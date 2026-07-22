@@ -97,7 +97,7 @@ jobs:
           - os: windows-latest
             platform: windows
             arch: x86_64
-          - os: windows-latest
+          - os: windows-11-arm
             platform: windows
             arch: arm64
     steps:
@@ -290,7 +290,7 @@ jobs:
             if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
               echo "$NAME@$VERSION already published; skipping"
             else
-              npm publish "$package" --access public --provenance
+              npm publish "./$package" --access public --provenance
             fi
           done
       - name: Publish @trycua/cua-driver
@@ -301,7 +301,7 @@ jobs:
           if npm view "@trycua/cua-driver@$VERSION" version >/dev/null 2>&1; then
             echo "@trycua/cua-driver@$VERSION already published; skipping"
           else
-            npm publish "dist/trycua-cua-driver-$VERSION.tgz" --access public --provenance
+            npm publish "./dist/trycua-cua-driver-$VERSION.tgz" --access public --provenance
           fi
       - name: Attach npm packages to the Cua Driver release
         env:

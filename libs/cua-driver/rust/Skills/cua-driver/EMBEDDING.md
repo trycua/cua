@@ -117,6 +117,7 @@ const embedded = new EmbeddedCuaDriver({
 const connection = await embedded.start();
 const driver = CuaDriver.connect(connection.socketPath);
 // Application calls use driver; an agent runtime uses connection.mcp.
+driver.uniffiDestroy();
 await embedded.stop();
 ```
 
@@ -130,7 +131,7 @@ to raise a Screen Recording prompt; in that case, open the Screen Recording
 settings pane with `openMacOSScreenRecordingSettings()`, ask the user to add the
 host app, and start the driver only after both checks return true.
 
-Call `await driver.stop()` from every orderly shutdown path. Electron hosts
+Destroy the SDK client and call `await embedded.stop()` from every orderly shutdown path. Electron hosts
 must defer their first `before-quit` event until cleanup completes because
 asynchronous cleanup cannot run after the host process exits. Normal OpenClaw
 gateway and Hermes YAML configurations remain standalone integrations; use the

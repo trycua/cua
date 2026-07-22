@@ -78,7 +78,11 @@ const embedded = new EmbeddedCuaDriver({
 try {
   const connection = await embedded.start()
   const driver = CuaDriver.connect(connection.socketPath)
-  // Application calls use driver; an agent runtime uses connection.mcp.
+  try {
+    // Application calls use driver; an agent runtime uses connection.mcp.
+  } finally {
+    driver.uniffiDestroy()
+  }
 } finally {
   await embedded.stop()
 }

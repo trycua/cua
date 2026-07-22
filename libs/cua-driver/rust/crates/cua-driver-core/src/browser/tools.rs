@@ -112,9 +112,17 @@ fn with_tab_screenshot(mut result: ToolResult, screenshot: BrowserTabScreenshot)
             "mime_type": "image/png",
             "width": screenshot.width,
             "height": screenshot.height,
+            "coordinate_space": "viewport_css_px",
+            "viewport_css_width": screenshot.viewport_css_width,
+            "viewport_css_height": screenshot.viewport_css_height,
+            "pixel_to_css_scale_x": screenshot.pixel_to_css_scale_x,
+            "pixel_to_css_scale_y": screenshot.pixel_to_css_scale_y,
             "tab_activation": "not_requested",
             "window_foregrounding": "not_requested",
         });
+        structured["screenshot_width"] = json!(screenshot.width);
+        structured["screenshot_height"] = json!(screenshot.height);
+        structured["screenshot_mime_type"] = json!("image/png");
     }
     result
         .content

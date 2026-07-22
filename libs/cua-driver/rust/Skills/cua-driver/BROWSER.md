@@ -147,11 +147,19 @@ cua-driver get_browser_state \
     "include_screenshot":true}'
 ```
 
-The result includes a PNG image part plus structured width, height, scope, and
-route metadata. Cua Driver captures the exact tab viewport through CDP. It does
-not select the tab or foreground the browser window. Capture is opt-in because
-authenticated pages may contain sensitive information, and a requested capture
-refuses when the driver cannot return a valid bounded PNG.
+The result includes a PNG image part, the flat compatibility fields
+`screenshot_width`, `screenshot_height`, and `screenshot_mime_type`, plus a
+structured `screenshot` object. That object identifies the coordinate space as
+`viewport_css_px` and reports `viewport_css_width`, `viewport_css_height`,
+`pixel_to_css_scale_x`, and `pixel_to_css_scale_y`. When grounding a coordinate
+action from the PNG, convert image pixels to the browser action space with
+`css_x = png_x * pixel_to_css_scale_x` and
+`css_y = png_y * pixel_to_css_scale_y`; do not assume device scale factor 1.
+
+Cua Driver captures the exact tab viewport through CDP. It does not select the
+tab or foreground the browser window. Capture is opt-in because authenticated
+pages may contain sensitive information, and a requested capture refuses when
+the driver cannot return valid viewport metrics and a valid bounded PNG.
 
 `semantic_v2` composes the page accessibility tree, pierced DOM, layout, and
 viewport state. Read the compact `outline` for page content, use `refs` only

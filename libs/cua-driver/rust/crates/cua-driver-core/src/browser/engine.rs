@@ -290,6 +290,66 @@ pub(crate) struct BrowserTabScreenshot {
     pub data_base64: String,
     pub width: u32,
     pub height: u32,
+    pub viewport_css_width: f64,
+    pub viewport_css_height: f64,
+    pub pixel_to_css_scale_x: f64,
+    pub pixel_to_css_scale_y: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BrowserScreenshotViewport {
+    page_x: f64,
+    page_y: f64,
+    width: f64,
+    height: f64,
+}
+
+fn browser_screenshot_viewport(
+    metrics: &Value,
+) -> Result<BrowserScreenshotViewport, BrowserRefusal> {
+    let viewport = metrics
+        .get("cssVisualViewport")
+        .or_else(|| metrics.get("visualViewport"))
+        .ok_or_else(|| {
+            route_err(
+                "Page.getLayoutMetrics returned malformed data",
+                "missing visual viewport metrics",
+            )
+        })?;
+    let number = |field: &str| {
+        viewport
+            .get(field)
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+            .ok_or_else(|| {
+                route_err(
+                    "Page.getLayoutMetrics returned malformed data",
+                    format!("missing or non-finite visual viewport field {field}"),
+                )
+            })
+    };
+    let page_x = number("pageX")?;
+    let page_y = number("pageY")?;
+    let width = number("clientWidth")?;
+    let height = number("clientHeight")?;
+    if page_x < 0.0 || page_y < 0.0 {
+        return Err(route_err(
+            "Page.getLayoutMetrics returned malformed data",
+            "visual viewport page offsets must be non-negative",
+        ));
+    }
+    if width <= 0.0 || height <= 0.0 {
+        return Err(route_err(
+            "Page.getLayoutMetrics returned malformed data",
+            "visual viewport dimensions must be positive",
+        ));
+    }
+    Ok(BrowserScreenshotViewport {
+        page_x,
+        page_y,
+        width,
+        height,
+    })
 }
 
 /// Whether OOPIF content could be composed into the snapshot.
@@ -1507,6 +1567,11 @@ impl BrowserEngine {
         })?;
         let conn = self.connection_for_record(session, &record).await?;
         let cdp_session = self.attach(&conn, &tab.cdp_target_id).await?;
+        let metrics = conn
+            .call(Some(&cdp_session), "Page.getLayoutMetrics", json!({}))
+            .await
+            .map_err(|error| route_err("Page.getLayoutMetrics failed", error))?;
+        let viewport = browser_screenshot_viewport(&metrics)?;
         let response = conn
             .call(
                 Some(&cdp_session),
@@ -1515,6 +1580,13 @@ impl BrowserEngine {
                     "format": "png",
                     "fromSurface": true,
                     "captureBeyondViewport": false,
+                    "clip": {
+                        "x": viewport.page_x,
+                        "y": viewport.page_y,
+                        "width": viewport.width,
+                        "height": viewport.height,
+                        "scale": 1.0,
+                    },
                 }),
             )
             .await
@@ -1566,6 +1638,10 @@ impl BrowserEngine {
             data_base64,
             width,
             height,
+            viewport_css_width: viewport.width,
+            viewport_css_height: viewport.height,
+            pixel_to_css_scale_x: viewport.width / f64::from(width),
+            pixel_to_css_scale_y: viewport.height / f64::from(height),
         })
     }
 

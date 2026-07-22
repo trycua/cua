@@ -27,7 +27,52 @@ typed driver operations rather than a parallel `list_tools_json()` and
 `call_tool(name, JSON)` abstraction that duplicates MCP discovery, invocation,
 and result semantics.
 
-![Proposed Cua Driver architecture](2447/architecture-overview.png)
+```mermaid
+%%{init: {
+  "flowchart": {
+    "defaultRenderer": "elk",
+    "curve": "linear",
+    "nodeSpacing": 60,
+    "rankSpacing": 90
+  }
+}}%%
+
+flowchart LR
+
+    SDK["Public typed<br/>CuaDriver SDK"]
+
+    UNIFFI["UniFFI / C ABI"]
+
+    PY["Python SDK"]
+    TS["TypeScript SDK"]
+
+    PYMCP["MCP Server<br/><small>(Python)</small>"]
+    PYCLI["CLI<br/><small>(Python)</small>"]
+
+    TSMCP["MCP Server<br/><small>(TypeScript)</small>"]
+    TSCLI["CLI<br/><small>(TypeScript)</small>"]
+
+    SDK --> UNIFFI
+
+    UNIFFI --> PY
+    UNIFFI --> TS
+
+    PY --> PYMCP
+    PY --> PYCLI
+
+    TS --> TSMCP
+    TS --> TSCLI
+
+    classDef sdk fill:#0b7d85,color:#fff,stroke:#05555a,stroke-width:2px;
+    classDef bridge fill:#eef8ef,stroke:#5a9b5a,stroke-width:1.5px;
+    classDef binding fill:#f7fff7,stroke:#5a9b5a,stroke-width:1.5px;
+    classDef consumer fill:#eef5ff,stroke:#2563eb,stroke-width:1.5px;
+
+    class SDK sdk;
+    class UNIFFI bridge;
+    class PY,TS binding;
+    class PYMCP,PYCLI,TSMCP,TSCLI consumer;
+```
 
 **Figure 1.** The public typed SDK is the architectural boundary. Rust
 applications call it directly, Python and TypeScript applications use generated

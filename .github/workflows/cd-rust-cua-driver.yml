@@ -144,12 +144,13 @@ jobs:
           cp "target/${TARGET}/release/cua-driver" "release/${STAGE}/"
           cp "target/${TARGET}/release/libcua_driver_sdk.so" "release/${STAGE}/"
           cp "target/${TARGET}/release/cua_driver_node_runtime.node" "release/${STAGE}/"
+          cp include/cua_driver_abi.h "release/${STAGE}/"
           cp ../../LICENSE.md "release/${STAGE}/LICENSE" 2>/dev/null || true
           (cd release && tar -czf "${STAGE}.tar.gz" "${STAGE}")
           # Bare runtime tarball: CLI plus the UniFFI library consumed by the
           # Python and Node imported-SDK packages.
           tar -czf "release/${STAGE}-binary.tar.gz" -C "release/${STAGE}" \
-            cua-driver libcua_driver_sdk.so cua_driver_node_runtime.node
+            cua-driver libcua_driver_sdk.so cua_driver_node_runtime.node cua_driver_abi.h
           ls -lh "release/${STAGE}.tar.gz" "release/${STAGE}-binary.tar.gz"
       - uses: actions/upload-artifact@v4
         with:
@@ -242,6 +243,7 @@ jobs:
           Copy-Item "target/$target/release/cua-driver-uia.exe" "release/$stage/"
           Copy-Item "target/$target/release/cua_driver_sdk.dll" "release/$stage/"
           Copy-Item "target/$target/release/cua_driver_node_runtime.node" "release/$stage/"
+          Copy-Item "include/cua_driver_abi.h" "release/$stage/"
           if (Test-Path "../../LICENSE.md") { Copy-Item "../../LICENSE.md" "release/$stage/LICENSE" }
           # Zip the directory itself (no trailing /*) so the archive contains
           # the top-level "$stage" wrapper dir — install.ps1 walks into
@@ -256,7 +258,7 @@ jobs:
           # to UIAccess integrity on a default-policy machine. The main CLI/MCP
           # binary stays fully functional regardless; uia is opt-in dead-weight
           # until signed.
-          Compress-Archive -Path "release/$stage/cua-driver.exe","release/$stage/cua-driver-uia.exe","release/$stage/cua_driver_sdk.dll","release/$stage/cua_driver_node_runtime.node" -DestinationPath "release/$stage-binary.zip" -Force
+          Compress-Archive -Path "release/$stage/cua-driver.exe","release/$stage/cua-driver-uia.exe","release/$stage/cua_driver_sdk.dll","release/$stage/cua_driver_node_runtime.node","release/$stage/cua_driver_abi.h" -DestinationPath "release/$stage-binary.zip" -Force
           Get-ChildItem "release/$stage*.zip"
       - uses: actions/upload-artifact@v4
         with:
@@ -486,6 +488,7 @@ jobs:
             cp release/universal/cua-driver "release/${STAGE}/"
             cp release/universal/libcua_driver_sdk.dylib "release/${STAGE}/"
             cp release/universal/cua_driver_node_runtime.node "release/${STAGE}/"
+            cp include/cua_driver_abi.h "release/${STAGE}/"
             # Ship the .app bundle in every macOS tarball so install.sh
             # can drop it into /Applications/CuaDriver.app for TCC
             # attribution (issue #1525). Tarball callers that want only
@@ -497,7 +500,8 @@ jobs:
           # Bare runtime tarball: universal CLI plus universal UniFFI library.
           # No app bundle: callers of this asset deliberately skip that flow.
           tar -czf "release/cua-driver-rs-${VERSION}-darwin-universal-binary.tar.gz" \
-            -C release/universal cua-driver libcua_driver_sdk.dylib cua_driver_node_runtime.node
+            -C release/universal cua-driver libcua_driver_sdk.dylib cua_driver_node_runtime.node \
+            -C ../../include cua_driver_abi.h
           ls -lh release/*.tar.gz
       - uses: actions/upload-artifact@v4
         with:

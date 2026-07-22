@@ -9,6 +9,8 @@ on:
       - "libs/cua-driver/python/**"
       - "libs/cua-driver/rust/Cargo.toml"
       - "libs/cua-driver/rust/Cargo.lock"
+      - "libs/cua-driver/rust/include/**"
+      - "libs/cua-driver/rust/tests/**"
       - "libs/cua-driver/rust/crates/cua-driver/**"
       - "libs/cua-driver/rust/crates/cua-driver-contract/**"
       - "libs/cua-driver/rust/crates/cua-driver-bindgen/**"
@@ -32,6 +34,8 @@ on:
       - "libs/cua-driver/python/**"
       - "libs/cua-driver/rust/Cargo.toml"
       - "libs/cua-driver/rust/Cargo.lock"
+      - "libs/cua-driver/rust/include/**"
+      - "libs/cua-driver/rust/tests/**"
       - "libs/cua-driver/rust/crates/cua-driver/**"
       - "libs/cua-driver/rust/crates/cua-driver-contract/**"
       - "libs/cua-driver/rust/crates/cua-driver-bindgen/**"
@@ -151,6 +155,29 @@ jobs:
         run: |
           npm --prefix typescript run build
           node scripts/stage-uniffi-library.mjs
+
+      - name: Verify stable C ABI symbols and external client
+        working-directory: libs/cua-driver/rust
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror \
+            -I include tests/c_abi_smoke.c \
+            -L target/release -lcua_driver_sdk \
+            -Wl,-rpath,'$ORIGIN/release' \
+            -o target/cua-driver-abi-smoke
+          LD_LIBRARY_PATH=target/release target/cua-driver-abi-smoke
+          nm -D --defined-only target/release/libcua_driver_sdk.so > /tmp/cua-driver-abi-symbols.txt
+          for symbol in \
+            cua_driver_abi_version_v1 \
+            cua_driver_abi_is_compatible_v1 \
+            cua_driver_buffer_free_v1 \
+            cua_driver_create_v1 \
+            cua_driver_destroy_v1 \
+            cua_driver_invoke_v1 \
+            cua_driver_shutdown_v1 \
+            cua_driver_operation_cancel_v1 \
+            cua_driver_operation_release_v1; do
+            grep -Eq "[[:space:]]${symbol}$" /tmp/cua-driver-abi-symbols.txt
+          done
 
       - name: Test Python UniFFI loader
         working-directory: libs/cua-driver/python

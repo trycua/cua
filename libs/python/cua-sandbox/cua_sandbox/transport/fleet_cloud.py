@@ -72,6 +72,20 @@ class _FleetClient:
     async def create_claim(self, request: CreateClaimRequest) -> Any:
         return await self._client.create_claim(request)
 
+    async def wait_pool(self, pool: Any, timeout: float = 900.0, poll_interval: float = 5.0) -> Any:
+        deadline = asyncio.get_running_loop().time() + timeout
+        while True:
+            pools = await self._client.list_pools(pool.metadata.namespace)
+            for current_pool in pools:
+                if current_pool.metadata.name != pool.metadata.name:
+                    continue
+                if current_pool.status and (current_pool.status.available_count or 0) >= 1:
+                    return current_pool
+                break
+            if asyncio.get_running_loop().time() >= deadline:
+                raise TimeoutError(f"Timed out waiting for Fleet pool {pool.metadata.name!r} to warm up")
+            await asyncio.sleep(poll_interval)
+
     async def wait_claim(self, claim: Any) -> Any:
         return await self._client.wait_claim(claim)
 
@@ -188,6 +202,7 @@ class FleetCloudTransport(FleetTransport):
                     else:
                         self._validate_image(self._image)
                         self._pool = await self._sdk.create_pool(self._pool_request())
+                        self._pool = await self._sdk.wait_pool(self._pool)
                 if self._claim is None:
                     if self._image is None:
                         self._claim = await self._sdk.get_claim(self._pool)
@@ -198,7 +213,7 @@ class FleetCloudTransport(FleetTransport):
                                 spec=ClaimSpec(
                                     sandbox_template_ref=SandboxTemplateRef(name=self._pool.metadata.name),
                                     warmpool=None,
-                                    bind_deadline=None,
+                                    bind_deadline=600,
                                     lifecycle=None,
                                 ),
                             )

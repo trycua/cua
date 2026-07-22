@@ -1,5 +1,6 @@
 """Regression tests for cua-driver-rs release and PyPI wiring."""
 
+import json
 from pathlib import Path
 import unittest
 
@@ -80,6 +81,13 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn("chore(lume): synchronize release documentation", workflow)
         self.assertNotIn("if: steps.release.outputs.prs_created == 'true'", workflow)
         self.assertNotIn("RELEASE_PRS: ${{ steps.release.outputs.prs }}", workflow)
+
+    def test_driver_breaking_changes_remain_pre_major(self) -> None:
+        config = json.loads(self.read("release-please-config.json"))
+        driver = config["packages"]["libs/cua-driver"]
+
+        self.assertTrue(driver["bump-minor-pre-major"])
+        self.assertNotIn("bump-minor-pre-major", config["packages"]["libs/lume"])
 
     def test_release_please_exposes_targeted_bump_dropdowns(self) -> None:
         workflow = self.read(".github/workflows/release-please.yml")

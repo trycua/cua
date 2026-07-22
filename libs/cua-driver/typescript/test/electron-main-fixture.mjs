@@ -4,6 +4,9 @@ import path from "node:path"
 
 const directory = mkdtempSync(path.join(os.tmpdir(), "cua-driver-electron-host-"))
 const binaryPath = path.join(directory, "generic-driver-host")
+const packageVersion = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+).version
 
 writeFileSync(
   binaryPath,
@@ -23,7 +26,7 @@ const server = net.createServer(socket => {
     if (!buffer.includes("\\n")) return;
     const request = JSON.parse(buffer.split("\\n", 1)[0]);
     const result = request.method === "metadata" ? {
-      driver_version: "0.11.0",
+      driver_version: ${JSON.stringify(packageVersion)},
       contract_version: hostBundleId.endsWith(".failure") ? "incompatible" : "0.2.0",
       tools_list_schema_version: "1",
       capability_version: "1",
@@ -76,11 +79,10 @@ try {
     versions: {
       electron: process.versions.electron,
       node: process.versions.node,
-      package: JSON.parse(
-        readFileSync(new URL("../package.json", import.meta.url), "utf8"),
-      ).version,
+      package: packageVersion,
     },
     connection: {
+      driverVersion: connection.driverVersion,
       socketPathIsPrivate:
         socketPath.startsWith(os.tmpdir()) && path.basename(socketPath).startsWith("cua-"),
       pidMatchesChild: Number(readFileSync(path.join(directory, "com.example.electron-host.pid"), "utf8")) === pid,

@@ -5,69 +5,80 @@
 //! thread). Every callback enforces, in order:
 //!   1. drop OS-injected events (our own actuation / replay) — `*_INJECTED`,
 //!   2. drop events while the target window is not foreground (window-scoping),
-//!   3. drop events the [`CaptureGate`] rejects (indicator not live/covering).
+//!   3. drop events when indicator rendering is stale or the pointer is outside the target.
 //! Only after all three may an event be buffered. The keyboard path feeds the
 //! shared [`Coalescer`] so typing is redacted and coalesced.
 //!
 //! Single active capture at a time (the recorder is a daemon singleton), so
 //! hook state lives in one process-global guarded by a mutex.
 
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Sender, SyncSender};
 use std::sync::Mutex;
+use std::time::Instant;
 
-use windows::Win32::Foundation::{LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, GetDoubleClickTime, GetKeyboardState, ToUnicode, VIRTUAL_KEY, VK_CONTROL,
-    VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+    GetAsyncKeyState, GetKeyboardState, ToUnicode, VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_MENU,
+    VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW, GetSystemMetrics,
-    PostThreadMessageW, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, HHOOK,
-    KBDLLHOOKSTRUCT, LLKHF_INJECTED, LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT, SM_CXDOUBLECLK, SM_CXDRAG,
-    WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
-    WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEWHEEL, WM_QUIT, WM_RBUTTONDOWN, WM_RBUTTONUP,
-    WM_SYSKEYDOWN,
+    CallNextHookEx, DispatchMessageW, GetAncestor, GetForegroundWindow, GetMessageW,
+    GetSystemMetrics, GetWindowRect, GetWindowThreadProcessId, PostThreadMessageW,
+    SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, GA_ROOT, HHOOK, KBDLLHOOKSTRUCT,
+    LLKHF_INJECTED, LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT, SM_CXDRAG, WH_KEYBOARD_LL, WH_MOUSE_LL,
+    WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL,
+    WM_MOUSEWHEEL, WM_QUIT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN,
 };
 
 use crate::coalesce::{Coalescer, KeyInput};
-use crate::event::{Button, HumanEvent, Mods};
-use crate::gate::CaptureGate;
-use crate::{CaptureConfig, CaptureError, InputCapture};
+use crate::event::{Button, HumanEvent, Modifiers};
+use crate::render_health::RenderHealth;
+use crate::{CaptureConfig, CaptureError};
 
 /// Process-global hook state. `None` when no capture is active.
 static HOOK_STATE: Mutex<Option<HookState>> = Mutex::new(None);
 
 struct HookState {
     target_hwnd: isize,
-    gate: CaptureGate,
-    sink: Sender<HumanEvent>,
-    clock: Box<dyn Fn() -> u64 + Send>,
+    health: RenderHealth,
+    sink: SyncSender<HumanEvent>,
+    started_at: Instant,
     coalescer: Coalescer,
     /// In-progress mouse press: (down point, button, t_ms).
     mouse_down: Option<(POINT, Button, u64)>,
-    /// Last completed click for double-click detection: (point, t_ms).
-    last_click: Option<(POINT, u64)>,
 }
 
 impl HookState {
     fn now(&self) -> u64 {
-        (self.clock)()
+        self.started_at.elapsed().as_millis() as u64
     }
     fn emit(&self, ev: HumanEvent) {
-        let _ = self.sink.send(ev);
+        let _ = self.sink.try_send(ev);
     }
 }
 
-/// Is `hwnd` (or its root) the current foreground window? Window-scoping gate.
+/// Compare top-level roots so input sent to a child control remains in scope.
 fn is_target_foreground(target: isize) -> bool {
-    let fg = unsafe { GetForegroundWindow() };
-    fg.0 as isize == target
+    unsafe {
+        let foreground = GetAncestor(GetForegroundWindow(), GA_ROOT);
+        let target = GetAncestor(HWND(target as *mut _), GA_ROOT);
+        !foreground.is_invalid() && foreground == target
+    }
 }
 
-fn current_mods() -> Mods {
+fn point_in_target(target: isize, point: POINT) -> bool {
+    let mut rect = RECT::default();
+    unsafe { GetWindowRect(HWND(target as *mut _), &mut rect) }.is_ok()
+        && point.x >= rect.left
+        && point.x < rect.right
+        && point.y >= rect.top
+        && point.y < rect.bottom
+}
+
+fn current_modifiers() -> Modifiers {
     // High bit set => key down.
     let down = |vk: VIRTUAL_KEY| (unsafe { GetAsyncKeyState(vk.0 as i32) } as u16 & 0x8000) != 0;
-    Mods {
+    Modifiers {
         ctrl: down(VK_CONTROL),
         alt: down(VK_MENU),
         shift: down(VK_SHIFT),
@@ -103,8 +114,8 @@ fn handle_mouse(st: &mut HookState, msg: u32, info: &MSLLHOOKSTRUCT) {
     let now = st.now();
     let (x, y) = (pt.x as f64, pt.y as f64);
 
-    // 3. indicator gate (point-covered). Wheel + button events all positioned.
-    if !st.gate.allow_at(now, x, y) {
+    // Require a live indicator and a point inside the target window.
+    if !st.health.is_fresh(now) || !point_in_target(st.target_hwnd, pt) {
         return;
     }
 
@@ -112,8 +123,18 @@ fn handle_mouse(st: &mut HookState, msg: u32, info: &MSLLHOOKSTRUCT) {
         WM_MOUSEWHEEL | WM_MOUSEHWHEEL => {
             // High word of mouseData is a signed wheel delta (multiples of 120).
             let delta = ((info.mouseData >> 16) & 0xffff) as i16 as f64 / 120.0;
-            let (dx, dy) = if msg == WM_MOUSEHWHEEL { (delta, 0.0) } else { (0.0, delta) };
-            st.emit(HumanEvent::Scroll { x, y, dx, dy, t_ms: now });
+            let (dx, dy) = if msg == WM_MOUSEHWHEEL {
+                (delta, 0.0)
+            } else {
+                (0.0, delta)
+            };
+            st.emit(HumanEvent::Scroll {
+                x,
+                y,
+                dx,
+                dy,
+                t_ms: now,
+            });
         }
         WM_LBUTTONDOWN => st.mouse_down = Some((pt, Button::Left, now)),
         WM_RBUTTONDOWN => st.mouse_down = Some((pt, Button::Right, now)),
@@ -130,7 +151,6 @@ fn finish_button(st: &mut HookState, up: POINT, now: u64) {
     let drag_px = unsafe { GetSystemMetrics(SM_CXDRAG) }.max(4);
     let moved = (up.x - down.x).abs() > drag_px || (up.y - down.y).abs() > drag_px;
     if moved {
-        st.last_click = None;
         st.emit(HumanEvent::Drag {
             from: (down.x as f64, down.y as f64),
             to: (up.x as f64, up.y as f64),
@@ -140,27 +160,14 @@ fn finish_button(st: &mut HookState, up: POINT, now: u64) {
         return;
     }
 
-    // Double-click: same-ish point within the system double-click time/space.
-    let dbl_time = unsafe { GetDoubleClickTime() } as u64;
-    let dbl_px = unsafe { GetSystemMetrics(SM_CXDOUBLECLK) }.max(2);
-    if button == Button::Left {
-        if let Some((prev, prev_t)) = st.last_click.take() {
-            if now.saturating_sub(prev_t) <= dbl_time
-                && (up.x - prev.x).abs() <= dbl_px
-                && (up.y - prev.y).abs() <= dbl_px
-            {
-                st.emit(HumanEvent::DoubleClick {
-                    x: up.x as f64,
-                    y: up.y as f64,
-                    button,
-                    t_ms: now,
-                });
-                return;
-            }
-        }
-        st.last_click = Some((up, now));
-    }
-    st.emit(HumanEvent::Click { x: up.x as f64, y: up.y as f64, button, t_ms: now });
+    // Preserve physical clicks. A later compiler can decide whether two clicks
+    // form a higher-level double-click action.
+    st.emit(HumanEvent::Click {
+        x: up.x as f64,
+        y: up.y as f64,
+        button,
+        t_ms: now,
+    });
 }
 
 // ── Keyboard hook ────────────────────────────────────────────────────────────
@@ -183,15 +190,32 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
 }
 
 fn handle_key(st: &mut HookState, vk: u32, scan: u32) {
+    use windows::Win32::UI::Input::KeyboardAndMouse as key;
+    if matches!(
+        VIRTUAL_KEY(vk as u16),
+        key::VK_CONTROL
+            | key::VK_LCONTROL
+            | key::VK_RCONTROL
+            | key::VK_SHIFT
+            | key::VK_LSHIFT
+            | key::VK_RSHIFT
+            | key::VK_MENU
+            | key::VK_LMENU
+            | key::VK_RMENU
+            | key::VK_LWIN
+            | key::VK_RWIN
+    ) {
+        return;
+    }
     if !is_target_foreground(st.target_hwnd) {
         return;
     }
     let now = st.now();
-    if !st.gate.allow(now) {
+    if !st.health.is_fresh(now) {
         return;
     }
-    let mods = current_mods();
-    let key = build_key_input(vk, scan, mods);
+    let modifiers = current_modifiers();
+    let key = build_key_input(vk, scan, modifiers);
     for ev in st.coalescer.push(key, now) {
         st.emit(ev);
     }
@@ -199,17 +223,24 @@ fn handle_key(st: &mut HookState, vk: u32, scan: u32) {
 
 /// Translate a VK code into a [`KeyInput`]: a text char for plain typing, or a
 /// semantic name for command/navigation keys.
-fn build_key_input(vk: u32, scan: u32, mods: Mods) -> KeyInput {
+fn build_key_input(vk: u32, scan: u32, modifiers: Modifiers) -> KeyInput {
     let name = vk_name(vk);
     // A text char is produced only when no command modifier is held (Shift is
     // fine — it just changes case). This keeps Ctrl+C out of the text buffer.
-    let text_char = if mods.is_command() { None } else { translate_char(vk, scan) };
+    let text_char = if modifiers.is_command() {
+        None
+    } else {
+        translate_char(vk, scan)
+    };
     KeyInput {
-        name: name.unwrap_or_else(|| {
-            text_char.map(|c| c.to_string()).unwrap_or_else(|| format!("VK_{vk}"))
+        key: name.unwrap_or_else(|| {
+            text_char
+                .or_else(|| char::from_u32(vk).filter(char::is_ascii_alphanumeric))
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| format!("VK_{vk}"))
         }),
         text_char,
-        mods,
+        modifiers,
     }
 }
 
@@ -255,7 +286,9 @@ fn translate_char(vk: u32, scan: u32) -> Option<char> {
     kb[VK_CONTROL.0 as usize] = 0;
     kb[VK_MENU.0 as usize] = 0;
     let mut buf = [0u16; 8];
-    let n = unsafe { ToUnicode(vk, scan, Some(&kb), &mut buf, 0) };
+    // Bit 2 prevents ToUnicode from mutating the kernel dead-key state on
+    // supported Windows versions.
+    let n = unsafe { ToUnicode(vk, scan, Some(&kb), &mut buf, 1 << 2) };
     if n == 1 {
         let c = char::from_u32(buf[0] as u32)?;
         if !c.is_control() {
@@ -267,13 +300,13 @@ fn translate_char(vk: u32, scan: u32) -> Option<char> {
 
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 
-struct WindowsCapture {
+pub(crate) struct Capture {
     thread: Option<std::thread::JoinHandle<()>>,
     thread_id: u32,
 }
 
-impl InputCapture for WindowsCapture {
-    fn stop(mut self: Box<Self>) {
+impl Capture {
+    pub(crate) fn stop(mut self) {
         // Ask the message-pump thread to exit; it unhooks + flushes on the way
         // out (see the thread body). PostThreadMessage may race startup, so the
         // thread also tolerates being asked to quit before the pump begins.
@@ -288,7 +321,7 @@ impl InputCapture for WindowsCapture {
     }
 }
 
-impl Drop for WindowsCapture {
+impl Drop for Capture {
     fn drop(&mut self) {
         // Defensive: if stop() was not called, still tear the hook down.
         if self.thread_id != 0 {
@@ -302,46 +335,68 @@ impl Drop for WindowsCapture {
     }
 }
 
-pub fn start(
-    cfg: CaptureConfig,
-    gate: CaptureGate,
-    sink: Sender<HumanEvent>,
-    clock: impl Fn() -> u64 + Send + 'static,
-) -> Result<Box<dyn InputCapture>, CaptureError> {
-    // Refuse a second concurrent capture (single daemon recorder).
-    {
-        let mut guard = HOOK_STATE.lock().unwrap();
-        if guard.is_some() {
-            return Err(CaptureError::Hook("a capture is already active".into()));
+impl Capture {
+    pub(crate) fn start(
+        cfg: CaptureConfig,
+        health: RenderHealth,
+        sink: SyncSender<HumanEvent>,
+        started_at: Instant,
+    ) -> Result<Self, CaptureError> {
+        let target = HWND(cfg.window_id as *mut _);
+        let mut actual_pid = 0;
+        unsafe { GetWindowThreadProcessId(target, Some(&mut actual_pid)) };
+        if cfg.pid <= 0 || actual_pid != cfg.pid as u32 {
+            return Err(CaptureError::Hook(format!(
+                "window {} does not belong to process {}",
+                cfg.window_id, cfg.pid
+            )));
         }
-        *guard = Some(HookState {
-            target_hwnd: cfg.window_id as isize,
-            gate,
-            sink,
-            clock: Box::new(clock),
-            coalescer: Coalescer::new(cfg.capture_raw_text),
-            mouse_down: None,
-            last_click: None,
-        });
-    }
 
-    let (tx_id, rx_id) = std::sync::mpsc::channel::<Result<u32, String>>();
-    let thread = std::thread::Builder::new()
-        .name("input-capture-win".into())
-        .spawn(move || pump(tx_id))
-        .map_err(|e| CaptureError::Hook(e.to_string()))?;
-
-    match rx_id.recv() {
-        Ok(Ok(thread_id)) => Ok(Box::new(WindowsCapture { thread: Some(thread), thread_id })),
-        Ok(Err(e)) => {
-            *HOOK_STATE.lock().unwrap() = None;
-            let _ = thread.join();
-            Err(CaptureError::Hook(e))
+        // Refuse a second concurrent capture (single daemon recorder).
+        {
+            let mut guard = HOOK_STATE.lock().unwrap();
+            if guard.is_some() {
+                return Err(CaptureError::Hook("a capture is already active".into()));
+            }
+            *guard = Some(HookState {
+                target_hwnd: cfg.window_id as isize,
+                health,
+                sink,
+                started_at,
+                coalescer: Coalescer::new(),
+                mouse_down: None,
+            });
         }
-        Err(_) => {
-            *HOOK_STATE.lock().unwrap() = None;
-            let _ = thread.join();
-            Err(CaptureError::Hook("capture thread exited during startup".into()))
+
+        let (tx_id, rx_id) = std::sync::mpsc::channel::<Result<u32, String>>();
+        let thread = match std::thread::Builder::new()
+            .name("input-capture-win".into())
+            .spawn(move || pump(tx_id))
+        {
+            Ok(thread) => thread,
+            Err(error) => {
+                *HOOK_STATE.lock().unwrap() = None;
+                return Err(CaptureError::Hook(error.to_string()));
+            }
+        };
+
+        match rx_id.recv() {
+            Ok(Ok(thread_id)) => Ok(Self {
+                thread: Some(thread),
+                thread_id,
+            }),
+            Ok(Err(e)) => {
+                *HOOK_STATE.lock().unwrap() = None;
+                let _ = thread.join();
+                Err(CaptureError::Hook(e))
+            }
+            Err(_) => {
+                *HOOK_STATE.lock().unwrap() = None;
+                let _ = thread.join();
+                Err(CaptureError::Hook(
+                    "capture thread exited during startup".into(),
+                ))
+            }
         }
     }
 }

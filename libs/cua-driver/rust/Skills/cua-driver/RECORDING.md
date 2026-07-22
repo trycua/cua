@@ -140,72 +140,30 @@ If recording is still enabled while replay runs, the replay is
 itself recorded into the current output directory — that's the
 intended regression-diff workflow.
 
-## Demonstration mode (human-input recording → skills)
+## Human demonstrations
 
-> **Windows only for now** (macOS/Linux planned). A record-and-replay
-> demonstration-to-skill workflow: record a human demonstrating a task on a
-> window, then turn it into a reusable skill.
+> **Windows only.** Human demonstrations are separate from ordinary tool-call
+> recording and are not automatically replayable.
 
-Ordinary recording captures only the agent's own tool calls. **Demonstration
-mode also captures what a human does** to a chosen window — clicks, scrolls,
-drags, and (coalesced, redacted) typing — interleaved with any agent actions
-on one timeline. Start it by passing `demonstration: true` (plus `pid` and
-`window_id`) to `start_recording`:
+Call `start_demonstration` with the `pid` and `window_id` returned by
+`list_windows`. Call `stop_demonstration` when the task is complete. Stop writes
+`TRAJECTORY.md` and `SUMMARY.json` next to the captured `turn-NNNNN/` folders.
 
-```jsonc
-start_recording({
-  "output_dir": "~/demos/rename-flow",
-  "demonstration": true,
-  "pid": 84984,
-  "window_id": 15736134,
-  "capture_raw_text": false   // default: typed text is redacted
-})
-```
+The red border is a user notification. Cua-driver creates it before installing
+the input hook and drops input if border rendering stops. As a user-space
+overlay, it cannot prove that another window or a secure desktop has not
+obscured it.
 
-Human events are written as the same `turn-NNNNN/` folders, tagged
-`"source": "human"` in `action.json`. `get_recording_state` reports
-`demonstration: true` and a `human_turns` count.
+Capture has these limits:
 
-### The glowing border is a "recording-LED"
+- events are accepted only while the selected top-level window is foreground;
+- the supplied window must belong to the supplied process;
+- cua-driver-injected events are ignored;
+- text capture records only `text entered (redacted)` and never retains literal
+  text or its length;
+- the hook and border stop on `stop_demonstration` or when the owning MCP
+  session ends.
 
-When a demonstration is active, a glowing border is drawn around the target
-window. This is not cosmetic — it is a **security interlock**, the software
-analog of a camera LED wired to the sensor's power rail:
-
-- **Capture is impossible without the border painting.** The input hook is
-  gated on a heartbeat that is bumped only from inside an actually-presented
-  border frame. No fresh frame ⇒ every event is dropped before it is buffered.
-- **Window-scoped.** Events are only captured while the target window is
-  foreground and the event falls inside the border's covered rect. Anything
-  outside the window is dropped, never stored — this is not a system-wide
-  keylogger.
-- **Tamper watchdog.** If the border is hidden, minimized, moved off the
-  target, covered, or the target disappears, capture goes dark within a
-  heartbeat.
-- **Redacted by default.** Typed text is stored as a summary like
-  `•••• (8 chars, alpha)`. Literal text is stored only with
-  `capture_raw_text: true` (needed for faithful replay) — which stores secrets,
-  so opt in deliberately. The OS-injected events from cua-driver's own
-  actuation/replay are filtered out (the `*_INJECTED` flag), so replay does not
-  double-record.
-- **Auto-detached.** The hook + border are torn down on `stop_recording`,
-  process exit, and panic.
-
-### Turning a demonstration into a skill
-
-After stopping, call `process_recording({ "dir": "<output_dir>" })`. It renders:
-
-- `TRAJECTORY.md` — readable action prose with screenshots referenced by
-  **relative path** (never base64), only a few key frames embedded inline, so
-  reading it doesn't blow up your context.
-- `SUMMARY.json` — counts, duration, human/agent split, action histogram.
-
-Then author a `SKILL.md` from `TRAJECTORY.md` following the
-**`DEMONSTRATION.md`** guide in this directory (Open Agent Skills
-Standard: minimal `name`+trigger `description` frontmatter, `## Inputs`,
-semantic `## Steps`, `## Verification`; generalize coordinates and redacted text
-into intent + `{placeholders}`).
-
-If `ANTHROPIC_API_KEY` is set, `process_recording({ "dir": …, "author_skill":
-true })` calls the Anthropic API to write a draft `SKILL.md` for you. Without a
-key it just produces the trajectory and points you at the skill.
+Use the bundled **`DEMONSTRATION.md`** guide to turn `TRAJECTORY.md` into a
+skill. Skill authoring remains in the host agent; cua-driver makes no model API
+request.

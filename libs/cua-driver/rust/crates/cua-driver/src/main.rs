@@ -711,10 +711,6 @@ fn main() {
         } => {
             cli::run_recording_cmd(&subcommand, &args, socket.as_deref());
         }
-        cli::Command::Demonstration { subcommand, args, socket } => {
-            cli::run_demonstration_cmd(&subcommand, &args, socket.as_deref());
-            return;
-        }
         cli::Command::DumpDocs { pretty, doc_type } => {
             let tools = inspect_tools_without_runtime();
             cli::run_dump_docs_with_type(&tools, pretty, &doc_type);
@@ -968,10 +964,6 @@ fn main() -> anyhow::Result<()> {
             socket,
         } => {
             cli::run_recording_cmd(&subcommand, &args, socket.as_deref());
-            return Ok(());
-        }
-        cli::Command::Demonstration { subcommand, args, socket } => {
-            cli::run_demonstration_cmd(&subcommand, &args, socket.as_deref());
             return Ok(());
         }
         cli::Command::DumpDocs { pretty, doc_type } => {

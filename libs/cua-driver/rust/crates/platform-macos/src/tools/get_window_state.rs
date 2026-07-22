@@ -643,7 +643,10 @@ mod tests {
         nodes[0].enabled = Some(true);
         nodes[0].selected = Some(false);
         let entry = &build_elements_array(&nodes)[0];
-        assert_eq!(entry["value"], "8", "numeric AXValue surfaces via value_state");
+        assert_eq!(
+            entry["value"], "8",
+            "numeric AXValue surfaces via value_state"
+        );
         assert_eq!(entry["value_description"], "8 dB");
         assert_eq!(entry["min"], 2.0);
         assert_eq!(entry["max"], 8.0);

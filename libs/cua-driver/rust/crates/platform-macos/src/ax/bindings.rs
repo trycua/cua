@@ -194,42 +194,74 @@ pub unsafe fn copy_bool_attr(element: AXUIElementRef, attr_name: &str) -> Option
     None
 }
 
-/// Copy an attribute that may be a `CFString`, `CFNumber`, or `CFBoolean`,
-/// coerced to a display string. A slider's `AXValue` is a CFNumber and a
-/// checkbox/radio's is a CFBoolean/0|1 CFNumber — `copy_string_attr` drops
-/// those on its CFString type gate, which is why the tree historically showed
-/// no value for such controls. Numbers render without a trailing `.0` when
-/// integral (`8`, not `8.0`); booleans render as `1`/`0` to match how AppKit
-/// reports two-state controls.
-pub unsafe fn copy_stringish_attr(element: AXUIElementRef, attr_name: &str) -> Option<String> {
+/// A copied AX attribute represented for both existing string-only consumers
+/// and the wider structured control-state response.
+#[derive(Debug, PartialEq, Eq)]
+pub struct StringishAttrValue {
+    /// Present only when the source value was a CFString.
+    pub string_value: Option<String>,
+    /// CFString as-is, CFNumber as text, or CFBoolean as `"1"` / `"0"`.
+    pub state_value: String,
+}
+
+/// Convert a borrowed CF value without taking ownership of it.
+unsafe fn coerce_stringish_value(value: CFTypeRef) -> Option<StringishAttrValue> {
     use core_foundation::boolean::CFBoolean;
     use core_foundation::number::CFNumber;
+    let type_id = core_foundation::base::CFGetTypeID(value);
+    if type_id == CFStr::type_id() {
+        let string = CFStr::wrap_under_get_rule(value as _).to_string();
+        return Some(StringishAttrValue {
+            string_value: Some(string.clone()),
+            state_value: string,
+        });
+    }
+    if type_id == CFNumber::type_id() {
+        let n = CFNumber::wrap_under_get_rule(value as _);
+        let f = n.to_f64()?;
+        let state_value = if f == f.trunc() && f.abs() < 1e15 {
+            format!("{}", f as i64)
+        } else {
+            format!("{f}")
+        };
+        return Some(StringishAttrValue {
+            string_value: None,
+            state_value,
+        });
+    }
+    if type_id == CFBoolean::type_id() {
+        let b = CFBoolean::wrap_under_get_rule(value as _);
+        return Some(StringishAttrValue {
+            string_value: None,
+            state_value: if bool::from(b) {
+                "1".into()
+            } else {
+                "0".into()
+            },
+        });
+    }
+    None
+}
+
+/// Copy an attribute that may be a `CFString`, `CFNumber`, or `CFBoolean`.
+///
+/// The returned pair lets the tree walker preserve its historical CFString-only
+/// markdown while using the same single AX read for structured control state.
+/// Numbers render without a trailing `.0` when integral (`8`, not `8.0`), and
+/// booleans render as `1`/`0` to match AppKit's two-state controls.
+pub unsafe fn copy_stringish_attr(
+    element: AXUIElementRef,
+    attr_name: &str,
+) -> Option<StringishAttrValue> {
     let attr = CFStr::new(attr_name);
     let mut value: CFTypeRef = std::ptr::null();
     let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
     if err != kAXErrorSuccess || value.is_null() {
         return None;
     }
-    let type_id = core_foundation::base::CFGetTypeID(value);
-    if type_id == CFStr::type_id() {
-        let s = CFStr::wrap_under_create_rule(value as _);
-        return Some(s.to_string());
-    }
-    if type_id == CFNumber::type_id() {
-        let n = CFNumber::wrap_under_create_rule(value as _);
-        let f = n.to_f64()?;
-        return Some(if f == f.trunc() && f.abs() < 1e15 {
-            format!("{}", f as i64)
-        } else {
-            format!("{f}")
-        });
-    }
-    if type_id == CFBoolean::type_id() {
-        let b = CFBoolean::wrap_under_create_rule(value as _);
-        return Some(if bool::from(b) { "1".into() } else { "0".into() });
-    }
+    let result = coerce_stringish_value(value);
     CFRelease(value);
-    None
+    result
 }
 
 /// Get the action names for an AX element.
@@ -577,4 +609,39 @@ pub unsafe fn copy_ax_windows(element: AXUIElementRef) -> Vec<AXUIElementRef> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core_foundation::{boolean::CFBoolean, number::CFNumber};
+
+    #[test]
+    fn stringish_value_coerces_cfstring_cfnumber_and_cfboolean() {
+        let string = CFStr::new("Search");
+        let integer = CFNumber::from(8.0);
+        let decimal = CFNumber::from(2.5);
+        let true_value = CFBoolean::true_value();
+        let false_value = CFBoolean::false_value();
+
+        let string_result = unsafe { coerce_stringish_value(string.as_CFTypeRef()) }.unwrap();
+        assert_eq!(string_result.string_value.as_deref(), Some("Search"));
+        assert_eq!(string_result.state_value, "Search");
+
+        let integer_result = unsafe { coerce_stringish_value(integer.as_CFTypeRef()) }.unwrap();
+        assert_eq!(integer_result.string_value, None);
+        assert_eq!(integer_result.state_value, "8");
+
+        let decimal_result = unsafe { coerce_stringish_value(decimal.as_CFTypeRef()) }.unwrap();
+        assert_eq!(decimal_result.string_value, None);
+        assert_eq!(decimal_result.state_value, "2.5");
+
+        let true_result = unsafe { coerce_stringish_value(true_value.as_CFTypeRef()) }.unwrap();
+        assert_eq!(true_result.string_value, None);
+        assert_eq!(true_result.state_value, "1");
+
+        let false_result = unsafe { coerce_stringish_value(false_value.as_CFTypeRef()) }.unwrap();
+        assert_eq!(false_result.string_value, None);
+        assert_eq!(false_result.state_value, "0");
+    }
 }

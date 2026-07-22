@@ -10,6 +10,7 @@ status: review
 discussion: https://github.com/trycua/cua/issues/2447
 implementation:
   - https://github.com/trycua/cua/pull/2461
+  - https://github.com/trycua/cua/pull/2467
 supersedes:
 superseded_by:
 ---

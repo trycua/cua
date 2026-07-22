@@ -26,7 +26,7 @@ test(
       child.on("exit", resolve)
     })
 
-    assert.equal(code, 0, stderr)
+    assert.equal(code, 0, `stdout:\n${stdout}\nstderr:\n${stderr}`)
     const result = JSON.parse(stdout.trim().split("\n").at(-1))
     assert.equal(result.versions.electron, "43.2.0")
     assert.equal(result.versions.package, "0.11.0")

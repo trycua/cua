@@ -29,6 +29,31 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn('default: ""', workflow)
         self.assertIn("libs/cua-driver/rust/Cargo.toml", workflow)
 
+    def test_clawhub_publish_follows_verified_driver_release(self) -> None:
+        workflow = self.read(".github/workflows/clawhub-cua-driver.yml")
+
+        self.assertIn('workflows: ["CD: Cua Driver (cross-platform)"]', workflow)
+        self.assertIn("github.event.workflow_run.conclusion == 'success'", workflow)
+        self.assertIn('git("tag", "--points-at", source_sha)', workflow)
+        self.assertIn('"gh",\n                      "release",\n                      "view"', workflow)
+        self.assertIn("needs.release-context.outputs.should_publish == 'true'", workflow)
+        self.assertIn("--source-commit \"${SOURCE_SHA}\"", workflow)
+        self.assertIn("--source-ref \"${SOURCE_REF}\"", workflow)
+        self.assertIn("Request ClawHub security scan", workflow)
+
+    def test_clawhub_manual_publish_keeps_rights_confirmation(self) -> None:
+        workflow = self.read(".github/workflows/clawhub-cua-driver.yml")
+
+        self.assertIn("confirm_mit0:", workflow)
+        self.assertIn(
+            'if os.environ["CONFIRM_MIT0"] != "true":',
+            workflow,
+        )
+        self.assertIn(
+            'if os.environ["GITHUB_REF"] != "refs/heads/main":',
+            workflow,
+        )
+
     def test_python_publish_builds_linux_arm64_wheel(self) -> None:
         workflow = self.read(".github/workflows/cd-py-cua-driver.yml")
 

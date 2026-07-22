@@ -915,6 +915,38 @@ fn post_mouse_moved_primer(
     }
 }
 
+/// Post a wheel event through the PID/window-routed paths Chromium and AppKit
+/// use for synthetic scrolling. A foreground HID post alone can be accepted by
+/// CoreGraphics while Chromium silently ignores it; these routing fields make
+/// the intended window explicit without adding any gesture delay.
+pub(super) fn post_scroll_event(
+    pid: i32,
+    event: &CGEvent,
+    window_local: Option<(f64, f64)>,
+    wid: Option<u32>,
+) {
+    let event_ptr = event.as_ptr() as *mut std::ffi::c_void;
+    if let Some((wx, wy)) = window_local {
+        crate::input::skylight::set_window_location(event_ptr, wx, wy);
+    }
+    if let Some(wid) = wid {
+        let window_id = i64::from(wid);
+        let set = |field: u32, value: i64| {
+            crate::input::skylight::set_integer_field(event_ptr, field, value);
+        };
+        set(51, window_id); // windowNumber
+        set(91, window_id); // kCGMouseEventWindowUnderMousePointer
+        set(92, window_id); // ...ThatCanHandleThisEvent
+    }
+    // f40 = target pid (Chromium synthetic-event filter).
+    crate::input::skylight::set_integer_field(event_ptr, 40, i64::from(pid));
+
+    // SkyLight reaches Chromium/Catalyst; the public path reaches AppKit and
+    // WKWebView. The receiving stack accepts one of the two paths.
+    crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false);
+    event.post_to_pid(pid as libc::pid_t);
+}
+
 /// Synthesize a targeted mouse-wheel scroll at `(screen_x, screen_y)`,
 /// posted to `pid`.
 ///
@@ -997,26 +1029,7 @@ pub fn scroll_wheel_at_xy(
         // hit-test routes the scroll to the element under the cursor.
         unsafe { CGEventSetLocation(event_ptr, screen_x, screen_y) };
 
-        // Background-delivery stamps (mirror post_mouse_event).
-        if let Some((wx, wy)) = window_local {
-            crate::input::skylight::set_window_location(event_ptr, wx, wy);
-        }
-        if let Some(wid) = wid {
-            let window_id = wid as i64;
-            let set = |f: u32, v: i64| {
-                crate::input::skylight::set_integer_field(event_ptr, f, v);
-            };
-            set(51, window_id); // windowNumber
-            set(91, window_id); // kCGMouseEventWindowUnderMousePointer
-            set(92, window_id); // ...ThatCanHandleThisEvent
-        }
-        // f40 = target pid (Chromium synthetic-event filter).
-        crate::input::skylight::set_integer_field(event_ptr, 40, pid as i64);
-
-        // Belt+suspenders post: SkyLight reaches backgrounded Chromium/Catalyst;
-        // the public path lands on AppKit/WKWebView. Mouse-class → no auth envelope.
-        crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false);
-        event.post_to_pid(pid as libc::pid_t);
+        post_scroll_event(pid, &event, window_local, wid);
 
         std::thread::sleep(std::time::Duration::from_millis(30));
     }

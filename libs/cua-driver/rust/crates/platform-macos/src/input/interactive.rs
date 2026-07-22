@@ -30,6 +30,7 @@ const MAX_BATCH_EVENTS: usize = 256;
 const TEXT_EVENT_UTF16_UNITS: usize = 20;
 const SCROLL_PHASE_FIELD: u32 = 99;
 const SCROLL_MOMENTUM_PHASE_FIELD: u32 = 123;
+const PHASELESS_PRECISE_PIXELS_PER_LINE: f64 = 10.0;
 
 /// Controls whether events remain PID-routed or use the foreground HID queue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -530,8 +531,18 @@ impl NativeInputState {
         precise: bool,
     ) -> Result<()> {
         let (point, window_local) = self.resolve_point(x_normalized, y_normalized)?;
-        self.scroll_residual_x += delta_x;
-        self.scroll_residual_y += delta_y;
+        // Some high-resolution wheels report precise deltas without native
+        // gesture phases. Chromium ignores PID-routed continuous pixel events
+        // in that shape, so convert only that shape into proportional line
+        // motion. Real trackpad gestures retain pixel units and all phases.
+        let phase_less_precise = phase_less_precise_scroll(precise, phase, momentum_phase);
+        let delta_scale = if phase_less_precise {
+            PHASELESS_PRECISE_PIXELS_PER_LINE.recip()
+        } else {
+            1.0
+        };
+        self.scroll_residual_x += delta_x * delta_scale;
+        self.scroll_residual_y += delta_y * delta_scale;
         let integral_x = extract_integral(&mut self.scroll_residual_x);
         let integral_y = extract_integral(&mut self.scroll_residual_y);
 
@@ -545,7 +556,7 @@ impl NativeInputState {
             return Ok(());
         }
 
-        let units = if precise {
+        let units = if precise && !phase_less_precise {
             ScrollEventUnit::PIXEL
         } else {
             ScrollEventUnit::LINE
@@ -555,7 +566,7 @@ impl NativeInputState {
                 .map_err(|_| native("scroll event creation failed"))?;
         event.set_integer_value_field(
             EventField::SCROLL_WHEEL_EVENT_IS_CONTINUOUS,
-            i64::from(precise),
+            i64::from(precise && !phase_less_precise),
         );
         event.set_integer_value_field(SCROLL_PHASE_FIELD, scroll_phase_value(phase));
         event.set_integer_value_field(
@@ -564,20 +575,16 @@ impl NativeInputState {
         );
         unsafe { CGEventSetLocation(event.as_ptr().cast(), point.x, point.y) };
 
-        if self.is_foreground() {
-            event.post(CGEventTapLocation::HID);
-        } else {
-            super::mouse::post_mouse_event(
-                self.config.pid,
-                &event,
-                Some(window_local),
-                Some(self.config.window_id),
-                Some(self.click_group_id),
-                0,
-                0,
-                0,
-            );
-        }
+        // Wheel delivery remains explicitly PID/window-routed even while the
+        // target is persistently foreground. Chromium can silently reject an
+        // otherwise valid global HID wheel event, whereas the stamped native
+        // routes are immediate and preserve gesture/momentum fields.
+        super::mouse::post_scroll_event(
+            self.config.pid,
+            &event,
+            Some(window_local),
+            Some(self.config.window_id),
+        );
         Ok(())
     }
 
@@ -715,6 +722,14 @@ fn text_event_chunks(text: &str) -> Vec<Vec<u16>> {
     chunks
 }
 
+fn phase_less_precise_scroll(
+    precise: bool,
+    phase: GesturePhase,
+    momentum_phase: GesturePhase,
+) -> bool {
+    precise && phase == GesturePhase::None && momentum_phase == GesturePhase::None
+}
+
 fn scroll_phase_value(phase: GesturePhase) -> i64 {
     match phase {
         GesturePhase::None => 0,
@@ -755,6 +770,25 @@ mod tests {
         residual += 0.8;
         assert_eq!(extract_integral(&mut residual), 1);
         assert!((residual - 0.2).abs() < f64::EPSILON * 4.0);
+    }
+
+    #[test]
+    fn only_phase_less_precise_scroll_uses_line_fallback() {
+        assert!(phase_less_precise_scroll(
+            true,
+            GesturePhase::None,
+            GesturePhase::None
+        ));
+        assert!(!phase_less_precise_scroll(
+            true,
+            GesturePhase::Changed,
+            GesturePhase::None
+        ));
+        assert!(!phase_less_precise_scroll(
+            false,
+            GesturePhase::None,
+            GesturePhase::None
+        ));
     }
 
     #[test]

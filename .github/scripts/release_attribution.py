@@ -778,6 +778,29 @@ def extract_changelog_section(changelog: Path, version: str) -> str:
     return match.group(0).rstrip() + "\n"
 
 
+def changelog_references_change(
+    changelog_section: str,
+    pull_number: int,
+    commit_shas: Iterable[str],
+) -> bool:
+    """Accept Release Please's PR link or its verified commit-link fallback."""
+    if f"#{pull_number}" in changelog_section or f"/pull/{pull_number}" in changelog_section:
+        return True
+    return any(commit_sha in changelog_section for commit_sha in commit_shas)
+
+
+def release_bump(changes: Sequence[Mapping[str, Any]], version: str) -> str:
+    """Classify a release using the same pre-major policy as Release Please."""
+    major_match = re.match(r"^(?P<major>0|[1-9]\d*)\.", version)
+    if not major_match:
+        raise ReleaseError(f"release version is not semantic: {version}")
+    if any(change["breaking"] for change in changes):
+        return "minor" if int(major_match.group("major")) == 0 else "major"
+    if any(change["type"] == "feat" for change in changes):
+        return "minor"
+    return "patch"
+
+
 def build_manifest(
     *,
     repo_root: Path,
@@ -805,6 +828,7 @@ def build_manifest(
 
     changes: list[dict[str, Any]] = []
     seen_changes: set[tuple[int, str, str]] = set()
+    pull_commits: dict[int, set[str]] = defaultdict(set)
     all_contributors: list[dict[str, Any]] = []
     visual_requested = False
 
@@ -829,6 +853,7 @@ def build_manifest(
         if not subject_is_releasing and not OVERRIDE_RE.search(pull_body):
             continue
         pull_number = int(pull["number"])
+        pull_commits[pull_number].add(commit.sha)
         entries = release_entries(commit.subject, commit.body, pull_body)
         if not entries:
             continue
@@ -863,18 +888,17 @@ def build_manifest(
         {
             int(change["pr"])
             for change in changes
-            if f"#{change['pr']}" not in changelog_section
-            and f"/pull/{change['pr']}" not in changelog_section
+            if not changelog_references_change(
+                changelog_section,
+                int(change["pr"]),
+                pull_commits[int(change["pr"])],
+            )
         }
     )
     if missing_prs:
         raise ReleaseError(f"changelog section is missing pull requests: {missing_prs}")
 
-    bump = "patch"
-    if any(change["breaking"] for change in changes):
-        bump = "major"
-    elif any(change["type"] == "feat" for change in changes):
-        bump = "minor"
+    bump = release_bump(changes, version)
 
     owner, repo = repository.split("/", 1)
     compare_url = (

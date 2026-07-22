@@ -425,6 +425,28 @@ pub fn get_process_psn_for_window(window_id: u32, pid: libc::pid_t, out_psn: &mu
     false
 }
 
+/// Make `target_pid` and `target_wid` WindowServer-frontmost and leave them
+/// there. Unlike [`with_foreground_assist`], this deliberately does not save or
+/// restore the previous process. It is the persistent counterpart required by
+/// focus-proxy surfaces whose input channel is armed only while genuinely
+/// frontmost.
+///
+/// Returns `true` only when the target PSN resolved and WindowServer accepted
+/// `SLPSSetFrontProcessWithOptions`.
+pub fn set_front_process_persistently(target_pid: libc::pid_t, target_wid: u32) -> bool {
+    let Some(set_front) = set_front_process_fn() else {
+        return false;
+    };
+    let mut target_psn = [0u8; 8];
+    if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
+        return false;
+    }
+
+    // kCPSNoWindows = 0x400. Supplying the exact target window still makes
+    // that window's process frontmost while avoiding a broad all-window raise.
+    unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) == 0 }
+}
+
 /// Tool-agnostic foreground-assist: briefly front `window_id`, run `body` (which
 /// posts the synthetic input), then restore the prior frontmost process.
 ///

@@ -570,7 +570,7 @@ if [ "$INSTALL_AUTOSTART" != true ]; then
     if [ "$OS" = "Darwin" ]; then
         echo "Auto-start (recommended on macOS): re-run with --autostart to register a LaunchAgent."
         echo "  A launchd-started daemon is attributed to com.trycua.driver.local (not your terminal),"
-        echo "  so permission prompts say \"Cua Driver\" and grants stick — grant Accessibility +"
+        echo "  so permission prompts say \"Cua Driver Local\" and grants stick — grant Accessibility +"
         echo "  Screen Recording once and every cua-driver-local call/mcp routes through it correctly."
         echo "  (Without it, a prompt raised from a terminal attributes to the terminal instead.)"
     else

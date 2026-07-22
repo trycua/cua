@@ -33,11 +33,16 @@ if [[ "$method" == DELETE ]]; then
   exit 0
 fi
 case "$url" in
-  */osgymsandboxclaims)
-    printf '{"items":[{"metadata":{"name":"claim-a"}}]}' > "$output_file"
-    ;;
-  */osgymworkspacepools)
-    printf '{"items":[{"metadata":{"name":"pool-a"}}]}' > "$output_file"
+  */osgymsandboxclaims|*/osgymworkspacepools)
+    if [[ "${CLEANUP_LIST_STATUS:-200}" != 200 ]]; then
+      printf '%s' "$CLEANUP_LIST_STATUS"
+      exit 0
+    fi
+    if [[ "$url" == */osgymsandboxclaims ]]; then
+      printf '{"items":[{"metadata":{"name":"claim-a"}}]}' > "$output_file"
+    else
+      printf '{"items":[{"metadata":{"name":"pool-a"}}]}' > "$output_file"
+    fi
     ;;
   *)
     printf '{"items":[]}' > "$output_file"
@@ -68,3 +73,15 @@ EXPECTED
 
 diff -u "$temporary/expected.log" "$CLEANUP_TEST_LOG"
 printf 'live SDK cleanup regression checks passed.\n'
+
+: > "$CLEANUP_TEST_LOG"
+export CLEANUP_LIST_STATUS=403
+"$repo_root/cyclops-cs/scripts/cleanup-live-sdk-example.sh"
+unset CLEANUP_LIST_STATUS
+cat > "$temporary/forbidden-expected.log" <<'FORBIDDEN_EXPECTED'
+POST https://auth.example/protocol/openid-connect/token
+GET https://run.example/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/sdk-example-python-1-1/osgymsandboxclaims
+GET https://run.example/api/k8s/apis/cua.ai/v1/namespaces/sdk-example-python-1-1/osgymworkspacepools
+DELETE https://run.example/api/namespaces/sdk-example-python-1-1
+FORBIDDEN_EXPECTED
+diff -u "$temporary/forbidden-expected.log" "$CLEANUP_TEST_LOG"

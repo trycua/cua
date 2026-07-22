@@ -1,7 +1,7 @@
-name: "CD: Python cua-driver"
+name: "CD: Cua Driver SDK packages"
 
-# Triggered after cua-driver-rs releases to build platform-specific wheels
-# with bundled binaries and publish to PyPI.
+# Triggered after a Cua Driver release to publish version-locked Python wheels
+# and the TypeScript SDK plus its platform-native npm packages.
 
 on:
   workflow_dispatch:
@@ -18,6 +18,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   # Extract version from the triggering workflow or input
@@ -25,9 +26,10 @@ jobs:
     runs-on: ubuntu-latest
     if: |
       github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion != 'cancelled'
+      github.event.workflow_run.conclusion == 'success'
     outputs:
       version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
       should_publish: ${{ steps.version.outputs.should_publish }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -70,6 +72,7 @@ jobs:
             fi
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=cua-driver-rs-v$VERSION" >> "$GITHUB_OUTPUT"
           echo "should_publish=$SHOULD_PUBLISH" >> "$GITHUB_OUTPUT"
           echo "Detected version: $VERSION (publish: $SHOULD_PUBLISH)"
 
@@ -94,11 +97,13 @@ jobs:
           - os: windows-latest
             platform: windows
             arch: x86_64
-          - os: windows-latest
+          - os: windows-11-arm
             platform: windows
             arch: arm64
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: refs/tags/${{ needs.get-version.outputs.tag }}
 
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
@@ -129,6 +134,12 @@ jobs:
           cd libs/cua-driver/python
           python build_wheel.py --version "${{ needs.get-version.outputs.version }}" --arch "${{ matrix.arch }}"
 
+      - name: Load generated UniFFI bindings from the built wheel
+        shell: bash
+        run: |
+          python -m pip install --force-reinstall libs/cua-driver/python/dist/*.whl
+          python -c "from cua_driver import CuaDriver; print(CuaDriver.connect(None).socket_path())"
+
       - name: List built artifacts
         shell: bash
         run: |
@@ -145,7 +156,7 @@ jobs:
     needs: [get-version, build-wheels]
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - name: Download all wheels
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
@@ -169,3 +180,141 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
         run: |
           python -m twine upload --skip-existing --verbose dist/*
+      - name: Attach Python wheels to the Cua Driver release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha256sum dist/*.whl | sort > dist/python-sdk-checksums.txt
+          gh release upload "${{ needs.get-version.outputs.tag }}" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+
+  build-npm:
+    needs: get-version
+    if: needs.get-version.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: refs/tags/${{ needs.get-version.outputs.tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: libs/cua-driver/typescript/package-lock.json
+      - name: Verify one release version
+        run: python3 .github/scripts/validate_release_versions.py --product driver
+      - name: Ensure npm provenance identifies the canonical repository
+        working-directory: libs/cua-driver/typescript
+        run: |
+          npm pkg set repository.type=git \
+            repository.url=git+https://github.com/trycua/cua.git
+      - name: Install and build TypeScript SDK
+        working-directory: libs/cua-driver/typescript
+        run: |
+          npm ci
+          npm run build
+      - name: Download verified native release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.get-version.outputs.tag }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/cua-driver-assets" "$RUNNER_TEMP/cua-driver-native"
+          gh release download "$TAG" --dir "$RUNNER_TEMP/cua-driver-assets" \
+            --pattern '*-darwin-universal-binary.tar.gz' \
+            --pattern '*-linux-x86_64-binary.tar.gz' \
+            --pattern '*-linux-arm64-binary.tar.gz' \
+            --pattern '*-windows-x86_64-binary.zip' \
+            --pattern '*-windows-arm64-binary.zip'
+
+          mkdir -p "$RUNNER_TEMP/cua-driver-native/darwin-arm64" \
+            "$RUNNER_TEMP/cua-driver-native/darwin-x64" \
+            "$RUNNER_TEMP/cua-driver-native/linux-x64-gnu" \
+            "$RUNNER_TEMP/cua-driver-native/linux-arm64-gnu" \
+            "$RUNNER_TEMP/cua-driver-native/win32-x64-msvc" \
+            "$RUNNER_TEMP/cua-driver-native/win32-arm64-msvc"
+
+          tar -xzf "$RUNNER_TEMP"/cua-driver-assets/*-darwin-universal-binary.tar.gz \
+            -C "$RUNNER_TEMP/cua-driver-native/darwin-arm64" libcua_driver_sdk.dylib
+          cp "$RUNNER_TEMP/cua-driver-native/darwin-arm64/libcua_driver_sdk.dylib" \
+            "$RUNNER_TEMP/cua-driver-native/darwin-x64/libcua_driver_sdk.dylib"
+          tar -xzf "$RUNNER_TEMP"/cua-driver-assets/*-linux-x86_64-binary.tar.gz \
+            -C "$RUNNER_TEMP/cua-driver-native/linux-x64-gnu" libcua_driver_sdk.so
+          tar -xzf "$RUNNER_TEMP"/cua-driver-assets/*-linux-arm64-binary.tar.gz \
+            -C "$RUNNER_TEMP/cua-driver-native/linux-arm64-gnu" libcua_driver_sdk.so
+          unzip -j "$RUNNER_TEMP"/cua-driver-assets/*-windows-x86_64-binary.zip \
+            cua_driver_sdk.dll -d "$RUNNER_TEMP/cua-driver-native/win32-x64-msvc"
+          unzip -j "$RUNNER_TEMP"/cua-driver-assets/*-windows-arm64-binary.zip \
+            cua_driver_sdk.dll -d "$RUNNER_TEMP/cua-driver-native/win32-arm64-msvc"
+      - name: Pack root and platform npm packages
+        run: |
+          node libs/cua-driver/scripts/build-npm-packages.mjs \
+            --version "${{ needs.get-version.outputs.version }}" \
+            --native-dir "$RUNNER_TEMP/cua-driver-native" \
+            --output-dir "$RUNNER_TEMP/cua-driver-npm"
+          ROOT_PACKAGE="$RUNNER_TEMP/cua-driver-npm/trycua-cua-driver-${{ needs.get-version.outputs.version }}.tgz"
+          REPOSITORY=$(tar -xOf "$ROOT_PACKAGE" package/package.json | node -e \
+            "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).repository?.url ?? ''))")
+          test "$REPOSITORY" = "git+https://github.com/trycua/cua.git"
+          ls -lh "$RUNNER_TEMP/cua-driver-npm"/*.tgz
+      - name: Smoke-test the packed Linux SDK
+        run: |
+          mkdir -p "$RUNNER_TEMP/cua-driver-npm-smoke"
+          npm install --prefix "$RUNNER_TEMP/cua-driver-npm-smoke" \
+            "$RUNNER_TEMP/cua-driver-npm"/trycua-cua-driver-${{ needs.get-version.outputs.version }}.tgz \
+            "$RUNNER_TEMP/cua-driver-npm"/trycua-cua-driver-linux-x64-gnu-${{ needs.get-version.outputs.version }}.tgz
+          cd "$RUNNER_TEMP/cua-driver-npm-smoke"
+          node --input-type=module -e \
+            "const sdk = await import('@trycua/cua-driver'); const driver = sdk.CuaDriver.connect(undefined); console.log(driver.socketPath()); driver.uniffiDestroy(); if (typeof sdk.EmbeddedCuaDriverHost !== 'function') process.exit(1)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cua-driver-npm-${{ needs.get-version.outputs.version }}
+          path: ${{ runner.temp }}/cua-driver-npm/*.tgz
+          if-no-files-found: error
+
+  publish-npm:
+    needs: [get-version, build-npm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      - uses: actions/download-artifact@v4
+        with:
+          name: cua-driver-npm-${{ needs.get-version.outputs.version }}
+          path: dist
+      - name: Publish native packages before the public SDK
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.get-version.outputs.version }}
+        run: |
+          for package in dist/trycua-cua-driver-*-"$VERSION".tgz; do
+            if [[ "$package" == "dist/trycua-cua-driver-$VERSION.tgz" ]]; then
+              continue
+            fi
+            NAME=$(tar -xOf "$package" package/package.json | node -e \
+              "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).name))")
+            if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+              echo "$NAME@$VERSION already published; skipping"
+            else
+              npm publish "./$package" --access public --provenance
+            fi
+          done
+      - name: Publish @trycua/cua-driver
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.get-version.outputs.version }}
+        run: |
+          if npm view "@trycua/cua-driver@$VERSION" version >/dev/null 2>&1; then
+            echo "@trycua/cua-driver@$VERSION already published; skipping"
+          else
+            npm publish "./dist/trycua-cua-driver-$VERSION.tgz" --access public --provenance
+          fi
+      - name: Attach npm packages to the Cua Driver release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha256sum dist/*.tgz | sort > dist/typescript-sdk-checksums.txt
+          gh release upload "${{ needs.get-version.outputs.tag }}" dist/* --clobber --repo "$GITHUB_REPOSITORY"

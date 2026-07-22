@@ -1,7 +1,9 @@
 use async_trait::async_trait;
+use cua_driver_contract::GetScreenSizeInput;
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
+    tool_args::parse_typed_input,
 };
 use serde_json::Value;
 
@@ -15,8 +17,11 @@ fn def() -> &'static ToolDef {
         name: "get_screen_size".into(),
         description: "Return the logical size of the main display in points plus its backing \
             scale factor. Agents click in points; Retina displays have scale_factor 2.0. \
-            Requires no TCC permissions.".into(),
-        input_schema: serde_json::json!({"type":"object","properties":{},"additionalProperties":false}),
+            Requires no TCC permissions."
+            .into(),
+        input_schema: serde_json::json!({"type":"object","properties":{
+            "session": cua_driver_core::tool_schema::session_schema()
+        },"additionalProperties":false}),
         read_only: true,
         destructive: false,
         idempotent: true,
@@ -30,7 +35,10 @@ impl Tool for GetScreenSizeTool {
         def()
     }
 
-    async fn invoke(&self, _args: Value) -> ToolResult {
+    async fn invoke(&self, args: Value) -> ToolResult {
+        if let Err(result) = parse_typed_input::<GetScreenSizeInput>("get_screen_size", args) {
+            return result;
+        }
         match main_screen_size() {
             Some((w, h, scale)) => {
                 // Matches Swift text format 1:1.

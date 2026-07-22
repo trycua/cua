@@ -1,0 +1,29 @@
+[package]
+name = "cua-driver-sdk"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "UniFFI-backed imported SDK for the Cua Driver daemon"
+publish = false
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+cua-driver-contract = { path = "../cua-driver-contract" }
+cua-driver-core = { path = "../cua-driver-core", default-features = false }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+uniffi = { workspace = true, features = ["tokio"] }
+uuid = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+
+[dev-dependencies]
+tempfile = "3"
+uniffi = { workspace = true, features = ["bindgen"] }

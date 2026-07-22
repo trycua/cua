@@ -19,5 +19,5 @@ serde_json = "1.0"
 serde_yaml = "0.9"
 thiserror = "2.0"
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "sync"] }
-uniffi = "0.32.0"
+uniffi = "=0.31.0"
 url = "2.5"

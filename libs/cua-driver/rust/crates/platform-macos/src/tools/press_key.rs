@@ -1,7 +1,9 @@
 use async_trait::async_trait;
+use cua_driver_contract::PressKeyInput;
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
+    tool_args::parse_typed_projection,
 };
 use libc;
 use serde_json::Value;
@@ -83,11 +85,12 @@ impl Tool for PressKeyTool {
             && args.get("pid").is_none()
             && args.get("window_id").is_none()
         {
-            let key = match args.require_str("key") {
-                Ok(value) => value,
-                Err(error) => return error,
+            let input = match parse_typed_projection::<PressKeyInput>("press_key", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
             };
-            let modifiers: Vec<String> = args.str_array("modifiers");
+            let key = input.key;
+            let modifiers = input.modifiers.unwrap_or_default();
             let key_for_input = key.clone();
             let result = tokio::task::spawn_blocking(move || {
                 let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
@@ -254,7 +257,7 @@ impl Tool for PressKeyTool {
         )
         .await;
 
-        let changes = snapshot.detect_async().await;
+        let changes = super::finish_window_observation(snapshot, &args).await;
 
         match result {
             Ok(Ok(())) => {

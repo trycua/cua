@@ -154,7 +154,11 @@ write_ruby_facade() {
     ruby_defined_method_names "$schema_file" "$method_prefix" > "$schema_definitions"
     comm -23 "$references" "$definitions" > "$missing"
     unresolved="$temporary_output/ruby-$method_prefix-unresolved"
-    comm -23 "$missing" "$schema_definitions" > "$unresolved"
+    case "$method_prefix" in
+      check_lower) sed "s/OsGym/OSGym/g" "$missing" > "$temporary_output/ruby-$method_prefix-normalized-external" ;;
+      *) cp "$missing" "$temporary_output/ruby-$method_prefix-normalized-external" ;;
+    esac
+    comm -23 "$temporary_output/ruby-$method_prefix-normalized-external" "$schema_definitions" > "$unresolved"
     if [ -s "$unresolved" ]; then
       echo "error: generated Ruby SDK references methods missing from schema: $method_prefix" >&2
       cat "$unresolved" >&2
@@ -181,7 +185,7 @@ RUBY_FACADE_HEADER
 
   SCHEMA_CHECK_LOWER_METHODS.each do |method_name|
     RustBuffer.define_singleton_method(method_name) do |value|
-      schema_rust_buffer.public_send(method_name, value)
+      schema_rust_buffer.public_send(method_name.to_s.gsub("OsGym", "OSGym"), value)
     end
   end
 
@@ -582,7 +586,7 @@ generated_root="$temporary_output/generated"
 mkdir -p "$raw_output" "$generated_root/python/cyclops_sdk" "$generated_root/kotlin" \
   "$generated_root/swift" "$generated_root/ruby/cyclops_sdk"
 "$cargo_bin" run --locked --manifest-path "$workspace" -p cyclops-sdk-bindgen --target "$host_triple" -- \
-  generate --library "$library" --config "$bindings_dir/uniffi.toml" \
+  generate --library "$library" \
   --language python --language kotlin --language swift --language ruby \
   --out-dir "$raw_output" --no-format
 
@@ -604,6 +608,36 @@ cat "$generated_root/swift/CyclopsSdkFFI.modulemap" "$generated_root/swift/Cyclo
 
 mv "$raw_output/cyclops_sdk.rb" "$generated_root/ruby/cyclops_sdk/sdk.rb"
 mv "$raw_output/cyclops_sdk_schema.rb" "$generated_root/ruby/cyclops_sdk/schema.rb"
+# UniFFI 0.31.0 emits `OsGym` in cross-crate Ruby helper references while the
+# schema component exports `OSGym`; normalize the generated helper calls.
+sed -i.bak "s/check_lower_TypeOsGym/check_lower_TypeOSGym/g" "$generated_root/ruby/cyclops_sdk/sdk.rb"
+rm "$generated_root/ruby/cyclops_sdk/sdk.rb.bak"
+# UniFFI 0.31.0 lowers a foreign callback interface as an object clone. Ruby
+# callback implementations have no Rust handle, so avoid cloning nil handles.
+python3 - "$generated_root/ruby/cyclops_sdk/sdk.rb" <<'PYTHON_RUBY_PATCH'
+import pathlib
+import sys
+path = pathlib.Path(sys.argv[1])
+text = path.read_text()
+old = """  def uniffi_clone_handle()
+    return CyclopsSdk.rust_call(
+      :uniffi_cyclops_sdk_fn_clone_httpclient,
+      @handle
+    )
+  end
+"""
+new = """  def uniffi_clone_handle()
+    return 0 if @handle.nil?
+    return CyclopsSdk.rust_call(
+      :uniffi_cyclops_sdk_fn_clone_httpclient,
+      @handle
+    )
+  end
+"""
+if old not in text:
+    raise SystemExit("expected HttpClient clone method not found")
+path.write_text(text.replace(old, new, 1))
+PYTHON_RUBY_PATCH
 write_ruby_facade \
   "$generated_root/ruby/cyclops_sdk/sdk.rb" \
   "$generated_root/ruby/cyclops_sdk/schema.rb" \

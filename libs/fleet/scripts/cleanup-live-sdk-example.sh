@@ -33,7 +33,7 @@ delete_collection() {
         [[ -n "$name" ]] && delete_url "$collection/$name"
       done < <(jq -r '.items[]?.metadata.name' "$body_file")
       ;;
-    404) ;;
+    403|404) ;;
     *) echo "Failed to list $collection: HTTP $status" >&2; cleanup_failed=1 ;;
   esac
   rm -f "$body_file"

@@ -424,9 +424,10 @@ pub fn parse_command() -> Command {
         println!("                                  Answers via a running daemon, so the result carries the CuaDriver");
         println!("                                  identity (com.trycua.driver). If no daemon is running it reports");
         println!("                                  `unknown` rather than your terminal's grants. Add --json for the payload.");
-        println!("  cua-driver permissions grant    Launch CuaDriver via LaunchServices so the permission dialog attributes");
-        println!("                                  to com.trycua.driver (not your terminal), wait for the grant, then");
-        println!("                                  confirm the driver's own status. This is the correct way to grant.");
+        println!("  cua-driver permissions grant    Launch CuaDriver via LaunchServices so dialogs attribute to the app,");
+        println!("                                  explain and request Accessibility, Screen Recording, and Tahoe's");
+        println!("                                  direct-capture consent, then verify live capture. This is the correct");
+        println!("                                  way to grant; the read-only status command never triggers that probe.");
         println!();
         println!("Updating cua-driver:");
         println!("  cua-driver check-update         Ask GitHub whether a newer release is available. Read-only.");
@@ -592,6 +593,13 @@ pub fn parse_command() -> Command {
     }
     if let Some(id) = flag_value(&args, "--host-bundle-id") {
         std::env::set_var(cua_driver_core::HOST_BUNDLE_ID_ENV, id);
+    }
+    // Internal host/daemon lifetime contract. The daemon reads from a
+    // dedicated inherited stdin pipe and shuts down on EOF. The core helper
+    // additionally requires embedded mode, so this can never reinterpret an
+    // ordinary MCP proxy's JSON-RPC stdin.
+    if args.iter().any(|a| a == "--parent-liveness-stdio") {
+        std::env::set_var(cua_driver_core::PARENT_LIVENESS_STDIN_ENV, "1");
     }
 
     // Strip cursor-overlay flags (and their values) to expose the subcommand.
@@ -2389,7 +2397,9 @@ fn run_permissions_status(json: bool) {
     let b = |k: &str| structured.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
     let ax = b("accessibility");
     let sr = b("screen_recording");
-    let cap = b("screen_recording_capturable");
+    let cap = structured
+        .get("screen_recording_capturable")
+        .and_then(|v| v.as_bool());
     let attribution = structured
         .get("source")
         .and_then(|s| s.get("attribution"))
@@ -2404,15 +2414,57 @@ fn run_permissions_status(json: bool) {
         "Screen Recording: {}",
         if sr { "✅ granted" } else { "❌ not granted" }
     );
-    if sr && !cap {
-        println!(
-            "  ⚠️  preflight reports granted, but a live capture probe failed — the grant \
-             likely belongs to another process, not this one."
-        );
+    match cap {
+        Some(true) => println!("Direct Capture:     ✅ ready"),
+        Some(false) => {
+            println!("Direct Capture:     ❌ unavailable");
+            if sr {
+                println!(
+                    "  ⚠️  preflight reports granted, but the explicit live capture probe failed."
+                );
+            }
+        }
+        None => println!(
+            "Direct Capture:     ❓ not checked (status is read-only; run `{cli_name} permissions grant`)"
+        ),
     }
     println!("Source: {attribution}");
     if !(ax && sr) {
         println!("  → To grant for the driver, run: {cli_name} permissions grant");
+    }
+}
+
+fn permission_flag(structured: &serde_json::Value, key: &str) -> bool {
+    structured
+        .get(key)
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+}
+
+fn permission_grant_is_ready(structured: &serde_json::Value) -> bool {
+    permission_flag(structured, "accessibility")
+        && permission_flag(structured, "screen_recording")
+        && permission_flag(structured, "screen_recording_capturable")
+}
+
+fn permission_grant_needs_direct_capture(structured: &serde_json::Value) -> bool {
+    permission_flag(structured, "screen_recording")
+        && !permission_flag(structured, "screen_recording_capturable")
+}
+
+fn permission_check_request(
+    prompt: bool,
+    probe_direct_capture: bool,
+) -> crate::serve::DaemonRequest {
+    crate::serve::DaemonRequest {
+        method: "call".into(),
+        name: Some("check_permissions".into()),
+        args: Some(serde_json::json!({
+            "prompt": prompt,
+            "probe_direct_capture": probe_direct_capture,
+        })),
+        session_id: None,
+        observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
     }
 }
 
@@ -2425,9 +2477,16 @@ fn run_permissions_grant() {
     {
         let cli_name = crate::bundle::cli_name();
         let app_name = crate::bundle::app_name();
+        let app_path = crate::bundle::app_bundle_path();
+        let bundle_id = crate::bundle::bundle_id();
         let socket = crate::serve::default_socket_path();
-        if crate::serve::is_daemon_listening(&socket) {
+        let daemon_already_running = crate::serve::is_daemon_listening(&socket);
+        if daemon_already_running {
             println!("{app_name} daemon already running — checking its permissions…");
+            println!(
+                "Requesting any missing Accessibility and Screen Recording grants now. \
+                 macOS may show a prompt or add {app_name} to System Settings."
+            );
         } else {
             println!("Launching {app_name} to request permissions.");
             println!(
@@ -2446,39 +2505,40 @@ fn run_permissions_grant() {
         }
         // Since #1761 the daemon binds its socket IMMEDIATELY — before the
         // permissions gate completes — so the first `check_permissions`
-        // query returns "pending" while the grant is still missing. Poll
-        // the daemon until both grants flip true (success) or we time out.
+        // query returns "pending" while the grant is still missing. First poll
+        // only the non-prompting TCC preflight booleans. Direct
+        // ScreenCaptureKit access has its own Tahoe consent and is requested
+        // explicitly below, after we explain the system dialog.
         //
         // The gate re-execs the daemon (~every 25s) to pick up an
         // Accessibility grant — `AXIsProcessTrusted` is cached per process
         // and only a fresh process image sees a later grant. During each
         // restart the socket briefly disappears, so tolerate transient
         // connection failures rather than bailing on the first one.
-        let req = crate::serve::DaemonRequest {
-            method: "call".into(),
-            name: Some("check_permissions".into()),
-            args: Some(serde_json::json!({ "prompt": false })),
-            session_id: None,
-            observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
-        };
+        let req = permission_check_request(false, false);
+        // A daemon that is already inside the permission gate may be a
+        // prompt-suppressed re-exec. Merely polling it cannot register a
+        // missing Screen Recording row. Re-raise the two required TCC requests
+        // through the daemon identity, but deliberately defer Tahoe's separate
+        // direct-capture probe until after the explanation below.
+        let prompt_req = permission_check_request(true, false);
         let poll_deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
         let mut ax = false;
         let mut sr = false;
+        let mut required_prompts_requested = !daemon_already_running;
         loop {
+            if !required_prompts_requested {
+                required_prompts_requested = crate::serve::send_request(&socket, &prompt_req)
+                    .is_ok_and(|response| response.ok);
+            }
             if let Some(structured) = crate::serve::send_request(&socket, &req)
                 .ok()
                 .filter(|r| r.ok)
                 .and_then(|r| r.result)
                 .and_then(|res| res.get("structuredContent").cloned())
             {
-                ax = structured
-                    .get("accessibility")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                sr = structured
-                    .get("screen_recording")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                ax = permission_flag(&structured, "accessibility");
+                sr = permission_flag(&structured, "screen_recording");
                 if ax && sr {
                     break;
                 }
@@ -2490,9 +2550,7 @@ fn run_permissions_grant() {
             }
             std::thread::sleep(std::time::Duration::from_secs(2));
         }
-        if ax && sr {
-            println!("\n✅ CuaDriver has Accessibility + Screen Recording. You're set.");
-        } else {
+        if !(ax && sr) {
             let missing = match (ax, sr) {
                 (false, false) => "Accessibility + Screen Recording",
                 (false, true) => "Accessibility",
@@ -2501,10 +2559,75 @@ fn run_permissions_grant() {
             };
             println!("\n⚠️  Timed out waiting on: {missing}.");
             println!(
-                "Approve CuaDriver for \u{201c}Cua Driver\u{201d} in System Settings \u{2192} \
-                 Privacy & Security, then re-run `cua-driver permissions grant`."
+                "Approve {app_name} in System Settings \u{2192} Privacy & Security, then \
+                 re-run `{cli_name} permissions grant`."
+            );
+            if !sr {
+                println!(
+                    "If {app_name} is missing from Screen & System Audio Recording, click +, \
+                     add {app_path}, enable it, then re-run the command."
+                );
+            }
+            process::exit(1);
+        }
+
+        println!("\nAccessibility and Screen Recording are granted.");
+        println!(
+            "macOS may now ask {app_name} to bypass the system private window picker and \
+             directly access your screen and audio. This is the expected consent for exact \
+             screenshots and recordings without a picker. Cua Driver's current recorder \
+             captures screen video only; it does not enable system-audio capture. This \
+             consent does not authorize browser profiles, browser data, or CDP attachment."
+        );
+        println!("Choose Allow to request and verify direct capture now…");
+
+        let direct_req = permission_check_request(true, true);
+        let direct_deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
+        let mut direct_status = None;
+        loop {
+            if let Some(structured) = crate::serve::send_request(&socket, &direct_req)
+                .ok()
+                .filter(|r| r.ok)
+                .and_then(|r| r.result)
+                .and_then(|res| res.get("structuredContent").cloned())
+            {
+                direct_status = Some(structured.clone());
+                if permission_grant_is_ready(&structured) {
+                    println!(
+                        "\n✅ {app_name} has Accessibility, Screen Recording, and direct capture access. You're set."
+                    );
+                    return;
+                }
+                // The explicit probe returned a real negative result (the
+                // user denied the consent or ScreenCaptureKit failed). Do not
+                // hammer the user with the same system dialog in a poll loop.
+                break;
+            }
+            if std::time::Instant::now() >= direct_deadline {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+
+        eprintln!("\n❌ {app_name} still cannot use direct ScreenCaptureKit capture.");
+        if direct_status
+            .as_ref()
+            .is_some_and(permission_grant_needs_direct_capture)
+        {
+            eprintln!(
+                "Screen Recording is granted, but the private-window-picker bypass consent \
+                 was denied or the live probe failed."
             );
         }
+        eprintln!(
+            "In System Settings \u{2192} Privacy & Security \u{2192} Screen & System Audio Recording, \
+             allow {app_name} ({bundle_id}), then re-run `{cli_name} permissions grant`."
+        );
+        eprintln!("If it is already allowed, reset the stale decision and retry:");
+        eprintln!("  tccutil reset ScreenCapture {bundle_id}");
+        eprintln!("  {cli_name} stop");
+        eprintln!("  {cli_name} permissions grant");
+        process::exit(1);
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -2999,13 +3122,19 @@ fn diagnose_tcc_section() -> String {
     };
     let ax = display("accessibility");
     let sr = display("screen_recording");
+    let direct = status
+        .as_ref()
+        .and_then(|value| value.get("direct_capture_status"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown (daemon unavailable)");
 
     format!(
         "## tcc probes (daemon)\n\
          accessibility     (AXIsProcessTrusted): {ax}\n\
-         screen recording  (SCShareableContent):  {sr}\n\n\
-         if the UI disagrees with these booleans the daemon is fine —\n\
-         the issue is elsewhere (wrong bundle granted, stale cdhash, etc)."
+         screen recording  (CGPreflightScreenCaptureAccess): {sr}\n\
+         direct capture    (prompt-capable probe): {direct}\n\n\
+         diagnose is read-only and never runs the direct ScreenCaptureKit probe;\n\
+         use `cua-driver permissions grant` to request and verify it explicitly."
     )
 }
 
@@ -3512,6 +3641,58 @@ mod tests {
         assert_eq!(
             finite_client_kind_from_args(&args(&["doctor", "--client", "claude"])),
             "not_applicable"
+        );
+    }
+
+    #[test]
+    fn permission_grant_requires_live_capture_probe() {
+        let stale = serde_json::json!({
+            "accessibility": true,
+            "screen_recording": true,
+            "screen_recording_capturable": false
+        });
+
+        assert!(!permission_grant_is_ready(&stale));
+        assert!(permission_grant_needs_direct_capture(&stale));
+    }
+
+    #[test]
+    fn permission_grant_accepts_all_live_checks() {
+        let ready = serde_json::json!({
+            "accessibility": true,
+            "screen_recording": true,
+            "screen_recording_capturable": true
+        });
+
+        assert!(permission_grant_is_ready(&ready));
+        assert!(!permission_grant_needs_direct_capture(&ready));
+    }
+
+    #[test]
+    fn permission_grant_missing_live_probe_is_not_ready() {
+        let incomplete = serde_json::json!({
+            "accessibility": true,
+            "screen_recording": true
+        });
+
+        assert!(!permission_grant_is_ready(&incomplete));
+    }
+
+    #[test]
+    fn permission_grant_stages_required_prompts_before_direct_capture() {
+        let staged = permission_check_request(true, false);
+        let staged_args = staged.args.expect("staged request args");
+        assert_eq!(staged_args.get("prompt"), Some(&serde_json::json!(true)));
+        assert_eq!(
+            staged_args.get("probe_direct_capture"),
+            Some(&serde_json::json!(false))
+        );
+
+        let direct = permission_check_request(true, true);
+        let direct_args = direct.args.expect("direct request args");
+        assert_eq!(
+            direct_args.get("probe_direct_capture"),
+            Some(&serde_json::json!(true))
         );
     }
 

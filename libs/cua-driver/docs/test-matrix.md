@@ -46,7 +46,7 @@ These run without the repo-local GUI applications:
 | Core driver logic | `rust/crates/*/src/**` | Protocol values, sessions, schemas, image helpers, input helpers, configuration, telemetry, CLI behavior |
 | MCP and CLI boundary | `rust/crates/cua-driver/tests/protocol_*` | Handshake, tool registration, tool calls, media, sessions, and errors |
 | Session capture scope | `session_capture_scope_test.rs` plus core `capture_scope` tests | Per-session isolation, immutable live policy, explicit auto escalation, end/revive race safety, transport-mirror refusal, and retired persistent key |
-| Schema gate | `schema_consistency_test.rs` | Shared tool schema parity across OS backends |
+| Tool-contract gate | `schema_consistency_test.rs` | Shared tool schema parity and reviewed risk metadata across OS backends |
 | Configuration transport | `transport_config_persistence_test.rs` | CLI and MCP configuration persistence |
 | Token and protocol surfaces | `protocol_element_token_test.rs`, related tests | JSON-RPC-visible contract behavior |
 | Permission modes and policy startup | `permission_policy_startup_test.rs`, `daemon_required_test.rs`, core `authorization`, `policy`, and `session_manifest` tests | Fail-before-bind policy loading, managed/user intersection, immutable standard/autonomous/unrestricted startup, danger acknowledgement, admin disable, deny-by-default manifests, and canonical daemon dispatch |

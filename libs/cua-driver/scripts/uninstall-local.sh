@@ -202,7 +202,10 @@ if [[ -e "$LOCAL_HOME_MARKER" || -L "$LOCAL_HOME_MARKER" ]]; then
         "$HOME_DIR/.installation_recorded" \
         "$HOME_DIR/.telemetry_enabled" \
         "$HOME_DIR/.telemetry_id" \
+        "$HOME_DIR/.telemetry_identity.lock" \
         "$HOME_DIR/.telemetry_install_channel" \
+        "$HOME_DIR/.telemetry_lifecycle.lock" \
+        "$HOME_DIR/.telemetry_retry_after" \
         "$HOME_DIR/.tcc-signing-identity" \
         "$HOME_DIR/config.json" \
         "$HOME_DIR/serve.err.log" \

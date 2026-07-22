@@ -23,6 +23,22 @@ def test_wheel_tags_are_platform_specific():
     assert build_wheel.get_wheel_tag("windows", "arm64") == "py3-none-win_arm64"
 
 
+def test_release_archives_include_cli_and_uniffi_library():
+    build_wheel = load_build_wheel_module()
+
+    _, darwin_files = build_wheel.get_release_url("1.2.3", "darwin", "universal")
+    _, linux_files = build_wheel.get_release_url("1.2.3", "linux", "x86_64")
+    _, windows_files = build_wheel.get_release_url("1.2.3", "windows", "arm64")
+
+    assert darwin_files == ["cua-driver", "libcua_driver_sdk.dylib"]
+    assert linux_files == ["cua-driver", "libcua_driver_sdk.so"]
+    assert windows_files == [
+        "cua-driver.exe",
+        "cua-driver-uia.exe",
+        "cua_driver_sdk.dll",
+    ]
+
+
 def test_license_metadata_stays_legacy_upload_compatible():
     pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
     pyproject_text = pyproject.read_text()

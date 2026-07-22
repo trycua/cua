@@ -12,9 +12,11 @@
 //! `structuredContent` object.
 
 use async_trait::async_trait;
+use cua_driver_contract::GetDesktopStateInput;
 use cua_driver_core::{
     protocol::{Content, ToolResult},
     tool::{Tool, ToolDef},
+    tool_args::parse_typed_input,
 };
 use serde_json::Value;
 
@@ -55,9 +57,11 @@ impl Tool for GetDesktopStateTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use cua_driver_core::tool_args::ArgsExt;
-
-        let screenshot_out_file = args.opt_str("screenshot_out_file").map(|s| {
+        let input = match parse_typed_input::<GetDesktopStateInput>("get_desktop_state", args) {
+            Ok(input) => input,
+            Err(result) => return result,
+        };
+        let screenshot_out_file = input.screenshot_out_file.map(|s| {
             // Expand ~ prefix (mirrors get_window_state).
             if s.starts_with("~/") {
                 let home = std::env::var("HOME").unwrap_or_default();

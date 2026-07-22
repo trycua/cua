@@ -208,9 +208,15 @@ async fn overlay_glide_to(key: &str, sx: f64, sy: f64) {
     }
     crate::overlay::animate_cursor_to(key.to_owned(), sx, sy).await;
 }
+use cua_driver_contract::{
+    ClickButton, ClickInput, DragInput, GetCursorPositionInput, GetDesktopStateInput,
+    GetScreenSizeInput, HotkeyInput, MoveCursorInput, PressKeyInput, ScrollDirection, ScrollInput,
+    TypeTextInput,
+};
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef, ToolRegistry},
+    tool_args::{parse_typed_input, parse_typed_projection},
 };
 use serde_json::{json, Value};
 use std::sync::{Arc, RwLock};
@@ -2512,22 +2518,23 @@ impl Tool for ClickTool {
                     "suggestion": "pass scope=desktop",
                 }));
             }
-            // Resolve button (reuse the same validation as the pid path).
-            let button_raw = args.str_or("button", "left").to_lowercase();
-            if !matches!(button_raw.as_str(), "" | "left" | "right" | "middle") {
-                return ToolResult::error(format!(
-                    "click: unknown button \"{button_raw}\" — expected one of left, right, middle."
-                ));
-            }
-            let button = if button_raw.is_empty() {
-                "left".to_string()
-            } else {
-                button_raw
+            let input = match parse_typed_projection::<ClickInput>("click", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
             };
-            let count = args.u64_or("count", 1) as usize;
+            let button = input
+                .button
+                .unwrap_or(ClickButton::Left)
+                .as_str()
+                .to_owned();
+            let count = input.count.unwrap_or(1) as usize;
+            if count == 0 {
+                return ToolResult::error("click.count must be at least 1.")
+                    .with_structured(json!({ "code": "invalid_arguments" }));
+            }
             let modifiers: Vec<String> = args.str_array("modifier");
-            let sx = args.f64_or("x", 0.0) as i32;
-            let sy = args.f64_or("y", 0.0) as i32;
+            let sx = input.x as i32;
+            let sy = input.y as i32;
 
             // Resolve the application window before moving the agent cursor.
             // WindowFromPoint can return a transparent layered overlay, and the
@@ -3471,22 +3478,18 @@ impl Tool for TypeTextTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use crate::input::delivery::{DeliveryMode, EventKind};
         use cua_driver_core::tool_args::ArgsExt;
-        let text_raw = match args.require_str("text") {
-            Ok(v) => v,
-            Err(e) => return e,
-        };
         let cursor_key = resolve_cursor_key(&args);
-        // Strip trailing agent-protocol closing tags before delivery —
-        // catches the case where an LLM hallucinated its own tool-
-        // invocation tags into the text param (see text_sanitize docs).
-        // Returns Cow::Borrowed on the no-match fast path so the common
-        // case is allocation-free.
-        let text = cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
-            .into_owned();
         if args.get("scope").and_then(Value::as_str) == Some("desktop")
             && args.get("pid").is_none()
             && args.get("window_id").is_none()
         {
+            let input = match parse_typed_projection::<TypeTextInput>("type_text", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
+            };
+            let text =
+                cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&input.text)
+                    .into_owned();
             let hwnd = match crate::input::mouse::foreground_window() {
                 Ok(hwnd) => hwnd,
                 Err(error) => return ToolResult::error(error.to_string()),
@@ -3508,6 +3511,17 @@ impl Tool for TypeTextTool {
                 Err(error) => ToolResult::error(format!("desktop type task failed: {error}")),
             };
         }
+        let text_raw = match args.require_str("text") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        // Strip trailing agent-protocol closing tags before delivery —
+        // catches the case where an LLM hallucinated its own tool-
+        // invocation tags into the text param (see text_sanitize docs).
+        // Returns Cow::Borrowed on the no-match fast path so the common
+        // case is allocation-free.
+        let text = cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
+            .into_owned();
         let raw_pid = match args.require_i64("pid") {
             Ok(v) => v,
             Err(e) => return e,
@@ -4133,15 +4147,16 @@ impl Tool for PressKeyTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use crate::input::delivery::{DeliveryMode, EventKind};
         use cua_driver_core::tool_args::ArgsExt;
-        let key = match args.require_str("key") {
-            Ok(v) => v,
-            Err(e) => return e,
-        };
-        let mods: Vec<String> = args.str_array("modifiers");
         if args.get("scope").and_then(Value::as_str) == Some("desktop")
             && args.get("pid").is_none()
             && args.get("window_id").is_none()
         {
+            let input = match parse_typed_projection::<PressKeyInput>("press_key", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
+            };
+            let key = input.key;
+            let mods = input.modifiers.unwrap_or_default();
             let hwnd = match crate::input::mouse::foreground_window() {
                 Ok(hwnd) => hwnd,
                 Err(error) => return ToolResult::error(error.to_string()),
@@ -4164,6 +4179,11 @@ impl Tool for PressKeyTool {
                 Err(error) => ToolResult::error(format!("desktop key task failed: {error}")),
             };
         }
+        let key = match args.require_str("key") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        let mods: Vec<String> = args.str_array("modifiers");
         let raw_pid = match args.require_i64("pid") {
             Ok(v) => v,
             Err(e) => return e,
@@ -4473,6 +4493,56 @@ impl Tool for HotkeyTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use crate::input::delivery::{DeliveryMode, EventKind};
         use cua_driver_core::tool_args::ArgsExt;
+        if args.get("scope").and_then(Value::as_str) == Some("desktop")
+            && args.get("pid").is_none()
+            && args.get("window_id").is_none()
+        {
+            let input = match parse_typed_projection::<HotkeyInput>("hotkey", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
+            };
+            if input.keys.len() < 2 {
+                return ToolResult::error("hotkey.keys must contain at least two keys.")
+                    .with_structured(json!({ "code": "invalid_arguments" }));
+            }
+            let mods: Vec<String> = input
+                .keys
+                .iter()
+                .filter(|key| is_modifier(key))
+                .cloned()
+                .collect();
+            let Some(key) = input
+                .keys
+                .iter()
+                .rev()
+                .find(|key| !is_modifier(key))
+                .cloned()
+            else {
+                return ToolResult::error("keys must include at least one non-modifier key.");
+            };
+            let full_keys = input.keys;
+            let hwnd = match crate::input::mouse::foreground_window() {
+                Ok(hwnd) => hwnd,
+                Err(error) => return ToolResult::error(error.to_string()),
+            };
+            let key_display = full_keys.join("+");
+            return match tokio::task::spawn_blocking(move || {
+                let modifiers: Vec<&str> = mods.iter().map(String::as_str).collect();
+                crate::input::send_key_synthesized(hwnd, &key, &modifiers)
+            })
+            .await
+            {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "Sent {key_display} to the foreground application (scope:desktop)."
+                ))
+                .with_structured(json!({
+                    "scope": "desktop", "path": "SendInput", "keys": full_keys,
+                    "effect": "unverifiable"
+                })),
+                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Err(error) => ToolResult::error(format!("desktop hotkey task failed: {error}")),
+            };
+        }
         // Parse keys array (Swift's only path).  Legacy key+modifiers shape
         // still accepted as a Rust-side convenience.
         let (key, mods, full_keys) = if let Some(arr) = args.get("keys") {
@@ -4509,32 +4579,6 @@ impl Tool for HotkeyTool {
         } else {
             return ToolResult::error("Missing required array field keys.");
         };
-        if args.get("scope").and_then(Value::as_str) == Some("desktop")
-            && args.get("pid").is_none()
-            && args.get("window_id").is_none()
-        {
-            let hwnd = match crate::input::mouse::foreground_window() {
-                Ok(hwnd) => hwnd,
-                Err(error) => return ToolResult::error(error.to_string()),
-            };
-            let key_display = full_keys.join("+");
-            return match tokio::task::spawn_blocking(move || {
-                let modifiers: Vec<&str> = mods.iter().map(String::as_str).collect();
-                crate::input::send_key_synthesized(hwnd, &key, &modifiers)
-            })
-            .await
-            {
-                Ok(Ok(())) => ToolResult::text(format!(
-                    "Sent {key_display} to the foreground application (scope:desktop)."
-                ))
-                .with_structured(json!({
-                    "scope": "desktop", "path": "SendInput", "keys": full_keys,
-                    "effect": "unverifiable"
-                })),
-                Ok(Err(error)) => ToolResult::error(error.to_string()),
-                Err(error) => ToolResult::error(format!("desktop hotkey task failed: {error}")),
-            };
-        }
         let hwnd_opt = args.opt_u64("window_id");
         let raw_pid = match args.require_i64("pid") {
             Ok(v) => v,
@@ -4975,14 +5019,6 @@ impl Tool for ScrollTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use crate::input::delivery::{DeliveryMode, EventKind};
         use cua_driver_core::tool_args::ArgsExt;
-        // `direction` is required in both the pid path and the window-less
-        // desktop path, so resolve it before the pid check.
-        let direction = match args.get("direction").and_then(|v| v.as_str()) {
-            Some(d) => d.to_owned(),
-            None => return ToolResult::error("Missing required string field direction."),
-        };
-        let amount = args.u64_or("amount", 3).clamp(1, 50) as u32;
-
         // ── Window-less screen-absolute branch (capture_scope="desktop") ──────
         // No pid/window_id + numeric x,y + desktop scope → synthesize a wheel
         // event at the screen point via SendInput. The wheel routes to whatever
@@ -5003,22 +5039,23 @@ impl Tool for ScrollTool {
                     "suggestion": "pass scope=desktop",
                 }));
             }
-            let sx = args.f64_or("x", 0.0) as i32;
-            let sy = args.f64_or("y", 0.0) as i32;
+            let input = match parse_typed_projection::<ScrollInput>("scroll", &args) {
+                Ok(input) => input,
+                Err(error) => return error,
+            };
+            let sx = input.x as i32;
+            let sy = input.y as i32;
+            let direction = input.direction;
+            let amount = input.amount.unwrap_or(3) as u32;
             // Direction → (horizontal?, sign). Positive ticks = up / right.
-            let (horizontal, sign) = match direction.as_str() {
-                "up" => (false, 1),
-                "down" => (false, -1),
-                "right" => (true, 1),
-                "left" => (true, -1),
-                other => {
-                    return ToolResult::error(format!(
-                        "scroll: unknown direction \"{other}\" — expected up, down, left, right."
-                    ))
-                }
+            let (horizontal, sign) = match direction {
+                ScrollDirection::Up => (false, 1),
+                ScrollDirection::Down => (false, -1),
+                ScrollDirection::Right => (true, 1),
+                ScrollDirection::Left => (true, -1),
             };
             let ticks = sign * amount as i32;
-            let dir_disp = direction.clone();
+            let dir_disp = direction.as_str();
             let result = tokio::task::spawn_blocking(move || {
                 crate::input::send_wheel_synthesized(sx, sy, ticks, horizontal)
             })
@@ -5031,6 +5068,13 @@ impl Tool for ScrollTool {
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
             };
         }
+
+        // Window-scoped arguments retain the richer platform contract.
+        let direction = match args.get("direction").and_then(|v| v.as_str()) {
+            Some(d) => d.to_owned(),
+            None => return ToolResult::error("Missing required string field direction."),
+        };
+        let amount = args.u64_or("amount", 3).clamp(1, 50) as u32;
 
         // Swift error wording 1:1.
         let raw_pid = match args.get("pid").and_then(|v| v.as_i64()) {
@@ -6202,22 +6246,17 @@ impl Tool for DragTool {
             && args.get("pid").is_none()
             && args.get("window_id").is_none()
         {
-            let required = |key: &str| {
-                args.opt_f64(key)
-                    .or_else(|| args.opt_i64(key).map(|value| value as f64))
+            let input = match parse_typed_projection::<DragInput>("drag", &args) {
+                Ok(input) => input,
+                Err(error) => return error,
             };
-            let (from_x, from_y, to_x, to_y) = match (
-                required("from_x"),
-                required("from_y"),
-                required("to_x"),
-                required("to_y"),
-            ) {
-                (Some(a), Some(b), Some(c), Some(d)) => (a as i32, b as i32, c as i32, d as i32),
-                _ => return ToolResult::error("from_x, from_y, to_x, and to_y are required."),
-            };
-            let duration_ms = args.u64_or("duration_ms", 500);
-            let steps = args.u64_or("steps", 20) as usize;
-            let button = args.str_or("button", "left");
+            let from_x = input.from_x as i32;
+            let from_y = input.from_y as i32;
+            let to_x = input.to_x as i32;
+            let to_y = input.to_y as i32;
+            let duration_ms = input.duration_ms.unwrap_or(500);
+            let steps = input.steps.unwrap_or(20) as usize;
+            let button = input.button.unwrap_or(ClickButton::Left).as_str();
             let hwnd = match crate::input::mouse::foreground_window() {
                 Ok(hwnd) => hwnd,
                 Err(error) => return ToolResult::error(error.to_string()),
@@ -6542,11 +6581,16 @@ impl Tool for GetScreenSizeTool {
             description: "Return the size of the main display in physical pixels plus its display \
                 scale factor. On Windows, screenshots and pixel clicks use this same physical-pixel \
                 coordinate space. Requires no special permissions.".into(),
-            input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
+            input_schema: json!({"type":"object","properties":{
+                "session": cua_driver_core::tool_schema::session_schema()
+            },"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: true, open_world: false,
         })
     }
-    async fn invoke(&self, _args: Value) -> ToolResult {
+    async fn invoke(&self, args: Value) -> ToolResult {
+        if let Err(error) = parse_typed_input::<GetScreenSizeInput>("get_screen_size", args) {
+            return error;
+        }
         use windows::Win32::UI::HiDpi::GetDpiForSystem;
         // With permonitorv2 DPI awareness (set in cua-driver.manifest),
         // SM_CXSCREEN/SM_CYSCREEN return PHYSICAL pixels — the same
@@ -6601,9 +6645,11 @@ impl Tool for GetDesktopStateTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::protocol::Content;
-        use cua_driver_core::tool_args::ArgsExt;
-
-        let screenshot_out_file = args.opt_str("screenshot_out_file");
+        let input = match parse_typed_input::<GetDesktopStateInput>("get_desktop_state", args) {
+            Ok(input) => input,
+            Err(error) => return error,
+        };
+        let screenshot_out_file = input.screenshot_out_file;
 
         // True screen geometry in physical pixels (same space as the capture).
         let (screen_width, screen_height) = physical_screen_size();
@@ -6680,14 +6726,20 @@ impl Tool for GetCursorPositionTool {
             description:
                 "Return the current mouse cursor position in screen points (origin top-left)."
                     .into(),
-            input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
+            input_schema: json!({"type":"object","properties":{
+                "session": cua_driver_core::tool_schema::session_schema()
+            },"additionalProperties":false}),
             read_only: true,
             destructive: false,
             idempotent: true,
             open_world: false,
         })
     }
-    async fn invoke(&self, _args: Value) -> ToolResult {
+    async fn invoke(&self, args: Value) -> ToolResult {
+        if let Err(error) = parse_typed_input::<GetCursorPositionInput>("get_cursor_position", args)
+        {
+            return error;
+        }
         use windows::Win32::Foundation::POINT;
         use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
         let mut pt = POINT { x: 0, y: 0 };
@@ -6729,9 +6781,13 @@ impl Tool for MoveCursorTool {
     }
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        let x = args.f64_or("x", 0.0);
-        let y = args.f64_or("y", 0.0);
         if args.get("scope").and_then(Value::as_str) == Some("desktop") {
+            let input = match parse_typed_projection::<MoveCursorInput>("move_cursor", &args) {
+                Ok(input) => input,
+                Err(error) => return error,
+            };
+            let x = input.x;
+            let y = input.y;
             return match crate::input::mouse::move_cursor_desktop(x as i32, y as i32) {
                 Ok(()) => ToolResult::text(format!(
                     "Moved the OS pointer to ({x:.1}, {y:.1}) (scope:desktop)."
@@ -6742,6 +6798,8 @@ impl Tool for MoveCursorTool {
                 Err(error) => ToolResult::error(error.to_string()),
             };
         }
+        let x = args.f64_or("x", 0.0);
+        let y = args.f64_or("y", 0.0);
         // Cursor key precedence: caller-declared `session` > legacy `cursor_id`
         // > NO_CURSOR. An anonymous run (no session) has no cursor to move.
         let cursor_key = resolve_cursor_key(&args);

@@ -154,7 +154,8 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
       && jq -e '
         .accessibility == true
         and .screen_recording == true
-        and .screen_recording_capturable == true
+        and .screen_recording_capturable == null
+        and .direct_capture_status == "not_checked"
         and .source.attribution == "driver-daemon"
       ' "${PERMISSIONS_FILE}" >/dev/null; then
     PERMISSIONS_READY=1
@@ -168,9 +169,21 @@ if [[ "${PERMISSIONS_READY}" != 1 ]]; then
   exit 1
 fi
 
-echo "[AUTOMATION] Verifying the installed CuaDriver can query System Events"
+LIVE_PERMISSIONS_FILE="${ARTIFACT_DIR}/permissions-live-capture.json"
+if ! "${INSTALLED_BIN}" call check_permissions '{"prompt":true}' \
+    > "${LIVE_PERMISSIONS_FILE}" \
+    || ! jq -e '
+      .structuredContent.screen_recording_capturable == true
+      and .structuredContent.direct_capture_status == "ready"
+    ' "${LIVE_PERMISSIONS_FILE}" >/dev/null; then
+  cat "${LIVE_PERMISSIONS_FILE}" >&2 || true
+  echo "The cloned golden image does not have usable direct ScreenCaptureKit consent" >&2
+  exit 1
+fi
+
+echo "[APP DISCOVERY] Verifying the installed CuaDriver can enumerate apps"
 if ! "${INSTALLED_BIN}" list_apps '{}' > "${ARTIFACT_DIR}/driver-list-apps.json"; then
-  echo "CuaDriver cannot control System Events; rebuild the seed and grant the Automation prompt" >&2
+  echo "CuaDriver cannot enumerate applications" >&2
   exit 2
 fi
 

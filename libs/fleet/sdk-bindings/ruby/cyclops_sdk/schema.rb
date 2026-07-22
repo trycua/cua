@@ -14,7 +14,7 @@
 # helpers directly inline like we're doing here.
 
 require 'ffi'
-require 'set'
+
 
 module CyclopsSdkSchema
   def self.uniffi_in_range(i, type_name, min, max)
@@ -36,64 +36,21 @@ def self.uniffi_bytes(v)
   v.to_str
 end
 
-# Callback return codes
-UNIFFI_CALLBACK_SUCCESS = 0
-UNIFFI_CALLBACK_ERROR = 1
-UNIFFI_CALLBACK_UNEXPECTED_ERROR = 2
-
-# Call a method on a callback interface object, catching and reporting errors
-# to Rust via the call_status.
-# If error_type is provided, known errors of that type are reported as UNIFFI_CALLBACK_ERROR;
-# all other errors are reported as UNIFFI_CALLBACK_UNEXPECTED_ERROR.
-def self.uniffi_trait_interface_call(call_status, make_call, write_return_value, error_type = nil, lower_error = nil)
-  begin
-    write_return_value.call make_call.call
-  rescue StandardError => e
-    buf = if !error_type.nil? && uniffi_is_error_type?(e, error_type)
-      call_status[:code] = UNIFFI_CALLBACK_ERROR
-      lower_error.call e
-    else
-      call_status[:code] = UNIFFI_CALLBACK_UNEXPECTED_ERROR
-      RustBuffer.alloc_from_string(e.inspect)
-    end
-
-    error_buf = call_status[:error_buf]
-    error_buf[:capacity] = buf[:capacity]
-    error_buf[:len] = buf[:len]
-    error_buf[:data] = buf[:data]
-  end
-end
-
-# Check if an exception is a variant of the given error type.
-# Error types in Ruby are either modules (non-flat enums) or classes (flat enums),
-# with variant classes as constant within them.
-def self.uniffi_is_error_type?(e, error_type)
-  # Object-as-error: error_type is a class itself (e.g. MyError < StandardError)
-  if error_type.is_a?(Class) && e.is_a?(error_type)
-    return true
-  end
-
-  # Enum error: error_type is a module with class constants for each variant
-  error_type.constants.any? do |c|
-    klass = error_type.const_get c
-    klass.is_a?(Class) && e.is_a?(klass)
-  end
-end
   class RustBuffer < FFI::Struct
   layout :capacity, :uint64,
          :len,      :uint64,
          :data,     :pointer
 
   def self.alloc(size)
-    return ::CyclopsSdkSchema.rust_call(:ffi_cyclops_sdk_schema_rustbuffer_alloc, size)
+    return CyclopsSdkSchema.rust_call(:ffi_cyclops_sdk_schema_rustbuffer_alloc, size)
   end
 
   def self.reserve(rbuf, additional)
-    return ::CyclopsSdkSchema.rust_call(:ffi_cyclops_sdk_schema_rustbuffer_reserve, rbuf, additional)
+    return CyclopsSdkSchema.rust_call(:ffi_cyclops_sdk_schema_rustbuffer_reserve, rbuf, additional)
   end
 
   def free
-    ::CyclopsSdkSchema.rust_call(:ffi_cyclops_sdk_schema_rustbuffer_free, self)
+    CyclopsSdkSchema.rust_call(:ffi_cyclops_sdk_schema_rustbuffer_free, self)
   end
 
   def capacity
@@ -141,14 +98,14 @@ end
     free
   end# The primitive String type.
 
-  def self.alloc_from_string(value)
+  def self.allocFromString(value)
     RustBuffer.allocWithBuilder do |builder|
       builder.write value.encode('utf-8')
       return builder.finalize
     end
   end
 
-  def consume_into_string
+  def consumeIntoString
     consumeWithStream do |stream|
       return stream.read(stream.remaining).force_encoding(Encoding::UTF_8)
     end
@@ -169,9 +126,9 @@ end
     end
   end
 
-  def consume_into_TypeClaimLifecycle
+  def consumeIntoTypeClaimLifecycle
     consumeWithStream do |stream|
-      return stream.read_TypeClaimLifecycle
+      return stream.readTypeClaimLifecycle
     end
   end
 
@@ -191,9 +148,9 @@ end
     end
   end
 
-  def consume_into_TypeClaimSpec
+  def consumeIntoTypeClaimSpec
     consumeWithStream do |stream|
-      return stream.read_TypeClaimSpec
+      return stream.readTypeClaimSpec
     end
   end
 
@@ -214,9 +171,9 @@ end
     end
   end
 
-  def consume_into_TypeOSGymSandboxClaimCondition
+  def consumeIntoTypeOSGymSandboxClaimCondition
     consumeWithStream do |stream|
-      return stream.read_TypeOSGymSandboxClaimCondition
+      return stream.readTypeOSGymSandboxClaimCondition
     end
   end
 
@@ -234,9 +191,9 @@ end
     end
   end
 
-  def consume_into_TypeOSGymSandboxClaimSandbox
+  def consumeIntoTypeOSGymSandboxClaimSandbox
     consumeWithStream do |stream|
-      return stream.read_TypeOSGymSandboxClaimSandbox
+      return stream.readTypeOSGymSandboxClaimSandbox
     end
   end
 
@@ -244,8 +201,8 @@ end
 
   def self.check_lower_TypeOSGymSandboxClaimStatus(v)
     RustBuffer.check_lower_Optionalstring(v.phase)
-    RustBuffer.check_lower_OptionalSequenceTypeOSGymSandboxClaimCondition(v.conditions)
-    RustBuffer.check_lower_OptionalTypeOSGymSandboxClaimSandbox(v.sandbox)
+    RustBuffer.check_lower_OptionalSequenceTypeOsGymSandboxClaimCondition(v.conditions)
+    RustBuffer.check_lower_OptionalTypeOsGymSandboxClaimSandbox(v.sandbox)
   end
 
   def self.alloc_from_TypeOSGymSandboxClaimStatus(v)
@@ -255,9 +212,9 @@ end
     end
   end
 
-  def consume_into_TypeOSGymSandboxClaimStatus
+  def consumeIntoTypeOSGymSandboxClaimStatus
     consumeWithStream do |stream|
-      return stream.read_TypeOSGymSandboxClaimStatus
+      return stream.readTypeOSGymSandboxClaimStatus
     end
   end
 
@@ -274,9 +231,9 @@ end
     end
   end
 
-  def consume_into_TypeOSGymSandboxSpec
+  def consumeIntoTypeOSGymSandboxSpec
     consumeWithStream do |stream|
-      return stream.read_TypeOSGymSandboxSpec
+      return stream.readTypeOSGymSandboxSpec
     end
   end
 
@@ -300,9 +257,9 @@ end
     end
   end
 
-  def consume_into_TypeOSGymSandboxStatus
+  def consumeIntoTypeOSGymSandboxStatus
     consumeWithStream do |stream|
-      return stream.read_TypeOSGymSandboxStatus
+      return stream.readTypeOSGymSandboxStatus
     end
   end
 
@@ -319,9 +276,9 @@ end
     end
   end
 
-  def consume_into_TypeOSGymSandboxTemplateSpec
+  def consumeIntoTypeOSGymSandboxTemplateSpec
     consumeWithStream do |stream|
-      return stream.read_TypeOSGymSandboxTemplateSpec
+      return stream.readTypeOSGymSandboxTemplateSpec
     end
   end
 
@@ -340,9 +297,9 @@ end
     end
   end
 
-  def consume_into_TypeOSGymSandboxWarmPoolSpec
+  def consumeIntoTypeOSGymSandboxWarmPoolSpec
     consumeWithStream do |stream|
-      return stream.read_TypeOSGymSandboxWarmPoolSpec
+      return stream.readTypeOSGymSandboxWarmPoolSpec
     end
   end
 
@@ -361,9 +318,9 @@ end
     end
   end
 
-  def consume_into_TypeOSGymSandboxWarmPoolStatus
+  def consumeIntoTypeOSGymSandboxWarmPoolStatus
     consumeWithStream do |stream|
-      return stream.read_TypeOSGymSandboxWarmPoolStatus
+      return stream.readTypeOSGymSandboxWarmPoolStatus
     end
   end
 
@@ -383,9 +340,9 @@ end
     end
   end
 
-  def consume_into_TypeOSGymWorkspacePoolStatus
+  def consumeIntoTypeOSGymWorkspacePoolStatus
     consumeWithStream do |stream|
-      return stream.read_TypeOSGymWorkspacePoolStatus
+      return stream.readTypeOSGymWorkspacePoolStatus
     end
   end
 
@@ -406,9 +363,9 @@ end
     end
   end
 
-  def consume_into_TypeOidcConfig
+  def consumeIntoTypeOidcConfig
     consumeWithStream do |stream|
-      return stream.read_TypeOidcConfig
+      return stream.readTypeOidcConfig
     end
   end
 
@@ -428,9 +385,9 @@ end
     end
   end
 
-  def consume_into_TypePoolSpec
+  def consumeIntoTypePoolSpec
     consumeWithStream do |stream|
-      return stream.read_TypePoolSpec
+      return stream.readTypePoolSpec
     end
   end
 
@@ -458,9 +415,9 @@ end
     end
   end
 
-  def consume_into_TypePoolTemplate
+  def consumeIntoTypePoolTemplate
     consumeWithStream do |stream|
-      return stream.read_TypePoolTemplate
+      return stream.readTypePoolTemplate
     end
   end
 
@@ -479,9 +436,9 @@ end
     end
   end
 
-  def consume_into_TypeSandboxService
+  def consumeIntoTypeSandboxService
     consumeWithStream do |stream|
-      return stream.read_TypeSandboxService
+      return stream.readTypeSandboxService
     end
   end
 
@@ -498,9 +455,9 @@ end
     end
   end
 
-  def consume_into_TypeSandboxTemplateRef
+  def consumeIntoTypeSandboxTemplateRef
     consumeWithStream do |stream|
-      return stream.read_TypeSandboxTemplateRef
+      return stream.readTypeSandboxTemplateRef
     end
   end
 
@@ -530,9 +487,9 @@ end
     end
   end
 
-  def consume_into_TypeVmTemplate
+  def consumeIntoTypeVmTemplate
     consumeWithStream do |stream|
-      return stream.read_TypeVmTemplate
+      return stream.readTypeVmTemplate
     end
   end
 
@@ -551,9 +508,9 @@ end
     end
   end
 
-  def consume_into_TypeWarmPoolAutoscaling
+  def consumeIntoTypeWarmPoolAutoscaling
     consumeWithStream do |stream|
-      return stream.read_TypeWarmPoolAutoscaling
+      return stream.readTypeWarmPoolAutoscaling
     end
   end
 
@@ -569,9 +526,9 @@ end
     end
   end
 
-  def consume_into_TypeFirmware
+  def consumeIntoTypeFirmware
     consumeWithStream do |stream|
-      return stream.read_TypeFirmware
+      return stream.readTypeFirmware
     end
   end
 
@@ -588,27 +545,13 @@ end
     end
   end
 
-  def consume_into_TypeImagePullPolicy
+  def consumeIntoTypeImagePullPolicy
     consumeWithStream do |stream|
-      return stream.read_TypeImagePullPolicy
+      return stream.readTypeImagePullPolicy
     end
   end
 
 
-  # Error enum - generate alloc_from for callback error serialization
-  def self.alloc_from_TypeJsonValueError(v)
-    RustBuffer.allocWithBuilder do |builder|
-      builder.write_TypeJsonValueError(v)
-      return builder.finalize
-    end
-  end
-
-  # Enum used as error - generate consume_into_ for use as a return value
-  def consume_into_TypeJsonValueError
-    consumeWithStream do |stream|
-      return stream.read_TypeJsonValueError
-    end
-  end
 
 
   # The Enum type RuntimeKind.
@@ -623,9 +566,9 @@ end
     end
   end
 
-  def consume_into_TypeRuntimeKind
+  def consumeIntoTypeRuntimeKind
     consumeWithStream do |stream|
-      return stream.read_TypeRuntimeKind
+      return stream.readTypeRuntimeKind
     end
   end
 
@@ -642,9 +585,9 @@ end
     end
   end
 
-  def consume_into_TypeServiceProtocol
+  def consumeIntoTypeServiceProtocol
     consumeWithStream do |stream|
-      return stream.read_TypeServiceProtocol
+      return stream.readTypeServiceProtocol
     end
   end
 
@@ -652,7 +595,7 @@ end
   # The Optional<T> type for u32.
 
   def self.check_lower_Optionalu32(v)
-    if !v.nil?
+    if not v.nil?
 
     end
   end
@@ -664,16 +607,16 @@ end
     end
   end
 
-  def consume_into_Optionalu32
+  def consumeIntoOptionalu32
     consumeWithStream do |stream|
-      return stream.read_Optionalu32
+      return stream.readOptionalu32
     end
   end
 
   # The Optional<T> type for bool.
 
   def self.check_lower_Optionalbool(v)
-    if !v.nil?
+    if not v.nil?
 
     end
   end
@@ -685,16 +628,16 @@ end
     end
   end
 
-  def consume_into_Optionalbool
+  def consumeIntoOptionalbool
     consumeWithStream do |stream|
-      return stream.read_Optionalbool
+      return stream.readOptionalbool
     end
   end
 
   # The Optional<T> type for string.
 
   def self.check_lower_Optionalstring(v)
-    if !v.nil?
+    if not v.nil?
 
     end
   end
@@ -706,16 +649,16 @@ end
     end
   end
 
-  def consume_into_Optionalstring
+  def consumeIntoOptionalstring
     consumeWithStream do |stream|
-      return stream.read_Optionalstring
+      return stream.readOptionalstring
     end
   end
 
   # The Optional<T> type for TypePreservedJson.
 
   def self.check_lower_OptionalTypePreservedJson(v)
-    if !v.nil?
+    if not v.nil?
       (PreservedJson.uniffi_check_lower v)
     end
   end
@@ -727,16 +670,16 @@ end
     end
   end
 
-  def consume_into_OptionalTypePreservedJson
+  def consumeIntoOptionalTypePreservedJson
     consumeWithStream do |stream|
-      return stream.read_OptionalTypePreservedJson
+      return stream.readOptionalTypePreservedJson
     end
   end
 
   # The Optional<T> type for TypeClaimLifecycle.
 
   def self.check_lower_OptionalTypeClaimLifecycle(v)
-    if !v.nil?
+    if not v.nil?
       RustBuffer.check_lower_TypeClaimLifecycle(v)
     end
   end
@@ -748,17 +691,17 @@ end
     end
   end
 
-  def consume_into_OptionalTypeClaimLifecycle
+  def consumeIntoOptionalTypeClaimLifecycle
     consumeWithStream do |stream|
-      return stream.read_OptionalTypeClaimLifecycle
+      return stream.readOptionalTypeClaimLifecycle
     end
   end
 
   # The Optional<T> type for TypeOSGymSandboxClaimSandbox.
 
   def self.check_lower_OptionalTypeOSGymSandboxClaimSandbox(v)
-    if !v.nil?
-      RustBuffer.check_lower_TypeOSGymSandboxClaimSandbox(v)
+    if not v.nil?
+      RustBuffer.check_lower_TypeOsGymSandboxClaimSandbox(v)
     end
   end
 
@@ -769,16 +712,16 @@ end
     end
   end
 
-  def consume_into_OptionalTypeOSGymSandboxClaimSandbox
+  def consumeIntoOptionalTypeOSGymSandboxClaimSandbox
     consumeWithStream do |stream|
-      return stream.read_OptionalTypeOSGymSandboxClaimSandbox
+      return stream.readOptionalTypeOSGymSandboxClaimSandbox
     end
   end
 
   # The Optional<T> type for TypeOidcConfig.
 
   def self.check_lower_OptionalTypeOidcConfig(v)
-    if !v.nil?
+    if not v.nil?
       RustBuffer.check_lower_TypeOidcConfig(v)
     end
   end
@@ -790,16 +733,16 @@ end
     end
   end
 
-  def consume_into_OptionalTypeOidcConfig
+  def consumeIntoOptionalTypeOidcConfig
     consumeWithStream do |stream|
-      return stream.read_OptionalTypeOidcConfig
+      return stream.readOptionalTypeOidcConfig
     end
   end
 
   # The Optional<T> type for TypeWarmPoolAutoscaling.
 
   def self.check_lower_OptionalTypeWarmPoolAutoscaling(v)
-    if !v.nil?
+    if not v.nil?
       RustBuffer.check_lower_TypeWarmPoolAutoscaling(v)
     end
   end
@@ -811,16 +754,16 @@ end
     end
   end
 
-  def consume_into_OptionalTypeWarmPoolAutoscaling
+  def consumeIntoOptionalTypeWarmPoolAutoscaling
     consumeWithStream do |stream|
-      return stream.read_OptionalTypeWarmPoolAutoscaling
+      return stream.readOptionalTypeWarmPoolAutoscaling
     end
   end
 
   # The Optional<T> type for TypeFirmware.
 
   def self.check_lower_OptionalTypeFirmware(v)
-    if !v.nil?
+    if not v.nil?
       RustBuffer.check_lower_TypeFirmware(v)
     end
   end
@@ -832,16 +775,16 @@ end
     end
   end
 
-  def consume_into_OptionalTypeFirmware
+  def consumeIntoOptionalTypeFirmware
     consumeWithStream do |stream|
-      return stream.read_OptionalTypeFirmware
+      return stream.readOptionalTypeFirmware
     end
   end
 
   # The Optional<T> type for TypeImagePullPolicy.
 
   def self.check_lower_OptionalTypeImagePullPolicy(v)
-    if !v.nil?
+    if not v.nil?
       RustBuffer.check_lower_TypeImagePullPolicy(v)
     end
   end
@@ -853,16 +796,16 @@ end
     end
   end
 
-  def consume_into_OptionalTypeImagePullPolicy
+  def consumeIntoOptionalTypeImagePullPolicy
     consumeWithStream do |stream|
-      return stream.read_OptionalTypeImagePullPolicy
+      return stream.readOptionalTypeImagePullPolicy
     end
   end
 
   # The Optional<T> type for TypeRuntimeKind.
 
   def self.check_lower_OptionalTypeRuntimeKind(v)
-    if !v.nil?
+    if not v.nil?
       RustBuffer.check_lower_TypeRuntimeKind(v)
     end
   end
@@ -874,16 +817,16 @@ end
     end
   end
 
-  def consume_into_OptionalTypeRuntimeKind
+  def consumeIntoOptionalTypeRuntimeKind
     consumeWithStream do |stream|
-      return stream.read_OptionalTypeRuntimeKind
+      return stream.readOptionalTypeRuntimeKind
     end
   end
 
   # The Optional<T> type for TypeServiceProtocol.
 
   def self.check_lower_OptionalTypeServiceProtocol(v)
-    if !v.nil?
+    if not v.nil?
       RustBuffer.check_lower_TypeServiceProtocol(v)
     end
   end
@@ -895,16 +838,16 @@ end
     end
   end
 
-  def consume_into_OptionalTypeServiceProtocol
+  def consumeIntoOptionalTypeServiceProtocol
     consumeWithStream do |stream|
-      return stream.read_OptionalTypeServiceProtocol
+      return stream.readOptionalTypeServiceProtocol
     end
   end
 
   # The Optional<T> type for Sequencestring.
 
   def self.check_lower_OptionalSequencestring(v)
-    if !v.nil?
+    if not v.nil?
       RustBuffer.check_lower_Sequencestring(v)
     end
   end
@@ -916,16 +859,16 @@ end
     end
   end
 
-  def consume_into_OptionalSequencestring
+  def consumeIntoOptionalSequencestring
     consumeWithStream do |stream|
-      return stream.read_OptionalSequencestring
+      return stream.readOptionalSequencestring
     end
   end
 
   # The Optional<T> type for SequenceTypePreservedJson.
 
   def self.check_lower_OptionalSequenceTypePreservedJson(v)
-    if !v.nil?
+    if not v.nil?
       RustBuffer.check_lower_SequenceTypePreservedJson(v)
     end
   end
@@ -937,17 +880,17 @@ end
     end
   end
 
-  def consume_into_OptionalSequenceTypePreservedJson
+  def consumeIntoOptionalSequenceTypePreservedJson
     consumeWithStream do |stream|
-      return stream.read_OptionalSequenceTypePreservedJson
+      return stream.readOptionalSequenceTypePreservedJson
     end
   end
 
   # The Optional<T> type for SequenceTypeOSGymSandboxClaimCondition.
 
   def self.check_lower_OptionalSequenceTypeOSGymSandboxClaimCondition(v)
-    if !v.nil?
-      RustBuffer.check_lower_SequenceTypeOSGymSandboxClaimCondition(v)
+    if not v.nil?
+      RustBuffer.check_lower_SequenceTypeOsGymSandboxClaimCondition(v)
     end
   end
 
@@ -958,16 +901,16 @@ end
     end
   end
 
-  def consume_into_OptionalSequenceTypeOSGymSandboxClaimCondition
+  def consumeIntoOptionalSequenceTypeOSGymSandboxClaimCondition
     consumeWithStream do |stream|
-      return stream.read_OptionalSequenceTypeOSGymSandboxClaimCondition
+      return stream.readOptionalSequenceTypeOSGymSandboxClaimCondition
     end
   end
 
   # The Optional<T> type for SequenceTypeSandboxService.
 
   def self.check_lower_OptionalSequenceTypeSandboxService(v)
-    if !v.nil?
+    if not v.nil?
       RustBuffer.check_lower_SequenceTypeSandboxService(v)
     end
   end
@@ -979,16 +922,16 @@ end
     end
   end
 
-  def consume_into_OptionalSequenceTypeSandboxService
+  def consumeIntoOptionalSequenceTypeSandboxService
     consumeWithStream do |stream|
-      return stream.read_OptionalSequenceTypeSandboxService
+      return stream.readOptionalSequenceTypeSandboxService
     end
   end
 
   # The Optional<T> type for MapStringString.
 
   def self.check_lower_OptionalMapStringString(v)
-    if !v.nil?
+    if not v.nil?
       RustBuffer.check_lower_MapStringString(v)
     end
   end
@@ -1000,9 +943,9 @@ end
     end
   end
 
-  def consume_into_OptionalMapStringString
+  def consumeIntoOptionalMapStringString
     consumeWithStream do |stream|
-      return stream.read_OptionalMapStringString
+      return stream.readOptionalMapStringString
     end
   end
 
@@ -1021,9 +964,9 @@ end
     end
   end
 
-  def consume_into_Sequencestring
+  def consumeIntoSequencestring
     consumeWithStream do |stream|
-      return stream.read_Sequencestring
+      return stream.readSequencestring
     end
   end
 
@@ -1042,9 +985,9 @@ end
     end
   end
 
-  def consume_into_SequenceTypePreservedJson
+  def consumeIntoSequenceTypePreservedJson
     consumeWithStream do |stream|
-      return stream.read_SequenceTypePreservedJson
+      return stream.readSequenceTypePreservedJson
     end
   end
 
@@ -1052,7 +995,7 @@ end
 
   def self.check_lower_SequenceTypeOSGymSandboxClaimCondition(v)
     v.each do |item|
-      RustBuffer.check_lower_TypeOSGymSandboxClaimCondition(item)
+      RustBuffer.check_lower_TypeOsGymSandboxClaimCondition(item)
     end
   end
 
@@ -1063,9 +1006,9 @@ end
     end
   end
 
-  def consume_into_SequenceTypeOSGymSandboxClaimCondition
+  def consumeIntoSequenceTypeOSGymSandboxClaimCondition
     consumeWithStream do |stream|
-      return stream.read_SequenceTypeOSGymSandboxClaimCondition
+      return stream.readSequenceTypeOSGymSandboxClaimCondition
     end
   end
 
@@ -1084,14 +1027,13 @@ end
     end
   end
 
-  def consume_into_SequenceTypeSandboxService
+  def consumeIntoSequenceTypeSandboxService
     consumeWithStream do |stream|
-      return stream.read_SequenceTypeSandboxService
+      return stream.readSequenceTypeSandboxService
     end
   end
 
-
-  # The Map<T> type for MapStringString.
+  # The Map<T> type for string.
 
   def self.check_lower_MapStringString(v)
     v.each do |k, v|
@@ -1107,9 +1049,9 @@ end
     end
   end
 
-  def consume_into_MapStringString
+  def consumeIntoMapStringString
     consumeWithStream do |stream|
-      return stream.read_MapStringString
+      return stream.readMapStringString
     end
   end
 end
@@ -1157,19 +1099,19 @@ class RustBufferStream
     data
   end
 
-  def read_u16
+  def readU16
     unpack_from 2, 'S>'
   end
 
-  def read_u32
+  def readU32
     unpack_from 4, 'L>'
   end
 
-  def read_u64
+  def readU64
     unpack_from 8, 'Q>'
   end
 
-  def read_bool
+  def readBool
     v = unpack_from 1, 'c'
 
     return false if v == 0
@@ -1178,7 +1120,7 @@ class RustBufferStream
     raise InternalError, 'Unexpected byte for Boolean type'
   end
 
-  def read_string
+  def readString
     size = unpack_from 4, 'l>'
 
     raise InternalError, 'Unexpected negative string length' if size.negative?
@@ -1188,213 +1130,213 @@ class RustBufferStream
 
   # The Object type PreservedJson.
 
-  def read_TypePreservedJson
+  def readTypePreservedJson
     handle = unpack_from 8, 'Q>'
-    return PreservedJson.uniffi_lift(handle)
+    return PreservedJson.uniffi_allocate(handle)
   end
 
   # The Record type ClaimLifecycle.
 
-  def read_TypeClaimLifecycle
+  def readTypeClaimLifecycle
     ClaimLifecycle.new(
-      shutdown_time: read_Optionalstring,
-      shutdown_policy: read_Optionalstring,
-      auto_renew: read_Optionalbool
+      shutdown_time: readOptionalstring,
+      shutdown_policy: readOptionalstring,
+      auto_renew: readOptionalbool
     )
   end
 
   # The Record type ClaimSpec.
 
-  def read_TypeClaimSpec
+  def readTypeClaimSpec
     ClaimSpec.new(
-      sandbox_template_ref: read_TypeSandboxTemplateRef,
-      warmpool: read_Optionalstring,
-      bind_deadline: read_Optionalu32,
-      lifecycle: read_OptionalTypeClaimLifecycle
+      sandbox_template_ref: readTypeSandboxTemplateRef,
+      warmpool: readOptionalstring,
+      bind_deadline: readOptionalu32,
+      lifecycle: readOptionalTypeClaimLifecycle
     )
   end
 
   # The Record type OSGymSandboxClaimCondition.
 
-  def read_TypeOSGymSandboxClaimCondition
+  def readTypeOsGymSandboxClaimCondition
     OsGymSandboxClaimCondition.new(
-      type: read_Optionalstring,
-      status: read_Optionalstring,
-      reason: read_Optionalstring,
-      message: read_Optionalstring,
-      last_transition_time: read_Optionalstring
+      type: readOptionalstring,
+      status: readOptionalstring,
+      reason: readOptionalstring,
+      message: readOptionalstring,
+      last_transition_time: readOptionalstring
     )
   end
 
   # The Record type OSGymSandboxClaimSandbox.
 
-  def read_TypeOSGymSandboxClaimSandbox
+  def readTypeOsGymSandboxClaimSandbox
     OsGymSandboxClaimSandbox.new(
-      name: read_Optionalstring,
-      service: read_Optionalstring
+      name: readOptionalstring,
+      service: readOptionalstring
     )
   end
 
   # The Record type OSGymSandboxClaimStatus.
 
-  def read_TypeOSGymSandboxClaimStatus
+  def readTypeOsGymSandboxClaimStatus
     OsGymSandboxClaimStatus.new(
-      phase: read_Optionalstring,
-      conditions: read_OptionalSequenceTypeOSGymSandboxClaimCondition,
-      sandbox: read_OptionalTypeOSGymSandboxClaimSandbox
+      phase: readOptionalstring,
+      conditions: readOptionalSequenceTypeOsGymSandboxClaimCondition,
+      sandbox: readOptionalTypeOsGymSandboxClaimSandbox
     )
   end
 
   # The Record type OSGymSandboxSpec.
 
-  def read_TypeOSGymSandboxSpec
+  def readTypeOsGymSandboxSpec
     OsGymSandboxSpec.new(
-      vm_template: read_TypeVmTemplate
+      vm_template: readTypeVmTemplate
     )
   end
 
   # The Record type OSGymSandboxStatus.
 
-  def read_TypeOSGymSandboxStatus
+  def readTypeOsGymSandboxStatus
     OsGymSandboxStatus.new(
-      phase: read_Optionalstring,
-      runtime: read_Optionalstring,
-      ready: read_Optionalbool,
-      vm_name: read_Optionalstring,
-      service: read_Optionalstring,
-      message: read_Optionalstring,
-      reset_issued_at: read_Optionalstring,
-      reset_vmi_uid: read_Optionalstring
+      phase: readOptionalstring,
+      runtime: readOptionalstring,
+      ready: readOptionalbool,
+      vm_name: readOptionalstring,
+      service: readOptionalstring,
+      message: readOptionalstring,
+      reset_issued_at: readOptionalstring,
+      reset_vmi_uid: readOptionalstring
     )
   end
 
   # The Record type OSGymSandboxTemplateSpec.
 
-  def read_TypeOSGymSandboxTemplateSpec
+  def readTypeOsGymSandboxTemplateSpec
     OsGymSandboxTemplateSpec.new(
-      vm_template: read_TypeVmTemplate
+      vm_template: readTypeVmTemplate
     )
   end
 
   # The Record type OSGymSandboxWarmPoolSpec.
 
-  def read_TypeOSGymSandboxWarmPoolSpec
+  def readTypeOsGymSandboxWarmPoolSpec
     OsGymSandboxWarmPoolSpec.new(
-      replicas: read_u32,
-      sandbox_template_ref: read_TypeSandboxTemplateRef,
-      autoscaling: read_OptionalTypeWarmPoolAutoscaling
+      replicas: readU32,
+      sandbox_template_ref: readTypeSandboxTemplateRef,
+      autoscaling: readOptionalTypeWarmPoolAutoscaling
     )
   end
 
   # The Record type OSGymSandboxWarmPoolStatus.
 
-  def read_TypeOSGymSandboxWarmPoolStatus
+  def readTypeOsGymSandboxWarmPoolStatus
     OsGymSandboxWarmPoolStatus.new(
-      replicas: read_Optionalu32,
-      ready_replicas: read_Optionalu32,
-      selector: read_Optionalstring
+      replicas: readOptionalu32,
+      ready_replicas: readOptionalu32,
+      selector: readOptionalstring
     )
   end
 
   # The Record type OSGymWorkspacePoolStatus.
 
-  def read_TypeOSGymWorkspacePoolStatus
+  def readTypeOsGymWorkspacePoolStatus
     OsGymWorkspacePoolStatus.new(
-      phase: read_Optionalstring,
-      total_count: read_Optionalu32,
-      available_count: read_Optionalu32,
-      claimed_count: read_Optionalu32
+      phase: readOptionalstring,
+      total_count: readOptionalu32,
+      available_count: readOptionalu32,
+      claimed_count: readOptionalu32
     )
   end
 
   # The Record type OidcConfig.
 
-  def read_TypeOidcConfig
+  def readTypeOidcConfig
     OidcConfig.new(
-      credentials_secret: read_string,
-      token_url: read_string,
-      aws_role_arn: read_Optionalstring,
-      aws_region: read_Optionalstring,
-      refresh_interval_seconds: read_Optionalu32
+      credentials_secret: readString,
+      token_url: readString,
+      aws_role_arn: readOptionalstring,
+      aws_region: readOptionalstring,
+      refresh_interval_seconds: readOptionalu32
     )
   end
 
   # The Record type PoolSpec.
 
-  def read_TypePoolSpec
+  def readTypePoolSpec
     PoolSpec.new(
-      replicas: read_u32,
-      template: read_TypePoolTemplate,
-      autoscaling: read_OptionalTypeWarmPoolAutoscaling,
-      services: read_OptionalSequenceTypeSandboxService
+      replicas: readU32,
+      template: readTypePoolTemplate,
+      autoscaling: readOptionalTypeWarmPoolAutoscaling,
+      services: readOptionalSequenceTypeSandboxService
     )
   end
 
   # The Record type PoolTemplate.
 
-  def read_TypePoolTemplate
+  def readTypePoolTemplate
     PoolTemplate.new(
-      runtime: read_OptionalTypeRuntimeKind,
-      runtime_class_name: read_Optionalstring,
-      node_selector: read_OptionalMapStringString,
-      tolerations: read_OptionalSequenceTypePreservedJson,
-      command: read_OptionalSequencestring,
-      container_disk_image: read_string,
-      image_pull_secret: read_Optionalstring,
-      cpu_cores: read_Optionalu32,
-      memory: read_Optionalstring,
-      firmware: read_OptionalTypeFirmware,
-      probes: read_OptionalTypePreservedJson,
-      oidc: read_OptionalTypeOidcConfig
+      runtime: readOptionalTypeRuntimeKind,
+      runtime_class_name: readOptionalstring,
+      node_selector: readOptionalMapStringString,
+      tolerations: readOptionalSequenceTypePreservedJson,
+      command: readOptionalSequencestring,
+      container_disk_image: readString,
+      image_pull_secret: readOptionalstring,
+      cpu_cores: readOptionalu32,
+      memory: readOptionalstring,
+      firmware: readOptionalTypeFirmware,
+      probes: readOptionalTypePreservedJson,
+      oidc: readOptionalTypeOidcConfig
     )
   end
 
   # The Record type SandboxService.
 
-  def read_TypeSandboxService
+  def readTypeSandboxService
     SandboxService.new(
-      name: read_string,
-      target_port: read_u16,
-      protocol: read_OptionalTypeServiceProtocol
+      name: readString,
+      target_port: readU16,
+      protocol: readOptionalTypeServiceProtocol
     )
   end
 
   # The Record type SandboxTemplateRef.
 
-  def read_TypeSandboxTemplateRef
+  def readTypeSandboxTemplateRef
     SandboxTemplateRef.new(
-      name: read_string
+      name: readString
     )
   end
 
   # The Record type VmTemplate.
 
-  def read_TypeVmTemplate
+  def readTypeVmTemplate
     VmTemplate.new(
-      container_disk_image: read_string,
-      command: read_OptionalSequencestring,
-      runtime: read_OptionalTypeRuntimeKind,
-      runtime_class_name: read_Optionalstring,
-      node_selector: read_OptionalMapStringString,
-      tolerations: read_OptionalSequenceTypePreservedJson,
-      image_pull_policy: read_OptionalTypeImagePullPolicy,
-      image_pull_secret: read_Optionalstring,
-      cpu_cores: read_Optionalu32,
-      memory: read_Optionalstring,
-      firmware: read_OptionalTypeFirmware,
-      probes: read_OptionalTypePreservedJson,
-      services: read_OptionalSequenceTypeSandboxService,
-      oidc: read_OptionalTypeOidcConfig
+      container_disk_image: readString,
+      command: readOptionalSequencestring,
+      runtime: readOptionalTypeRuntimeKind,
+      runtime_class_name: readOptionalstring,
+      node_selector: readOptionalMapStringString,
+      tolerations: readOptionalSequenceTypePreservedJson,
+      image_pull_policy: readOptionalTypeImagePullPolicy,
+      image_pull_secret: readOptionalstring,
+      cpu_cores: readOptionalu32,
+      memory: readOptionalstring,
+      firmware: readOptionalTypeFirmware,
+      probes: readOptionalTypePreservedJson,
+      services: readOptionalSequenceTypeSandboxService,
+      oidc: readOptionalTypeOidcConfig
     )
   end
 
   # The Record type WarmPoolAutoscaling.
 
-  def read_TypeWarmPoolAutoscaling
+  def readTypeWarmPoolAutoscaling
     WarmPoolAutoscaling.new(
-      min_pool_size: read_Optionalu32,
-      initial_pool_size: read_Optionalu32,
-      max_pool_size: read_Optionalu32
+      min_pool_size: readOptionalu32,
+      initial_pool_size: readOptionalu32,
+      max_pool_size: readOptionalu32
     )
   end
 
@@ -1402,7 +1344,7 @@ class RustBufferStream
 
   # The Enum type Firmware.
 
-  def read_TypeFirmware
+  def readTypeFirmware
     variant = unpack_from 4, 'l>'
 
     if variant == 1
@@ -1421,7 +1363,7 @@ class RustBufferStream
 
   # The Enum type ImagePullPolicy.
 
-  def read_TypeImagePullPolicy
+  def readTypeImagePullPolicy
     variant = unpack_from 4, 'l>'
 
     if variant == 1
@@ -1445,12 +1387,12 @@ class RustBufferStream
 
   # The Error type JsonValueError
 
-  def read_TypeJsonValueError
+  def readTypeJsonValueError
     variant = unpack_from 4, 'l>'
 
     if variant == 1
         return JsonValueError::Invalid.new(
-            reason: read_string()
+            readString()
         )
     end
 
@@ -1462,7 +1404,7 @@ class RustBufferStream
 
   # The Enum type RuntimeKind.
 
-  def read_TypeRuntimeKind
+  def readTypeRuntimeKind
     variant = unpack_from 4, 'l>'
 
     if variant == 1
@@ -1484,7 +1426,7 @@ class RustBufferStream
 
   # The Enum type ServiceProtocol.
 
-  def read_TypeServiceProtocol
+  def readTypeServiceProtocol
     variant = unpack_from 4, 'l>'
 
     if variant == 1
@@ -1499,256 +1441,239 @@ class RustBufferStream
 
 
 
-
   # The Optional<T> type for u32.
 
-  def read_Optionalu32
+  def readOptionalu32
     flag = unpack_from 1, 'c'
 
     if flag == 0
       return nil
     elsif flag == 1
-      return read_u32
+      return readU32
     else
       raise InternalError, 'Unexpected flag byte for Optionalu32'
     end
   end
 
-
   # The Optional<T> type for bool.
 
-  def read_Optionalbool
+  def readOptionalbool
     flag = unpack_from 1, 'c'
 
     if flag == 0
       return nil
     elsif flag == 1
-      return read_bool
+      return readBool
     else
       raise InternalError, 'Unexpected flag byte for Optionalbool'
     end
   end
 
-
   # The Optional<T> type for string.
 
-  def read_Optionalstring
+  def readOptionalstring
     flag = unpack_from 1, 'c'
 
     if flag == 0
       return nil
     elsif flag == 1
-      return read_string
+      return readString
     else
       raise InternalError, 'Unexpected flag byte for Optionalstring'
     end
   end
 
-
   # The Optional<T> type for TypePreservedJson.
 
-  def read_OptionalTypePreservedJson
+  def readOptionalTypePreservedJson
     flag = unpack_from 1, 'c'
 
     if flag == 0
       return nil
     elsif flag == 1
-      return read_TypePreservedJson
+      return readTypePreservedJson
     else
       raise InternalError, 'Unexpected flag byte for OptionalTypePreservedJson'
     end
   end
 
-
   # The Optional<T> type for TypeClaimLifecycle.
 
-  def read_OptionalTypeClaimLifecycle
+  def readOptionalTypeClaimLifecycle
     flag = unpack_from 1, 'c'
 
     if flag == 0
       return nil
     elsif flag == 1
-      return read_TypeClaimLifecycle
+      return readTypeClaimLifecycle
     else
       raise InternalError, 'Unexpected flag byte for OptionalTypeClaimLifecycle'
     end
   end
 
-
   # The Optional<T> type for TypeOSGymSandboxClaimSandbox.
 
-  def read_OptionalTypeOSGymSandboxClaimSandbox
+  def readOptionalTypeOsGymSandboxClaimSandbox
     flag = unpack_from 1, 'c'
 
     if flag == 0
       return nil
     elsif flag == 1
-      return read_TypeOSGymSandboxClaimSandbox
+      return readTypeOsGymSandboxClaimSandbox
     else
-      raise InternalError, 'Unexpected flag byte for OptionalTypeOSGymSandboxClaimSandbox'
+      raise InternalError, 'Unexpected flag byte for OptionalTypeOsGymSandboxClaimSandbox'
     end
   end
 
-
   # The Optional<T> type for TypeOidcConfig.
 
-  def read_OptionalTypeOidcConfig
+  def readOptionalTypeOidcConfig
     flag = unpack_from 1, 'c'
 
     if flag == 0
       return nil
     elsif flag == 1
-      return read_TypeOidcConfig
+      return readTypeOidcConfig
     else
       raise InternalError, 'Unexpected flag byte for OptionalTypeOidcConfig'
     end
   end
 
-
   # The Optional<T> type for TypeWarmPoolAutoscaling.
 
-  def read_OptionalTypeWarmPoolAutoscaling
+  def readOptionalTypeWarmPoolAutoscaling
     flag = unpack_from 1, 'c'
 
     if flag == 0
       return nil
     elsif flag == 1
-      return read_TypeWarmPoolAutoscaling
+      return readTypeWarmPoolAutoscaling
     else
       raise InternalError, 'Unexpected flag byte for OptionalTypeWarmPoolAutoscaling'
     end
   end
 
-
   # The Optional<T> type for TypeFirmware.
 
-  def read_OptionalTypeFirmware
+  def readOptionalTypeFirmware
     flag = unpack_from 1, 'c'
 
     if flag == 0
       return nil
     elsif flag == 1
-      return read_TypeFirmware
+      return readTypeFirmware
     else
       raise InternalError, 'Unexpected flag byte for OptionalTypeFirmware'
     end
   end
 
-
   # The Optional<T> type for TypeImagePullPolicy.
 
-  def read_OptionalTypeImagePullPolicy
+  def readOptionalTypeImagePullPolicy
     flag = unpack_from 1, 'c'
 
     if flag == 0
       return nil
     elsif flag == 1
-      return read_TypeImagePullPolicy
+      return readTypeImagePullPolicy
     else
       raise InternalError, 'Unexpected flag byte for OptionalTypeImagePullPolicy'
     end
   end
 
-
   # The Optional<T> type for TypeRuntimeKind.
 
-  def read_OptionalTypeRuntimeKind
+  def readOptionalTypeRuntimeKind
     flag = unpack_from 1, 'c'
 
     if flag == 0
       return nil
     elsif flag == 1
-      return read_TypeRuntimeKind
+      return readTypeRuntimeKind
     else
       raise InternalError, 'Unexpected flag byte for OptionalTypeRuntimeKind'
     end
   end
 
-
   # The Optional<T> type for TypeServiceProtocol.
 
-  def read_OptionalTypeServiceProtocol
+  def readOptionalTypeServiceProtocol
     flag = unpack_from 1, 'c'
 
     if flag == 0
       return nil
     elsif flag == 1
-      return read_TypeServiceProtocol
+      return readTypeServiceProtocol
     else
       raise InternalError, 'Unexpected flag byte for OptionalTypeServiceProtocol'
     end
   end
 
-
   # The Optional<T> type for Sequencestring.
 
-  def read_OptionalSequencestring
+  def readOptionalSequencestring
     flag = unpack_from 1, 'c'
 
     if flag == 0
       return nil
     elsif flag == 1
-      return read_Sequencestring
+      return readSequencestring
     else
       raise InternalError, 'Unexpected flag byte for OptionalSequencestring'
     end
   end
 
-
   # The Optional<T> type for SequenceTypePreservedJson.
 
-  def read_OptionalSequenceTypePreservedJson
+  def readOptionalSequenceTypePreservedJson
     flag = unpack_from 1, 'c'
 
     if flag == 0
       return nil
     elsif flag == 1
-      return read_SequenceTypePreservedJson
+      return readSequenceTypePreservedJson
     else
       raise InternalError, 'Unexpected flag byte for OptionalSequenceTypePreservedJson'
     end
   end
 
-
   # The Optional<T> type for SequenceTypeOSGymSandboxClaimCondition.
 
-  def read_OptionalSequenceTypeOSGymSandboxClaimCondition
+  def readOptionalSequenceTypeOsGymSandboxClaimCondition
     flag = unpack_from 1, 'c'
 
     if flag == 0
       return nil
     elsif flag == 1
-      return read_SequenceTypeOSGymSandboxClaimCondition
+      return readSequenceTypeOsGymSandboxClaimCondition
     else
-      raise InternalError, 'Unexpected flag byte for OptionalSequenceTypeOSGymSandboxClaimCondition'
+      raise InternalError, 'Unexpected flag byte for OptionalSequenceTypeOsGymSandboxClaimCondition'
     end
   end
 
-
   # The Optional<T> type for SequenceTypeSandboxService.
 
-  def read_OptionalSequenceTypeSandboxService
+  def readOptionalSequenceTypeSandboxService
     flag = unpack_from 1, 'c'
 
     if flag == 0
       return nil
     elsif flag == 1
-      return read_SequenceTypeSandboxService
+      return readSequenceTypeSandboxService
     else
       raise InternalError, 'Unexpected flag byte for OptionalSequenceTypeSandboxService'
     end
   end
 
-
   # The Optional<T> type for MapStringString.
 
-  def read_OptionalMapStringString
+  def readOptionalMapStringString
     flag = unpack_from 1, 'c'
 
     if flag == 0
       return nil
     elsif flag == 1
-      return read_MapStringString
+      return readMapStringString
     else
       raise InternalError, 'Unexpected flag byte for OptionalMapStringString'
     end
@@ -1756,7 +1681,7 @@ class RustBufferStream
 
   # The Sequence<T> type for string.
 
-  def read_Sequencestring
+  def readSequencestring
     count = unpack_from 4, 'l>'
 
     raise InternalError, 'Unexpected negative sequence length' if count.negative?
@@ -1764,7 +1689,7 @@ class RustBufferStream
     items = []
 
     count.times do
-      items.append read_string
+      items.append readString
     end
 
     items
@@ -1772,7 +1697,7 @@ class RustBufferStream
 
   # The Sequence<T> type for TypePreservedJson.
 
-  def read_SequenceTypePreservedJson
+  def readSequenceTypePreservedJson
     count = unpack_from 4, 'l>'
 
     raise InternalError, 'Unexpected negative sequence length' if count.negative?
@@ -1780,7 +1705,7 @@ class RustBufferStream
     items = []
 
     count.times do
-      items.append read_TypePreservedJson
+      items.append readTypePreservedJson
     end
 
     items
@@ -1788,7 +1713,7 @@ class RustBufferStream
 
   # The Sequence<T> type for TypeOSGymSandboxClaimCondition.
 
-  def read_SequenceTypeOSGymSandboxClaimCondition
+  def readSequenceTypeOsGymSandboxClaimCondition
     count = unpack_from 4, 'l>'
 
     raise InternalError, 'Unexpected negative sequence length' if count.negative?
@@ -1796,7 +1721,7 @@ class RustBufferStream
     items = []
 
     count.times do
-      items.append read_TypeOSGymSandboxClaimCondition
+      items.append readTypeOsGymSandboxClaimCondition
     end
 
     items
@@ -1804,7 +1729,7 @@ class RustBufferStream
 
   # The Sequence<T> type for TypeSandboxService.
 
-  def read_SequenceTypeSandboxService
+  def readSequenceTypeSandboxService
     count = unpack_from 4, 'l>'
 
     raise InternalError, 'Unexpected negative sequence length' if count.negative?
@@ -1812,28 +1737,26 @@ class RustBufferStream
     items = []
 
     count.times do
-      items.append read_TypeSandboxService
+      items.append readTypeSandboxService
     end
 
     items
   end
 
-  # The Map<T> type for MapStringString.
+  # The Map<T> type for string.
 
-  def read_MapStringString
+  def readMapStringString
     count = unpack_from 4, 'l>'
     raise InternalError, 'Unexpected negative map size' if count.negative?
 
     items = {}
     count.times do
-      key = read_string
-      items[key] = read_string
+      key = readString
+      items[key] = readString
     end
 
     items
   end
-
-
 
   def unpack_from(size, format)
     raise InternalError, 'read past end of rust buffer' if @offset + size > @rbuf.len
@@ -1879,27 +1802,27 @@ class RustBufferBuilder
     end
   end
 
-  def write_u16(v)
-    v = ::CyclopsSdkSchema::uniffi_in_range(v, "u16", 0, 2**16)
+  def write_U16(v)
+    v = CyclopsSdkSchema::uniffi_in_range(v, "u16", 0, 2**16)
     pack_into(2, 'S>', v)
   end
 
-  def write_u32(v)
-    v = ::CyclopsSdkSchema::uniffi_in_range(v, "u32", 0, 2**32)
+  def write_U32(v)
+    v = CyclopsSdkSchema::uniffi_in_range(v, "u32", 0, 2**32)
     pack_into(4, 'L>', v)
   end
 
-  def write_u64(v)
-    v = ::CyclopsSdkSchema::uniffi_in_range(v, "u64", 0, 2**64)
+  def write_U64(v)
+    v = CyclopsSdkSchema::uniffi_in_range(v, "u64", 0, 2**64)
     pack_into(8, 'Q>', v)
   end
 
-  def write_bool(v)
+  def write_Bool(v)
     pack_into(1, 'c', v ? 1 : 0)
   end
 
-  def write_string(v)
-    v = ::CyclopsSdkSchema::uniffi_utf8(v)
+  def write_String(v)
+    v = CyclopsSdkSchema::uniffi_utf8(v)
     pack_into 4, 'l>', v.bytes.size
     write v
   end
@@ -1930,7 +1853,7 @@ class RustBufferBuilder
 
   # The Record type OSGymSandboxClaimCondition.
 
-  def write_TypeOSGymSandboxClaimCondition(v)
+  def write_TypeOsGymSandboxClaimCondition(v)
     self.write_Optionalstring(v.type)
     self.write_Optionalstring(v.status)
     self.write_Optionalstring(v.reason)
@@ -1940,28 +1863,28 @@ class RustBufferBuilder
 
   # The Record type OSGymSandboxClaimSandbox.
 
-  def write_TypeOSGymSandboxClaimSandbox(v)
+  def write_TypeOsGymSandboxClaimSandbox(v)
     self.write_Optionalstring(v.name)
     self.write_Optionalstring(v.service)
   end
 
   # The Record type OSGymSandboxClaimStatus.
 
-  def write_TypeOSGymSandboxClaimStatus(v)
+  def write_TypeOsGymSandboxClaimStatus(v)
     self.write_Optionalstring(v.phase)
-    self.write_OptionalSequenceTypeOSGymSandboxClaimCondition(v.conditions)
-    self.write_OptionalTypeOSGymSandboxClaimSandbox(v.sandbox)
+    self.write_OptionalSequenceTypeOsGymSandboxClaimCondition(v.conditions)
+    self.write_OptionalTypeOsGymSandboxClaimSandbox(v.sandbox)
   end
 
   # The Record type OSGymSandboxSpec.
 
-  def write_TypeOSGymSandboxSpec(v)
+  def write_TypeOsGymSandboxSpec(v)
     self.write_TypeVmTemplate(v.vm_template)
   end
 
   # The Record type OSGymSandboxStatus.
 
-  def write_TypeOSGymSandboxStatus(v)
+  def write_TypeOsGymSandboxStatus(v)
     self.write_Optionalstring(v.phase)
     self.write_Optionalstring(v.runtime)
     self.write_Optionalbool(v.ready)
@@ -1974,21 +1897,21 @@ class RustBufferBuilder
 
   # The Record type OSGymSandboxTemplateSpec.
 
-  def write_TypeOSGymSandboxTemplateSpec(v)
+  def write_TypeOsGymSandboxTemplateSpec(v)
     self.write_TypeVmTemplate(v.vm_template)
   end
 
   # The Record type OSGymSandboxWarmPoolSpec.
 
-  def write_TypeOSGymSandboxWarmPoolSpec(v)
-    self.write_u32(v.replicas)
+  def write_TypeOsGymSandboxWarmPoolSpec(v)
+    self.write_U32(v.replicas)
     self.write_TypeSandboxTemplateRef(v.sandbox_template_ref)
     self.write_OptionalTypeWarmPoolAutoscaling(v.autoscaling)
   end
 
   # The Record type OSGymSandboxWarmPoolStatus.
 
-  def write_TypeOSGymSandboxWarmPoolStatus(v)
+  def write_TypeOsGymSandboxWarmPoolStatus(v)
     self.write_Optionalu32(v.replicas)
     self.write_Optionalu32(v.ready_replicas)
     self.write_Optionalstring(v.selector)
@@ -1996,7 +1919,7 @@ class RustBufferBuilder
 
   # The Record type OSGymWorkspacePoolStatus.
 
-  def write_TypeOSGymWorkspacePoolStatus(v)
+  def write_TypeOsGymWorkspacePoolStatus(v)
     self.write_Optionalstring(v.phase)
     self.write_Optionalu32(v.total_count)
     self.write_Optionalu32(v.available_count)
@@ -2006,8 +1929,8 @@ class RustBufferBuilder
   # The Record type OidcConfig.
 
   def write_TypeOidcConfig(v)
-    self.write_string(v.credentials_secret)
-    self.write_string(v.token_url)
+    self.write_String(v.credentials_secret)
+    self.write_String(v.token_url)
     self.write_Optionalstring(v.aws_role_arn)
     self.write_Optionalstring(v.aws_region)
     self.write_Optionalu32(v.refresh_interval_seconds)
@@ -2016,7 +1939,7 @@ class RustBufferBuilder
   # The Record type PoolSpec.
 
   def write_TypePoolSpec(v)
-    self.write_u32(v.replicas)
+    self.write_U32(v.replicas)
     self.write_TypePoolTemplate(v.template)
     self.write_OptionalTypeWarmPoolAutoscaling(v.autoscaling)
     self.write_OptionalSequenceTypeSandboxService(v.services)
@@ -2030,7 +1953,7 @@ class RustBufferBuilder
     self.write_OptionalMapStringString(v.node_selector)
     self.write_OptionalSequenceTypePreservedJson(v.tolerations)
     self.write_OptionalSequencestring(v.command)
-    self.write_string(v.container_disk_image)
+    self.write_String(v.container_disk_image)
     self.write_Optionalstring(v.image_pull_secret)
     self.write_Optionalu32(v.cpu_cores)
     self.write_Optionalstring(v.memory)
@@ -2042,21 +1965,21 @@ class RustBufferBuilder
   # The Record type SandboxService.
 
   def write_TypeSandboxService(v)
-    self.write_string(v.name)
-    self.write_u16(v.target_port)
+    self.write_String(v.name)
+    self.write_U16(v.target_port)
     self.write_OptionalTypeServiceProtocol(v.protocol)
   end
 
   # The Record type SandboxTemplateRef.
 
   def write_TypeSandboxTemplateRef(v)
-    self.write_string(v.name)
+    self.write_String(v.name)
   end
 
   # The Record type VmTemplate.
 
   def write_TypeVmTemplate(v)
-    self.write_string(v.container_disk_image)
+    self.write_String(v.container_disk_image)
     self.write_OptionalSequencestring(v.command)
     self.write_OptionalTypeRuntimeKind(v.runtime)
     self.write_Optionalstring(v.runtime_class_name)
@@ -2083,65 +2006,30 @@ class RustBufferBuilder
   # The Enum type Firmware.
 
   def write_TypeFirmware(v)
-    if v == Firmware::BIOS
-      pack_into(4, 'l>', 1)
-    end
-    if v == Firmware::EFI
-      pack_into(4, 'l>', 2)
-    end
+    pack_into(4, 'l>', v)
  end
 
 
   # The Enum type ImagePullPolicy.
 
   def write_TypeImagePullPolicy(v)
-    if v == ImagePullPolicy::ALWAYS
-      pack_into(4, 'l>', 1)
-    end
-    if v == ImagePullPolicy::IF_NOT_PRESENT
-      pack_into(4, 'l>', 2)
-    end
-    if v == ImagePullPolicy::NEVER
-      pack_into(4, 'l>', 3)
-    end
+    pack_into(4, 'l>', v)
  end
 
 
-  # The Error type JsonValueError - write for callback error returns.
-
-  def write_TypeJsonValueError(v)
-    if v.is_a?(JsonValueError::Invalid)
-      pack_into 4, 'l>', 1
-        self.write_string(v.reason)
-      return
-    end
-  end
 
 
   # The Enum type RuntimeKind.
 
   def write_TypeRuntimeKind(v)
-    if v == RuntimeKind::KUBEVIRT
-      pack_into(4, 'l>', 1)
-    end
-    if v == RuntimeKind::MACOS
-      pack_into(4, 'l>', 2)
-    end
-    if v == RuntimeKind::GVISOR
-      pack_into(4, 'l>', 3)
-    end
+    pack_into(4, 'l>', v)
  end
 
 
   # The Enum type ServiceProtocol.
 
   def write_TypeServiceProtocol(v)
-    if v == ServiceProtocol::TCP
-      pack_into(4, 'l>', 1)
-    end
-    if v == ServiceProtocol::UDP
-      pack_into(4, 'l>', 2)
-    end
+    pack_into(4, 'l>', v)
  end
 
 
@@ -2152,7 +2040,7 @@ class RustBufferBuilder
       pack_into(1, 'c', 0)
     else
       pack_into(1, 'c', 1)
-      self.write_u32(v)
+      self.write_U32(v)
     end
   end
 
@@ -2163,7 +2051,7 @@ class RustBufferBuilder
       pack_into(1, 'c', 0)
     else
       pack_into(1, 'c', 1)
-      self.write_bool(v)
+      self.write_Bool(v)
     end
   end
 
@@ -2174,7 +2062,7 @@ class RustBufferBuilder
       pack_into(1, 'c', 0)
     else
       pack_into(1, 'c', 1)
-      self.write_string(v)
+      self.write_String(v)
     end
   end
 
@@ -2202,12 +2090,12 @@ class RustBufferBuilder
 
   # The Optional<T> type for TypeOSGymSandboxClaimSandbox.
 
-  def write_OptionalTypeOSGymSandboxClaimSandbox(v)
+  def write_OptionalTypeOsGymSandboxClaimSandbox(v)
     if v.nil?
       pack_into(1, 'c', 0)
     else
       pack_into(1, 'c', 1)
-      self.write_TypeOSGymSandboxClaimSandbox(v)
+      self.write_TypeOsGymSandboxClaimSandbox(v)
     end
   end
 
@@ -2301,12 +2189,12 @@ class RustBufferBuilder
 
   # The Optional<T> type for SequenceTypeOSGymSandboxClaimCondition.
 
-  def write_OptionalSequenceTypeOSGymSandboxClaimCondition(v)
+  def write_OptionalSequenceTypeOsGymSandboxClaimCondition(v)
     if v.nil?
       pack_into(1, 'c', 0)
     else
       pack_into(1, 'c', 1)
-      self.write_SequenceTypeOSGymSandboxClaimCondition(v)
+      self.write_SequenceTypeOsGymSandboxClaimCondition(v)
     end
   end
 
@@ -2338,7 +2226,7 @@ class RustBufferBuilder
     pack_into(4, 'l>', items.size)
 
     items.each do |item|
-      self.write_string(item)
+      self.write_String(item)
     end
   end
 
@@ -2354,11 +2242,11 @@ class RustBufferBuilder
 
   # The Sequence<T> type for TypeOSGymSandboxClaimCondition.
 
-  def write_SequenceTypeOSGymSandboxClaimCondition(items)
+  def write_SequenceTypeOsGymSandboxClaimCondition(items)
     pack_into(4, 'l>', items.size)
 
     items.each do |item|
-      self.write_TypeOSGymSandboxClaimCondition(item)
+      self.write_TypeOsGymSandboxClaimCondition(item)
     end
   end
 
@@ -2372,18 +2260,16 @@ class RustBufferBuilder
     end
   end
 
-  # The Map<T> type for MapStringString.
+  # The Map<T> type for string.
 
   def write_MapStringString(items)
     pack_into(4, 'l>', items.size)
 
     items.each do |k, v|
-      self.write_string(k)
-      self.write_string(v)
+      write_String(k)
+      self.write_String(v)
     end
   end
-
-
 
   private
 
@@ -2436,20 +2322,16 @@ CALL_PANIC = 2
 
 module JsonValueError
   class Invalid < StandardError
-    def initialize(reason:)
-
+    def initialize(reason)
         @reason = reason
-
         super()
-    end
-
+      end
 
     attr_reader :reason
 
 
     def to_s
-        "#{self.class.name}(reason=#{@reason.inspect})"
-
+     "#{self.class.name}(reason=#{@reason.inspect})"
     end
   end
 
@@ -2458,7 +2340,13 @@ end
 
 # Map error modules to the RustBuffer method name that reads them
 ERROR_MODULE_TO_READER_METHOD = {
-JsonValueError => :read_TypeJsonValueError,
+
+
+
+
+
+  JsonValueError => :readTypeJsonValueError,
+
 }
 
 private_constant :ERROR_MODULE_TO_READER_METHOD, :CALL_SUCCESS, :CALL_ERROR, :CALL_PANIC,
@@ -2466,8 +2354,7 @@ private_constant :ERROR_MODULE_TO_READER_METHOD, :CALL_SUCCESS, :CALL_ERROR, :CA
 
 def self.consume_buffer_into_error(error_module, rust_buffer)
   rust_buffer.consumeWithStream do |stream|
-    reader_method = ERROR_MODULE_TO_READER_METHOD[error_module] ||
-                    ERROR_MODULE_TO_READER_METHOD[error_module.name&.split('::')&.last]
+    reader_method = ERROR_MODULE_TO_READER_METHOD[error_module]
     return stream.send(reader_method)
   end
 end
@@ -2509,7 +2396,7 @@ def self.rust_call_with_error(error_module, fn_name, *args)
     # with the message.  But if that code panics, then it just sends back
     # an empty buffer.
     if status.error_buf.len > 0
-      raise InternalError, status.error_buf.consume_into_string
+      raise InternalError, status.error_buf.consumeIntoString()
     else
       raise InternalError, "Rust panic"
     end
@@ -2529,413 +2416,50 @@ module UniFFILib
   ffi_lib 'cyclops_sdk'
 
 
-  # Define FFI callback types and structs (vtables, etc.)
-
-  callback :RustFutureContinuationCallback,
-    [:uint64, :int8, ],
-    :void
-
-  callback :ForeignFutureDroppedCallback,
-    [:uint64, ],
-    :void
-
-  callback :CallbackInterfaceFree,
-    [:uint64, ],
-    :void
-
-  callback :CallbackInterfaceClone,
-    [:uint64, ],
-    :uint64
-
-  class ForeignFutureDroppedCallbackStruct < FFI::Struct
-    layout(
-      :handle, :uint64,
-      :free, :ForeignFutureDroppedCallback
-    )
-  end
-
-  class ForeignFutureResultU8 < FFI::Struct
-    layout(
-      :return_value, :uint8,
-      :call_status, RustCallStatus
-    )
-  end
-
-  callback :ForeignFutureCompleteU8,
-    [:uint64, ForeignFutureResultU8.by_value, ],
-    :void
-
-  class ForeignFutureResultI8 < FFI::Struct
-    layout(
-      :return_value, :int8,
-      :call_status, RustCallStatus
-    )
-  end
-
-  callback :ForeignFutureCompleteI8,
-    [:uint64, ForeignFutureResultI8.by_value, ],
-    :void
-
-  class ForeignFutureResultU16 < FFI::Struct
-    layout(
-      :return_value, :uint16,
-      :call_status, RustCallStatus
-    )
-  end
-
-  callback :ForeignFutureCompleteU16,
-    [:uint64, ForeignFutureResultU16.by_value, ],
-    :void
-
-  class ForeignFutureResultI16 < FFI::Struct
-    layout(
-      :return_value, :int16,
-      :call_status, RustCallStatus
-    )
-  end
-
-  callback :ForeignFutureCompleteI16,
-    [:uint64, ForeignFutureResultI16.by_value, ],
-    :void
-
-  class ForeignFutureResultU32 < FFI::Struct
-    layout(
-      :return_value, :uint32,
-      :call_status, RustCallStatus
-    )
-  end
-
-  callback :ForeignFutureCompleteU32,
-    [:uint64, ForeignFutureResultU32.by_value, ],
-    :void
-
-  class ForeignFutureResultI32 < FFI::Struct
-    layout(
-      :return_value, :int32,
-      :call_status, RustCallStatus
-    )
-  end
-
-  callback :ForeignFutureCompleteI32,
-    [:uint64, ForeignFutureResultI32.by_value, ],
-    :void
-
-  class ForeignFutureResultU64 < FFI::Struct
-    layout(
-      :return_value, :uint64,
-      :call_status, RustCallStatus
-    )
-  end
-
-  callback :ForeignFutureCompleteU64,
-    [:uint64, ForeignFutureResultU64.by_value, ],
-    :void
-
-  class ForeignFutureResultI64 < FFI::Struct
-    layout(
-      :return_value, :int64,
-      :call_status, RustCallStatus
-    )
-  end
-
-  callback :ForeignFutureCompleteI64,
-    [:uint64, ForeignFutureResultI64.by_value, ],
-    :void
-
-  class ForeignFutureResultF32 < FFI::Struct
-    layout(
-      :return_value, :float,
-      :call_status, RustCallStatus
-    )
-  end
-
-  callback :ForeignFutureCompleteF32,
-    [:uint64, ForeignFutureResultF32.by_value, ],
-    :void
-
-  class ForeignFutureResultF64 < FFI::Struct
-    layout(
-      :return_value, :double,
-      :call_status, RustCallStatus
-    )
-  end
-
-  callback :ForeignFutureCompleteF64,
-    [:uint64, ForeignFutureResultF64.by_value, ],
-    :void
-
-  class ForeignFutureResultRustBuffer < FFI::Struct
-    layout(
-      :return_value, RustBuffer.by_value,
-      :call_status, RustCallStatus
-    )
-  end
-
-  callback :ForeignFutureCompleteRustBuffer,
-    [:uint64, ForeignFutureResultRustBuffer.by_value, ],
-    :void
-
-  class ForeignFutureResultVoid < FFI::Struct
-    layout(
-      :call_status, RustCallStatus
-    )
-  end
-
-  callback :ForeignFutureCompleteVoid,
-    [:uint64, ForeignFutureResultVoid.by_value, ],
-    :void
-
   attach_function :uniffi_cyclops_sdk_schema_fn_clone_preservedjson,
     [:uint64, RustCallStatus.by_ref],
     :uint64
-
   attach_function :uniffi_cyclops_sdk_schema_fn_free_preservedjson,
     [:uint64, RustCallStatus.by_ref],
     :void
-
   attach_function :uniffi_cyclops_sdk_schema_fn_constructor_preservedjson_from_json,
     [RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
-
   attach_function :uniffi_cyclops_sdk_schema_fn_method_preservedjson_to_json,
     [:uint64, RustCallStatus.by_ref],
     RustBuffer.by_value
-
   attach_function :uniffi_cyclops_sdk_schema_fn_method_poolspec_uniffi_trait_eq_eq,
     [RustBuffer.by_value, RustBuffer.by_value, RustCallStatus.by_ref],
     :int8
-
   attach_function :uniffi_cyclops_sdk_schema_fn_method_poolspec_uniffi_trait_eq_ne,
     [RustBuffer.by_value, RustBuffer.by_value, RustCallStatus.by_ref],
     :int8
-
   attach_function :uniffi_cyclops_sdk_schema_fn_method_poolspec_uniffi_trait_hash,
     [RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
-
   attach_function :ffi_cyclops_sdk_schema_rustbuffer_alloc,
     [:uint64, RustCallStatus.by_ref],
     RustBuffer.by_value
-
   attach_function :ffi_cyclops_sdk_schema_rustbuffer_from_bytes,
     [ForeignBytes, RustCallStatus.by_ref],
     RustBuffer.by_value
-
   attach_function :ffi_cyclops_sdk_schema_rustbuffer_free,
     [RustBuffer.by_value, RustCallStatus.by_ref],
     :void
-
   attach_function :ffi_cyclops_sdk_schema_rustbuffer_reserve,
     [RustBuffer.by_value, :uint64, RustCallStatus.by_ref],
     RustBuffer.by_value
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_poll_u8,
-    [:uint64, :RustFutureContinuationCallback, :uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_cancel_u8,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_free_u8,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_complete_u8,
-    [:uint64, RustCallStatus.by_ref],
-    :uint8
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_poll_i8,
-    [:uint64, :RustFutureContinuationCallback, :uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_cancel_i8,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_free_i8,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_complete_i8,
-    [:uint64, RustCallStatus.by_ref],
-    :int8
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_poll_u16,
-    [:uint64, :RustFutureContinuationCallback, :uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_cancel_u16,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_free_u16,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_complete_u16,
-    [:uint64, RustCallStatus.by_ref],
-    :uint16
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_poll_i16,
-    [:uint64, :RustFutureContinuationCallback, :uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_cancel_i16,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_free_i16,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_complete_i16,
-    [:uint64, RustCallStatus.by_ref],
-    :int16
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_poll_u32,
-    [:uint64, :RustFutureContinuationCallback, :uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_cancel_u32,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_free_u32,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_complete_u32,
-    [:uint64, RustCallStatus.by_ref],
-    :uint32
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_poll_i32,
-    [:uint64, :RustFutureContinuationCallback, :uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_cancel_i32,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_free_i32,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_complete_i32,
-    [:uint64, RustCallStatus.by_ref],
-    :int32
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_poll_u64,
-    [:uint64, :RustFutureContinuationCallback, :uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_cancel_u64,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_free_u64,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_complete_u64,
-    [:uint64, RustCallStatus.by_ref],
-    :uint64
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_poll_i64,
-    [:uint64, :RustFutureContinuationCallback, :uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_cancel_i64,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_free_i64,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_complete_i64,
-    [:uint64, RustCallStatus.by_ref],
-    :int64
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_poll_f32,
-    [:uint64, :RustFutureContinuationCallback, :uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_cancel_f32,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_free_f32,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_complete_f32,
-    [:uint64, RustCallStatus.by_ref],
-    :float
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_poll_f64,
-    [:uint64, :RustFutureContinuationCallback, :uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_cancel_f64,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_free_f64,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_complete_f64,
-    [:uint64, RustCallStatus.by_ref],
-    :double
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_poll_rust_buffer,
-    [:uint64, :RustFutureContinuationCallback, :uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_cancel_rust_buffer,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_free_rust_buffer,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_complete_rust_buffer,
-    [:uint64, RustCallStatus.by_ref],
-    RustBuffer.by_value
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_poll_void,
-    [:uint64, :RustFutureContinuationCallback, :uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_cancel_void,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_free_void,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_schema_rust_future_complete_void,
-    [:uint64, RustCallStatus.by_ref],
-    :void
-
   attach_function :uniffi_cyclops_sdk_schema_checksum_method_preservedjson_to_json,
-    [],
+    [RustCallStatus.by_ref],
     :uint16
-
   attach_function :uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json,
-    [],
+    [RustCallStatus.by_ref],
     :uint16
-
   attach_function :ffi_cyclops_sdk_schema_uniffi_contract_version,
-    [],
+    [RustCallStatus.by_ref],
     :uint32
 
 end
-
-  # Custom type definitions.
 
   # Public interface members begin here.
 
@@ -2944,8 +2468,8 @@ end
 
 
 class Firmware
-  BIOS = 0
-  EFI = 1
+  BIOS = 1
+  EFI = 2
 
 end
 
@@ -2955,9 +2479,9 @@ end
 
 
 class ImagePullPolicy
-  ALWAYS = 0
-  IF_NOT_PRESENT = 1
-  NEVER = 2
+  ALWAYS = 1
+  IF_NOT_PRESENT = 2
+  NEVER = 3
 
 end
 
@@ -2967,9 +2491,9 @@ end
 
 
 class RuntimeKind
-  KUBEVIRT = 0
-  MACOS = 1
-  GVISOR = 2
+  KUBEVIRT = 1
+  MACOS = 2
+  GVISOR = 3
 
 end
 
@@ -2979,8 +2503,8 @@ end
 
 
 class ServiceProtocol
-  TCP = 0
-  UDP = 1
+  TCP = 1
+  UDP = 2
 
 end
 
@@ -3010,7 +2534,6 @@ class ClaimLifecycle
 
     true
   end
-
 end
 
   # Record type ClaimSpec
@@ -3040,7 +2563,6 @@ class ClaimSpec
 
     true
   end
-
 end
 
   # Record type OSGymSandboxClaimCondition
@@ -3074,7 +2596,6 @@ class OsGymSandboxClaimCondition
 
     true
   end
-
 end
 
   # Record type OSGymSandboxClaimSandbox
@@ -3096,7 +2617,6 @@ class OsGymSandboxClaimSandbox
 
     true
   end
-
 end
 
   # Record type OSGymSandboxClaimStatus
@@ -3122,7 +2642,6 @@ class OsGymSandboxClaimStatus
 
     true
   end
-
 end
 
   # Record type OidcConfig
@@ -3156,7 +2675,6 @@ class OidcConfig
 
     true
   end
-
 end
 
   # Record type SandboxService
@@ -3182,7 +2700,6 @@ class SandboxService
 
     true
   end
-
 end
 
   # Record type SandboxTemplateRef
@@ -3200,7 +2717,6 @@ class SandboxTemplateRef
 
     true
   end
-
 end
 
   # Record type VmTemplate
@@ -3270,7 +2786,6 @@ class VmTemplate
 
     true
   end
-
 end
 
   # Record type OSGymSandboxSpec
@@ -3288,7 +2803,6 @@ class OsGymSandboxSpec
 
     true
   end
-
 end
 
   # Record type OSGymSandboxStatus
@@ -3334,7 +2848,6 @@ class OsGymSandboxStatus
 
     true
   end
-
 end
 
   # Record type OSGymSandboxTemplateSpec
@@ -3352,7 +2865,6 @@ class OsGymSandboxTemplateSpec
 
     true
   end
-
 end
 
   # Record type OSGymSandboxWarmPoolSpec
@@ -3378,7 +2890,6 @@ class OsGymSandboxWarmPoolSpec
 
     true
   end
-
 end
 
   # Record type OSGymSandboxWarmPoolStatus
@@ -3404,7 +2915,6 @@ class OsGymSandboxWarmPoolStatus
 
     true
   end
-
 end
 
   # Record type WarmPoolAutoscaling
@@ -3430,7 +2940,6 @@ class WarmPoolAutoscaling
 
     true
   end
-
 end
 
   # Record type OSGymWorkspacePoolStatus
@@ -3460,7 +2969,6 @@ class OsGymWorkspacePoolStatus
 
     true
   end
-
 end
 
   # Record type PoolSpec
@@ -3474,28 +2982,22 @@ class PoolSpec
     @services = services
   end
 
-# The Rust `Eq::eq` implementation.
-def ==(other)
-  return false unless other.is_a?(self.class)
-  result = ::CyclopsSdkSchema.rust_call(
-    :uniffi_cyclops_sdk_schema_fn_method_poolspec_uniffi_trait_eq_eq,
-    RustBuffer.alloc_from_TypePoolSpec(self),
-    RustBuffer.alloc_from_TypePoolSpec(other)
-  )
-  1 == result
-end
-# The Rust `Hash::hash` implementation.
-def hash
-  result = ::CyclopsSdkSchema.rust_call(
-    :uniffi_cyclops_sdk_schema_fn_method_poolspec_uniffi_trait_hash,
-    RustBuffer.alloc_from_TypePoolSpec(self)
-  )
-  result.to_i
-end
+  def ==(other)
+    if @replicas != other.replicas
+      return false
+    end
+    if @template != other.template
+      return false
+    end
+    if @autoscaling != other.autoscaling
+      return false
+    end
+    if @services != other.services
+      return false
+    end
 
-def eql?(other)
-  self == other
-end
+    true
+  end
 end
 
   # Record type PoolTemplate
@@ -3557,7 +3059,6 @@ class PoolTemplate
 
     true
   end
-
 end
 
 
@@ -3580,23 +3081,24 @@ end
   # to the actual instance, only its underlying handle.
   def self.uniffi_define_finalizer_by_handle(handle, object_id)
     Proc.new do |_id|
-      ::CyclopsSdkSchema.rust_call(
+      CyclopsSdkSchema.rust_call(
         :uniffi_cyclops_sdk_schema_fn_free_preservedjson,
         handle
       )
     end
   end
+
   # A private helper for lowering instances into a raw handle.
   # This does an explicit typecheck, because accidentally lowering a different type of
   # object in a place where this type is expected, could lead to memory unsafety.
   def self.uniffi_check_lower(inst)
-    if !inst.is_a? self
+    if not inst.is_a? self
       raise TypeError.new "Expected a PreservedJson instance, got #{inst}"
     end
   end
 
   def uniffi_clone_handle()
-    return ::CyclopsSdkSchema.rust_call(
+    return CyclopsSdkSchema.rust_call(
       :uniffi_cyclops_sdk_schema_fn_clone_preservedjson,
       @handle
     )
@@ -3606,28 +3108,21 @@ end
     return inst.uniffi_clone_handle()
   end
 
-  def self.uniffi_lift(handle)
-    uniffi_allocate handle
-  end
-
-
   def self.from_json(value)
-        value = ::CyclopsSdkSchema::uniffi_utf8(value)
+        value = CyclopsSdkSchema::uniffi_utf8(value)
 
     # Call the (fallible) function before creating any half-baked object instances.
     # Lightly yucky way to bypass the usual "initialize" logic
     # and just create a new instance with the required handle.
-    return uniffi_allocate(::CyclopsSdkSchema.rust_call_with_error(JsonValueError,:uniffi_cyclops_sdk_schema_fn_constructor_preservedjson_from_json,RustBuffer.alloc_from_string(value)))
+    return uniffi_allocate(CyclopsSdkSchema.rust_call_with_error(JsonValueError,:uniffi_cyclops_sdk_schema_fn_constructor_preservedjson_from_json,RustBuffer.allocFromString(value)))
   end
 
 
   def to_json()
-    result = ::CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_preservedjson_to_json,uniffi_clone_handle(),)
-    return result.consume_into_string
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_preservedjson_to_json,uniffi_clone_handle(),)
+    return result.consumeIntoString
   end
 
 end
-
-
 
 end

@@ -1,11 +1,105 @@
-"""Python wrapper for cua-driver - cross-platform MCP server.
+"""Rust-backed SDK and binary wrapper for Cua Driver client applications.
 
-This package provides a thin Python wrapper around the cua-driver Rust binary,
-enabling pip-installable access to the MCP server for computer-use automation.
+Agents should configure the bundled ``cua-driver mcp`` executable directly
+through their runtime's MCP client instead of importing a language MCP facade.
 """
 
-__version__ = "0.10.0"  # x-release-please-version
+__version__ = "0.11.0"  # x-release-please-version
 
-from .wrapper import run_cua_driver, get_binary_path
+from ._native import (
+    CuaDriver,
+    DriverError,
+    DriverMetadata,
+    EmbeddedCuaDriverHost,
+    EmbeddedDriverConnection,
+    EmbeddedDriverError,
+    EmbeddedDriverExit,
+    EmbeddedDriverHostOptions,
+    EmbeddedDriverHostState,
+    EmbeddedEnvironmentVariable,
+    EmbeddedMcpConfiguration,
+    EmbeddedPermissionMode,
+    ImageContent,
+    MacOsPermissionStatus,
+    ToolResult,
+    current_mac_os_permission_status,
+    open_mac_os_screen_recording_settings,
+    request_mac_os_permissions,
+)
+from ._native_contract import (
+    CaptureScope,
+    ClickButton,
+    ClickInput,
+    DesktopScope,
+    DragInput,
+    EndSessionInput,
+    EndSessionOutput,
+    EffectiveScope,
+    EscalateSessionInput,
+    EscalationReason,
+    GetCursorPositionInput,
+    GetDesktopStateInput,
+    GetScreenSizeInput,
+    GetSessionStateInput,
+    HotkeyInput,
+    MoveCursorInput,
+    Platform,
+    PressKeyInput,
+    ScrollBy,
+    ScrollDirection,
+    ScrollInput,
+    SessionStateOutput,
+    StartSessionInput,
+    StartSessionOutput,
+    TypeTextInput,
+)
+from .wrapper import get_binary_path, run_cua_driver
 
-__all__ = ["run_cua_driver", "get_binary_path", "__version__"]
+__all__ = [
+    "CaptureScope",
+    "ClickButton",
+    "ClickInput",
+    "CuaDriver",
+    "DesktopScope",
+    "DragInput",
+    "DriverError",
+    "DriverMetadata",
+    "EmbeddedCuaDriverHost",
+    "EmbeddedDriverConnection",
+    "EmbeddedDriverError",
+    "EmbeddedDriverExit",
+    "EmbeddedDriverHostOptions",
+    "EmbeddedDriverHostState",
+    "EmbeddedEnvironmentVariable",
+    "EmbeddedMcpConfiguration",
+    "EmbeddedPermissionMode",
+    "EffectiveScope",
+    "EndSessionInput",
+    "EndSessionOutput",
+    "EscalateSessionInput",
+    "EscalationReason",
+    "GetCursorPositionInput",
+    "GetDesktopStateInput",
+    "GetScreenSizeInput",
+    "GetSessionStateInput",
+    "HotkeyInput",
+    "ImageContent",
+    "MacOsPermissionStatus",
+    "MoveCursorInput",
+    "Platform",
+    "PressKeyInput",
+    "ScrollBy",
+    "ScrollDirection",
+    "ScrollInput",
+    "SessionStateOutput",
+    "StartSessionInput",
+    "StartSessionOutput",
+    "ToolResult",
+    "TypeTextInput",
+    "__version__",
+    "current_mac_os_permission_status",
+    "get_binary_path",
+    "open_mac_os_screen_recording_settings",
+    "request_mac_os_permissions",
+    "run_cua_driver",
+]

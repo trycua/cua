@@ -56,9 +56,16 @@ If a maintainer adapts material parts of a contribution in a new commit,
 include a `Co-authored-by` trailer with the contributor's GitHub no-reply email
 and link the source pull request in the landing pull request. Use a line such as
 `Salvaged from #123` so release automation can recover the source author.
-Preserve human coauthor trailers during rebases and squash merges. Honor public
-credit opt-out requests and keep security-report attribution private until the
-report can be disclosed.
+Prefer a commit email linked to the contributor's GitHub account, especially a
+GitHub no-reply address. If preserved authorship uses an email GitHub cannot
+resolve, add the verified email-to-login entry to
+`.github/release-attribution-config.json` in the same pull request. The
+contributor-attribution check provides the exact `identityOverrides` JSON when
+one explicitly referenced source pull request proves a unique mapping; it never
+guesses from a name or email. Attribution preservation and resolvability must
+land together. Preserve human coauthor trailers during rebases and squash
+merges. Honor public credit opt-out requests and keep security-report
+attribution private until the report can be disclosed.
 
 Root pre-commit hooks are optional local helpers. Install them with:
 

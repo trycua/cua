@@ -482,10 +482,9 @@ fn fetch_tools_list_from_daemon(
         .unwrap_or_else(|| {
             serde_json::Value::String(cua_driver_core::tool::CAPABILITY_VERSION.to_owned())
         });
-    let schema_version = result
-        .get("schema_version")
-        .cloned()
-        .unwrap_or_else(|| serde_json::Value::String("1".to_owned()));
+    let schema_version = result.get("schema_version").cloned().unwrap_or_else(|| {
+        serde_json::Value::String(cua_driver_core::tool::TOOLS_LIST_SCHEMA_VERSION.to_owned())
+    });
 
     let daemon_observes_tool_calls = daemon_owns_tool_observation(&result);
 

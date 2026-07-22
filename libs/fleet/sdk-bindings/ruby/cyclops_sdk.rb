@@ -12,15 +12,11 @@ module CyclopsSdk
     check_lower_TypePoolSpec
   ].freeze
   SCHEMA_READ_METHODS = %i[
-    read_TypeClaimSpec
-    read_TypeOSGymSandboxClaimStatus
-    read_TypeOSGymWorkspacePoolStatus
-    read_TypePoolSpec
   ].freeze
   SCHEMA_WRITE_METHODS = %i[
     write_TypeClaimSpec
-    write_TypeOSGymSandboxClaimStatus
-    write_TypeOSGymWorkspacePoolStatus
+    write_TypeOsGymSandboxClaimStatus
+    write_TypeOsGymWorkspacePoolStatus
     write_TypePoolSpec
   ].freeze
 
@@ -29,7 +25,7 @@ module CyclopsSdk
 
   SCHEMA_CHECK_LOWER_METHODS.each do |method_name|
     RustBuffer.define_singleton_method(method_name) do |value|
-      schema_rust_buffer.public_send(method_name, value)
+      schema_rust_buffer.public_send(method_name.to_s.gsub("OsGym", "OSGym"), value)
     end
   end
 

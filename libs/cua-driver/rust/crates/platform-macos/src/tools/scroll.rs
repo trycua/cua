@@ -1,8 +1,10 @@
 use async_trait::async_trait;
 use core_foundation::base::{CFRelease, CFTypeRef};
+use cua_driver_contract::{ScrollBy, ScrollDirection, ScrollInput};
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
+    tool_args::parse_typed_projection,
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -116,35 +118,24 @@ impl Tool for ScrollTool {
             && args.get("pid").is_none()
             && args.get("window_id").is_none()
         {
-            let direction = match args.require_str("direction") {
-                Ok(value) => value,
-                Err(error) => return error,
+            let input = match parse_typed_projection::<ScrollInput>("scroll", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
             };
-            let x = match args.require_f64("x") {
-                Ok(value) => value,
-                Err(error) => return error,
-            };
-            let y = match args.require_f64("y") {
-                Ok(value) => value,
-                Err(error) => return error,
-            };
-            let by = args.str_or("by", "line");
-            let amount = args.u64_or("amount", 3).clamp(1, 50) as usize;
-            let step = if by == "page" {
+            let (x, y) = (input.x, input.y);
+            let direction = input.direction.as_str();
+            let by = input.by.unwrap_or(ScrollBy::Line).as_str();
+            let amount = input.amount.unwrap_or(3).clamp(1, 50) as usize;
+            let step = if input.by == Some(ScrollBy::Page) {
                 WHEEL_STEP_PAGE_PX
             } else {
                 WHEEL_STEP_LINE_PX
             };
-            let (delta_y, delta_x) = match direction.as_str() {
-                "down" => (-step, 0),
-                "up" => (step, 0),
-                "right" => (0, -step),
-                "left" => (0, step),
-                other => {
-                    return ToolResult::error(format!(
-                        "unknown scroll direction '{other}'; expected up, down, left, or right"
-                    ))
-                }
+            let (delta_y, delta_x) = match input.direction {
+                ScrollDirection::Down => (-step, 0),
+                ScrollDirection::Up => (step, 0),
+                ScrollDirection::Right => (0, -step),
+                ScrollDirection::Left => (0, step),
             };
             let (x, y) = super::desktop_screenshot_point(x, y).await;
             let result = tokio::task::spawn_blocking(move || {
@@ -504,7 +495,7 @@ impl Tool for ScrollTool {
             )
             .await;
 
-            let changes = snapshot.detect_async().await;
+            let changes = super::finish_window_observation(snapshot, &args).await;
             let mode_label = if fg {
                 " (delivery_mode:foreground)"
             } else {
@@ -576,7 +567,7 @@ impl Tool for ScrollTool {
         )
         .await;
 
-        let changes = snapshot.detect_async().await;
+        let changes = super::finish_window_observation(snapshot, &args).await;
 
         match result {
             Ok(Ok(())) => ToolResult::text(format!(

@@ -39,52 +39,6 @@ fileprivate extension ForeignBytes {
     init(bufferPointer: UnsafeBufferPointer<UInt8>) {
         self.init(len: Int32(bufferPointer.count), data: bufferPointer.baseAddress)
     }
-
-    init(rawBufferPointer: UnsafeRawBufferPointer) {
-        self.init(
-            len: Int32(rawBufferPointer.count),
-            data: rawBufferPointer.baseAddress?.assumingMemoryBound(to: UInt8.self)
-        )
-    }
-}
-
-// Converter for `&[u8]` / `[ByRef] bytes` arguments.
-//
-// Conforms to `FfiConverter` so the compiler enforces the full converter
-// method set. Only the scope-bound `lower(_:_body:)` overload is sound —
-// zero-copy byte buffers only flow foreign -> Rust, and only in argument
-// position. The four protocol-witness methods (`lift`, `lower`, `read`,
-// `write`) `fatalError` at runtime if anyone reaches them.
-//
-// The scope-bound `lower` takes a closure because the `ForeignBytes`
-// pointer is only guaranteed valid for the duration of
-// `Data.withUnsafeBytes`. Callers must run the full FFI call inside
-// the closure body.
-fileprivate enum FfiConverterByRefBytes: FfiConverter {
-    typealias SwiftType = Data
-    typealias FfiType = ForeignBytes
-
-    static func lower<R>(_ value: Data, _ body: (ForeignBytes) throws -> R) rethrows -> R {
-        return try value.withUnsafeBytes { rawBuf in
-            try body(ForeignBytes(rawBufferPointer: rawBuf))
-        }
-    }
-
-    static func lower(_ value: Data) -> ForeignBytes {
-        fatalError("ByRef bytes cannot use the plain lower: returning ForeignBytes escapes the Data.withUnsafeBytes scope. Use the scope-bound lower(_:_body:) overload instead.")
-    }
-
-    static func lift(_ value: ForeignBytes) throws -> Data {
-        fatalError("ByRef bytes cannot be lifted: zero-copy &[u8] only flows foreign->Rust")
-    }
-
-    static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Data {
-        fatalError("ByRef bytes cannot be read from a buffer: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.")
-    }
-
-    static func write(_ value: Data, into buf: inout [UInt8]) {
-        fatalError("ByRef bytes cannot be written to a buffer: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.")
-    }
 }
 
 // For every type used in the interface, we provide helper methods for conveniently
@@ -549,11 +503,7 @@ fileprivate struct FfiConverterString: FfiConverter {
             return String()
         }
         let bytes = UnsafeBufferPointer<UInt8>(start: value.data!, count: Int(value.len))
-        // Use Swift's native UTF-8 decoder; `String(bytes:encoding:.utf8)` goes
-        // through Foundation's NSString and silently strips a leading U+FEFF BOM.
-        // Invalid UTF-8 substitutes U+FFFD instead of trapping (unreachable
-        // given Rust's `String` invariant).
-        return String(decoding: bytes, as: UTF8.self)
+        return String(bytes: bytes, encoding: String.Encoding.utf8)!
     }
 
     public static func lower(_ value: String) -> RustBuffer {
@@ -569,8 +519,7 @@ fileprivate struct FfiConverterString: FfiConverter {
 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> String {
         let len: Int32 = try readInt(&buf)
-        // See `lift` above for why we avoid Foundation's NSString-backed decoder here.
-        return String(decoding: try readBytes(&buf, count: Int(len)), as: UTF8.self)
+        return String(bytes: try readBytes(&buf, count: Int(len)), encoding: String.Encoding.utf8)!
     }
 
     public static func write(_ value: String, into buf: inout [UInt8]) {
@@ -641,9 +590,8 @@ open class PreservedJson: PreservedJsonProtocol, @unchecked Sendable {
 
 public static func fromJson(value: String)throws  -> PreservedJson  {
     return try  FfiConverterTypePreservedJson_lift(try rustCallWithError(FfiConverterTypeJsonValueError_lift) {
-        uniffiCallStatus in
     uniffi_cyclops_sdk_schema_fn_constructor_preservedjson_from_json(
-        FfiConverterString.lower(value),uniffiCallStatus
+        FfiConverterString.lower(value),$0
     )
 })
 }
@@ -652,9 +600,8 @@ public static func fromJson(value: String)throws  -> PreservedJson  {
 
 open func toJson() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
-        uniffiCallStatus in
     uniffi_cyclops_sdk_schema_fn_method_preservedjson_to_json(
-            self.uniffiCloneHandle(),uniffiCallStatus
+            self.uniffiCloneHandle(),$0
     )
 })
 }
@@ -1449,10 +1396,9 @@ public struct PoolSpec: Equatable, Hashable {
 public static func == (self: PoolSpec, other: PoolSpec) -> Bool {
     return try!  FfiConverterBool.lift(
         try! rustCall() {
-        uniffiCallStatus in
     uniffi_cyclops_sdk_schema_fn_method_poolspec_uniffi_trait_eq_eq(
             FfiConverterTypePoolSpec_lower(self),
-        FfiConverterTypePoolSpec_lower(other),uniffiCallStatus
+        FfiConverterTypePoolSpec_lower(other),$0
     )
 }
     )
@@ -1461,9 +1407,8 @@ public static func == (self: PoolSpec, other: PoolSpec) -> Bool {
 public func hash(into hasher: inout Hasher) {
     let val = try!  FfiConverterUInt64.lift(
         try! rustCall() {
-        uniffiCallStatus in
     uniffi_cyclops_sdk_schema_fn_method_poolspec_uniffi_trait_hash(
-            FfiConverterTypePoolSpec_lower(self),uniffiCallStatus
+            FfiConverterTypePoolSpec_lower(self),$0
     )
 }
     )
@@ -1874,7 +1819,8 @@ public func FfiConverterTypeWarmPoolAutoscaling_lower(_ value: WarmPoolAutoscali
     return FfiConverterTypeWarmPoolAutoscaling.lower(value)
 }
 
-
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum Firmware: Equatable, Hashable {
 
@@ -1940,7 +1886,8 @@ public func FfiConverterTypeFirmware_lower(_ value: Firmware) -> RustBuffer {
 }
 
 
-
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum ImagePullPolicy: Equatable, Hashable {
 
@@ -2014,8 +1961,7 @@ public func FfiConverterTypeImagePullPolicy_lower(_ value: ImagePullPolicy) -> R
 
 
 
-public
-enum JsonValueError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
+public enum JsonValueError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
 
 
 
@@ -2088,7 +2034,8 @@ public func FfiConverterTypeJsonValueError_lower(_ value: JsonValueError) -> Rus
     return FfiConverterTypeJsonValueError.lower(value)
 }
 
-
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum RuntimeKind: Equatable, Hashable {
 
@@ -2161,7 +2108,8 @@ public func FfiConverterTypeRuntimeKind_lower(_ value: RuntimeKind) -> RustBuffe
 }
 
 
-
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum ServiceProtocol: Equatable, Hashable {
 
@@ -2776,10 +2724,10 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_cyclops_sdk_schema_checksum_method_preservedjson_to_json() != 675) {
+    if (uniffi_cyclops_sdk_schema_checksum_method_preservedjson_to_json() != 8252) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json() != 56364) {
+    if (uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json() != 24064) {
         return InitializationResult.apiChecksumMismatch
     }
 

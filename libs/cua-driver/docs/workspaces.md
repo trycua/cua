@@ -18,10 +18,13 @@ authoritative contract for the current platform.
 3. Either pass the returned `workspace_id` to `launch_app`, or bind it once
    with `start_session({session, workspace_id})` and let later launches inherit
    the binding.
-4. Use `move_window_to_workspace` only when the workspace advertises
+4. Call `get_workspace_state` with the workspace id or bound session to discover
+   its native windows, then pass those window ids to `get_window_state` and the
+   existing window-targeted input tools.
+5. Use `move_window_to_workspace` only when the workspace advertises
    `move_existing_window: true`. A nested compositor requires relaunch because
    a Wayland client cannot change display-server connections after launch.
-5. Call `close_workspace`. It refuses while sessions are bound unless
+6. Call `close_workspace`. It refuses while sessions are bound unless
    `force: true`; closed records remain as process-local tombstones.
 
 Session end removes only the binding. It does not close a workspace, because

@@ -657,6 +657,51 @@ impl WorkspaceBackend for WindowsWorkspaceBackend {
         Ok(json!({"desktop_id": observed.to_string(), "verified": true}))
     }
 
+    async fn get_state(&self, workspace_id: &str) -> Result<serde_json::Value, PublicError> {
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = workspace_id;
+            return Err(PublicError::Unavailable(
+                "Windows workspace state is unavailable off Windows".into(),
+            ));
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let desktop = *self
+                .workspaces
+                .lock()
+                .unwrap()
+                .get(workspace_id)
+                .ok_or_else(|| PublicError::NotFound(workspace_id.to_owned()))?;
+            let native = self.native;
+            let target = desktop.desktop.id();
+            tokio::task::spawn_blocking(move || {
+                let mut windows = Vec::new();
+                for window in crate::win32::list_windows(None).into_iter().take(512) {
+                    let Ok(hwnd) = isize::try_from(window.hwnd) else {
+                        continue;
+                    };
+                    let Ok(observed) = native.get_window_desktop_id(hwnd) else {
+                        continue;
+                    };
+                    if observed == target {
+                        windows.push(json!({
+                            "window_id":window.hwnd,
+                            "pid":window.pid,
+                            "title":window.title,
+                            "bounds":{"x":window.x,"y":window.y,"width":window.width,"height":window.height},
+                            "is_on_screen":window.is_on_screen,
+                            "minimized":window.minimized,
+                        }));
+                    }
+                }
+                Ok(json!({"windows":windows,"desktop_id":target.to_string(),"bounded":true}))
+            })
+            .await
+            .map_err(|error| PublicError::Backend(format!("workspace state task failed: {error}")))?
+        }
+    }
+
     fn configure_command(
         &self,
         workspace_id: &str,

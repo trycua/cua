@@ -213,6 +213,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "create_workspace" => &["workspace.lifecycle.create"],
         "list_workspaces" => &["workspace.state.read"],
         "get_workspace" => &["workspace.state.read"],
+        "get_workspace_state" => &["workspace.state.read", "window.list"],
         "close_workspace" => &["workspace.lifecycle.close"],
         "move_window_to_workspace" => &["workspace.window.move"],
         "list_apps" => &["app.list"],
@@ -435,6 +436,13 @@ impl ToolRegistry {
         let Some(tool) = self.tools.get(resolved_name) else {
             return ToolResult::error(format!("Unknown tool: {name}"));
         };
+        if let Err(error) = crate::workspace::validate_operation_target(resolved_name, &args).await
+        {
+            return ToolResult::error(error.to_string()).with_structured(serde_json::json!({
+                "code": error.code(),
+                "workspace_id": crate::workspace::resolve_workspace_id(&args).ok().flatten(),
+            }));
+        }
         // Reject modality violations before reserving a recording turn. A
         // rejected action has no before/after evidence and must not leave a
         // pending recorder entry behind.
@@ -780,6 +788,7 @@ mod capability_tests {
         "create_workspace",
         "list_workspaces",
         "get_workspace",
+        "get_workspace_state",
         "close_workspace",
         "move_window_to_workspace",
         // permissions / config

@@ -952,6 +952,15 @@ Read one workspace, its lifecycle status, and its capabilities.
 {"workspace_id":"example"}
 ```
 
+### `get_workspace_state`
+
+List windows currently belonging to a workspace. Use the returned window ids with `get_window_state` and window-targeted input tools. Pass either `workspace_id` or a workspace-bound `session`.
+
+**Arguments:**
+
+- `session` (string, optional)
+- `workspace_id` (string, optional)
+
 ### `close_workspace`
 
 Close a workspace and release backend-owned resources. A nested compositor also terminates verified child processes previously launched into it before removing its ephemeral profile; adopted native spaces/desktops and their apps are never destroyed. Refuses while sessions are bound unless force=true.

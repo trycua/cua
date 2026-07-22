@@ -128,6 +128,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "get_desktop_state"
         | "get_accessibility_tree"
         | "get_window_state"
+        | "get_workspace_state"
         | "set_config"
         | "escalate_session"
         | "start_recording"

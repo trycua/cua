@@ -188,6 +188,7 @@ fn tool_scope(tool_name: &str, args: &Value) -> ToolScope {
             | "zoom"
             | "page"
             | "move_window_to_workspace"
+            | "get_workspace_state"
     ) || tool_name == "get_browser_state"
         || (tool_name.starts_with("browser_")
             && !matches!(tool_name, "browser_prepare" | "browser_download"))

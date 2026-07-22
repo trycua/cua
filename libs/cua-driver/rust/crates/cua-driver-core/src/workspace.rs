@@ -140,6 +140,8 @@ pub enum WorkspaceError {
     Closing(String),
     #[error("workspace backend failed: {0}")]
     Backend(String),
+    #[error("workspace '{0}' has an operation in progress")]
+    Busy(String),
     #[error("workspace '{0}' is still bound to one or more sessions")]
     InUse(String),
     #[error("session '{session}' is already bound to workspace '{existing}', not '{requested}'")]
@@ -162,6 +164,7 @@ impl WorkspaceError {
             Self::Closed(_) => "workspace_closed",
             Self::Closing(_) => "workspace_closing",
             Self::Backend(_) => "workspace_backend_error",
+            Self::Busy(_) => "workspace_busy",
             Self::InUse(_) => "workspace_in_use",
             Self::BindingConflict { .. } => "workspace_binding_conflict",
             Self::SessionEnded(_) => "session_ended",
@@ -187,6 +190,12 @@ pub trait WorkspaceBackend: Send + Sync {
         target: &WindowTarget,
     ) -> Result<Value, WorkspaceError>;
 
+    /// Return a bounded, backend-native inventory of windows that currently
+    /// belong to this workspace. Pixel and accessibility capture remain
+    /// window-targeted; callers use the returned window ids with the existing
+    /// state tools.
+    async fn get_state(&self, workspace_id: &str) -> Result<Value, WorkspaceError>;
+
     /// Apply workspace-specific connection variables to a child command.
     /// The daemon's own process environment must never be mutated.
     fn configure_command(
@@ -199,6 +208,7 @@ pub trait WorkspaceBackend: Send + Sync {
 pub struct WorkspaceManager {
     backend: Arc<dyn WorkspaceBackend>,
     records: RwLock<HashMap<String, WorkspaceRecord>>,
+    in_flight: Mutex<HashMap<String, usize>>,
     session_bindings: Mutex<HashMap<String, String>>,
 }
 
@@ -207,6 +217,7 @@ impl WorkspaceManager {
         Self {
             backend,
             records: RwLock::new(HashMap::new()),
+            in_flight: Mutex::new(HashMap::new()),
             session_bindings: Mutex::new(HashMap::new()),
         }
     }
@@ -273,6 +284,17 @@ impl WorkspaceManager {
                 .ok_or_else(|| WorkspaceError::NotFound(workspace_id.to_owned()))?;
             match record.status {
                 WorkspaceStatus::Active => {
+                    if self
+                        .in_flight
+                        .lock()
+                        .unwrap()
+                        .get(workspace_id)
+                        .copied()
+                        .unwrap_or(0)
+                        > 0
+                    {
+                        return Err(WorkspaceError::Busy(workspace_id.to_owned()));
+                    }
                     record.status = WorkspaceStatus::Closing;
                     record.launched_pids.clone()
                 }
@@ -306,7 +328,8 @@ impl WorkspaceManager {
         workspace_id: &str,
         target: WindowTarget,
     ) -> Result<Value, WorkspaceError> {
-        let record = self.get_active(workspace_id)?;
+        let lease = self.begin_operation(workspace_id)?;
+        let record = &lease.record;
         if !record.capabilities.move_existing_window {
             return Err(WorkspaceError::MoveUnsupported {
                 kind: record.kind.as_str(),
@@ -314,6 +337,43 @@ impl WorkspaceManager {
             });
         }
         self.backend.move_window(workspace_id, &target).await
+    }
+
+    pub async fn get_state(&self, workspace_id: &str) -> Result<Value, WorkspaceError> {
+        let lease = self.begin_operation(workspace_id)?;
+        let record = &lease.record;
+        if !record.capabilities.capture {
+            return Err(WorkspaceError::Unsupported(format!(
+                "{} does not expose workspace state",
+                record.kind.as_str()
+            )));
+        }
+        self.backend.get_state(workspace_id).await
+    }
+
+    pub fn resolve_workspace_id(&self, args: &Value) -> Result<Option<String>, WorkspaceError> {
+        let explicit = args.get("workspace_id").and_then(Value::as_str);
+        let session = args.get("session").and_then(Value::as_str);
+        if let Some(explicit) = explicit {
+            self.get_active(explicit)?;
+            if let Some(session) = session {
+                if let Some(bound) = self.workspace_for_session(session) {
+                    if bound != explicit {
+                        return Err(WorkspaceError::BindingConflict {
+                            session: session.to_owned(),
+                            existing: bound,
+                            requested: explicit.to_owned(),
+                        });
+                    }
+                }
+            }
+            return Ok(Some(explicit.to_owned()));
+        }
+        let resolved = session.and_then(|id| self.workspace_for_session(id));
+        if let Some(workspace_id) = resolved.as_deref() {
+            self.get_active(workspace_id)?;
+        }
+        Ok(resolved)
     }
 
     pub fn configure_command(
@@ -357,6 +417,58 @@ impl WorkspaceManager {
         }
     }
 
+    fn begin_operation(&self, workspace_id: &str) -> Result<WorkspaceLease<'_>, WorkspaceError> {
+        let records = self.records.read().unwrap();
+        let record = records
+            .get(workspace_id)
+            .cloned()
+            .ok_or_else(|| WorkspaceError::NotFound(workspace_id.to_owned()))?;
+        match record.status {
+            WorkspaceStatus::Active => {}
+            WorkspaceStatus::Closing => {
+                return Err(WorkspaceError::Closing(workspace_id.to_owned()))
+            }
+            WorkspaceStatus::Closed => return Err(WorkspaceError::Closed(workspace_id.to_owned())),
+        }
+        let mut in_flight = self.in_flight.lock().unwrap();
+        *in_flight.entry(workspace_id.to_owned()).or_default() += 1;
+        drop(in_flight);
+        drop(records);
+        Ok(WorkspaceLease {
+            manager: self,
+            workspace_id: workspace_id.to_owned(),
+            record,
+        })
+    }
+
+    /// Hold a workspace active across a multi-step platform operation such as
+    /// configure → spawn → move → ownership recording. `close_workspace`
+    /// returns `workspace_busy` until the lease is dropped.
+    pub fn lease_operation(
+        self: &Arc<Self>,
+        workspace_id: &str,
+    ) -> Result<WorkspaceOperationLease, WorkspaceError> {
+        let records = self.records.read().unwrap();
+        let record = records
+            .get(workspace_id)
+            .ok_or_else(|| WorkspaceError::NotFound(workspace_id.to_owned()))?;
+        match record.status {
+            WorkspaceStatus::Active => {}
+            WorkspaceStatus::Closing => {
+                return Err(WorkspaceError::Closing(workspace_id.to_owned()))
+            }
+            WorkspaceStatus::Closed => return Err(WorkspaceError::Closed(workspace_id.to_owned())),
+        }
+        let mut in_flight = self.in_flight.lock().unwrap();
+        *in_flight.entry(workspace_id.to_owned()).or_default() += 1;
+        drop(in_flight);
+        drop(records);
+        Ok(WorkspaceOperationLease {
+            manager: self.clone(),
+            workspace_id: workspace_id.to_owned(),
+        })
+    }
+
     pub fn bind_session(
         &self,
         session: &str,
@@ -393,6 +505,39 @@ impl WorkspaceManager {
     }
 }
 
+struct WorkspaceLease<'a> {
+    manager: &'a WorkspaceManager,
+    workspace_id: String,
+    record: WorkspaceRecord,
+}
+
+pub struct WorkspaceOperationLease {
+    manager: Arc<WorkspaceManager>,
+    workspace_id: String,
+}
+
+fn finish_operation(manager: &WorkspaceManager, workspace_id: &str) {
+    let mut in_flight = manager.in_flight.lock().unwrap();
+    if let Some(count) = in_flight.get_mut(workspace_id) {
+        *count -= 1;
+        if *count == 0 {
+            in_flight.remove(workspace_id);
+        }
+    }
+}
+
+impl Drop for WorkspaceLease<'_> {
+    fn drop(&mut self) {
+        finish_operation(self.manager, &self.workspace_id);
+    }
+}
+
+impl Drop for WorkspaceOperationLease {
+    fn drop(&mut self) {
+        finish_operation(&self.manager, &self.workspace_id);
+    }
+}
+
 static DEFAULT_MANAGER: OnceLock<Arc<WorkspaceManager>> = OnceLock::new();
 
 pub fn default_manager() -> Option<&'static Arc<WorkspaceManager>> {
@@ -400,10 +545,8 @@ pub fn default_manager() -> Option<&'static Arc<WorkspaceManager>> {
 }
 
 pub fn resolve_workspace_id(args: &Value) -> Result<Option<String>, WorkspaceError> {
-    let explicit = args.get("workspace_id").and_then(Value::as_str);
-    let session = args.get("session").and_then(Value::as_str);
     let Some(manager) = default_manager() else {
-        return if explicit.is_some() {
+        return if args.get("workspace_id").and_then(Value::as_str).is_some() {
             Err(WorkspaceError::Unavailable(
                 "this platform did not register a workspace backend".into(),
             ))
@@ -411,22 +554,65 @@ pub fn resolve_workspace_id(args: &Value) -> Result<Option<String>, WorkspaceErr
             Ok(None)
         };
     };
-    if let Some(explicit) = explicit {
-        manager.get_active(explicit)?;
-        if let Some(session) = session {
-            if let Some(bound) = manager.workspace_for_session(session) {
-                if bound != explicit {
-                    return Err(WorkspaceError::BindingConflict {
-                        session: session.to_owned(),
-                        existing: bound,
-                        requested: explicit.to_owned(),
-                    });
-                }
-            }
-        }
-        return Ok(Some(explicit.to_owned()));
+    manager.resolve_workspace_id(args)
+}
+
+pub async fn validate_operation_target(
+    tool_name: &str,
+    args: &Value,
+) -> Result<(), WorkspaceError> {
+    if !matches!(
+        tool_name,
+        "get_window_state"
+            | "get_accessibility_tree"
+            | "zoom"
+            | "click"
+            | "double_click"
+            | "right_click"
+            | "drag"
+            | "scroll"
+            | "type_text"
+            | "press_key"
+            | "hotkey"
+            | "set_value"
+    ) {
+        return Ok(());
     }
-    Ok(session.and_then(|id| manager.workspace_for_session(id)))
+    let Some(manager) = default_manager() else {
+        return Ok(());
+    };
+    let Some(workspace_id) = manager.resolve_workspace_id(args)? else {
+        return Ok(());
+    };
+    let window_id = args.get("window_id").and_then(Value::as_i64);
+    let pid = args.get("pid").and_then(Value::as_i64);
+    if window_id.is_none() && pid.is_none() {
+        return Err(WorkspaceError::Unsupported(format!(
+            "{tool_name} requires window_id or pid when routed through workspace '{workspace_id}'"
+        )));
+    }
+    let state = manager.get_state(&workspace_id).await?;
+    let belongs = state
+        .get("windows")
+        .and_then(Value::as_array)
+        .is_some_and(|windows| {
+            windows.iter().any(|window| {
+                if let Some(expected) = window_id {
+                    window.get("window_id").and_then(Value::as_i64) == Some(expected)
+                } else {
+                    pid.is_some_and(|expected| {
+                        window.get("pid").and_then(Value::as_i64) == Some(expected)
+                    })
+                }
+            })
+        });
+    if belongs {
+        Ok(())
+    } else {
+        Err(WorkspaceError::Unsupported(format!(
+            "target does not belong to workspace '{workspace_id}'"
+        )))
+    }
 }
 
 pub fn configure_command_for_args(
@@ -483,6 +669,7 @@ pub fn register_tools(
     registry.register(Box::new(CreateWorkspaceTool(manager.clone())));
     registry.register(Box::new(ListWorkspacesTool(manager.clone())));
     registry.register(Box::new(GetWorkspaceTool(manager.clone())));
+    registry.register(Box::new(GetWorkspaceStateTool(manager.clone())));
     registry.register(Box::new(CloseWorkspaceTool(manager.clone())));
     registry.register(Box::new(MoveWindowTool(manager.clone())));
     manager
@@ -636,6 +823,55 @@ impl Tool for GetWorkspaceTool {
             Ok(record) => {
                 ToolResult::text(format!("Workspace '{id}' status is '{:?}'.", record.status))
                     .with_structured(json!({"workspace":record}))
+            }
+            Err(error) => tool_error(error),
+        }
+    }
+}
+
+struct GetWorkspaceStateTool(Arc<WorkspaceManager>);
+static GET_STATE_DEF: OnceLock<ToolDef> = OnceLock::new();
+#[async_trait]
+impl Tool for GetWorkspaceStateTool {
+    fn def(&self) -> &ToolDef {
+        GET_STATE_DEF.get_or_init(|| {
+            def(
+                "get_workspace_state",
+                "List windows currently belonging to a workspace. Use the returned window ids with get_window_state and window-targeted input tools.",
+                json!({
+                    "type":"object",
+                    "properties":{
+                        "workspace_id":{"type":"string"},
+                        "session":{"type":"string","description":"Session whose workspace binding is used when workspace_id is omitted."}
+                    },
+                    "anyOf":[{"required":["workspace_id"]},{"required":["session"]}],
+                    "additionalProperties":false
+                }),
+                true,
+                false,
+                true,
+            )
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        let workspace_id = match self.0.resolve_workspace_id(&args) {
+            Ok(Some(workspace_id)) => workspace_id,
+            Ok(None) => {
+                return ToolResult::error(
+                    "get_workspace_state requires workspace_id or a workspace-bound session",
+                )
+            }
+            Err(error) => return tool_error(error),
+        };
+        let record = match self.0.get(&workspace_id) {
+            Ok(record) => record,
+            Err(error) => return tool_error(error),
+        };
+        match self.0.get_state(&workspace_id).await {
+            Ok(state) => {
+                ToolResult::text(format!("Workspace '{workspace_id}' state is available."))
+                    .with_structured(json!({"workspace":record,"state":state}))
             }
             Err(error) => tool_error(error),
         }
@@ -811,6 +1047,13 @@ mod tests {
             unreachable!("manager rejects this backend's unsupported move first")
         }
 
+        async fn get_state(&self, workspace_id: &str) -> Result<Value, WorkspaceError> {
+            if !self.live.lock().unwrap().contains(workspace_id) {
+                return Err(WorkspaceError::NotFound(workspace_id.to_owned()));
+            }
+            Ok(json!({"windows":[{"window_id":7,"pid":42}]}))
+        }
+
         fn configure_command(
             &self,
             workspace_id: &str,
@@ -880,10 +1123,26 @@ mod tests {
             Some("test space")
         );
 
+        let lease = manager.begin_operation(&created.workspace_id).unwrap();
+        assert!(matches!(
+            manager.close(&created.workspace_id, true).await,
+            Err(WorkspaceError::Busy(_))
+        ));
+        drop(lease);
+
         let bound = manager
             .bind_session("session-a", Some(&created.workspace_id))
             .unwrap();
         assert_eq!(bound.as_deref(), Some(created.workspace_id.as_str()));
+        let state = manager.get_state(&created.workspace_id).await.unwrap();
+        assert_eq!(state["windows"][0]["window_id"], 7);
+        assert_eq!(
+            manager
+                .resolve_workspace_id(&json!({"session":"session-a"}))
+                .unwrap()
+                .as_deref(),
+            Some(created.workspace_id.as_str())
+        );
         assert!(matches!(
             manager.close(&created.workspace_id, false).await,
             Err(WorkspaceError::InUse(_))
@@ -960,6 +1219,7 @@ mod tests {
             "create_workspace",
             "list_workspaces",
             "get_workspace",
+            "get_workspace_state",
             "close_workspace",
             "move_window_to_workspace",
         ] {

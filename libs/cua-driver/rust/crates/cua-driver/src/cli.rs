@@ -402,28 +402,6 @@ fn finite_tool_name_from_args(args: &[String]) -> Option<String> {
 /// Parse the first non-flag positional argument from argv to determine which
 /// subcommand to run.  Cursor-overlay flags are consumed by `CursorConfig`
 /// independently; we only care about the first non-`--` arg here.
-fn print_serve_help() {
-    println!(
-        "cua-driver serve — run the computer-use daemon\n\
-         Usage: cua-driver serve [OPTIONS]\n\n\
-         Options:\n\
-           --embedded              Remain in the spawning host's responsibility chain.\n\
-                                   Equivalent to CUA_DRIVER_EMBEDDED=1.\n\
-           --socket <path>         Listen on this Unix socket or Windows named pipe.\n\
-           --pid-file <path>       Write the daemon process id to this file.\n\
-           --host-bundle-id <id>   Advisory host label returned by check_permissions.\n\
-           --no-overlay            Disable the agent cursor overlay.\n\
-           --cursor-id <id>        Set the default cursor instance name.\n\
-           --cursor-icon <path>    Use a custom cursor image.\n\
-           --cursor-shape <name>   Select a built-in cursor shape.\n\
-           --cursor-palette <name> Select a built-in cursor palette.\n\
-           -h, --help              Print this help.\n\n\
-         Embedded hosts must spawn this command directly, wait for the socket to\n\
-         accept connections, and stop the process when the host exits. See\n\
-         Skills/cua-driver/EMBEDDING.md."
-    );
-}
-
 pub fn parse_command() -> Command {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
@@ -434,10 +412,6 @@ pub fn parse_command() -> Command {
         std::process::exit(0);
     }
     if args.iter().any(|a| a == "--help" || a == "-h") {
-        if positional_args(&args).first().copied() == Some("serve") {
-            print_serve_help();
-            std::process::exit(0);
-        }
         println!(
             "cua-driver {} — cross-platform computer-use automation driver",
             env!("CARGO_PKG_VERSION")

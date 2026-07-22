@@ -470,6 +470,17 @@ pub fn read_pid_file(pid_file_path: &str) -> Option<u32> {
 
 // ── Server ────────────────────────────────────────────────────────────────────
 
+#[cfg(unix)]
+fn secure_embedded_socket(socket_path: &str, embedded: bool) -> anyhow::Result<()> {
+    if !embedded {
+        return Ok(());
+    }
+    use std::os::unix::fs::PermissionsExt as _;
+    let permissions = std::fs::Permissions::from_mode(0o600);
+    std::fs::set_permissions(socket_path, permissions)
+        .map_err(|e| anyhow::anyhow!("secure embedded daemon socket {socket_path}: {e}"))
+}
+
 /// Run the daemon server. Binds `socket_path`, writes `pid_file_path`,
 /// accepts connections, and serves requests until `{"method":"shutdown"}`.
 ///
@@ -495,10 +506,7 @@ pub async fn run_serve(
 
     let listener =
         UnixListener::bind(socket_path).map_err(|e| anyhow::anyhow!("bind {socket_path}: {e}"))?;
-    use std::os::unix::fs::PermissionsExt as _;
-    let permissions = std::fs::Permissions::from_mode(0o600);
-    std::fs::set_permissions(socket_path, permissions)
-        .map_err(|e| anyhow::anyhow!("secure daemon socket {socket_path}: {e}"))?;
+    secure_embedded_socket(socket_path, cua_driver_core::embedded_mode())?;
 
     eprintln!("Cua Driver daemon listening on {socket_path}");
 
@@ -1529,6 +1537,32 @@ pub fn run_revoke_cmd(socket_path: &str, session: Option<&str>, all: bool) {
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(all(test, unix))]
+mod socket_tests {
+    use super::secure_embedded_socket;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    #[test]
+    fn only_embedded_sockets_are_forced_private() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("driver.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o770)).unwrap();
+
+        secure_embedded_socket(socket.to_str().unwrap(), false).unwrap();
+        assert_eq!(
+            std::fs::metadata(&socket).unwrap().permissions().mode() & 0o777,
+            0o770
+        );
+
+        secure_embedded_socket(socket.to_str().unwrap(), true).unwrap();
+        assert_eq!(
+            std::fs::metadata(&socket).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+}
+
+#[cfg(all(test, unix))]
 mod gate_tests {
     //! Ended-session resurrection guard wired into the `call` dispatch.
     //!
@@ -1626,14 +1660,6 @@ mod gate_tests {
             }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
-
-        use std::os::unix::fs::PermissionsExt as _;
-        let socket_mode = std::fs::metadata(&socket)
-            .expect("daemon socket metadata")
-            .permissions()
-            .mode()
-            & 0o777;
-        assert_eq!(socket_mode, 0o600, "daemon socket must be host-private");
 
         let sid = "gate-test-session-A1B2C3";
 

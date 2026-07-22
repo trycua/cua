@@ -1,1 +1,1 @@
-{ "title": "Lume", "pages": ["cli-reference", "http-api", "mcp-tools", "limits"] }
+{ "title": "Lume", "pages": ["cli-reference", "http-api", "mcp-tools", "telemetry", "limits"] }

@@ -28,6 +28,7 @@ struct CheckUpdate: AsyncParsableCommand {
         }
 
         let state = await LumeVersionCheck.checkUpdateState(noCache: noCache)
+        recordUpdateCheckTelemetry(state, source: "cli")
 
         if json {
             try printJSON(state)
@@ -74,6 +75,7 @@ struct Update: AsyncParsableCommand {
         }
 
         let state = await LumeVersionCheck.checkUpdateState(noCache: false)
+        recordUpdateCheckTelemetry(state, source: "cli")
 
         if json {
             try printJSON(state)
@@ -105,7 +107,26 @@ struct Update: AsyncParsableCommand {
             print("Installing Lume \(latest)...")
         }
 
-        let status = try LumeVersionCheck.runInstallScript(version: latest)
+        let applyStartedAt = Date()
+        TelemetryClient.shared.recordUpdateApplyStarted(targetVersion: latest)
+        let status: Int32
+        do {
+            status = try LumeVersionCheck.runInstallScript(version: latest)
+        } catch {
+            TelemetryClient.shared.recordUpdateApplyCompleted(
+                targetVersion: latest,
+                success: false,
+                failureClass: "installer_launch",
+                elapsed: Date().timeIntervalSince(applyStartedAt)
+            )
+            throw error
+        }
+        TelemetryClient.shared.recordUpdateApplyCompleted(
+            targetVersion: latest,
+            success: status == 0,
+            failureClass: status == 0 ? "none" : "installer_exit",
+            elapsed: Date().timeIntervalSince(applyStartedAt)
+        )
         guard status == 0 else {
             if !json {
                 print("Installer failed with exit status \(status).")
@@ -118,6 +139,15 @@ struct Update: AsyncParsableCommand {
             print("Lume \(latest) installed.")
         }
     }
+}
+
+private func recordUpdateCheckTelemetry(_ state: LumeVersionCheck.State, source: String) {
+    TelemetryClient.shared.recordUpdateChecked(
+        source: source,
+        outcome: state.error != nil ? "unavailable" : (state.updateAvailable ? "available" : "up_to_date"),
+        targetVersion: state.latestVersion,
+        cacheHit: state.cacheHit
+    )
 }
 
 private func printJSON<T: Encodable>(_ value: T) throws {

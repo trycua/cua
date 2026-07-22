@@ -92,6 +92,18 @@ describe("embedded cua-driver lifecycle", { skip: process.platform === "win32" }
     await assert.rejects(stat(socketPath))
   })
 
+  test("refuses to delete a non-socket path", async () => {
+    const { binaryPath } = await makeFakeDriver()
+    const directory = await mkdtemp(join(tmpdir(), "cua embedded conflict "))
+    temporaryDirectories.push(directory)
+    const socketPath = join(directory, "important.txt")
+    await writeFile(socketPath, "keep me")
+    const driver = makeDriver(binaryPath, socketPath)
+
+    await assert.rejects(driver.start(), { code: "socket-path-conflict" })
+    assert.equal(await readFile(socketPath, "utf8"), "keep me")
+  })
+
   test("keeps its default unix socket below the sockaddr length limit", async () => {
     const { binaryPath } = await makeFakeDriver()
     const driver = new EmbeddedCuaDriver({

@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { chmod, rm } from 'node:fs/promises';
+import { chmod, lstat, unlink } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,7 +9,11 @@ const EMBEDDED_ENV = 'CUA_DRIVER_EMBEDDED';
 const HOST_BUNDLE_ID_ENV = 'CUA_DRIVER_HOST_BUNDLE_ID';
 
 export type EmbeddedDriverErrorCode =
-  'spawn-failed' | 'startup-timeout' | 'startup-cancelled' | 'exited-before-ready';
+  | 'spawn-failed'
+  | 'socket-path-conflict'
+  | 'startup-timeout'
+  | 'startup-cancelled'
+  | 'exited-before-ready';
 
 export class EmbeddedDriverError extends Error {
   readonly code: EmbeddedDriverErrorCode;
@@ -52,7 +56,19 @@ const defaultSocketPath = (): string => {
 };
 
 const removeSocket = async (socketPath: string): Promise<void> => {
-  if (process.platform !== 'win32') await rm(socketPath, { force: true });
+  if (process.platform === 'win32') return;
+  try {
+    const metadata = await lstat(socketPath);
+    if (!metadata.isSocket()) {
+      throw new EmbeddedDriverError(
+        'socket-path-conflict',
+        `refusing to remove non-socket path ${socketPath}`
+      );
+    }
+    await unlink(socketPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
 };
 
 const canConnect = (socketPath: string): Promise<boolean> =>
@@ -293,7 +309,7 @@ export class EmbeddedCuaDriver {
     if (this.#starting) await this.#starting.catch(() => undefined);
 
     const child = this.#child;
-    const socketPath = this.#connection?.socketPath ?? this.#options.socketPath;
+    const socketPath = this.#connection?.socketPath;
     this.#connection = undefined;
     this.#child = undefined;
 

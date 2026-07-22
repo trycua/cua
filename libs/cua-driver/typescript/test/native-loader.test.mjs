@@ -31,7 +31,15 @@ test(
 const net = require("node:net");
 const args = process.argv.slice(2);
 const socketPath = args[args.indexOf("--socket") + 1];
-const server = net.createServer(socket => socket.end());
+const server = net.createServer(socket => {
+  let buffer = "";
+  socket.setEncoding("utf8");
+  socket.on("data", chunk => {
+    buffer += chunk;
+    if (!buffer.includes("\\n")) return;
+    socket.end(JSON.stringify({ ok: true, result: [{ name: "embedded_fixture" }] }) + "\\n");
+  });
+});
 server.listen(socketPath);
 process.on("SIGTERM", () => server.close(() => process.exit(0)));
 `,
@@ -51,6 +59,7 @@ process.on("SIGTERM", () => server.close(() => process.exit(0)));
       const sdk = await import("@trycua/cua-driver")
       const driver = sdk.CuaDriver.connect(connection.socketPath)
       assert.equal(driver.socketPath(), connection.socketPath)
+      assert.deepEqual(JSON.parse(driver.listToolsJson()), [{ name: "embedded_fixture" }])
       driver.uniffiDestroy()
     } finally {
       await embedded.stop()

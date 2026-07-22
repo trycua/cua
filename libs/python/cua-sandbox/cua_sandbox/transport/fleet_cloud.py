@@ -20,6 +20,7 @@ from cyclops_sdk import (
     PoolTemplate,
     PreservedJson,
     SandboxService,
+    ServiceProtocol,
     SandboxTemplateRef,
 )
 from cua_sandbox._config import (
@@ -297,9 +298,15 @@ class FleetCloudTransport(FleetTransport):
 
     def _pool_request(self) -> CreatePoolRequest:
         assert self._image is not None
-        services = [SandboxService(name="server", target_port=8000, protocol="TCP")]
+        services = [
+            SandboxService(
+                name="server", target_port=8000, protocol=ServiceProtocol.TCP
+            )
+        ]
         services.extend(
-            SandboxService(name=f"port-{port}", target_port=port, protocol="TCP")
+            SandboxService(
+                name=f"port-{port}", target_port=port, protocol=ServiceProtocol.TCP
+            )
             for port in self._image._ports
             if port != 8000
         )

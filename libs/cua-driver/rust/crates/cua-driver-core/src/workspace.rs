@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::protocol::ToolResult;
+use crate::protocol::{Content, ToolResult};
 use crate::tool::{Tool, ToolDef, ToolRegistry};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -776,9 +776,10 @@ pub fn register_tools(
     backend: Arc<dyn WorkspaceBackend>,
 ) -> Arc<WorkspaceManager> {
     let manager = Arc::new(WorkspaceManager::new(backend));
+    let host_namespace = registry.host_namespace().to_owned();
     registry.set_workspace_manager(manager.clone());
     let weak_manager = Arc::downgrade(&manager);
-    crate::session::register_session_end_hook(move |session| {
+    crate::session::register_session_end_hook_for_namespace(host_namespace, move |session| {
         if let Some(manager) = weak_manager.upgrade() {
             manager.clear_session(session);
         }
@@ -955,7 +956,7 @@ impl Tool for GetWorkspaceStateTool {
         GET_STATE_DEF.get_or_init(|| {
             def(
                 "get_workspace_state",
-                "List windows currently belonging to a workspace. Pass each returned workspace_ref to get_window_state and window-targeted input tools; a newer state call makes older refs stale.",
+                "Capture a bounded visual overview and list windows currently belonging to a workspace. Pass each returned workspace_ref to get_window_state and window-targeted input tools; a newer state call makes older refs stale.",
                 json!({
                     "type":"object",
                     "properties":{
@@ -987,9 +988,20 @@ impl Tool for GetWorkspaceStateTool {
             Err(error) => return tool_error(error),
         };
         match self.0.get_state(&workspace_id).await {
-            Ok(state) => {
-                ToolResult::text(format!("Workspace '{workspace_id}' state is available."))
-                    .with_structured(json!({"workspace":record,"state":state}))
+            Ok(mut state) => {
+                let overview = state
+                    .as_object_mut()
+                    .and_then(|object| object.remove("overview_png"))
+                    .and_then(|value| value.as_str().map(str::to_owned));
+                if let Some(object) = state.as_object_mut() {
+                    object.insert("overview_available".into(), Value::Bool(overview.is_some()));
+                }
+                let mut result =
+                    ToolResult::text(format!("Workspace '{workspace_id}' state is available."));
+                if let Some(overview) = overview {
+                    result.content.push(Content::image_png(overview));
+                }
+                result.with_structured(json!({"workspace":record,"state":state}))
             }
             Err(error) => tool_error(error),
         }
@@ -1377,6 +1389,58 @@ mod tests {
             .unwrap();
         assert_eq!(first.list().len(), 1);
         assert!(second.list().is_empty());
+    }
+
+    #[tokio::test]
+    async fn registries_isolate_same_named_session_lifecycle() {
+        let session = format!("shared-host-session-{}", uuid::Uuid::new_v4());
+        let mut first_registry = ToolRegistry::new();
+        let first = register_tools(&mut first_registry, Arc::new(FakeBackend::default()));
+        first_registry.register_session_tools();
+        let mut second_registry = ToolRegistry::new();
+        let second = register_tools(&mut second_registry, Arc::new(FakeBackend::default()));
+        second_registry.register_session_tools();
+        let first_workspace = first
+            .create(CreateWorkspaceRequest {
+                kind: WorkspaceKind::NestedCompositor,
+                name: None,
+                native_id: None,
+                options: json!({}),
+            })
+            .await
+            .unwrap();
+        let second_workspace = second
+            .create(CreateWorkspaceRequest {
+                kind: WorkspaceKind::NestedCompositor,
+                name: None,
+                native_id: None,
+                options: json!({}),
+            })
+            .await
+            .unwrap();
+
+        for (registry, workspace_id) in [
+            (&first_registry, &first_workspace.workspace_id),
+            (&second_registry, &second_workspace.workspace_id),
+        ] {
+            let result = registry
+                .invoke(
+                    "start_session",
+                    json!({"session":session,"workspace_id":workspace_id}),
+                )
+                .await;
+            assert_ne!(result.is_error, Some(true));
+        }
+
+        assert!(first_registry.fire_session_end(&session).await);
+        let second_state = second_registry
+            .invoke("get_session_state", json!({"session":session}))
+            .await;
+        assert_ne!(second_state.is_error, Some(true));
+        assert_eq!(
+            second_state.structured_content.unwrap()["workspace_id"],
+            second_workspace.workspace_id
+        );
     }
 
     #[tokio::test]

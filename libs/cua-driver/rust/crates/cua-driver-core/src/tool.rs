@@ -355,7 +355,8 @@ pub struct ToolRegistry {
     definitions: HashMap<String, ToolDef>,
     /// Ordered list of tool names for `tools/list`.
     order: Vec<String>,
-    /// Workspace state belongs to this host, never to the process.
+    /// Session, capture, token, and workspace state are scoped to this host.
+    host_namespace: String,
     workspace_manager: Option<Arc<crate::workspace::WorkspaceManager>>,
     /// Shared recording session — auto-records each non-read-only tool call.
     pub recording: Arc<RecordingSession>,
@@ -367,6 +368,7 @@ impl ToolRegistry {
             tools: HashMap::new(),
             definitions: HashMap::new(),
             order: Vec::new(),
+            host_namespace: uuid::Uuid::new_v4().simple().to_string(),
             workspace_manager: None,
             recording: Arc::new(RecordingSession::new()),
         }
@@ -381,6 +383,14 @@ impl ToolRegistry {
         self.order.push(name.clone());
         self.definitions.insert(name.clone(), definition);
         self.tools.insert(name, tool);
+    }
+
+    pub(crate) fn host_namespace(&self) -> &str {
+        &self.host_namespace
+    }
+
+    pub fn register_session_end_hook(&self, hook: impl Fn(&str) + Send + Sync + 'static) {
+        crate::session::register_session_end_hook_for_namespace(self.host_namespace.clone(), hook);
     }
 
     pub(crate) fn set_workspace_manager(
@@ -480,11 +490,35 @@ impl ToolRegistry {
 
     /// Invoke a tool by name and (if recording is enabled) write its result to disk.
     pub async fn invoke(&self, name: &str, args: Value) -> ToolResult {
-        if let Some(manager) = self.workspace_manager.clone() {
-            crate::workspace::with_manager(manager, self.invoke_scoped(name, args)).await
-        } else {
-            self.invoke_scoped(name, args).await
-        }
+        let invocation = async {
+            if let Some(manager) = self.workspace_manager.clone() {
+                crate::workspace::with_manager(manager, self.invoke_scoped(name, args)).await
+            } else {
+                self.invoke_scoped(name, args).await
+            }
+        };
+        crate::session::with_namespace(self.host_namespace.clone(), invocation).await
+    }
+
+    pub async fn fire_session_end(&self, session: &str) -> bool {
+        crate::session::with_namespace(self.host_namespace.clone(), async {
+            crate::session::fire_session_end(session)
+        })
+        .await
+    }
+
+    pub async fn evict_idle_sessions(&self, ttl: std::time::Duration) -> Vec<String> {
+        crate::session::with_namespace(self.host_namespace.clone(), async {
+            crate::session::evict_idle(ttl)
+        })
+        .await
+    }
+
+    pub async fn revoke_all_sessions(&self) -> usize {
+        crate::session::with_namespace(self.host_namespace.clone(), async {
+            crate::session::revoke_all_sessions()
+        })
+        .await
     }
 
     async fn invoke_scoped(&self, name: &str, mut args: Value) -> ToolResult {

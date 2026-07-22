@@ -404,6 +404,33 @@ impl CuaDriver {
             client_kind: DaemonClientKind::Unknown,
         })
     }
+
+    /// Revoke every session owned by this standalone host runtime.
+    pub async fn revoke_all_host_sessions(&self) -> Result<usize, DriverError> {
+        if !matches!(&self.backend, DriverBackend::Embedded(_)) {
+            return Err(DriverError::Configuration {
+                reason: "bulk session revocation requires an embedded host runtime".into(),
+            });
+        }
+        let result = self
+            .invoke(
+                "__host_revoke_all_sessions",
+                Value::Object(Default::default()),
+            )
+            .await?;
+        let structured = result
+            .structured_json
+            .as_deref()
+            .and_then(|value| serde_json::from_str::<Value>(value).ok());
+        structured
+            .as_ref()
+            .and_then(|value| value.get("revoked"))
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or_else(|| DriverError::Protocol {
+                reason: "bulk session revocation omitted its count".into(),
+            })
+    }
 }
 
 #[uniffi::export(async_runtime = "tokio")]

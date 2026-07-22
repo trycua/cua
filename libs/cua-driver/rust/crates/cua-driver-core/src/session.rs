@@ -26,6 +26,11 @@ use cua_driver_contract::{CaptureScope, EscalationReason};
 
 type SessionEndHook = Box<dyn Fn(&str) + Send + Sync>;
 
+struct ScopedSessionEndHook {
+    namespace: String,
+    hook: SessionEndHook,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionDeclaration {
     StartSession,
@@ -207,7 +212,28 @@ impl SessionToolContext {
     }
 }
 
-static SESSION_END_HOOKS: OnceLock<Mutex<Vec<SessionEndHook>>> = OnceLock::new();
+static SESSION_END_HOOKS: OnceLock<Mutex<Vec<ScopedSessionEndHook>>> = OnceLock::new();
+
+tokio::task_local! {
+    static SESSION_NAMESPACE: String;
+}
+
+pub async fn with_namespace<F>(namespace: String, future: F) -> F::Output
+where
+    F: std::future::Future,
+{
+    SESSION_NAMESPACE.scope(namespace, future).await
+}
+
+pub fn current_namespace() -> String {
+    SESSION_NAMESPACE
+        .try_with(Clone::clone)
+        .unwrap_or_else(|_| "process".into())
+}
+
+pub(crate) fn session_key(session_id: &str) -> (String, String) {
+    (current_namespace(), session_id.to_owned())
+}
 
 /// Last-activity timestamp per live session id. A session is "touched" every
 /// time a tool call carries its explicit `session` id (see the daemon boundary
@@ -216,9 +242,9 @@ static SESSION_END_HOOKS: OnceLock<Mutex<Vec<SessionEndHook>>> = OnceLock::new()
 /// connection-EOF reaping now that a session is a caller-declared identity, not
 /// a per-MCP-connection one. `"default"` and empty ids are never tracked (they
 /// are the anonymous, cursor-less fallback).
-static SESSION_ACTIVITY: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+static SESSION_ACTIVITY: OnceLock<Mutex<HashMap<(String, String), Instant>>> = OnceLock::new();
 
-fn activity() -> &'static Mutex<HashMap<String, Instant>> {
+fn activity() -> &'static Mutex<HashMap<(String, String), Instant>> {
     SESSION_ACTIVITY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -303,13 +329,13 @@ pub fn begin_tool_call(
 /// be idempotent because the overlay Remove + recording stop must run exactly
 /// once. Growth is bounded (one short string per ended session over the
 /// daemon's lifetime); eviction is a deliberate non-blocking follow-up.
-static ENDED_SESSIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+static ENDED_SESSIONS: OnceLock<Mutex<HashSet<(String, String)>>> = OnceLock::new();
 
-fn hooks() -> &'static Mutex<Vec<SessionEndHook>> {
+fn hooks() -> &'static Mutex<Vec<ScopedSessionEndHook>> {
     SESSION_END_HOOKS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-fn ended_sessions() -> &'static Mutex<HashSet<String>> {
+fn ended_sessions() -> &'static Mutex<HashSet<(String, String)>> {
     ENDED_SESSIONS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
@@ -320,7 +346,17 @@ fn ended_sessions() -> &'static Mutex<HashSet<String>> {
 /// fires once per proxy exit, but a hook should treat a clear of an unseen id
 /// as a no-op.
 pub fn register_session_end_hook(hook: impl Fn(&str) + Send + Sync + 'static) {
-    hooks().lock().unwrap().push(Box::new(hook));
+    register_session_end_hook_for_namespace(current_namespace(), hook);
+}
+
+pub fn register_session_end_hook_for_namespace(
+    namespace: String,
+    hook: impl Fn(&str) + Send + Sync + 'static,
+) {
+    hooks().lock().unwrap().push(ScopedSessionEndHook {
+        namespace,
+        hook: Box::new(hook),
+    });
 }
 
 /// Fan a session-end out to every registered cleanup hook. Called by the daemon
@@ -335,15 +371,18 @@ pub fn fire_session_end(session_id: &str) -> bool {
     // Mark-then-fan-out under a short critical section, releasing the lock
     // before running hooks (hooks may be slow / re-entrant and must not hold
     // the dedupe lock).
+    let namespace = current_namespace();
     {
         let mut ended = ended_sessions().lock().unwrap();
-        if !ended.insert(session_id.to_owned()) {
+        if !ended.insert(session_key(session_id)) {
             return false; // already ended — idempotent no-op.
         }
     }
     crate::capture_scope::clear_session(session_id);
-    for hook in hooks().lock().unwrap().iter() {
-        hook(session_id);
+    for scoped in hooks().lock().unwrap().iter() {
+        if scoped.namespace == namespace {
+            (scoped.hook)(session_id);
+        }
     }
     true
 }
@@ -352,7 +391,14 @@ pub fn fire_session_end(session_id: &str) -> bool {
 /// a local operator control path without requiring an authorization grant:
 /// revocation can only remove authority, never create it.
 pub fn revoke_all_sessions() -> usize {
-    let sessions: Vec<String> = activity().lock().unwrap().keys().cloned().collect();
+    let namespace = current_namespace();
+    let sessions: Vec<String> = activity()
+        .lock()
+        .unwrap()
+        .keys()
+        .filter(|(host, _)| host == &namespace)
+        .map(|(_, session)| session.clone())
+        .collect();
     for session in &sessions {
         end_session(session);
     }
@@ -363,7 +409,10 @@ pub fn revoke_all_sessions() -> usize {
 /// daemon-side authority for "this session is permanently gone"; the macOS
 /// overlay keeps its own render-side tombstone keyed on the same id.
 pub fn is_session_ended(session_id: &str) -> bool {
-    ended_sessions().lock().unwrap().contains(session_id)
+    ended_sessions()
+        .lock()
+        .unwrap()
+        .contains(&session_key(session_id))
 }
 
 /// Revive a previously-ended session id by clearing its tombstone, so a fresh
@@ -380,7 +429,10 @@ pub fn revive_session(session_id: &str) -> bool {
     if !is_trackable(session_id) {
         return false;
     }
-    ended_sessions().lock().unwrap().remove(session_id)
+    ended_sessions()
+        .lock()
+        .unwrap()
+        .remove(&session_key(session_id))
 }
 
 /// Restore a tombstone when a multi-subsystem `start_session` transaction
@@ -393,7 +445,7 @@ pub(crate) fn restore_ended_session(session_id: &str) {
         ended_sessions()
             .lock()
             .unwrap()
-            .insert(session_id.to_owned());
+            .insert(session_key(session_id));
     }
 }
 
@@ -409,7 +461,7 @@ pub fn touch_session(session_id: &str) {
     activity()
         .lock()
         .unwrap()
-        .insert(session_id.to_owned(), Instant::now());
+        .insert(session_key(session_id), Instant::now());
 }
 
 /// End a session explicitly (the `end_session` tool / `session end` CLI verb):
@@ -424,7 +476,7 @@ fn end_session_with_reason(session_id: &str, reason: SessionEndReason) {
     if !is_trackable(session_id) {
         return;
     }
-    activity().lock().unwrap().remove(session_id);
+    activity().lock().unwrap().remove(&session_key(session_id));
     let cursor_reader = CURSOR_OUTCOME_READER
         .get()
         .and_then(|reader| reader.lock().unwrap().clone());
@@ -444,11 +496,12 @@ fn end_session_with_reason(session_id: &str, reason: SessionEndReason) {
 /// TTL are left untouched.
 pub fn evict_idle(ttl: Duration) -> Vec<String> {
     let now = Instant::now();
+    let namespace = current_namespace();
     let stale: Vec<String> = {
         let map = activity().lock().unwrap();
         map.iter()
-            .filter(|(_, last)| now.duration_since(**last) >= ttl)
-            .map(|(id, _)| id.clone())
+            .filter(|((host, _), last)| host == &namespace && now.duration_since(**last) >= ttl)
+            .map(|((_, session), _)| session.clone())
             .collect()
     };
     for id in &stale {
@@ -459,7 +512,13 @@ pub fn evict_idle(ttl: Duration) -> Vec<String> {
 
 /// Number of sessions with a live idle-TTL entry. Diagnostics only.
 pub fn active_session_count() -> usize {
-    activity().lock().unwrap().len()
+    let namespace = current_namespace();
+    activity()
+        .lock()
+        .unwrap()
+        .keys()
+        .filter(|(host, _)| host == &namespace)
+        .count()
 }
 
 #[cfg(test)]

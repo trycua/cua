@@ -575,7 +575,7 @@ pub async fn run_serve(
                                     .and_then(serde_json::Value::as_str)
                                     .filter(|value| !value.is_empty());
                                 let result: Result<serde_json::Value, String> = if all && session.is_none() {
-                                    let count = cua_driver_core::session::revoke_all_sessions();
+                                    let count = reg.revoke_all_sessions().await;
                                     Ok(serde_json::json!({"revoked": count, "scope": "all"}))
                                 } else if !all {
                                     match session {
@@ -1123,7 +1123,7 @@ pub async fn run_serve(
                                     .and_then(serde_json::Value::as_str)
                                     .filter(|value| !value.is_empty());
                                 let result: Result<serde_json::Value, String> = if all && session.is_none() {
-                                    let count = cua_driver_core::session::revoke_all_sessions();
+                                    let count = reg.revoke_all_sessions().await;
                                     Ok(serde_json::json!({"revoked": count, "scope": "all"}))
                                 } else if !all {
                                     match session {

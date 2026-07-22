@@ -27,6 +27,7 @@ use super::types::BindingQuality;
 /// crates call this from their `register_all` after constructing the
 /// engine with their adapter.
 pub fn register_browser_tools(engine: &Arc<BrowserEngine>, registry: &mut ToolRegistry) {
+    engine.register_session_cleanup(registry);
     registry.register(Box::new(GetBrowserStateTool::new(engine.clone())));
     registry.register(Box::new(BrowserPrepareTool::new(engine.clone())));
     registry.register(Box::new(BrowserNavigateTool::new(engine.clone())));
@@ -2454,6 +2455,8 @@ mod tests {
         use std::collections::HashMap;
 
         let e = engine();
+        let registry = ToolRegistry::new();
+        e.register_session_cleanup(&registry);
         let sid = "browser-store-cleanup-session-771";
         e.store.mint_target(
             sid,
@@ -2479,7 +2482,7 @@ mod tests {
             },
         );
         assert_eq!(e.store.target_count(sid), 1);
-        crate::session::fire_session_end(sid);
+        registry.fire_session_end(sid).await;
         assert_eq!(
             e.store.target_count(sid),
             0,

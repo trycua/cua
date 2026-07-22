@@ -493,7 +493,7 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
     {
         let session_config = state.session_config.clone();
         let cursor_registry = state.cursor_registry.clone();
-        cua_driver_core::session::register_session_end_hook(move |session_id| {
+        registry.register_session_end_hook(move |session_id| {
             session_config.clear(session_id);
             // Per-session agent cursor: the session_id is the cursor key when
             // the caller gave no explicit cursor_id, so dropping it here both

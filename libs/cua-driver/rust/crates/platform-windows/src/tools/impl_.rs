@@ -8700,7 +8700,7 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
         static HOOK_ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
         if HOOK_ONCE.set(()).is_ok() {
             let cursor_registry = state.cursor_registry.clone();
-            cua_driver_core::session::register_session_end_hook(move |session_id| {
+            r.register_session_end_hook(move |session_id| {
                 cursor_registry.remove(session_id);
                 crate::overlay::remove_cursor(session_id.to_owned());
             });

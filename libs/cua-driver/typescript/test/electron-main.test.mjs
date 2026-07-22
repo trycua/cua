@@ -14,7 +14,7 @@ test(
   async () => {
     const command = process.platform === "linux" ? "xvfb-run" : electron
     const args = process.platform === "linux"
-      ? ["-a", electron, path.join(testDirectory, "electron-main-fixture.mjs")]
+      ? ["-a", electron, "--no-sandbox", path.join(testDirectory, "electron-main-fixture.mjs")]
       : [path.join(testDirectory, "electron-main-fixture.mjs")]
     const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] })
     let stdout = ""

@@ -137,6 +137,22 @@ cua-driver get_browser_state \
     "session":"browser-run-1","snapshot_format":"semantic_v2"}'
 ```
 
+Set `include_screenshot:true` when the visual state matters, including when the
+exact tab is open but unselected:
+
+```bash
+cua-driver get_browser_state \
+  '{"target_id":"<target>","tab_id":"<tab>",
+    "session":"browser-run-1","snapshot_format":"semantic_v2",
+    "include_screenshot":true}'
+```
+
+The result includes a PNG image part plus structured width, height, scope, and
+route metadata. Cua Driver captures the exact tab viewport through CDP. It does
+not select the tab or foreground the browser window. Capture is opt-in because
+authenticated pages may contain sensitive information, and a requested capture
+refuses when the driver cannot return a valid bounded PNG.
+
 `semantic_v2` composes the page accessibility tree, pierced DOM, layout, and
 viewport state. Read the compact `outline` for page content, use `refs` only
 for actions declared in each entry's `actions` array, and use `content_refs`

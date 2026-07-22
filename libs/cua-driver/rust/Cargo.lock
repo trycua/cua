@@ -918,6 +918,7 @@ version = "0.10.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64",
  "cua-driver-contract",
  "futures-util",
  "image",

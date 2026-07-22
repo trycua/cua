@@ -14,6 +14,7 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use base64::Engine as _;
 use cua_driver_testkit::e2e::{
     append_json_line, execute_case, recording_evidence, write_environment_from_env, CaseSpec,
     Delivery, DriverRoute, EnvironmentRecord, Evidence, Observation, OracleKind, RefusalCode,
@@ -2305,10 +2306,15 @@ fn run_multi_tab(spec: &BrowserSpec) {
         *evidence = recording_evidence(fixture.driver.recording_dir());
         let session = format!("standalone-multi-tab-{}", fixture.pid);
         let _ = bind(&mut fixture, &session);
-        let second_html = standalone_fixture_html().replace(
-            "<title>cua-driver Web Harness</title>",
-            "<title>cua-driver Background Harness</title>",
-        );
+        let second_html = standalone_fixture_html()
+            .replace(
+                "<title>cua-driver Web Harness</title>",
+                "<title>cua-driver Background Harness</title>",
+            )
+            .replace(
+                "</style>",
+                "body { background: rgb(18, 171, 52) !important; }</style>",
+            );
         let second_server = BrowserFixtureServer::start(&second_html);
         let created = harness_cdp_call(
             fixture.cdp_port,
@@ -2409,9 +2415,61 @@ fn run_multi_tab(spec: &BrowserSpec) {
                     "session": session,
                     "snapshot_format": "semantic_v2",
                     "query": "Increment txt-input",
+                    "include_screenshot": true,
                 }),
             );
             assert_eq!(snapshot.structured()["status"], "ok", "{}", snapshot.raw);
+            assert_eq!(
+                snapshot.structured()["screenshot"]["source"],
+                "cdp_tab",
+                "{}",
+                snapshot.raw
+            );
+            assert!(
+                snapshot.structured()["screenshot"]["width"]
+                    .as_u64()
+                    .is_some_and(|width| width > 0)
+                    && snapshot.structured()["screenshot"]["height"]
+                        .as_u64()
+                        .is_some_and(|height| height > 0),
+                "{}",
+                snapshot.raw
+            );
+            assert!(
+                snapshot.raw["result"]["content"]
+                    .as_array()
+                    .is_some_and(|content| content.iter().any(|item| {
+                        item["type"] == "image"
+                            && item["mimeType"] == "image/png"
+                            && item["data"]
+                                .as_str()
+                                .is_some_and(|data| data.starts_with("iVBOR"))
+                    })),
+                "{}",
+                snapshot.raw
+            );
+            let screenshot_data = snapshot.raw["result"]["content"]
+                .as_array()
+                .and_then(|content| {
+                    content
+                        .iter()
+                        .find(|item| item["type"] == "image")
+                        .and_then(|item| item["data"].as_str())
+                })
+                .expect("inactive-tab PNG data");
+            let screenshot_bytes = base64::engine::general_purpose::STANDARD
+                .decode(screenshot_data)
+                .expect("decode inactive-tab PNG");
+            let screenshot = image::load_from_memory(&screenshot_bytes)
+                .expect("decode inactive-tab image")
+                .to_rgba8();
+            let pixel = screenshot.get_pixel(2, 2).0;
+            assert!(
+                pixel[0].abs_diff(18) <= 2
+                    && pixel[1].abs_diff(171) <= 2
+                    && pixel[2].abs_diff(52) <= 2,
+                "screenshot did not come from the green inactive tab: rgba={pixel:?}"
+            );
             let click_ref = semantic_ref_by_name(&snapshot, "Increment", "click");
             let trusted = fixture.driver.call(
                 "browser_click",

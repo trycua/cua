@@ -12,7 +12,7 @@ use std::sync::{
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use crate::protocol::ToolResult;
+use crate::protocol::{Content, ToolResult};
 use crate::tool::Tool;
 
 use super::engine::BrowserEngine;
@@ -53,6 +53,7 @@ struct FixtureState {
     semantic_full_dom_fails: bool,
     semantic_full_dom_times_out: bool,
     semantic_truncated_dom: bool,
+    screenshot_data: String,
     /// Every incoming CDP call: (sessionId, method, params).
     calls: Vec<(Option<String>, String, Value)>,
 }
@@ -74,6 +75,7 @@ impl Default for FixtureState {
             semantic_full_dom_fails: false,
             semantic_full_dom_times_out: false,
             semantic_truncated_dom: false,
+            screenshot_data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZJrAAAAAASUVORK5CYII=".into(),
             calls: Vec::new(),
         }
     }
@@ -513,6 +515,9 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     "clientHeight": 600.0
                 }
             })),
+            "Page.captureScreenshot" if is_tab => {
+                MockReply::ok(json!({"data": st.screenshot_data.clone()}))
+            }
             "Page.navigate" if is_tab => MockReply::ok(json!({
                 "frameId": "F_MAIN",
                 "loaderId": "L_MAIN_NAVIGATED",
@@ -1343,6 +1348,74 @@ async fn semantic_snapshot_keeps_visible_content_after_hidden_node_pressure() {
         "CSS-hidden retained controls leaked into refs: {snap}"
     );
     assert_eq!(snap["snapshot"]["omitted"]["css_hidden"], 320);
+}
+
+#[tokio::test]
+async fn semantic_snapshot_can_capture_an_inactive_tab_without_activation_calls() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let result = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "snapshot_format": "semantic_v2",
+            "include_screenshot": true
+        }))
+        .await;
+    let snapshot = structured(&result);
+    assert_eq!(snapshot["status"], "ok", "{snapshot}");
+    assert_eq!(snapshot["screenshot"]["mime_type"], "image/png");
+    assert_eq!(snapshot["screenshot"]["width"], 1);
+    assert_eq!(snapshot["screenshot"]["height"], 1);
+    assert_eq!(snapshot["screenshot"]["source"], "cdp_tab");
+    assert!(result.content.iter().any(|content| matches!(
+        content,
+        Content::Image { mime_type, .. } if mime_type == "image/png"
+    )));
+
+    let state = f.state.lock().unwrap();
+    assert!(state.calls.iter().any(|(_, method, params)| {
+        method == "Page.captureScreenshot"
+            && params["format"] == "png"
+            && params["fromSurface"] == true
+            && params["captureBeyondViewport"] == false
+    }));
+    assert!(state.calls.iter().all(|(_, method, _)| {
+        method != "Target.activateTarget" && method != "Page.bringToFront"
+    }));
+}
+
+#[tokio::test]
+async fn semantic_snapshot_does_not_capture_unless_requested() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snapshot = semantic_snapshot(&f, &target, &tab).await;
+    assert_eq!(snapshot["status"], "ok", "{snapshot}");
+    assert_eq!(snapshot["screenshot"], Value::Null);
+    assert!(recorded_calls(&f, "Page.captureScreenshot").is_empty());
+}
+
+#[tokio::test]
+async fn requested_tab_screenshot_refuses_malformed_image_data() {
+    let f = fixture_with(|state| state.screenshot_data = "not-base64".into()).await;
+    let (target, tab) = bind(&f).await;
+    let result = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "snapshot_format": "semantic_v2",
+            "include_screenshot": true
+        }))
+        .await;
+    let refusal = structured(&result);
+    assert_eq!(refusal["status"], "refused", "{refusal}");
+    assert_eq!(refusal["refusal"]["code"], "browser_route_unavailable");
+    assert!(result
+        .content
+        .iter()
+        .all(|content| !matches!(content, Content::Image { .. })));
 }
 
 #[tokio::test]

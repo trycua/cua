@@ -26,6 +26,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Weak};
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -63,6 +64,9 @@ pub const BOUNDS_TOLERANCE_PX: f64 = 8.0;
 /// Cap on refs minted per snapshot — keeps snapshots bounded on
 /// pathological pages. The truncation is reported in the tool output.
 pub const MAX_REFS_PER_SNAPSHOT: usize = 300;
+/// Hard cap for decoded tab screenshots returned through MCP. This bounds a
+/// compromised or malformed endpoint before its response reaches consumers.
+const MAX_BROWSER_SCREENSHOT_BYTES: usize = 16 * 1024 * 1024;
 
 pub struct BrowserEngine {
     pub(crate) platform: Arc<dyn BrowserPlatform>,
@@ -280,6 +284,12 @@ pub(crate) struct SemanticSnapshotOutcome {
     pub omissions: OmissionCounts,
     pub continuation: Option<String>,
     pub oopif: OopifStatus,
+}
+
+pub(crate) struct BrowserTabScreenshot {
+    pub data_base64: String,
+    pub width: u32,
+    pub height: u32,
 }
 
 /// Whether OOPIF content could be composed into the snapshot.
@@ -1477,6 +1487,87 @@ impl BrowserEngine {
     }
 
     // ── Read-side: page snapshot (ref minting) ──────────────────────────
+
+    /// Capture the exact page target's current viewport through its attached
+    /// CDP session. This route never calls `Target.activateTarget`,
+    /// `Page.bringToFront`, or a native foreground API, so an already-open
+    /// inactive tab stays inactive.
+    pub(crate) async fn capture_tab_screenshot(
+        &self,
+        session: &str,
+        target_id: &str,
+        tab_id: &str,
+    ) -> Result<BrowserTabScreenshot, BrowserRefusal> {
+        let record = self.store.get_target(session, target_id)?;
+        let tab = record.tabs.get(tab_id).cloned().ok_or_else(|| {
+            refuse(
+                BrowserRefusalCode::BrowserTabNotFound,
+                format!("tab {tab_id} is not known for target {target_id}"),
+            )
+        })?;
+        let conn = self.connection_for_record(session, &record).await?;
+        let cdp_session = self.attach(&conn, &tab.cdp_target_id).await?;
+        let response = conn
+            .call(
+                Some(&cdp_session),
+                "Page.captureScreenshot",
+                json!({
+                    "format": "png",
+                    "fromSurface": true,
+                    "captureBeyondViewport": false,
+                }),
+            )
+            .await
+            .map_err(|error| route_err("Page.captureScreenshot failed", error))?;
+        let data_base64 = response
+            .get("data")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                route_err(
+                    "Page.captureScreenshot returned malformed data",
+                    "missing base64 PNG payload",
+                )
+            })?
+            .to_owned();
+        if data_base64.len() > MAX_BROWSER_SCREENSHOT_BYTES.saturating_mul(2) {
+            return Err(route_err(
+                "Page.captureScreenshot returned oversized data",
+                "encoded payload exceeds the browser screenshot limit",
+            ));
+        }
+        let png = BASE64.decode(&data_base64).map_err(|error| {
+            route_err(
+                "Page.captureScreenshot returned malformed data",
+                format!("base64 decode failed: {error}"),
+            )
+        })?;
+        if png.len() > MAX_BROWSER_SCREENSHOT_BYTES {
+            return Err(route_err(
+                "Page.captureScreenshot returned oversized data",
+                format!(
+                    "decoded PNG is {} bytes; limit is {MAX_BROWSER_SCREENSHOT_BYTES}",
+                    png.len()
+                ),
+            ));
+        }
+        let (width, height) = crate::image_utils::png_dimensions(&png).map_err(|error| {
+            route_err(
+                "Page.captureScreenshot returned malformed data",
+                format!("invalid PNG: {error}"),
+            )
+        })?;
+        if width == 0 || height == 0 {
+            return Err(route_err(
+                "Page.captureScreenshot returned malformed data",
+                "PNG dimensions must be non-zero",
+            ));
+        }
+        Ok(BrowserTabScreenshot {
+            data_base64,
+            width,
+            height,
+        })
+    }
 
     /// Snapshot one tab's composed DOM (main frame + shadow DOM +
     /// same-process iframes + capability-tested OOPIFs) and mint

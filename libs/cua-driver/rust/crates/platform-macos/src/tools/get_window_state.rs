@@ -434,8 +434,36 @@ pub(crate) fn build_elements_array_with_token(
             // structured side — it only showed up in `tree_markdown`, forcing a
             // markdown grep to verify what landed. Emit it explicitly so the
             // verify-then-escalate loop can read the typed text structurally.
-            if let Some(value) = node.value.clone().filter(|v| !v.is_empty()) {
+            // `value_state` widens the string-only AXValue read to all CF
+            // types (CFNumber sliders → "8", CFBoolean checkboxes/radios →
+            // "1"/"0") — controls whose state was previously invisible here.
+            // Falls back to `value` so the field never regresses for
+            // string-valued elements.
+            if let Some(value) = node
+                .value_state
+                .clone()
+                .or_else(|| node.value.clone())
+                .filter(|v| !v.is_empty())
+            {
                 entry["value"] = serde_json::Value::String(value);
+            }
+            if let Some(desc) = node.value_description.clone() {
+                entry["value_description"] = serde_json::Value::String(desc);
+            }
+            // Only surface a real range: WebKit reports AXMinValue/AXMaxValue
+            // as 0.0/0.0 on non-range controls (checkboxes, radios), which
+            // would be pure noise on every two-state element.
+            if let (Some(min), Some(max)) = (node.min_value, node.max_value) {
+                if max > min {
+                    entry["min"] = serde_json::json!(min);
+                    entry["max"] = serde_json::json!(max);
+                }
+            }
+            if let Some(enabled) = node.enabled {
+                entry["enabled"] = serde_json::Value::Bool(enabled);
+            }
+            if let Some(selected) = node.selected {
+                entry["selected"] = serde_json::Value::Bool(selected);
             }
             if let Some(frame) = frame {
                 entry["frame"] = frame;
@@ -494,6 +522,12 @@ mod tests {
             depth,
             parent_element_index: parent,
             frame,
+            value_state: None,
+            value_description: None,
+            min_value: None,
+            max_value: None,
+            enabled: None,
+            selected: None,
         }
     }
 
@@ -587,6 +621,68 @@ mod tests {
             entry["value"], "i love u",
             "value must be surfaced separately"
         );
+    }
+
+    #[test]
+    fn elements_surface_control_state_fields() {
+        // A slider whose AXValue is a CFNumber: `value` comes from the
+        // coerced value_state, alongside value_description, min/max,
+        // enabled, and selected.
+        let mut nodes = vec![node(
+            Some(0),
+            "AXSlider",
+            Some("Stationary noise suppression"),
+            1,
+            None,
+            None,
+        )];
+        nodes[0].value_state = Some("8".into());
+        nodes[0].value_description = Some("8 dB".into());
+        nodes[0].min_value = Some(2.0);
+        nodes[0].max_value = Some(8.0);
+        nodes[0].enabled = Some(true);
+        nodes[0].selected = Some(false);
+        let entry = &build_elements_array(&nodes)[0];
+        assert_eq!(
+            entry["value"], "8",
+            "numeric AXValue surfaces via value_state"
+        );
+        assert_eq!(entry["value_description"], "8 dB");
+        assert_eq!(entry["min"], 2.0);
+        assert_eq!(entry["max"], 8.0);
+        assert_eq!(entry["enabled"], true);
+        assert_eq!(entry["selected"], false);
+    }
+
+    #[test]
+    fn elements_control_state_fields_omitted_when_absent() {
+        // Stock behaviour is unchanged for elements without control state.
+        let nodes = vec![node(Some(0), "AXButton", Some("OK"), 0, None, None)];
+        let entry = &build_elements_array(&nodes)[0];
+        for key in ["value_description", "min", "max", "enabled", "selected"] {
+            assert!(entry.get(key).is_none(), "{key} must be omitted");
+        }
+    }
+
+    #[test]
+    fn elements_omit_degenerate_min_max_range() {
+        // WebKit reports AXMinValue/AXMaxValue as 0.0/0.0 on non-range
+        // controls (checkboxes, radios) — a degenerate range is omitted.
+        let mut nodes = vec![node(Some(0), "AXCheckBox", Some("On"), 0, None, None)];
+        nodes[0].min_value = Some(0.0);
+        nodes[0].max_value = Some(0.0);
+        let entry = &build_elements_array(&nodes)[0];
+        assert!(entry.get("min").is_none(), "degenerate min must be omitted");
+        assert!(entry.get("max").is_none(), "degenerate max must be omitted");
+    }
+
+    #[test]
+    fn elements_value_state_falls_back_to_string_value() {
+        // String-valued elements keep their `value` even with no value_state.
+        let mut nodes = vec![node(Some(0), "AXComboBox", None, 0, None, None)];
+        nodes[0].value = Some("Search".into());
+        let entry = &build_elements_array(&nodes)[0];
+        assert_eq!(entry["value"], "Search");
     }
 
     #[test]

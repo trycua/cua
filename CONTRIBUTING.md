@@ -23,6 +23,12 @@ For feature requests, describe the user problem and the expected behavior
 before prescribing an implementation. Mention affected platforms and existing
 workarounds when known.
 
+Use the [RFC process](rfcs/README.md) before implementation when a proposal
+changes a public SDK, CLI, MCP, protocol, compatibility, permission, or
+cross-component architectural contract. Start with the **Request for comments**
+GitHub issue form. Longer proposals and diagrams remain in this repository under
+`rfcs/` and link back to the discussion issue.
+
 ## Submit Code
 
 1. Read [`Development.md`](Development.md) and the guide next to the component.

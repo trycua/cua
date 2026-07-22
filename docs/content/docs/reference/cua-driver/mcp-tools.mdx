@@ -12,7 +12,7 @@ description: Reference for every MCP tool Cua Driver exposes
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-`cua-driver` exposes 55 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
+`cua-driver` exposes 56 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
 
 Tool names are `snake_case`. Responses are MCP `CallTool.Result` envelopes: a text content block prefixed with a `✅` summary (or the error reason on failure), plus optional image or structured-content blocks on tools that produce them. See the [CLI reference](/reference/cua-driver/cli-reference) for CLI-specific options like `--socket` and `--screenshot-out-file`.
 
@@ -80,6 +80,8 @@ Optional `max_elements` / `max_depth` bound the AX walk to mitigate context-wind
 - `screenshot_out_file` (string, optional): When set, write the PNG to this file path (~ expanded) instead of embedding base64 in the response. The structured output will contain screenshot_file_path instead.
 - `session` (string, optional): Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.
 - `window_id` (integer, required): Target window ID from list_windows.
+- `workspace_id` (string, optional): Explicit workspace. It must match the session binding when both are supplied.
+- `workspace_ref` (string, optional): Workspace-bound window reference returned by get_workspace_state. Required when workspace_id or a workspace-bound session is used.
 
 ```json
 {"pid":844,"window_id":10725}
@@ -91,7 +93,10 @@ Return a lightweight snapshot of the desktop: running regular apps and on-screen
 
 For the full AX subtree of a single window (with interactive element indices you can click by), use `get_window_state` instead — that's the heavy per-window tool. This one is a fast discovery read that needs no TCC grants.
 
-**Arguments:** none.
+**Arguments:**
+
+- `workspace_id` (string, optional): Explicit workspace. It must match the session binding when both are supplied.
+- `workspace_ref` (string, optional): Workspace-bound window reference returned by get_workspace_state. Required when workspace_id or a workspace-bound session is used.
 
 ### `get_desktop_state`
 
@@ -225,6 +230,8 @@ from_zoom: set true after a zoom call to auto-translate zoom-image pixel coordin
 - `scope` (string, optional): Coordinate frame for a windowless screen-absolute click (default "window"). Pass "desktop" when sending x,y with NO pid/window_id — the coordinates are then true screen pixels (read from get_desktop_state with scope="desktop"). Per-call; not a setting.
 - `session` (string, optional): Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.
 - `window_id` (integer, optional): Target window ID. Required for element_index. Optional when element_token is supplied (the token carries it).
+- `workspace_id` (string, optional): Explicit workspace. It must match the session binding when both are supplied.
+- `workspace_ref` (string, optional): Workspace-bound window reference returned by get_workspace_state. Required when workspace_id or a workspace-bound session is used.
 - `x` (number, optional): X in screenshot pixels, read straight off the image you were handed — no scaling math needed. With pid+window_id (capture_scope=window): window-local pixels from the get_window_state PNG (top-left origin). Windowless (no pid/window_id, capture_scope=desktop): pixels from the get_desktop_state PNG (the native full-display image). Either way, the pixel you read IS the pixel that gets clicked; the driver undoes the Retina backing scale + any downscale internally.
 - `y` (number, optional): Y in screenshot pixels (see x). Window-local from get_window_state, or full-display from get_desktop_state under capture_scope=desktop.
 
@@ -244,6 +251,8 @@ Pixel path (x, y provided): two down/up pairs ~80 ms apart at the given coordina
 - `pid` (integer, required)
 - `session` (string, optional): Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.
 - `window_id` (integer, optional): CGWindowID. Required when element_index is used. Optional when element_token is supplied (the token carries it).
+- `workspace_id` (string, optional): Explicit workspace. It must match the session binding when both are supplied.
+- `workspace_ref` (string, optional): Workspace-bound window reference returned by get_workspace_state. Required when workspace_id or a workspace-bound session is used.
 - `x` (number, optional): Screen X coordinate (pixel path).
 - `y` (number, optional): Screen Y coordinate (pixel path).
 
@@ -270,6 +279,8 @@ Exactly one of `element_index` or (`x` AND `y`) must be provided. `pid` always r
 - `pid` (integer, required): Target process ID.
 - `session` (string, optional): Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.
 - `window_id` (integer, optional): CGWindowID. Required when element_index is used. Optional when element_token is supplied (the token carries it).
+- `workspace_id` (string, optional): Explicit workspace. It must match the session binding when both are supplied.
+- `workspace_ref` (string, optional): Workspace-bound window reference returned by get_workspace_state. Required when workspace_id or a workspace-bound session is used.
 - `x` (number, optional): X in window-local screenshot pixels. Must be provided together with y.
 - `y` (number, optional): Y in window-local screenshot pixels. Must be provided together with x.
 
@@ -305,6 +316,8 @@ When `from_zoom` is true, coordinates are in the last zoom image for this pid; t
 - `to_x` (number, required): Drag-end X in window-local screenshot pixels.
 - `to_y` (number, required): Drag-end Y in window-local screenshot pixels.
 - `window_id` (integer, optional): CGWindowID for the window the pixel coordinates were measured against. Optional — when omitted the driver picks the frontmost window of pid.
+- `workspace_id` (string, optional): Explicit workspace. It must match the session binding when both are supplied.
+- `workspace_ref` (string, optional): Workspace-bound window reference returned by get_workspace_state. Required when workspace_id or a workspace-bound session is used.
 
 ```json
 {"from_x":100,"from_y":200,"to_x":100,"to_y":200}
@@ -329,6 +342,8 @@ WEB CONTENT (Chromium/WebKit/Electron — browser tabs, Slack, VS Code, X's comp
 - `session` (string, optional): Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.
 - `text` (string, required): Text to insert at the target's cursor.
 - `window_id` (integer, optional): CGWindowID. Required when element_index is used. Optional when element_token is supplied (the token carries it).
+- `workspace_id` (string, optional): Explicit workspace. It must match the session binding when both are supplied.
+- `workspace_ref` (string, optional): Workspace-bound window reference returned by get_workspace_state. Required when workspace_id or a workspace-bound session is used.
 - `x` (number, optional): Screenshot-pixel X of the field to type into — the element px action form. Pass x,y (no element_index) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the AX path can't reach. Read straight off the get_window_state PNG, same convention as click.
 - `y` (number, optional): Screenshot-pixel Y of the field (see x).
 
@@ -355,6 +370,8 @@ A key press is never driver-verifiable → effect:"unverifiable"; confirm via sc
 - `scope` (string, optional): Use desktop with no pid/window_id to send the key to the frontmost application.
 - `session` (string, optional): Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.
 - `window_id` (integer, optional): Target window. Required for delivery_mode:"foreground". Does NOT itself raise the window — raising is gated on delivery_mode.
+- `workspace_id` (string, optional): Explicit workspace. It must match the session binding when both are supplied.
+- `workspace_ref` (string, optional): Workspace-bound window reference returned by get_workspace_state. Required when workspace_id or a workspace-bound session is used.
 - `x` (number, optional): Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_index.
 - `y` (number, optional): Screenshot-pixel Y (see x).
 
@@ -380,6 +397,8 @@ Recognized modifiers: cmd/command, shift, option/alt, ctrl/control, fn. Non-modi
 - `scope` (string, optional): Use desktop with no pid/window_id to send the chord to the frontmost application.
 - `session` (string, optional): Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.
 - `window_id` (integer, optional): Target window. Required for delivery_mode:"foreground" (the NSMenu activation needs a window). Does NOT itself raise the window — raising is gated on delivery_mode.
+- `workspace_id` (string, optional): Explicit workspace. It must match the session binding when both are supplied.
+- `workspace_ref` (string, optional): Workspace-bound window reference returned by get_workspace_state. Required when workspace_id or a workspace-bound session is used.
 - `x` (number, optional): Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the combo (so e.g. Cmd+V pastes into that field). Pass with y. Use for Chromium/Electron surfaces the background combo can't reach.
 - `y` (number, optional): Screenshot-pixel Y (see x).
 
@@ -405,6 +424,8 @@ For free-form text entry into web inputs, prefer `type_text_chars` which synthes
 - `session` (string, optional): Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.
 - `value` (string, required): New value. AX will coerce to the element's native type.
 - `window_id` (integer, optional): CGWindowID for the window whose get_window_state produced the element_index. Required when element_index is used; optional when element_token is supplied (the token carries it).
+- `workspace_id` (string, optional): Explicit workspace. It must match the session binding when both are supplied.
+- `workspace_ref` (string, optional): Workspace-bound window reference returned by get_workspace_state. Required when workspace_id or a workspace-bound session is used.
 
 ```json
 {"pid":844,"value":"42"}
@@ -432,6 +453,8 @@ Mapping: by='page' → larger step; by='line' → smaller step; amount = number 
 - `scope` (string, optional): Use desktop with x,y and no pid/window_id for native get_desktop_state screenshot coordinates.
 - `session` (string, optional): Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.
 - `window_id` (integer, optional)
+- `workspace_id` (string, optional): Explicit workspace. It must match the session binding when both are supplied.
+- `workspace_ref` (string, optional): Workspace-bound window reference returned by get_workspace_state. Required when workspace_id or a workspace-bound session is used.
 - `x` (number, optional): Window-local screenshot X (top-left origin of the PNG from get_window_state). With `y`, routes through the pixel-wheel path at this point — use for a scrollable surface that isn't in the AX tree. Requires window_id to anchor the window→screen conversion.
 - `y` (number, optional): Window-local screenshot Y. See `x`.
 
@@ -465,6 +488,8 @@ After a zoom, pass `from_zoom=true` to click/type_text to auto-translate coordin
 
 - `pid` (integer, optional): Target pid — required for from_zoom click/type translation.
 - `window_id` (integer, required): CGWindowID from list_windows.
+- `workspace_id` (string, optional): Explicit workspace. It must match the session binding when both are supplied.
+- `workspace_ref` (string, optional): Workspace-bound window reference returned by get_workspace_state. Required when workspace_id or a workspace-bound session is used.
 - `x1` (number, required): Left edge of region in screenshot pixels.
 - `x2` (number, required): Right edge of region in screenshot pixels.
 - `y1` (number, required): Top edge of region in screenshot pixels.
@@ -954,11 +979,11 @@ Read one workspace, its lifecycle status, and its capabilities.
 
 ### `get_workspace_state`
 
-List windows currently belonging to a workspace. Use the returned window ids with `get_window_state` and window-targeted input tools. Pass either `workspace_id` or a workspace-bound `session`.
+List windows currently belonging to a workspace. Pass each returned workspace_ref to get_window_state and window-targeted input tools; a newer state call makes older refs stale.
 
 **Arguments:**
 
-- `session` (string, optional)
+- `session` (string, optional): Session whose workspace binding is used when workspace_id is omitted.
 - `workspace_id` (string, optional)
 
 ### `close_workspace`

@@ -1590,7 +1590,7 @@ impl Tool for LaunchAppTool {
             }
         };
         let _workspace_lease = if let Some(workspace_id) = workspace_id.as_deref() {
-            let manager = cua_driver_core::workspace::default_manager()
+            let manager = cua_driver_core::workspace::current_manager()
                 .expect("workspace id resolution requires a manager");
             match manager.lease_operation(workspace_id) {
                 Ok(lease) => Some(lease),
@@ -1606,7 +1606,7 @@ impl Tool for LaunchAppTool {
             None
         };
         if let Some(workspace_id) = workspace_id.as_deref() {
-            let manager = cua_driver_core::workspace::default_manager()
+            let manager = cua_driver_core::workspace::current_manager()
                 .expect("workspace id resolution requires a manager");
             let record = match manager.get(workspace_id) {
                 Ok(record) => record,
@@ -2297,20 +2297,18 @@ impl Tool for LaunchAppTool {
                     "app_launched": true,
                 }));
             }
-            let manager = cua_driver_core::workspace::default_manager()
-                .expect("workspace id resolution requires a manager");
+            let workspace_lease = _workspace_lease
+                .as_ref()
+                .expect("workspace launch holds a lease");
             for window in &windows_json {
                 let Some(window_id) = window.get("window_id").and_then(Value::as_i64) else {
                     continue;
                 };
-                if let Err(error) = manager
-                    .move_window(
-                        workspace_id,
-                        cua_driver_core::workspace::WindowTarget {
-                            window_id,
-                            pid: Some(i64::from(pid)),
-                        },
-                    )
+                if let Err(error) = workspace_lease
+                    .move_window(&cua_driver_core::workspace::WindowTarget {
+                        window_id,
+                        pid: Some(i64::from(pid)),
+                    })
                     .await
                 {
                     return ToolResult::error(format!(
@@ -2325,7 +2323,7 @@ impl Tool for LaunchAppTool {
                     }));
                 }
             }
-            if let Err(error) = manager.note_launch(workspace_id, pid) {
+            if let Err(error) = workspace_lease.note_launch(pid) {
                 return ToolResult::error(format!(
                     "App launched as pid {pid}, but workspace ownership could not be recorded: {error}"
                 ))

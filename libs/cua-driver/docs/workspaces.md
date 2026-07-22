@@ -19,8 +19,9 @@ authoritative contract for the current platform.
    with `start_session({session, workspace_id})` and let later launches inherit
    the binding.
 4. Call `get_workspace_state` with the workspace id or bound session to discover
-   its native windows, then pass those window ids to `get_window_state` and the
-   existing window-targeted input tools.
+   its native windows. Pass the returned `workspace_ref` with the same session or
+   explicit workspace id to `get_window_state` and window-targeted input tools.
+   A later state call invalidates older references.
 5. Use `move_window_to_workspace` only when the workspace advertises
    `move_existing_window: true`. A nested compositor requires relaunch because
    a Wayland client cannot change display-server connections after launch.

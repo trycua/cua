@@ -861,7 +861,7 @@ impl Tool for LaunchAppTool {
             }
         };
         let _workspace_lease = if let Some(workspace_id) = workspace_id.as_deref() {
-            let manager = cua_driver_core::workspace::default_manager()
+            let manager = cua_driver_core::workspace::current_manager()
                 .expect("workspace id resolution requires a manager");
             match manager.lease_operation(workspace_id) {
                 Ok(lease) => Some(lease),
@@ -911,6 +911,7 @@ impl Tool for LaunchAppTool {
         }
 
         let workspace_id_for_launch = workspace_id.clone();
+        let workspace_manager_for_launch = cua_driver_core::workspace::current_manager();
         let result = tokio::task::spawn_blocking(
             move || -> anyhow::Result<(String, Option<std::process::Child>, String)> {
                 // Open URLs via xdg-open.
@@ -921,6 +922,7 @@ impl Tool for LaunchAppTool {
                         configure_workspace_launch(
                             &mut command,
                             workspace_id_for_launch.as_deref(),
+                            workspace_manager_for_launch.as_ref(),
                         )?;
                         command.spawn()?;
                     }
@@ -955,7 +957,11 @@ impl Tool for LaunchAppTool {
                     {
                         launch.arg("--force-renderer-accessibility");
                     }
-                    configure_workspace_launch(&mut launch, workspace_id_for_launch.as_deref())?;
+                    configure_workspace_launch(
+                        &mut launch,
+                        workspace_id_for_launch.as_deref(),
+                        workspace_manager_for_launch.as_ref(),
+                    )?;
                     if workspace_id_for_launch.is_some()
                         && chromium_family_program(prog)
                         && !rest.iter().any(|arg| arg.starts_with("--user-data-dir"))
@@ -998,6 +1004,7 @@ impl Tool for LaunchAppTool {
                             configure_workspace_launch(
                                 &mut fallback,
                                 workspace_id_for_launch.as_deref(),
+                                workspace_manager_for_launch.as_ref(),
                             )?;
                             fallback.spawn()?;
                             return Ok((
@@ -1018,12 +1025,12 @@ impl Tool for LaunchAppTool {
                 if let Some(mut child) = child_opt {
                     let pid = child.id();
                     if let Some(workspace_id) = workspace_id.as_deref() {
-                        let manager = cua_driver_core::workspace::default_manager()
-                            .expect("workspace id resolution requires a manager");
-                        if let Err(error) = manager.note_launch(workspace_id, pid) {
-                            // Close can win the configure→spawn race. Retain the
-                            // exact Child handle until ownership is recorded so
-                            // a failed handoff cannot leak the just-started app.
+                        let workspace_lease = _workspace_lease
+                            .as_ref()
+                            .expect("workspace launch holds a lease");
+                        if let Err(error) = workspace_lease.note_launch(pid) {
+                            // Retain the exact Child handle until ownership is
+                            // recorded so a failed handoff cannot leak it.
                             let _ = tokio::task::spawn_blocking(move || {
                                 let _ = child.kill();
                                 let _ = child.wait();
@@ -1102,13 +1109,13 @@ fn chromium_family_program(program: &str) -> bool {
 fn configure_workspace_launch(
     command: &mut std::process::Command,
     workspace_id: Option<&str>,
+    manager: Option<&std::sync::Arc<cua_driver_core::workspace::WorkspaceManager>>,
 ) -> anyhow::Result<()> {
     let Some(workspace_id) = workspace_id else {
         return Ok(());
     };
-    let manager = cua_driver_core::workspace::default_manager()
-        .ok_or_else(|| anyhow::anyhow!("workspace backend is not registered"))?;
     manager
+        .ok_or_else(|| anyhow::anyhow!("workspace backend is not registered"))?
         .configure_command(workspace_id, command)
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }

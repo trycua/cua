@@ -212,7 +212,7 @@ impl Tool for EscalateSessionTool {
         match escalate_session(&id, input.reason, input.detail.as_deref()) {
             Ok(state) => {
                 let mut output = state.output(&id);
-                output.workspace_id = crate::workspace::default_manager()
+                output.workspace_id = crate::workspace::current_manager()
                     .and_then(|manager| manager.workspace_for_session(&id));
                 ToolResult::text(format!("✅ Session '{id}' escalated to desktop scope."))
                     .with_structured(
@@ -272,7 +272,7 @@ impl Tool for GetSessionStateTool {
                 .with_structured(json!({ "code": "session_not_started", "session": id }));
         };
         let mut output = state.output(&id);
-        output.workspace_id = crate::workspace::default_manager()
+        output.workspace_id = crate::workspace::current_manager()
             .and_then(|manager| manager.workspace_for_session(&id));
         let structured = serde_json::to_value(output).expect("session output serializes");
         ToolResult::text(format!(

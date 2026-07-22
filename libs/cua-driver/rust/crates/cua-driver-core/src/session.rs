@@ -342,7 +342,6 @@ pub fn fire_session_end(session_id: &str) -> bool {
         }
     }
     crate::capture_scope::clear_session(session_id);
-    crate::workspace::clear_session(session_id);
     for hook in hooks().lock().unwrap().iter() {
         hook(session_id);
     }

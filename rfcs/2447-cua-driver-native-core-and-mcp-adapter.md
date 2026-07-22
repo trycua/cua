@@ -1,7 +1,8 @@
 ---
-title: Typed native Cua Driver core with MCP as a protocol adapter
+title: Typed Cua Driver SDK contract with MCP as a downstream server
 authors:
   - Cua maintainers
+  - "@r33drichards"
 created: 2026-07-22
 last_updated: 2026-07-22
 status: review
@@ -12,21 +13,26 @@ supersedes:
 superseded_by:
 ---
 
-# RFC: Typed native Cua Driver core with MCP as a protocol adapter
+# RFC: Typed Cua Driver SDK contract with MCP as a downstream server
 
 ## Summary
 
-Cua Driver should have one reusable, typed Rust runtime that owns desktop
-behavior and can either run inside an application through UniFFI or inside the
-standalone daemon. MCP should sit downstream of that runtime as the standard
-agent and process protocol. The public SDK must expose typed driver operations,
-not a parallel `list_tools_json()` and `call_tool(name, JSON)` abstraction that
-duplicates MCP discovery, invocation, and result semantics.
+Cua Driver should have one canonical public typed SDK contract that owns its
+request, result, error, lifecycle, policy, and desktop-operation semantics. The
+private Rust runtime and platform implementations sit behind that contract.
+Applications consume it directly in Rust or through UniFFI-generated Python and
+TypeScript bindings. MCP servers are applications of the same public SDK
+contract, not a peer interface over the private runtime. The SDK must expose
+typed driver operations rather than a parallel `list_tools_json()` and
+`call_tool(name, JSON)` abstraction that duplicates MCP discovery, invocation,
+and result semantics.
 
 ![Proposed Cua Driver architecture](2447/architecture-overview.png)
 
-**Figure 1.** One typed native implementation feeds an embedded application SDK
-and an official MCP adapter. The two surfaces solve different product needs.
+**Figure 1.** The public typed SDK is the architectural boundary. Rust
+applications call it directly, Python and TypeScript applications use generated
+bindings, and MCP servers consume the same contract before exposing it to
+protocol clients.
 
 ## Motivation
 
@@ -69,17 +75,21 @@ runtime contract and the external protocol contract difficult to distinguish.
 
 ## Goals
 
-- Make one Rust runtime the source of truth for desktop behavior, sessions,
-  policy, authorization, recording, telemetry, and shutdown.
-- Let Python, TypeScript, and Rust applications invoke that runtime in their own
+- Make one public typed Rust SDK contract the source of truth for desktop
+  behavior, sessions, policy, authorization, recording, telemetry, and
+  shutdown.
+- Keep private runtime and platform details behind that SDK boundary.
+- Let Python, TypeScript, and Rust applications invoke the SDK in their own
   process through typed methods.
-- Make the standalone daemon host the same runtime instead of owning a separate
-  implementation.
+- Require every MCP server to consume the same public typed SDK contract used
+  by applications, rather than reaching into private runtime crates.
+- Make the standalone daemon host the same SDK implementation instead of owning
+  a separate implementation.
 - Use the official MCP SDK for generic tool discovery, calls, cancellation, and
   optional Tasks behavior.
 - Preserve the daemon as the recommended surface for agents, short-lived CLI
   clients, stable OS permission identity, and multi-client coordination.
-- Prove contract and behavioral parity across the embedded SDK and MCP adapter
+- Prove contract and behavioral parity across the public SDK and MCP servers
   on macOS, Windows, and Linux.
 - Migrate published packages and current clients without requiring an immediate
   flag-day removal of the socket protocol.
@@ -101,12 +111,13 @@ runtime contract and the external protocol contract difficult to distinguish.
 
 | Term | Meaning |
 | --- | --- |
-| `CuaDriver` | The public typed runtime object in Rust, Python, and TypeScript. |
-| `cua-driver-runtime` | The proposed canonical Rust crate containing driver behavior. |
+| `CuaDriver` | The canonical public typed SDK object in Rust, Python, and TypeScript. |
+| `cua-driver-sdk` | The public typed Rust SDK contract and UniFFI export boundary. |
+| `cua-driver-runtime` | A possible private crate containing runtime and platform composition behind the SDK. |
 | `libcua_driver` | The packaged native library artifact loaded by an embedded application. |
 | Embedded SDK | The same-process Python, TypeScript, or Rust application API. |
-| MCP adapter | The only layer that translates typed operations into MCP tools and results. |
-| Daemon | `cua-driver serve`, a long-lived process that hosts `CuaDriver` and the MCP adapter. |
+| MCP server | A downstream consumer that translates the public typed SDK into MCP tools and results. |
+| Daemon | `cua-driver serve`, a long-lived process that hosts `CuaDriver` and an MCP server. |
 | `DaemonClient` | The temporary compatibility name for today's private socket client. |
 
 `InProcessCuaDriver` is deliberately not a public type. Whether an operation is
@@ -145,11 +156,13 @@ Rust-authored daemon client, not an embedded GUI runtime.
 
 ## Proposal
 
-### 1. Establish a protocol-neutral typed runtime
+### 1. Establish a protocol-neutral public typed SDK
 
-Create `cua-driver-runtime` and move runtime construction, platform selection,
-desktop operations, sessions, policy, authorization, recording, observation,
-and shutdown into it. Its public object is `CuaDriver`:
+Make `cua-driver-sdk` the public contract that every application and server
+consumes. Runtime construction, platform selection, desktop operations,
+sessions, policy, authorization, recording, observation, and shutdown may live
+in a private `cua-driver-runtime` crate, but none of those implementation
+details form a second public interface. The SDK's public object is `CuaDriver`:
 
 ```rust
 pub struct CuaDriver { /* owned runtime state */ }
@@ -172,10 +185,26 @@ impl CuaDriver {
 This example is illustrative rather than an API freeze. The important contract
 is that public operations have typed request, result, and error structures.
 
-The runtime may retain an internal registry or typed request enum to apply
-shared middleware consistently. That dispatcher is not a public language or
-network protocol. It must not expose MCP method names, JSON schemas, generic
+The private runtime may retain an internal registry or typed request enum to
+apply shared middleware consistently. That dispatcher is not a public language
+or network protocol. It must not expose MCP method names, JSON schemas, generic
 JSON arguments, or MCP result envelopes from `CuaDriver`.
+
+The crate dependency invariant is:
+
+```text
+applications and cua-driver-mcp
+             |
+             v
+      public cua-driver-sdk
+             |
+             v
+private cua-driver-runtime / platform-* crates
+```
+
+`cua-driver-mcp` may depend on `cua-driver-sdk`. It must not depend directly on
+private platform crates or bypass the SDK through a separate runtime interface.
+CI should enforce this boundary from Cargo metadata and source imports.
 
 ### 2. Make Rust types the complete contract source
 
@@ -189,20 +218,21 @@ Rust contract layer. Protocol-neutral operation metadata may include:
 - Cua capability and authorization metadata; and
 - platform availability.
 
-The MCP adapter converts that metadata into MCP tool annotations and extension
-metadata. UniFFI generates language records and typed methods from the same Rust
-types. Platform implementations must stop declaring an independent live schema
-after each operation passes parity tests.
+The public SDK owns that metadata. MCP servers convert it into MCP tool
+annotations and extension metadata, while UniFFI generates language records and
+typed methods from the same Rust types. Platform implementations must stop
+declaring an independent live schema after each operation passes parity tests.
 
 Schema generation must fail CI if checked-in Python or TypeScript bindings
 drift from Rust. A complete inventory test must fail for a missing, duplicated,
 or platform-only exported operation.
 
-### 3. Embed the runtime through UniFFI
+### 3. Export the public SDK through UniFFI
 
-Change `cua-driver-sdk` from a daemon-client implementation into bindings over
-`CuaDriver`. Python and TypeScript expose an asynchronous construction and
-lifecycle surface conceptually equivalent to:
+Change `cua-driver-sdk` from a daemon-client implementation into the public
+typed `CuaDriver` contract and its generated bindings. Python and TypeScript
+expose an asynchronous construction and lifecycle surface conceptually
+equivalent to:
 
 ```python
 driver = await CuaDriver.create(options)
@@ -225,11 +255,11 @@ must be caught before crossing the ABI. Async calls, callbacks, and cancellation
 must not block the Python or JavaScript event loop. Shutdown and handle
 destruction must be idempotent, with documented behavior for in-flight calls.
 
-### 4. Put MCP downstream of the typed runtime
+### 4. Put MCP downstream of the public typed SDK
 
-Create a `cua-driver-mcp` adapter crate using the
+Create a `cua-driver-mcp` server crate using the
 [official Rust MCP SDK](https://github.com/modelcontextprotocol/rust-sdk). Only
-this adapter owns:
+this server owns:
 
 - MCP initialization and capability negotiation;
 - `tools/list` and JSON Schema representation;
@@ -238,21 +268,28 @@ this adapter owns:
 - progress, cancellation, and protocol notifications; and
 - experimental Tasks integration when enabled.
 
-The adapter validates MCP arguments into typed Rust inputs, invokes
-`CuaDriver`, and converts the typed result back into MCP. Cua-specific metadata
-must use a documented MCP extension point rather than modifying the core tool
-shape ad hoc.
+The MCP server is a consumer of `cua-driver-sdk`, just like any other
+application. It validates MCP arguments into the SDK's typed Rust inputs,
+invokes the public `CuaDriver` methods, and converts typed SDK results back into
+MCP. It must not import a private registry or runtime dispatcher. Cua-specific
+metadata must use a documented MCP extension point rather than modifying the
+core tool shape ad hoc.
 
-`cua-driver serve` instantiates `CuaDriver` and this adapter. The first
-implementation increment should prove that the official SDK can serve the
-selected Unix-domain-socket and Windows named-pipe transports, or choose a
+A Rust MCP server calls the public Rust SDK directly; it does not round-trip
+through the C ABI. A Python or TypeScript MCP server uses the corresponding
+generated UniFFI binding. These are different language bindings over one SDK
+contract, not separate Cua server interfaces.
+
+`cua-driver serve` instantiates the public `CuaDriver` SDK and this server. The
+first implementation increment should prove that the official SDK can serve
+the selected Unix-domain-socket and Windows named-pipe transports, or choose a
 supported authenticated loopback transport. A custom local transport is
 acceptable; a second custom tool protocol is not.
 
 The CLI topology becomes:
 
 ```text
-cua-driver serve -> CuaDriver + official MCP adapter
+cua-driver serve -> public CuaDriver SDK + official MCP server
 cua-driver call  -> MCP client
 cua-driver mcp   -> thin stdio-to-daemon MCP transport bridge
 ```
@@ -262,12 +299,12 @@ cleanly through MCP lifecycle behavior, a small versioned administrative
 control plane may remain. It must not contain generic tool list or call
 operations.
 
-An application may build its own JavaScript MCP server on the embedded
+An application may build its own JavaScript MCP server on the generated
 TypeScript SDK using the
 [official TypeScript MCP SDK](https://github.com/modelcontextprotocol/typescript-sdk).
-This is an adapter example, not a second Cua server implementation. Shared
+This server consumes the same public SDK contract as the Rust server. Shared
 conformance fixtures must verify that Rust-hosted and application-hosted MCP
-servers expose equivalent Cua tool contracts.
+servers expose equivalent Cua tool contracts and result semantics.
 
 MCP Tasks remain experimental in the
 [2025-11-25 MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks).
@@ -278,9 +315,9 @@ flag until the upstream contract is stable enough to support.
 
 ![Embedded and daemon lifecycle modes](2447/lifecycle-modes.png)
 
-**Figure 2.** Both modes instantiate the same library. The difference is who
-owns process identity, transport, isolation, multi-client coordination, and
-shutdown.
+**Figure 2.** Both modes instantiate the same public SDK implementation. The
+difference is who owns process identity, transport, isolation, multi-client
+coordination, and shutdown.
 
 #### Embedded application
 
@@ -303,7 +340,8 @@ state, recovery, and coordination across clients. This remains the default for
 agents, the CLI, remote or short-lived callers, and clients that cannot safely
 host the platform runtime.
 
-The daemon is not a second backend. It is a host around the same runtime.
+The daemon is not a second backend. It is an MCP server application around the
+same public typed SDK.
 
 ### 6. Define platform responsibilities
 
@@ -336,9 +374,10 @@ desktop-session process is operationally preferable.
 ### 7. Package one implementation for each distribution
 
 Move target-specific platform dependencies from the binary-only composition
-root into the reusable runtime crate. Build `libcua_driver` for each supported
-OS and architecture and include it in the corresponding Python wheel and npm
-platform package. The embedded package must not require the driver executable.
+root behind the public SDK, optionally in a private runtime crate. Build
+`libcua_driver` for each supported OS and architecture and include it in the
+corresponding Python wheel and npm platform package. The embedded package must
+not require the driver executable.
 
 Continue publishing the `cua-driver` executable for CLI and MCP users. Native
 package loaders must verify architecture and version compatibility and produce
@@ -359,6 +398,14 @@ This is convenient for adapters but recreates the part of MCP that already
 defines discovery, invocation, results, and errors. It also gives application
 developers an untyped API despite shipping generated bindings. Reject it as the
 public SDK contract. A private internal dispatcher remains acceptable.
+
+### Make bindings and MCP peer adapters over a private runtime
+
+This looks symmetrical, but it permits the MCP server and language SDKs to
+consume different interfaces and recreate the parity problem at a new layer.
+Reject it. The public typed SDK is the single boundary; both generated bindings
+and MCP servers consume it. A Rust server may call the Rust SDK directly rather
+than crossing its generated C ABI.
 
 ### Remove the daemon entirely
 
@@ -384,14 +431,15 @@ operation conversion and any required local transport.
 
 Migration is staged so each boundary can be proven independently.
 
-1. **Add the runtime without changing transport.** Extract `CuaDriver`, make
-   the current daemon instantiate it, and retain the current private protocol.
-   Existing users should observe no behavior change.
+1. **Add the public typed SDK without changing transport.** Extract
+   `CuaDriver` behind the `cua-driver-sdk` facade, make the current daemon
+   consume that facade, and retain the current private protocol. Existing users
+   should observe no behavior change.
 2. **Add true embedding.** Publish `CuaDriver.create()` in Python and
    TypeScript. Rename the current socket object to `DaemonClient` or
    `CuaDriverClient`, preserve `connect()` as deprecated compatibility, and
    switch embedded documentation and examples to the native path.
-3. **Introduce the official MCP adapter.** Make the daemon serve MCP and make
+3. **Introduce the official MCP server.** Make the daemon serve MCP and make
    CLI calls use an official MCP client. Retain a temporary bridge for released
    clients that still speak the old protocol.
 4. **Change defaults and observe.** Prefer typed embedding for imported
@@ -408,7 +456,7 @@ a `1.0.0` major release before the product contract is ready.
 
 Rollback remains available until the compatibility bridge is removed: the
 daemon can keep serving the old private protocol while the new MCP path is
-disabled. The runtime extraction itself must not require rollback because both
+disabled. The SDK extraction itself must not require rollback because both
 hosts use the same implementation.
 
 ## Security, privacy, and telemetry
@@ -431,36 +479,42 @@ hosts use the same implementation.
 
 ## Implementation plan
 
-### PR 1: Runtime extraction and architecture decision
+### PR 1: Public SDK boundary and runtime extraction
 
 - Add this RFC and the repository RFC process.
-- Add `cua-driver-runtime` with `CuaDriver` construction and owned lifecycle.
-- Move platform registry composition and shared state behind the runtime.
-- Make `cua-driver serve` use the runtime while preserving current IPC.
+- Make `cua-driver-sdk` the public typed Rust facade with `CuaDriver`
+  construction and owned lifecycle.
+- Move platform registry composition and shared state behind that facade,
+  optionally in a private `cua-driver-runtime` crate.
+- Make `cua-driver serve` consume the public SDK while preserving current IPC.
+- Add a dependency-boundary check preventing MCP from importing private runtime
+  or platform crates.
 - Add an exact operation inventory and behavior-parity tests.
 
 ### PR 2: Complete typed contract parity
 
-- Define typed Rust inputs, results, and errors for every exported operation.
+- Define public SDK inputs, results, and errors for every exported operation.
 - Replace canonical MCP-shaped definitions with protocol-neutral metadata.
 - Generate and drift-check Rust, Python, and TypeScript surfaces.
 - Remove platform-local live schemas only when each parity fixture passes.
 
 ### PR 3: True embedded UniFFI SDK
 
-- Bind `CuaDriver` through UniFFI.
+- Export the public `CuaDriver` SDK through UniFFI.
 - Add async lifecycle, cancellation, idempotent shutdown, and error mapping.
 - Bundle the native runtime in wheels and npm platform packages.
 - Add Python, Node, signed macOS host, Windows interactive-session, and Linux
   display-server E2E.
 
-### PR 4: Official MCP adapter
+### PR 4: Official MCP server
 
-- Add the Rust MCP adapter using the official SDK.
+- Add the Rust MCP server using the official MCP SDK and public
+  `cua-driver-sdk` API.
+- Prove it has no dependency on private runtime or platform crates.
 - Prove or select the daemon's supported local transport.
 - Move `serve`, `call`, and `mcp` to the new topology.
 - Add protocol negotiation, cancellation, conformance, and opt-in Tasks tests.
-- Provide an application-owned TypeScript MCP adapter example using the
+- Provide an application-owned TypeScript MCP server example using the
   official TypeScript SDK.
 
 ### PR 5: Migration, cleanup, and documentation
@@ -477,11 +531,14 @@ The RFC is complete only when all of the following are proven at the exact
 release source revision:
 
 - Every exported operation has one canonical typed Rust input and result
-  contract and no independently maintained live schema.
+  contract owned by the public SDK and no independently maintained live schema.
+- Cargo dependency and source-import checks prove that MCP consumes
+  `cua-driver-sdk` and cannot bypass it through private runtime or platform
+  crates.
 - An inventory test detects missing, duplicated, renamed, or platform-only
   exported operations.
-- `cua-driver serve` and embedded `CuaDriver` instantiate the same runtime and
-  apply the same policy and authorization middleware.
+- `cua-driver serve` and embedded applications instantiate the same public SDK
+  implementation and apply the same policy and authorization middleware.
 - Python and Node clean installs perform at least one desktop observation, one
   input action, session creation and cleanup, cancellation, and shutdown without
   spawning a process or opening daemon IPC.
@@ -490,8 +547,8 @@ release source revision:
   daemon.
 - If enabled, Tasks tests cover capability negotiation, creation, status,
   cancellation, retention, and unsupported-client behavior.
-- Rust-hosted and application-hosted TypeScript MCP adapters pass shared tool
-  contract fixtures.
+- Rust-hosted and application-hosted Python or TypeScript MCP servers pass
+  shared SDK and MCP contract fixtures.
 - macOS signed-host E2E proves host TCC attribution and daemon E2E proves stable
   daemon attribution.
 - Windows E2E covers embedded interactive use and an external client reaching a
@@ -510,9 +567,9 @@ release source revision:
 
 ## Unresolved questions
 
-- Should the canonical Rust crate be named `cua-driver-runtime` while the
-  packaged artifact remains `libcua_driver`, or should one name be used for
-  both?
+- Should private runtime composition remain inside `cua-driver-sdk`, or move to
+  a separate non-public `cua-driver-runtime` crate while the packaged artifact
+  remains `libcua_driver`?
 - Which official-MCP-compatible local transport should replace the current
   newline-delimited Unix socket and Windows named-pipe protocol?
 - Can all operation outputs become fully typed immediately, or do a small
@@ -521,13 +578,25 @@ release source revision:
   without creating an incompatible tool shape?
 - What minimum compatibility window is required before removing the released
   socket-backed SDK and daemon list/call methods?
-- Should the TypeScript application-owned MCP adapter ship as package code, an
+- Should the TypeScript application-owned MCP server ship as package code, an
   example, or a separately versioned optional package?
 - Which Tasks use cases are valuable enough to justify enabling the
   experimental upstream facility before it stabilizes?
 
 ## Decision record
 
-Pending review. The discussion issue should capture the final decision,
-material feedback, accepted amendments, rejected alternatives, remaining
-risks, implementation links, and any superseded documents.
+Pending review.
+
+The 2026-07-22 revision in
+[#2454](https://github.com/trycua/cua/pull/2454) incorporates architecture
+feedback from [@r33drichards](https://github.com/r33drichards). The original
+figure showed the embedded bindings and MCP adapter as peers over a typed native
+core. That shape still allowed two interfaces over private implementation
+details. The revised decision makes `cua-driver-sdk` the public typed boundary
+and requires MCP servers to consume the same SDK contract as every application.
+Rust servers call the Rust SDK directly; Python and TypeScript servers use
+generated bindings, so no unnecessary C ABI round-trip is imposed on Rust.
+
+The discussion issue should capture the final decision, other material
+feedback, accepted amendments, rejected alternatives, remaining risks,
+implementation links, and any superseded documents.

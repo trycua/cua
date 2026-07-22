@@ -224,7 +224,7 @@ export class EmbeddedCuaDriver {
         if (this.#connection) {
           this.#child = undefined;
           this.#connection = undefined;
-          void removeSocket(socketPath);
+          void removeSocket(socketPath).catch(() => undefined);
           return;
         }
         reject(

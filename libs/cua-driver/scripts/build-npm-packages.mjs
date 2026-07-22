@@ -47,6 +47,8 @@ const platforms = [
   { triple: "win32-arm64-msvc", os: "win32", cpu: "arm64", file: "cua_driver_sdk.dll" },
   { triple: "win32-x64-msvc", os: "win32", cpu: "x64", file: "cua_driver_sdk.dll" },
 ]
+const runtimeFile = "cua_driver_node_runtime.node"
+const runtimeNotice = "node-runtime-NOTICE.md"
 
 function writeJson(path, value) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`)
@@ -76,19 +78,25 @@ for (const platform of platforms) {
     if (allowPartial) continue
     throw new Error(`missing native SDK library ${source}`)
   }
+  const runtimeSource = join(nativeRoot, platform.triple, runtimeFile)
+  if (!existsSync(runtimeSource)) {
+    throw new Error(`missing Electron-compatible Node runtime ${runtimeSource}`)
+  }
   nativeCount += 1
   const destination = join(stagingRoot, platform.triple)
   mkdirSync(destination, { recursive: true })
   cpSync(source, join(destination, platform.file))
+  cpSync(runtimeSource, join(destination, runtimeFile))
+  cpSync(join(scriptDirectory, runtimeNotice), join(destination, runtimeNotice))
   const manifest = {
     name,
     version,
     description: `Native Cua Driver SDK library for ${platform.triple}`,
-    license: "MIT",
+    license: "MIT AND MPL-2.0",
     repository: { type: "git", url: "git+https://github.com/trycua/cua.git" },
     os: [platform.os],
     cpu: [platform.cpu],
-    files: [platform.file],
+    files: [platform.file, runtimeFile, runtimeNotice],
     publishConfig: { access: "public" },
   }
   if (platform.libc) manifest.libc = [platform.libc]

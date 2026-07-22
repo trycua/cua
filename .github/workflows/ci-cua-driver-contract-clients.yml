@@ -171,6 +171,8 @@ jobs:
           mkdir -p /tmp/cua-driver-native/linux-x64-gnu /tmp/cua-driver-npm/smoke
           cp ../rust/target/release/libcua_driver_sdk.so \
             /tmp/cua-driver-native/linux-x64-gnu/libcua_driver_sdk.so
+          cp node_modules/@trycua/cua-driver-linux-x64-gnu/cua_driver_node_runtime.node \
+            /tmp/cua-driver-native/linux-x64-gnu/cua_driver_node_runtime.node
           VERSION=$(node -p "require('./package.json').version")
           node ../scripts/build-npm-packages.mjs \
             --version "$VERSION" \
@@ -182,6 +184,8 @@ jobs:
           grep -F 'package/dist/electron.js' /tmp/cua-driver-npm/contents.txt
           tar -tzf "/tmp/cua-driver-npm/trycua-cua-driver-linux-x64-gnu-$VERSION.tgz" | \
             grep -F 'package/libcua_driver_sdk.so'
+          tar -tzf "/tmp/cua-driver-npm/trycua-cua-driver-linux-x64-gnu-$VERSION.tgz" | \
+            grep -F 'package/cua_driver_node_runtime.node'
           npm install --prefix /tmp/cua-driver-npm/smoke \
             "/tmp/cua-driver-npm/trycua-cua-driver-$VERSION.tgz" \
             "/tmp/cua-driver-npm/trycua-cua-driver-linux-x64-gnu-$VERSION.tgz"

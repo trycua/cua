@@ -48,6 +48,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "electron": "43.2.0",
     "typescript": "^5.7.0",
     "uniffi-bindgen-react-native": "0.31.0-3"
   },

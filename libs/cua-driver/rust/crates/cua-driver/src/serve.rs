@@ -1535,10 +1535,13 @@ pub async fn run_serve(
 
 /// `cua-driver serve` implementation.
 pub fn run_serve_cmd(
-    registry: std::sync::Arc<cua_driver_core::tool::ToolRegistry>,
+    driver: std::sync::Arc<cua_driver_sdk::CuaDriver>,
     socket_path: &str,
     pid_file_path: Option<&str>,
 ) {
+    let registry = driver
+        .compatibility_registry()
+        .expect("daemon host must own the SDK runtime");
     let socket_path = socket_path.to_owned();
     let pid_file_path = pid_file_path.map(str::to_owned);
 

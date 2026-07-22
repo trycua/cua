@@ -14,7 +14,7 @@ test(
   async () => {
     const command = process.platform === "linux" ? "xvfb-run" : electron
     const args = process.platform === "linux"
-      ? ["-a", electron, path.join(testDirectory, "electron-main-fixture.mjs")]
+      ? ["-a", electron, "--no-sandbox", path.join(testDirectory, "electron-main-fixture.mjs")]
       : [path.join(testDirectory, "electron-main-fixture.mjs")]
     const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] })
     let stdout = ""
@@ -26,7 +26,7 @@ test(
       child.on("exit", resolve)
     })
 
-    assert.equal(code, 0, stderr)
+    assert.equal(code, 0, `stdout:\n${stdout}\nstderr:\n${stderr}`)
     const result = JSON.parse(stdout.trim().split("\n").at(-1))
     assert.equal(result.versions.electron, "43.2.0")
     assert.equal(result.versions.package, "0.11.0")

@@ -53,7 +53,7 @@ async fn embedded_host_serves_sdk_and_mcp_with_one_contract() {
     assert_eq!(host.state(), EmbeddedDriverHostState::Ready);
 
     let sdk = CuaDriver::connect(Some(connection.socket_path.clone())).expect("connect SDK");
-    let metadata = sdk.metadata().expect("SDK metadata handshake");
+    let metadata = sdk.metadata().await.expect("SDK metadata handshake");
     assert!(metadata.embedded);
     assert_eq!(metadata.pid, connection.pid);
     assert_eq!(metadata.contract_version, connection.contract_version);
@@ -62,7 +62,7 @@ async fn embedded_host_serves_sdk_and_mcp_with_one_contract() {
         Some("com.trycua.embedded-contract-test")
     );
     let sdk_tools: Value =
-        serde_json::from_str(&sdk.list_tools_json().expect("SDK tools/list")).unwrap();
+        serde_json::from_str(&sdk.list_tools_json().await.expect("SDK tools/list")).unwrap();
 
     let mut proxy_command = Command::new(&connection.mcp.command);
     proxy_command
@@ -121,6 +121,7 @@ async fn embedded_host_serves_sdk_and_mcp_with_one_contract() {
             session: "embedded-sdk-window".into(),
             capture_scope: Some(CaptureScope::Window),
         })
+        .await
         .expect("start SDK-owned session");
     assert_eq!(sdk_session.state.capture_scope, CaptureScope::Window);
 
@@ -155,11 +156,13 @@ async fn embedded_host_serves_sdk_and_mcp_with_one_contract() {
         .get_session_state(GetSessionStateInput {
             session: "embedded-sdk-window".into(),
         })
+        .await
         .expect("read SDK session");
     let mcp_state = sdk
         .get_session_state(GetSessionStateInput {
             session: "embedded-mcp-desktop".into(),
         })
+        .await
         .expect("read MCP-created session through SDK");
     assert_eq!(sdk_state.capture_scope, CaptureScope::Window);
     assert_eq!(mcp_state.capture_scope, CaptureScope::Desktop);

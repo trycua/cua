@@ -79,7 +79,7 @@ process.stdin.on("end", () => server.close(() => process.exit(0)));
       const sdk = await import("@trycua/cua-driver")
       const driver = sdk.CuaDriver.connect(connection.socketPath)
       assert.equal(driver.socketPath(), connection.socketPath)
-      assert.deepEqual(JSON.parse(driver.listToolsJson()), {
+      assert.deepEqual(JSON.parse(await driver.listToolsJson()), {
         tools: [{ name: "embedded_fixture" }],
       })
       driver.uniffiDestroy()
@@ -152,7 +152,7 @@ test(
         expectedMethods.every((name) => typeof driver[name] === "function"),
         true,
       )
-      const result = driver.getDesktopState(
+      const result = await driver.getDesktopState(
         GetDesktopStateInput.new({ session: "node-run" }),
       )
       const request = await requestPromise
@@ -167,6 +167,27 @@ test(
     } finally {
       fixture.kill()
       rmSync(directory, { recursive: true, force: true })
+    }
+  },
+)
+
+test(
+  "generated Node SDK can own the runtime in process",
+  { skip: !existsSync(library), timeout: 10_000 },
+  async () => {
+    const { CuaDriver, DriverExecutionMode } = await import("@trycua/cua-driver")
+    const driver = CuaDriver.create(undefined)
+    try {
+      assert.equal(driver.executionMode(), DriverExecutionMode.Embedded)
+      assert.equal(driver.socketPath(), "")
+      assert.equal(driver.isAvailable(), true)
+      const metadata = await driver.metadata()
+      assert.equal(metadata.embedded, true)
+      assert.equal(metadata.pid, process.pid)
+      await driver.shutdown()
+      assert.equal(driver.isAvailable(), false)
+    } finally {
+      driver.uniffiDestroy()
     }
   },
 )

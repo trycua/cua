@@ -4,7 +4,7 @@ Rust-backed TypeScript/Node SDK for Cua Driver client applications.
 
 ## Product boundary
 
-The package root exposes the native daemon SDK:
+The package root exposes the native SDK:
 
 ```ts
 import { CuaDriver } from "@trycua/cua-driver"
@@ -21,10 +21,10 @@ runtime-neutral MCP clients and should configure the executable directly:
 cua-driver mcp
 ```
 
-The removed pre-release MCP facade used `CuaDriver.stdio()`, async methods,
-`*Args` interfaces, and a TypeScript stdio transport. Application code migrates
-to the synchronous Rust-backed methods shown below; agent code removes the Cua
-package import and supplies `cua-driver mcp` to its agent SDK.
+The removed pre-release MCP facade used `CuaDriver.stdio()`, `*Args`
+interfaces, and a TypeScript stdio transport. Application code imports the
+typed Rust-backed SDK shown below; agent code supplies `cua-driver mcp` to its
+agent SDK.
 
 ## SDK example
 
@@ -37,8 +37,8 @@ import {
   StartSessionInput,
 } from "@trycua/cua-driver"
 
-const driver = CuaDriver.connect(undefined) // default installed daemon socket
-driver.startSession(
+const driver = CuaDriver.create(undefined) // same process; no daemon
+await driver.startSession(
   StartSessionInput.new({
     session: "demo",
     captureScope: CaptureScope.Desktop,
@@ -46,27 +46,37 @@ driver.startSession(
 )
 
 try {
-  const desktop = driver.getDesktopState(
+  const desktop = await driver.getDesktopState(
     GetDesktopStateInput.new({ session: "demo" }),
   )
   console.log(desktop.images[0]?.mimeType)
 } finally {
-  driver.endSession(EndSessionInput.new({ session: "demo" }))
+  await driver.endSession(EndSessionInput.new({ session: "demo" }))
+  await driver.shutdown()
   driver.uniffiDestroy()
 }
 ```
 
-The SDK is currently synchronous and requires a native library matching the
-host OS and architecture. Desktop calls return a typed `ToolResult` with text,
+SDK operations are asynchronous and require a native library matching the host
+OS and architecture. Desktop calls return a typed `ToolResult` with text,
 images, verification/error metadata, and `structuredJson` / `rawJson` for
-platform-extensible results. Session lifecycle calls return dedicated
-generated records.
+platform-extensible results. Session lifecycle calls return dedicated generated
+records.
 
-## Embedded Node and Electron hosts
+`CuaDriver.connect(socketPath)` remains available while existing applications
+migrate. It exposes the same methods over the installed daemon, but it does not
+provide a second SDK contract.
 
-A signed desktop application can bundle `cua-driver`, start it as a direct
-child, and connect both the native SDK and its agent runtime to the same private
-daemon:
+`shutdown()` closes admission, waits for already admitted operations to finish,
+and is idempotent. Calls started after shutdown reject with `DriverError`.
+`uniffiDestroy()` releases the binding handle, but orderly applications should
+await `shutdown()` first.
+
+## Daemon-backed MCP hosts
+
+A signed desktop application that must also expose MCP to an external agent can
+bundle `cua-driver`, start it as a direct child, and connect both application
+code and its agent runtime to the same private daemon:
 
 ```ts
 import { CuaDriver, EmbeddedCuaDriverHost } from "@trycua/cua-driver"

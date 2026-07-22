@@ -85,14 +85,14 @@ except FileNotFoundError:
                 )
                 connection = await host.start()
                 driver = CuaDriver.connect(connection.socket_path)
-                metadata = driver.metadata()
+                metadata = await driver.metadata()
                 self.assertTrue(metadata.embedded)
                 self.assertEqual(metadata.pid, connection.pid)
                 self.assertEqual(
                     metadata.host_bundle_id, "com.example.python-embedded"
                 )
                 self.assertEqual(
-                    json.loads(driver.list_tools_json()),
+                    json.loads(await driver.list_tools_json()),
                     {"tools": [{"name": "embedded_fixture"}]},
                 )
                 await host.stop()
@@ -167,8 +167,12 @@ except FileNotFoundError:
                 "hotkey",
             }
             self.assertTrue(all(hasattr(driver, name) for name in expected_methods))
-            result = driver.get_desktop_state(
-                GetDesktopStateInput(session="python-run", screenshot_out_file=None)
+            result = asyncio.run(
+                driver.get_desktop_state(
+                    GetDesktopStateInput(
+                        session="python-run", screenshot_out_file=None
+                    )
+                )
             )
             server.join(timeout=5)
             listener.close()
@@ -179,6 +183,22 @@ except FileNotFoundError:
         self.assertEqual(captured[0]["name"], "get_desktop_state")
         self.assertEqual(captured[0]["args"], {"session": "python-run"})
         self.assertEqual(captured[0]["client_kind"], "python_sdk")
+
+    def test_generated_python_sdk_can_own_the_runtime_in_process(self) -> None:
+        from cua_driver import CuaDriver, DriverExecutionMode
+
+        async def scenario() -> None:
+            driver = CuaDriver.create()
+            self.assertEqual(driver.execution_mode(), DriverExecutionMode.EMBEDDED)
+            self.assertEqual(driver.socket_path(), "")
+            self.assertTrue(driver.is_available())
+            metadata = await driver.metadata()
+            self.assertTrue(metadata.embedded)
+            self.assertEqual(metadata.pid, os.getpid())
+            await driver.shutdown()
+            self.assertFalse(driver.is_available())
+
+        asyncio.run(scenario())
 
 
 if os.environ.get("CUA_DRIVER_REQUIRE_UNIFFI") == "1" and not LIBRARY.exists():

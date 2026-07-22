@@ -273,6 +273,31 @@ const DEFINITIONS = {
       ret: FfiType.Void,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_driver_sdk_fn_clone_embeddedcuadriverhost": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_free_embeddedcuadriverhost": {
+      args: [FfiType.Handle],
+      ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_func_current_mac_os_permission_status": {
+      args: [],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_func_open_mac_os_screen_recording_settings": {
+      args: [],
+      ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_func_request_mac_os_permissions": {
+      args: [],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_driver_sdk_fn_constructor_cuadriver_connect": {
       args: [FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -338,6 +363,11 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_driver_sdk_fn_method_cuadriver_metadata": {
+      args: [FfiType.Handle],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_driver_sdk_fn_method_cuadriver_move_cursor": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
@@ -368,9 +398,64 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_driver_sdk_fn_constructor_embeddedcuadriverhost_new": {
+      args: [FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_constructor_embeddedcuadriverhost_with_options": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_connection": {
+      args: [FfiType.Handle],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_restart": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_start": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_state": {
+      args: [FfiType.Handle],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_stop": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_wait_for_exit": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "ffi_cua_driver_sdk_uniffi_contract_version": {
       args: [],
       ret: FfiType.UInt32,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_func_current_mac_os_permission_status": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_func_open_mac_os_screen_recording_settings": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_func_request_mac_os_permissions": {
+      args: [],
+      ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
     "uniffi_cua_driver_sdk_checksum_constructor_cuadriver_connect": {
@@ -438,6 +523,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_driver_sdk_checksum_method_cuadriver_metadata": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_driver_sdk_checksum_method_cuadriver_move_cursor": {
       args: [],
       ret: FfiType.UInt16,
@@ -464,6 +554,46 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_driver_sdk_checksum_method_cuadriver_type_text": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_constructor_embeddedcuadriverhost_new": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_constructor_embeddedcuadriverhost_with_options": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_connection": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_restart": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_start": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_state": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_stop": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_wait_for_exit": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -540,6 +670,11 @@ interface NativeModuleInterface {
     ffi_cua_driver_sdk_rust_future_free_void(handle: bigint): void;
     uniffi_cua_driver_sdk_fn_clone_cuadriver(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_free_cuadriver(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cua_driver_sdk_fn_clone_embeddedcuadriverhost(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cua_driver_sdk_fn_free_embeddedcuadriverhost(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cua_driver_sdk_fn_func_current_mac_os_permission_status(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_driver_sdk_fn_func_open_mac_os_screen_recording_settings(uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cua_driver_sdk_fn_func_request_mac_os_permissions(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_constructor_cuadriver_connect(socketPath: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_call_tool(uniffiSelf: bigint, name: Uint8Array, argumentsJson: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_method_cuadriver_click(uniffiSelf: bigint, input: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -553,13 +688,25 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_method_cuadriver_hotkey(uniffiSelf: bigint, input: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_method_cuadriver_is_available(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): number;
     uniffi_cua_driver_sdk_fn_method_cuadriver_list_tools_json(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_driver_sdk_fn_method_cuadriver_metadata(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_method_cuadriver_move_cursor(uniffiSelf: bigint, input: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_method_cuadriver_press_key(uniffiSelf: bigint, input: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_method_cuadriver_scroll(uniffiSelf: bigint, input: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_method_cuadriver_socket_path(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_method_cuadriver_start_session(uniffiSelf: bigint, input: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_method_cuadriver_type_text(uniffiSelf: bigint, input: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_driver_sdk_fn_constructor_embeddedcuadriverhost_new(binaryPath: Uint8Array, hostBundleId: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cua_driver_sdk_fn_constructor_embeddedcuadriverhost_with_options(options: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_connection(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_restart(uniffiSelf: bigint): bigint;
+    uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_start(uniffiSelf: bigint): bigint;
+    uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_state(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_stop(uniffiSelf: bigint): bigint;
+    uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_wait_for_exit(uniffiSelf: bigint, generation: Uint8Array): bigint;
     ffi_cua_driver_sdk_uniffi_contract_version(): number;
+    uniffi_cua_driver_sdk_checksum_func_current_mac_os_permission_status(): number;
+    uniffi_cua_driver_sdk_checksum_func_open_mac_os_screen_recording_settings(): number;
+    uniffi_cua_driver_sdk_checksum_func_request_mac_os_permissions(): number;
     uniffi_cua_driver_sdk_checksum_constructor_cuadriver_connect(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_call_tool(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_click(): number;
@@ -573,12 +720,21 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_checksum_method_cuadriver_hotkey(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_is_available(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_list_tools_json(): number;
+    uniffi_cua_driver_sdk_checksum_method_cuadriver_metadata(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_move_cursor(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_press_key(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_scroll(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_socket_path(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_start_session(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_type_text(): number;
+    uniffi_cua_driver_sdk_checksum_constructor_embeddedcuadriverhost_new(): number;
+    uniffi_cua_driver_sdk_checksum_constructor_embeddedcuadriverhost_with_options(): number;
+    uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_connection(): number;
+    uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_restart(): number;
+    uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_start(): number;
+    uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_state(): number;
+    uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_stop(): number;
+    uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_wait_for_exit(): number;
     // Codegen call sites use these via `nativeModule().rustbuffer_alloc(...)`
     // and `nativeModule().rustbuffer_free(...)`. The runtime's registered
     // module exposes them as method properties.
@@ -592,6 +748,8 @@ const getter: () => NativeModuleInterface = () => {
     const libPath = resolveLibPath({
       crateName: "cua_driver_sdk",
       callerUrl: import.meta.url,
+      npmPackageBase: "@trycua/cua-driver-",
+      tripleStyle: "node",
     });
     const mod_ = UniffiNativeModule.open(libPath);
     _nativeModule = mod_.register(DEFINITIONS) as unknown as NativeModuleInterface;

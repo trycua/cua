@@ -470,6 +470,80 @@ pub fn read_pid_file(pid_file_path: &str) -> Option<u32> {
 
 // ── Server ────────────────────────────────────────────────────────────────────
 
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+struct SocketIdentity {
+    device: u64,
+    inode: u64,
+}
+
+#[cfg(unix)]
+fn socket_identity(socket_path: &str) -> anyhow::Result<SocketIdentity> {
+    use std::os::unix::fs::MetadataExt as _;
+    let metadata = std::fs::symlink_metadata(socket_path)?;
+    Ok(SocketIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    })
+}
+
+#[cfg(unix)]
+fn remove_owned_socket(socket_path: &str, identity: SocketIdentity) {
+    let Ok(current) = socket_identity(socket_path) else {
+        return;
+    };
+    if current.device == identity.device && current.inode == identity.inode {
+        let _ = std::fs::remove_file(socket_path);
+    }
+}
+
+#[cfg(unix)]
+fn secure_embedded_socket(socket_path: &str, embedded: bool) -> anyhow::Result<()> {
+    if !embedded {
+        return Ok(());
+    }
+    use std::os::unix::fs::PermissionsExt as _;
+    let permissions = std::fs::Permissions::from_mode(0o600);
+    std::fs::set_permissions(socket_path, permissions)
+        .map_err(|e| anyhow::anyhow!("secure embedded daemon socket {socket_path}: {e}"))
+}
+
+#[cfg(unix)]
+fn prepare_embedded_socket_path(socket_path: &str, embedded: bool) -> anyhow::Result<()> {
+    if !embedded {
+        // Preserve the legacy standalone stale-socket recovery behavior.
+        let _ = std::fs::remove_file(socket_path);
+        return Ok(());
+    }
+    match std::fs::symlink_metadata(socket_path) {
+        Ok(_) => anyhow::bail!(
+            "embedded daemon endpoint already exists at {socket_path}; the owning host must prove and remove its stale socket before spawn"
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn daemon_metadata_response() -> DaemonResponse {
+    DaemonResponse::ok(
+        serde_json::to_value(cua_driver_core::daemon::current_daemon_metadata())
+            .expect("daemon metadata is serializable"),
+    )
+}
+
+async fn wait_for_parent_stdin_eof() {
+    use tokio::io::AsyncReadExt as _;
+
+    let mut stdin = tokio::io::stdin();
+    let mut buffer = [0_u8; 64];
+    loop {
+        match stdin.read(&mut buffer).await {
+            Ok(0) | Err(_) => return,
+            Ok(_) => {}
+        }
+    }
+}
+
 /// Run the daemon server. Binds `socket_path`, writes `pid_file_path`,
 /// accepts connections, and serves requests until `{"method":"shutdown"}`.
 ///
@@ -490,11 +564,15 @@ pub async fn run_serve(
         std::fs::create_dir_all(dir)?;
     }
 
-    // Remove stale socket file (from a crashed previous daemon).
-    let _ = std::fs::remove_file(socket_path);
+    let embedded = cua_driver_core::embedded_mode();
+    // Embedded endpoints are host-owned. The daemon must never unlink an
+    // arbitrary pre-existing path between the host's safety check and bind.
+    prepare_embedded_socket_path(socket_path, embedded)?;
 
     let listener =
         UnixListener::bind(socket_path).map_err(|e| anyhow::anyhow!("bind {socket_path}: {e}"))?;
+    secure_embedded_socket(socket_path, embedded)?;
+    let bound_socket = socket_identity(socket_path)?;
 
     eprintln!("Cua Driver daemon listening on {socket_path}");
 
@@ -509,6 +587,14 @@ pub async fn run_serve(
     // Shutdown channel.
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let shutdown_tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx)));
+    let parent_liveness = async {
+        if cua_driver_core::parent_liveness_stdin_enabled() {
+            wait_for_parent_stdin_eof().await;
+        } else {
+            std::future::pending::<()>().await;
+        }
+    };
+    tokio::pin!(parent_liveness);
 
     // Idle-TTL recording backstop (#1764), now demoted to SECONDARY cover. The
     // PRIMARY teardown is the per-session reaper: the proxy holds a persistent
@@ -563,6 +649,12 @@ pub async fn run_serve(
                         };
 
                         match req.method.as_str() {
+                            "metadata" => {
+                                let resp = daemon_metadata_response();
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                            }
                             "shutdown" => {
                                 let resp = DaemonResponse::ok(serde_json::json!({"shutdown": true}));
                                 let _ = writer.write_all(
@@ -792,11 +884,15 @@ pub async fn run_serve(
                 eprintln!("Cua Driver daemon shutting down.");
                 break;
             }
+            _ = &mut parent_liveness => {
+                eprintln!("Cua Driver embedded host closed its lifetime pipe; shutting down.");
+                break;
+            }
         }
     }
 
-    // Clean up.
-    let _ = std::fs::remove_file(socket_path);
+    // Do not unlink a replacement socket created after this listener was bound.
+    remove_owned_socket(socket_path, bound_socket);
     if let Some(pid_path) = pid_file_path {
         let _ = std::fs::remove_file(pid_path);
     }
@@ -921,29 +1017,10 @@ fn is_self_at_high_il() -> bool {
     }
 }
 
-/// Build a SECURITY_ATTRIBUTES that lets any Medium-IL (or higher) process
-/// open the named pipe, even though the daemon itself is running at
-/// High IL (via the autostart Scheduled Task's `RunLevel=Highest`, per
-/// #1630). Without this, the default UIPI rule "no write-up across IL
-/// boundaries" makes the High-IL daemon's pipe unreachable from a normal
-/// Medium-IL user shell — every `cua-driver <tool>` call from the CLI
-/// fails to reach the daemon and its shared `ToolState`, which breaks the
-/// element_index cache invariant
-/// (`get_window_state` → `click(element_index)` stops working because
-/// the two calls land in different ToolState instances).
-///
-/// SDDL: `D:(A;OICI;GA;;;WD)S:(ML;;NW;;;LW)`
-///   - DACL grants `GENERIC_ALL` to `WD` (Everyone).
-///   - SACL sets the mandatory label to LOW with `NW` (NoWriteUp), so
-///     processes at Low-IL and above can write the pipe — i.e. no
-///     IL-based write restriction in practice.
-///
-/// Returns the SECURITY_ATTRIBUTES struct AND the raw security-descriptor
-/// pointer (which the caller must keep alive for the lifetime of the
-/// pipe-server, then free via `LocalFree`).
 #[cfg(target_os = "windows")]
-unsafe fn build_open_pipe_security_attrs() -> Option<(SecurityAttributesRaw, *mut std::ffi::c_void)>
-{
+unsafe fn security_attrs_from_sddl(
+    sddl: &str,
+) -> Option<(SecurityAttributesRaw, *mut std::ffi::c_void)> {
     #[link(name = "advapi32")]
     extern "system" {
         fn ConvertStringSecurityDescriptorToSecurityDescriptorW(
@@ -953,9 +1030,7 @@ unsafe fn build_open_pipe_security_attrs() -> Option<(SecurityAttributesRaw, *mu
             security_descriptor_size: *mut u32,
         ) -> i32;
     }
-    let sddl: Vec<u16> = "D:(A;OICI;GA;;;WD)S:(ML;;NW;;;LW)\0"
-        .encode_utf16()
-        .collect();
+    let sddl: Vec<u16> = format!("{sddl}\0").encode_utf16().collect();
     let mut sd_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
     let mut sd_size: u32 = 0;
     let ok = ConvertStringSecurityDescriptorToSecurityDescriptorW(
@@ -973,6 +1048,107 @@ unsafe fn build_open_pipe_security_attrs() -> Option<(SecurityAttributesRaw, *mu
         b_inherit_handle: 0,
     };
     Some((attrs, sd_ptr))
+}
+
+/// Return the current process token's user SID as an SDDL string. Embedded
+/// named pipes use this identity instead of the standalone daemon's historical
+/// Everyone DACL.
+#[cfg(target_os = "windows")]
+unsafe fn current_user_sid_string() -> Option<String> {
+    #[repr(C)]
+    struct SidAndAttributes {
+        sid: *mut std::ffi::c_void,
+        attributes: u32,
+    }
+    #[repr(C)]
+    struct TokenUserRaw {
+        user: SidAndAttributes,
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentProcess() -> *mut std::ffi::c_void;
+        fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+        fn LocalFree(memory: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+    }
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn OpenProcessToken(
+            process: *mut std::ffi::c_void,
+            desired_access: u32,
+            token: *mut *mut std::ffi::c_void,
+        ) -> i32;
+        fn GetTokenInformation(
+            token: *mut std::ffi::c_void,
+            information_class: u32,
+            information: *mut std::ffi::c_void,
+            information_length: u32,
+            return_length: *mut u32,
+        ) -> i32;
+        fn ConvertSidToStringSidW(sid: *mut std::ffi::c_void, string_sid: *mut *mut u16) -> i32;
+    }
+
+    const TOKEN_QUERY: u32 = 0x0008;
+    const TOKEN_USER_CLASS: u32 = 1;
+    let mut token = std::ptr::null_mut();
+    if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 || token.is_null() {
+        return None;
+    }
+    let mut required = 0_u32;
+    let _ = GetTokenInformation(
+        token,
+        TOKEN_USER_CLASS,
+        std::ptr::null_mut(),
+        0,
+        &mut required,
+    );
+    if required == 0 {
+        let _ = CloseHandle(token);
+        return None;
+    }
+    let mut buffer = vec![0_u8; required as usize];
+    let ok = GetTokenInformation(
+        token,
+        TOKEN_USER_CLASS,
+        buffer.as_mut_ptr().cast(),
+        required,
+        &mut required,
+    );
+    let _ = CloseHandle(token);
+    if ok == 0 {
+        return None;
+    }
+    // GetTokenInformation writes into a byte buffer whose alignment is not
+    // guaranteed to match TOKEN_USER. Copy the small header out rather than
+    // creating a potentially unaligned reference into the buffer.
+    let token_user = std::ptr::read_unaligned(buffer.as_ptr().cast::<TokenUserRaw>());
+    let mut string_sid = std::ptr::null_mut();
+    if ConvertSidToStringSidW(token_user.user.sid, &mut string_sid) == 0 || string_sid.is_null() {
+        return None;
+    }
+    let length = (0..)
+        .find(|&index| *string_sid.add(index) == 0)
+        .unwrap_or(0);
+    let sid = String::from_utf16_lossy(std::slice::from_raw_parts(string_sid, length));
+    let _ = LocalFree(string_sid.cast());
+    (!sid.is_empty()).then_some(sid)
+}
+
+/// Build the named-pipe ACL for one daemon mode.
+///
+/// Standalone preserves the existing cross-integrity Everyone descriptor used
+/// by elevated installs. Embedded mode is private to the current user while
+/// retaining the low mandatory label needed when host and daemon integrity
+/// levels differ.
+#[cfg(target_os = "windows")]
+unsafe fn build_pipe_security_attrs(
+    embedded: bool,
+) -> Option<(SecurityAttributesRaw, *mut std::ffi::c_void)> {
+    if embedded {
+        let sid = current_user_sid_string()?;
+        security_attrs_from_sddl(&format!("D:P(A;;GA;;;{sid})S:(ML;;NW;;;LW)"))
+    } else {
+        security_attrs_from_sddl("D:(A;OICI;GA;;;WD)S:(ML;;NW;;;LW)")
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -996,12 +1172,16 @@ pub async fn run_serve(
 
     eprintln!("Cua Driver daemon listening on {socket_path}");
 
-    // Build the cross-IL security descriptor once, reuse on every pipe
-    // instance. If this fails we fall back to the default-ACL `create`
-    // (which is High-IL exclusive when the daemon is at High IL — i.e.
-    // the bug we're trying to fix). Log the failure so it's diagnosable.
-    let security_attrs = unsafe { build_open_pipe_security_attrs() };
+    // Build the mode-specific descriptor once and reuse it for every pipe
+    // instance. Embedded mode fails closed if its current-user-only ACL cannot
+    // be created; a default or Everyone ACL would violate the private-endpoint
+    // contract promised by the host SDK.
+    let embedded = cua_driver_core::embedded_mode();
+    let security_attrs = unsafe { build_pipe_security_attrs(embedded) };
     if security_attrs.is_none() {
+        if embedded {
+            anyhow::bail!("failed to build current-user security descriptor for embedded pipe");
+        }
         eprintln!(
             "cua-driver: failed to build cross-IL SECURITY_ATTRIBUTES; pipe will be \
              High-IL exclusive. CLI and MCP clients from Medium-IL processes \
@@ -1029,6 +1209,14 @@ pub async fn run_serve(
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let shutdown_tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx)));
+    let parent_liveness = async {
+        if cua_driver_core::parent_liveness_stdin_enabled() {
+            wait_for_parent_stdin_eof().await;
+        } else {
+            std::future::pending::<()>().await;
+        }
+    };
+    tokio::pin!(parent_liveness);
 
     // Idle-TTL recording backstop (#1764). See the unix branch above for the
     // full rationale; the leak (record_video via ffmpeg) is platform-independent.
@@ -1040,25 +1228,26 @@ pub async fn run_serve(
     }
     register_recording_session_end_hook(registry.recording.clone());
 
+    let mut first_pipe = true;
     loop {
-        // Create a new pipe server instance to accept the next client.
-        // Use create_with_security_attributes_raw so Medium-IL clients can
-        // open the pipe even though we're at High IL (see comment on
-        // build_open_pipe_security_attrs). Fall back to default ACL if
-        // SD construction failed at startup.
+        // Standalone daemons use the cross-IL descriptor when available;
+        // embedded daemons use the current-user descriptor and reserve the
+        // pipe name with their first instance.
+        let first_pipe_instance = embedded && first_pipe;
         let server = if sec_attrs_ptr.is_null() {
             ServerOptions::new()
-                .first_pipe_instance(false)
+                .first_pipe_instance(first_pipe_instance)
                 .create(socket_path)
                 .map_err(|e| anyhow::anyhow!("create named pipe {socket_path}: {e}"))?
         } else {
             unsafe {
                 ServerOptions::new()
-                    .first_pipe_instance(false)
+                    .first_pipe_instance(first_pipe_instance)
                     .create_with_security_attributes_raw(socket_path, sec_attrs_ptr)
                     .map_err(|e| anyhow::anyhow!("create named pipe {socket_path}: {e}"))?
             }
         };
+        first_pipe = false;
 
         tokio::select! {
             result = server.connect() => {
@@ -1092,6 +1281,12 @@ pub async fn run_serve(
                         };
 
                         match req.method.as_str() {
+                            "metadata" => {
+                                let resp = daemon_metadata_response();
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                            }
                             "shutdown" => {
                                 let resp = DaemonResponse::ok(serde_json::json!({"shutdown": true}));
                                 let _ = writer.write_all(
@@ -1283,6 +1478,10 @@ pub async fn run_serve(
             }
             _ = &mut shutdown_rx => {
                 eprintln!("Cua Driver daemon shutting down.");
+                break;
+            }
+            _ = &mut parent_liveness => {
+                eprintln!("Cua Driver embedded host closed its lifetime pipe; shutting down.");
                 break;
             }
         }
@@ -1523,6 +1722,47 @@ pub fn run_revoke_cmd(socket_path: &str, session: Option<&str>, all: bool) {
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(all(test, unix))]
+mod socket_tests {
+    use super::{remove_owned_socket, secure_embedded_socket, socket_identity};
+    use std::os::unix::fs::PermissionsExt as _;
+
+    #[test]
+    fn only_embedded_sockets_are_forced_private() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("driver.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o770)).unwrap();
+
+        secure_embedded_socket(socket.to_str().unwrap(), false).unwrap();
+        assert_eq!(
+            std::fs::metadata(&socket).unwrap().permissions().mode() & 0o777,
+            0o770
+        );
+
+        secure_embedded_socket(socket.to_str().unwrap(), true).unwrap();
+        assert_eq!(
+            std::fs::metadata(&socket).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    #[test]
+    fn cleanup_preserves_a_replacement_socket() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("driver.sock");
+        let first = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let first_identity = socket_identity(socket.to_str().unwrap()).unwrap();
+        std::fs::remove_file(&socket).unwrap();
+        let _replacement = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+
+        remove_owned_socket(socket.to_str().unwrap(), first_identity);
+
+        assert!(socket.exists());
+        drop(first);
+    }
+}
 
 #[cfg(all(test, unix))]
 mod gate_tests {

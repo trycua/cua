@@ -99,7 +99,9 @@ The product boundary is reflected directly in packaging:
 - Rust release artifacts now carry the SDK library on Linux, macOS, and
   Windows. The Python release matrix installs every built wheel and imports the
   generated binding before PyPI publication.
-- Full multi-OS/architecture assembly for one npm publication remains a stated
-  release gate. This pull request must not publish a host-local npm tarball.
+- Release CI assembles optional native npm packages for every supported Node
+  OS/architecture from the verified Cua Driver release assets, smoke-tests the
+  installed root package, and publishes all artifacts at the Rust tag version.
+  A developer's host-local tarball is never published.
 - MCP/CLI remains unchanged as the agent boundary; the language package roots
   are the Rust-backed application SDK.

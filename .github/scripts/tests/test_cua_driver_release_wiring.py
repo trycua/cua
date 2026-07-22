@@ -18,7 +18,7 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
 
         self.assertIn('workflows: ["CD: Cua Driver (cross-platform)"]', workflow)
         self.assertNotIn("branches:\n      - main", workflow)
-        self.assertIn("github.event.workflow_run.conclusion != 'cancelled'", workflow)
+        self.assertIn("github.event.workflow_run.conclusion == 'success'", workflow)
         self.assertIn('gh release view "$TAG" --repo "$GITHUB_REPOSITORY"', workflow)
 
     def test_python_publish_defaults_to_current_rust_version(self) -> None:

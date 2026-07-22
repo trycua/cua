@@ -7,6 +7,36 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Versioned identity returned by the daemon before an imported SDK or an MCP
+/// proxy is allowed to treat an endpoint as ready.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DaemonMetadata {
+    pub driver_version: String,
+    pub contract_version: String,
+    pub tools_list_schema_version: String,
+    pub capability_version: String,
+    pub mcp_protocol_version: String,
+    pub pid: u32,
+    pub embedded: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_bundle_id: Option<String>,
+}
+
+pub fn current_daemon_metadata() -> DaemonMetadata {
+    DaemonMetadata {
+        driver_version: env!("CARGO_PKG_VERSION").to_owned(),
+        contract_version: cua_driver_contract::CONTRACT_VERSION.to_owned(),
+        tools_list_schema_version: cua_driver_contract::TOOLS_LIST_SCHEMA_VERSION.to_owned(),
+        capability_version: cua_driver_contract::CAPABILITY_VERSION.to_owned(),
+        mcp_protocol_version: cua_driver_contract::MCP_PROTOCOL_VERSION.to_owned(),
+        pid: std::process::id(),
+        embedded: crate::embedded_mode(),
+        host_bundle_id: std::env::var(crate::HOST_BUNDLE_ID_ENV)
+            .ok()
+            .filter(|value| !value.is_empty()),
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolObservationOrigin {
@@ -60,6 +90,34 @@ impl DaemonResponse {
             exit_code: Some(exit_code),
         }
     }
+}
+
+/// Perform the daemon identity/version handshake used by embedded startup and
+/// imported SDK diagnostics. Unlike a connect-only probe, this proves the
+/// endpoint speaks the expected Cua wire protocol.
+pub fn request_daemon_metadata(socket_path: &str) -> anyhow::Result<DaemonMetadata> {
+    let response = send_request(
+        socket_path,
+        &DaemonRequest {
+            method: "metadata".into(),
+            name: None,
+            args: None,
+            session_id: None,
+            observation_origin: None,
+        },
+    )?;
+    if !response.ok {
+        anyhow::bail!(
+            "daemon metadata request failed: {}",
+            response.error.unwrap_or_else(|| "unknown error".into())
+        );
+    }
+    serde_json::from_value(
+        response
+            .result
+            .ok_or_else(|| anyhow::anyhow!("daemon metadata response omitted result"))?,
+    )
+    .map_err(Into::into)
 }
 
 /// Return the platform socket or pipe path for an installed-product namespace.
@@ -216,7 +274,10 @@ pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Resul
 
 #[cfg(test)]
 mod tests {
-    use super::{socket_path_for_namespace, DaemonRequest, DaemonResponse, ToolObservationOrigin};
+    use super::{
+        current_daemon_metadata, socket_path_for_namespace, DaemonRequest, DaemonResponse,
+        ToolObservationOrigin,
+    };
 
     #[test]
     fn socket_path_keeps_the_selected_namespace() {
@@ -253,6 +314,20 @@ mod tests {
         assert_eq!(
             serde_json::to_value(ToolObservationOrigin::McpProxy).unwrap(),
             "mcp_proxy"
+        );
+    }
+
+    #[test]
+    fn metadata_is_versioned_and_process_bound() {
+        let metadata = current_daemon_metadata();
+        assert_eq!(metadata.pid, std::process::id());
+        assert_eq!(
+            metadata.contract_version,
+            cua_driver_contract::CONTRACT_VERSION
+        );
+        assert_eq!(
+            metadata.mcp_protocol_version,
+            cua_driver_contract::MCP_PROTOCOL_VERSION
         );
     }
 }

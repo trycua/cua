@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cua-driver"
-version = "0.10.0"
-description = "Python wrapper for cua-driver - cross-platform MCP server for computer-use automation"
+version = "0.11.0"
+description = "Rust-backed Cua Driver SDK and bundled executable for client applications"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [
@@ -17,6 +17,7 @@ keywords = [
     "automation",
     "accessibility",
     "screen-capture",
+    "sdk",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -52,6 +53,9 @@ cua-driver = "cua_driver.__main__:main"
 packages = ["src/cua_driver"]
 artifacts = [
     "src/cua_driver/bin/*",
+    "src/cua_driver/*.dylib",
+    "src/cua_driver/*.so",
+    "src/cua_driver/*.dll",
 ]
 pure-python = false
 

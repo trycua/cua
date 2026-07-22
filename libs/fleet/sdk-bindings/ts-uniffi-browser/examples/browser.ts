@@ -1,121 +1,153 @@
 import {
   CyclopsClient,
-  CyclopsCredentials,
+  uniffiInitAsync,
   type Claim,
-  type HttpClient,
-  type HttpRequest,
-  type HttpResponse,
   type Pool,
-} from "../ts/cyclops_sdk";
-import type { ClaimSpec, PoolSpec } from "../ts/cyclops_sdk_schema";
+} from "../ts/index.web"
+import type { PoolSpec } from "../ts/cyclops_sdk_schema"
 
-const serviceName = "mcp";
-const servicePath = "/health";
-const output = document.querySelector<HTMLPreElement>("#output")!;
-const runButton = document.querySelector<HTMLButtonElement>("#run")!;
-const form = document.querySelector<HTMLFormElement>("#config")!;
-
-class FetchHttpClient implements HttpClient {
-  async execute(request: HttpRequest): Promise<HttpResponse> {
-    const response = await fetch(request.url, {
-      method: request.method,
-      headers: request.headers.map(({ name, value }) => [name, value]),
-      body: request.body,
-    });
-    return {
-      status: response.status,
-      headers: [...response.headers].map(([name, value]) => ({ name, value })),
-      body: await response.arrayBuffer(),
-    };
+declare global {
+  interface Window {
+    __CYCLOPS_BROWSER_CONFIG__?: BrowserRuntimeConfig
   }
 }
 
+type BrowserRuntimeConfig = {
+  accessToken: string
+  baseUrl: string
+  namespace: string
+  image: string
+  imagePullSecret?: string
+}
+
+const serviceName = "mcp"
+const servicePath = "/health"
+const output = document.querySelector<HTMLPreElement>("#output")!
+const runButton = document.querySelector<HTMLButtonElement>("#run")!
+const sdkReady = document.querySelector<HTMLElement>("[data-testid=sdk-ready]")!
+const lifecycleStatus = document.querySelector<HTMLElement>("[data-testid=lifecycle-status]")!
+
+const sdkInitialization = uniffiInitAsync().then(
+  () => {
+    sdkReady.textContent = "ready"
+  },
+  (error) => {
+    sdkReady.textContent = "failed"
+    log("SDK initialization failed:", error instanceof Error ? error.message : String(error))
+    throw error
+  },
+)
+
 function log(message: string, value?: unknown): void {
-  output.textContent += `\n${message}${value === undefined ? "" : ` ${JSON.stringify(value, null, 2)}`}`;
+  output.textContent += `\n${message}${value === undefined ? "" : ` ${JSON.stringify(value, null, 2)}`}`
 }
 
-function values(): Record<string, string> {
-  const data = new FormData(form);
-  return Object.fromEntries([...data.entries()].map(([key, value]) => [key, String(value).trim()]));
+function describeError(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) {
+    return {
+      type: error.constructor.name,
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+      cause: error.cause instanceof Error ? { name: error.cause.name, message: error.cause.message, stack: error.cause.stack } : error.cause,
+    }
+  }
+
+  return { type: typeof error, value: String(error) }
 }
 
-function makePoolSpec(image: string, imagePullSecret: string): PoolSpec {
+function runtimeConfig(): BrowserRuntimeConfig {
+  const config = window.__CYCLOPS_BROWSER_CONFIG__
+  if (!config) {
+    throw new Error("browser runtime configuration is unavailable")
+  }
+
+  for (const [name, value] of Object.entries(config)) {
+    if (!value?.trim()) {
+      throw new Error(`browser runtime configuration is missing ${name}`)
+    }
+  }
+  return config
+}
+
+function makePoolSpec(image: string, imagePullSecret?: string): PoolSpec {
   return {
     replicas: 1,
     template: {
-      // `containerDiskImage` is the only required template field. Production
-      // pools should also set resource and scheduling requirements.
       containerDiskImage: image,
-      imagePullSecret: imagePullSecret || undefined,
+      cpuCores: 4,
+      memory: "4Gi",
+      imagePullSecret,
     },
     services: [{ name: serviceName, targetPort: 3000 }],
-  };
+  }
 }
 
 async function runLifecycle(): Promise<void> {
-  const config = values();
-  const client = CyclopsClient.connect({
-    baseUrl: config.baseUrl,
-    tokenUrl: config.tokenUrl,
-    credentials: new CyclopsCredentials(config.clientId, config.clientSecret),
-    poolPollIntervalMs: 5000n,
-    poolPollLimit: 100,
-    claimPollIntervalMs: 2000n,
-    claimPollLimit: 100,
-  }, new FetchHttpClient());
+  await sdkInitialization
+  const config = runtimeConfig()
+  log("[auth] Supplying runner access token to SDK client.")
+  const client = CyclopsClient.connectBrowserWithAccessToken(
+    {
+      baseUrl: config.baseUrl,
+      poolPollIntervalMs: 5_000n,
+      poolPollLimit: 120,
+      claimPollIntervalMs: 5_000n,
+      claimPollLimit: 120,
+    },
+    config.accessToken,
+  )
+  log("[auth] SDK client connected.")
 
-  let pool: Pool | undefined;
-  let claim: Claim | undefined;
+  let pool: Pool | undefined
+  let claim: Claim | undefined
   try {
-    log("[1/8] Listing existing pools...");
-    log("Pools:", await client.listPools(config.namespace));
+    log("[1/5] Creating pool...")
+    pool = await client.createPool({
+      namespace: config.namespace,
+      spec: makePoolSpec(config.image, config.imagePullSecret),
+    })
 
-    log("[2/8] Creating pool...");
-    pool = await client.createPool({ namespace: config.namespace, spec: makePoolSpec(config.image, config.imagePullSecret) });
-    log("Pool:", pool);
+    log("[2/5] Creating claim...")
+    claim = await client.createClaim({ pool })
 
-    log("[3/8] Listing pools after creation...");
-    log("Pools:", await client.listPools(config.namespace));
+    log("[3/5] Waiting for claim to bind a sandbox...")
+    const sandbox = await client.waitClaim(claim)
 
-    log("[4/8] Creating claim...");
-    const spec: ClaimSpec = { sandboxTemplateRef: { name: pool.metadata.name } };
-    claim = await client.createClaim({ pool, spec });
-    log("Claim:", claim);
-
-    log("[5/8] Listing claims...");
-    log("Claims:", await client.listClaims(config.namespace));
-
-    log("[6/8] Waiting for claim to bind a sandbox...");
-    const sandbox = await client.waitClaim(claim);
-    log("Sandbox:", sandbox);
-
-    log("[7/8] Calling the sandbox service...");
+    log("[4/5] Calling the sandbox service...")
     const response = await client.serviceRequest(sandbox, serviceName, servicePath, {
-      method: "GET", url: `https://ignored.invalid${servicePath}`, headers: [],
-    });
-    log("Service response:", { status: response.status, body: new TextDecoder().decode(response.body) });
-    log("[8/8] Lifecycle completed; cleanup will now run.");
+      method: "GET",
+      url: `https://ignored.invalid${servicePath}`,
+      headers: [],
+    })
+    log("Service response:", {
+      status: response.status,
+      body: new TextDecoder().decode(response.body),
+    })
+    lifecycleStatus.textContent = "completed"
+    log("[5/5] Lifecycle completed; cleanup will now run.")
   } finally {
     if (claim) {
-      log("[cleanup] Deleting claim...");
-      await client.deleteClaim(claim);
+      log("[cleanup] Deleting claim...")
+      await client.deleteClaim(claim)
     }
     if (pool) {
-      log("[cleanup] Deleting pool...");
-      await client.deletePool(pool);
+      log("[cleanup] Deleting pool...")
+      await client.deletePool(pool)
     }
   }
 }
 
 runButton.addEventListener("click", async () => {
-  if (!form.reportValidity()) return;
-  output.textContent = "Running...";
-  runButton.disabled = true;
+  output.textContent = "Running..."
+  lifecycleStatus.textContent = "running"
+  runButton.disabled = true
   try {
-    await runLifecycle();
+    await runLifecycle()
   } catch (error) {
-    log("Lifecycle failed:", error instanceof Error ? error.message : String(error));
+    lifecycleStatus.textContent = "failed"
+    log("Lifecycle failed:", describeError(error))
   } finally {
-    runButton.disabled = false;
+    runButton.disabled = false
   }
-});
+})

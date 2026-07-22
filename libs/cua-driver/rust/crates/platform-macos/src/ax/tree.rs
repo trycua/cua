@@ -216,7 +216,7 @@ pub fn walk_tree_bounded(
                 })
                 .collect()
         } else {
-            top_level.iter().copied().collect()
+            top_level.to_vec()
         };
 
         // Walk each top-level child at depth 0.
@@ -535,8 +535,8 @@ fn filter_tree(markdown: &str, query: &str) -> String {
             current_ancestor.push("");
             last_emitted_at.push(None);
         }
-        for deeper in (depth + 1)..current_ancestor.len() {
-            last_emitted_at[deeper] = None;
+        for emitted_at in last_emitted_at.iter_mut().skip(depth + 1) {
+            *emitted_at = None;
         }
         current_ancestor[depth] = line;
 

@@ -10,13 +10,13 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use crate::protocol::ToolResult;
+use crate::protocol::{Content, ToolResult};
 use crate::tool::{Tool, ToolDef, ToolRegistry};
 use crate::tool_args::ArgsExt;
 
 use super::approval::MCP_HOST_APPROVAL_ARG;
 use super::download::BrowserDownloadTool;
-use super::engine::BrowserEngine;
+use super::engine::{BrowserEngine, BrowserTabScreenshot};
 use super::platform::{PrepareAuthorization, PrepareProfile, PrepareRequest, PrepareStrategy};
 use super::pointer::BrowserPointerTool;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
@@ -104,6 +104,32 @@ fn semantic_ref_value(listed: &super::engine::SemanticListedRef) -> Value {
     })
 }
 
+fn with_tab_screenshot(mut result: ToolResult, screenshot: BrowserTabScreenshot) -> ToolResult {
+    if let Some(structured) = result.structured_content.as_mut() {
+        structured["screenshot"] = json!({
+            "source": "cdp_tab",
+            "scope": "viewport",
+            "mime_type": "image/png",
+            "width": screenshot.width,
+            "height": screenshot.height,
+            "coordinate_space": "viewport_css_px",
+            "viewport_css_width": screenshot.viewport_css_width,
+            "viewport_css_height": screenshot.viewport_css_height,
+            "pixel_to_css_scale_x": screenshot.pixel_to_css_scale_x,
+            "pixel_to_css_scale_y": screenshot.pixel_to_css_scale_y,
+            "tab_activation": "not_requested",
+            "window_foregrounding": "not_requested",
+        });
+        structured["screenshot_width"] = json!(screenshot.width);
+        structured["screenshot_height"] = json!(screenshot.height);
+        structured["screenshot_mime_type"] = json!("image/png");
+    }
+    result
+        .content
+        .insert(0, Content::image_png(screenshot.data_base64));
+    result
+}
+
 // ── get_browser_state ────────────────────────────────────────────────────────
 
 pub struct GetBrowserStateTool {
@@ -152,6 +178,11 @@ impl GetBrowserStateTool {
                         "type": "string",
                         "description": "Opaque continuation minted by an earlier semantic_v2 response."
                     },
+                    "include_screenshot": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Capture the exact tab viewport as PNG through CDP without selecting the tab or foregrounding its native window. The request refuses if capture cannot be completed."
+                    },
                 },
                 "additionalProperties": true
             }),
@@ -190,6 +221,15 @@ impl Tool for GetBrowserStateTool {
             let snapshot_format = args
                 .opt_str("snapshot_format")
                 .unwrap_or_else(|| "dom_refs_v1".into());
+            let include_screenshot = match args.get("include_screenshot") {
+                None => false,
+                Some(Value::Bool(include)) => *include,
+                Some(_) => {
+                    return ToolResult::error(
+                        "Field include_screenshot has wrong type: expected boolean",
+                    )
+                }
+            };
             if snapshot_format != "dom_refs_v1" && snapshot_format != "semantic_v2" {
                 return ToolResult::error(format!(
                     "snapshot_format must be \"dom_refs_v1\" or \"semantic_v2\", got {snapshot_format:?}"
@@ -205,7 +245,7 @@ impl Tool for GetBrowserStateTool {
                 );
             }
             if snapshot_format == "semantic_v2" {
-                return match self
+                let snapshot = match self
                     .engine
                     .snapshot_tab_semantic(
                         &session,
@@ -272,10 +312,21 @@ impl Tool for GetBrowserStateTool {
                             },
                         }))
                     }
-                    Err(refusal) => refusal.to_tool_result(),
+                    Err(refusal) => return refusal.to_tool_result(),
                 };
+                if include_screenshot {
+                    return match self
+                        .engine
+                        .capture_tab_screenshot(&session, &target_id, &tab_id)
+                        .await
+                    {
+                        Ok(screenshot) => with_tab_screenshot(snapshot, screenshot),
+                        Err(refusal) => refusal.to_tool_result(),
+                    };
+                }
+                return snapshot;
             }
-            return match self
+            let snapshot = match self
                 .engine
                 .snapshot_tab(&session, &target_id, &tab_id)
                 .await
@@ -314,8 +365,19 @@ impl Tool for GetBrowserStateTool {
                         },
                     }))
                 }
-                Err(refusal) => refusal.to_tool_result(),
+                Err(refusal) => return refusal.to_tool_result(),
             };
+            if include_screenshot {
+                return match self
+                    .engine
+                    .capture_tab_screenshot(&session, &target_id, &tab_id)
+                    .await
+                {
+                    Ok(screenshot) => with_tab_screenshot(snapshot, screenshot),
+                    Err(refusal) => refusal.to_tool_result(),
+                };
+            }
+            return snapshot;
         }
 
         // Bind mode: pid + window_id.
@@ -1936,6 +1998,10 @@ mod tests {
             "get_browser_state must be strictly read-only"
         );
         assert!(state.def().idempotent);
+        assert_eq!(
+            state.def().input_schema["properties"]["include_screenshot"]["default"],
+            false
+        );
 
         let prepare = BrowserPrepareTool::new(e.clone());
         assert!(prepare.def().destructive);
@@ -2053,6 +2119,23 @@ mod tests {
             let result = tool.invoke(args).await;
             assert_eq!(result.is_error, Some(true));
         }
+    }
+
+    #[tokio::test]
+    async fn snapshot_rejects_non_boolean_include_screenshot() {
+        let result = GetBrowserStateTool::new(engine())
+            .invoke(json!({
+                "target_id": "bt-fixture",
+                "tab_id": "tab-fixture",
+                "session": "browser-run",
+                "include_screenshot": "yes"
+            }))
+            .await;
+        assert_eq!(result.is_error, Some(true));
+        assert!(matches!(
+            &result.content[0],
+            Content::Text { text, .. } if text.contains("expected boolean")
+        ));
     }
 
     #[tokio::test]

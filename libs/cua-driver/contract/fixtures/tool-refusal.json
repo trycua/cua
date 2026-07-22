@@ -1,0 +1,18 @@
+{
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "Foreground delivery requires an explicit retry."
+      }
+    ],
+    "isError": true,
+    "structuredContent": {
+      "status": "refused",
+      "refusal": {
+        "code": "foreground_required",
+        "message": "Retry only after the model verifies background delivery failed."
+      }
+    }
+  }
+}

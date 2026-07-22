@@ -111,9 +111,7 @@ async fn dispatch(body: &[u8], registry: &Arc<ToolRegistry>) -> Option<String> {
         Ok(r) => r,
         Err(_) => return Some(serialize(&Response::parse_error())),
     };
-    if req.id.is_none() {
-        return None; // notification
-    }
+    req.id.as_ref()?;
     let initialize_metadata = req.initialize_metadata();
     let session_context = session_tool_context(
         &req,
@@ -145,7 +143,7 @@ fn http_tool_observation_timer(
     registry: &ToolRegistry,
 ) -> Option<cua_driver_core::server::ToolObservationTimer> {
     tool_observation_timer(
-        &req,
+        req,
         |name| name == "type_text_chars" || registry.get_def(name).is_some(),
         StdioExecutionPath::DirectDaemon,
     )

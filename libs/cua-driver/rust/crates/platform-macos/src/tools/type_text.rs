@@ -22,9 +22,11 @@
 //! (e.g., to trigger live-search debounce handlers).
 
 use async_trait::async_trait;
+use cua_driver_contract::TypeTextInput;
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
+    tool_args::parse_typed_projection,
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -135,13 +137,13 @@ impl Tool for TypeTextTool {
             && args.get("pid").is_none()
             && args.get("window_id").is_none()
         {
-            let text = match args.require_str("text") {
-                Ok(value) => {
-                    cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&value)
-                        .into_owned()
-                }
-                Err(error) => return error,
+            let input = match parse_typed_projection::<TypeTextInput>("type_text", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
             };
+            let text =
+                cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&input.text)
+                    .into_owned();
             let delay_ms = args.u64_or("delay_ms", 30).min(200);
             let result = tokio::task::spawn_blocking(move || {
                 crate::input::keyboard::type_text_global(&text, delay_ms)
@@ -448,7 +450,7 @@ fn verify_typed(before: Option<&str>, after: Option<&str>, text: &str) -> bool {
         return true;
     }
     let Some(after) = after else { return false };
-    after.contains(text) || before.map_or(false, |b| after.chars().count() > b.chars().count())
+    after.contains(text) || before.is_some_and(|b| after.chars().count() > b.chars().count())
 }
 
 /// Read the focused/target field's `AXValue`, for before/after read-back.

@@ -184,6 +184,12 @@ pub struct ZoomRegistry {
     inner: std::sync::Mutex<HashMap<i32, ZoomContext>>,
 }
 
+impl Default for ZoomRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ZoomRegistry {
     pub fn new() -> Self {
         Self {
@@ -207,6 +213,12 @@ impl ZoomRegistry {
 /// Mirrors Swift's `ImageResizeRegistry`.
 pub struct ResizeRegistry {
     inner: std::sync::Mutex<HashMap<i32, f64>>,
+}
+
+impl Default for ResizeRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ResizeRegistry {

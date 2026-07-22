@@ -6,27 +6,17 @@
     <title>Cyclops Browser Lifecycle Example</title>
     <style>
       body { font: 16px/1.4 ui-monospace, monospace; margin: 2rem auto; max-width: 60rem; padding: 0 1rem; }
-      form { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
-      label { display: grid; gap: .25rem; } input { font: inherit; padding: .4rem; }
       button { font: inherit; margin-top: 1rem; padding: .55rem .8rem; }
       pre { background: #111; color: #e8f5e9; min-height: 16rem; overflow: auto; padding: 1rem; white-space: pre-wrap; }
     </style>
   </head>
   <body>
     <h1>Cyclops browser lifecycle</h1>
-    <p>This demonstration sends OAuth credentials from the browser. Use only a development-only client and trusted origin.</p>
-    <form id="config">
-      <label>Base URL <input name="baseUrl" placeholder="https://cyclops.example" required /></label>
-      <label>Token URL <input name="tokenUrl" placeholder="https://auth.example/oauth/token" required /></label>
-      <label>Client ID <input name="clientId" required /></label>
-      <label>Client secret <input name="clientSecret" type="password" required /></label>
-      <label>Namespace <input name="namespace" value="default" required /></label>
-      <label>Container-disk image <input name="image" placeholder="registry.example/cyclops-mcp:latest" required /></label>
-      <label>Image-pull secret <input name="imagePullSecret" /></label>
-    </form>
+    <p>This development-only page receives a short-lived access token from its test runner; it never accepts a client secret.</p>
+    <p>SDK initialization: <span data-testid="sdk-ready">initializing</span></p>
+    <p>Lifecycle status: <span data-testid="lifecycle-status">idle</span></p>
     <button id="run" type="button">Run Lifecycle</button>
     <pre id="output" aria-live="polite">Ready.</pre>
-    <!-- Source entrypoint: browser.ts; the WASM-aware bundler writes dist/browser.js. -->
-    <script type="module" src="./dist/browser.js"></script>
+    <script type="module" src="./browser.ts"></script>
   </body>
 </html>

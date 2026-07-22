@@ -362,7 +362,7 @@ pub fn list_all_apps() -> Vec<AppInfo> {
     installed.retain(|a| {
         !a.bundle_id
             .as_ref()
-            .map_or(false, |b| running_bundles.contains(b))
+            .is_some_and(|b| running_bundles.contains(b))
     });
 
     let mut all = running;

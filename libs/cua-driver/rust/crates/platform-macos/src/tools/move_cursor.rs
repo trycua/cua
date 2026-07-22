@@ -1,7 +1,9 @@
 use async_trait::async_trait;
+use cua_driver_contract::MoveCursorInput;
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
+    tool_args::parse_typed_projection,
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -53,15 +55,12 @@ impl Tool for MoveCursorTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        let x = match args.require_f64("x") {
-            Ok(v) => v,
-            Err(e) => return e,
-        };
-        let y = match args.require_f64("y") {
-            Ok(v) => v,
-            Err(e) => return e,
-        };
         if args.opt_str("scope").as_deref() == Some("desktop") {
+            let input = match parse_typed_projection::<MoveCursorInput>("move_cursor", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
+            };
+            let (x, y) = (input.x, input.y);
             let (x, y) = super::desktop_screenshot_point(x, y).await;
             let result =
                 tokio::task::spawn_blocking(move || crate::input::mouse::move_cursor_desktop(x, y))
@@ -82,6 +81,14 @@ impl Tool for MoveCursorTool {
                 Err(error) => ToolResult::error(format!("desktop pointer task failed: {error}")),
             };
         }
+        let x = match args.require_f64("x") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        let y = match args.require_f64("y") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
         let cursor_id = super::cursor_tools::resolve_cursor_key(&args);
 
         self.state.cursor_registry.update_position(&cursor_id, x, y);

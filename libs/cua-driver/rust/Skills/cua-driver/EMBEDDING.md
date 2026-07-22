@@ -99,6 +99,67 @@ selects unrestricted mode and records the acknowledgement. The older
 `autonomous` mode name remains accepted as an alias for `bounded` during
 migration.
 
+### Node and Electron hosts
+
+Use the embedded host in `@trycua/cua-driver` instead of implementing process
+and socket management in every host. It starts a private daemon directly, waits
+until its socket accepts connections, returns SDK and MCP connection details,
+and owns restart and cleanup:
+
+```ts
+import { CuaDriver, EmbeddedCuaDriverHost } from '@trycua/cua-driver';
+
+const embedded = new EmbeddedCuaDriverHost(
+  '/path/inside/YourApp.app/Contents/Resources/cua-driver',
+  'com.example.your-app',
+);
+const connection = await embedded.start();
+const driver = CuaDriver.connect(connection.socketPath);
+// Application calls use driver; an agent runtime uses connection.mcp.
+driver.uniffiDestroy();
+await embedded.stop();
+embedded.uniffiDestroy();
+```
+
+The package does not install or bundle cua-driver. Ship a compatible executable
+outside Electron's ASAR archive, preserve its executable bit, and sign the
+nested executable before signing and notarizing the enclosing macOS app.
+Electron main processes can use the package's `/electron` entry point for
+low-level Accessibility and Screen Recording requests after `app.whenReady()`;
+the calls run as the importing host, not the child driver. The host still owns
+permission UI, status, and restart policy. These functions use the same
+generated Rust SDK; there is no second native FFI dependency. Some macOS
+releases refuse to raise a Screen Recording prompt; in that case, open the
+Screen Recording settings pane with
+`openMacOSScreenRecordingSettings()`, ask the user to add the host app, and
+start the driver only after both checks return true.
+
+Destroy the SDK client and call `await embedded.stop()` from every orderly
+shutdown path. If grants change, destroy the SDK client, call
+`embedded.restart()`, and reconnect. Electron hosts must defer their first
+`before-quit` event until cleanup completes because asynchronous cleanup cannot
+run after the host process exits. Normal OpenClaw
+gateway and Hermes YAML configurations remain standalone integrations; use the
+package only when their signed Node or Electron app process directly owns the
+daemon child.
+
+### Lifecycle rules
+
+- Concurrent `start()` calls coalesce into one daemon generation.
+- Treat `connection` as generation-scoped. After `restart()`, destroy old SDK
+  clients and MCP proxies and reconnect from the newly returned descriptor.
+- Stop new work, end sessions, close proxies/clients, then await `stop()`.
+  `stop()` is idempotent and cancels an in-progress start.
+- Observe unexpected termination with `waitForExit(generation)` in Node or
+  `wait_for_exit(generation)` in Python. Never blindly replay an action whose
+  completion is unknown.
+- The Rust owner holds a parent-liveness pipe, so host death closes the daemon;
+  orderly shutdown should still await `stop()`.
+- Capture scope belongs to each session. One embedded daemon can concurrently
+  serve `auto`, strict `window`, and strict `desktop` sessions.
+- Permission changes require destroying clients, restarting the daemon, and
+  reconnecting. A connection from the old generation is never reusable.
+
 ## What embedded mode changes (and what it doesn't)
 
 |                                | Standalone                          | Embedded (`CUA_DRIVER_EMBEDDED=1`)       |

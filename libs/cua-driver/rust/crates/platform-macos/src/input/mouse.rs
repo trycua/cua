@@ -154,6 +154,8 @@ extern "C" {
 /// Like `click_at_xy` but also stamps window-local `(wx, wy)` onto the event.
 /// When `wid` is provided, additionally stamps Chromium routing fields
 /// (f51 / f58 / f91 / f92) for better backgrounded-target delivery.
+// The flattened arguments mirror the native event fields used by existing callers.
+#[allow(clippy::too_many_arguments)]
 pub fn click_at_xy_with_window_local(
     pid: i32,
     x: f64,
@@ -279,6 +281,8 @@ fn click_at_xy_inner(
 ///
 /// Uses both SkyLight `SLEventPostToPid` AND `CGEvent::post_to_pid` (belt+suspenders)
 /// for AppKit / Catalyst target coverage.
+// The flattened arguments mirror the native event fields used by existing callers.
+#[allow(clippy::too_many_arguments)]
 pub fn click_at_xy_chromium(
     pid: i32,
     screen_x: f64,
@@ -298,7 +302,7 @@ pub fn click_at_xy_chromium(
     let win_local = (win_local_x, win_local_y);
     let off_local = (-1.0_f64, -1.0_f64);
     let flags = parse_modifier_flags(modifiers);
-    let click_pairs = count.max(1).min(2);
+    let click_pairs = count.clamp(1, 2);
     let window_id = wid as i64;
 
     // All 5 events share the same click-group ID so WindowServer / Chromium
@@ -421,6 +425,8 @@ pub fn click_at_xy_chromium(
 ///
 /// Like the Swift reference `MouseInput.drag`, uses the SkyLight path for
 /// backgrounded-target delivery.
+// The drag primitive deliberately exposes its complete native event contract.
+#[allow(clippy::too_many_arguments)]
 pub fn drag_at_xy(
     pid: i32,
     from_x: f64,
@@ -555,6 +561,8 @@ pub fn drag_at_xy(
 /// pointer capture and drag tracking. PID-routed `post_to_pid` events are
 /// suitable for background delivery, but they can be silently filtered by the
 /// renderer even when the target is frontmost.
+// The drag primitive deliberately exposes its complete native event contract.
+#[allow(clippy::too_many_arguments)]
 pub fn drag_at_xy_foreground(
     from_x: f64,
     from_y: f64,
@@ -824,6 +832,7 @@ fn right_click_at_xy_inner(
 /// - Fires `SLEventPostToPid` (SkyLight path — reaches backgrounded Chromium/Catalyst).
 /// - Also fires `CGEvent::post_to_pid` (public path — lands on AppKit targets where
 ///   SkyLight mouse delivery drops).
+///
 /// Both are always posted in sequence regardless of whether the other succeeded.
 ///
 /// Field stamps applied (always):
@@ -842,6 +851,8 @@ fn right_click_at_xy_inner(
 /// `button_number` MUST match the button encoded in the event type (right-down
 /// stamped with f3=0 routes as a left-click on the receiving side — this was the
 /// right-click-lands-as-nothing bug). Left=0, Right=1, Middle=2.
+// These arguments are the individual CGEvent fields stamped by this low-level primitive.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn post_mouse_event(
     pid: i32,
     event: &CGEvent,
@@ -945,6 +956,8 @@ fn post_mouse_moved_primer(
 /// `window_local`/`wid`: when known, stamp the window-local point and the
 /// Chromium window-routing fields (f51/f91/f92) for backgrounded delivery —
 /// identical in spirit to `post_mouse_event`.
+// These arguments are the individual wheel-event fields used by existing callers.
+#[allow(clippy::too_many_arguments)]
 pub fn scroll_wheel_at_xy(
     pid: i32,
     screen_x: f64,

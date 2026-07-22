@@ -1,5 +1,6 @@
 """Regression tests for cua-driver-rs release and PyPI wiring."""
 
+import json
 from pathlib import Path
 import unittest
 
@@ -18,7 +19,7 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
 
         self.assertIn('workflows: ["CD: Cua Driver (cross-platform)"]', workflow)
         self.assertNotIn("branches:\n      - main", workflow)
-        self.assertIn("github.event.workflow_run.conclusion != 'cancelled'", workflow)
+        self.assertIn("github.event.workflow_run.conclusion == 'success'", workflow)
         self.assertIn('gh release view "$TAG" --repo "$GITHUB_REPOSITORY"', workflow)
 
     def test_python_publish_defaults_to_current_rust_version(self) -> None:
@@ -33,6 +34,43 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
 
         self.assertIn("os: ubuntu-24.04-arm", workflow)
         self.assertIn("arch: arm64", workflow)
+
+    def test_python_publish_smokes_windows_arm64_on_arm64(self) -> None:
+        workflow = self.read(".github/workflows/cd-py-cua-driver.yml")
+
+        self.assertIn("os: windows-11-arm", workflow)
+        self.assertEqual(workflow.count("os: windows-latest"), 1)
+
+    def test_npm_publish_uses_explicit_local_tarball_paths(self) -> None:
+        workflow = self.read(".github/workflows/cd-py-cua-driver.yml")
+
+        self.assertIn('npm publish "./$package"', workflow)
+        self.assertIn(
+            'npm publish "./dist/trycua-cua-driver-$VERSION.tgz"',
+            workflow,
+        )
+        self.assertNotIn('npm publish "$package"', workflow)
+
+    def test_npm_packages_declare_and_verify_provenance_repository(self) -> None:
+        workflow = self.read(".github/workflows/cd-py-cua-driver.yml")
+        package = json.loads(
+            self.read("libs/cua-driver/typescript/package.json")
+        )
+        package_lock = json.loads(
+            self.read("libs/cua-driver/typescript/package-lock.json")
+        )
+        expected = {
+            "type": "git",
+            "url": "git+https://github.com/trycua/cua.git",
+        }
+
+        self.assertEqual(package["repository"], expected)
+        self.assertEqual(package_lock["packages"][""]["repository"], expected)
+        self.assertIn("npm pkg set repository.type=git", workflow)
+        self.assertIn(
+            'test "$REPOSITORY" = "git+https://github.com/trycua/cua.git"',
+            workflow,
+        )
 
     def test_macos_bundle_explains_screen_capture_and_automation_prompts(self) -> None:
         plist = self.read(
@@ -69,6 +107,9 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             workflow,
         )
         self.assertIn("git rebase origin/main", workflow)
+        self.assertIn("merge_release_please_manifests.py", workflow)
+        self.assertIn('git diff --name-only --diff-filter=U', workflow)
+        self.assertIn("git rebase --abort", workflow)
         self.assertIn('--force-with-lease="refs/heads/$BRANCH:$REMOTE_HEAD"', workflow)
         self.assertNotIn("git push --force ", workflow)
         self.assertIn("sync_driver_release_docs.py", workflow)
@@ -80,6 +121,13 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn("chore(lume): synchronize release documentation", workflow)
         self.assertNotIn("if: steps.release.outputs.prs_created == 'true'", workflow)
         self.assertNotIn("RELEASE_PRS: ${{ steps.release.outputs.prs }}", workflow)
+
+    def test_driver_breaking_changes_remain_pre_major(self) -> None:
+        config = json.loads(self.read("release-please-config.json"))
+        driver = config["packages"]["libs/cua-driver"]
+
+        self.assertTrue(driver["bump-minor-pre-major"])
+        self.assertNotIn("bump-minor-pre-major", config["packages"]["libs/lume"])
 
     def test_release_please_exposes_targeted_bump_dropdowns(self) -> None:
         workflow = self.read(".github/workflows/release-please.yml")
@@ -178,6 +226,10 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn('"path": "rust/Cargo.toml"', config)
         self.assertIn('"path": "python/pyproject.toml"', config)
         self.assertIn('"path": "python/src/cua_driver/__init__.py"', config)
+        self.assertIn('"path": "typescript/package.json"', config)
+        self.assertEqual(
+            config.count('"path": "typescript/package-lock.json"'), 2
+        )
         self.assertIn('"path": "scripts/_install-rust.sh"', config)
         self.assertIn('"path": "scripts/install.ps1"', config)
         self.assertIn('"path": "rust/Skills/cua-driver/SKILL.md"', config)

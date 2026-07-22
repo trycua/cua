@@ -55,20 +55,41 @@ const defaultSocketPath = (): string => {
     : join(tmpdir(), `cua-${process.pid}-${nonce}.sock`);
 };
 
-const removeSocket = async (socketPath: string): Promise<void> => {
+interface SocketIdentity {
+  readonly device: bigint;
+  readonly inode: bigint;
+}
+
+const removeSocket = async (
+  socketPath: string,
+  expected?: SocketIdentity
+): Promise<void> => {
   if (process.platform === 'win32') return;
   try {
-    const metadata = await lstat(socketPath);
+    const metadata = await lstat(socketPath, { bigint: true });
     if (!metadata.isSocket()) {
       throw new EmbeddedDriverError(
         'socket-path-conflict',
         `refusing to remove non-socket path ${socketPath}`
       );
     }
+    if (expected && (metadata.dev !== expected.device || metadata.ino !== expected.inode)) return;
     await unlink(socketPath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
+};
+
+const socketIdentity = async (socketPath: string): Promise<SocketIdentity | undefined> => {
+  if (process.platform === 'win32') return undefined;
+  const metadata = await lstat(socketPath, { bigint: true });
+  if (!metadata.isSocket()) {
+    throw new EmbeddedDriverError(
+      'socket-path-conflict',
+      `expected daemon socket at ${socketPath}`
+    );
+  }
+  return { device: metadata.dev, inode: metadata.ino };
 };
 
 const canConnect = (socketPath: string): Promise<boolean> =>
@@ -85,6 +106,16 @@ const canConnect = (socketPath: string): Promise<boolean> =>
     socket.once('connect', () => finish(true));
     socket.once('error', () => finish(false));
   });
+
+const prepareSocketPath = async (socketPath: string): Promise<void> => {
+  if (await canConnect(socketPath)) {
+    throw new EmbeddedDriverError(
+      'socket-path-conflict',
+      `refusing to replace active socket ${socketPath}`
+    );
+  }
+  await removeSocket(socketPath);
+};
 
 const startupCancelled = (): EmbeddedDriverError =>
   new EmbeddedDriverError('startup-cancelled', 'embedded cua-driver startup was cancelled');
@@ -143,6 +174,7 @@ export class EmbeddedCuaDriver {
   #startupAbort: AbortController | undefined;
   #stopping: Promise<void> | undefined;
   #unexpectedExitCleanup: Promise<void> | undefined;
+  #socketIdentity: SocketIdentity | undefined;
 
   constructor(options: EmbeddedDriverOptions) {
     if (!options.binaryPath.trim()) throw new TypeError('binaryPath must not be empty');
@@ -178,7 +210,7 @@ export class EmbeddedCuaDriver {
   async #start(signal: AbortSignal): Promise<EmbeddedDriverConnection> {
     if (signal.aborted) throw startupCancelled();
     const socketPath = this.#options.socketPath ?? defaultSocketPath();
-    await removeSocket(socketPath);
+    await prepareSocketPath(socketPath);
     if (signal.aborted) throw startupCancelled();
     const embeddedEnv = {
       [EMBEDDED_ENV]: '1',
@@ -226,7 +258,8 @@ export class EmbeddedCuaDriver {
         if (this.#connection) {
           this.#child = undefined;
           this.#connection = undefined;
-          const cleanup = removeSocket(socketPath).catch(() => undefined);
+          this.#socketIdentity = undefined;
+          const cleanup = removeSocket(socketPath, ownedSocket).catch(() => undefined);
           this.#unexpectedExitCleanup = cleanup;
           void cleanup.finally(() => {
             if (this.#unexpectedExitCleanup === cleanup) this.#unexpectedExitCleanup = undefined;
@@ -242,6 +275,7 @@ export class EmbeddedCuaDriver {
       });
     });
 
+    let ownedSocket: SocketIdentity | undefined;
     const readinessAbort = new AbortController();
     const cancelReadiness = () => readinessAbort.abort();
     signal.addEventListener('abort', cancelReadiness, { once: true });
@@ -264,6 +298,13 @@ export class EmbeddedCuaDriver {
         );
       }
       if (process.platform !== 'win32') await chmod(socketPath, 0o600);
+      ownedSocket = await socketIdentity(socketPath);
+      if (child.exitCode !== null || child.signalCode !== null) {
+        throw new EmbeddedDriverError(
+          'exited-before-ready',
+          'embedded cua-driver exited while its socket was secured'
+        );
+      }
       if (child.pid === undefined) {
         throw new EmbeddedDriverError('spawn-failed', 'embedded cua-driver has no process id');
       }
@@ -277,11 +318,12 @@ export class EmbeddedCuaDriver {
         },
       };
       this.#connection = connection;
+      this.#socketIdentity = ownedSocket;
       return connection;
     } catch (cause) {
       await terminateChild(child, this.#options.shutdownTimeoutMs);
       this.#child = undefined;
-      await removeSocket(socketPath);
+      if (ownedSocket) await removeSocket(socketPath, ownedSocket);
       throw cause;
     }
   }
@@ -300,6 +342,7 @@ export class EmbeddedCuaDriver {
   }
 
   stop(): Promise<void> {
+    this.#startupAbort?.abort();
     if (this.#stopping) return this.#stopping;
     this.#stopping = this.#stop().finally(() => {
       this.#stopping = undefined;
@@ -308,7 +351,6 @@ export class EmbeddedCuaDriver {
   }
 
   async #stop(): Promise<void> {
-    this.#startupAbort?.abort();
     if (this.#child && this.#child.exitCode === null && this.#child.signalCode === null) {
       this.#child.kill('SIGTERM');
     }
@@ -317,11 +359,13 @@ export class EmbeddedCuaDriver {
 
     const child = this.#child;
     const socketPath = this.#connection?.socketPath;
+    const ownedSocket = this.#socketIdentity;
     this.#connection = undefined;
     this.#child = undefined;
+    this.#socketIdentity = undefined;
 
     if (child) await terminateChild(child, this.#options.shutdownTimeoutMs);
-    if (socketPath) await removeSocket(socketPath);
+    if (socketPath && ownedSocket) await removeSocket(socketPath, ownedSocket);
   }
 
   async restart(): Promise<EmbeddedDriverConnection> {

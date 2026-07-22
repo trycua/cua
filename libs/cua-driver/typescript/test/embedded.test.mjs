@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
-import { createServer } from "node:net"
+import { createConnection, createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, test } from "node:test"
@@ -104,6 +104,33 @@ describe("embedded cua-driver lifecycle", { skip: process.platform === "win32" }
     assert.equal(await readFile(socketPath, "utf8"), "keep me")
   })
 
+  test("refuses to replace an active socket", async () => {
+    const { binaryPath } = await makeFakeDriver()
+    const directory = await mkdtemp(join(tmpdir(), "cua embedded active socket "))
+    temporaryDirectories.push(directory)
+    const socketPath = join(directory, "driver.sock")
+    const server = createServer(socket => socket.end())
+    await new Promise((resolve, reject) => {
+      server.once("error", reject)
+      server.listen(socketPath, resolve)
+    })
+
+    try {
+      const driver = makeDriver(binaryPath, socketPath)
+      await assert.rejects(driver.start(), { code: "socket-path-conflict" })
+      await new Promise((resolve, reject) => {
+        const socket = createConnection(socketPath)
+        socket.once("connect", () => {
+          socket.destroy()
+          resolve()
+        })
+        socket.once("error", reject)
+      })
+    } finally {
+      await new Promise(resolve => server.close(resolve))
+    }
+  })
+
   test("keeps its default unix socket below the sockaddr length limit", async () => {
     const { binaryPath } = await makeFakeDriver()
     const driver = new EmbeddedCuaDriver({
@@ -145,6 +172,40 @@ describe("embedded cua-driver lifecycle", { skip: process.platform === "win32" }
 
     const second = await driver.start()
     assert.notEqual(second.pid, first.pid)
+  })
+
+  test("preserves a replacement socket after an unexpected exit", async () => {
+    const { binaryPath } = await makeFakeDriver()
+    const directory = await mkdtemp(join(tmpdir(), "cua embedded replacement socket "))
+    temporaryDirectories.push(directory)
+    const socketPath = join(directory, "driver.sock")
+    const driver = makeDriver(binaryPath, socketPath)
+    const connection = await driver.start()
+
+    await rm(socketPath)
+    const replacement = createServer(socket => socket.end())
+    await new Promise((resolve, reject) => {
+      replacement.once("error", reject)
+      replacement.listen(socketPath, resolve)
+    })
+
+    try {
+      process.kill(connection.pid, "SIGKILL")
+      for (let attempt = 0; attempt < 100 && driver.connection; attempt += 1) {
+        await new Promise(resolve => setTimeout(resolve, 10))
+      }
+      assert.equal(driver.connection, undefined)
+      await new Promise((resolve, reject) => {
+        const socket = createConnection(socketPath)
+        socket.once("connect", () => {
+          socket.destroy()
+          resolve()
+        })
+        socket.once("error", reject)
+      })
+    } finally {
+      await new Promise(resolve => replacement.close(resolve))
+    }
   })
 
   test("reports an early exit and stops polling the socket", async () => {
@@ -223,6 +284,23 @@ setInterval(() => {}, 1000);
     await driver.stop()
 
     await assert.rejects(starting, { code: "startup-cancelled" })
+    assert.equal(driver.connection, undefined)
+    await assert.rejects(stat(socketPath))
+  })
+
+  test("a repeated stop cancels a start queued behind shutdown", async () => {
+    const { binaryPath } = await makeFakeDriver()
+    const socketPath = join(tmpdir(), `cua-driver-queued-start-${process.pid}.sock`)
+    const driver = makeDriver(binaryPath, socketPath)
+    await driver.start()
+
+    const stopping = driver.stop()
+    const queuedStart = driver.start()
+    const repeatedStop = driver.stop()
+
+    assert.equal(repeatedStop, stopping)
+    await repeatedStop
+    await assert.rejects(queuedStart, { code: "startup-cancelled" })
     assert.equal(driver.connection, undefined)
     await assert.rejects(stat(socketPath))
   })

@@ -379,7 +379,6 @@ fn append_platform_probes(report: &mut Report) {
 #[cfg(target_os = "linux")]
 fn probe_at_spi_bus_via_gdbus(timeout: std::time::Duration) -> bool {
     use std::process::{Command, Stdio};
-    use wait_timeout::ChildExt;
 
     let mut child = match Command::new("gdbus")
         .args([
@@ -397,20 +396,36 @@ fn probe_at_spi_bus_via_gdbus(timeout: std::time::Duration) -> bool {
         Ok(c) => c,
         Err(_) => return false,
     };
-    match child.wait_timeout(timeout) {
+    match wait_for_child(&mut child, timeout) {
         Ok(Some(status)) => status.success(),
-        Ok(None) => {
-            // Timed out — kill the stuck child so we don't leave a
+        Ok(None) | Err(_) => {
+            // Timed out or failed — kill the stuck child so we don't leave a
             // gdbus process hanging around after `doctor` exits.
             let _ = child.kill();
             let _ = child.wait();
             false
         }
-        Err(_) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            false
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn wait_for_child(
+    child: &mut std::process::Child,
+    timeout: std::time::Duration,
+) -> std::io::Result<Option<std::process::ExitStatus>> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(Some(status));
         }
+
+        let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
+            return Ok(None);
+        };
+        if remaining.is_zero() {
+            return Ok(None);
+        }
+        std::thread::sleep(remaining.min(std::time::Duration::from_millis(15)));
     }
 }
 
@@ -616,6 +631,29 @@ mod tests {
         let json = r.to_json();
         // Warnings do not fail the run — exit-code-driving flag stays true.
         assert_eq!(json["ok"], serde_json::Value::Bool(true));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn wait_for_child_reports_exit() {
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let status = wait_for_child(&mut child, std::time::Duration::from_secs(1))
+            .unwrap()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn wait_for_child_times_out() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("5")
+            .spawn()
+            .unwrap();
+        let status = wait_for_child(&mut child, std::time::Duration::from_millis(10)).unwrap();
+        assert!(status.is_none());
+        child.kill().unwrap();
+        child.wait().unwrap();
     }
 
     #[test]

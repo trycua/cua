@@ -72,6 +72,8 @@ pub struct SessionStateOutput {
     pub escalation_reason: Option<EscalationReason>,
     #[schemars(required, schema_with = "nullable_string_schema")]
     pub escalation_detail: Option<String>,
+    #[schemars(required, schema_with = "nullable_string_schema")]
+    pub workspace_id: Option<String>,
 }
 
 impl ToolOutput for SessionStateOutput {}

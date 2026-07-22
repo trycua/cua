@@ -342,6 +342,7 @@ pub fn fire_session_end(session_id: &str) -> bool {
         }
     }
     crate::capture_scope::clear_session(session_id);
+    crate::workspace::clear_session(session_id);
     for hook in hooks().lock().unwrap().iter() {
         hook(session_id);
     }
@@ -381,6 +382,20 @@ pub fn revive_session(session_id: &str) -> bool {
         return false;
     }
     ended_sessions().lock().unwrap().remove(session_id)
+}
+
+/// Restore a tombstone when a multi-subsystem `start_session` transaction
+/// fails after reviving an id but before the session becomes active.
+///
+/// This deliberately does not fan out end hooks or emit an observer event: it
+/// is rollback of an incomplete start, not a second session lifecycle event.
+pub(crate) fn restore_ended_session(session_id: &str) {
+    if is_trackable(session_id) {
+        ended_sessions()
+            .lock()
+            .unwrap()
+            .insert(session_id.to_owned());
+    }
 }
 
 /// Record activity for an explicit session id, resetting its idle-TTL clock.

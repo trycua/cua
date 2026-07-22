@@ -944,7 +944,8 @@ export type SessionStateOutput = {
     effectiveScope: EffectiveScope,
     desktopUnlocked: boolean,
     escalationReason?: EscalationReason,
-    escalationDetail?: string
+    escalationDetail?: string,
+    workspaceId?: string
 }
 
 /**
@@ -973,7 +974,8 @@ const FfiConverterTypeSessionStateOutput = (() => {
                 effectiveScope: FfiConverterTypeEffectiveScope.read(from),
                 desktopUnlocked: FfiConverterBool.read(from),
                 escalationReason: FfiConverterOptionalTypeEscalationReason.read(from),
-                escalationDetail: FfiConverterOptionalString.read(from)
+                escalationDetail: FfiConverterOptionalString.read(from),
+                workspaceId: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -983,6 +985,7 @@ const FfiConverterTypeSessionStateOutput = (() => {
             FfiConverterBool.write(value.desktopUnlocked, into);
             FfiConverterOptionalTypeEscalationReason.write(value.escalationReason, into);
             FfiConverterOptionalString.write(value.escalationDetail, into);
+            FfiConverterOptionalString.write(value.workspaceId, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.session) +
@@ -990,7 +993,8 @@ const FfiConverterTypeSessionStateOutput = (() => {
              FfiConverterTypeEffectiveScope.allocationSize(value.effectiveScope) +
              FfiConverterBool.allocationSize(value.desktopUnlocked) +
              FfiConverterOptionalTypeEscalationReason.allocationSize(value.escalationReason) +
-             FfiConverterOptionalString.allocationSize(value.escalationDetail);
+             FfiConverterOptionalString.allocationSize(value.escalationDetail) +
+             FfiConverterOptionalString.allocationSize(value.workspaceId);
 
         }
     };
@@ -1005,7 +1009,11 @@ export type StartSessionInput = {
     /**
      * Per-session perception/action modality. auto starts window-only and requires explicit escalation before desktop tools; window and desktop are strict. Immutable for the live session.
      */
-    captureScope?: CaptureScope
+    captureScope?: CaptureScope,
+    /**
+     * Optional live workspace to bind to this session. Immutable until the session ends; launch_app inherits it when workspace_id is omitted.
+     */
+    workspaceId?: string
 }
 
 /**
@@ -1030,16 +1038,19 @@ const FfiConverterTypeStartSessionInput = (() => {
         read(from: RustBuffer): TypeName {
             return {
                 session: FfiConverterString.read(from),
-                captureScope: FfiConverterOptionalTypeCaptureScope.read(from)
+                captureScope: FfiConverterOptionalTypeCaptureScope.read(from),
+                workspaceId: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterString.write(value.session, into);
             FfiConverterOptionalTypeCaptureScope.write(value.captureScope, into);
+            FfiConverterOptionalString.write(value.workspaceId, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.session) +
-             FfiConverterOptionalTypeCaptureScope.allocationSize(value.captureScope);
+             FfiConverterOptionalTypeCaptureScope.allocationSize(value.captureScope) +
+             FfiConverterOptionalString.allocationSize(value.workspaceId);
 
         }
     };

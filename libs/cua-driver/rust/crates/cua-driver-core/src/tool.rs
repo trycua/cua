@@ -104,6 +104,9 @@ impl ToolDef {
 ///   opaque `element_token` arg alongside the integer `element_index`)
 /// - `app.launch`, `app.list`, `app.kill`, `window.list`,
 ///   `window.activate`, `window.debug_info`
+/// - `workspace.backends.read`, `workspace.lifecycle.create`,
+///   `workspace.lifecycle.close`, `workspace.state.read`,
+///   `workspace.window.move`
 /// - `system.permissions.tcc`,
 ///   `system.permissions.tcc.accessibility`,
 ///   `system.permissions.tcc.screen_recording`
@@ -206,6 +209,12 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
 
         // ── apps / windows ───────────────────────────────────────────
         "launch_app" => &["app.launch"],
+        "list_workspace_backends" => &["workspace.backends.read"],
+        "create_workspace" => &["workspace.lifecycle.create"],
+        "list_workspaces" => &["workspace.state.read"],
+        "get_workspace" => &["workspace.state.read"],
+        "close_workspace" => &["workspace.lifecycle.close"],
+        "move_window_to_workspace" => &["workspace.window.move"],
         "list_apps" => &["app.list"],
         "kill_app" => &["app.kill"],
         "list_windows" => &["window.list"],
@@ -345,6 +354,16 @@ impl ToolRegistry {
         self.register(Box::new(EscalateSessionTool));
         self.register(Box::new(GetSessionStateTool));
         self.register(Box::new(EndSessionTool));
+    }
+
+    /// Register the platform-neutral workspace lifecycle tools against a
+    /// platform backend. The same manager is installed for launch and session
+    /// integration, so workspace selection is consistent across transports.
+    pub fn register_workspace_tools(
+        &mut self,
+        backend: Arc<dyn crate::workspace::WorkspaceBackend>,
+    ) -> Arc<crate::workspace::WorkspaceManager> {
+        crate::workspace::register_tools(self, backend)
     }
 
     /// Wire up the replay tool's weak self-reference.
@@ -756,6 +775,13 @@ mod capability_tests {
         "list_windows",
         "bring_to_front",
         "debug_window_info",
+        // workspaces
+        "list_workspace_backends",
+        "create_workspace",
+        "list_workspaces",
+        "get_workspace",
+        "close_workspace",
+        "move_window_to_workspace",
         // permissions / config
         "check_permissions",
         "get_config",
@@ -833,6 +859,12 @@ mod capability_tests {
         "window.list",
         "window.activate",
         "window.debug_info",
+        // workspaces
+        "workspace.backends.read",
+        "workspace.lifecycle.create",
+        "workspace.lifecycle.close",
+        "workspace.state.read",
+        "workspace.window.move",
         // permissions
         "system.permissions.tcc",
         "system.permissions.tcc.accessibility",

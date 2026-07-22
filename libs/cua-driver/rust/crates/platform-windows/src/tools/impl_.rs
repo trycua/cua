@@ -1572,13 +1572,47 @@ impl Tool for LaunchAppTool {
                 "additional_arguments":{"type":"array","items":{"type":"string"},"description":"Extra command-line arguments passed to the launched process (or activation arguments for packaged apps)."},
                 "webkit_inspector_port":{"type":"integer","description":"Accepted for cross-platform parity; no-op on Windows."},
                 "creates_new_application_instance":{"type":"boolean","description":"Accepted for parity; no-op on Windows (ShellExecuteEx always creates a new process)."},
-                "start_minimized":{"type":"boolean","description":"When true, launch the app's window minimized to the taskbar instead of restored-but-not-activated. Use this when the agent wants to drive the app entirely in the background — the user's previously-frontmost window (e.g. terminal) stays visually on top. Desktop launches hold the foreground lock through startup and use SW_SHOWMINNOACTIVE; packaged-app activation remains broker-controlled and receives a best-effort SW_SHOWMINNOACTIVE post-pass. UIA / background dispatch still work on a minimized window; only `screenshot` and `delivery_mode:\"foreground\"` need it restored."}
+                "start_minimized":{"type":"boolean","description":"When true, launch the app's window minimized to the taskbar instead of restored-but-not-activated. Use this when the agent wants to drive the app entirely in the background — the user's previously-frontmost window (e.g. terminal) stays visually on top. Desktop launches hold the foreground lock through startup and use SW_SHOWMINNOACTIVE; packaged-app activation remains broker-controlled and receives a best-effort SW_SHOWMINNOACTIVE post-pass. UIA / background dispatch still work on a minimized window; only `screenshot` and `delivery_mode:\"foreground\"` need it restored."},
+                "workspace_id":{"type":"string","description":"Optional live native_space workspace. The first resolved top-level windows are moved to it and verified before success is returned."},
+                "session":{"type":"string","description":"Optional session id; inherits its workspace binding when workspace_id is omitted."}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: true, open_world: true,
         })
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        let workspace_id = match cua_driver_core::workspace::resolve_workspace_id(&args) {
+            Ok(value) => value,
+            Err(error) => {
+                return ToolResult::error(error.to_string()).with_structured(json!({
+                    "code": error.code(),
+                }))
+            }
+        };
+        if let Some(workspace_id) = workspace_id.as_deref() {
+            let manager = cua_driver_core::workspace::default_manager()
+                .expect("workspace id resolution requires a manager");
+            let record = match manager.get(workspace_id) {
+                Ok(record) => record,
+                Err(error) => {
+                    return ToolResult::error(error.to_string()).with_structured(json!({
+                        "code": error.code(),
+                        "workspace_id": workspace_id,
+                        "app_launched": false,
+                    }))
+                }
+            };
+            if !record.capabilities.launch {
+                return ToolResult::error(
+                    "Windows native_space cannot safely route a third-party launch with the documented IVirtualDesktopManager API",
+                )
+                .with_structured(json!({
+                    "code": "workspace_operation_unsupported",
+                    "workspace_id": workspace_id,
+                    "app_launched": false,
+                }));
+            }
+        }
         let launch_path_opt = args
             .get("launch_path")
             .and_then(|v| v.as_str())
@@ -1628,15 +1662,16 @@ impl Tool for LaunchAppTool {
         // process with a different name owns the actual window. Captured
         // here (before the launch) so the new soffice.bin pid won't be
         // in the snapshot.
-        let pre_launch_pids: std::sync::Arc<std::collections::HashSet<u32>> = if start_minimized {
-            let pids: std::collections::HashSet<u32> = crate::win32::list_processes()
-                .into_iter()
-                .map(|p| p.pid)
-                .collect();
-            std::sync::Arc::new(pids)
-        } else {
-            std::sync::Arc::new(std::collections::HashSet::new())
-        };
+        let pre_launch_pids: std::sync::Arc<std::collections::HashSet<u32>> =
+            if start_minimized || workspace_id.is_some() {
+                let pids: std::collections::HashSet<u32> = crate::win32::list_processes()
+                    .into_iter()
+                    .map(|p| p.pid)
+                    .collect();
+                std::sync::Arc::new(pids)
+            } else {
+                std::sync::Arc::new(std::collections::HashSet::new())
+            };
 
         // Capture the foreground window BEFORE any launch path runs so the
         // post-spawn polling restore (below) has a target HWND to flip back
@@ -2223,6 +2258,70 @@ impl Tool for LaunchAppTool {
         }
         let pid = resolved_pid;
 
+        if let Some(workspace_id) = workspace_id.as_deref() {
+            if pre_launch_pids.contains(&pid) {
+                return ToolResult::error(format!(
+                    "App reused pre-existing pid {pid}; refusing to move its existing windows into workspace '{workspace_id}'"
+                ))
+                .with_structured(json!({
+                    "code": "workspace_existing_instance",
+                    "workspace_id": workspace_id,
+                    "pid": pid,
+                    "app_launched": false,
+                }));
+            }
+            if windows_json.is_empty() {
+                return ToolResult::error(format!(
+                    "App launched as pid {pid}, but no top-level window appeared to move into workspace '{workspace_id}'"
+                ))
+                .with_structured(json!({
+                    "code": "workspace_window_not_found",
+                    "workspace_id": workspace_id,
+                    "pid": pid,
+                    "app_launched": true,
+                }));
+            }
+            let manager = cua_driver_core::workspace::default_manager()
+                .expect("workspace id resolution requires a manager");
+            for window in &windows_json {
+                let Some(window_id) = window.get("window_id").and_then(Value::as_i64) else {
+                    continue;
+                };
+                if let Err(error) = manager
+                    .move_window(
+                        workspace_id,
+                        cua_driver_core::workspace::WindowTarget {
+                            window_id,
+                            pid: Some(i64::from(pid)),
+                        },
+                    )
+                    .await
+                {
+                    return ToolResult::error(format!(
+                        "App launched as pid {pid}, but window {window_id} could not be moved to workspace '{workspace_id}': {error}"
+                    ))
+                    .with_structured(json!({
+                        "code": "workspace_move_failed",
+                        "workspace_id": workspace_id,
+                        "pid": pid,
+                        "window_id": window_id,
+                        "app_launched": true,
+                    }));
+                }
+            }
+            if let Err(error) = manager.note_launch(workspace_id, pid) {
+                return ToolResult::error(format!(
+                    "App launched as pid {pid}, but workspace ownership could not be recorded: {error}"
+                ))
+                .with_structured(json!({
+                    "code": error.code(),
+                    "workspace_id": workspace_id,
+                    "pid": pid,
+                    "app_launched": true,
+                }));
+            }
+        }
+
         // start_minimized post-pass: drop every resolved window to the
         // taskbar. The desktop ShellExecuteEx path already minimizes via
         // nShow=SW_SHOWMINNOACTIVE, but three cases still need this
@@ -2407,6 +2506,7 @@ impl Tool for LaunchAppTool {
             "running":   true,
             "active":    false,  // SW_SHOWNOACTIVATE — Swift's background-launch invariant
             "windows":   windows_json,
+            "workspace_id": workspace_id,
         });
         ToolResult::text(summary).with_structured(structured)
     }
@@ -8702,6 +8802,9 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
         crate::browser_platform::WindowsBrowserPlatform,
     ));
     cua_driver_core::browser::register_browser_tools(&browser_engine, &mut r);
+    r.register_workspace_tools(std::sync::Arc::new(
+        crate::workspace::WindowsWorkspaceBackend::new(),
+    ));
     r.register_recording_tools();
     r.register_session_tools();
     r

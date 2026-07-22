@@ -584,6 +584,7 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
         crate::browser::MacOsBrowserPlatform,
     ));
     cua_driver_core::browser::register_browser_tools(&browser_engine, registry);
+    registry.register_workspace_tools(Arc::new(crate::workspace::MacosWorkspaceBackend::new()));
     // Recording / replay + session-lifecycle tools are platform-independent.
     registry.register_recording_tools();
     registry.register_session_tools();

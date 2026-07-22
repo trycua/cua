@@ -66,6 +66,14 @@ fn def() -> &'static ToolDef {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "Extra arguments appended after --args when launching."
+                },
+                "workspace_id": {
+                    "type": "string",
+                    "description": "Optional live native_space workspace. Resolved windows are moved to it with private-API readback verification before success is returned."
+                },
+                "session": {
+                    "type": "string",
+                    "description": "Optional session id; inherits its workspace binding when workspace_id is omitted."
                 }
             },
             "additionalProperties": false
@@ -85,6 +93,14 @@ impl Tool for LaunchAppTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        let workspace_id = match cua_driver_core::workspace::resolve_workspace_id(&args) {
+            Ok(value) => value,
+            Err(error) => {
+                return ToolResult::error(error.to_string()).with_structured(serde_json::json!({
+                    "code": error.code(),
+                }))
+            }
+        };
         let bundle_id = args.opt_str("bundle_id");
         let name = args.opt_str("name");
         let urls: Vec<String> = args.str_array("urls");
@@ -94,7 +110,22 @@ impl Tool for LaunchAppTool {
             );
         }
         let webkit_inspector_port = args.opt_u64("webkit_inspector_port").map(|v| v as u16);
-        let creates_new_instance = args.bool_or("creates_new_application_instance", false);
+        let mut creates_new_instance = args.bool_or("creates_new_application_instance", false);
+        // Moving every window of a reused single-instance app would adopt the
+        // user's pre-existing windows. Workspace launches therefore always
+        // request a fresh LaunchServices instance and verify that the returned
+        // pid did not exist before the launch.
+        if workspace_id.is_some() {
+            creates_new_instance = true;
+        }
+        let preexisting_pids: std::collections::HashSet<i32> = if workspace_id.is_some() {
+            crate::apps::list_running_apps()
+                .into_iter()
+                .map(|app| app.pid)
+                .collect()
+        } else {
+            std::collections::HashSet::new()
+        };
         let additional_arguments: Vec<String> = args.str_array("additional_arguments");
         if additional_arguments
             .iter()
@@ -410,6 +441,72 @@ impl Tool for LaunchAppTool {
 
         match launch_result {
             Ok(Ok((pid, app_info, windows))) => {
+                if let Some(workspace_id) = workspace_id.as_deref() {
+                    if preexisting_pids.contains(&pid) {
+                        return ToolResult::error(format!(
+                            "App reused pre-existing pid {pid}; refusing to move its existing windows into workspace '{workspace_id}'"
+                        ))
+                        .with_structured(serde_json::json!({
+                            "code": "workspace_existing_instance",
+                            "workspace_id": workspace_id,
+                            "pid": pid,
+                            "app_launched": false,
+                        }));
+                    }
+                    if windows.is_empty() {
+                        return ToolResult::error(format!(
+                            "App launched as pid {pid}, but no top-level window appeared to move into workspace '{workspace_id}'"
+                        ))
+                        .with_structured(serde_json::json!({
+                            "code": "workspace_window_not_found",
+                            "workspace_id": workspace_id,
+                            "pid": pid,
+                            "app_launched": true,
+                        }));
+                    }
+                    let manager = cua_driver_core::workspace::default_manager()
+                        .expect("workspace id resolution requires a manager");
+                    for window in &windows {
+                        if let Err(error) = manager
+                            .move_window(
+                                workspace_id,
+                                cua_driver_core::workspace::WindowTarget {
+                                    window_id: i64::from(window.window_id),
+                                    pid: Some(i64::from(pid)),
+                                },
+                            )
+                            .await
+                        {
+                            return ToolResult::error(format!(
+                                "App launched as pid {pid}, but window {} could not be moved to workspace '{workspace_id}': {error}",
+                                window.window_id
+                            ))
+                            .with_structured(serde_json::json!({
+                                "code": "workspace_move_failed",
+                                "workspace_id": workspace_id,
+                                "pid": pid,
+                                "window_id": window.window_id,
+                                "app_launched": true,
+                            }));
+                        }
+                    }
+                    let Ok(launched_pid) = u32::try_from(pid) else {
+                        return ToolResult::error(format!(
+                            "App launch returned invalid pid {pid} for workspace ownership"
+                        ));
+                    };
+                    if let Err(error) = manager.note_launch(workspace_id, launched_pid) {
+                        return ToolResult::error(format!(
+                            "App launched as pid {pid}, but workspace ownership could not be recorded: {error}"
+                        ))
+                        .with_structured(serde_json::json!({
+                            "code": error.code(),
+                            "workspace_id": workspace_id,
+                            "pid": pid,
+                            "app_launched": true,
+                        }));
+                    }
+                }
                 let app_name = app_info.as_ref().map(|a| a.name.as_str()).unwrap_or("?");
                 let bid = app_info
                     .as_ref()
@@ -456,6 +553,7 @@ impl Tool for LaunchAppTool {
                     "bundle_id": bid,
                     "name": app_name,
                     "windows": windows_json,
+                    "workspace_id": workspace_id,
                 });
                 // Only emit `self_activation_suppressed` when the
                 // belt-and-braces demotion check actually ran. `None`

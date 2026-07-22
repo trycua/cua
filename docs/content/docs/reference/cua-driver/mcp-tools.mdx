@@ -12,7 +12,7 @@ description: Reference for every MCP tool Cua Driver exposes
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-`cua-driver` exposes 49 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
+`cua-driver` exposes 55 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
 
 Tool names are `snake_case`. Responses are MCP `CallTool.Result` envelopes: a text content block prefixed with a `✅` summary (or the error reason on failure), plus optional image or structured-content blocks on tools that produce them. See the [CLI reference](/reference/cua-driver/cli-reference) for CLI-specific options like `--socket` and `--screenshot-out-file`.
 
@@ -166,8 +166,10 @@ Returns the launched app's pid, bundle_id, name, and a `windows` array (same sha
 - `bundle_id` (string, optional): App bundle identifier, e.g. com.apple.calculator. Preferred over name.
 - `creates_new_application_instance` (boolean, optional): When true, force a new app instance even if already running (open -n). Use for concurrent multi-agent/multi-session work so each session gets an isolated instance + window instead of sharing one — on single-instance apps (e.g. Calculator) every caller otherwise gets the same window and the sessions clobber each other.
 - `name` (string, optional): App display name. Used only when bundle_id is absent.
+- `session` (string, optional): Optional session id; inherits its workspace binding when workspace_id is omitted.
 - `urls` (array of string, optional): Optional file paths or URLs to open with the app (e.g. a folder path for Finder).
 - `webkit_inspector_port` (integer, optional): Open a WebKit inspector server on this port (sets WEBKIT_INSPECTOR_SERVER env var).
+- `workspace_id` (string, optional): Optional live native_space workspace. Resolved windows are moved to it with private-API readback verification before success is returned.
 
 ### `kill_app`
 
@@ -584,12 +586,13 @@ Note: capture_mode is a per-call param (on get_window_state / click), not a stor
 
 ### `start_session`
 
-Declare a session — a named, color-coded identity for THIS agent run. Pass a stable `session` id and choose capture_scope=auto|window|desktop; the agent cursor, capture policy, per-session config, and recording all key on it, and it follows the run across any apps/windows. The cursor's color is derived from the id, so distinct runs are visually distinct. A cursor is shown only for a declared session — call this (or pass `session` on your first action) to opt in. Idempotent: re-calling with the same id just refreshes its idle-TTL. End it with `end_session` (or let the idle-TTL reclaim it). Concurrent runs/subagents each pass their own `session` to get their own cursor.
+Declare a session — a named, color-coded identity for THIS agent run. Pass a stable `session` id and choose capture_scope=auto|window|desktop; optionally bind a live `workspace_id` so later launches inherit it. The agent cursor, capture policy, per-session config, recording, and workspace binding follow the run across apps/windows. The cursor's color is derived from the id, so distinct runs are visually distinct. A cursor is shown only for a declared session — call this (or pass `session` on your first action) to opt in. Idempotent: re-calling with the same id just refreshes its idle-TTL. End it with `end_session` (or let the idle-TTL reclaim it). Concurrent runs/subagents each pass their own `session` to get their own cursor.
 
 **Arguments:**
 
 - `capture_scope` (string, optional): Per-session perception/action modality. auto starts window-only and requires explicit escalation before desktop tools; window and desktop are strict. Immutable for the live session.
 - `session` (string, required): Stable session id for this run (e.g. "research-run-1").
+- `workspace_id` (string, optional): Optional live workspace to bind to this session. Immutable until the session ends; launch_app inherits it when workspace_id is omitted.
 
 ```json
 {"session":"example"}
@@ -912,6 +915,68 @@ Perform hover, right-click, double-click, scroll, or drag in an exactly-bound br
 
 ```json
 {"action":"hover","session":"example","tab_id":"example","target_id":"example"}
+```
+
+### `list_workspace_backends`
+
+List workspace backends and their actual platform capabilities. Native spaces and nested compositors are visual/routing boundaries, not security sandboxes.
+
+**Arguments:** none.
+
+### `create_workspace`
+
+Create or attach to an isolated visual workspace. Use list_workspace_backends first; unsupported lifecycle operations fail explicitly.
+
+**Arguments:**
+
+- `backend` (string, optional)
+- `name` (string, optional)
+- `native_id` (string, optional): Existing platform-native Space/desktop id to attach to when creation is unsupported.
+- `options` (object, optional)
+
+### `list_workspaces`
+
+List workspaces managed by this driver process, including closed tombstones.
+
+**Arguments:** none.
+
+### `get_workspace`
+
+Read one workspace, its lifecycle status, and its capabilities.
+
+**Arguments:**
+
+- `workspace_id` (string, required)
+
+```json
+{"workspace_id":"example"}
+```
+
+### `close_workspace`
+
+Close a workspace and release backend-owned resources. A nested compositor also terminates verified child processes previously launched into it before removing its ephemeral profile; adopted native spaces/desktops and their apps are never destroyed. Refuses while sessions are bound unless force=true.
+
+**Arguments:**
+
+- `force` (boolean, optional)
+- `workspace_id` (string, required)
+
+```json
+{"workspace_id":"example"}
+```
+
+### `move_window_to_workspace`
+
+Move an existing native window into a workspace when the backend supports adoption. Nested compositor clients generally must be relaunched instead.
+
+**Arguments:**
+
+- `pid` (integer, optional)
+- `window_id` (integer, required)
+- `workspace_id` (string, required)
+
+```json
+{"window_id":10725,"workspace_id":"example"}
 ```
 
 ### `escalate_session`

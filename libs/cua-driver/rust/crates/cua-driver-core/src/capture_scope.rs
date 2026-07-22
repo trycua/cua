@@ -52,6 +52,7 @@ impl SessionCaptureScope {
             desktop_unlocked: self.desktop_unlocked,
             escalation_reason: self.escalation_reason,
             escalation_detail: self.escalation_detail.clone(),
+            workspace_id: None,
         }
     }
 }
@@ -186,6 +187,7 @@ fn tool_scope(tool_name: &str, args: &Value) -> ToolScope {
             | "screenshot_compat"
             | "zoom"
             | "page"
+            | "move_window_to_workspace"
     ) || tool_name == "get_browser_state"
         || (tool_name.starts_with("browser_")
             && !matches!(tool_name, "browser_prepare" | "browser_download"))

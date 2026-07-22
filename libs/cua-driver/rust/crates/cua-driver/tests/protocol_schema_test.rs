@@ -76,6 +76,10 @@ fn tools_list_schema_shape() {
             "get_browser_state schema missing {field}"
         );
     }
+    assert_eq!(
+        browser_state["inputSchema"]["properties"]["include_screenshot"]["default"], false,
+        "get_browser_state should advertise opt-in exact-tab capture"
+    );
     for (name, required) in [
         ("browser_prepare", &["pid"][..]),
         ("browser_navigate", &["target_id", "tab_id", "url"][..]),

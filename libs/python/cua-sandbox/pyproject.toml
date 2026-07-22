@@ -18,7 +18,6 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -38,7 +37,6 @@ dependencies = [
     "grpcio==1.78.0",
     "protobuf==6.33.6",
     "pycdlib>=1.14.0",
-    "cyclops-sdk>=0.1.0",
 ]
 
 [project.optional-dependencies]
@@ -97,4 +95,5 @@ dev = [
 
 [tool.uv.sources]
 cua-agent = { path = "../agent", editable = true }
-cyclops-sdk = { path = "../../../lib/fleets", editable = true }
+
+[tool.hatch.build.hooks.custom]

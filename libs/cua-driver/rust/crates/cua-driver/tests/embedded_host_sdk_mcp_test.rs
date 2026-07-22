@@ -270,15 +270,21 @@ async fn stop_cancels_startup_and_unblocks_every_waiter() {
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn early_child_exit_resets_the_host_to_stopped() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let directory = tempfile::tempdir().unwrap();
+    let binary = directory.path().join("early-exit-driver");
+    std::fs::write(&binary, "#!/bin/sh\nexit 7\n").unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
     let host = EmbeddedCuaDriverHost::new(
-        "/usr/bin/false".into(),
+        binary.to_string_lossy().into_owned(),
         "com.trycua.embedded-early-exit-test".into(),
     )
     .expect("construct host");
     let error = host.clone().start().await.unwrap_err();
     assert!(matches!(
         error,
-        cua_driver_sdk::EmbeddedDriverError::ExitedBeforeReady { .. }
+        cua_driver_sdk::EmbeddedDriverError::ExitedBeforeReady { code: Some(7) }
     ));
     assert_eq!(host.state(), EmbeddedDriverHostState::Stopped);
 }

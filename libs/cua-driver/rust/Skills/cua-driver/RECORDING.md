@@ -161,8 +161,10 @@ Capture has these limits:
 - events are accepted only while the selected top-level window is foreground;
 - the supplied window must belong to the supplied process;
 - cua-driver-injected events are ignored;
-- text capture records only `text entered (redacted)` and never retains literal
-  text or its length;
+- text input events record only `text entered (redacted)` and never retain
+  literal text or its length;
+- screenshots can still contain text and other content visible in the target
+  window, so review artifacts before sharing them;
 - the hook and border stop on `stop_demonstration` or when the owning MCP
   session ends.
 

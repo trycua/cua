@@ -2042,7 +2042,7 @@ fn build_payload(
     transport: Transport,
 ) -> Value {
     let mut event_properties = properties.clone();
-    event_properties.insert("telemetry_schema_version".into(), Value::from(4));
+    event_properties.insert("telemetry_schema_version".into(), Value::from(3));
     event_properties
         .entry("product_version")
         .or_insert_with(|| Value::String(current_product_version().into()));
@@ -3030,7 +3030,7 @@ mod tests {
     }
 
     #[test]
-    fn v4_payload_allows_server_geoip_without_sending_an_ip_or_client_timestamp() {
+    fn v3_payload_allows_server_geoip_without_sending_an_ip_or_client_timestamp() {
         let _guard = ENV_LOCK.lock().unwrap();
         let identity = InstallationIdentity {
             id: "test-id".into(),
@@ -3066,7 +3066,7 @@ mod tests {
         ] {
             assert!(properties.contains_key(required), "missing {required}");
         }
-        assert_eq!(properties["telemetry_schema_version"], 4);
+        assert_eq!(properties["telemetry_schema_version"], 3);
         assert_eq!(properties["is_synthetic"], false);
         assert!(!properties.contains_key("$geoip_disable"));
         assert!(!properties.contains_key("$ip"));
@@ -3175,7 +3175,7 @@ mod tests {
         let permissions = inspect_event(event::PERMISSIONS_GATE_COMPLETED).unwrap();
         assert_eq!(permissions["properties"]["resolution"], "granted");
         for payload in [permissions_started, permissions_dismissed, permissions] {
-            assert_eq!(payload["properties"]["telemetry_schema_version"], 4);
+            assert_eq!(payload["properties"]["telemetry_schema_version"], 3);
             assert!(payload.get("timestamp").is_none());
             let serialized = serde_json::to_string(&payload)
                 .unwrap()
@@ -3571,7 +3571,7 @@ mod tests {
     fn agent_session_inspect_samples_expose_only_the_contract() {
         for event_name in [event::AGENT_SESSION_STARTED, event::AGENT_SESSION_ENDED] {
             let payload = inspect_event(event_name).unwrap();
-            assert_eq!(payload["properties"]["telemetry_schema_version"], 4);
+            assert_eq!(payload["properties"]["telemetry_schema_version"], 3);
             let properties = payload["properties"].as_object().unwrap();
             for forbidden_key in ["session", "session_id", "agent_session_id", "cursor_id"] {
                 assert!(!properties.contains_key(forbidden_key));

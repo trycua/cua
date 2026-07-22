@@ -54,11 +54,11 @@ cua-driver telemetry inspect cua_driver_agent_session_ended --json
 
 ## Common client event properties
 
-Every schema-v4 client event has this fixed envelope:
+Every schema-v3 client event has this fixed envelope:
 
 | Property                   | Meaning                                                   |
 | -------------------------- | --------------------------------------------------------- |
-| `telemetry_schema_version` | Fixed integer `4`                                         |
+| `telemetry_schema_version` | Fixed integer `3`                                         |
 | `product_version`          | Installed Cua Driver version                              |
 | `os_family`                | `macos`, `windows`, `linux`, or `other`                   |
 | `os_major`                 | Major operating-system version only                       |

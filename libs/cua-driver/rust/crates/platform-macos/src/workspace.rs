@@ -396,6 +396,12 @@ mod tests {
         assert!(names.contains("list_workspace_backends"));
         assert!(names.contains("create_workspace"));
         assert!(names.contains("get_workspace_state"));
+        let window_schema = &registry
+            .get_def("get_window_state")
+            .expect("window state tool")
+            .input_schema["properties"];
+        assert!(window_schema.get("workspace_id").is_some());
+        assert!(window_schema.get("workspace_ref").is_some());
         assert!(names.contains("move_window_to_workspace"));
         assert!(names.contains("close_workspace"));
     }

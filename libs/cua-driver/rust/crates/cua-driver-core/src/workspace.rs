@@ -5,7 +5,7 @@
 //! their real capabilities; callers must not infer process, filesystem, or
 //! network isolation from either backend.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -144,6 +144,19 @@ pub enum WorkspaceError {
     Busy(String),
     #[error("workspace '{0}' is still bound to one or more sessions")]
     InUse(String),
+    #[error(
+        "{tool} requires workspace_ref from get_workspace_state for workspace '{workspace_id}'"
+    )]
+    ReferenceRequired { tool: String, workspace_id: String },
+    #[error("workspace_ref '{0}' is unknown or stale")]
+    InvalidReference(String),
+    #[error("workspace_ref belongs to workspace '{reference_workspace}', not '{requested}'")]
+    ReferenceConflict {
+        reference_workspace: String,
+        requested: String,
+    },
+    #[error("workspace_ref no longer belongs to workspace '{0}'")]
+    TargetMoved(String),
     #[error("session '{session}' is already bound to workspace '{existing}', not '{requested}'")]
     BindingConflict {
         session: String,
@@ -166,6 +179,10 @@ impl WorkspaceError {
             Self::Backend(_) => "workspace_backend_error",
             Self::Busy(_) => "workspace_busy",
             Self::InUse(_) => "workspace_in_use",
+            Self::ReferenceRequired { .. } => "workspace_ref_required",
+            Self::InvalidReference(_) => "workspace_ref_stale",
+            Self::ReferenceConflict { .. } => "workspace_ref_conflict",
+            Self::TargetMoved(_) => "workspace_target_moved",
             Self::BindingConflict { .. } => "workspace_binding_conflict",
             Self::SessionEnded(_) => "session_ended",
         }
@@ -208,8 +225,16 @@ pub trait WorkspaceBackend: Send + Sync {
 pub struct WorkspaceManager {
     backend: Arc<dyn WorkspaceBackend>,
     records: RwLock<HashMap<String, WorkspaceRecord>>,
-    in_flight: Mutex<HashMap<String, usize>>,
+    in_flight: Mutex<HashSet<String>>,
     session_bindings: Mutex<HashMap<String, String>>,
+    window_references: Mutex<HashMap<String, WorkspaceWindowReference>>,
+}
+
+#[derive(Clone)]
+struct WorkspaceWindowReference {
+    workspace_id: String,
+    window_id: i64,
+    pid: Option<i64>,
 }
 
 impl WorkspaceManager {
@@ -217,8 +242,9 @@ impl WorkspaceManager {
         Self {
             backend,
             records: RwLock::new(HashMap::new()),
-            in_flight: Mutex::new(HashMap::new()),
+            in_flight: Mutex::new(HashSet::new()),
             session_bindings: Mutex::new(HashMap::new()),
+            window_references: Mutex::new(HashMap::new()),
         }
     }
 
@@ -284,15 +310,7 @@ impl WorkspaceManager {
                 .ok_or_else(|| WorkspaceError::NotFound(workspace_id.to_owned()))?;
             match record.status {
                 WorkspaceStatus::Active => {
-                    if self
-                        .in_flight
-                        .lock()
-                        .unwrap()
-                        .get(workspace_id)
-                        .copied()
-                        .unwrap_or(0)
-                        > 0
-                    {
+                    if self.in_flight.lock().unwrap().contains(workspace_id) {
                         return Err(WorkspaceError::Busy(workspace_id.to_owned()));
                     }
                     record.status = WorkspaceStatus::Closing;
@@ -320,6 +338,10 @@ impl WorkspaceManager {
                 .unwrap()
                 .retain(|_, bound| bound != workspace_id);
         }
+        self.window_references
+            .lock()
+            .unwrap()
+            .retain(|_, target| target.workspace_id != workspace_id);
         Ok(())
     }
 
@@ -340,8 +362,21 @@ impl WorkspaceManager {
     }
 
     pub async fn get_state(&self, workspace_id: &str) -> Result<Value, WorkspaceError> {
-        let lease = self.begin_operation(workspace_id)?;
-        let record = &lease.record;
+        let mut state = self.backend_state(workspace_id).await?;
+        self.bind_window_references(workspace_id, &mut state)?;
+        Ok(state)
+    }
+
+    async fn backend_state(&self, workspace_id: &str) -> Result<Value, WorkspaceError> {
+        let _lease = self.begin_operation(workspace_id)?;
+        self.backend_state_while_leased(workspace_id).await
+    }
+
+    async fn backend_state_while_leased(
+        &self,
+        workspace_id: &str,
+    ) -> Result<Value, WorkspaceError> {
+        let record = self.get_active(workspace_id)?;
         if !record.capabilities.capture {
             return Err(WorkspaceError::Unsupported(format!(
                 "{} does not expose workspace state",
@@ -349,6 +384,38 @@ impl WorkspaceManager {
             )));
         }
         self.backend.get_state(workspace_id).await
+    }
+
+    fn bind_window_references(
+        &self,
+        workspace_id: &str,
+        state: &mut Value,
+    ) -> Result<(), WorkspaceError> {
+        let windows = state
+            .get_mut("windows")
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| WorkspaceError::Backend("workspace state omitted windows".into()))?;
+        let mut references = self.window_references.lock().unwrap();
+        references.retain(|_, target| target.workspace_id != workspace_id);
+        for window in windows {
+            let Some(object) = window.as_object_mut() else {
+                continue;
+            };
+            let Some(window_id) = object.get("window_id").and_then(Value::as_i64) else {
+                continue;
+            };
+            let reference = format!("w{}", uuid::Uuid::new_v4().simple());
+            references.insert(
+                reference.clone(),
+                WorkspaceWindowReference {
+                    workspace_id: workspace_id.to_owned(),
+                    window_id,
+                    pid: object.get("pid").and_then(Value::as_i64),
+                },
+            );
+            object.insert("workspace_ref".into(), Value::String(reference));
+        }
+        Ok(())
     }
 
     pub fn resolve_workspace_id(&self, args: &Value) -> Result<Option<String>, WorkspaceError> {
@@ -431,7 +498,9 @@ impl WorkspaceManager {
             WorkspaceStatus::Closed => return Err(WorkspaceError::Closed(workspace_id.to_owned())),
         }
         let mut in_flight = self.in_flight.lock().unwrap();
-        *in_flight.entry(workspace_id.to_owned()).or_default() += 1;
+        if !in_flight.insert(workspace_id.to_owned()) {
+            return Err(WorkspaceError::Busy(workspace_id.to_owned()));
+        }
         drop(in_flight);
         drop(records);
         Ok(WorkspaceLease {
@@ -460,7 +529,9 @@ impl WorkspaceManager {
             WorkspaceStatus::Closed => return Err(WorkspaceError::Closed(workspace_id.to_owned())),
         }
         let mut in_flight = self.in_flight.lock().unwrap();
-        *in_flight.entry(workspace_id.to_owned()).or_default() += 1;
+        if !in_flight.insert(workspace_id.to_owned()) {
+            return Err(WorkspaceError::Busy(workspace_id.to_owned()));
+        }
         drop(in_flight);
         drop(records);
         Ok(WorkspaceOperationLease {
@@ -517,18 +588,32 @@ pub struct WorkspaceOperationLease {
 }
 
 fn finish_operation(manager: &WorkspaceManager, workspace_id: &str) {
-    let mut in_flight = manager.in_flight.lock().unwrap();
-    if let Some(count) = in_flight.get_mut(workspace_id) {
-        *count -= 1;
-        if *count == 0 {
-            in_flight.remove(workspace_id);
-        }
-    }
+    manager.in_flight.lock().unwrap().remove(workspace_id);
 }
 
 impl Drop for WorkspaceLease<'_> {
     fn drop(&mut self) {
         finish_operation(self.manager, &self.workspace_id);
+    }
+}
+
+impl WorkspaceOperationLease {
+    pub fn note_launch(&self, pid: u32) -> Result<(), WorkspaceError> {
+        self.manager.note_launch(&self.workspace_id, pid)
+    }
+
+    pub async fn move_window(&self, target: &WindowTarget) -> Result<Value, WorkspaceError> {
+        let record = self.manager.get_active(&self.workspace_id)?;
+        if !record.capabilities.move_existing_window {
+            return Err(WorkspaceError::MoveUnsupported {
+                kind: record.kind.as_str(),
+                relaunch_required: record.kind == WorkspaceKind::NestedCompositor,
+            });
+        }
+        self.manager
+            .backend
+            .move_window(&self.workspace_id, target)
+            .await
     }
 }
 
@@ -538,17 +623,26 @@ impl Drop for WorkspaceOperationLease {
     }
 }
 
-static DEFAULT_MANAGER: OnceLock<Arc<WorkspaceManager>> = OnceLock::new();
+tokio::task_local! {
+    static CURRENT_MANAGER: Arc<WorkspaceManager>;
+}
 
-pub fn default_manager() -> Option<&'static Arc<WorkspaceManager>> {
-    DEFAULT_MANAGER.get()
+pub async fn with_manager<F>(manager: Arc<WorkspaceManager>, future: F) -> F::Output
+where
+    F: std::future::Future,
+{
+    CURRENT_MANAGER.scope(manager, future).await
+}
+
+pub fn current_manager() -> Option<Arc<WorkspaceManager>> {
+    CURRENT_MANAGER.try_with(Arc::clone).ok()
 }
 
 pub fn resolve_workspace_id(args: &Value) -> Result<Option<String>, WorkspaceError> {
-    let Some(manager) = default_manager() else {
+    let Some(manager) = current_manager() else {
         return if args.get("workspace_id").and_then(Value::as_str).is_some() {
             Err(WorkspaceError::Unavailable(
-                "this platform did not register a workspace backend".into(),
+                "this host did not register a workspace backend".into(),
             ))
         } else {
             Ok(None)
@@ -557,62 +651,80 @@ pub fn resolve_workspace_id(args: &Value) -> Result<Option<String>, WorkspaceErr
     manager.resolve_workspace_id(args)
 }
 
+/// Resolve a workspace-bound window reference, verify that its native window
+/// still belongs to the workspace, and hold the workspace open until dispatch
+/// completes. Raw pid/window targeting is deliberately rejected for bound
+/// sessions because a process can own windows in several workspaces.
 pub async fn validate_operation_target(
+    manager: Option<&Arc<WorkspaceManager>>,
+    workspace_targeted: bool,
     tool_name: &str,
-    args: &Value,
-) -> Result<(), WorkspaceError> {
-    if !matches!(
-        tool_name,
-        "get_window_state"
-            | "get_accessibility_tree"
-            | "zoom"
-            | "click"
-            | "double_click"
-            | "right_click"
-            | "drag"
-            | "scroll"
-            | "type_text"
-            | "press_key"
-            | "hotkey"
-            | "set_value"
-    ) {
-        return Ok(());
+    args: &mut Value,
+) -> Result<Option<WorkspaceOperationLease>, WorkspaceError> {
+    if !workspace_targeted {
+        return Ok(None);
     }
-    let Some(manager) = default_manager() else {
-        return Ok(());
+    let Some(manager) = manager else {
+        return Ok(None);
     };
     let Some(workspace_id) = manager.resolve_workspace_id(args)? else {
-        return Ok(());
+        return Ok(None);
     };
-    let window_id = args.get("window_id").and_then(Value::as_i64);
-    let pid = args.get("pid").and_then(Value::as_i64);
-    if window_id.is_none() && pid.is_none() {
-        return Err(WorkspaceError::Unsupported(format!(
-            "{tool_name} requires window_id or pid when routed through workspace '{workspace_id}'"
-        )));
+    let reference = args
+        .get("workspace_ref")
+        .and_then(Value::as_str)
+        .ok_or_else(|| WorkspaceError::ReferenceRequired {
+            tool: tool_name.to_owned(),
+            workspace_id: workspace_id.clone(),
+        })?;
+    let target = manager
+        .window_references
+        .lock()
+        .unwrap()
+        .get(reference)
+        .cloned()
+        .ok_or_else(|| WorkspaceError::InvalidReference(reference.to_owned()))?;
+    if target.workspace_id != workspace_id {
+        return Err(WorkspaceError::ReferenceConflict {
+            reference_workspace: target.workspace_id,
+            requested: workspace_id,
+        });
     }
-    let state = manager.get_state(&workspace_id).await?;
+    if args
+        .get("window_id")
+        .and_then(Value::as_i64)
+        .is_some_and(|window_id| window_id != target.window_id)
+        || args
+            .get("pid")
+            .and_then(Value::as_i64)
+            .zip(target.pid)
+            .is_some_and(|(pid, target_pid)| pid != target_pid)
+    {
+        return Err(WorkspaceError::Unsupported(
+            "workspace_ref conflicts with the supplied native target".into(),
+        ));
+    }
+    let lease = manager.lease_operation(&workspace_id)?;
+    let state = manager.backend_state_while_leased(&workspace_id).await?;
     let belongs = state
         .get("windows")
         .and_then(Value::as_array)
         .is_some_and(|windows| {
             windows.iter().any(|window| {
-                if let Some(expected) = window_id {
-                    window.get("window_id").and_then(Value::as_i64) == Some(expected)
-                } else {
-                    pid.is_some_and(|expected| {
-                        window.get("pid").and_then(Value::as_i64) == Some(expected)
-                    })
-                }
+                window.get("window_id").and_then(Value::as_i64) == Some(target.window_id)
             })
         });
-    if belongs {
-        Ok(())
-    } else {
-        Err(WorkspaceError::Unsupported(format!(
-            "target does not belong to workspace '{workspace_id}'"
-        )))
+    if !belongs {
+        return Err(WorkspaceError::TargetMoved(workspace_id));
     }
+    let object = args
+        .as_object_mut()
+        .ok_or_else(|| WorkspaceError::Unsupported("tool arguments must be an object".into()))?;
+    object.insert("window_id".into(), Value::from(target.window_id));
+    if let Some(pid) = target.pid {
+        object.entry("pid").or_insert_with(|| Value::from(pid));
+    }
+    Ok(Some(lease))
 }
 
 pub fn configure_command_for_args(
@@ -622,7 +734,7 @@ pub fn configure_command_for_args(
     let Some(workspace_id) = resolve_workspace_id(args)? else {
         return Ok(None);
     };
-    default_manager()
+    current_manager()
         .expect("workspace manager resolved")
         .configure_command(&workspace_id, command)?;
     Ok(Some(workspace_id))
@@ -632,7 +744,7 @@ pub fn bind_session(
     session: &str,
     requested: Option<&str>,
 ) -> Result<Option<String>, WorkspaceError> {
-    match default_manager() {
+    match current_manager() {
         Some(manager) => manager.bind_session(session, requested),
         None if requested.is_some() => Err(WorkspaceError::Unavailable(
             "this platform did not register a workspace backend".into(),
@@ -647,14 +759,14 @@ pub fn validate_workspace_id(requested: Option<&str>) -> Result<(), WorkspaceErr
     let Some(requested) = requested else {
         return Ok(());
     };
-    let manager = default_manager().ok_or_else(|| {
-        WorkspaceError::Unavailable("this platform did not register a workspace backend".into())
+    let manager = current_manager().ok_or_else(|| {
+        WorkspaceError::Unavailable("this host did not register a workspace backend".into())
     })?;
     manager.get_active(requested).map(|_| ())
 }
 
 pub fn clear_session(session: &str) {
-    if let Some(manager) = default_manager() {
+    if let Some(manager) = current_manager() {
         manager.clear_session(session);
     }
 }
@@ -663,8 +775,14 @@ pub fn register_tools(
     registry: &mut ToolRegistry,
     backend: Arc<dyn WorkspaceBackend>,
 ) -> Arc<WorkspaceManager> {
-    let proposed = Arc::new(WorkspaceManager::new(backend));
-    let manager = DEFAULT_MANAGER.get_or_init(|| proposed).clone();
+    let manager = Arc::new(WorkspaceManager::new(backend));
+    registry.set_workspace_manager(manager.clone());
+    let weak_manager = Arc::downgrade(&manager);
+    crate::session::register_session_end_hook(move |session| {
+        if let Some(manager) = weak_manager.upgrade() {
+            manager.clear_session(session);
+        }
+    });
     registry.register(Box::new(ListBackendsTool(manager.clone())));
     registry.register(Box::new(CreateWorkspaceTool(manager.clone())));
     registry.register(Box::new(ListWorkspacesTool(manager.clone())));
@@ -837,7 +955,7 @@ impl Tool for GetWorkspaceStateTool {
         GET_STATE_DEF.get_or_init(|| {
             def(
                 "get_workspace_state",
-                "List windows currently belonging to a workspace. Use the returned window ids with get_window_state and window-targeted input tools.",
+                "List windows currently belonging to a workspace. Pass each returned workspace_ref to get_window_state and window-targeted input tools; a newer state call makes older refs stale.",
                 json!({
                     "type":"object",
                     "properties":{
@@ -1125,6 +1243,10 @@ mod tests {
 
         let lease = manager.begin_operation(&created.workspace_id).unwrap();
         assert!(matches!(
+            manager.begin_operation(&created.workspace_id),
+            Err(WorkspaceError::Busy(_))
+        ));
+        assert!(matches!(
             manager.close(&created.workspace_id, true).await,
             Err(WorkspaceError::Busy(_))
         ));
@@ -1165,6 +1287,96 @@ mod tests {
             WorkspaceStatus::Closed
         );
         assert_eq!(manager.workspace_for_session("session-a"), None);
+    }
+
+    #[tokio::test]
+    async fn workspace_refs_are_scoped_exact_and_stale_on_refresh() {
+        let manager = Arc::new(WorkspaceManager::new(Arc::new(FakeBackend::default())));
+        let first = manager
+            .create(CreateWorkspaceRequest {
+                kind: WorkspaceKind::NestedCompositor,
+                name: None,
+                native_id: None,
+                options: json!({}),
+            })
+            .await
+            .unwrap();
+        let second = manager
+            .create(CreateWorkspaceRequest {
+                kind: WorkspaceKind::NestedCompositor,
+                name: None,
+                native_id: None,
+                options: json!({}),
+            })
+            .await
+            .unwrap();
+        manager
+            .bind_session("workspace-ref-session", Some(&first.workspace_id))
+            .unwrap();
+        let state = manager.get_state(&first.workspace_id).await.unwrap();
+        let reference = state["windows"][0]["workspace_ref"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let mut args = json!({
+            "session":"workspace-ref-session",
+            "workspace_ref":reference,
+        });
+        let lease = validate_operation_target(Some(&manager), true, "click", &mut args)
+            .await
+            .unwrap();
+        assert_eq!(args["window_id"], 7);
+        assert_eq!(args["pid"], 42);
+        drop(lease);
+
+        let mut raw_pid = json!({"session":"workspace-ref-session","pid":42});
+        assert!(
+            validate_operation_target(Some(&manager), true, "type_text", &mut raw_pid)
+                .await
+                .is_err()
+        );
+
+        let mut wrong_workspace = json!({
+            "workspace_id":second.workspace_id,
+            "workspace_ref":reference,
+        });
+        assert!(matches!(
+            validate_operation_target(Some(&manager), true, "click", &mut wrong_workspace).await,
+            Err(WorkspaceError::ReferenceConflict { .. })
+        ));
+
+        manager.get_state(&first.workspace_id).await.unwrap();
+        let mut stale = json!({
+            "workspace_id":first.workspace_id,
+            "workspace_ref":reference,
+        });
+        assert!(
+            validate_operation_target(Some(&manager), true, "click", &mut stale)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn registries_own_independent_workspace_managers() {
+        let mut first_registry = ToolRegistry::new();
+        let first = register_tools(&mut first_registry, Arc::new(FakeBackend::default()));
+        let mut second_registry = ToolRegistry::new();
+        let second = register_tools(&mut second_registry, Arc::new(FakeBackend::default()));
+        assert!(!Arc::ptr_eq(&first, &second));
+
+        first
+            .create(CreateWorkspaceRequest {
+                kind: WorkspaceKind::NestedCompositor,
+                name: None,
+                native_id: None,
+                options: json!({}),
+            })
+            .await
+            .unwrap();
+        assert_eq!(first.list().len(), 1);
+        assert!(second.list().is_empty());
     }
 
     #[tokio::test]

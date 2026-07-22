@@ -180,6 +180,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-compat"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1ba85bc55464dcbf728b56d97e119d673f4cf9062be330a9a26f3acf504a590"
+dependencies = [
+ "futures-core",
+ "futures-io",
+ "once_cell",
+ "pin-project-lite",
+ "tokio",
+]
+
+[[package]]
 name = "async-executor"
 version = "1.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -855,6 +868,7 @@ dependencies = [
  "base64",
  "cua-driver-contract",
  "cua-driver-core",
+ "cua-driver-sdk",
  "cua-driver-testkit",
  "cursor-overlay",
  "embed-resource",
@@ -928,13 +942,16 @@ dependencies = [
 name = "cua-driver-sdk"
 version = "0.10.0"
 dependencies = [
+ "core-foundation",
  "cua-driver-contract",
  "cua-driver-core",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 1.0.69",
+ "tokio",
  "uniffi",
+ "uuid",
 ]
 
 [[package]]
@@ -4022,6 +4039,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b0ef62e69762fbb9386dcb6c87cd3dd05d525fa8a3a579a290892e60ddbda47e"
 dependencies = [
  "anyhow",
+ "async-compat",
  "bytes",
  "once_cell",
  "static_assertions",

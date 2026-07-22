@@ -61,6 +61,44 @@ with text, images, verification/error metadata, and `structured_json` /
 `raw_json` for platform-extensible results. Session lifecycle calls return
 dedicated generated records.
 
+## Embedded application host
+
+Python applications can own the same Rust lifecycle object as Node clients.
+The regular `CuaDriver` interface is unchanged; only the socket comes from the
+embedded host:
+
+```python
+import asyncio
+
+from cua_driver import CuaDriver, EmbeddedCuaDriverHost, get_binary_path
+
+
+async def main() -> None:
+    host = EmbeddedCuaDriverHost(
+        binary_path=str(get_binary_path()),
+        host_bundle_id="com.example.your-app",
+    )
+    connection = await host.start()
+    driver = CuaDriver.connect(connection.socket_path)
+    try:
+        # Application calls use driver. An agent runtime can launch
+        # connection.mcp.command with connection.mcp.args and environment.
+        print(driver.metadata())
+    finally:
+        del driver
+        await host.stop()
+
+
+asyncio.run(main())
+```
+
+`start()` coalesces concurrent callers, `stop()` cancels startup and is
+idempotent, and `restart()` returns a new generation/PID/endpoint. Destroy SDK
+clients and MCP proxies before stopping or restarting, then reconnect from the
+new connection. `wait_for_exit(connection.generation)` observes unexpected
+termination. Dropping the host closes its parent-liveness pipe and kills the
+child as a fallback, but orderly applications should still await `stop()`.
+
 ## Binary wrapper
 
 The package also exposes the bundled executable:

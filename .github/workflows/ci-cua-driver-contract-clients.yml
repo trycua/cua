@@ -20,6 +20,8 @@ on:
       - "libs/cua-driver/rust/crates/platform-windows/**"
       - "libs/cua-driver/scripts/generate-uniffi-bindings.mjs"
       - "libs/cua-driver/scripts/stage-uniffi-library.mjs"
+      - "libs/cua-driver/scripts/build-npm-packages.mjs"
+      - ".github/workflows/cd-py-cua-driver.yml"
       - ".github/workflows/ci-cua-driver-contract-clients.yml"
   push:
     branches: [main]
@@ -41,6 +43,8 @@ on:
       - "libs/cua-driver/rust/crates/platform-windows/**"
       - "libs/cua-driver/scripts/generate-uniffi-bindings.mjs"
       - "libs/cua-driver/scripts/stage-uniffi-library.mjs"
+      - "libs/cua-driver/scripts/build-npm-packages.mjs"
+      - ".github/workflows/cd-py-cua-driver.yml"
       - ".github/workflows/ci-cua-driver-contract-clients.yml"
   workflow_dispatch:
 
@@ -80,6 +84,10 @@ jobs:
       - name: Compile the UniFFI SDK library
         working-directory: libs/cua-driver/rust
         run: cargo check --locked -p cua-driver-sdk
+
+      - name: Prove the embedded host serves SDK and MCP clients
+        working-directory: libs/cua-driver/rust
+        run: cargo test --locked -p cua-driver --test embedded_host_sdk_mcp_test
 
   verify:
     name: Generated contract and SDK bindings
@@ -155,21 +163,31 @@ jobs:
           unzip -l /tmp/cua-driver-wheels/*.whl | grep -F 'cua_driver/libcua_driver_sdk.so'
           python -m pip install --target /tmp/cua-driver-wheel-smoke /tmp/cua-driver-wheels/*.whl
           PYTHONPATH=/tmp/cua-driver-wheel-smoke python -c \
-            "from cua_driver import CuaDriver; print(CuaDriver.connect(None).socket_path())"
+            "from cua_driver import CuaDriver, EmbeddedCuaDriverHost; print(CuaDriver.connect(None).socket_path(), EmbeddedCuaDriverHost)"
 
       - name: Verify Node native package contents
         working-directory: libs/cua-driver/typescript
         run: |
-          mkdir -p /tmp/cua-driver-npm/smoke
-          npm pack --pack-destination /tmp/cua-driver-npm
-          tar -tzf /tmp/cua-driver-npm/*.tgz > /tmp/cua-driver-npm/contents.txt
-          grep -F 'package/dist/native/libcua_driver_sdk.so' /tmp/cua-driver-npm/contents.txt
+          mkdir -p /tmp/cua-driver-native/linux-x64-gnu /tmp/cua-driver-npm/smoke
+          cp ../rust/target/release/libcua_driver_sdk.so \
+            /tmp/cua-driver-native/linux-x64-gnu/libcua_driver_sdk.so
+          VERSION=$(node -p "require('./package.json').version")
+          node ../scripts/build-npm-packages.mjs \
+            --version "$VERSION" \
+            --native-dir /tmp/cua-driver-native \
+            --output-dir /tmp/cua-driver-npm \
+            --allow-partial
+          tar -tzf "/tmp/cua-driver-npm/trycua-cua-driver-$VERSION.tgz" > /tmp/cua-driver-npm/contents.txt
           grep -F 'package/dist/embedded.js' /tmp/cua-driver-npm/contents.txt
           grep -F 'package/dist/electron.js' /tmp/cua-driver-npm/contents.txt
-          npm install --prefix /tmp/cua-driver-npm/smoke /tmp/cua-driver-npm/*.tgz
+          tar -tzf "/tmp/cua-driver-npm/trycua-cua-driver-linux-x64-gnu-$VERSION.tgz" | \
+            grep -F 'package/libcua_driver_sdk.so'
+          npm install --prefix /tmp/cua-driver-npm/smoke \
+            "/tmp/cua-driver-npm/trycua-cua-driver-$VERSION.tgz" \
+            "/tmp/cua-driver-npm/trycua-cua-driver-linux-x64-gnu-$VERSION.tgz"
           cd /tmp/cua-driver-npm/smoke
           node --input-type=module -e \
-            "const sdk = await import('@trycua/cua-driver'); const driver = sdk.CuaDriver.connect(undefined); console.log(driver.socketPath()); driver.uniffiDestroy(); const embedded = await import('@trycua/cua-driver/embedded'); if (typeof embedded.EmbeddedCuaDriver !== 'function') process.exit(1)"
+            "const sdk = await import('@trycua/cua-driver'); const driver = sdk.CuaDriver.connect(undefined); console.log(driver.socketPath()); driver.uniffiDestroy(); const embedded = await import('@trycua/cua-driver/embedded'); if (embedded.EmbeddedCuaDriverHost !== sdk.EmbeddedCuaDriverHost) process.exit(1)"
 
       - name: Check Python agent SDK example
         run: python -m py_compile libs/cua-driver/examples/agent-sdks/claude_agent.py

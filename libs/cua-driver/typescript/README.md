@@ -10,10 +10,11 @@ The package root exposes the native daemon SDK:
 import { CuaDriver } from "@trycua/cua-driver"
 ```
 
-The `/embedded` entrypoint lets a signed desktop host own a private daemon. The
-`/electron` entrypoint exposes low-level macOS permission requests from Electron
-main; the host still owns permission UI, status, and restart policy. The package
-does not contain a TypeScript MCP client. Agents already have
+`EmbeddedCuaDriverHost` is exported from both the package root and the
+organizational `/embedded` entrypoint; they are the same generated Rust object.
+The `/electron` entrypoint is a thin compatibility naming layer over the same
+generated macOS permission functions. The package does not contain a TypeScript
+MCP client. Agents already have
 runtime-neutral MCP clients and should configure the executable directly:
 
 ```text
@@ -68,13 +69,12 @@ child, and connect both the native SDK and its agent runtime to the same private
 daemon:
 
 ```ts
-import { CuaDriver } from "@trycua/cua-driver"
-import { EmbeddedCuaDriver } from "@trycua/cua-driver/embedded"
+import { CuaDriver, EmbeddedCuaDriverHost } from "@trycua/cua-driver"
 
-const embedded = new EmbeddedCuaDriver({
-  binaryPath: "/path/inside/YourApp.app/cua-driver",
-  hostBundleId: "com.example.your-app",
-})
+const embedded = new EmbeddedCuaDriverHost(
+  "/path/inside/YourApp.app/Contents/Resources/cua-driver",
+  "com.example.your-app",
+)
 
 try {
   const connection = await embedded.start()
@@ -86,6 +86,7 @@ try {
   }
 } finally {
   await embedded.stop()
+  embedded.uniffiDestroy()
 }
 ```
 
@@ -113,12 +114,18 @@ if (!hasRequiredMacOSPermissions(permissions) && !permissions.screenRecording) {
 
 The adapter does not provide dialogs, settings rows, or onboarding policy. Do
 not start the daemon until `hasRequiredMacOSPermissions()` returns true. Stop the
-daemon before the host exits. If grants change while it is running, destroy any
-SDK client, call `embedded.restart()`, and reconnect so macOS evaluates the
-grants in a fresh process. The package does not install or bundle the
-executable; keep it and the Electron adapter's `ffi-rs`
-native module outside ASAR and sign the nested executable before the host app.
+daemon before the host exits. If grants change while it is running, destroy all
+SDK clients and MCP proxies, call `embedded.restart()`, and reconnect using the
+new connection: every restart changes the generation, PID, and endpoint.
 
-Host-native assembly and loader tests are implemented. Publishing the npm
-package still requires assembling and testing the complete platform-library
-matrix rather than packing a developer's local library.
+`start()` is concurrency-safe and coalesces callers. `stop()` cancels an
+in-progress start and is idempotent. Treat a returned connection as valid only
+for its generation, observe unexpected termination with
+`waitForExit(connection.generation)`, and stop new work before teardown. The
+Rust host also closes a parent-liveness pipe on normal destruction so the daemon
+cannot remain orphaned after a host crash.
+
+The npm package installs one optional native package selected for the current
+OS and CPU. It does not bundle the `cua-driver` executable: ship that executable
+outside ASAR, preserve its executable bit, and sign it before signing and
+notarizing the enclosing app.

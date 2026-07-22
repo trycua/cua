@@ -9,7 +9,36 @@ A complete macOS reference host and demo live in the repo at `libs/cua-driver/ru
 
 ## Launch embedded
 
-Choose a private socket and start the embedded daemon first:
+The supported SDK host generates a private endpoint, clears unsafe ambient
+environment variables, starts the daemon, and waits for a versioned metadata
+handshake:
+
+```ts
+import { CuaDriver, EmbeddedCuaDriverHost } from "@trycua/cua-driver"
+
+const host = new EmbeddedCuaDriverHost(
+  "/path/to/cua-driver",
+  "com.yourco.yourapp",
+)
+const connection = await host.start()
+const driver = CuaDriver.connect(connection.socketPath)
+
+// Existing application SDK calls use `driver` unchanged.
+// Existing agent runtimes launch connection.mcp.command with
+// connection.mcp.args and connection.mcp.environment.
+```
+
+Python exposes the same generated Rust objects:
+
+```python
+from cua_driver import CuaDriver, EmbeddedCuaDriverHost, get_binary_path
+
+host = EmbeddedCuaDriverHost(str(get_binary_path()), "com.yourco.yourapp")
+connection = await host.start()
+driver = CuaDriver.connect(connection.socket_path)
+```
+
+For non-SDK hosts, the equivalent low-level launch is:
 
 ```sh
 CUA_DRIVER_EMBEDDED=1 \
@@ -31,23 +60,46 @@ You can pass `--embedded --host-bundle-id com.yourco.yourapp` to `serve` instead
 Use the embedded host in `@trycua/cua-driver` instead of duplicating socket naming, readiness checks, restart handling, and process cleanup:
 
 ```ts
-import { CuaDriver } from '@trycua/cua-driver';
-import { EmbeddedCuaDriver } from '@trycua/cua-driver/embedded';
+import { CuaDriver, EmbeddedCuaDriverHost } from '@trycua/cua-driver';
 
-const embedded = new EmbeddedCuaDriver({
-  binaryPath: '/path/inside/YourApp.app/cua-driver',
-  hostBundleId: 'com.example.your-app',
-});
+const embedded = new EmbeddedCuaDriverHost(
+  '/path/inside/YourApp.app/Contents/Resources/cua-driver',
+  'com.example.your-app',
+);
 const connection = await embedded.start();
 const driver = CuaDriver.connect(connection.socketPath);
 // Application calls use driver; an agent runtime uses connection.mcp.
 driver.uniffiDestroy();
 await embedded.stop();
+embedded.uniffiDestroy();
 ```
 
-The package does not install or bundle cua-driver. Ship a compatible executable outside Electron's ASAR archive, preserve its executable bit, and sign the nested executable before signing and notarizing the enclosing macOS app. The `/electron` entry point exposes low-level Accessibility and Screen Recording requests that run in Electron's main process; its native `ffi-rs` module must also remain outside ASAR. The host remains responsible for permission UI, status, and restart policy, and must not start the daemon until both grants are active.
+The package does not install or bundle cua-driver. Ship a compatible executable outside Electron's ASAR archive, preserve its executable bit, and sign the nested executable before signing and notarizing the enclosing macOS app. The `/electron` entry point exposes compatibility-named Accessibility and Screen Recording helpers backed by the same generated Rust SDK; there is no second FFI library. The host remains responsible for permission UI, status, and restart policy, and must not start the daemon until both grants are active.
 
 Destroy the SDK client and call `await embedded.stop()` from every orderly shutdown path. Electron hosts should defer their first `before-quit` event until `stop()` completes because asynchronous cleanup cannot run after the host process has exited. If grants change while the daemon is running, destroy the SDK client, call `embedded.restart()`, and reconnect so macOS re-evaluates them in a fresh process.
+
+## Lifecycle contract
+
+- `start()` is concurrency-safe and coalesces callers into one generation.
+- A connection is valid only for its returned generation. `restart()` changes
+  the generation, PID, and usually the endpoint; discard every old SDK client
+  and MCP proxy before reconnecting.
+- Stop accepting new work, end active sessions, close MCP proxies and SDK
+  clients, then await `stop()`. `stop()` cancels startup and is idempotent.
+- Use `waitForExit(generation)` / `wait_for_exit(generation)` to observe an
+  unexpected child exit. Do not automatically replay an action whose completion
+  is unknown.
+- The host holds a parent-liveness pipe. EOF shuts down the daemon if the host
+  exits; Rust destruction also requests a kill as a fallback. This is crash
+  containment, not a substitute for orderly shutdown.
+- Capture scope is session state, not host state. Concurrent sessions sharing
+  one daemon may independently select `auto`, strict `window`, or strict
+  `desktop`; always end each session you start.
+- macOS grant changes require a daemon restart. Never start the daemon before
+  the permission-owning host process is ready.
+- Custom endpoints are accepted only when they are absent or a stale socket.
+  The host refuses regular files, symlinks, and live listeners and only removes
+  the endpoint identity owned by the matching generation.
 
 ## Host requirements
 

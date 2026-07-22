@@ -594,6 +594,13 @@ pub fn parse_command() -> Command {
     if let Some(id) = flag_value(&args, "--host-bundle-id") {
         std::env::set_var(cua_driver_core::HOST_BUNDLE_ID_ENV, id);
     }
+    // Internal host/daemon lifetime contract. The daemon reads from a
+    // dedicated inherited stdin pipe and shuts down on EOF. The core helper
+    // additionally requires embedded mode, so this can never reinterpret an
+    // ordinary MCP proxy's JSON-RPC stdin.
+    if args.iter().any(|a| a == "--parent-liveness-stdio") {
+        std::env::set_var(cua_driver_core::PARENT_LIVENESS_STDIN_ENV, "1");
+    }
 
     // Strip cursor-overlay flags (and their values) to expose the subcommand.
     let mut positionals: Vec<&str> = Vec::new();

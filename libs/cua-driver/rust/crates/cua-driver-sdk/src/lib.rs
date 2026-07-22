@@ -12,13 +12,16 @@ use cua_driver_contract::{
     StartSessionInput, StartSessionOutput, ToolInput, TypeTextInput,
 };
 use cua_driver_core::daemon::{
-    is_daemon_listening, send_request, socket_path_for_namespace, DaemonRequest,
-    ToolObservationOrigin,
+    is_daemon_listening, request_daemon_metadata, send_request, socket_path_for_namespace,
+    DaemonRequest, ToolObservationOrigin,
 };
 use serde::Serialize;
 use serde_json::Value;
 use std::sync::Arc;
 use thiserror::Error;
+
+mod embedded;
+pub use embedded::*;
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ImageContent {
@@ -38,6 +41,135 @@ pub struct ToolResult {
     pub verified: Option<bool>,
     pub degraded: bool,
     pub raw_json: String,
+}
+
+/// Transport-independent daemon identity used to prove that standalone and
+/// embedded SDK/MCP routes reached a compatible Rust implementation.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct DriverMetadata {
+    pub driver_version: String,
+    pub contract_version: String,
+    pub tools_list_schema_version: String,
+    pub capability_version: String,
+    pub mcp_protocol_version: String,
+    pub pid: u32,
+    pub embedded: bool,
+    pub host_bundle_id: Option<String>,
+}
+
+/// The TCC grants required by a macOS host application before it starts an
+/// embedded driver. These probes execute in the importing SDK process so the
+/// operating system attributes the request to the host application.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct MacOsPermissionStatus {
+    pub accessibility: bool,
+    pub screen_recording: bool,
+}
+
+#[uniffi::export]
+pub fn current_mac_os_permission_status() -> MacOsPermissionStatus {
+    #[cfg(target_os = "macos")]
+    {
+        return MacOsPermissionStatus {
+            accessibility: mac_os_accessibility_granted(),
+            screen_recording: mac_os_screen_recording_granted(),
+        };
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        MacOsPermissionStatus {
+            accessibility: true,
+            screen_recording: true,
+        }
+    }
+}
+
+#[uniffi::export]
+pub fn request_mac_os_permissions() -> MacOsPermissionStatus {
+    #[cfg(target_os = "macos")]
+    {
+        return MacOsPermissionStatus {
+            accessibility: request_mac_os_accessibility(),
+            screen_recording: request_mac_os_screen_recording(),
+        };
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        MacOsPermissionStatus {
+            accessibility: true,
+            screen_recording: true,
+        }
+    }
+}
+
+#[uniffi::export]
+pub fn open_mac_os_screen_recording_settings() -> Result<(), DriverError> {
+    #[cfg(target_os = "macos")]
+    {
+        let status = std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+            .status()
+            .map_err(|error| DriverError::Protocol {
+                reason: format!("open macOS Screen Recording settings: {error}"),
+            })?;
+        if !status.success() {
+            return Err(DriverError::Protocol {
+                reason: format!(
+                    "open macOS Screen Recording settings exited with {:?}",
+                    status.code()
+                ),
+            });
+        }
+        return Ok(());
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn mac_os_accessibility_granted() -> bool {
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        fn AXIsProcessTrusted() -> bool;
+    }
+    unsafe { AXIsProcessTrusted() }
+}
+
+#[cfg(target_os = "macos")]
+fn request_mac_os_accessibility() -> bool {
+    use core_foundation::base::TCFType as _;
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
+    use core_foundation::string::CFString;
+
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> bool;
+    }
+    let key = CFString::new("AXTrustedCheckOptionPrompt");
+    let value = CFBoolean::true_value();
+    let options = CFDictionary::from_CFType_pairs(&[(key.as_CFType(), value.as_CFType())]);
+    unsafe { AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef()) }
+}
+
+#[cfg(target_os = "macos")]
+fn mac_os_screen_recording_granted() -> bool {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGPreflightScreenCaptureAccess() -> bool;
+    }
+    unsafe { CGPreflightScreenCaptureAccess() }
+}
+
+#[cfg(target_os = "macos")]
+fn request_mac_os_screen_recording() -> bool {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGRequestScreenCaptureAccess() -> bool;
+    }
+    unsafe { CGRequestScreenCaptureAccess() }
 }
 
 #[derive(Debug, Error, uniffi::Error)]
@@ -129,6 +261,24 @@ impl CuaDriver {
 
     pub fn is_available(&self) -> bool {
         is_daemon_listening(&self.socket_path)
+    }
+
+    pub fn metadata(&self) -> Result<DriverMetadata, DriverError> {
+        let metadata =
+            request_daemon_metadata(&self.socket_path).map_err(|error| DriverError::Transport {
+                socket_path: self.socket_path.clone(),
+                reason: error.to_string(),
+            })?;
+        Ok(DriverMetadata {
+            driver_version: metadata.driver_version,
+            contract_version: metadata.contract_version,
+            tools_list_schema_version: metadata.tools_list_schema_version,
+            capability_version: metadata.capability_version,
+            mcp_protocol_version: metadata.mcp_protocol_version,
+            pid: metadata.pid,
+            embedded: metadata.embedded,
+            host_bundle_id: metadata.host_bundle_id,
+        })
     }
 
     /// Escape hatch for forward-compatible tools and application-owned server

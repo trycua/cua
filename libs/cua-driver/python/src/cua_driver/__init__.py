@@ -6,7 +6,26 @@ through their runtime's MCP client instead of importing a language MCP facade.
 
 __version__ = "0.10.0"  # x-release-please-version
 
-from ._native import CuaDriver, DriverError, ImageContent, ToolResult
+from ._native import (
+    CuaDriver,
+    DriverError,
+    DriverMetadata,
+    EmbeddedCuaDriverHost,
+    EmbeddedDriverConnection,
+    EmbeddedDriverError,
+    EmbeddedDriverExit,
+    EmbeddedDriverHostOptions,
+    EmbeddedDriverHostState,
+    EmbeddedEnvironmentVariable,
+    EmbeddedMcpConfiguration,
+    EmbeddedPermissionMode,
+    ImageContent,
+    MacOsPermissionStatus,
+    ToolResult,
+    current_mac_os_permission_status,
+    open_mac_os_screen_recording_settings,
+    request_mac_os_permissions,
+)
 from ._native_contract import (
     CaptureScope,
     ClickButton,
@@ -44,6 +63,16 @@ __all__ = [
     "DesktopScope",
     "DragInput",
     "DriverError",
+    "DriverMetadata",
+    "EmbeddedCuaDriverHost",
+    "EmbeddedDriverConnection",
+    "EmbeddedDriverError",
+    "EmbeddedDriverExit",
+    "EmbeddedDriverHostOptions",
+    "EmbeddedDriverHostState",
+    "EmbeddedEnvironmentVariable",
+    "EmbeddedMcpConfiguration",
+    "EmbeddedPermissionMode",
     "EffectiveScope",
     "EndSessionInput",
     "EndSessionOutput",
@@ -55,6 +84,7 @@ __all__ = [
     "GetSessionStateInput",
     "HotkeyInput",
     "ImageContent",
+    "MacOsPermissionStatus",
     "MoveCursorInput",
     "Platform",
     "PressKeyInput",
@@ -67,6 +97,9 @@ __all__ = [
     "ToolResult",
     "TypeTextInput",
     "__version__",
+    "current_mac_os_permission_status",
     "get_binary_path",
+    "open_mac_os_screen_recording_settings",
+    "request_mac_os_permissions",
     "run_cua_driver",
 ]

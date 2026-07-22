@@ -171,10 +171,9 @@ tracks owned files, and checks drift.
 
 Fleet's Node and browser artifacts also establish an important fact: TypeScript
 UniFFI is not limited to WASM. The checked-in Node path uses
-`uniffi-bindgen-react-native`, `@ubjs/core`, `@ubjs/node`, and a colocated native
-library. That path proves feasibility. Its generator/runtime pinning and npm
-release matrix still need to be assessed independently before Cua copies the
-packaging design.
+`uniffi-bindgen-react-native`, `@ubjs/core`, `@ubjs/node`, and native platform
+packages. That path proved feasibility and informed Cua's generated loader and
+optional npm platform-package matrix.
 
 Fleet therefore demonstrates the relevant architecture: bindings are for
 consumers that want the shared implementation, including consumers that may
@@ -333,36 +332,35 @@ the contract namespace and SDK namespace both load `libcua_driver_sdk`. If the
 expected generated selector changes, generation fails instead of silently
 patching an unrelated string.
 
-Python wheels are already platform-specific and the Rust release workflow now
+Python wheels are platform-specific and the Rust release workflow
 places the matching SDK library beside the CLI in each release runtime archive.
 The wheel builder moves that library next to the generated Python modules, and
-CI inspects the wheel and runs it across the FFI boundary. Node host-native
-assembly, `npm pack` inspection, and a real N-API loader test are also present.
-The npm package must not be published from a single developer host: release CI
-still needs to assemble the full Node OS/architecture matrix or split native
-artifacts into optional platform packages.
+CI inspects the wheel and runs it across the FFI boundary. The public Node
+package uses generated platform resolution and optional native packages for
+macOS arm64/x64, Linux glibc arm64/x64, and Windows arm64/x64. Release CI builds
+those packages from the already verified Cua Driver assets, smoke-tests the
+installed root plus matching native package, publishes native packages first,
+then publishes the root. Python, npm, and Rust versions come from one release
+tag and are attached to the same GitHub release.
 
 ## UniFFI follow-up gates
 
 Evaluate the two SDK targets separately.
 
-Before making the UniFFI path the default or publishing it as production-ready:
+Before expanding the UniFFI path to another runtime or platform:
 
-1. Assemble and load-test the Node native artifact on every supported release
-   OS and architecture.
-2. Decide whether Node ships one multi-platform package or optional platform
-   packages and verify installation in Node-based desktop runtimes.
-3. Add release signing/notarization evidence for the native library everywhere
+1. Load-test the native artifact on the added release OS and architecture.
+2. Add the platform package to generated resolution and the release matrix.
+3. Preserve release signing/notarization evidence for the native library everywhere
    the platform requires it.
 4. Run the executable MCP boundary and imported SDK through the same daemon
    conformance corpus so behavior remains equivalent across the two product
    surfaces.
 
-For a UniFFI embedded/server SDK, proceed only after there is an officially
-supported host model with documented permission identity, event-loop ownership,
-state isolation, concurrency, and recovery. Measurement that MCP framing or
-process transfer materially affects supported workloads strengthens this case
-but does not replace the host-runtime design.
+The embedded SDK has a supported Rust-owned host model with documented
+permission identity, endpoint ownership, generation-scoped lifecycle,
+concurrency, parent liveness, and recovery. MCP remains the agent boundary;
+UniFFI owns application-side lifecycle and typed calls.
 
 Python and TypeScript should be evaluated independently because their binding,
 loader, and packaging toolchains differ. MCP and the CLI remain supported for

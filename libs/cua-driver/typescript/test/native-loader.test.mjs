@@ -13,7 +13,18 @@ const libraryName =
     : process.platform === "win32"
       ? "cua_driver_sdk.dll"
       : "libcua_driver_sdk.so"
-const library = path.resolve(testDirectory, "../dist/native", libraryName)
+const nodeTriple =
+  process.platform === "darwin"
+    ? `darwin-${process.arch}`
+    : process.platform === "win32"
+      ? `win32-${process.arch}-msvc`
+      : `linux-${process.arch}-${process.report.getReport().header.glibcVersionRuntime ? "gnu" : "musl"}`
+const library = path.resolve(
+  testDirectory,
+  "../node_modules/@trycua",
+  `cua-driver-${nodeTriple}`,
+  libraryName,
+)
 
 if (process.env.CUA_DRIVER_REQUIRE_UNIFFI === "1" && !existsSync(library)) {
   throw new Error(`required staged UniFFI library is missing: ${library}`)
@@ -29,37 +40,48 @@ test(
       binaryPath,
       `#!/usr/bin/env node
 const net = require("node:net");
+const fs = require("node:fs");
 const args = process.argv.slice(2);
 const socketPath = args[args.indexOf("--socket") + 1];
+const hostBundleId = args[args.indexOf("--host-bundle-id") + 1];
 const server = net.createServer(socket => {
   let buffer = "";
   socket.setEncoding("utf8");
   socket.on("data", chunk => {
     buffer += chunk;
     if (!buffer.includes("\\n")) return;
-    socket.end(JSON.stringify({ ok: true, result: [{ name: "embedded_fixture" }] }) + "\\n");
+    const request = JSON.parse(buffer.split("\\n", 1)[0]);
+    const result = request.method === "metadata" ? {
+      driver_version: "0.10.0",
+      contract_version: "0.2.0",
+      tools_list_schema_version: "1",
+      capability_version: "1",
+      mcp_protocol_version: "2025-06-18",
+      pid: process.pid,
+      embedded: true,
+      host_bundle_id: hostBundleId,
+    } : { tools: [{ name: "embedded_fixture" }] };
+    socket.end(JSON.stringify({ ok: true, result }) + "\\n");
   });
 });
-server.listen(socketPath);
-process.on("SIGTERM", () => server.close(() => process.exit(0)));
+server.listen(socketPath, () => fs.chmodSync(socketPath, 0o600));
+process.stdin.resume();
+process.stdin.on("end", () => server.close(() => process.exit(0)));
 `,
     )
     chmodSync(binaryPath, 0o755)
 
-    const { EmbeddedCuaDriver } = await import("@trycua/cua-driver/embedded")
-    const embedded = new EmbeddedCuaDriver({
-      binaryPath,
-      hostBundleId: "com.example.t3",
-      socketPath: path.join(directory, "driver.sock"),
-      stderr: "ignore",
-    })
+    const { EmbeddedCuaDriverHost } = await import("@trycua/cua-driver/embedded")
+    const embedded = new EmbeddedCuaDriverHost(binaryPath, "com.example.t3")
 
     try {
       const connection = await embedded.start()
       const sdk = await import("@trycua/cua-driver")
       const driver = sdk.CuaDriver.connect(connection.socketPath)
       assert.equal(driver.socketPath(), connection.socketPath)
-      assert.deepEqual(JSON.parse(driver.listToolsJson()), [{ name: "embedded_fixture" }])
+      assert.deepEqual(JSON.parse(driver.listToolsJson()), {
+        tools: [{ name: "embedded_fixture" }],
+      })
       driver.uniffiDestroy()
     } finally {
       await embedded.stop()

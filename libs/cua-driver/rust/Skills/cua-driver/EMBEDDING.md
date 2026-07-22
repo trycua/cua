@@ -101,21 +101,23 @@ migration.
 
 ### Node and Electron hosts
 
-Use `@trycua/cua-driver-embedded` instead of implementing process and socket
-management in every host. The package starts a private daemon directly, waits
-until its socket accepts connections, returns the MCP configuration, and owns
-restart and cleanup:
+Use the embedded host in `@trycua/cua-driver` instead of implementing process
+and socket management in every host. It starts a private daemon directly, waits
+until its socket accepts connections, returns SDK and MCP connection details,
+and owns restart and cleanup:
 
 ```ts
-import { EmbeddedCuaDriver } from '@trycua/cua-driver-embedded';
+import { CuaDriver } from '@trycua/cua-driver';
+import { EmbeddedCuaDriver } from '@trycua/cua-driver/embedded';
 
-const driver = new EmbeddedCuaDriver({
+const embedded = new EmbeddedCuaDriver({
   binaryPath: '/path/inside/YourApp.app/cua-driver',
   hostBundleId: 'com.example.your-app',
 });
-const connection = await driver.start();
-// Register connection.mcp with the host's MCP client.
-await driver.stop();
+const connection = await embedded.start();
+const driver = CuaDriver.connect(connection.socketPath);
+// Application calls use driver; an agent runtime uses connection.mcp.
+await embedded.stop();
 ```
 
 The package does not install or bundle cua-driver. Ship a compatible executable

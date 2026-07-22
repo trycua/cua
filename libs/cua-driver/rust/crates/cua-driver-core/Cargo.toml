@@ -35,12 +35,9 @@ base64 = { workspace = true }
 sha2 = "0.10"
 url = "2.5"
 
-# Window-scoped, indicator-gated human input capture for demonstration
-# recording (cross-platform; real backend on Windows, stub elsewhere).
+# Window-scoped human input capture. The Windows backend is implemented;
+# other platforms return Unsupported.
 input-capture = { path = "../input-capture" }
-# Optional Anthropic call in `process_recording` (author_skill). Same client
-# the daemon uses for telemetry; only invoked when ANTHROPIC_API_KEY is set.
-ureq = { version = "3", features = ["json"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

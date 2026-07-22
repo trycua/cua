@@ -235,12 +235,15 @@ fn spawn_session_idle_sweep() {
 /// a second stop here is an idempotent no-op.
 fn register_recording_session_end_hook(
     recording: std::sync::Arc<cua_driver_core::recording::RecordingSession>,
+    demonstrations: std::sync::Arc<cua_driver_core::demonstration::DemonstrationManager>,
 ) {
     cua_driver_core::session::register_session_end_hook(move |sid| {
         let recording = recording.clone();
+        let demonstrations = demonstrations.clone();
         let sid = sid.to_owned();
         std::thread::spawn(move || {
             let _ = recording.stop_owner(Some(&sid));
+            let _ = demonstrations.stop_owner(&sid);
         });
     });
 }
@@ -612,7 +615,10 @@ pub async fn run_serve(
     if let Some(port) = crate::mcp_http::configured_port() {
         crate::mcp_http::spawn(registry.clone(), port);
     }
-    register_recording_session_end_hook(registry.recording.clone());
+    register_recording_session_end_hook(
+        registry.recording.clone(),
+        registry.demonstrations.clone(),
+    );
 
     loop {
         tokio::select! {
@@ -1226,7 +1232,10 @@ pub async fn run_serve(
     if let Some(port) = crate::mcp_http::configured_port() {
         crate::mcp_http::spawn(registry.clone(), port);
     }
-    register_recording_session_end_hook(registry.recording.clone());
+    register_recording_session_end_hook(
+        registry.recording.clone(),
+        registry.demonstrations.clone(),
+    );
 
     let mut first_pipe = true;
     loop {

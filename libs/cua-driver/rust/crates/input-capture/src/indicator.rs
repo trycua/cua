@@ -1,40 +1,35 @@
-//! The visible recording indicator — a glowing border drawn around the target
-//! window — and its watchdog. This is the half of the "recording-LED" coupling
-//! that *proves* recording is visible: its paint loop bumps the shared
-//! [`IndicatorHeartbeat`] from inside an actually-presented frame, and its
-//! watchdog marks the heartbeat compromised the instant the border stops being
-//! visible / topmost / covering the target.
+//! Visible recording indicator drawn around the target window.
 //!
-//! Windows implementation: a click-through layered topmost tool window
-//! (`WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW`)
-//! that tracks the target window's rect and repaints a pulsing glow at ~30 Hz
-//! via `UpdateLayeredWindow`. On non-Windows it is a no-op stub (capture is
-//! `Unsupported` there anyway, so the gate never opens).
+//! The Windows implementation uses a click-through layered tool window and
+//! reports successful frame submissions to the private render-health gate. It
+//! is a user notification, not proof that the border is unobscured.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
-use crate::gate::IndicatorHeartbeat;
+use crate::render_health::RenderHealth;
 
-/// A running recording indicator. Dropping it tears the border window down and
-/// (because the heartbeat stops) latches capture dark.
-pub struct Indicator {
+/// A running recording indicator. Dropping it tears the border window down.
+pub(crate) struct Indicator {
     stop: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Indicator {
-    /// Start the indicator for `target_hwnd`, bumping `heartbeat` from each
-    /// presented frame. `clock` must be the SAME monotonic-ms clock the capture
-    /// gate uses, so freshness comparisons are apples-to-apples.
+    /// Start the indicator for `target_hwnd`, updating `health` after each
+    /// submitted frame.
     pub fn start(
         target_hwnd: isize,
-        heartbeat: Arc<IndicatorHeartbeat>,
-        clock: Arc<dyn Fn() -> u64 + Send + Sync>,
+        health: RenderHealth,
+        started_at: Instant,
     ) -> anyhow::Result<Self> {
         let stop = Arc::new(AtomicBool::new(false));
-        let thread = platform::spawn(target_hwnd, heartbeat, clock, stop.clone())?;
-        Ok(Self { stop, thread: Some(thread) })
+        let thread = platform::spawn(target_hwnd, health, started_at, stop.clone())?;
+        Ok(Self {
+            stop,
+            thread: Some(thread),
+        })
     }
 }
 
@@ -50,7 +45,6 @@ impl Drop for Indicator {
 #[cfg(target_os = "windows")]
 mod platform {
     use super::*;
-    use std::time::Instant;
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
     use windows::Win32::UI::WindowsAndMessaging::DefWindowProcW;
@@ -72,9 +66,9 @@ mod platform {
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DestroyWindow, GetWindowRect, IsIconic, IsWindow, IsWindowVisible,
-        RegisterClassW, SetWindowPos, ShowWindow, UpdateLayeredWindow, HWND_TOPMOST, SWP_NOACTIVATE,
-        SWP_NOSIZE, SW_SHOWNOACTIVATE, ULW_ALPHA, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
-        WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+        RegisterClassW, SetWindowPos, ShowWindow, UpdateLayeredWindow, HWND_TOPMOST,
+        SWP_NOACTIVATE, SWP_NOSIZE, SW_SHOWNOACTIVATE, ULW_ALPHA, WNDCLASSW, WS_EX_LAYERED,
+        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
     };
 
     /// Outward glow radius in pixels. The glow starts exactly at the window's
@@ -85,32 +79,31 @@ mod platform {
 
     pub fn spawn(
         target_hwnd: isize,
-        heartbeat: Arc<IndicatorHeartbeat>,
-        clock: Arc<dyn Fn() -> u64 + Send + Sync>,
+        health: RenderHealth,
+        started_at: Instant,
         stop: Arc<AtomicBool>,
     ) -> anyhow::Result<std::thread::JoinHandle<()>> {
         let handle = std::thread::Builder::new()
             .name("recording-indicator".into())
             .spawn(move || {
-                if let Err(e) = run(target_hwnd, &heartbeat, &clock, &stop) {
+                if let Err(e) = run(target_hwnd, &health, started_at, &stop) {
                     tracing::warn!("recording indicator stopped: {e}");
                 }
-                // On exit the heartbeat naturally goes stale; also latch dark.
-                heartbeat.mark_compromised();
+                // On exit the health naturally goes stale; also latch dark.
+                health.clear();
             })?;
         Ok(handle)
     }
 
     fn run(
         target_hwnd: isize,
-        heartbeat: &Arc<IndicatorHeartbeat>,
-        clock: &Arc<dyn Fn() -> u64 + Send + Sync>,
+        health: &RenderHealth,
+        started_at: Instant,
         stop: &Arc<AtomicBool>,
     ) -> anyhow::Result<()> {
         let class_name: Vec<u16> = "CuaRecordingBorder\0".encode_utf16().collect();
-        let hinstance = unsafe {
-            windows::Win32::System::LibraryLoader::GetModuleHandleW(PCWSTR::null())?
-        };
+        let hinstance =
+            unsafe { windows::Win32::System::LibraryLoader::GetModuleHandleW(PCWSTR::null())? };
         let wc = WNDCLASSW {
             lpfnWndProc: Some(border_wnd_proc),
             hInstance: hinstance.into(),
@@ -152,21 +145,21 @@ mod platform {
         let result = (|| -> anyhow::Result<()> {
             while !stop.load(Ordering::SeqCst) {
                 let target = HWND(target_hwnd as *mut _);
-                // Watchdog: target must still exist and be visible/non-minimized.
+                // Pause frame health while the target is unavailable.
                 let alive = unsafe {
                     IsWindow(target).as_bool()
                         && IsWindowVisible(target).as_bool()
                         && !IsIconic(target).as_bool()
                 };
                 if !alive {
-                    heartbeat.mark_compromised();
+                    health.clear();
                     std::thread::sleep(std::time::Duration::from_millis(TARGET_FPS_MS));
                     continue;
                 }
 
                 let mut rect = RECT::default();
                 if unsafe { GetWindowRect(target, &mut rect) }.is_err() {
-                    heartbeat.mark_compromised();
+                    health.clear();
                     std::thread::sleep(std::time::Duration::from_millis(TARGET_FPS_MS));
                     continue;
                 }
@@ -192,35 +185,15 @@ mod platform {
 
                 // Keep the border topmost and positioned over the target.
                 unsafe {
-                    let _ = SetWindowPos(
-                        hwnd,
-                        HWND_TOPMOST,
-                        tx,
-                        ty,
-                        tw,
-                        th,
-                        SWP_NOACTIVATE,
-                    );
+                    let _ = SetWindowPos(hwnd, HWND_TOPMOST, tx, ty, tw, th, SWP_NOACTIVATE);
                     let _ = SWP_NOSIZE;
                 }
 
                 let presented = surf.present(hwnd, tx, ty, tw, th);
                 if presented {
-                    // Heartbeat = proof a covering border frame was drawn. The
-                    // covered rect is the TARGET window (not the inflated
-                    // border) so the gate only opens for points in the window.
-                    let now = clock();
-                    heartbeat.present(
-                        now,
-                        [
-                            rect.left,
-                            rect.top,
-                            rect.right - rect.left,
-                            rect.bottom - rect.top,
-                        ],
-                    );
+                    health.submitted(started_at.elapsed().as_millis() as u64);
                 } else {
-                    heartbeat.mark_compromised();
+                    health.clear();
                 }
 
                 std::thread::sleep(std::time::Duration::from_millis(TARGET_FPS_MS));
@@ -272,16 +245,25 @@ mod platform {
                     anyhow::bail!("CreateDIBSection returned null bits");
                 }
                 let old = SelectObject(dc, bmp);
-                Ok(Self { screen_dc, dc, bmp, old, bits: bits as *mut u8, w, h })
+                Ok(Self {
+                    screen_dc,
+                    dc,
+                    bmp,
+                    old,
+                    bits: bits as *mut u8,
+                    w,
+                    h,
+                })
             }
         }
 
         /// Paint a red glow that emanates **outward** from the target window's
         /// bounding box. The buffer is the window inflated by `glow` on all
         /// sides; the inner rect `[glow, glow, w-glow, h-glow]` is the window
-        /// itself and stays fully transparent (its content shows through, and
-        /// WS_EX_TRANSPARENT keeps it click-through). For pixels outside the
-        /// window, alpha is brightest right at the window edge (no gap) and
+        /// itself and stays transparent except for a thin inner edge, which
+        /// keeps the indicator visible on maximized windows. The overlay remains
+        /// click-through. For pixels outside the window, alpha is brightest at
+        /// the window edge and
         /// falls off to 0 at `glow` px out — a soft blurred border + shadow.
         fn paint_border(&mut self, w: i32, h: i32, glow: i32, pulse: f64) {
             // Bright recording red (distinct from the cyan focus rect).
@@ -298,11 +280,17 @@ mod platform {
                     let dx = (il - x).max(x - ir).max(0) as f64;
                     let dy = (it - y).max(y - ib).max(0) as f64;
                     if dx == 0.0 && dy == 0.0 {
-                        // inside the window: fully transparent
-                        buf[i] = 0;
-                        buf[i + 1] = 0;
-                        buf[i + 2] = 0;
-                        buf[i + 3] = 0;
+                        let edge = (x - il).min(ir - x).min(y - it).min(ib - y);
+                        if edge <= 2 {
+                            let a = (230.0 * pulse).clamp(0.0, 255.0);
+                            let af = a / 255.0;
+                            buf[i] = (cb * af) as u8;
+                            buf[i + 1] = (cg * af) as u8;
+                            buf[i + 2] = (cr * af) as u8;
+                            buf[i + 3] = a as u8;
+                        } else {
+                            buf[i..i + 4].fill(0);
+                        }
                         continue;
                     }
                     let d = (dx * dx + dy * dy).sqrt();
@@ -338,7 +326,7 @@ mod platform {
                 let dst = POINT { x, y };
                 let size = SIZE { cx: w, cy: h };
                 let blend = BLENDFUNCTION {
-                    BlendOp: 0,      // AC_SRC_OVER
+                    BlendOp: 0, // AC_SRC_OVER
                     BlendFlags: 0,
                     SourceConstantAlpha: 255,
                     AlphaFormat: 1, // AC_SRC_ALPHA
@@ -376,8 +364,8 @@ mod platform {
     use super::*;
     pub fn spawn(
         _target_hwnd: isize,
-        _heartbeat: Arc<IndicatorHeartbeat>,
-        _clock: Arc<dyn Fn() -> u64 + Send + Sync>,
+        _health: RenderHealth,
+        _started_at: Instant,
         _stop: Arc<AtomicBool>,
     ) -> anyhow::Result<std::thread::JoinHandle<()>> {
         // No indicator on non-Windows yet; capture is Unsupported there so the

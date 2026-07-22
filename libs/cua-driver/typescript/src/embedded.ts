@@ -8,7 +8,8 @@ import { join } from 'node:path';
 const EMBEDDED_ENV = 'CUA_DRIVER_EMBEDDED';
 const HOST_BUNDLE_ID_ENV = 'CUA_DRIVER_HOST_BUNDLE_ID';
 
-export type EmbeddedDriverErrorCode = 'spawn-failed' | 'startup-timeout' | 'exited-before-ready';
+export type EmbeddedDriverErrorCode =
+  'spawn-failed' | 'startup-timeout' | 'startup-cancelled' | 'exited-before-ready';
 
 export class EmbeddedDriverError extends Error {
   readonly code: EmbeddedDriverErrorCode;
@@ -69,8 +70,25 @@ const canConnect = (socketPath: string): Promise<boolean> =>
     socket.once('error', () => finish(false));
   });
 
-const delay = (milliseconds: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, milliseconds));
+const startupCancelled = (): EmbeddedDriverError =>
+  new EmbeddedDriverError('startup-cancelled', 'embedded cua-driver startup was cancelled');
+
+const delay = (milliseconds: number, signal: AbortSignal): Promise<void> =>
+  new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(startupCancelled());
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timeout);
+      reject(startupCancelled());
+    };
+    const timeout = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, milliseconds);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 
 const waitForExit = (child: ChildProcess, timeoutMs: number): Promise<boolean> =>
   new Promise((resolve) => {
@@ -106,6 +124,7 @@ export class EmbeddedCuaDriver {
   #child: ChildProcess | undefined;
   #connection: EmbeddedDriverConnection | undefined;
   #starting: Promise<EmbeddedDriverConnection> | undefined;
+  #startupAbort: AbortController | undefined;
   #stopping: Promise<void> | undefined;
 
   constructor(options: EmbeddedDriverOptions) {
@@ -127,17 +146,22 @@ export class EmbeddedCuaDriver {
     if (this.#connection) return Promise.resolve(this.#connection);
     if (this.#starting) return this.#starting;
     const waitForStop = this.#stopping ?? Promise.resolve();
+    const startupAbort = new AbortController();
+    this.#startupAbort = startupAbort;
     this.#starting = waitForStop
-      .then(() => this.#start())
+      .then(() => this.#start(startupAbort.signal))
       .finally(() => {
+        if (this.#startupAbort === startupAbort) this.#startupAbort = undefined;
         this.#starting = undefined;
       });
     return this.#starting;
   }
 
-  async #start(): Promise<EmbeddedDriverConnection> {
+  async #start(signal: AbortSignal): Promise<EmbeddedDriverConnection> {
+    if (signal.aborted) throw startupCancelled();
     const socketPath = this.#options.socketPath ?? defaultSocketPath();
     await removeSocket(socketPath);
+    if (signal.aborted) throw startupCancelled();
     const embeddedEnv = {
       [EMBEDDED_ENV]: '1',
       [HOST_BUNDLE_ID_ENV]: this.#options.hostBundleId,
@@ -196,8 +220,21 @@ export class EmbeddedCuaDriver {
       });
     });
 
+    const readinessAbort = new AbortController();
+    const cancelReadiness = () => readinessAbort.abort();
+    signal.addEventListener('abort', cancelReadiness, { once: true });
     try {
-      await Promise.race([this.#waitForSocket(socketPath), spawnFailure, exited]);
+      try {
+        await Promise.race([
+          this.#waitForSocket(socketPath, readinessAbort.signal),
+          spawnFailure,
+          exited,
+        ]);
+      } finally {
+        signal.removeEventListener('abort', cancelReadiness);
+        readinessAbort.abort();
+      }
+      if (signal.aborted) throw startupCancelled();
       if (child.exitCode !== null || child.signalCode !== null) {
         throw new EmbeddedDriverError(
           'exited-before-ready',
@@ -227,11 +264,12 @@ export class EmbeddedCuaDriver {
     }
   }
 
-  async #waitForSocket(socketPath: string): Promise<void> {
+  async #waitForSocket(socketPath: string, signal: AbortSignal): Promise<void> {
     const deadline = Date.now() + this.#options.startupTimeoutMs;
     while (Date.now() < deadline) {
+      if (signal.aborted) throw startupCancelled();
       if (await canConnect(socketPath)) return;
-      await delay(50);
+      await delay(50, signal);
     }
     throw new EmbeddedDriverError(
       'startup-timeout',
@@ -248,6 +286,7 @@ export class EmbeddedCuaDriver {
   }
 
   async #stop(): Promise<void> {
+    this.#startupAbort?.abort();
     if (this.#child && this.#child.exitCode === null && this.#child.signalCode === null) {
       this.#child.kill('SIGTERM');
     }
@@ -267,20 +306,3 @@ export class EmbeddedCuaDriver {
     return this.start();
   }
 }
-
-const tomlString = (value: string): string => JSON.stringify(value);
-
-export const buildCodexLaunchArgs = (connection: EmbeddedDriverConnection): string => {
-  const proxyArgs = connection.mcp.args.map(tomlString).join(',');
-  const proxyEnv = Object.entries(connection.mcp.env)
-    .map(([key, value]) => `${key}=${tomlString(value)}`)
-    .join(',');
-  return [
-    '-c',
-    tomlString(`mcp_servers.cua-driver.command=${tomlString(connection.mcp.command)}`),
-    '-c',
-    tomlString(`mcp_servers.cua-driver.args=[${proxyArgs}]`),
-    '-c',
-    tomlString(`mcp_servers.cua-driver.env={${proxyEnv}}`),
-  ].join(' ');
-};

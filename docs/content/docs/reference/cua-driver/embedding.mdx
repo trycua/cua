@@ -28,17 +28,19 @@ You can pass `--embedded --host-bundle-id com.yourco.yourapp` to `serve` instead
 
 ## Node and Electron hosts
 
-Use `@trycua/cua-driver-embedded` instead of duplicating socket naming, readiness checks, restart handling, and process cleanup:
+Use the embedded host in `@trycua/cua-driver` instead of duplicating socket naming, readiness checks, restart handling, and process cleanup:
 
 ```ts
-import { EmbeddedCuaDriver } from '@trycua/cua-driver-embedded';
+import { CuaDriver } from '@trycua/cua-driver';
+import { EmbeddedCuaDriver } from '@trycua/cua-driver/embedded';
 
-const driver = new EmbeddedCuaDriver({
+const embedded = new EmbeddedCuaDriver({
   binaryPath: '/path/inside/YourApp.app/cua-driver',
   hostBundleId: 'com.example.your-app',
 });
-const connection = await driver.start();
-// Register connection.mcp with the host's MCP client.
+const connection = await embedded.start();
+const driver = CuaDriver.connect(connection.socketPath);
+// Application calls use driver; an agent runtime uses connection.mcp.
 ```
 
 The package does not install or bundle cua-driver. Ship a compatible executable outside Electron's ASAR archive, preserve its executable bit, and sign the nested executable before signing and notarizing the enclosing macOS app. The `/electron` entry point requests Accessibility and Screen Recording from Electron's main process; its native `ffi-rs` module must also remain outside ASAR.
@@ -58,7 +60,7 @@ If macOS grants are added after the daemon has started, restart the daemon so TC
 
 `--embedded` does not transfer a GUI app's grants to the driver; it only keeps the daemon inside its spawner's macOS responsibility chain. If a separate gateway or Node process spawns the daemon, the daemon inherits the gateway's identity, not the app's. Spawn `cua-driver serve --embedded` from the app process.
 
-Normal OpenClaw gateway and Hermes YAML MCP configurations remain standalone integrations; do not set embedded mode merely because one of those agents is the client. A signed Node or Electron desktop host may use `@trycua/cua-driver-embedded`, but only its permission-owning app process may start the daemon. The MCP client can then launch the proxy described by `connection.mcp`.
+Normal OpenClaw gateway and Hermes YAML MCP configurations remain standalone integrations; do not set embedded mode merely because one of those agents is the client. A signed Node or Electron desktop host may use `@trycua/cua-driver/embedded`, but only its permission-owning app process may start the daemon. The MCP client can then launch the proxy described by `connection.mcp`.
 
 ```text
 Wrong (inherits the gateway's identity):        Right:

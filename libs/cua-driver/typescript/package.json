@@ -1,7 +1,7 @@
 {
   "name": "@trycua/cua-driver",
   "version": "0.10.0",
-  "description": "Rust-backed Cua Driver SDK for client applications",
+  "description": "Rust-backed Cua Driver SDK and embedded Node host",
   "type": "module",
   "license": "MIT",
   "main": "./dist/index.js",
@@ -10,11 +10,23 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./embedded": {
+      "types": "./dist/embedded.d.ts",
+      "import": "./dist/embedded.js"
+    },
+    "./electron": {
+      "types": "./dist/electron.d.ts",
+      "import": "./dist/electron.js"
     }
   },
   "files": [
     "dist/index.js",
     "dist/index.d.ts",
+    "dist/embedded.js",
+    "dist/embedded.d.ts",
+    "dist/electron.js",
+    "dist/electron.d.ts",
     "dist/native",
     "README.md"
   ],
@@ -32,11 +44,21 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "electron": "^41.5.0",
     "typescript": "^5.7.0",
     "uniffi-bindgen-react-native": "0.31.0-3"
   },
   "dependencies": {
     "@ubjs/core": "0.31.0-3",
-    "@ubjs/node": "0.31.0-3"
+    "@ubjs/node": "0.31.0-3",
+    "ffi-rs": "1.3.2"
+  },
+  "peerDependencies": {
+    "electron": ">=30"
+  },
+  "peerDependenciesMeta": {
+    "electron": {
+      "optional": true
+    }
   }
 }

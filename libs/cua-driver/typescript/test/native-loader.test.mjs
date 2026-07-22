@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
-import { existsSync, mkdtempSync, rmSync } from "node:fs"
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import test from "node:test"
@@ -18,6 +18,46 @@ const library = path.resolve(testDirectory, "../dist/native", libraryName)
 if (process.env.CUA_DRIVER_REQUIRE_UNIFFI === "1" && !existsSync(library)) {
   throw new Error(`required staged UniFFI library is missing: ${library}`)
 }
+
+test(
+  "embedded host supplies the private socket to the Rust SDK",
+  { skip: process.platform === "win32" || !existsSync(library), timeout: 10_000 },
+  async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "cua-driver-embedded-sdk-"))
+    const binaryPath = path.join(directory, "fake cua-driver")
+    writeFileSync(
+      binaryPath,
+      `#!/usr/bin/env node
+const net = require("node:net");
+const args = process.argv.slice(2);
+const socketPath = args[args.indexOf("--socket") + 1];
+const server = net.createServer(socket => socket.end());
+server.listen(socketPath);
+process.on("SIGTERM", () => server.close(() => process.exit(0)));
+`,
+    )
+    chmodSync(binaryPath, 0o755)
+
+    const { EmbeddedCuaDriver } = await import("@trycua/cua-driver/embedded")
+    const embedded = new EmbeddedCuaDriver({
+      binaryPath,
+      hostBundleId: "com.example.t3",
+      socketPath: path.join(directory, "driver.sock"),
+      stderr: "ignore",
+    })
+
+    try {
+      const connection = await embedded.start()
+      const sdk = await import("@trycua/cua-driver")
+      const driver = sdk.CuaDriver.connect(connection.socketPath)
+      assert.equal(driver.socketPath(), connection.socketPath)
+      driver.uniffiDestroy()
+    } finally {
+      await embedded.stop()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  },
+)
 
 test(
   "generated Node SDK bindings call the Rust daemon interface",

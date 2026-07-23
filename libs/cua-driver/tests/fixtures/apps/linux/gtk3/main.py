@@ -220,7 +220,7 @@ class HarnessWindow(Gtk.Window):
                 f"last_hotkey=ctrl+shift+k  hotkeys={self.hotkeys}"
             )
             return True
-        if key == "f5":
+        if key == "f5" and not ctrl and not shift:
             self.key_presses += 1
             self.key_status.set_text(f"last_key=f5  key_presses={self.key_presses}")
             return True

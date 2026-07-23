@@ -30,6 +30,11 @@ if (sentinelMode) {
       </main>
     `;
     record('ready');
+    // Electron can already own native/DOM focus before this renderer's focus
+    // listener is ready. Re-activating an already focused window does not
+    // guarantee another DOM focus event, so explicitly publish the initial
+    // state and keep subsequent focus/blur transitions as separate oracles.
+    if (document.hasFocus()) record('focus');
   });
   window.addEventListener('focus', () => record('focus'));
   window.addEventListener('blur', () => record('blur'));

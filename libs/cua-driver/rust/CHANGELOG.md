@@ -1,5 +1,48 @@
 # Changelog
 
+## [0.12.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.2...cua-driver-rs-v0.12.3) (2026-07-23)
+
+
+### Bug Fixes
+
+* **cua-driver:** diagnose stale local MCP registrations ([#2498](https://github.com/trycua/cua/issues/2498)) ([df10b6d](https://github.com/trycua/cua/commit/df10b6d3d4b194a714656d3d8758db5017234de0))
+* **cua-driver:** prevent silent ad-hoc local signing ([#2495](https://github.com/trycua/cua/issues/2495)) ([b680ff2](https://github.com/trycua/cua/commit/b680ff2db0c87407e188f6d8fdd28a6bc77228b0))
+* **cua-driver:** show active-tab browser cursors on macOS ([#2493](https://github.com/trycua/cua/issues/2493)) ([c7675a0](https://github.com/trycua/cua/commit/c7675a04d5d3b53a0809db8347b11a23ac81ce63))
+* **cua-driver:** verify desktop input effects and release modifiers ([#2492](https://github.com/trycua/cua/issues/2492)) ([5b68ef5](https://github.com/trycua/cua/commit/5b68ef596f9adf183121e864d19db5e0ee7ddd4d))
+
+## [0.12.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.1...cua-driver-rs-v0.12.2) (2026-07-23)
+
+
+### Bug Fixes
+
+* **cua-driver:** tolerate fileno-less Python stdio ([#2482](https://github.com/trycua/cua/issues/2482)) ([d041f1a](https://github.com/trycua/cua/commit/d041f1a580d413bbe5da6645fd58b9088b2cdd4a))
+* **cua-driver:** trust native macOS sentinel focus ([#2481](https://github.com/trycua/cua/issues/2481)) ([6c2bbcc](https://github.com/trycua/cua/commit/6c2bbccfe5ad6690ef0961c492b34a3493354e84))
+
+## [0.12.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.0...cua-driver-rs-v0.12.1) (2026-07-23)
+
+
+### Bug Fixes
+
+* **cua-driver:** make macOS SDK load standalone ([#2477](https://github.com/trycua/cua/issues/2477)) ([457b17e](https://github.com/trycua/cua/commit/457b17eae8ea2d2ca1b45ad5b23fc342787769a7))
+
+## [0.12.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.11.0...cua-driver-rs-v0.12.0) (2026-07-22)
+
+
+### Features
+
+* **cua-driver:** add client and modality telemetry ([#2441](https://github.com/trycua/cua/issues/2441)) ([5cd0000](https://github.com/trycua/cua/commit/5cd0000e2e018a835303a8f8bdd82a88ea483a6e))
+* **cua-driver:** add true in-process SDK runtime ([#2461](https://github.com/trycua/cua/issues/2461)) ([617508a](https://github.com/trycua/cua/commit/617508a7ae123f277b203d31fca29933927a4636))
+* **cua-driver:** add versioned native ABI ([b172afc](https://github.com/trycua/cua/commit/b172afc75f39832a4bdfaa9040d6d4f556449b49))
+* **cua-driver:** expose macOS control state in window elements ([db281a3](https://github.com/trycua/cua/commit/db281a3b0d9bbabaf74f3c6847adf6abbb66995a))
+
+
+### Bug Fixes
+
+* **cua-driver:** advertise delivery mode capability ([7f6657c](https://github.com/trycua/cua/commit/7f6657c440cedf1f20c6307c849a89487f867b41)), closes [#2425](https://github.com/trycua/cua/issues/2425)
+* **cua-driver:** avoid SIGCHLD handler in doctor ([31bbc07](https://github.com/trycua/cua/commit/31bbc074d75f59fe2c417cddc66cf4093bd8330b)), closes [#2348](https://github.com/trycua/cua/issues/2348)
+* **cua-driver:** enforce scope for mouse button actions ([caa241b](https://github.com/trycua/cua/commit/caa241be5f801e2060d4f5823fde64f9e6dc2be4)), closes [#2368](https://github.com/trycua/cua/issues/2368)
+* **cua-driver:** support Electron UniFFI buffers ([#2455](https://github.com/trycua/cua/issues/2455)) ([d3bf82a](https://github.com/trycua/cua/commit/d3bf82a2cbb27fd83cfa836c04f9f5678e3e3aad))
+
 ## [0.11.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.10.0...cua-driver-rs-v0.11.0) (2026-07-22)
 
 

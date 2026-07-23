@@ -134,10 +134,10 @@ security unlock-keychain "$SIGNING_KEYCHAIN"
 export CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN="$SIGNING_KEYCHAIN"
 ```
 
-The first local install creates and imports the self-signed identity. It may
-fall back to an ad-hoc signature until the new certificate is trusted; this is
-safe only because TCC has not been granted yet. Run it once, then open Keychain
-Access in the VM display, select the `cua-driver-signing` keychain, open
+The first strict local install creates and imports the self-signed identity,
+then stops without replacing the app if the new certificate is not usable yet.
+Run it once, then open Keychain Access in the VM display, select the
+`cua-driver-signing` keychain, open
 `CuaDriver Local Signing (cua-driver-rs)`, and set Trust to Always Trust. Back
 in Terminal, give Apple tooling access to the private key without storing the
 keychain password in the image or repository:
@@ -145,7 +145,8 @@ keychain password in the image or repository:
 ```bash
 cd ~/cua
 export CUA_DRIVER_SOURCE_SHA="$(cat .cua-e2e-source-sha)"
-bash libs/cua-driver/scripts/install-local.sh --release --autostart
+bash libs/cua-driver/scripts/install-local.sh \
+  --release --autostart --require-stable-signing
 
 read -r -s -p 'Keychain password: ' KEYCHAIN_PASSWORD; echo
 security set-key-partition-list \
@@ -158,7 +159,8 @@ Rerun the installer and require its `signed staged app with a stable local
 identity` message before granting permissions through the app-owned flow:
 
 ```bash
-bash libs/cua-driver/scripts/install-local.sh --release --autostart
+bash libs/cua-driver/scripts/install-local.sh \
+  --release --autostart --require-stable-signing
 ~/.local/bin/cua-driver-local permissions grant
 ```
 

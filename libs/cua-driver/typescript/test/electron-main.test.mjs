@@ -1,12 +1,15 @@
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
 
 const testDirectory = path.dirname(fileURLToPath(import.meta.url))
 const electron = path.resolve(testDirectory, "../node_modules/.bin/electron")
+const packageVersion = JSON.parse(
+  readFileSync(path.resolve(testDirectory, "../package.json"), "utf8"),
+).version
 
 test(
   "Electron main receives embedded connection values and cleans up lifecycle",
@@ -14,7 +17,7 @@ test(
   async () => {
     const command = process.platform === "linux" ? "xvfb-run" : electron
     const args = process.platform === "linux"
-      ? ["-a", electron, path.join(testDirectory, "electron-main-fixture.mjs")]
+      ? ["-a", electron, "--no-sandbox", path.join(testDirectory, "electron-main-fixture.mjs")]
       : [path.join(testDirectory, "electron-main-fixture.mjs")]
     const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] })
     let stdout = ""
@@ -26,10 +29,11 @@ test(
       child.on("exit", resolve)
     })
 
-    assert.equal(code, 0, stderr)
+    assert.equal(code, 0, `stdout:\n${stdout}\nstderr:\n${stderr}`)
     const result = JSON.parse(stdout.trim().split("\n").at(-1))
     assert.equal(result.versions.electron, "43.2.0")
-    assert.equal(result.versions.package, "0.11.0")
+    assert.equal(result.versions.package, packageVersion)
+    assert.equal(result.connection.driverVersion, packageVersion)
     assert.equal(result.connection.socketPathIsPrivate, true)
     assert.equal(result.connection.pidMatchesChild, true)
     assert.equal(result.connection.stateIsReady, true)

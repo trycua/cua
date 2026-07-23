@@ -280,19 +280,19 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertNotIn("launches CuaDriver", shared_hints)
 
     def test_local_macos_signing_uses_an_unambiguous_identity_hash(self) -> None:
-        installer = self.read("libs/cua-driver/scripts/_install-local-rust.sh")
+        signing = self.read("libs/cua-driver/scripts/_local-signing.sh")
 
         self.assertIn(
             'security find-identity -p codesigning "$kc"',
-            installer,
+            signing,
         )
-        self.assertNotIn('security find-identity -v -p codesigning "$kc"', installer)
-        self.assertIn('SIGN_ID="$(ensure_local_signing_identity)"', installer)
+        self.assertNotIn('security find-identity -v -p codesigning "$kc"', signing)
+        self.assertIn('sign_id="$(ensure_local_signing_identity)"', signing)
         self.assertIn(
-            'codesign_bounded 20 --force --deep --sign "$SIGN_ID" "$APP_STAGE"',
-            installer,
+            'codesign_bounded 20 --force --deep --sign "$sign_id" "$app_stage"',
+            signing,
         )
-        self.assertNotIn("printf '%s' \"$CUA_LOCAL_SIGN_CN\"; return", installer)
+        self.assertNotIn("printf '%s' \"$CUA_LOCAL_SIGN_CN\"; return", signing)
 
     def test_release_installers_persist_channel_before_binary_swap(self) -> None:
         shell = self.read("libs/cua-driver/scripts/_install-rust.sh")
@@ -354,6 +354,27 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn("inputs.publish == true", workflow)
         self.assertIn('--tag "${{ steps.version.outputs.tag }}"', workflow)
         self.assertIn('--sha "${{ steps.version.outputs.sha }}"', workflow)
+
+    def test_driver_tag_build_cannot_publish_before_manual_e2e_gate(self) -> None:
+        workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
+        self.assertIn(
+            "if: github.event_name == 'workflow_dispatch' && inputs.publish == true",
+            workflow,
+        )
+        self.assertNotIn(
+            "if: startsWith(github.ref, 'refs/tags/cua-driver-rs-v') || inputs.publish == true",
+            workflow,
+        )
+
+        linux = self.read(".github/workflows/e2e-rust-linux.yml")
+        self.assertIn('name: "Linux / install-local.sh smoke"', linux)
+        self.assertIn("bash libs/cua-driver/scripts/install-local.sh --release", linux)
+        self.assertIn("CUA_DRIVER_LOCAL_HOME: ${{ runner.temp }}/cua-driver-local-home", linux)
+
+        windows = self.read(".github/workflows/e2e-rust-windows.yml")
+        self.assertIn('name: "Windows / install-local.ps1 smoke"', windows)
+        self.assertIn("install-local.ps1 -NoAutoStart -NoPathUpdate", windows)
+        self.assertIn('CUA_DRIVER_LOCAL_HOME = Join-Path $env:RUNNER_TEMP', windows)
 
     def test_driver_release_publishes_checksums_for_python_wheels(self) -> None:
         workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")

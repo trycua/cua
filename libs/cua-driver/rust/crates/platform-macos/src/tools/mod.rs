@@ -617,7 +617,7 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
         page::MacOsPageBackend::new(state.clone()),
     ))));
     let browser_engine = cua_driver_core::browser::BrowserEngine::new(Arc::new(
-        crate::browser::MacOsBrowserPlatform,
+        crate::browser::MacOsBrowserPlatform::new(state.cursor_registry.clone()),
     ));
     cua_driver_core::browser::register_browser_tools(&browser_engine, registry);
     // Recording / replay + session-lifecycle tools are platform-independent.

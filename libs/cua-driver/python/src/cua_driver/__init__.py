@@ -4,12 +4,14 @@ Agents should configure the bundled ``cua-driver mcp`` executable directly
 through their runtime's MCP client instead of importing a language MCP facade.
 """
 
-__version__ = "0.11.0"  # x-release-please-version
+__version__ = "0.12.3"  # x-release-please-version
 
 from ._native import (
     CuaDriver as _NativeCuaDriver,
     DriverError,
+    DriverExecutionMode,
     DriverMetadata,
+    DriverOptions,
     EmbeddedCuaDriverHost,
     EmbeddedDriverConnection,
     EmbeddedDriverError,
@@ -63,7 +65,14 @@ def _connect_python_sdk(cls, socket_path):
     return cls.connect_with_client_kind(socket_path, SdkClientKind.PYTHON)
 
 
+def _create_python_sdk(cls, options=None):
+    """Create the canonical same-process SDK runtime for Python."""
+
+    return cls.create_with_client_kind(options, SdkClientKind.PYTHON)
+
+
 _NativeCuaDriver.connect = classmethod(_connect_python_sdk)
+_NativeCuaDriver.create = classmethod(_create_python_sdk)
 CuaDriver = _NativeCuaDriver
 
 __all__ = [
@@ -74,7 +83,9 @@ __all__ = [
     "DesktopScope",
     "DragInput",
     "DriverError",
+    "DriverExecutionMode",
     "DriverMetadata",
+    "DriverOptions",
     "EmbeddedCuaDriverHost",
     "EmbeddedDriverConnection",
     "EmbeddedDriverError",

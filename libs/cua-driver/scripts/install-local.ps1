@@ -364,6 +364,22 @@ if (Test-Path -LiteralPath $HintsTxt) {
     Write-Host "Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver/rust"
 }
 
+# The local/release identity split deliberately stopped source installs from
+# creating or repairing the published cua-driver.exe path. Surface the
+# migration state when only the local product is present so an existing MCP
+# client does not keep launching a missing release command. Do not create an
+# alias here: local and published products must retain separate identities.
+$releaseBinary = Join-Path $env:LOCALAPPDATA "Programs\Cua\cua-driver\bin\cua-driver.exe"
+if (-not (Test-Path -LiteralPath $releaseBinary -PathType Leaf)) {
+    Write-Host ""
+    Write-Host "Migration note: the published cua-driver CLI is not installed at $releaseBinary." -ForegroundColor Yellow
+    Write-Host "  Existing MCP clients configured for 'cua-driver' will not use this local build." -ForegroundColor Yellow
+    Write-Host "  To configure Codex for the local build, run:"
+    Write-Host "    $installedBinary mcp-config --client codex"
+    Write-Host "  To restore the published product instead, run:"
+    Write-Host "    irm https://cua.ai/driver/install.ps1 | iex"
+}
+
 # Windows-specific autostart hint (kept inline; per-shell natural location).
 if ($AutoStart) {
     # Default branch: autostart was enabled (either by default or explicitly).

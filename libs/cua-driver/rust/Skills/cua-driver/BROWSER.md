@@ -31,6 +31,27 @@ Use one explicit `session` value throughout. Never substitute a raw CDP
 target id, tab ordinal, URL match, or remembered ref for a capability returned
 by `get_browser_state`.
 
+### macOS recording feedback
+
+On macOS, ref- and coordinate-targeted browser mutations now drive the same
+session-scoped agent cursor overlay as native window actions. `browser_click`
+and click-like pointer actions glide to the live page target and pulse;
+`browser_type` glides to and pulses the editable target; hover and scroll glide
+without a click pulse. This feedback is visual-only: it never moves the user's
+physical pointer, changes focus or z-order, or substitutes for CDP delivery.
+
+The driver rechecks the live page visibility over CDP before every visual
+action. An unselected tab remains fully addressable, but its session cursor is
+hidden. When the selected tab acts, its cursor becomes the only browser-session
+cursor shown for that native window. Use one declared session per tab when a
+recording should give tabs stable, distinct cursor colors.
+
+The overlay is emitted only when the page point can be mapped safely into the
+exact bound native window. In particular, unprovable child-frame coordinates
+are skipped rather than drawn in the wrong place. `browser_navigate` has no
+page target, so it intentionally does not invent cursor motion; use a textual
+recording overlay to explain navigation in a public demo.
+
 ## 1. Select an exact native window
 
 Start or discover the app with the native tools and select one returned

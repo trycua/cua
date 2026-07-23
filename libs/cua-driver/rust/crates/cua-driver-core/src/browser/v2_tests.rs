@@ -59,6 +59,7 @@ struct FixtureState {
     screenshot_data: String,
     viewport_css_width: f64,
     viewport_css_height: f64,
+    tab_visible: bool,
     /// Every incoming CDP call: (sessionId, method, params).
     calls: Vec<(Option<String>, String, Value)>,
 }
@@ -83,6 +84,7 @@ impl Default for FixtureState {
             screenshot_data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZJrAAAAAASUVORK5CYII=".into(),
             viewport_css_width: 800.0,
             viewport_css_height: 600.0,
+            tab_visible: true,
             calls: Vec::new(),
         }
     }
@@ -531,6 +533,16 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     "clientHeight": st.viewport_css_height
                 }
             })),
+            "Runtime.evaluate"
+                if call.params["expression"] == "document.visibilityState === 'visible'" =>
+            {
+                MockReply::ok(json!({
+                    "result": {
+                        "type": "boolean",
+                        "value": st.tab_visible
+                    }
+                }))
+            }
             "Page.captureScreenshot" if is_tab => {
                 MockReply::ok(json!({"data": st.screenshot_data.clone()}))
             }
@@ -1635,6 +1647,41 @@ async fn navigation_targets_an_inactive_tab_without_activating_it() {
         navigate[0].1["url"],
         "https://fixture.test/background-navigation"
     );
+    assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
+    assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+}
+
+#[tokio::test]
+async fn browser_visual_feedback_probes_live_tab_visibility_without_activating_it() {
+    let f = fixture_with(|state| state.tab_visible = false).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": main_ref,
+            "input_route": "dom_event",
+            "session": SESSION,
+        }))
+        .await;
+
+    assert_eq!(
+        structured(&result)["status"],
+        "ok",
+        "{}",
+        structured(&result)
+    );
+    let visibility = recorded_calls(&f, "Runtime.evaluate");
+    assert_eq!(visibility.len(), 1, "{visibility:?}");
+    assert_eq!(
+        visibility[0].1["expression"],
+        "document.visibilityState === 'visible'"
+    );
+    assert_eq!(visibility[0].1["returnByValue"], true);
+    assert_eq!(visibility[0].1["awaitPromise"], false);
     assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
     assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
 }

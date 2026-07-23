@@ -1,15 +1,15 @@
 //! Session lifecycle hooks.
 //!
-//! The cua-driver daemon (`serve.rs`) drives ONE shared `ToolRegistry`; every
-//! `cua-driver mcp` proxy process connects to it and shares its state. A
+//! The public SDK runtime owns one shared platform registry; the cua-driver
+//! daemon and every `cua-driver mcp` proxy consume that runtime downstream. A
 //! proxy-minted `session_id` (carried in the daemon request envelope) lets the
 //! daemon OWN and CLEAN UP per-session state.
 //!
 //! Recording ownership lives on the core `RecordingSession` directly. But some
 //! session-scoped state is platform-specific (e.g. macOS per-session config
 //! overrides in `platform-macos::tools::SessionConfigRegistry`) and the daemon
-//! only holds an `Arc<ToolRegistry>` — it can't reach into a platform crate's
-//! `ToolState`. This module bridges that gap with a small process-global list
+//! cannot reach into a platform crate's private `ToolState`. This module
+//! bridges that gap with a small process-global list
 //! of cleanup callbacks: each platform registers a `Fn(&str)` once at startup,
 //! and the daemon's `session_end` arm fans the disconnecting `session_id` out
 //! to all of them.

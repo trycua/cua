@@ -158,6 +158,8 @@ try {
       "--locked",
       "-p",
       "cua-driver-bindgen",
+      "--bin",
+      "cua-driver-bindgen",
       "--",
       "generate",
       "--library",

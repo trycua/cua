@@ -3,7 +3,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../../.." && pwd)"
+# A copied runner may target a clean, exact source tree during release certification.
+REPO_ROOT="${CUA_E2E_REPO_ROOT:-$(cd "${SCRIPT_DIR}/../../../../.." && pwd)}"
 DRIVER_ROOT="${REPO_ROOT}/libs/cua-driver"
 RUST_ROOT="${DRIVER_ROOT}/rust"
 ARTIFACT_DIR="${REPO_ROOT}/artifacts/cua-driver/macos"
@@ -136,7 +137,8 @@ echo "[BUILD IDENTITY] Invalidating the macOS backend for ${SOURCE_SHA}"
 cargo clean --manifest-path "${RUST_ROOT}/Cargo.toml" -p platform-macos
 
 echo "[INSTALL] Building and installing ${SOURCE_SHA} with the golden signing identity"
-bash "${DRIVER_ROOT}/scripts/install-local.sh" --release --autostart \
+bash "${DRIVER_ROOT}/scripts/install-local.sh" \
+  --release --autostart --require-stable-signing \
   2>&1 | tee "${ARTIFACT_DIR}/install-local.log"
 
 codesign -d -r- /Applications/CuaDriverLocal.app \
@@ -173,8 +175,9 @@ LIVE_PERMISSIONS_FILE="${ARTIFACT_DIR}/permissions-live-capture.json"
 if ! "${INSTALLED_BIN}" call check_permissions '{"prompt":true}' \
     > "${LIVE_PERMISSIONS_FILE}" \
     || ! jq -e '
-      .structuredContent.screen_recording_capturable == true
-      and .structuredContent.direct_capture_status == "ready"
+      (.structuredContent // .) as $permissions
+      | $permissions.screen_recording_capturable == true
+      and $permissions.direct_capture_status == "ready"
     ' "${LIVE_PERMISSIONS_FILE}" >/dev/null; then
   cat "${LIVE_PERMISSIONS_FILE}" >&2 || true
   echo "The cloned golden image does not have usable direct ScreenCaptureKit consent" >&2
@@ -186,6 +189,9 @@ if ! "${INSTALLED_BIN}" list_apps '{}' > "${ARTIFACT_DIR}/driver-list-apps.json"
   echo "CuaDriver cannot enumerate applications" >&2
   exit 2
 fi
+
+# install-local.sh intentionally uses a separate namespace from release installs.
+export CUA_E2E_MACOS_DAEMON_SOCKET="${CUA_E2E_MACOS_DAEMON_SOCKET:-${HOME}/Library/Caches/cua-driver-local/cua-driver-local.sock}"
 
 echo "[E2E] Running the canonical macOS matrix"
 if [[ "${NO_BUILD}" == 1 ]]; then

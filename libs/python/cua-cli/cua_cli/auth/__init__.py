@@ -1,5 +1,10 @@
-"""Authentication module for CUA CLI."""
+"""Authentication utilities for Cua CLI."""
 
-from .store import CredentialStore, clear_credentials, get_api_key, save_api_key
+from .store import (
+    OAuthCredentials,
+    clear_credentials,
+    load_credentials,
+    save_credentials,
+)
 
-__all__ = ["CredentialStore", "get_api_key", "save_api_key", "clear_credentials"]
+__all__ = ["OAuthCredentials", "clear_credentials", "load_credentials", "save_credentials"]

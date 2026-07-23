@@ -1,0 +1,60 @@
+---
+title: 'Expose MCP from a desktop app'
+description: "Host a private Cua Driver daemon when an external agent must reuse your app's desktop permissions."
+---
+
+Use a daemon-backed host only when a signed desktop application must expose Cua
+Driver to an external MCP client. If only your application calls the driver,
+use [`CuaDriver.create()`](/how-to-guides/driver/use-sdk-in-process) instead.
+
+## Bundle the executable
+
+Ship a compatible `cua-driver` executable as an application resource. In an
+Electron app, keep it outside the ASAR archive, preserve its executable bit,
+and sign the nested executable before signing and notarizing the enclosing app.
+The npm package supplies the native SDK library but does not bundle the
+executable. The Python wheel does bundle it.
+
+## Start the host from the permission-owning process
+
+```ts
+import { CuaDriver, EmbeddedCuaDriverHost } from '@trycua/cua-driver';
+
+const host = new EmbeddedCuaDriverHost(
+  '/path/inside/YourApp.app/Contents/Resources/cua-driver',
+  'com.example.your-app'
+);
+
+const connection = await host.start();
+const driver = CuaDriver.connect(connection.socketPath);
+
+// Application code calls the same typed SDK methods on `driver`.
+// The external agent launches `connection.mcp.command` with
+// `connection.mcp.args` and `connection.mcp.environment`.
+```
+
+On macOS, call `start()` from the app process that owns Accessibility and
+Screen Recording permission. A gateway, terminal, `open`, or `NSWorkspace`
+changes the TCC responsibility chain and cannot lend the app's grants to the
+child.
+
+## Shut down in dependency order
+
+Stop accepting new work, end active sessions, close MCP clients, then tear down
+the SDK client and host:
+
+```ts
+await driver.shutdown();
+driver.uniffiDestroy();
+await host.stop();
+host.uniffiDestroy();
+```
+
+`start()` coalesces concurrent callers. `stop()` cancels startup and is
+idempotent. After `restart()`, discard the old connection: the generation, PID,
+and endpoint change. Use `waitForExit(connection.generation)` to observe an
+unexpected child exit, and never automatically replay an action whose outcome
+is unknown.
+
+For the complete lifecycle and low-level launch contract, see
+[Embedding reference](/reference/cua-driver/embedding).

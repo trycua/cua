@@ -240,10 +240,11 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate {
         let scrollWrap = NSStackView()
         scrollWrap.orientation = .horizontal
         scrollWrap.spacing = 12
-        let scroller = NSScrollView(frame: NSRect(x: 0, y: 0, width: 360, height: 120))
+        let scroller = NSScrollView(frame: NSRect(x: 0, y: 0, width: 480, height: 120))
+        scroller.translatesAutoresizingMaskIntoConstraints = false
         scroller.hasVerticalScroller = true
         scroller.borderType = .lineBorder
-        let bodyText = NSTextView(frame: NSRect(x: 0, y: 0, width: 340, height: 600))
+        let bodyText = NSTextView(frame: NSRect(x: 0, y: 0, width: 460, height: 600))
         bodyText.isEditable = false
         // The NSScrollView's AXScrollArea is NOT surfaced by get_window_state — only
         // the document AXTextArea is. Put scroll-tall on the document view so the
@@ -268,6 +269,10 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate {
         scroller.contentView.postsBoundsChangedNotifications = true
         scrollWrap.addArrangedSubview(scroller)
         scrollWrap.addArrangedSubview(scrollOffsetLabel)
+        NSLayoutConstraint.activate([
+            scroller.widthAnchor.constraint(equalToConstant: 480),
+            scroller.heightAnchor.constraint(equalToConstant: 120),
+        ])
         content.addArrangedSubview(scrollWrap)
 
         // exit

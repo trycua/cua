@@ -129,20 +129,35 @@ fn increment_center(snap: &serde_json::Value) -> Option<(i64, i64)> {
     Some(((x + w / 2.0) as i64, (y + h / 2.0) as i64))
 }
 
-fn element_center_containing(snap: &serde_json::Value, marker: &str) -> Option<(i64, i64)> {
+fn element_center_labeled(snap: &serde_json::Value, label: &str) -> Option<(i64, i64)> {
     let element = snap["elements"].as_array()?.iter().find(|element| {
-        serde_json::to_string(element)
-            .map(|serialized| serialized.contains(marker))
+        element["label"]
+            .as_str()
+            .map(|candidate| candidate.contains(label))
             .unwrap_or(false)
-            && element
-                .get("frame")
-                .map(|frame| frame.is_object())
-                .unwrap_or(false)
     })?;
     let frame = &element["frame"];
     Some((
         (frame["x"].as_f64()? + frame["w"].as_f64()? / 2.0) as i64,
         (frame["y"].as_f64()? + frame["h"].as_f64()? / 2.0) as i64,
+    ))
+}
+
+/// The AppKit fixture exposes the scroll document as one tall AXTextArea.
+/// Its geometric center may be below the visible NSScrollView viewport (and
+/// under the Dock on compact CI displays), so target a point near its visible
+/// top edge instead of the document's off-screen center.
+fn visible_scroll_point(snap: &serde_json::Value, marker: &str) -> Option<(i64, i64)> {
+    let element = snap["elements"].as_array()?.iter().find(|element| {
+        element["label"]
+            .as_str()
+            .map(|candidate| candidate.contains(marker))
+            .unwrap_or(false)
+    })?;
+    let frame = &element["frame"];
+    Some((
+        (frame["x"].as_f64()? + frame["w"].as_f64()? / 2.0) as i64,
+        (frame["y"].as_f64()? + frame["h"].as_f64()?.min(60.0) / 2.0) as i64,
     ))
 }
 
@@ -318,7 +333,7 @@ fn desktop_scope_windowless_scroll_lands_on_control() {
         let mut snap = ax_snapshot(&mut driver, &window_session, pid, wid);
         let deadline = Instant::now() + Duration::from_secs(8);
         let (x, y) = loop {
-            if let Some(center) = element_center_containing(&snap, "SCROLL_TOP_MARKER_v1") {
+            if let Some(center) = visible_scroll_point(&snap, "SCROLL_TOP_MARKER_v1") {
                 break center;
             }
             assert!(
@@ -397,7 +412,7 @@ fn desktop_scope_hotkey_releases_modifiers() {
         let mut snap = ax_snapshot(&mut driver, &window_session, pid, wid);
         let deadline = Instant::now() + Duration::from_secs(8);
         let (click_x, click_y) = loop {
-            if let Some(center) = element_center_containing(&snap, "btn-clicktarget") {
+            if let Some(center) = element_center_labeled(&snap, "Click target") {
                 break center;
             }
             assert!(

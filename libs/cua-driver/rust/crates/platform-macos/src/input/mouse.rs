@@ -112,19 +112,27 @@ pub fn scroll_wheel_desktop(
     move_cursor_desktop(x, y)?;
     std::thread::sleep(std::time::Duration::from_millis(40));
     for _ in 0..ticks.max(1) {
-        let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
-            .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
         // AppKit does not reliably consume synthetic LINE-unit events posted
         // through the global HID queue. pynput's proven macOS desktop path uses
-        // PIXEL units and scales each logical wheel notch to ten pixels.
+        // PIXEL units, a null source, and scales each logical wheel notch to ten
+        // pixels. Keep that exact controller convention instead of attaching
+        // synthetic source state unrelated to the physical pointer we warped.
         let wheel_y = (delta_y_per_tick / 12).clamp(-100, 100);
         let wheel_x = (delta_x_per_tick / 12).clamp(-100, 100);
-        let event =
-            CGEvent::new_scroll_event(source, ScrollEventUnit::PIXEL, 2, wheel_y, wheel_x, 0)
-                .map_err(|_| anyhow::anyhow!("CGEvent::new_scroll_event failed"))?;
-        // The cursor warp above is the hit-test authority. Setting a location
-        // field on a wheel event can make AppKit treat it as a non-wheel mouse
-        // event and silently drop it.
+        let event_ref = unsafe {
+            CGEventCreateScrollWheelEvent2(
+                std::ptr::null_mut(),
+                ScrollEventUnit::PIXEL,
+                2,
+                wheel_y,
+                wheel_x,
+                0,
+            )
+        };
+        if event_ref.is_null() {
+            return Err(anyhow::anyhow!("CGEventCreateScrollWheelEvent2 failed"));
+        }
+        let event = unsafe { CGEvent::from_ptr(event_ref) };
         event.post(CGEventTapLocation::HID);
         std::thread::sleep(std::time::Duration::from_millis(30));
     }
@@ -151,6 +159,18 @@ pub fn click_at_xy_desktop_preserving_cursor(x: f64, y: f64) -> anyhow::Result<(
 }
 
 extern "C" {
+    /// Quartz's non-variadic scroll-event constructor. The public desktop
+    /// path intentionally passes a null source to match real mouse-controller
+    /// libraries such as pynput.
+    fn CGEventCreateScrollWheelEvent2(
+        source: core_graphics::sys::CGEventSourceRef,
+        units: core_graphics::event::CGScrollEventUnit,
+        wheel_count: u32,
+        wheel1: i32,
+        wheel2: i32,
+        wheel3: i32,
+    ) -> core_graphics::sys::CGEventRef;
+
     /// Reconnect the mouse-delta stream to the (just-warped) cursor position so a
     /// synthesized click hit-tests at the new location, not the pre-warp one.
     fn CGAssociateMouseAndMouseCursorPosition(connected: bool) -> i32;

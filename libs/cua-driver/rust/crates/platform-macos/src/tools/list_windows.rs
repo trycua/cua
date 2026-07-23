@@ -50,6 +50,8 @@ impl Tool for ListWindowsTool {
         let pid_filter: Option<i32> = args.opt_i64("pid").map(|v| v as i32);
         let on_screen_only = args.bool_or("on_screen_only", false);
 
+        let current_space_id = crate::input::skylight::get_active_space();
+
         let mut windows = if on_screen_only {
             crate::windows::visible_windows()
         } else {
@@ -82,8 +84,6 @@ impl Tool for ListWindowsTool {
                 })
             })
             .collect();
-
-        let current_space_id = crate::input::skylight::get_active_space();
 
         ToolResult::text(format!("Found {} window(s).", windows_json.len())).with_structured(
             serde_json::json!({

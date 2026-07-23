@@ -362,32 +362,7 @@ pub fn get_active_space() -> Option<u64> {
 /// the first (only) space ID from the result.  Returns `None` when the symbol
 /// is unavailable or the query produces no result.
 pub fn get_window_space(window_id: u32) -> Option<u64> {
-    use core_foundation::{
-        array::CFArray,
-        base::{CFTypeRef, TCFType},
-        number::CFNumber,
-    };
-
-    let cid = main_connection_id()?;
-    let f = copy_spaces_for_windows_fn()?;
-
-    let num = CFNumber::from(window_id as i64);
-    let num_ref: *const c_void = num.as_concrete_TypeRef() as *const c_void;
-    let arr = unsafe { CFArray::<CFTypeRef>::from_copyable(&[num_ref]) };
-
-    let result_ptr: *mut c_void = unsafe { f(cid, 7, arr.as_concrete_TypeRef() as *const c_void) };
-    if result_ptr.is_null() {
-        return None;
-    }
-
-    let result: CFArray<CFTypeRef> = unsafe { CFArray::wrap_under_create_rule(result_ptr as _) };
-    if result.len() == 0 {
-        return None;
-    }
-
-    let space_ptr = unsafe { *result.get(0)? };
-    let space_num = unsafe { CFNumber::wrap_under_get_rule(space_ptr as _) };
-    space_num.to_i64().map(|v| v as u64)
+    get_window_spaces(&[window_id]).into_iter().next().flatten()
 }
 
 /// Return Space IDs for multiple windows in a single SPI call.
@@ -412,7 +387,7 @@ pub fn get_window_spaces(window_ids: &[u32]) -> Vec<Option<u64>> {
 
     use core_foundation::{
         array::CFArray,
-        base::{CFTypeRef, TCFType},
+        base::{CFGetTypeID, CFTypeRef, TCFType},
         number::CFNumber,
     };
 
@@ -433,18 +408,27 @@ pub fn get_window_spaces(window_ids: &[u32]) -> Vec<Option<u64>> {
 
     let result: CFArray<CFTypeRef> = unsafe { CFArray::wrap_under_create_rule(result_ptr as _) };
 
-    let mut spaces = Vec::with_capacity(window_ids.len());
-    for i in 0..result.len() {
-        let item = unsafe { result.get(i) };
-        match item {
-            Some(ptr) => {
-                let num = unsafe { CFNumber::wrap_under_get_rule(*ptr as _) };
-                spaces.push(num.to_i64().map(|v| v as u64));
+    let num_type_id = CFNumber::type_id();
+    let spaces: Vec<Option<u64>> = (0..result.len())
+        .map(|i| unsafe {
+            let item = result.get(i)?;
+            if CFGetTypeID(*item) != num_type_id {
+                return None;
             }
-            None => spaces.push(None),
-        }
+            let num = CFNumber::wrap_under_get_rule(*item as _);
+            num.to_i64().map(|v| v as u64)
+        })
+        .collect();
+
+    // Ensure result length matches input — pad with None if SPI returned fewer
+    // entries than requested.
+    if spaces.len() < window_ids.len() {
+        let mut padded = spaces;
+        padded.resize(window_ids.len(), None);
+        padded
+    } else {
+        spaces
     }
-    spaces
 }
 
 // ── Focus-without-raise ───────────────────────────────────────────────────────

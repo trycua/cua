@@ -131,10 +131,11 @@ mod interactive_observation_tests {
     }
 }
 
-/// px-focus for the keyboard family (type_text / press_key / hotkey): pixel-click
-/// at (x,y) to establish real renderer focus before a keystroke — the *element px
-/// action* form of a keyboard tool. Reuses ClickTool's exact coordinate
-/// translation + delivery_mode so it lands on the same pixel a px-click would.
+/// px-focus for the keyboard family (type_text / press_key / hotkey): focus the
+/// element at (x,y) before a keystroke — the *element px action* form of a
+/// keyboard tool. Prefer non-destructive AX focus so an existing selection is
+/// retained; the foreground rung falls back to a real pixel click when needed.
+/// Reuses ClickTool's exact coordinate translation and delivery mode.
 /// `Ok(())` on success; `Err(ToolResult)` short-circuits the caller.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn focus_by_pixel(
@@ -151,16 +152,51 @@ pub(crate) async fn focus_by_pixel(
     use cua_driver_core::tool::Tool;
     let mut click_args = serde_json::json!({
         "pid": pid, "x": x, "y": y,
-        "delivery_mode": if foreground { "foreground" } else { "background" },
-        "action": if foreground { "press" } else { "focus" },
+        "delivery_mode": "background",
+        "action": "focus",
     });
     if let Some(wid) = window_id {
         click_args["window_id"] = serde_json::json!(wid);
     }
-    if let Some(s) = session {
+    if let Some(ref s) = session {
         click_args["session"] = serde_json::json!(s);
     }
-    if let Some(s) = session_id {
+    if let Some(ref s) = session_id {
+        click_args["_session_id"] = serde_json::json!(s);
+    }
+    if from_zoom {
+        click_args["from_zoom"] = serde_json::json!(true);
+    }
+    let focus = click::ClickTool::new(state.clone())
+        .invoke(click_args)
+        .await;
+    if focus.is_error != Some(true) {
+        // AXFocused is non-destructive: unlike a second real click, it keeps a
+        // Cmd+A selection intact before a follow-up type_text or Cmd+V.
+        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+        return Ok(());
+    }
+
+    if !foreground {
+        return Err(cua_driver_core::protocol::ToolResult::error(format!(
+            "focus pixel-click at ({x:.0},{y:.0}) failed."
+        )));
+    }
+
+    // Some renderer surfaces do not expose a usable AX focus action. The
+    // explicit foreground rung retains its real-click fallback for them.
+    let mut click_args = serde_json::json!({
+        "pid": pid, "x": x, "y": y,
+        "delivery_mode": "foreground",
+        "action": "press",
+    });
+    if let Some(wid) = window_id {
+        click_args["window_id"] = serde_json::json!(wid);
+    }
+    if let Some(ref s) = session {
+        click_args["session"] = serde_json::json!(s);
+    }
+    if let Some(ref s) = session_id {
         click_args["_session_id"] = serde_json::json!(s);
     }
     if from_zoom {

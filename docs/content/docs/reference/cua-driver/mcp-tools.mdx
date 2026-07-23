@@ -364,7 +364,7 @@ A key press is never driver-verifiable → effect:"unverifiable"; confirm via sc
 
 Press a key combination — e.g. `["cmd", "c"]` for Copy, `["cmd", "shift", "4"]` for screenshot selection. Follows the same `delivery_mode` ladder as click/type_text — it does NOT raise the window by default:
 • `background` (default): post the combo to the target pid WITHOUT fronting or raising it — uses the macOS 14+ auth-message envelope so Chromium/Electron accept it as trusted live input. No focus steal. `window_id` here only targets the combo; it does not raise.
-• `foreground`: briefly front the window (NSMenu path, &lt; 1 ms via SLPSSetFrontProcessWithOptions) so native menu key-equivalents (Cmd+Z, Cmd+W) dispatch, then restore the prior frontmost — the explicit escalation for menu-bar shortcuts on non-Chromium apps that ignore a background combo. Requires window_id.
+• `foreground`: briefly front the window (NSMenu path, &lt; 1 ms via SLPSSetFrontProcessWithOptions) so native menu key-equivalents (Cmd+Z, Cmd+W) dispatch, then restore the prior frontmost — the explicit escalation for menu-bar shortcuts on non-Chromium apps that ignore a background combo. With x,y, the focused field receives the chord through the foreground HID queue (needed by native Chromium fields such as the omnibox). Requires window_id.
 
 A combo is never driver-verifiable (no read-back) → effect:"unverifiable"; confirm via screenshot. NOTE: a keyboard combo does NOT focus a text field — to type into a backgrounded Electron input, establish real renderer focus with a PIXEL click first, then `type_text` (do not reach for a clipboard + Cmd+V dance).
 

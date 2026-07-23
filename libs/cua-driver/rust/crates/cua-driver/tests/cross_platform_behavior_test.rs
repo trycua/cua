@@ -19,6 +19,8 @@
 #![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 
 use std::any::Any;
+#[cfg(target_os = "macos")]
+use std::io::Write as _;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -885,8 +887,103 @@ fn run_hotkey_action(fixture: &mut Fixture, addressing: &str, delivery: &str) ->
         response.text()
     );
     assert_fixture_contains(fixture, "key_state=hotkey");
+    #[cfg(target_os = "macos")]
+    if fixture.name == "electron" && addressing == "px" && delivery == "foreground" {
+        run_macos_selection_hotkeys(fixture);
+    }
     let passed = unverified_background_protocol_oracle(&response, delivery);
     Observation::delivered_with_fixture_state(passed)
+}
+
+#[cfg(target_os = "macos")]
+struct TextClipboardGuard {
+    previous: Vec<u8>,
+}
+
+#[cfg(target_os = "macos")]
+impl TextClipboardGuard {
+    fn replace(text: &str) -> Self {
+        let previous = Command::new("/usr/bin/pbpaste")
+            .output()
+            .expect("read macOS text pasteboard")
+            .stdout;
+        write_text_clipboard(text.as_bytes());
+        Self { previous }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for TextClipboardGuard {
+    fn drop(&mut self) {
+        write_text_clipboard(&self.previous);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn write_text_clipboard(contents: &[u8]) {
+    let mut child = Command::new("/usr/bin/pbcopy")
+        .stdin(Stdio::piped())
+        .spawn()
+        .expect("start macOS text pasteboard writer");
+    child
+        .stdin
+        .as_mut()
+        .expect("pbcopy stdin")
+        .write_all(contents)
+        .expect("write macOS text pasteboard");
+    assert!(
+        child.wait().expect("wait for pbcopy").success(),
+        "pbcopy failed"
+    );
+}
+
+#[cfg(target_os = "macos")]
+fn run_macos_selection_hotkeys(fixture: &mut Fixture) {
+    const INITIAL: &str = "cua-hotkey-initial";
+    const REPLACEMENT: &str = "cua-hotkey-replacement";
+    const PASTED: &str = "cua-hotkey-pasted";
+
+    let state = snapshot(fixture);
+    let mut type_args = action_target_args(fixture, &state, "keyboard-input", "px", "foreground");
+    type_args["text"] = serde_json::json!(INITIAL);
+    let typed = fixture.driver.call("type_text", type_args);
+    assert!(!typed.is_error(), "seed selection fixture: {}", typed.raw);
+    assert_fixture_value(fixture, "keyboard-input", INITIAL);
+
+    let select_all = |fixture: &mut Fixture| {
+        let state = snapshot(fixture);
+        let mut args = action_target_args(fixture, &state, "keyboard-input", "px", "foreground");
+        args["keys"] = serde_json::json!(["cmd", "a"]);
+        let response = fixture.driver.call("hotkey", args);
+        assert!(!response.is_error(), "Cmd+A failed: {}", response.raw);
+        assert_eq!(response.verified(), Some(false), "{}", response.raw);
+        assert_eq!(
+            response.structured()["effect"],
+            "unverifiable",
+            "generic hotkeys must retain the honest unverifiable contract: {}",
+            response.raw
+        );
+    };
+
+    select_all(fixture);
+    let state = snapshot(fixture);
+    let mut replace_args =
+        action_target_args(fixture, &state, "keyboard-input", "px", "foreground");
+    replace_args["text"] = serde_json::json!(REPLACEMENT);
+    let replaced = fixture.driver.call("type_text", replace_args);
+    assert!(!replaced.is_error(), "replace selection: {}", replaced.raw);
+    assert_fixture_value(fixture, "keyboard-input", REPLACEMENT);
+
+    select_all(fixture);
+    let _clipboard = TextClipboardGuard::replace(PASTED);
+    let state = snapshot(fixture);
+    let mut paste_args = action_target_args(fixture, &state, "keyboard-input", "px", "foreground");
+    paste_args["keys"] = serde_json::json!(["cmd", "v"]);
+    let pasted = fixture.driver.call("hotkey", paste_args);
+    assert!(!pasted.is_error(), "Cmd+V failed: {}", pasted.raw);
+    assert_eq!(pasted.verified(), Some(false), "{}", pasted.raw);
+    assert_eq!(pasted.structured()["effect"], "unverifiable");
+    assert_fixture_value(fixture, "keyboard-input", PASTED);
 }
 
 fn run_scroll_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> Observation {

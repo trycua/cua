@@ -1,0 +1,107 @@
+---
+title: 'SDK reference'
+description: 'Python and TypeScript packages, constructors, methods, results, and errors for the typed Cua Driver SDK.'
+---
+
+## Packages
+
+| Runtime              | Package              | Import                                           |
+| -------------------- | -------------------- | ------------------------------------------------ |
+| Python               | `cua-driver`         | `from cua_driver import CuaDriver`               |
+| Node.js / TypeScript | `@trycua/cua-driver` | `import { CuaDriver } from "@trycua/cua-driver"` |
+
+Both packages are generated from the same Rust and UniFFI contract. Methods are
+asynchronous. Python uses `snake_case`; TypeScript uses `camelCase`.
+
+## Constructors
+
+| Python                                | TypeScript                       | Behavior                                                                                   |
+| ------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------ |
+| `CuaDriver.create(options=None)`      | `CuaDriver.create(options?)`     | Creates the primary same-process runtime. No daemon, executable, or IPC is required.       |
+| `CuaDriver.connect(socket_path=None)` | `CuaDriver.connect(socketPath?)` | Connects the same typed surface to a daemon. This is a compatibility and app-hosting path. |
+
+`DriverOptions` currently contains
+`claude_code_compatibility` / `claudeCodeCompatibility`, which defaults to
+`false`.
+
+`execution_mode()` / `executionMode()` reports the generated
+`DriverExecutionMode` value. The current enum variants are `Embedded` for the
+same-process runtime and `Daemon` for a socket-backed connection.
+
+## Lifecycle and metadata
+
+| Python             | TypeScript        | Result                                                  |
+| ------------------ | ----------------- | ------------------------------------------------------- |
+| `metadata()`       | `metadata()`      | Driver version, protocol version, and platform metadata |
+| `execution_mode()` | `executionMode()` | `DriverExecutionMode`                                   |
+| `is_available()`   | `isAvailable()`   | Whether the runtime can serve calls                     |
+| `shutdown()`       | `shutdown()`      | Stops admission and awaits admitted work                |
+
+In TypeScript, call `uniffiDestroy()` after `shutdown()` to release the binding
+handle. Python releases the handle during finalization, but applications should
+still await `shutdown()`.
+
+## Session methods
+
+| Python              | TypeScript        | Input                  |
+| ------------------- | ----------------- | ---------------------- |
+| `start_session`     | `startSession`    | `StartSessionInput`    |
+| `get_session_state` | `getSessionState` | `GetSessionStateInput` |
+| `escalate_session`  | `escalateSession` | `EscalateSessionInput` |
+| `end_session`       | `endSession`      | `EndSessionInput`      |
+
+`StartSessionInput.capture_scope` / `captureScope` accepts `AUTO`, `WINDOW`, or
+`DESKTOP`. Capture scope is immutable for a live session. `AUTO` requires an
+explicit escalation before desktop tools are enabled.
+
+## Typed desktop methods
+
+| Python                | TypeScript          | Input                    |
+| --------------------- | ------------------- | ------------------------ |
+| `get_desktop_state`   | `getDesktopState`   | `GetDesktopStateInput`   |
+| `get_screen_size`     | `getScreenSize`     | `GetScreenSizeInput`     |
+| `get_cursor_position` | `getCursorPosition` | `GetCursorPositionInput` |
+| `move_cursor`         | `moveCursor`        | `MoveCursorInput`        |
+| `click`               | `click`             | `ClickInput`             |
+| `drag`                | `drag`              | `DragInput`              |
+| `scroll`              | `scroll`            | `ScrollInput`            |
+| `type_text`           | `typeText`          | `TypeTextInput`          |
+| `press_key`           | `pressKey`          | `PressKeyInput`          |
+| `hotkey`              | `hotkey`            | `HotkeyInput`            |
+
+Use `list_tools_json()` / `listToolsJson()` and `call_tool()` / `callTool()` for
+the generic, platform-extensible tool surface. Prefer typed methods when one is
+available.
+
+## `ToolResult`
+
+Desktop methods return `ToolResult`.
+
+| Python field      | TypeScript field | Meaning                                    |
+| ----------------- | ---------------- | ------------------------------------------ |
+| `text`            | `text`           | Human-readable result text                 |
+| `images`          | `images`         | Returned images and MIME types             |
+| `structured_json` | `structuredJson` | Structured platform result                 |
+| `is_error`        | `isError`        | Whether the tool reported failure          |
+| `error_code`      | `errorCode`      | Stable tool error code, when present       |
+| `verified`        | `verified`       | Whether post-action verification succeeded |
+| `degraded`        | `degraded`       | Whether a reduced-capability path was used |
+| `raw_json`        | `rawJson`        | Complete extensible result envelope        |
+
+## Errors
+
+The generated `DriverError` variants are:
+
+- `Configuration`
+- `InvalidArguments`
+- `Transport`
+- `Protocol`
+- `Tool`
+- `Shutdown`
+
+Tool-level failures may also arrive as `ToolResult.is_error` / `isError`.
+Inspect the result before consuming images or structured fields.
+
+See [MCP tools](/reference/cua-driver/mcp-tools) for the agent-facing tool
+catalog and [SDK, MCP, and process hosting](/concepts/sdk-mcp-and-hosting) for
+the architecture boundary.

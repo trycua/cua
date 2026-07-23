@@ -48,6 +48,16 @@ const config = {
         permanent: true,
       },
       {
+        source: '/tutorials/your-first-cloud-sandbox',
+        destination: '/tutorials/your-first-local-sandbox',
+        permanent: true,
+      },
+      {
+        source: '/how-to-guides/sandbox/snapshots',
+        destination: '/how-to-guides/sandbox/images',
+        permanent: true,
+      },
+      {
         source: '/how-to-guides/skills/record-a-demonstration',
         destination: '/how-to-guides',
         permanent: true,

@@ -1,9 +1,9 @@
 ---
 title: 'Cua documentation'
-description: 'Open-source computer-use automation for real machines and disposable cloud desktops.'
+description: 'Open-source computer-use automation for real machines and local isolated desktops.'
 ---
 
-Cua is an open-source MIT-licensed platform ([github.com/trycua/cua](https://github.com/trycua/cua)) for **computer-use automation**: letting AI agents operate computers by clicking, typing, and reading the screen and accessibility tree. What we refer to as **Computer-Use 2.0** treats the GUI as one tool surface in an agent loop, alongside code, shell, files, and APIs. Use Cua Driver to drive a machine you already have, Cua Sandbox to start an isolated cloud desktop, or Cua-Bench to evaluate computer-use agents.
+Cua is an open-source MIT-licensed platform ([github.com/trycua/cua](https://github.com/trycua/cua)) for **computer-use automation**: letting AI agents operate computers by clicking, typing, and reading the screen and accessibility tree. What we refer to as **Computer-Use 2.0** treats the GUI as one tool surface in an agent loop, alongside code, shell, files, and APIs. Use Cua Driver to drive a machine you already have, Cua Sandbox to start an isolated local desktop, or Cua-Bench to evaluate computer-use agents.
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
 
@@ -13,9 +13,9 @@ import { Card, Cards } from 'fumadocs-ui/components/card';
     already have without bringing them to the foreground or moving the real mouse. It speaks MCP
     over stdio and is also a plain CLI.
   </Card>
-  <Card title="Spin up a cloud desktop — Cua Sandbox" href="/tutorials/your-first-cloud-sandbox">
-    Start disposable full Linux, Windows, or macOS VMs with a GUI for an agent to drive when you
-    want a fresh, isolated computer in the cloud instead of your own machine.
+  <Card title="Start a local desktop — Cua Sandbox" href="/tutorials/your-first-local-sandbox">
+    Start a disposable Linux desktop with Docker, or use a local VM runtime when you need a fresh,
+    isolated computer on your own hardware.
   </Card>
   <Card title="Evaluate agents with Cua-Bench" href="/concepts/what-is-cua-bench">
     Define verifiable computer-use tasks, run agents across local or hosted environments, and score
@@ -57,4 +57,4 @@ How-to guides: recipes for a goal. Start with [How-to guides](/how-to-guides).
 
 Reference: precise technical description. Start with [Reference](/reference).
 
-For real local apps and signed-in state, start with **Cua Driver**. For fresh isolated desktops, start with **Cua Sandbox**. Lume is the local Apple Silicon VM substrate behind part of the stack.
+For existing apps and signed-in state, start with **Cua Driver**. For fresh isolated local desktops, start with **Cua Sandbox**. Lume is the local Apple Silicon VM substrate behind part of the stack.

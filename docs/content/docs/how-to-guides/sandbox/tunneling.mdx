@@ -14,7 +14,7 @@ Start the service inside the sandbox, then forward its port.
 ```python
 from cua import Sandbox, Image
 
-async with Sandbox.ephemeral(Image.linux()) as sb:
+async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
     await sb.shell.run('python3 -m http.server 8080 &')
 
     async with sb.tunnel.forward(8080) as t:
@@ -69,7 +69,7 @@ Start Chrome with remote debugging enabled, then read the DevTools target list t
 ```python
 from cua import Sandbox, Image
 
-async with Sandbox.ephemeral(Image.linux()) as sb:
+async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
     await sb.shell.run('google-chrome --remote-debugging-port=9222 --headless &')
 
     async with sb.tunnel.forward(9222) as t:

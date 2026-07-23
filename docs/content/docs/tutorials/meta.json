@@ -4,7 +4,7 @@
   "pages": [
     "index",
     "drive-your-first-app",
-    "your-first-cloud-sandbox",
+    "your-first-local-sandbox",
     "create-your-first-lume-vm"
   ]
 }

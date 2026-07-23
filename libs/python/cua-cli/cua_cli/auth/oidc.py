@@ -10,6 +10,14 @@ from typing import Any
 import aiohttp
 from cua_cli.auth.store import OAuthCredentials, load_credentials, save_credentials
 
+try:
+    from cyclops_sdk import AccessTokenProvider as _FleetTokenProvider
+except ImportError:
+
+    class _FleetTokenProvider:
+        pass
+
+
 DEFAULT_RUN_API_BASE = "https://run.cua.ai"
 DEFAULT_OIDC_ISSUER = "https://auth.cua.ai/realms/cyclops-cs"
 DEFAULT_CLIENT_ID = "cua-cli"
@@ -226,15 +234,22 @@ def _error_description(payload: Mapping[str, Any], fallback: str) -> str:
     return str(description) if description else fallback
 
 
-async def get_access_token() -> str:
+async def get_access_token(*, force_refresh: bool = False) -> str:
     """Return a valid access token, refreshing and persisting it when needed."""
     credentials = load_credentials()
     if credentials is None:
         raise OidcError("Not logged in. Run 'cua auth login' first.")
-    if credentials.expires_at > datetime.now(UTC) + timedelta(seconds=60):
+    if not force_refresh and credentials.expires_at > datetime.now(UTC) + timedelta(seconds=60):
         return credentials.access_token
 
     client = OidcClient()
     refreshed = await client.refresh(await client.discover(), credentials)
     save_credentials(refreshed)
     return refreshed.access_token
+
+
+class FleetAccessTokenProvider(_FleetTokenProvider):
+    """Adapt CLI device credentials to the Fleet SDK token-provider callback."""
+
+    async def get_access_token(self, force_refresh: bool) -> str:
+        return await get_access_token(force_refresh=force_refresh)

@@ -1,10 +1,15 @@
 """Tests for the Keycloak OIDC device flow used by run.cua.ai."""
 
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
-from cua_cli.auth.oidc import DEVICE_GRANT_TYPE, OidcClient
+from cua_cli.auth.oidc import (
+    DEVICE_GRANT_TYPE,
+    FleetAccessTokenProvider,
+    OidcClient,
+    get_access_token,
+)
 from cua_cli.auth.store import OAuthCredentials
 
 
@@ -142,3 +147,52 @@ async def test_poll_slow_down_increases_interval() -> None:
     await OidcClient(request=requester, sleep=sleep).poll_for_tokens(discovery, device_code)
 
     assert delays == [8]
+
+
+@pytest.mark.asyncio
+async def test_get_access_token_forces_refresh_of_an_unexpired_token(monkeypatch) -> None:
+    credentials = OAuthCredentials(
+        access_token="cached-token",
+        refresh_token="refresh-token",
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+    refreshed = OAuthCredentials(
+        access_token="refreshed-token",
+        refresh_token="refresh-token",
+        expires_at=credentials.expires_at,
+    )
+    refresh_calls = []
+
+    class RefreshingClient:
+        async def discover(self):
+            return object()
+
+        async def refresh(self, discovery, received_credentials):
+            assert discovery is not None
+            assert received_credentials is credentials
+            refresh_calls.append(True)
+            return refreshed
+
+    monkeypatch.setattr("cua_cli.auth.oidc.load_credentials", lambda: credentials)
+    monkeypatch.setattr("cua_cli.auth.oidc.OidcClient", RefreshingClient)
+    monkeypatch.setattr("cua_cli.auth.oidc.save_credentials", lambda value: None)
+
+    assert await get_access_token(force_refresh=True) == refreshed.access_token
+    assert refresh_calls == [True]
+
+
+@pytest.mark.asyncio
+async def test_fleet_access_token_provider_forwards_force_refresh(monkeypatch) -> None:
+    refresh_requests = []
+
+    async def access_token(*, force_refresh: bool = False) -> str:
+        refresh_requests.append(force_refresh)
+        return "token"
+
+    monkeypatch.setattr("cua_cli.auth.oidc.get_access_token", access_token)
+    provider = FleetAccessTokenProvider()
+
+    await provider.get_access_token(False)
+    await provider.get_access_token(True)
+
+    assert refresh_requests == [False, True]

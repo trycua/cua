@@ -1,8 +1,8 @@
 """Main entry point for Cua CLI."""
 
 import argparse
-import os
 import logging
+import os
 import sys
 import time
 

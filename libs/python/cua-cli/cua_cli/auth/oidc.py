@@ -8,7 +8,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import aiohttp
-
 from cua_cli.auth.store import OAuthCredentials, load_credentials, save_credentials
 
 DEFAULT_RUN_API_BASE = "https://run.cua.ai"

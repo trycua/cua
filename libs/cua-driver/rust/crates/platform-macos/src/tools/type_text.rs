@@ -305,7 +305,29 @@ impl Tool for TypeTextTool {
         let changes = super::finish_window_observation(snapshot, &args).await;
 
         match result {
-            Ok(Ok((detail, path, verified))) => {
+            Ok(Ok(outcome)) if outcome.delivered_chars.is_some_and(|n| n < char_count) => {
+                let delivered_chars = outcome.delivered_chars.unwrap_or_default();
+                ToolResult::error(format!(
+                    "type_text incomplete: delivered {delivered_chars} of {char_count} character(s){}; retry only the remaining suffix",
+                    outcome.detail
+                ))
+                .with_structured(serde_json::json!({
+                    "code": "type_text_incomplete",
+                    "path": outcome.path,
+                    "effect": "partial",
+                    "requested_chars": char_count,
+                    "delivered_chars": delivered_chars,
+                    "retryable": true,
+                    "retry_from_character": delivered_chars,
+                }))
+            }
+            Ok(Ok(outcome)) => {
+                let TypeTextOutcome {
+                    detail,
+                    path,
+                    verified,
+                    delivered_chars,
+                } = outcome;
                 // SURFACE-AWARE VERIFICATION. On any web-content surface —
                 // Chromium/WebKit/Electron — the AX layer accepts a write and
                 // echoes it straight back through `AXValue` while the renderer/DOM
@@ -363,9 +385,13 @@ impl Tool for TypeTextTool {
                     let mut s = serde_json::json!({
                         "path": path,
                         "characters": char_count,
+                        "requested_chars": char_count,
                         "verified": verified,
                         "effect": if verified { "confirmed" } else { "unverifiable" },
                     });
+                    if let Some(delivered_chars) = delivered_chars {
+                        s["delivered_chars"] = serde_json::json!(delivered_chars);
+                    }
                     if ax_echo_surface {
                         // Web-content AX echo. A real browser TAB → the `page` tool
                         // (drives the DOM via CDP) is the reliable rung; an embedded
@@ -425,6 +451,26 @@ const PATH_AX: &str = "ax";
 const PATH_KEY_EVENTS: &str = "key_events";
 const PATH_KEY_EVENTS_FG: &str = "key_events_fg";
 
+const DELIVERY_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+const DELIVERY_DRAIN_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
+
+struct TypeTextOutcome {
+    detail: String,
+    path: &'static str,
+    verified: bool,
+    /// Exact when AX exposed the target value. `None` means delivery could not
+    /// be observed, so the existing unverifiable contract remains in force.
+    delivered_chars: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TypedProgress {
+    Complete,
+    Partial(usize),
+    Unchanged,
+    Unverifiable,
+}
+
 fn foreground_settle_ms(pid: i32, frontmost_pid: Option<i32>) -> u64 {
     if frontmost_pid == Some(pid) {
         20
@@ -439,18 +485,42 @@ fn foreground_settle_ms(pid: i32, frontmost_pid: Option<i32>) -> u64 {
 /// the keystrokes. Returns whether we can *positively confirm* the text landed:
 /// - unreadable `after` (`None`) → unverifiable → `false` (Catalyst case; the
 ///   agent must confirm via screenshot).
-/// - `after` contains the text, or grew vs `before` → `true`.
+/// - `after` contains the complete text → `true`.
 /// - empty input text → trivially `true`.
 ///
 /// Apps that normalize input (smart quotes, autocomplete) may fail the
 /// substring/length test even though something landed — we report `false`
 /// (unverified) rather than erroring, so the agent can still confirm.
 fn verify_typed(before: Option<&str>, after: Option<&str>, text: &str) -> bool {
+    matches!(typed_progress(before, after, text), TypedProgress::Complete)
+}
+
+/// Classify an observable insertion without mistaking a prefix for complete
+/// delivery. A positive length delta is an exact delivered-character count for
+/// insert-at-cursor typing; it is capped at the request size defensively.
+fn typed_progress(before: Option<&str>, after: Option<&str>, text: &str) -> TypedProgress {
     if text.is_empty() {
-        return true;
+        return TypedProgress::Complete;
     }
-    let Some(after) = after else { return false };
-    after.contains(text) || before.is_some_and(|b| after.chars().count() > b.chars().count())
+    let Some(after) = after else {
+        return TypedProgress::Unverifiable;
+    };
+    if after.contains(text) {
+        return TypedProgress::Complete;
+    }
+    let Some(before) = before else {
+        return TypedProgress::Unverifiable;
+    };
+    let delivered = after
+        .chars()
+        .count()
+        .saturating_sub(before.chars().count())
+        .min(text.chars().count());
+    if delivered == 0 {
+        TypedProgress::Unchanged
+    } else {
+        TypedProgress::Partial(delivered)
+    }
 }
 
 /// Read the focused/target field's `AXValue`, for before/after read-back.
@@ -537,7 +607,7 @@ fn cgevent_type_verified(
     before: Option<&str>,
     element_ptr_and_idx: Option<(usize, Option<usize>)>,
     settle_ms: u64,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<(bool, Option<usize>)> {
     // Focus the target element first so the keystrokes land in IT. Critical in
     // foreground mode: a freshly-fronted window's keyboard focus may be on the
     // search box or nowhere, so without this the text goes into the void (or the
@@ -556,8 +626,45 @@ fn cgevent_type_verified(
         std::thread::sleep(std::time::Duration::from_millis(settle_ms));
     }
     crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)?;
-    let after = read_axvalue(pid, element_ptr_and_idx);
-    Ok(verify_typed(before, after.as_deref(), text))
+
+    // CGEvent posting is asynchronous with respect to the renderer. In
+    // particular, Chromium can acknowledge the posting process while a long
+    // tail remains queued. Poll the AX value until the complete payload is
+    // visible instead of treating any growth as success. If the deadline
+    // expires after observable growth, surface the exact partial count.
+    let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
+    Ok(await_typed_delivery(before, text, deadline, || {
+        read_axvalue(pid, element_ptr_and_idx)
+    }))
+}
+
+fn await_typed_delivery(
+    before: Option<&str>,
+    text: &str,
+    deadline: std::time::Instant,
+    mut read_value: impl FnMut() -> Option<String>,
+) -> (bool, Option<usize>) {
+    let mut best_partial = None;
+    loop {
+        let after = read_value();
+        match typed_progress(before, after.as_deref(), text) {
+            TypedProgress::Complete => return (true, Some(text.chars().count())),
+            TypedProgress::Partial(delivered) => {
+                best_partial =
+                    Some(best_partial.map_or(delivered, |best: usize| best.max(delivered)));
+            }
+            TypedProgress::Unverifiable => return (false, None),
+            TypedProgress::Unchanged => {
+                // A readable unchanged value is an observed zero-character
+                // delivery, not an unverifiable success.
+                best_partial.get_or_insert(0);
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            return (false, best_partial);
+        }
+        std::thread::sleep(DELIVERY_DRAIN_POLL_INTERVAL);
+    }
 }
 
 /// Best-effort-background ladder for `type_text`.
@@ -578,7 +685,7 @@ fn type_text_blocking(
     is_terminal_target: bool,
     delivery_mode: super::DeliveryMode,
     window_id: Option<u32>,
-) -> anyhow::Result<(String, &'static str, bool)> {
+) -> anyhow::Result<TypeTextOutcome> {
     // Original field value before any rung drives read-back verification only.
     // An unreadable value is not evidence that the field is empty.
     let before = read_axvalue(pid, element_ptr_and_idx);
@@ -604,22 +711,22 @@ fn type_text_blocking(
                 foreground_settle_ms,
             )
         };
-        let (verified, fronted) = match window_id {
+        let ((verified, delivered_chars), fronted) = match window_id {
             Some(wid) => {
                 // Front → type → restore. The closure returns the read-back
                 // result; with_foreground_assist returns whether it actually
                 // fronted (Ok(false) when the fronting SPIs are unavailable —
                 // the keystrokes still ran, just as background input).
-                let mut typed_verified = false;
+                let mut typed_delivery = (false, None);
                 let fronted = crate::input::skylight::with_foreground_assist(
                     pid as libc::pid_t,
                     wid,
                     || {
-                        typed_verified = do_type()?;
+                        typed_delivery = do_type()?;
                         Ok(())
                     },
                 )?;
-                (typed_verified, fronted)
+                (typed_delivery, fronted)
             }
             // No window to front — best-effort background keystrokes instead.
             None => (do_type()?, false),
@@ -627,15 +734,16 @@ fn type_text_blocking(
         // Only claim the `_fg` path when a front actually happened; when no
         // foregrounding occurred (no window, or SPIs unavailable) these were
         // background keystrokes and `path` must say so honestly.
-        return Ok((
-            format!(" via foreground keystrokes ({delay_ms}ms delay)"),
-            if fronted {
+        return Ok(TypeTextOutcome {
+            detail: format!(" via foreground keystrokes ({delay_ms}ms delay)"),
+            path: if fronted {
                 PATH_KEY_EVENTS_FG
             } else {
                 PATH_KEY_EVENTS
             },
+            delivered_chars,
             verified,
-        ));
+        });
     }
 
     // --- Background rung 0: terminal emulator → CGEvent only (AX is dropped). ---
@@ -644,7 +752,7 @@ fn type_text_blocking(
             "type_text: pid {pid} is a terminal emulator; skipping AX value-set, \
              using CGEvent key-event synthesis"
         );
-        let verified = cgevent_type_verified(
+        let (verified, delivered_chars) = cgevent_type_verified(
             pid,
             text,
             delay_ms,
@@ -652,11 +760,12 @@ fn type_text_blocking(
             element_ptr_and_idx,
             /*settle_ms=*/ 0,
         )?;
-        return Ok((
-            format!(" via CGEvent (terminal emulator, {delay_ms}ms delay)"),
-            PATH_KEY_EVENTS,
+        return Ok(TypeTextOutcome {
+            detail: format!(" via CGEvent (terminal emulator, {delay_ms}ms delay)"),
+            path: PATH_KEY_EVENTS,
             verified,
-        ));
+            delivered_chars,
+        });
     }
 
     // --- Background rung 1: AX SelectedText write (element or focused). ---
@@ -684,7 +793,12 @@ fn type_text_blocking(
         }
         if ax_landed {
             let idx_str = idx_opt.map(|i| format!(" [{i}]")).unwrap_or_default();
-            return Ok((format!(" into{idx_str} {role} \"{title}\""), PATH_AX, true));
+            return Ok(TypeTextOutcome {
+                detail: format!(" into{idx_str} {role} \"{title}\""),
+                path: PATH_AX,
+                verified: true,
+                delivered_chars: Some(text.chars().count()),
+            });
         }
         tracing::debug!(
             "AX write did not land for {role} \"{title}\" (err={err}); \
@@ -697,7 +811,7 @@ fn type_text_blocking(
     // --- Background rung 2: CGEvent keystrokes with read-back. ---
     // Never clear here: a partial AX write is rare, and clearing would violate
     // insert-at-cursor semantics.
-    let verified = cgevent_type_verified(
+    let (verified, delivered_chars) = cgevent_type_verified(
         pid,
         text,
         delay_ms,
@@ -705,11 +819,12 @@ fn type_text_blocking(
         element_ptr_and_idx,
         /*settle_ms=*/ 0,
     )?;
-    Ok((
-        format!(" via CGEvent ({delay_ms}ms delay)"),
-        PATH_KEY_EVENTS,
+    Ok(TypeTextOutcome {
+        detail: format!(" via CGEvent ({delay_ms}ms delay)"),
+        path: PATH_KEY_EVENTS,
         verified,
-    ))
+        delivered_chars,
+    })
 }
 
 #[cfg(test)]
@@ -757,10 +872,54 @@ mod tests {
     }
 
     #[test]
-    fn verify_typed_contains_or_grew_is_verified() {
+    fn verify_typed_contains_full_request_is_verified() {
         assert!(verify_typed(Some(""), Some("hi"), "hi")); // contains
         assert!(verify_typed(Some("ab"), Some("ab hi"), "hi")); // contains, appended
-        assert!(verify_typed(Some("ab"), Some("abXY"), "??")); // grew vs before
+    }
+
+    #[test]
+    fn observable_prefix_is_partial_not_verified() {
+        assert_eq!(
+            typed_progress(Some(""), Some("BEGINpayload"), "BEGINpayloadEND"),
+            TypedProgress::Partial(12)
+        );
+        assert!(!verify_typed(
+            Some(""),
+            Some("BEGINpayload"),
+            "BEGINpayloadEND"
+        ));
+    }
+
+    #[test]
+    fn delivery_waits_through_a_partial_readback_until_complete() {
+        let text = "BEGIN-payload-END";
+        let mut values = std::collections::VecDeque::from([
+            Some("BEGIN-payload".to_owned()),
+            Some(text.to_owned()),
+        ]);
+        let mut reads = 0;
+        let delivery = await_typed_delivery(
+            Some(""),
+            text,
+            std::time::Instant::now() + std::time::Duration::from_secs(1),
+            || {
+                reads += 1;
+                values.pop_front().flatten()
+            },
+        );
+        assert_eq!(delivery, (true, Some(text.chars().count())));
+        assert_eq!(reads, 2, "completion must wait past the prefix readback");
+    }
+
+    #[test]
+    fn drained_prefix_reports_the_delivered_character_count() {
+        let delivery = await_typed_delivery(
+            Some(""),
+            "BEGIN-payload-END",
+            std::time::Instant::now(),
+            || Some("BEGIN".to_owned()),
+        );
+        assert_eq!(delivery, (false, Some(5)));
     }
 
     #[test]

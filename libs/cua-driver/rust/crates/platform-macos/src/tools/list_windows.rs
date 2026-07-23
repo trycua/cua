@@ -83,10 +83,12 @@ impl Tool for ListWindowsTool {
             })
             .collect();
 
+        let current_space_id = crate::input::skylight::get_active_space();
+
         ToolResult::text(format!("Found {} window(s).", windows_json.len())).with_structured(
             serde_json::json!({
                 "windows": windows_json,
-                "current_space_id": null
+                "current_space_id": current_space_id
             }),
         )
     }

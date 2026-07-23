@@ -77,6 +77,11 @@ fn enumerate_windows(options: u32) -> Vec<WindowInfo> {
     };
     use std::os::raw::c_void;
 
+    // Capture the current active space once so every window in this batch is
+    // compared against the same snapshot.  Spurious dlopen/dlsym calls on every
+    // window are also avoided.
+    let current_space = crate::input::skylight::get_active_space();
+
     let raw_ref = unsafe { CGWindowListCopyWindowInfo(options, kCGNullWindowID) };
     if raw_ref.is_null() {
         return vec![];
@@ -84,7 +89,8 @@ fn enumerate_windows(options: u32) -> Vec<WindowInfo> {
 
     let raw: CFArray<CFTypeRef> = unsafe { CFArray::wrap_under_create_rule(raw_ref as _) };
     let total = raw.len() as usize;
-    let mut result = Vec::new();
+    let mut results = Vec::new();
+    let mut layer0_wids: Vec<u32> = Vec::new();
 
     for (idx, item) in raw.iter().enumerate() {
         let item = *item;
@@ -186,7 +192,7 @@ fn enumerate_windows(options: u32) -> Vec<WindowInfo> {
         // z_index: CGWindowList front-to-back → assign reverse index.
         let z_index = total - idx;
 
-        result.push(WindowInfo {
+        results.push(WindowInfo {
             window_id,
             pid,
             app_name,
@@ -198,9 +204,19 @@ fn enumerate_windows(options: u32) -> Vec<WindowInfo> {
             on_current_space: None,
             space_ids: None,
         });
+        layer0_wids.push(window_id);
     }
 
-    result
+    // Batch query spaces for all layer-0 windows in one SPI call.
+    let space_results = crate::input::skylight::get_window_spaces(&layer0_wids);
+    for (i, win) in results.iter_mut().enumerate() {
+        if let Some(space_id) = space_results.get(i).copied().flatten() {
+            win.space_ids = Some(vec![space_id]);
+            win.on_current_space = current_space.map(|cur| space_id == cur);
+        }
+    }
+
+    results
 }
 
 fn get_bounds_num(

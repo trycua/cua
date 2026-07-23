@@ -41,6 +41,12 @@ type SetIntFieldFn = unsafe extern "C" fn(*mut c_void, u32, i64);
 /// `uint32_t CGSMainConnectionID(void)`
 type ConnectionIDFn = unsafe extern "C" fn() -> u32;
 
+/// `uint64_t CGSGetActiveSpace(uint32_t cid)`
+type GetActiveSpaceFn = unsafe extern "C" fn(u32) -> u64;
+
+/// `CFArrayRef CGSCopySpacesForWindows(uint32_t cid, uint32_t options, CFArrayRef windowIDs)`
+type CopySpacesForWindowsFn = unsafe extern "C" fn(u32, u32, *const c_void) -> *mut c_void;
+
 // ── NSMenu shortcut activation SPIs ──────────────────────────────────────────
 
 /// `OSStatus SLPSSetFrontProcessWithOptions(const void *psn, uint32_t windowID, uint32_t options)`
@@ -138,6 +144,16 @@ fn set_int_field_fn() -> Option<SetIntFieldFn> {
 fn connection_id_fn() -> Option<ConnectionIDFn> {
     static SYM: OnceLock<Option<ConnectionIDFn>> = OnceLock::new();
     *SYM.get_or_init(|| find_sym(b"CGSMainConnectionID\0").map(|p| unsafe { as_fn(p) }))
+}
+
+fn get_active_space_fn() -> Option<GetActiveSpaceFn> {
+    static SYM: OnceLock<Option<GetActiveSpaceFn>> = OnceLock::new();
+    *SYM.get_or_init(|| find_sym(b"CGSGetActiveSpace\0").map(|p| unsafe { as_fn(p) }))
+}
+
+fn copy_spaces_for_windows_fn() -> Option<CopySpacesForWindowsFn> {
+    static SYM: OnceLock<Option<CopySpacesForWindowsFn>> = OnceLock::new();
+    *SYM.get_or_init(|| find_sym(b"CGSCopySpacesForWindows\0").map(|p| unsafe { as_fn(p) }))
 }
 
 fn factory_msg_send_fn() -> Option<FactoryMsgSendFn> {
@@ -329,6 +345,108 @@ pub fn main_connection_id() -> Option<u32> {
     connection_id_fn().map(|f| unsafe { f() })
 }
 
+/// Return the current active macOS Space (desktop) ID.
+///
+/// Uses the private `CGSGetActiveSpace` SPI from SkyLight.  Returns `None`
+/// when the symbol is unavailable (future macOS version that removes it).
+pub fn get_active_space() -> Option<u64> {
+    let cid = main_connection_id()?;
+    get_active_space_fn().map(|f| unsafe { f(cid) })
+}
+
+/// Return the Space ID for a specific window.
+///
+/// Uses the private `CGSCopySpacesForWindows` SPI from SkyLight.  This
+/// function queries one window at a time — it creates a temporary CFArray
+/// with the single window ID, calls `CGSCopySpacesForWindows`, and extracts
+/// the first (only) space ID from the result.  Returns `None` when the symbol
+/// is unavailable or the query produces no result.
+pub fn get_window_space(window_id: u32) -> Option<u64> {
+    use core_foundation::{
+        array::CFArray,
+        base::{CFTypeRef, TCFType},
+        number::CFNumber,
+    };
+
+    let cid = main_connection_id()?;
+    let f = copy_spaces_for_windows_fn()?;
+
+    let num = CFNumber::from(window_id as i64);
+    let num_ref: *const c_void = num.as_concrete_TypeRef() as *const c_void;
+    let arr = unsafe { CFArray::<CFTypeRef>::from_copyable(&[num_ref]) };
+
+    let result_ptr: *mut c_void = unsafe { f(cid, 7, arr.as_concrete_TypeRef() as *const c_void) };
+    if result_ptr.is_null() {
+        return None;
+    }
+
+    let result: CFArray<CFTypeRef> = unsafe { CFArray::wrap_under_create_rule(result_ptr as _) };
+    if result.len() == 0 {
+        return None;
+    }
+
+    let space_ptr = unsafe { *result.get(0)? };
+    let space_num = unsafe { CFNumber::wrap_under_get_rule(space_ptr as _) };
+    space_num.to_i64().map(|v| v as u64)
+}
+
+/// Return Space IDs for multiple windows in a single SPI call.
+///
+/// Batches all window IDs into one `CGSCopySpacesForWindows` call
+/// instead of N separate calls. Returns a Vec where `result[i]`
+/// corresponds to `window_ids[i]`. Entries are `None` when the
+/// window has no space assignment or the SPI is unavailable.
+pub fn get_window_spaces(window_ids: &[u32]) -> Vec<Option<u64>> {
+    if window_ids.is_empty() {
+        return vec![];
+    }
+
+    let cid = match main_connection_id() {
+        Some(cid) => cid,
+        None => return vec![None; window_ids.len()],
+    };
+    let f = match copy_spaces_for_windows_fn() {
+        Some(f) => f,
+        None => return vec![None; window_ids.len()],
+    };
+
+    use core_foundation::{
+        array::CFArray,
+        base::{CFTypeRef, TCFType},
+        number::CFNumber,
+    };
+
+    let nums: Vec<CFNumber> = window_ids
+        .iter()
+        .map(|&id| CFNumber::from(id as i64))
+        .collect();
+    let refs: Vec<*const c_void> = nums
+        .iter()
+        .map(|n| n.as_concrete_TypeRef() as *const c_void)
+        .collect();
+    let arr = unsafe { CFArray::<CFTypeRef>::from_copyable(&refs) };
+
+    let result_ptr = unsafe { f(cid, 7, arr.as_concrete_TypeRef() as *const c_void) };
+    if result_ptr.is_null() {
+        return vec![None; window_ids.len()];
+    }
+
+    let result: CFArray<CFTypeRef> = unsafe { CFArray::wrap_under_create_rule(result_ptr as _) };
+
+    let mut spaces = Vec::with_capacity(window_ids.len());
+    for i in 0..result.len() {
+        let item = unsafe { result.get(i) };
+        match item {
+            Some(ptr) => {
+                let num = unsafe { CFNumber::wrap_under_get_rule(*ptr as _) };
+                spaces.push(num.to_i64().map(|v| v as u64));
+            }
+            None => spaces.push(None),
+        }
+    }
+    spaces
+}
+
 // ── Focus-without-raise ───────────────────────────────────────────────────────
 
 /// Activate `target_pid`'s window `target_wid` without raising any windows
@@ -465,47 +583,6 @@ pub fn with_foreground_assist(
     body: impl FnOnce() -> anyhow::Result<()>,
 ) -> anyhow::Result<bool> {
     with_menu_shortcut_activation(target_pid, target_wid, body)
-}
-
-/// Activate an exact target window for a global HID keyboard action.
-///
-/// Unlike [`with_menu_shortcut_activation`], this helper must not run `action`
-/// when the private foreground SPI is unavailable: a global HID event has no
-/// pid addressing and would otherwise land in whichever application is
-/// currently frontmost. The short settles keep the target frontmost until
-/// WindowServer has routed both sides of the key chord, then restore the prior
-/// process even when the action fails.
-pub fn with_foreground_hid_activation(
-    target_pid: libc::pid_t,
-    target_wid: u32,
-    action: impl FnOnce() -> anyhow::Result<()>,
-) -> anyhow::Result<()> {
-    let set_front = set_front_process_fn()
-        .ok_or_else(|| anyhow::anyhow!("foreground HID delivery is unavailable"))?;
-
-    let mut prev_psn = [0u8; 8];
-    let prev_ok = get_front_process_fn()
-        .map(|f| unsafe { f(prev_psn.as_mut_ptr() as *mut c_void) } == 0)
-        .unwrap_or(false);
-
-    let mut target_psn = [0u8; 8];
-    if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
-        anyhow::bail!("could not resolve target window for foreground HID delivery");
-    }
-    let activated = unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) };
-    if activated != 0 {
-        anyhow::bail!("WindowServer rejected foreground HID activation");
-    }
-
-    std::thread::sleep(std::time::Duration::from_millis(40));
-    let result = action();
-    std::thread::sleep(std::time::Duration::from_millis(40));
-
-    if prev_ok {
-        unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
-    }
-
-    result
 }
 
 /// Activate `target_pid`'s window `target_wid` for NSMenu key dispatch, run `action`,

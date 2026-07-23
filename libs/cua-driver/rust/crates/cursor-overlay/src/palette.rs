@@ -163,7 +163,7 @@ fn lerp_rgba(a: [u8; 4], b: [u8; 4], t: f64) -> [u8; 4] {
 
 fn stable_index(id: &str, count: usize) -> usize {
     let suffix = id
-        .rfind(|c| c == '-' || c == '_' || c == '.')
+        .rfind(['-', '_', '.'])
         .map(|i| &id[i + 1..])
         .unwrap_or(id);
     if let Ok(n) = suffix.parse::<usize>() {

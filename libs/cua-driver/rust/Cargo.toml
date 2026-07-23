@@ -2,6 +2,9 @@
 resolver = "2"
 members = [
     "crates/cua-driver",
+    "crates/cua-driver-contract",
+    "crates/cua-driver-sdk",
+    "crates/cua-driver-bindgen",
     "crates/cua-driver-testkit",
     "crates/cua-driver-uia",
     "crates/cua-driver-core",
@@ -13,7 +16,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.10.0"
+version = "0.12.0"
 edition = "2021"
 authors = ["trycua"]
 license = "MIT"
@@ -30,3 +33,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 base64 = "0.22"
 uuid = { version = "1", features = ["v4"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+uniffi = "=0.31.0"

@@ -141,6 +141,8 @@ impl PathPlanner {
     ///
     /// * `end_visual_heading` — the arrow heading at rest (for the rendered tip).
     /// * `turn_radius` — minimum turning radius in points (Swift default: 80).
+    // The flattened start/end poses are part of the cross-language overlay API.
+    #[allow(clippy::too_many_arguments)]
     pub fn plan(
         x0: f64,
         y0: f64,
@@ -291,6 +293,9 @@ fn dubins_lrl(d: f64, a: f64, b: f64) -> Option<DubinsSol> {
     })
 }
 
+// Keep this helper's arguments aligned with `PathPlanner::plan` so the fallback
+// and Dubins routes cannot accidentally swap pose components.
+#[allow(clippy::too_many_arguments)]
 fn plan_dubins(
     x0: f64,
     y0: f64,
@@ -312,7 +317,8 @@ fn plan_dubins(
     let a = mod2pi(th0 - theta);
     let b = mod2pi(th1 - theta);
 
-    let solvers: [fn(f64, f64, f64) -> Option<DubinsSol>; 6] = [
+    type DubinsSolver = fn(f64, f64, f64) -> Option<DubinsSol>;
+    let solvers: [DubinsSolver; 6] = [
         dubins_lsl, dubins_rsr, dubins_lsr, dubins_rsl, dubins_rlr, dubins_lrl,
     ];
 

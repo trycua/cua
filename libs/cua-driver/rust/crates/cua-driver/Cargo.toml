@@ -17,6 +17,7 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 cua-driver-core = { path = "../cua-driver-core" }
+cua-driver-sdk = { path = "../cua-driver-sdk" }
 cursor-overlay = { path = "../cursor-overlay" }
 pip-preview = { path = "../pip-preview" }
 async-trait = "0.1"
@@ -30,11 +31,6 @@ ureq = { version = "3", features = ["json"] }
 # pre-release tags (`-dev`, `-rc.1`) sort below their corresponding release
 # and we never recommend a pre-release as an "update".
 semver = "1"
-# Bounded `Child::wait_timeout` for the Linux AT-SPI / gdbus probe in
-# `doctor`. We can't rely on `gdbus introspect` returning quickly when the
-# session D-Bus is hung — without a timeout, `doctor` would block forever
-# on a broken accessibility stack. Tiny dep, exactly this use case.
-wait-timeout = "0.2"
 # Tarball extraction for `cua-driver skills install`. The verb fetches a
 # versioned `cua-driver-rs-v<v>-skills.tar.gz` release asset from GitHub
 # and unpacks it under `<HomeDir>/skills/cua-driver-rs/`. `tar` is the
@@ -77,6 +73,7 @@ embed-resource = "2"
 # Shared integration-test harness (MCP/CLI transports, child reaping, paths,
 # response accessors). Dev-only — never linked into the shipped driver.
 cua-driver-testkit = { path = "../cua-driver-testkit" }
+cua-driver-contract = { path = "../cua-driver-contract" }
 tokio = { workspace = true, features = ["full"] }
 image = { workspace = true }
 base64 = { workspace = true }

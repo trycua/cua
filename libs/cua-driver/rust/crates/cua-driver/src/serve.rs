@@ -17,9 +17,13 @@
 //!   Linux  — ~/.cache/cua-driver/cua-driver.sock
 //!   Windows — \\.\pipe\cua-driver  (TODO: use named pipe; stubs only for now)
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
+
+pub use cua_driver_core::daemon::{
+    is_daemon_listening, send_request, socket_path_for_namespace, DaemonRequest, DaemonResponse,
+    ToolObservationOrigin,
+};
 
 static ACTIVE_PROXY_SESSIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
@@ -48,23 +52,6 @@ fn inject_browser_approvals(tool_name: &str, args: &mut serde_json::Value, sessi
             );
         }
     }
-}
-
-// ── Recording idle-TTL backstop (#1764) ─────────────────────────────────────────
-
-/// Default TTL of zero `call` activity after which an active recording is
-/// auto-stopped. Generous: a single agent turn can be slow. Overridable via the
-/// `CUA_DRIVER_RS_RECORDING_IDLE_TTL_SECS` env var (used by the #1764 verify
-/// harness to exercise the backstop quickly).
-const RECORDING_IDLE_TTL_SECS_DEFAULT: u64 = 300;
-
-/// Wall-clock seconds since the Unix epoch. Same idiom `recording.rs` uses for
-/// `now_ms`.
-fn now_unix_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
 }
 
 /// Resolve + apply the session identity for a tool call at the daemon boundary.
@@ -119,150 +106,11 @@ fn is_session_lifecycle_tool(tool_name: &str) -> bool {
     matches!(tool_name, "start_session" | "end_session")
 }
 
-/// Resolve the recording idle TTL, honoring the env override.
-fn recording_idle_ttl_secs() -> u64 {
-    std::env::var("CUA_DRIVER_RS_RECORDING_IDLE_TTL_SECS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .filter(|v| *v > 0)
-        .unwrap_or(RECORDING_IDLE_TTL_SECS_DEFAULT)
-}
-
-/// Spawn a detached daemon task that auto-stops a recording after the idle TTL.
-///
-/// Defense-in-depth for #1764: the primary teardown is now the per-session
-/// reaper (the proxy's persistent control connection EOF fires `session_end`,
-/// covering proxy SIGKILL/crash). This TTL covers the residual case a non-proxy
-/// raw client starts a recording and dies without ever sending `session_begin`.
-/// It MUST NOT stop a still-active session: it only reaps when BOTH
-/// the recording is enabled AND there has been no `call` activity for the full
-/// TTL. As long as a session keeps issuing tool calls, `last_activity` is bumped
-/// every turn and the idle window never reaches the TTL. `stop()` is idempotent,
-/// so racing with the proxy-exit hook or an explicit `stop_recording` is benign.
-fn spawn_recording_idle_backstop(
-    registry: std::sync::Arc<cua_driver_core::tool::ToolRegistry>,
-    last_activity: std::sync::Arc<std::sync::atomic::AtomicU64>,
-) {
-    let ttl = recording_idle_ttl_secs();
-    tokio::spawn(async move {
-        // 30s tick granularity: reap latency is `ttl` rounded up to the next
-        // tick, so a sub-30s TTL override (e.g. in tests) still fires no sooner
-        // than ~30s. Fine for the 300s production default.
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
-        loop {
-            tick.tick().await;
-            if registry.recording.current_state().enabled {
-                let idle = now_unix_secs()
-                    .saturating_sub(last_activity.load(std::sync::atomic::Ordering::Relaxed));
-                if idle >= ttl {
-                    tracing::warn!(
-                        "recording idle {idle}s ≥ {ttl}s TTL; auto-stopping \
-                         (proxy-exit hook likely missed)"
-                    );
-                    // Unconditional (`None`): the idle backstop is a last-resort
-                    // GLOBAL kill of whatever recording is active after global
-                    // inactivity — not an owner reclaiming a specific session.
-                    // It already targets the live recording by definition, so a
-                    // requester id would be redundant and could only make it
-                    // wrongly no-op. Session-scoped teardown is the proxy-exit
-                    // `session_end` path (#1764 / session-identity work).
-                    // stop_owner can SYNCHRONOUSLY finalize the recording's mp4
-                    // (SCStream::stop_capture blocks on disk I/O), so run it on a
-                    // blocking thread to keep the reactor free (see the EOF reaper).
-                    let reg2 = registry.clone();
-                    let _ =
-                        tokio::task::spawn_blocking(move || reg2.recording.stop_owner(None)).await;
-                }
-            }
-        }
-    });
-}
-
-/// Default idle-TTL for a caller-declared session (seconds). A session that
-/// isn't touched (no tool call carrying its `session`) for this long is reclaimed
-/// by [`spawn_session_idle_sweep`] — its cursor removed, recording stopped,
-/// config cleared. Overridable via `CUA_DRIVER_RS_SESSION_IDLE_TTL_SECS`.
-const SESSION_IDLE_TTL_SECS_DEFAULT: u64 = 300;
-
-fn session_idle_ttl_secs() -> u64 {
-    std::env::var("CUA_DRIVER_RS_SESSION_IDLE_TTL_SECS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .filter(|v| *v > 0)
-        .unwrap_or(SESSION_IDLE_TTL_SECS_DEFAULT)
-}
-
-/// Spawn the detached idle-TTL sweep for caller-declared sessions.
-///
-/// A session is no longer tied to a connection's lifetime (it's a caller-declared
-/// identity that can span connections, transports, and apps), so a run that ends
-/// — or crashes — without calling `end_session` is reclaimed here. Each tick ends
-/// every session whose last activity is older than the TTL; `session::evict_idle`
-/// fans `fire_session_end` out to the cursor/recording/config cleanup hooks. A
-/// session that keeps issuing tool calls bumps its activity every turn and never
-/// reaches the idle window. Idempotent and cheap.
-fn spawn_session_idle_sweep() {
-    let ttl = std::time::Duration::from_secs(session_idle_ttl_secs());
-    tokio::spawn(async move {
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
-        loop {
-            tick.tick().await;
-            let ended = cua_driver_core::session::evict_idle(ttl);
-            if !ended.is_empty() {
-                tracing::info!(
-                    count = ended.len(),
-                    "idle-TTL reclaimed sessions: {ended:?}"
-                );
-            }
-        }
-    });
-}
-
-/// Register a `session_end` hook that stops a recording the ending session owns.
-///
-/// The per-platform cursor-remove + config-clear hooks already run on
-/// `fire_session_end`; this adds recording teardown to the SAME signal, so
-/// `end_session`, the idle-TTL sweep, and the control-connection EOF reaper all
-/// stop a session's recording uniformly (matching `end_session`'s contract).
-/// `stop_owner(Some(sid))` is a no-op unless `sid` owns the live recording, and
-/// runs on a detached thread so finalizing the mp4 never blocks the synchronous
-/// `fire_session_end` caller (the sweep task or an async tool invoke). The EOF
-/// arm keeps its own inline `spawn_blocking` stop for ordered finalize-then-reply;
-/// a second stop here is an idempotent no-op.
-fn register_recording_session_end_hook(
-    recording: std::sync::Arc<cua_driver_core::recording::RecordingSession>,
-) {
-    cua_driver_core::session::register_session_end_hook(move |sid| {
-        let recording = recording.clone();
-        let sid = sid.to_owned();
-        std::thread::spawn(move || {
-            let _ = recording.stop_owner(Some(&sid));
-        });
-    });
-}
-
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
 /// Returns the platform default socket/pipe path.
 pub fn default_socket_path() -> String {
-    #[cfg(target_os = "macos")]
-    {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-        format!("{home}/Library/Caches/cua-driver/cua-driver.sock")
-    }
-    #[cfg(target_os = "linux")]
-    {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-        format!("{home}/.cache/cua-driver/cua-driver.sock")
-    }
-    #[cfg(target_os = "windows")]
-    {
-        r"\\.\pipe\cua-driver".to_owned()
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    {
-        "/tmp/cua-driver.sock".to_owned()
-    }
+    socket_path_for_namespace(crate::bundle::state_namespace())
 }
 
 /// On Windows, returns the named-pipe path of the uiAccess-elevated worker
@@ -275,25 +123,30 @@ pub fn default_socket_path() -> String {
 /// Medium-IL daemon. See #1602 / the `cua-driver-uia` crate for the worker side.
 #[cfg(target_os = "windows")]
 pub fn default_uia_pipe_path() -> String {
-    r"\\.\pipe\cua-driver-uia".to_owned()
+    if crate::bundle::is_local_installation() {
+        r"\\.\pipe\cua-driver-local-uia".to_owned()
+    } else {
+        r"\\.\pipe\cua-driver-uia".to_owned()
+    }
 }
 
 /// Returns the platform default PID file path.
 pub fn default_pid_file_path() -> String {
+    let namespace = crate::bundle::state_namespace();
     #[cfg(target_os = "macos")]
     {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-        format!("{home}/Library/Caches/cua-driver/cua-driver.pid")
+        format!("{home}/Library/Caches/{namespace}/{namespace}.pid")
     }
     #[cfg(target_os = "linux")]
     {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-        format!("{home}/.cache/cua-driver/cua-driver.pid")
+        format!("{home}/.cache/{namespace}/{namespace}.pid")
     }
     #[cfg(target_os = "windows")]
     {
         let local = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| "C:/Temp".into());
-        format!("{local}/cua-driver/cua-driver.pid")
+        format!("{local}/{namespace}/{namespace}.pid")
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
@@ -302,68 +155,6 @@ pub fn default_pid_file_path() -> String {
 }
 
 // ── Protocol types ────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ToolObservationOrigin {
-    McpProxy,
-    Direct,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DaemonRequest {
-    pub method: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub args: Option<serde_json::Value>,
-    /// MCP-session identity minted once per `cua-driver mcp` proxy process and
-    /// stamped on every forwarded request. The daemon uses it to OWN and CLEAN
-    /// UP session-scoped state (recording, config overrides). Absent (`None`)
-    /// means an anonymous/"global" session — a one-shot `cua-driver call` or a
-    /// legacy proxy that predates this field — which keeps today's behavior.
-    /// `skip_serializing_if = Option::is_none` makes the absent case
-    /// byte-identical on the wire, so old clients and daemons interoperate.
-    /// serde defaults a missing field to `None` on deserialize.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
-    /// Bounded internal routing metadata for exactly-once completion
-    /// observation. New proxies set `mcp_proxy` only after the daemon
-    /// advertises ownership; direct protocol clients may set `direct`.
-    /// Older peers ignore the additive field.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub observation_origin: Option<ToolObservationOrigin>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DaemonResponse {
-    pub ok: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub exit_code: Option<i32>,
-}
-
-impl DaemonResponse {
-    pub fn ok(result: serde_json::Value) -> Self {
-        Self {
-            ok: true,
-            result: Some(result),
-            error: None,
-            exit_code: None,
-        }
-    }
-    pub fn err(msg: impl Into<String>, code: i32) -> Self {
-        Self {
-            ok: false,
-            result: None,
-            error: Some(msg.into()),
-            exit_code: Some(code),
-        }
-    }
-}
 
 fn daemon_observation_transport(req: &DaemonRequest) -> Option<crate::telemetry::Transport> {
     match req.observation_origin {
@@ -423,10 +214,11 @@ fn observe_daemon_error(
 }
 
 async fn invoke_daemon_tool(
-    registry: &std::sync::Arc<cua_driver_core::tool::ToolRegistry>,
+    sdk: &std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
     req: DaemonRequest,
 ) -> DaemonResponse {
     let observation_transport = daemon_observation_transport(&req);
+    let direct_client_kind = req.client_kind;
     let raw_name = req.name.as_deref().unwrap_or("").to_owned();
     let tool_name = if raw_name == "type_text_chars" {
         eprintln!(
@@ -436,7 +228,7 @@ async fn invoke_daemon_tool(
     } else {
         raw_name
     };
-    let known_tool = registry.get_def(&tool_name).is_some();
+    let known_tool = sdk.is_known_tool(&tool_name);
     let mut args = req
         .args
         .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
@@ -500,90 +292,44 @@ async fn invoke_daemon_tool(
                 cua_driver_core::session::SessionTransport::Daemon
             }
         };
-        cua_driver_core::session::begin_tool_call(&tool_name, &args, true, transport)
+        let client_kind = match transport {
+            cua_driver_core::session::SessionTransport::McpStdio
+            | cua_driver_core::session::SessionTransport::McpHttp => {
+                cua_driver_core::session::SessionClientKind::Mcp
+            }
+            cua_driver_core::session::SessionTransport::Cli => {
+                cua_driver_core::session::SessionClientKind::Cli
+            }
+            cua_driver_core::session::SessionTransport::Daemon => match direct_client_kind {
+                Some(cua_driver_core::daemon::DaemonClientKind::Cli) => {
+                    cua_driver_core::session::SessionClientKind::Cli
+                }
+                Some(cua_driver_core::daemon::DaemonClientKind::PythonSdk) => {
+                    cua_driver_core::session::SessionClientKind::PythonSdk
+                }
+                Some(cua_driver_core::daemon::DaemonClientKind::TypescriptSdk) => {
+                    cua_driver_core::session::SessionClientKind::TypescriptSdk
+                }
+                Some(cua_driver_core::daemon::DaemonClientKind::Unknown) | None => {
+                    cua_driver_core::session::SessionClientKind::Direct
+                }
+            },
+        };
+        cua_driver_core::session::begin_tool_call(&tool_name, &args, true, transport, client_kind)
     });
 
-    let result = registry.invoke(&tool_name, args).await;
-    let is_error = result.is_error.unwrap_or(false);
-    let content: Vec<serde_json::Value> = result
-        .content
-        .iter()
-        .map(|item| match item {
-            cua_driver_core::protocol::Content::Text { text, .. } => {
-                serde_json::json!({"type":"text","text":text})
-            }
-            cua_driver_core::protocol::Content::Image {
-                data, mime_type, ..
-            } => serde_json::json!({"type":"image","data":data,"mimeType":mime_type}),
-        })
-        .collect();
-    let mut result_value = serde_json::json!({
-        "content": content,
-        "isError": is_error,
-    });
-    if let Some(structured) = result.structured_content {
-        result_value["structuredContent"] = structured;
-    }
+    let result_value = match sdk.invoke_raw(&tool_name, args).await {
+        Ok(result) => result,
+        Err(error) => {
+            observe_daemon_error(observation, 1);
+            return DaemonResponse::err(error, 1);
+        }
+    };
     DaemonResponse::ok(observe_daemon_result(
         observation,
         session_context,
         result_value,
     ))
-}
-
-// ── Client ────────────────────────────────────────────────────────────────────
-
-/// Probe whether a daemon is listening on `socket_path`.
-///
-/// On Windows this uses `WaitNamedPipeW` with a tiny timeout, which checks
-/// whether a pipe instance is available **without consuming one**. The
-/// previous design (sending a `list` request) opened a pipe instance,
-/// then the immediately-following real `send_request` had to wait for the
-/// daemon to spin up its NEXT instance — that race made real tool calls
-/// (especially state-dependent ones like `click` that need the daemon's
-/// element_index cache) miss the shared daemon state. See the conversation around the
-/// "Element 3 not in cache" bug for the diagnosis.
-///
-/// `WaitNamedPipeW(name, 1)`:
-///   - Returns TRUE if an instance is currently available.
-///   - Returns FALSE if not available within 1 ms.
-///   - Does NOT consume the instance — that's reserved for the actual call.
-pub fn is_daemon_listening(socket_path: &str) -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::ffi::OsStrExt;
-
-        // Raw FFI to `WaitNamedPipeW` so this crate doesn't have to pull in
-        // the `windows` crate as a direct dependency just for one probe.
-        // `kernel32.dll` is implicitly linked on Windows targets.
-        #[link(name = "kernel32")]
-        extern "system" {
-            fn WaitNamedPipeW(lpNamedPipeName: *const u16, nTimeOut: u32) -> i32;
-        }
-
-        let wide: Vec<u16> = std::ffi::OsStr::new(socket_path)
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-        // NMPWAIT_NOWAIT == 1: "do not wait at all"; returns nonzero only if an
-        // instance is immediately available. We don't want to block here —
-        // this is a one-shot existence probe.
-        unsafe { WaitNamedPipeW(wide.as_ptr(), 1) != 0 }
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let req = DaemonRequest {
-            method: "list".into(),
-            name: None,
-            args: None,
-            session_id: None,
-            observation_origin: None,
-        };
-        send_request(socket_path, &req)
-            .ok()
-            .map(|r| r.ok)
-            .unwrap_or(false)
-    }
 }
 
 /// Read the PID stored in `pid_file_path`, if any.
@@ -593,125 +339,81 @@ pub fn read_pid_file(pid_file_path: &str) -> Option<u32> {
         .and_then(|s| s.trim().parse().ok())
 }
 
-/// Send a request to the daemon and return the response.
-/// Uses a 3-second connect timeout (by polling) and a 10-second read timeout.
-#[cfg(unix)]
-pub fn send_request(socket_path: &str, req: &DaemonRequest) -> anyhow::Result<DaemonResponse> {
-    use std::io::Read;
-    use std::os::unix::net::UnixStream;
-    use std::time::{Duration, Instant};
-
-    let mut stream = UnixStream::connect(socket_path)
-        .map_err(|e| anyhow::anyhow!("connect to {socket_path}: {e}"))?;
-    stream.set_write_timeout(Some(Duration::from_secs(5)))?;
-    // Per-read timeout acts as a liveness poll, NOT a hard cap on the whole
-    // response: an AX-heavy `get_window_state` (slow tree walk) or a multi-MB
-    // SOM screenshot can legitimately take longer than one window to produce.
-    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
-
-    let mut w = stream.try_clone()?;
-    let line = serde_json::to_string(req)? + "\n";
-    // EAGAIN-aware write: a daemon momentarily too busy to read our request
-    // (backpressure under concurrent slow tools) makes the 5s SO_SNDTIMEO write
-    // time out. Treat that like the read loop below does (#1997) — keep retrying
-    // until an overall deadline — instead of failing with a fatal "Resource
-    // temporarily unavailable (os error 35)" transport error. Mirrors the 120s
-    // read budget.
-    let write_deadline = Instant::now() + Duration::from_secs(120);
-    cua_driver_core::socket_io::write_all_with_retry(&mut w, line.as_bytes(), write_deadline)?;
-
-    // Read the single newline-terminated response line. A blocking UnixStream
-    // with SO_RCVTIMEO returns `WouldBlock`/`TimedOut` (EAGAIN, os error 35)
-    // when the timeout elapses with no bytes ready — that is NOT a transport
-    // failure, just "the daemon is still working". Previously this surfaced as
-    // a fatal `daemon transport error … Resource temporarily unavailable`
-    // (#1864). Loop and keep waiting (re-arming the per-read poll) until we
-    // have a full line, the daemon closes the connection, or an overall
-    // deadline generous enough for the slowest AX walk / largest response.
-    let overall_deadline = Instant::now() + Duration::from_secs(120);
-    let mut buf: Vec<u8> = Vec::with_capacity(64 * 1024);
-    let mut chunk = [0u8; 64 * 1024];
-    let resp_line = loop {
-        if let Some(nl) = buf.iter().position(|&b| b == b'\n') {
-            break String::from_utf8_lossy(&buf[..nl]).into_owned();
-        }
-        match stream.read(&mut chunk) {
-            Ok(0) => {
-                // EOF. Use whatever we buffered (some daemons close right after
-                // a final unterminated line); otherwise the daemon hung up.
-                if buf.is_empty() {
-                    anyhow::bail!("daemon closed connection without response");
-                }
-                break String::from_utf8_lossy(&buf).into_owned();
-            }
-            Ok(n) => buf.extend_from_slice(&chunk[..n]),
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(e)
-                if matches!(
-                    e.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) =>
-            {
-                if Instant::now() >= overall_deadline {
-                    anyhow::bail!(
-                        "timed out after 120s waiting for daemon response \
-                         (received {} bytes so far)",
-                        buf.len()
-                    );
-                }
-                continue;
-            }
-            Err(e) => return Err(e.into()),
-        }
-    };
-    let resp: DaemonResponse = serde_json::from_str(&resp_line)?;
-    Ok(resp)
-}
-
-#[cfg(not(unix))]
-pub fn send_request(socket_path: &str, req: &DaemonRequest) -> anyhow::Result<DaemonResponse> {
-    #[cfg(target_os = "windows")]
-    {
-        use std::io::{BufRead, BufReader, Write};
-        use std::time::Duration;
-
-        // Retry opening the pipe — server may still be starting.
-        let deadline = std::time::Instant::now() + Duration::from_secs(3);
-        let pipe = loop {
-            match std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(socket_path)
-            {
-                Ok(f) => break f,
-                Err(_) if std::time::Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(50));
-                }
-                Err(e) => anyhow::bail!("connect to named pipe {socket_path}: {e}"),
-            }
-        };
-
-        let mut writer = pipe.try_clone()?;
-        let line = serde_json::to_string(req)? + "\n";
-        writer.write_all(line.as_bytes())?;
-        writer.flush()?;
-
-        // Server writes one JSON line then flushes; pipe stays open until we drop it.
-        let reader = BufReader::new(pipe);
-        let resp_line = reader
-            .lines()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("daemon closed connection without response"))??;
-        let resp: DaemonResponse = serde_json::from_str(&resp_line)?;
-        Ok(resp)
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        anyhow::bail!("daemon client not supported on this platform (socket path: {socket_path})");
-    }
-}
-
 // ── Server ────────────────────────────────────────────────────────────────────
+
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+struct SocketIdentity {
+    device: u64,
+    inode: u64,
+}
+
+#[cfg(unix)]
+fn socket_identity(socket_path: &str) -> anyhow::Result<SocketIdentity> {
+    use std::os::unix::fs::MetadataExt as _;
+    let metadata = std::fs::symlink_metadata(socket_path)?;
+    Ok(SocketIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    })
+}
+
+#[cfg(unix)]
+fn remove_owned_socket(socket_path: &str, identity: SocketIdentity) {
+    let Ok(current) = socket_identity(socket_path) else {
+        return;
+    };
+    if current.device == identity.device && current.inode == identity.inode {
+        let _ = std::fs::remove_file(socket_path);
+    }
+}
+
+#[cfg(unix)]
+fn secure_embedded_socket(socket_path: &str, embedded: bool) -> anyhow::Result<()> {
+    if !embedded {
+        return Ok(());
+    }
+    use std::os::unix::fs::PermissionsExt as _;
+    let permissions = std::fs::Permissions::from_mode(0o600);
+    std::fs::set_permissions(socket_path, permissions)
+        .map_err(|e| anyhow::anyhow!("secure embedded daemon socket {socket_path}: {e}"))
+}
+
+#[cfg(unix)]
+fn prepare_embedded_socket_path(socket_path: &str, embedded: bool) -> anyhow::Result<()> {
+    if !embedded {
+        // Preserve the legacy standalone stale-socket recovery behavior.
+        let _ = std::fs::remove_file(socket_path);
+        return Ok(());
+    }
+    match std::fs::symlink_metadata(socket_path) {
+        Ok(_) => anyhow::bail!(
+            "embedded daemon endpoint already exists at {socket_path}; the owning host must prove and remove its stale socket before spawn"
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn daemon_metadata_response() -> DaemonResponse {
+    DaemonResponse::ok(
+        serde_json::to_value(cua_driver_core::daemon::current_daemon_metadata())
+            .expect("daemon metadata is serializable"),
+    )
+}
+
+async fn wait_for_parent_stdin_eof() {
+    use tokio::io::AsyncReadExt as _;
+
+    let mut stdin = tokio::io::stdin();
+    let mut buffer = [0_u8; 64];
+    loop {
+        match stdin.read(&mut buffer).await {
+            Ok(0) | Err(_) => return,
+            Ok(_) => {}
+        }
+    }
+}
 
 /// Run the daemon server. Binds `socket_path`, writes `pid_file_path`,
 /// accepts connections, and serves requests until `{"method":"shutdown"}`.
@@ -719,7 +421,7 @@ pub fn send_request(socket_path: &str, req: &DaemonRequest) -> anyhow::Result<Da
 /// This is `async` and must be called from a tokio runtime.
 #[cfg(unix)]
 pub async fn run_serve(
-    registry: std::sync::Arc<cua_driver_core::tool::ToolRegistry>,
+    sdk: std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
     socket_path: &str,
     pid_file_path: Option<&str>,
 ) -> anyhow::Result<()> {
@@ -733,11 +435,15 @@ pub async fn run_serve(
         std::fs::create_dir_all(dir)?;
     }
 
-    // Remove stale socket file (from a crashed previous daemon).
-    let _ = std::fs::remove_file(socket_path);
+    let embedded = cua_driver_core::embedded_mode();
+    // Embedded endpoints are host-owned. The daemon must never unlink an
+    // arbitrary pre-existing path between the host's safety check and bind.
+    prepare_embedded_socket_path(socket_path, embedded)?;
 
     let listener =
         UnixListener::bind(socket_path).map_err(|e| anyhow::anyhow!("bind {socket_path}: {e}"))?;
+    secure_embedded_socket(socket_path, embedded)?;
+    let bound_socket = socket_identity(socket_path)?;
 
     eprintln!("Cua Driver daemon listening on {socket_path}");
 
@@ -752,32 +458,27 @@ pub async fn run_serve(
     // Shutdown channel.
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let shutdown_tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx)));
+    let parent_liveness = async {
+        if cua_driver_core::parent_liveness_stdin_enabled() {
+            wait_for_parent_stdin_eof().await;
+        } else {
+            std::future::pending::<()>().await;
+        }
+    };
+    tokio::pin!(parent_liveness);
 
-    // Idle-TTL recording backstop (#1764), now demoted to SECONDARY cover. The
-    // PRIMARY teardown is the per-session reaper: the proxy holds a persistent
-    // control connection (session_begin) whose EOF — on graceful exit AND on
-    // kill -9 — fires session_end, stopping that session's recording reliably.
-    // This TTL still uniquely covers (a) a non-proxy raw client that starts a
-    // recording and dies without ever sending session_begin and (b) a
-    // daemon-internal wedge. We track the last `call` activity timestamp; a
-    // background task auto-stops the recording after `RECORDING_IDLE_TTL_SECS`
-    // of zero tool activity. Keyed on call activity (NOT connection liveness),
-    // so an actively-used session is never reaped.
-    let last_activity = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(now_unix_secs()));
-    spawn_recording_idle_backstop(registry.clone(), last_activity.clone());
-    spawn_session_idle_sweep();
+    // Idle-session and recording maintenance is owned by the SDK runtime so
+    // direct embedded applications and daemon-backed clients behave alike.
     if let Some(port) = crate::mcp_http::configured_port() {
-        crate::mcp_http::spawn(registry.clone(), port);
+        crate::mcp_http::spawn(sdk.clone(), port);
     }
-    register_recording_session_end_hook(registry.recording.clone());
 
     loop {
         tokio::select! {
             result = listener.accept() => {
                 let (stream, _) = result?;
-                let reg = registry.clone();
+                let reg = sdk.clone();
                 let shutdown_tx2 = shutdown_tx.clone();
-                let last_activity = last_activity.clone();
 
                 tokio::spawn(async move {
                     let (reader, mut writer) = stream.into_split();
@@ -806,6 +507,12 @@ pub async fn run_serve(
                         };
 
                         match req.method.as_str() {
+                            "metadata" => {
+                                let resp = daemon_metadata_response();
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                            }
                             "shutdown" => {
                                 let resp = DaemonResponse::ok(serde_json::json!({"shutdown": true}));
                                 let _ = writer.write_all(
@@ -826,49 +533,18 @@ pub async fn run_serve(
                                 // fields are ignored.
                                 //
                                 // `capabilities` is sourced from the centralised
-                                // `cua_driver_core::tool::default_capabilities_for`
-                                // name → tokens map so daemon responses match the
-                                // core MCP capability contract.
-                                let tools: Vec<serde_json::Value> = reg.iter_defs()
-                                    .map(|(name, def)| {
-                                        let caps = cua_driver_core::tool::default_capabilities_for(name);
-                                        let risk = cua_driver_core::authorization::risk_metadata_json(name);
-                                        serde_json::json!({
-                                            "name": name,
-                                            "description": def.description,
-                                            "input_schema": def.input_schema,
-                                            "read_only": def.read_only,
-                                            "destructive": def.destructive,
-                                            "idempotent": def.idempotent,
-                                            "open_world": def.open_world,
-                                            "capabilities": caps,
-                                            "risk": risk,
-                                        })
-                                    })
-                                    .collect();
-                                // Mirror `tools_list` envelope: include
-                                // capability_version + schema_version so MCP
-                                // proxy callers can pass them through verbatim
-                                // (one daemon round-trip, complete response).
-                                let resp = DaemonResponse::ok(serde_json::json!({
-                                    "tools": tools,
-                                    "capability_version": cua_driver_core::tool::CAPABILITY_VERSION,
-                                    "schema_version": "1",
-                                    "tool_observation_owner": "daemon",
-                                }));
+                                // name + concrete-schema resolver so daemon
+                                // responses match the core MCP capability contract.
+                                let resp = DaemonResponse::ok(reg.daemon_tools_list());
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
                             }
                             "describe" => {
                                 let name = req.name.as_deref().unwrap_or("");
-                                match reg.get_def(name) {
-                                    Some(def) => {
-                                        let resp = DaemonResponse::ok(serde_json::json!({
-                                            "name": def.name,
-                                            "description": def.description,
-                                            "input_schema": def.input_schema
-                                        }));
+                                match reg.describe(name) {
+                                    Some(description) => {
+                                        let resp = DaemonResponse::ok(description);
                                         let _ = writer.write_all(
                                             (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                         ).await;
@@ -898,19 +574,21 @@ pub async fn run_serve(
                                 let session = args.get("session")
                                     .and_then(serde_json::Value::as_str)
                                     .filter(|value| !value.is_empty());
-                                let result = if all && session.is_none() {
+                                let result: Result<serde_json::Value, String> = if all && session.is_none() {
                                     let count = cua_driver_core::session::revoke_all_sessions();
                                     Ok(serde_json::json!({"revoked": count, "scope": "all"}))
                                 } else if !all {
-                                    session.map_or_else(
-                                        || Err("revoke_authorization requires session or all=true"),
-                                        |session| {
-                                            cua_driver_core::session::end_session(session);
-                                            Ok(serde_json::json!({"revoked": 1, "scope": "session"}))
-                                        },
-                                    )
+                                    match session {
+                                        Some(session) => reg.end_session(session).await.map(|()| {
+                                            serde_json::json!({"revoked": 1, "scope": "session"})
+                                        }),
+                                        None => Err(
+                                            "revoke_authorization requires session or all=true"
+                                                .to_owned(),
+                                        ),
+                                    }
                                 } else {
-                                    Err("revoke_authorization accepts exactly one of session or all=true")
+                                    Err("revoke_authorization accepts exactly one of session or all=true".to_owned())
                                 };
                                 let resp = match result {
                                     Ok(value) => DaemonResponse::ok(value),
@@ -921,12 +599,6 @@ pub async fn run_serve(
                                 ).await;
                             }
                             "call" => {
-                                // Recording idle-TTL liveness: any serviced tool
-                                // call counts as activity (#1764).
-                                last_activity.store(
-                                    now_unix_secs(),
-                                    std::sync::atomic::Ordering::Relaxed,
-                                );
                                 let resp = invoke_daemon_tool(&reg, req).await;
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
@@ -963,24 +635,9 @@ pub async fn run_serve(
                                 // proxies never send it — the control-connection
                                 // EOF is the single teardown path. Always ACK ok.
                                 if let Some(sid) = req.session_id.as_deref() {
-                                    // stop_owner can SYNCHRONOUSLY finalize the
-                                    // recording's mp4 — run it off the reactor on
-                                    // a blocking thread (see the EOF reaper).
-                                    // fire_session_end stays inline (non-blocking).
-                                    // Mark the session ended FIRST so an in-flight
-                                    // start_recording sees ended=true and bails — the
-                                    // mark-before-reap invariant the cursor/config hooks
-                                    // already satisfy (their reap runs inside
-                                    // fire_session_end, after the mark). stop_owner does
-                                    // not consult is_session_ended, so reaping after the
-                                    // mark is safe.
-                                    cua_driver_core::session::fire_session_end(sid);
-                                    let reg2 = reg.clone();
-                                    let sid_for_stop = sid.to_owned();
-                                    let _ = tokio::task::spawn_blocking(move || {
-                                        reg2.recording.stop_owner(Some(&sid_for_stop))
-                                    })
-                                    .await;
+                                    if let Err(error) = reg.end_session(sid).await {
+                                        tracing::warn!("legacy session_end failed: {error}");
+                                    }
                                 }
                                 let resp = DaemonResponse::ok(
                                     serde_json::json!({"session_end": true})
@@ -1011,23 +668,9 @@ pub async fn run_serve(
                     // benign.
                     if let Some(sid) = control_session_id {
                         active_proxy_sessions().lock().unwrap().remove(&sid);
-                        // stop_owner can SYNCHRONOUSLY finalize the recording's
-                        // mp4 — on macOS it hits SCStream::stop_capture(), which
-                        // blocks on disk I/O (video_sckit.rs). Run it on a
-                        // blocking thread so it does not stall a runtime worker.
-                        // fire_session_end stays inline: its hooks (overlay
-                        // Remove, config-override clear) are non-blocking.
-                        // Mark the session ended FIRST so an in-flight start_recording
-                        // sees ended=true and bails (mark-before-reap; the cursor/config
-                        // hooks already reap inside fire_session_end after the mark).
-                        // stop_owner ignores is_session_ended, so reaping after is safe.
-                        cua_driver_core::session::fire_session_end(&sid);
-                        let reg2 = reg.clone();
-                        let sid_for_stop = sid.clone();
-                        let _ = tokio::task::spawn_blocking(move || {
-                            reg2.recording.stop_owner(Some(&sid_for_stop))
-                        })
-                        .await;
+                        if let Err(error) = reg.end_session(&sid).await {
+                            tracing::warn!("control-session cleanup failed: {error}");
+                        }
                     }
                 });
             }
@@ -1035,14 +678,21 @@ pub async fn run_serve(
                 eprintln!("Cua Driver daemon shutting down.");
                 break;
             }
+            _ = &mut parent_liveness => {
+                eprintln!("Cua Driver embedded host closed its lifetime pipe; shutting down.");
+                break;
+            }
         }
     }
 
-    // Clean up.
-    let _ = std::fs::remove_file(socket_path);
+    // Do not unlink a replacement socket created after this listener was bound.
+    remove_owned_socket(socket_path, bound_socket);
     if let Some(pid_path) = pid_file_path {
         let _ = std::fs::remove_file(pid_path);
     }
+    sdk.shutdown()
+        .await
+        .map_err(|error| anyhow::anyhow!("shut down SDK runtime: {error}"))?;
 
     Ok(())
 }
@@ -1114,7 +764,7 @@ fn maybe_spawn_uia_worker() {
         }
     };
     let uia = match current.parent() {
-        Some(dir) => dir.join("cua-driver-uia.exe"),
+        Some(dir) => dir.join(crate::bundle::uia_executable_name()),
         None => return,
     };
     if !uia.exists() {
@@ -1164,29 +814,10 @@ fn is_self_at_high_il() -> bool {
     }
 }
 
-/// Build a SECURITY_ATTRIBUTES that lets any Medium-IL (or higher) process
-/// open the named pipe, even though the daemon itself is running at
-/// High IL (via the autostart Scheduled Task's `RunLevel=Highest`, per
-/// #1630). Without this, the default UIPI rule "no write-up across IL
-/// boundaries" makes the High-IL daemon's pipe unreachable from a normal
-/// Medium-IL user shell — every `cua-driver <tool>` call from the CLI
-/// fails to reach the daemon and its shared `ToolState`, which breaks the
-/// element_index cache invariant
-/// (`get_window_state` → `click(element_index)` stops working because
-/// the two calls land in different ToolState instances).
-///
-/// SDDL: `D:(A;OICI;GA;;;WD)S:(ML;;NW;;;LW)`
-///   - DACL grants `GENERIC_ALL` to `WD` (Everyone).
-///   - SACL sets the mandatory label to LOW with `NW` (NoWriteUp), so
-///     processes at Low-IL and above can write the pipe — i.e. no
-///     IL-based write restriction in practice.
-///
-/// Returns the SECURITY_ATTRIBUTES struct AND the raw security-descriptor
-/// pointer (which the caller must keep alive for the lifetime of the
-/// pipe-server, then free via `LocalFree`).
 #[cfg(target_os = "windows")]
-unsafe fn build_open_pipe_security_attrs() -> Option<(SecurityAttributesRaw, *mut std::ffi::c_void)>
-{
+unsafe fn security_attrs_from_sddl(
+    sddl: &str,
+) -> Option<(SecurityAttributesRaw, *mut std::ffi::c_void)> {
     #[link(name = "advapi32")]
     extern "system" {
         fn ConvertStringSecurityDescriptorToSecurityDescriptorW(
@@ -1196,9 +827,7 @@ unsafe fn build_open_pipe_security_attrs() -> Option<(SecurityAttributesRaw, *mu
             security_descriptor_size: *mut u32,
         ) -> i32;
     }
-    let sddl: Vec<u16> = "D:(A;OICI;GA;;;WD)S:(ML;;NW;;;LW)\0"
-        .encode_utf16()
-        .collect();
+    let sddl: Vec<u16> = format!("{sddl}\0").encode_utf16().collect();
     let mut sd_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
     let mut sd_size: u32 = 0;
     let ok = ConvertStringSecurityDescriptorToSecurityDescriptorW(
@@ -1218,6 +847,107 @@ unsafe fn build_open_pipe_security_attrs() -> Option<(SecurityAttributesRaw, *mu
     Some((attrs, sd_ptr))
 }
 
+/// Return the current process token's user SID as an SDDL string. Embedded
+/// named pipes use this identity instead of the standalone daemon's historical
+/// Everyone DACL.
+#[cfg(target_os = "windows")]
+unsafe fn current_user_sid_string() -> Option<String> {
+    #[repr(C)]
+    struct SidAndAttributes {
+        sid: *mut std::ffi::c_void,
+        attributes: u32,
+    }
+    #[repr(C)]
+    struct TokenUserRaw {
+        user: SidAndAttributes,
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentProcess() -> *mut std::ffi::c_void;
+        fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+        fn LocalFree(memory: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+    }
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn OpenProcessToken(
+            process: *mut std::ffi::c_void,
+            desired_access: u32,
+            token: *mut *mut std::ffi::c_void,
+        ) -> i32;
+        fn GetTokenInformation(
+            token: *mut std::ffi::c_void,
+            information_class: u32,
+            information: *mut std::ffi::c_void,
+            information_length: u32,
+            return_length: *mut u32,
+        ) -> i32;
+        fn ConvertSidToStringSidW(sid: *mut std::ffi::c_void, string_sid: *mut *mut u16) -> i32;
+    }
+
+    const TOKEN_QUERY: u32 = 0x0008;
+    const TOKEN_USER_CLASS: u32 = 1;
+    let mut token = std::ptr::null_mut();
+    if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 || token.is_null() {
+        return None;
+    }
+    let mut required = 0_u32;
+    let _ = GetTokenInformation(
+        token,
+        TOKEN_USER_CLASS,
+        std::ptr::null_mut(),
+        0,
+        &mut required,
+    );
+    if required == 0 {
+        let _ = CloseHandle(token);
+        return None;
+    }
+    let mut buffer = vec![0_u8; required as usize];
+    let ok = GetTokenInformation(
+        token,
+        TOKEN_USER_CLASS,
+        buffer.as_mut_ptr().cast(),
+        required,
+        &mut required,
+    );
+    let _ = CloseHandle(token);
+    if ok == 0 {
+        return None;
+    }
+    // GetTokenInformation writes into a byte buffer whose alignment is not
+    // guaranteed to match TOKEN_USER. Copy the small header out rather than
+    // creating a potentially unaligned reference into the buffer.
+    let token_user = std::ptr::read_unaligned(buffer.as_ptr().cast::<TokenUserRaw>());
+    let mut string_sid = std::ptr::null_mut();
+    if ConvertSidToStringSidW(token_user.user.sid, &mut string_sid) == 0 || string_sid.is_null() {
+        return None;
+    }
+    let length = (0..)
+        .find(|&index| *string_sid.add(index) == 0)
+        .unwrap_or(0);
+    let sid = String::from_utf16_lossy(std::slice::from_raw_parts(string_sid, length));
+    let _ = LocalFree(string_sid.cast());
+    (!sid.is_empty()).then_some(sid)
+}
+
+/// Build the named-pipe ACL for one daemon mode.
+///
+/// Standalone preserves the existing cross-integrity Everyone descriptor used
+/// by elevated installs. Embedded mode is private to the current user while
+/// retaining the low mandatory label needed when host and daemon integrity
+/// levels differ.
+#[cfg(target_os = "windows")]
+unsafe fn build_pipe_security_attrs(
+    embedded: bool,
+) -> Option<(SecurityAttributesRaw, *mut std::ffi::c_void)> {
+    if embedded {
+        let sid = current_user_sid_string()?;
+        security_attrs_from_sddl(&format!("D:P(A;;GA;;;{sid})S:(ML;;NW;;;LW)"))
+    } else {
+        security_attrs_from_sddl("D:(A;OICI;GA;;;WD)S:(ML;;NW;;;LW)")
+    }
+}
+
 #[cfg(target_os = "windows")]
 #[repr(C)]
 struct SecurityAttributesRaw {
@@ -1228,7 +958,7 @@ struct SecurityAttributesRaw {
 
 #[cfg(target_os = "windows")]
 pub async fn run_serve(
-    registry: std::sync::Arc<cua_driver_core::tool::ToolRegistry>,
+    sdk: std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
     socket_path: &str,
     pid_file_path: Option<&str>,
 ) -> anyhow::Result<()> {
@@ -1239,12 +969,16 @@ pub async fn run_serve(
 
     eprintln!("Cua Driver daemon listening on {socket_path}");
 
-    // Build the cross-IL security descriptor once, reuse on every pipe
-    // instance. If this fails we fall back to the default-ACL `create`
-    // (which is High-IL exclusive when the daemon is at High IL — i.e.
-    // the bug we're trying to fix). Log the failure so it's diagnosable.
-    let security_attrs = unsafe { build_open_pipe_security_attrs() };
+    // Build the mode-specific descriptor once and reuse it for every pipe
+    // instance. Embedded mode fails closed if its current-user-only ACL cannot
+    // be created; a default or Everyone ACL would violate the private-endpoint
+    // contract promised by the host SDK.
+    let embedded = cua_driver_core::embedded_mode();
+    let security_attrs = unsafe { build_pipe_security_attrs(embedded) };
     if security_attrs.is_none() {
+        if embedded {
+            anyhow::bail!("failed to build current-user security descriptor for embedded pipe");
+        }
         eprintln!(
             "cua-driver: failed to build cross-IL SECURITY_ATTRIBUTES; pipe will be \
              High-IL exclusive. CLI and MCP clients from Medium-IL processes \
@@ -1272,44 +1006,47 @@ pub async fn run_serve(
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let shutdown_tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx)));
+    let parent_liveness = async {
+        if cua_driver_core::parent_liveness_stdin_enabled() {
+            wait_for_parent_stdin_eof().await;
+        } else {
+            std::future::pending::<()>().await;
+        }
+    };
+    tokio::pin!(parent_liveness);
 
-    // Idle-TTL recording backstop (#1764). See the unix branch above for the
-    // full rationale; the leak (record_video via ffmpeg) is platform-independent.
-    let last_activity = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(now_unix_secs()));
-    spawn_recording_idle_backstop(registry.clone(), last_activity.clone());
-    spawn_session_idle_sweep();
+    // Idle-session and recording maintenance is owned by the SDK runtime.
     if let Some(port) = crate::mcp_http::configured_port() {
-        crate::mcp_http::spawn(registry.clone(), port);
+        crate::mcp_http::spawn(sdk.clone(), port);
     }
-    register_recording_session_end_hook(registry.recording.clone());
 
+    let mut first_pipe = true;
     loop {
-        // Create a new pipe server instance to accept the next client.
-        // Use create_with_security_attributes_raw so Medium-IL clients can
-        // open the pipe even though we're at High IL (see comment on
-        // build_open_pipe_security_attrs). Fall back to default ACL if
-        // SD construction failed at startup.
+        // Standalone daemons use the cross-IL descriptor when available;
+        // embedded daemons use the current-user descriptor and reserve the
+        // pipe name with their first instance.
+        let first_pipe_instance = embedded && first_pipe;
         let server = if sec_attrs_ptr.is_null() {
             ServerOptions::new()
-                .first_pipe_instance(false)
+                .first_pipe_instance(first_pipe_instance)
                 .create(socket_path)
                 .map_err(|e| anyhow::anyhow!("create named pipe {socket_path}: {e}"))?
         } else {
             unsafe {
                 ServerOptions::new()
-                    .first_pipe_instance(false)
+                    .first_pipe_instance(first_pipe_instance)
                     .create_with_security_attributes_raw(socket_path, sec_attrs_ptr)
                     .map_err(|e| anyhow::anyhow!("create named pipe {socket_path}: {e}"))?
             }
         };
+        first_pipe = false;
 
         tokio::select! {
             result = server.connect() => {
                 result.map_err(|e| anyhow::anyhow!("named pipe connect: {e}"))?;
 
-                let reg = registry.clone();
+                let reg = sdk.clone();
                 let shutdown_tx2 = shutdown_tx.clone();
-                let last_activity = last_activity.clone();
 
                 tokio::spawn(async move {
                     let (reader, mut writer) = tokio::io::split(server);
@@ -1335,6 +1072,12 @@ pub async fn run_serve(
                         };
 
                         match req.method.as_str() {
+                            "metadata" => {
+                                let resp = daemon_metadata_response();
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                            }
                             "shutdown" => {
                                 let resp = DaemonResponse::ok(serde_json::json!({"shutdown": true}));
                                 let _ = writer.write_all(
@@ -1349,44 +1092,15 @@ pub async fn run_serve(
                                 // build a complete `tools/list` response from
                                 // one daemon round-trip. See the unix branch
                                 // above for rationale (capabilities map, etc.).
-                                let tools: Vec<serde_json::Value> = reg.iter_defs()
-                                    .map(|(name, def)| {
-                                        let caps = cua_driver_core::tool::default_capabilities_for(name);
-                                        let risk = cua_driver_core::authorization::risk_metadata_json(name);
-                                        serde_json::json!({
-                                            "name": name,
-                                            "description": def.description,
-                                            "input_schema": def.input_schema,
-                                            "read_only": def.read_only,
-                                            "destructive": def.destructive,
-                                            "idempotent": def.idempotent,
-                                            "open_world": def.open_world,
-                                            "capabilities": caps,
-                                            "risk": risk,
-                                        })
-                                    })
-                                    .collect();
-                                // Mirror `tools_list` envelope: include
-                                // capability_version + schema_version so MCP
-                                // proxy callers can pass them through verbatim
-                                // (one daemon round-trip, complete response).
-                                let resp = DaemonResponse::ok(serde_json::json!({
-                                    "tools": tools,
-                                    "capability_version": cua_driver_core::tool::CAPABILITY_VERSION,
-                                    "schema_version": "1",
-                                    "tool_observation_owner": "daemon",
-                                }));
+                                let resp = DaemonResponse::ok(reg.daemon_tools_list());
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
                             }
                             "describe" => {
                                 let name = req.name.as_deref().unwrap_or("");
-                                let resp = match reg.get_def(name) {
-                                    Some(def) => DaemonResponse::ok(serde_json::json!({
-                                        "name": def.name, "description": def.description,
-                                        "input_schema": def.input_schema
-                                    })),
+                                let resp = match reg.describe(name) {
+                                    Some(description) => DaemonResponse::ok(description),
                                     None => DaemonResponse::err(format!("Unknown tool: {name}"), 64),
                                 };
                                 let _ = writer.write_all(
@@ -1408,19 +1122,21 @@ pub async fn run_serve(
                                 let session = args.get("session")
                                     .and_then(serde_json::Value::as_str)
                                     .filter(|value| !value.is_empty());
-                                let result = if all && session.is_none() {
+                                let result: Result<serde_json::Value, String> = if all && session.is_none() {
                                     let count = cua_driver_core::session::revoke_all_sessions();
                                     Ok(serde_json::json!({"revoked": count, "scope": "all"}))
                                 } else if !all {
-                                    session.map_or_else(
-                                        || Err("revoke_authorization requires session or all=true"),
-                                        |session| {
-                                            cua_driver_core::session::end_session(session);
-                                            Ok(serde_json::json!({"revoked": 1, "scope": "session"}))
-                                        },
-                                    )
+                                    match session {
+                                        Some(session) => reg.end_session(session).await.map(|()| {
+                                            serde_json::json!({"revoked": 1, "scope": "session"})
+                                        }),
+                                        None => Err(
+                                            "revoke_authorization requires session or all=true"
+                                                .to_owned(),
+                                        ),
+                                    }
                                 } else {
-                                    Err("revoke_authorization accepts exactly one of session or all=true")
+                                    Err("revoke_authorization accepts exactly one of session or all=true".to_owned())
                                 };
                                 let resp = match result {
                                     Ok(value) => DaemonResponse::ok(value),
@@ -1431,11 +1147,6 @@ pub async fn run_serve(
                                 ).await;
                             }
                             "call" => {
-                                // Recording idle-TTL liveness (#1764).
-                                last_activity.store(
-                                    now_unix_secs(),
-                                    std::sync::atomic::Ordering::Relaxed,
-                                );
                                 let resp = invoke_daemon_tool(&reg, req).await;
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
@@ -1465,24 +1176,9 @@ pub async fn run_serve(
                                 // connection; control_session_id stays None so no
                                 // EOF double-fire. fire_session_end is idempotent.
                                 if let Some(sid) = req.session_id.as_deref() {
-                                    // stop_owner can SYNCHRONOUSLY finalize the
-                                    // recording's mp4 — run it off the reactor on
-                                    // a blocking thread (see the EOF reaper).
-                                    // fire_session_end stays inline (non-blocking).
-                                    // Mark the session ended FIRST so an in-flight
-                                    // start_recording sees ended=true and bails — the
-                                    // mark-before-reap invariant the cursor/config hooks
-                                    // already satisfy (their reap runs inside
-                                    // fire_session_end, after the mark). stop_owner does
-                                    // not consult is_session_ended, so reaping after the
-                                    // mark is safe.
-                                    cua_driver_core::session::fire_session_end(sid);
-                                    let reg2 = reg.clone();
-                                    let sid_for_stop = sid.to_owned();
-                                    let _ = tokio::task::spawn_blocking(move || {
-                                        reg2.recording.stop_owner(Some(&sid_for_stop))
-                                    })
-                                    .await;
+                                    if let Err(error) = reg.end_session(sid).await {
+                                        tracing::warn!("legacy session_end failed: {error}");
+                                    }
                                 }
                                 let resp = DaemonResponse::ok(
                                     serde_json::json!({"session_end": true})
@@ -1507,25 +1203,18 @@ pub async fn run_serve(
                     // control_session_id None.
                     if let Some(sid) = control_session_id {
                         active_proxy_sessions().lock().unwrap().remove(&sid);
-                        // Run stop_owner off the reactor (see the unix branch):
-                        // recording finalize can be a synchronous blocking call.
-                        // fire_session_end stays inline (non-blocking hooks).
-                        // Mark the session ended FIRST so an in-flight start_recording
-                        // sees ended=true and bails (mark-before-reap; the cursor/config
-                        // hooks already reap inside fire_session_end after the mark).
-                        // stop_owner ignores is_session_ended, so reaping after is safe.
-                        cua_driver_core::session::fire_session_end(&sid);
-                        let reg2 = reg.clone();
-                        let sid_for_stop = sid.clone();
-                        let _ = tokio::task::spawn_blocking(move || {
-                            reg2.recording.stop_owner(Some(&sid_for_stop))
-                        })
-                        .await;
+                        if let Err(error) = reg.end_session(&sid).await {
+                            tracing::warn!("control-session cleanup failed: {error}");
+                        }
                     }
                 });
             }
             _ = &mut shutdown_rx => {
                 eprintln!("Cua Driver daemon shutting down.");
+                break;
+            }
+            _ = &mut parent_liveness => {
+                eprintln!("Cua Driver embedded host closed its lifetime pipe; shutting down.");
                 break;
             }
         }
@@ -1534,12 +1223,15 @@ pub async fn run_serve(
     if let Some(pid_path) = pid_file_path {
         let _ = std::fs::remove_file(pid_path);
     }
+    sdk.shutdown()
+        .await
+        .map_err(|error| anyhow::anyhow!("shut down SDK runtime: {error}"))?;
     Ok(())
 }
 
 #[cfg(not(any(unix, target_os = "windows")))]
 pub async fn run_serve(
-    _registry: std::sync::Arc<cua_driver_core::tool::ToolRegistry>,
+    _sdk: std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
     _socket_path: &str,
     _pid_file_path: Option<&str>,
 ) -> anyhow::Result<()> {
@@ -1550,7 +1242,7 @@ pub async fn run_serve(
 
 /// `cua-driver serve` implementation.
 pub fn run_serve_cmd(
-    registry: std::sync::Arc<cua_driver_core::tool::ToolRegistry>,
+    driver: std::sync::Arc<cua_driver_sdk::CuaDriver>,
     socket_path: &str,
     pid_file_path: Option<&str>,
 ) {
@@ -1561,7 +1253,7 @@ pub fn run_serve_cmd(
     if is_daemon_listening(&socket_path) {
         let pid_hint = pid_file_path
             .as_deref()
-            .and_then(|p| read_pid_file(p))
+            .and_then(read_pid_file)
             .map(|pid| format!(" (pid {pid})"))
             .unwrap_or_default();
         eprintln!(
@@ -1598,7 +1290,14 @@ pub fn run_serve_cmd(
         .build()
         .expect("tokio runtime");
 
-    if let Err(e) = rt.block_on(run_serve(registry, &socket_path, pid_file_path.as_deref())) {
+    let sdk = match rt.block_on(crate::sdk_adapter::SdkAdapter::load(driver)) {
+        Ok(sdk) => sdk,
+        Err(error) => {
+            eprintln!("cua-driver serve error: {error}");
+            std::process::exit(1);
+        }
+    };
+    if let Err(e) = rt.block_on(run_serve(sdk, &socket_path, pid_file_path.as_deref())) {
         eprintln!("cua-driver serve error: {e}");
         std::process::exit(1);
     }
@@ -1617,6 +1316,7 @@ pub fn run_stop_cmd(socket_path: &str) {
         args: None,
         session_id: None,
         observation_origin: None,
+        client_kind: None,
     };
     match send_request(socket_path, &req) {
         Ok(_) => {
@@ -1664,6 +1364,7 @@ pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
             args: None,
             session_id: None,
             observation_origin: Some(ToolObservationOrigin::Direct),
+            client_kind: None,
         };
         if let Ok(response) = send_request(socket_path, &request) {
             if let Some(status) = response.result {
@@ -1740,6 +1441,7 @@ pub fn run_revoke_cmd(socket_path: &str, session: Option<&str>, all: bool) {
         }),
         session_id: None,
         observation_origin: Some(ToolObservationOrigin::Direct),
+        client_kind: None,
     };
     match send_request(socket_path, &request) {
         Ok(response) if response.ok => {
@@ -1768,6 +1470,47 @@ pub fn run_revoke_cmd(socket_path: &str, session: Option<&str>, all: bool) {
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(all(test, unix))]
+mod socket_tests {
+    use super::{remove_owned_socket, secure_embedded_socket, socket_identity};
+    use std::os::unix::fs::PermissionsExt as _;
+
+    #[test]
+    fn only_embedded_sockets_are_forced_private() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("driver.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o770)).unwrap();
+
+        secure_embedded_socket(socket.to_str().unwrap(), false).unwrap();
+        assert_eq!(
+            std::fs::metadata(&socket).unwrap().permissions().mode() & 0o777,
+            0o770
+        );
+
+        secure_embedded_socket(socket.to_str().unwrap(), true).unwrap();
+        assert_eq!(
+            std::fs::metadata(&socket).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    #[test]
+    fn cleanup_preserves_a_replacement_socket() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("driver.sock");
+        let first = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let first_identity = socket_identity(socket.to_str().unwrap()).unwrap();
+        std::fs::remove_file(&socket).unwrap();
+        let _replacement = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+
+        remove_owned_socket(socket.to_str().unwrap(), first_identity);
+
+        assert!(socket.exists());
+        drop(first);
+    }
+}
+
+#[cfg(all(test, unix))]
 mod gate_tests {
     //! Ended-session resurrection guard wired into the `call` dispatch.
     //!
@@ -1781,13 +1524,11 @@ mod gate_tests {
     //! again. Live and anonymous calls always pass through.
 
     use super::{run_serve, send_request, DaemonRequest};
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
-
     use async_trait::async_trait;
     use cua_driver_core::protocol::ToolResult;
     use cua_driver_core::tool::{Tool, ToolDef, ToolRegistry};
     use serde_json::Value;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     static PROBE_INVOCATIONS: AtomicUsize = AtomicUsize::new(0);
 
@@ -1811,6 +1552,10 @@ mod gate_tests {
         }
     }
 
+    fn register_probe(registry: &mut ToolRegistry) {
+        registry.register(Box::new(ProbeTool::new()));
+    }
+
     #[async_trait]
     impl Tool for ProbeTool {
         fn def(&self) -> &ToolDef {
@@ -1829,6 +1574,7 @@ mod gate_tests {
             args: Some(serde_json::json!({})),
             session_id: sid.map(|s| s.to_owned()),
             observation_origin: None,
+            client_kind: None,
         }
     }
 
@@ -1836,12 +1582,27 @@ mod gate_tests {
     async fn ended_session_call_is_gated_live_and_anon_pass() {
         PROBE_INVOCATIONS.store(0, Ordering::SeqCst);
 
-        let mut reg = ToolRegistry::new();
-        reg.register(Box::new(ProbeTool::new()));
-        // The real start_session tool so we can prove an explicit re-declare
-        // REVIVES an ended id end-to-end through the daemon boundary.
-        reg.register(Box::new(cua_driver_core::session_tools::StartSessionTool));
-        let registry = Arc::new(reg);
+        let driver =
+            cua_driver_sdk::CuaDriver::create_for_host(cua_driver_sdk::DriverHostOptions {
+                cursor: cursor_overlay::CursorConfig {
+                    enabled: false,
+                    ..cursor_overlay::CursorConfig::default()
+                },
+                claude_code_compatibility: false,
+                prepare_desktop_environment: false,
+                register_host_tools: Some(register_probe),
+            });
+        let direct_driver = driver.clone();
+        let sdk = crate::sdk_adapter::SdkAdapter::load(driver)
+            .await
+            .expect("SDK adapter");
+        let direct = direct_driver
+            .call_tool("probe".into(), "{}".into())
+            .await
+            .expect("direct SDK probe");
+        assert!(direct.raw_json.contains("probe ran"));
+        assert_eq!(PROBE_INVOCATIONS.load(Ordering::SeqCst), 1);
+        PROBE_INVOCATIONS.store(0, Ordering::SeqCst);
 
         // Unique temp socket — never the default socket / CuaDriver.app daemon.
         let socket = format!(
@@ -1853,7 +1614,7 @@ mod gate_tests {
                 .as_nanos()
         );
         let socket_for_server = socket.clone();
-        let reg_for_server = registry.clone();
+        let reg_for_server = sdk.clone();
         let server = tokio::spawn(async move {
             let _ = run_serve(reg_for_server, &socket_for_server, None).await;
         });
@@ -1891,6 +1652,7 @@ mod gate_tests {
             args: None,
             session_id: Some(sid.to_owned()),
             observation_origin: None,
+            client_kind: None,
         };
         let resp = tokio::task::spawn_blocking(move || send_request(&socket2, &end))
             .await
@@ -1934,6 +1696,7 @@ mod gate_tests {
             args: Some(serde_json::json!({ "session": s3b.clone() })),
             session_id: Some(s3b),
             observation_origin: None,
+            client_kind: None,
         };
         let resp = tokio::task::spawn_blocking(move || send_request(&socket3b, &start))
             .await
@@ -1980,6 +1743,7 @@ mod gate_tests {
             args: None,
             session_id: None,
             observation_origin: None,
+            client_kind: None,
         };
         let _ = tokio::task::spawn_blocking(move || send_request(&socket5, &shutdown)).await;
         let _ = server.await;
@@ -1998,6 +1762,7 @@ mod telemetry_routing_tests {
             args: Some(serde_json::json!({})),
             session_id: Some("bounded-session".into()),
             observation_origin: origin,
+            client_kind: None,
         }
     }
 

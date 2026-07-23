@@ -1,4 +1,7 @@
-use crate::{CyclopsConfiguration, HttpError, HttpHeader, HttpRequest, HttpResponse, SdkError};
+use crate::{
+    AccessTokenProviderError, CyclopsConfiguration, CyclopsTokenProviderConfiguration, HttpError,
+    HttpHeader, HttpRequest, HttpResponse, SdkError,
+};
 use serde::Deserialize;
 use std::{
     sync::Arc,
@@ -18,24 +21,101 @@ pub(crate) enum AuthenticatedRequestClass {
 }
 
 #[uniffi::export(with_foreign)]
-#[async_trait::async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 pub trait HttpClient: Send + Sync {
     async fn execute(&self, request: HttpRequest) -> Result<HttpResponse, HttpError>;
 }
 
+#[cfg(target_arch = "wasm32")]
+pub(crate) struct BrowserHttpClient;
+
+#[cfg(target_arch = "wasm32")]
+#[async_trait::async_trait(?Send)]
+impl HttpClient for BrowserHttpClient {
+    async fn execute(&self, request: HttpRequest) -> Result<HttpResponse, HttpError> {
+        use wasm_bindgen::JsCast;
+        use wasm_bindgen_futures::JsFuture;
+
+        let init = web_sys::RequestInit::new();
+        init.set_method(&request.method);
+        if let Some(body) = request.body {
+            let body = js_sys::Uint8Array::from(body.as_slice());
+            init.set_body(&body.into());
+        }
+
+        let browser_request = web_sys::Request::new_with_str_and_init(&request.url, &init)
+            .map_err(browser_transport_error)?;
+        let headers = browser_request.headers();
+        for header in request.headers {
+            headers
+                .set(&header.name, &header.value)
+                .map_err(browser_transport_error)?;
+        }
+
+        let window = web_sys::window().ok_or_else(|| HttpError::Transport {
+            reason: "browser window is unavailable".into(),
+        })?;
+        let response = JsFuture::from(window.fetch_with_request(&browser_request))
+            .await
+            .map_err(browser_transport_error)?
+            .dyn_into::<web_sys::Response>()
+            .map_err(browser_transport_error)?;
+        let body = JsFuture::from(response.array_buffer().map_err(browser_transport_error)?)
+            .await
+            .map_err(browser_transport_error)?;
+
+        Ok(HttpResponse {
+            status: response.status(),
+            headers: vec![],
+            body: js_sys::Uint8Array::new(&body).to_vec(),
+        })
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn browser_transport_error(error: wasm_bindgen::JsValue) -> HttpError {
+    let reason = error
+        .as_string()
+        .unwrap_or_else(|| format!("browser fetch failed: {error:?}"));
+    HttpError::Transport { reason }
+}
+
+#[uniffi::export(with_foreign)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+pub trait AccessTokenProvider: Send + Sync {
+    async fn get_access_token(
+        &self,
+        force_refresh: bool,
+    ) -> Result<String, AccessTokenProviderError>;
+}
+
 pub(crate) struct Transport {
     base_origin: Origin,
-    token_url: String,
-    client_id: String,
-    client_secret: String,
+    authentication: Authentication,
     http_client: Arc<dyn HttpClient>,
-    access_token: Mutex<Option<AccessToken>>,
+}
+
+enum Authentication {
+    ClientCredentials {
+        token_url: String,
+        client_id: String,
+        client_secret: String,
+        cached: Mutex<Option<AccessToken>>,
+    },
+    TokenProvider {
+        provider: Arc<dyn AccessTokenProvider>,
+    },
+    StaticAccessToken {
+        value: String,
+    },
 }
 
 #[derive(Clone)]
 struct AccessToken {
     value: String,
-    expires_at: Instant,
+    expires_at: Option<Instant>,
     generation: Arc<TokenGeneration>,
 }
 
@@ -57,11 +137,46 @@ impl Transport {
     ) -> Result<Self, SdkError> {
         Ok(Self {
             base_origin: Origin::from_url(&configuration.base_url)?,
-            token_url: configuration.token_url.clone(),
-            client_id: configuration.client_id().to_owned(),
-            client_secret: configuration.client_secret().to_owned(),
+            authentication: Authentication::ClientCredentials {
+                token_url: configuration.token_url.clone(),
+                client_id: configuration.client_id().to_owned(),
+                client_secret: configuration.client_secret().to_owned(),
+                cached: Mutex::new(None),
+            },
             http_client,
-            access_token: Mutex::new(None),
+        })
+    }
+
+    pub(crate) fn new_with_access_token_provider(
+        configuration: &CyclopsTokenProviderConfiguration,
+        provider: Arc<dyn AccessTokenProvider>,
+        http_client: Arc<dyn HttpClient>,
+    ) -> Result<Self, SdkError> {
+        Ok(Self {
+            base_origin: Origin::from_url(&configuration.base_url)?,
+            authentication: Authentication::TokenProvider { provider },
+            http_client,
+        })
+    }
+
+    pub(crate) fn new_with_access_token(
+        configuration: &CyclopsTokenProviderConfiguration,
+        access_token: String,
+        http_client: Arc<dyn HttpClient>,
+    ) -> Result<Self, SdkError> {
+        let value = access_token.trim();
+        if value.is_empty() {
+            return Err(SdkError::Token {
+                reason: "access token must not be empty".into(),
+            });
+        }
+
+        Ok(Self {
+            base_origin: Origin::from_url(&configuration.base_url)?,
+            authentication: Authentication::StaticAccessToken {
+                value: value.into(),
+            },
+            http_client,
         })
     }
 
@@ -131,45 +246,100 @@ impl Transport {
     }
 
     async fn access_token(&self) -> Result<AccessToken, SdkError> {
-        let mut cached = self.access_token.lock().await;
-        if let Some(token) = cached.as_ref().filter(|token| token.is_valid()) {
-            return Ok(token.clone());
-        }
+        match &self.authentication {
+            Authentication::ClientCredentials { cached, .. } => {
+                let mut cached = cached.lock().await;
+                if let Some(token) = cached.as_ref().filter(|token| token.is_valid()) {
+                    return Ok(token.clone());
+                }
 
-        let token = self.acquire_token().await?;
-        *cached = Some(token.clone());
-        Ok(token)
+                let token = self.acquire_client_credentials_token().await?;
+                *cached = Some(token.clone());
+                Ok(token)
+            }
+            Authentication::TokenProvider { provider } => {
+                self.provider_token(provider, false).await
+            }
+            Authentication::StaticAccessToken { value } => Ok(AccessToken {
+                value: value.clone(),
+                expires_at: None,
+                generation: Arc::new(TokenGeneration { _identity: 0 }),
+            }),
+        }
     }
 
     async fn refresh_after_unauthorized(
         &self,
         used_token: &AccessToken,
     ) -> Result<AccessToken, SdkError> {
-        let mut cached = self.access_token.lock().await;
-        match cached.as_ref() {
-            Some(token) if !token.is_same_generation(used_token) && token.is_valid() => {
-                return Ok(token.clone());
-            }
-            Some(token) if token.is_same_generation(used_token) => *cached = None,
-            _ => {}
-        }
+        match &self.authentication {
+            Authentication::ClientCredentials { cached, .. } => {
+                let mut cached = cached.lock().await;
+                match cached.as_ref() {
+                    Some(token) if !token.is_same_generation(used_token) && token.is_valid() => {
+                        return Ok(token.clone());
+                    }
+                    Some(token) if token.is_same_generation(used_token) => *cached = None,
+                    _ => {}
+                }
 
-        let token = self.acquire_token().await?;
-        *cached = Some(token.clone());
-        Ok(token)
+                let token = self.acquire_client_credentials_token().await?;
+                *cached = Some(token.clone());
+                Ok(token)
+            }
+            Authentication::TokenProvider { provider } => self.provider_token(provider, true).await,
+            Authentication::StaticAccessToken { .. } => Err(SdkError::Token {
+                reason: "static access token was rejected; create a new client with a fresh token"
+                    .into(),
+            }),
+        }
     }
 
-    async fn acquire_token(&self) -> Result<AccessToken, SdkError> {
+    async fn provider_token(
+        &self,
+        provider: &Arc<dyn AccessTokenProvider>,
+        force_refresh: bool,
+    ) -> Result<AccessToken, SdkError> {
+        let value = provider
+            .get_access_token(force_refresh)
+            .await
+            .map_err(|error| SdkError::Token {
+                reason: error.to_string(),
+            })?;
+        let value = value.trim();
+        if value.is_empty() {
+            return Err(SdkError::Token {
+                reason: "access-token provider returned an empty token".into(),
+            });
+        }
+
+        Ok(AccessToken {
+            value: value.into(),
+            expires_at: Some(Instant::now()),
+            generation: Arc::new(TokenGeneration { _identity: 0 }),
+        })
+    }
+
+    async fn acquire_client_credentials_token(&self) -> Result<AccessToken, SdkError> {
+        let Authentication::ClientCredentials {
+            token_url,
+            client_id,
+            client_secret,
+            ..
+        } = &self.authentication
+        else {
+            unreachable!("client-credentials token acquisition requires client credentials")
+        };
         let body = url::form_urlencoded::Serializer::new(String::new())
             .append_pair("grant_type", "client_credentials")
-            .append_pair("client_id", &self.client_id)
-            .append_pair("client_secret", &self.client_secret)
+            .append_pair("client_id", client_id)
+            .append_pair("client_secret", client_secret)
             .finish();
         let response = self
             .http_client
             .execute(HttpRequest {
                 method: "POST".into(),
-                url: self.token_url.clone(),
+                url: token_url.clone(),
                 headers: vec![
                     HttpHeader {
                         name: "accept".into(),
@@ -207,7 +377,7 @@ impl Transport {
             .unwrap_or_else(Instant::now);
         Ok(AccessToken {
             value: token.access_token,
-            expires_at,
+            expires_at: Some(expires_at),
             generation: Arc::new(TokenGeneration { _identity: 0 }),
         })
     }
@@ -223,9 +393,11 @@ impl AccessToken {
     }
 
     fn is_valid(&self) -> bool {
-        self.expires_at
-            .checked_sub(TOKEN_EXPIRY_SKEW)
-            .is_some_and(|refresh_at| Instant::now() < refresh_at)
+        self.expires_at.is_none_or(|expires_at| {
+            expires_at
+                .checked_sub(TOKEN_EXPIRY_SKEW)
+                .is_some_and(|refresh_at| Instant::now() < refresh_at)
+        })
     }
 }
 

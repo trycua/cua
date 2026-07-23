@@ -34,8 +34,6 @@ import cyclops_sdk
 # Used for default argument values
 _DEFAULT = object() # type: typing.Any
 
-import ctypes
-import struct
 
 class _UniffiRustBuffer(ctypes.Structure):
     _fields_ = [
@@ -115,49 +113,6 @@ class _UniffiForeignBytes(ctypes.Structure):
 
     def __str__(self):
         return "_UniffiForeignBytes(len={}, data={})".format(self.len, self.data[0:self.len])
-
-
-class _UniffiFfiConverterByRefBytes:
-    """Zero-copy converter for `&[u8]` / `[ByRef] bytes` arguments.
-
-    Only `lower` and `check_lower` are valid — zero-copy byte buffers only
-    flow foreign -> Rust, and only in argument position. `lift`, `read`, and
-    `write` have no sound implementation here.
-
-    CPython `bytes` objects are immutable and their internal buffer doesn't
-    move for the lifetime of the object; the caller must keep the source
-    `bytes` alive for the duration of the FFI call.
-    """
-
-    @staticmethod
-    def check_lower(value):
-        # Tighter than `bytes-like`: `lower` uses `ctypes.c_char_p` which only
-        # accepts `bytes`/`None`, so fail fast with a matching check.
-        if not isinstance(value, bytes):
-            raise TypeError("a bytes object is required, not {!r}".format(type(value).__name__))
-
-    @staticmethod
-    def lower(value):
-        fb = _UniffiForeignBytes()
-        if len(value) == 0:
-            fb.len = 0
-            fb.data = None
-        else:
-            fb.len = len(value)
-            fb.data = ctypes.cast(ctypes.c_char_p(value), ctypes.POINTER(ctypes.c_char))
-        return fb
-
-    @staticmethod
-    def lift(value):
-        raise NotImplementedError("ByRef bytes cannot be lifted: zero-copy &[u8] only flows foreign->Rust")
-
-    @staticmethod
-    def read(buf):
-        raise NotImplementedError("ByRef bytes cannot be read from a buffer: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.")
-
-    @staticmethod
-    def write(value, buf):
-        raise NotImplementedError("ByRef bytes cannot be written to a buffer: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.")
 
 
 class _UniffiRustBufferStream:
@@ -250,15 +205,14 @@ class _UniffiRustBufferBuilder:
 
     def _pack_into(self, size, format, value):
         with self._reserve(size):
-            packed = struct.pack(format, value)
-            if size > 0:
-                ctypes.memmove(ctypes.addressof(self.rbuf.data.contents) + self.rbuf.len, packed, size)
+            # XXX TODO: I feel like I should be able to use `struct.pack_into` here but can't figure it out.
+            for i, byte in enumerate(struct.pack(format, value)):
+                self.rbuf.data[self.rbuf.len + i] = byte
 
     def write(self, value):
-        length = len(value)
-        with self._reserve(length):
-            if length > 0:
-                ctypes.memmove(ctypes.addressof(self.rbuf.data.contents) + self.rbuf.len, value, length)
+        with self._reserve(len(value)):
+            for i, byte in enumerate(value):
+                self.rbuf.data[self.rbuf.len + i] = byte
 
     def write_i8(self, v):
         self._pack_into(1, ">b", v)
@@ -526,33 +480,41 @@ def _uniffi_check_contract_api_version(lib):
         raise InternalError("UniFFI contract version mismatch: try cleaning and rebuilding your project")
 
 def _uniffi_check_api_checksums(lib):
-    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim() != 51021:
+    if lib.uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token() != 1180:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool() != 31472:
+    if lib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect() != 54404:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() != 50650:
+    if lib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_browser_with_access_token() != 55589:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool() != 9252:
+    if lib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token() != 10148:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim() != 55182:
+    if lib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider() != 58487:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool() != 44001:
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim() != 23330:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims() != 26952:
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool() != 48557:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools() != 25465:
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() != 20460:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request() != 4680:
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool() != 31235:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool() != 39705:
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim() != 17760:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim() != 53385:
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool() != 43327:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect() != 48439:
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims() != 7802:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cyclops_sdk_checksum_constructor_cyclopscredentials_new() != 56420:
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools() != 27984:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cyclops_sdk_checksum_method_httpclient_execute() != 11556:
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request() != 46699:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool() != 17695:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim() != 18984:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_constructor_cyclopscredentials_new() != 25746:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_httpclient_execute() != 38803:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
 
 # A ctypes library to expose the extern-C FFI definitions.
@@ -580,162 +542,7 @@ _UniffiLib.ffi_cyclops_sdk_rustbuffer_reserve.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.ffi_cyclops_sdk_rustbuffer_reserve.restype = _UniffiRustBuffer
-_UniffiLib.ffi_cyclops_sdk_uniffi_contract_version.argtypes = (
-)
-_UniffiLib.ffi_cyclops_sdk_uniffi_contract_version.restype = ctypes.c_uint32
-_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim.argtypes = (
-)
-_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool.argtypes = (
-)
-_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim.argtypes = (
-)
-_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool.argtypes = (
-)
-_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim.argtypes = (
-)
-_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool.argtypes = (
-)
-_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims.argtypes = (
-)
-_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools.argtypes = (
-)
-_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request.argtypes = (
-)
-_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool.argtypes = (
-)
-_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim.argtypes = (
-)
-_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect.argtypes = (
-)
-_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopscredentials_new.argtypes = (
-)
-_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopscredentials_new.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cyclops_sdk_checksum_method_httpclient_execute.argtypes = (
-)
-_UniffiLib.uniffi_cyclops_sdk_checksum_method_httpclient_execute.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_claim.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_claim.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_pool.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_pool.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_claim.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_claim.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_pool.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_pool.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_claim.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_claim.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_pool.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_pool.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_claims.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_claims.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_pools.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_pools.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-    _UniffiRustBuffer,
-    _UniffiRustBuffer,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_update_pool.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_update_pool.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect.argtypes = (
-    _UniffiRustBuffer,
-    ctypes.c_uint64,
-    ctypes.POINTER(_UniffiRustCallStatus),
-)
-_UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopscredentials_new.argtypes = (
-    _UniffiRustBuffer,
-    _UniffiRustBuffer,
-    ctypes.POINTER(_UniffiRustCallStatus),
-)
-_UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopscredentials_new.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cyclops_sdk_fn_method_httpclient_execute.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cyclops_sdk_fn_method_httpclient_execute.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cyclops_sdk_fn_clone_cyclopsclient.argtypes = (
-    ctypes.c_uint64,
-    ctypes.POINTER(_UniffiRustCallStatus),
-)
-_UniffiLib.uniffi_cyclops_sdk_fn_clone_cyclopsclient.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cyclops_sdk_fn_free_cyclopsclient.argtypes = (
-    ctypes.c_uint64,
-    ctypes.POINTER(_UniffiRustCallStatus),
-)
-_UniffiLib.uniffi_cyclops_sdk_fn_free_cyclopsclient.restype = None
-_UniffiLib.uniffi_cyclops_sdk_fn_clone_cyclopscredentials.argtypes = (
-    ctypes.c_uint64,
-    ctypes.POINTER(_UniffiRustCallStatus),
-)
-_UniffiLib.uniffi_cyclops_sdk_fn_clone_cyclopscredentials.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cyclops_sdk_fn_free_cyclopscredentials.argtypes = (
-    ctypes.c_uint64,
-    ctypes.POINTER(_UniffiRustCallStatus),
-)
-_UniffiLib.uniffi_cyclops_sdk_fn_free_cyclopscredentials.restype = None
-_UniffiLib.uniffi_cyclops_sdk_fn_clone_httpclient.argtypes = (
-    ctypes.c_uint64,
-    ctypes.POINTER(_UniffiRustCallStatus),
-)
-_UniffiLib.uniffi_cyclops_sdk_fn_clone_httpclient.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cyclops_sdk_fn_free_httpclient.argtypes = (
-    ctypes.c_uint64,
-    ctypes.POINTER(_UniffiRustCallStatus),
-)
-_UniffiLib.uniffi_cyclops_sdk_fn_free_httpclient.restype = None
-class _UniffiForeignFutureResultRustBuffer(ctypes.Structure):
-    _fields_ = [
-        ("return_value", _UniffiRustBuffer),
-        ("call_status", _UniffiRustCallStatus),
-    ]
-_UNIFFI_FOREIGN_FUTURE_COMPLETERUST_BUFFER = ctypes.CFUNCTYPE(None,ctypes.c_uint64,_UniffiForeignFutureResultRustBuffer,
+_UNIFFI_RUST_FUTURE_CONTINUATION_CALLBACK = ctypes.CFUNCTYPE(None,ctypes.c_uint64,ctypes.c_int8,
 )
 _UNIFFI_FOREIGN_FUTURE_DROPPED_CALLBACK = ctypes.CFUNCTYPE(None,ctypes.c_uint64,
 )
@@ -744,24 +551,6 @@ class _UniffiForeignFutureDroppedCallbackStruct(ctypes.Structure):
         ("handle", ctypes.c_uint64),
         ("free", _UNIFFI_FOREIGN_FUTURE_DROPPED_CALLBACK),
     ]
-_UNIFFI_CALLBACK_INTERFACE_CYCLOPS_SDK_HTTP_CLIENT_METHOD0 = ctypes.CFUNCTYPE(None,ctypes.c_uint64,_UniffiRustBuffer,_UNIFFI_FOREIGN_FUTURE_COMPLETERUST_BUFFER,ctypes.c_uint64,ctypes.POINTER(_UniffiForeignFutureDroppedCallbackStruct),
-)
-_UNIFFI_CALLBACK_INTERFACE_CLONE_CYCLOPS_SDK_HTTP_CLIENT = ctypes.CFUNCTYPE(ctypes.c_uint64,ctypes.c_uint64,
-)
-_UNIFFI_CALLBACK_INTERFACE_FREE_CYCLOPS_SDK_HTTP_CLIENT = ctypes.CFUNCTYPE(None,ctypes.c_uint64,
-)
-class _UniffiVTableCallbackInterfaceCyclopsSdkHttpClient(ctypes.Structure):
-    _fields_ = [
-        ("uniffi_free", _UNIFFI_CALLBACK_INTERFACE_FREE_CYCLOPS_SDK_HTTP_CLIENT),
-        ("uniffi_clone", _UNIFFI_CALLBACK_INTERFACE_CLONE_CYCLOPS_SDK_HTTP_CLIENT),
-        ("execute", _UNIFFI_CALLBACK_INTERFACE_CYCLOPS_SDK_HTTP_CLIENT_METHOD0),
-    ]
-_UniffiLib.uniffi_cyclops_sdk_fn_init_callback_vtable_httpclient.argtypes = (
-    ctypes.POINTER(_UniffiVTableCallbackInterfaceCyclopsSdkHttpClient),
-)
-_UniffiLib.uniffi_cyclops_sdk_fn_init_callback_vtable_httpclient.restype = None
-_UNIFFI_RUST_FUTURE_CONTINUATION_CALLBACK = ctypes.CFUNCTYPE(None,ctypes.c_uint64,ctypes.c_int8,
-)
 _UniffiLib.ffi_cyclops_sdk_rust_future_poll_u8.argtypes = (
     ctypes.c_uint64,
     _UNIFFI_RUST_FUTURE_CONTINUATION_CALLBACK,
@@ -990,6 +779,242 @@ _UniffiLib.ffi_cyclops_sdk_rust_future_free_void.argtypes = (
     ctypes.c_uint64,
 )
 _UniffiLib.ffi_cyclops_sdk_rust_future_free_void.restype = None
+_UniffiLib.uniffi_cyclops_sdk_fn_clone_accesstokenprovider.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_clone_accesstokenprovider.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_free_accesstokenprovider.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_free_accesstokenprovider.restype = None
+_UniffiLib.uniffi_cyclops_sdk_fn_clone_cyclopsclient.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_clone_cyclopsclient.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_free_cyclopsclient.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_free_cyclopsclient.restype = None
+_UniffiLib.uniffi_cyclops_sdk_fn_clone_cyclopscredentials.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_clone_cyclopscredentials.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_free_cyclopscredentials.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_free_cyclopscredentials.restype = None
+_UniffiLib.uniffi_cyclops_sdk_fn_clone_httpclient.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_clone_httpclient.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_free_httpclient.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_free_httpclient.restype = None
+class _UniffiForeignFutureResultRustBuffer(ctypes.Structure):
+    _fields_ = [
+        ("return_value", _UniffiRustBuffer),
+        ("call_status", _UniffiRustCallStatus),
+    ]
+_UNIFFI_FOREIGN_FUTURE_COMPLETERUST_BUFFER = ctypes.CFUNCTYPE(None,ctypes.c_uint64,_UniffiForeignFutureResultRustBuffer,
+)
+_UNIFFI_CALLBACK_INTERFACE_CYCLOPS_SDK_ACCESS_TOKEN_PROVIDER_METHOD0 = ctypes.CFUNCTYPE(None,ctypes.c_uint64,ctypes.c_int8,_UNIFFI_FOREIGN_FUTURE_COMPLETERUST_BUFFER,ctypes.c_uint64,ctypes.POINTER(_UniffiForeignFutureDroppedCallbackStruct),
+)
+_UNIFFI_CALLBACK_INTERFACE_CLONE_CYCLOPS_SDK_ACCESS_TOKEN_PROVIDER = ctypes.CFUNCTYPE(ctypes.c_uint64,ctypes.c_uint64,
+)
+_UNIFFI_CALLBACK_INTERFACE_FREE_CYCLOPS_SDK_ACCESS_TOKEN_PROVIDER = ctypes.CFUNCTYPE(None,ctypes.c_uint64,
+)
+class _UniffiVTableCallbackInterfaceCyclopsSdkAccessTokenProvider(ctypes.Structure):
+    _fields_ = [
+        ("uniffi_free", _UNIFFI_CALLBACK_INTERFACE_FREE_CYCLOPS_SDK_ACCESS_TOKEN_PROVIDER),
+        ("uniffi_clone", _UNIFFI_CALLBACK_INTERFACE_CLONE_CYCLOPS_SDK_ACCESS_TOKEN_PROVIDER),
+        ("get_access_token", _UNIFFI_CALLBACK_INTERFACE_CYCLOPS_SDK_ACCESS_TOKEN_PROVIDER_METHOD0),
+    ]
+_UniffiLib.uniffi_cyclops_sdk_fn_init_callback_vtable_accesstokenprovider.argtypes = (
+    ctypes.POINTER(_UniffiVTableCallbackInterfaceCyclopsSdkAccessTokenProvider),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_init_callback_vtable_accesstokenprovider.restype = None
+_UNIFFI_CALLBACK_INTERFACE_CYCLOPS_SDK_HTTP_CLIENT_METHOD0 = ctypes.CFUNCTYPE(None,ctypes.c_uint64,_UniffiRustBuffer,_UNIFFI_FOREIGN_FUTURE_COMPLETERUST_BUFFER,ctypes.c_uint64,ctypes.POINTER(_UniffiForeignFutureDroppedCallbackStruct),
+)
+_UNIFFI_CALLBACK_INTERFACE_CLONE_CYCLOPS_SDK_HTTP_CLIENT = ctypes.CFUNCTYPE(ctypes.c_uint64,ctypes.c_uint64,
+)
+_UNIFFI_CALLBACK_INTERFACE_FREE_CYCLOPS_SDK_HTTP_CLIENT = ctypes.CFUNCTYPE(None,ctypes.c_uint64,
+)
+class _UniffiVTableCallbackInterfaceCyclopsSdkHttpClient(ctypes.Structure):
+    _fields_ = [
+        ("uniffi_free", _UNIFFI_CALLBACK_INTERFACE_FREE_CYCLOPS_SDK_HTTP_CLIENT),
+        ("uniffi_clone", _UNIFFI_CALLBACK_INTERFACE_CLONE_CYCLOPS_SDK_HTTP_CLIENT),
+        ("execute", _UNIFFI_CALLBACK_INTERFACE_CYCLOPS_SDK_HTTP_CLIENT_METHOD0),
+    ]
+_UniffiLib.uniffi_cyclops_sdk_fn_init_callback_vtable_httpclient.argtypes = (
+    ctypes.POINTER(_UniffiVTableCallbackInterfaceCyclopsSdkHttpClient),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_init_callback_vtable_httpclient.restype = None
+_UniffiLib.uniffi_cyclops_sdk_fn_method_accesstokenprovider_get_access_token.argtypes = (
+    ctypes.c_uint64,
+    ctypes.c_int8,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_accesstokenprovider_get_access_token.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect.argtypes = (
+    _UniffiRustBuffer,
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_browser_with_access_token.argtypes = (
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_browser_with_access_token.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token.argtypes = (
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider.argtypes = (
+    _UniffiRustBuffer,
+    ctypes.c_uint64,
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_claim.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_claim.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_pool.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_pool.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_claim.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_claim.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_pool.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_pool.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_claim.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_claim.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_pool.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_pool.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_claims.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_claims.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_pools.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_pools.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_update_pool.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_update_pool.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopscredentials_new.argtypes = (
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopscredentials_new.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_httpclient_execute.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_httpclient_execute.restype = ctypes.c_uint64
+_UniffiLib.ffi_cyclops_sdk_uniffi_contract_version.argtypes = (
+)
+_UniffiLib.ffi_cyclops_sdk_uniffi_contract_version.restype = ctypes.c_uint32
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_browser_with_access_token.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_browser_with_access_token.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopscredentials_new.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopscredentials_new.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_httpclient_execute.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_httpclient_execute.restype = ctypes.c_uint16
 
 _uniffi_check_contract_api_version(_UniffiLib)
 # _uniffi_check_api_checksums(_UniffiLib)
@@ -1686,6 +1711,60 @@ class _UniffiFfiConverterTypeCyclopsConfiguration(_UniffiConverterRustBuffer):
         _UniffiFfiConverterUInt32.write(value.claim_poll_limit, buf)
 
 @dataclass
+class CyclopsTokenProviderConfiguration:
+    def __init__(self, *, base_url:str, pool_poll_interval_ms:int, pool_poll_limit:int, claim_poll_interval_ms:int, claim_poll_limit:int):
+        self.base_url = base_url
+        self.pool_poll_interval_ms = pool_poll_interval_ms
+        self.pool_poll_limit = pool_poll_limit
+        self.claim_poll_interval_ms = claim_poll_interval_ms
+        self.claim_poll_limit = claim_poll_limit
+
+
+
+
+    def __str__(self):
+        return "CyclopsTokenProviderConfiguration(base_url={}, pool_poll_interval_ms={}, pool_poll_limit={}, claim_poll_interval_ms={}, claim_poll_limit={})".format(self.base_url, self.pool_poll_interval_ms, self.pool_poll_limit, self.claim_poll_interval_ms, self.claim_poll_limit)
+    def __eq__(self, other):
+        if self.base_url != other.base_url:
+            return False
+        if self.pool_poll_interval_ms != other.pool_poll_interval_ms:
+            return False
+        if self.pool_poll_limit != other.pool_poll_limit:
+            return False
+        if self.claim_poll_interval_ms != other.claim_poll_interval_ms:
+            return False
+        if self.claim_poll_limit != other.claim_poll_limit:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeCyclopsTokenProviderConfiguration(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return CyclopsTokenProviderConfiguration(
+            base_url=_UniffiFfiConverterString.read(buf),
+            pool_poll_interval_ms=_UniffiFfiConverterUInt64.read(buf),
+            pool_poll_limit=_UniffiFfiConverterUInt32.read(buf),
+            claim_poll_interval_ms=_UniffiFfiConverterUInt64.read(buf),
+            claim_poll_limit=_UniffiFfiConverterUInt32.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.base_url)
+        _UniffiFfiConverterUInt64.check_lower(value.pool_poll_interval_ms)
+        _UniffiFfiConverterUInt32.check_lower(value.pool_poll_limit)
+        _UniffiFfiConverterUInt64.check_lower(value.claim_poll_interval_ms)
+        _UniffiFfiConverterUInt32.check_lower(value.claim_poll_limit)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.base_url, buf)
+        _UniffiFfiConverterUInt64.write(value.pool_poll_interval_ms, buf)
+        _UniffiFfiConverterUInt32.write(value.pool_poll_limit, buf)
+        _UniffiFfiConverterUInt64.write(value.claim_poll_interval_ms, buf)
+        _UniffiFfiConverterUInt32.write(value.claim_poll_limit, buf)
+
+@dataclass
 class HttpHeader:
     def __init__(self, *, name:str, value:str):
         self.name = name
@@ -1962,6 +2041,59 @@ class _UniffiFfiConverterTypeSandbox(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.write(value.claim, buf)
         _UniffiFfiConverterString.write(value.name, buf)
         _UniffiFfiConverterSequenceString.write(value.services, buf)
+
+
+
+# AccessTokenProviderError
+# We want to define each variant as a nested class that's also a subclass,
+# which is tricky in Python.  To accomplish this we're going to create each
+# class separately, then manually add the child classes to the base class's
+# __dict__.  All of this happens in dummy class to avoid polluting the module
+# namespace.
+class AccessTokenProviderError(Exception):
+    pass
+
+_UniffiTempAccessTokenProviderError = AccessTokenProviderError
+
+class AccessTokenProviderError:  # type: ignore
+
+    class Failed(_UniffiTempAccessTokenProviderError):
+
+        def __init__(self, reason):
+            super().__init__(", ".join([
+                "reason={!r}".format(reason),
+            ]))
+            self.reason = reason
+
+        def __repr__(self):
+            return "AccessTokenProviderError.Failed({})".format(str(self))
+    _UniffiTempAccessTokenProviderError.Failed = Failed # type: ignore
+
+AccessTokenProviderError = _UniffiTempAccessTokenProviderError # type: ignore
+del _UniffiTempAccessTokenProviderError
+
+
+class _UniffiFfiConverterTypeAccessTokenProviderError(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return AccessTokenProviderError.Failed(
+                _UniffiFfiConverterString.read(buf),
+            )
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if isinstance(value, AccessTokenProviderError.Failed):
+            _UniffiFfiConverterString.check_lower(value.reason)
+            return
+
+    @staticmethod
+    def write(value, buf):
+        if isinstance(value, AccessTokenProviderError.Failed):
+            buf.write_i32(1)
+            _UniffiFfiConverterString.write(value.reason, buf)
 
 
 
@@ -2282,6 +2414,177 @@ class _UniffiFfiConverterTypeSdkError(_UniffiConverterRustBuffer):
         if isinstance(value, SdkError.ClaimTimeout):
             buf.write_i32(10)
 
+class _UniffiFfiConverterBoolean:
+    @classmethod
+    def check_lower(cls, value):
+        return not not value
+
+    @classmethod
+    def lower(cls, value):
+        return 1 if value else 0
+
+    @staticmethod
+    def lift(value):
+        return value != 0
+
+    @classmethod
+    def read(cls, buf):
+        return cls.lift(buf.read_u8())
+
+    @classmethod
+    def write(cls, value, buf):
+        buf.write_u8(value)
+
+
+class AccessTokenProvider():
+
+    async def get_access_token(self, force_refresh: bool) -> str:
+        raise NotImplementedError
+
+class AccessTokenProviderImpl(AccessTokenProvider):
+
+    _handle: ctypes.c_uint64
+
+    def __init__(self, *args, **kwargs):
+        raise ValueError("This class has no default constructor")
+
+    def __del__(self):
+        # In case of partial initialization of instances.
+        handle = getattr(self, "_handle", None)
+        if handle is not None:
+            _uniffi_rust_call(_UniffiLib.uniffi_cyclops_sdk_fn_free_accesstokenprovider, handle)
+
+    def _uniffi_clone_handle(self):
+        return _uniffi_rust_call(_UniffiLib.uniffi_cyclops_sdk_fn_clone_accesstokenprovider, self._handle)
+
+    # Used by alternative constructors or any methods which return this type.
+    @classmethod
+    def _uniffi_make_instance(cls, handle):
+        # Lightly yucky way to bypass the usual __init__ logic
+        # and just create a new instance with the required handle.
+        inst = cls.__new__(cls)
+        inst._handle = handle
+        return inst
+    async def get_access_token(self, force_refresh: bool) -> str:
+
+        _UniffiFfiConverterBoolean.check_lower(force_refresh)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterBoolean.lower(force_refresh),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterString.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeAccessTokenProviderError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_accesstokenprovider_get_access_token(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+
+
+
+
+# Put all the bits inside a class to keep the top-level namespace clean
+class _UniffiTraitImplAccessTokenProviderImpl:
+    # For each method, generate a callback function to pass to Rust
+
+    @_UNIFFI_CALLBACK_INTERFACE_CYCLOPS_SDK_ACCESS_TOKEN_PROVIDER_METHOD0
+    def get_access_token(
+            uniffi_handle,
+            force_refresh,
+            uniffi_future_callback,
+            uniffi_callback_data,
+            uniffi_out_dropped_callback,
+        ):
+        uniffi_obj = _UniffiFfiConverterTypeAccessTokenProvider._handle_map.get(uniffi_handle)
+        def make_call():
+            uniffi_args = (_UniffiFfiConverterBoolean.lift(force_refresh), )
+            uniffi_method = uniffi_obj.get_access_token
+            return uniffi_method(*uniffi_args)
+        def handle_success(return_value):
+            uniffi_future_callback(
+                uniffi_callback_data,
+                _UniffiForeignFutureResultRustBuffer(
+                    _UniffiFfiConverterString.lower(return_value),
+                    _UniffiRustCallStatus.default()
+                )
+            )
+
+        def handle_error(status_code, rust_buffer):
+            uniffi_future_callback(
+                uniffi_callback_data,
+                _UniffiForeignFutureResultRustBuffer(
+                    _UniffiRustBuffer.default(),
+                    _UniffiRustCallStatus(status_code, rust_buffer),
+                )
+            )
+        _uniffi_trait_interface_call_async_with_error(
+            make_call,
+            uniffi_out_dropped_callback,
+            handle_success,
+            handle_error,
+            AccessTokenProviderError,
+            _UniffiFfiConverterTypeAccessTokenProviderError.lower,
+        )
+
+    @_UNIFFI_CALLBACK_INTERFACE_FREE_CYCLOPS_SDK_ACCESS_TOKEN_PROVIDER
+    def _uniffi_free(uniffi_handle):
+        _UniffiFfiConverterTypeAccessTokenProvider._handle_map.remove(uniffi_handle)
+
+    @_UNIFFI_CALLBACK_INTERFACE_CLONE_CYCLOPS_SDK_ACCESS_TOKEN_PROVIDER
+    def _uniffi_clone(uniffi_handle):
+        return _UniffiFfiConverterTypeAccessTokenProvider._handle_map.clone(uniffi_handle)
+
+    # Generate the FFI VTable.  This has a field for each callback interface method.
+    _uniffi_vtable = _UniffiVTableCallbackInterfaceCyclopsSdkAccessTokenProvider(
+        _uniffi_free,
+        _uniffi_clone,
+        get_access_token,
+    )
+    # Send Rust a pointer to the VTable.  Note: this means we need to keep the struct alive forever,
+    # or else bad things will happen when Rust tries to access it.
+    _UniffiLib.uniffi_cyclops_sdk_fn_init_callback_vtable_accesstokenprovider(ctypes.byref(_uniffi_vtable))
+
+class _UniffiFfiConverterTypeAccessTokenProvider:
+    _handle_map = _UniffiHandleMap()
+
+    @staticmethod
+    def lift(value: int):
+        if (value & 1) == 0:
+            # Rust-generated handle, construct a new class that uses the handle to implement the
+            # interface
+            return AccessTokenProviderImpl._uniffi_make_instance(value)
+        else:
+            # Python-generated handle, get the object from the handle map
+            return _UniffiFfiConverterTypeAccessTokenProvider._handle_map.remove(value)
+
+    @staticmethod
+    def check_lower(value: AccessTokenProvider):
+        if not isinstance(value, AccessTokenProvider):
+            raise TypeError("Expected AccessTokenProvider subclass, {} found".format(type(value).__name__))
+
+    @staticmethod
+    def lower(value: AccessTokenProvider):
+         if isinstance(value, AccessTokenProviderImpl):
+            # Rust-implementated object.  Clone the handle and return it
+            return value._uniffi_clone_handle()
+         else:
+            # Python-implementated object, generate a new vtable handle and return that.
+            return _UniffiFfiConverterTypeAccessTokenProvider._handle_map.insert(value)
+
+    @classmethod
+    def read(cls, buf: _UniffiRustBuffer):
+        ptr = buf.read_u64()
+        if ptr == 0:
+            raise InternalError("Raw handle value was null")
+        return cls.lift(ptr)
+
+    @classmethod
+    def write(cls, value: AccessTokenProvider, buf: _UniffiRustBuffer):
+        buf.write_u64(cls.lower(value))
+
 class _UniffiFfiConverterSequenceTypeClaim(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -2372,6 +2675,66 @@ class CyclopsClient(CyclopsClientProtocol):
         _uniffi_ffi_result = _uniffi_rust_call_with_error(
             _uniffi_error_converter,
             _UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect,
+            *_uniffi_lowered_args,
+        )
+        return cls._uniffi_make_instance(_uniffi_ffi_result)
+    @classmethod
+    def connect_browser_with_access_token(cls, configuration: CyclopsTokenProviderConfiguration,access_token: str) -> CyclopsClient:
+
+        _UniffiFfiConverterTypeCyclopsTokenProviderConfiguration.check_lower(configuration)
+
+        _UniffiFfiConverterString.check_lower(access_token)
+        _uniffi_lowered_args = (
+            _UniffiFfiConverterTypeCyclopsTokenProviderConfiguration.lower(configuration),
+            _UniffiFfiConverterString.lower(access_token),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCyclopsClient.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_browser_with_access_token,
+            *_uniffi_lowered_args,
+        )
+        return cls._uniffi_make_instance(_uniffi_ffi_result)
+    @classmethod
+    def connect_with_access_token(cls, configuration: CyclopsTokenProviderConfiguration,access_token: str,http_client: HttpClient) -> CyclopsClient:
+
+        _UniffiFfiConverterTypeCyclopsTokenProviderConfiguration.check_lower(configuration)
+
+        _UniffiFfiConverterString.check_lower(access_token)
+
+        _UniffiFfiConverterTypeHttpClient.check_lower(http_client)
+        _uniffi_lowered_args = (
+            _UniffiFfiConverterTypeCyclopsTokenProviderConfiguration.lower(configuration),
+            _UniffiFfiConverterString.lower(access_token),
+            _UniffiFfiConverterTypeHttpClient.lower(http_client),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCyclopsClient.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token,
+            *_uniffi_lowered_args,
+        )
+        return cls._uniffi_make_instance(_uniffi_ffi_result)
+    @classmethod
+    def connect_with_access_token_provider(cls, configuration: CyclopsTokenProviderConfiguration,token_provider: AccessTokenProvider,http_client: HttpClient) -> CyclopsClient:
+
+        _UniffiFfiConverterTypeCyclopsTokenProviderConfiguration.check_lower(configuration)
+
+        _UniffiFfiConverterTypeAccessTokenProvider.check_lower(token_provider)
+
+        _UniffiFfiConverterTypeHttpClient.check_lower(http_client)
+        _uniffi_lowered_args = (
+            _UniffiFfiConverterTypeCyclopsTokenProviderConfiguration.lower(configuration),
+            _UniffiFfiConverterTypeAccessTokenProvider.lower(token_provider),
+            _UniffiFfiConverterTypeHttpClient.lower(http_client),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCyclopsClient.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider,
             *_uniffi_lowered_args,
         )
         return cls._uniffi_make_instance(_uniffi_ffi_result)
@@ -2772,8 +3135,22 @@ class _UniffiFfiConverterTypeHttpClient:
     def write(cls, value: HttpClient, buf: _UniffiRustBuffer):
         buf.write_u64(cls.lower(value))
 
+class _UniffiFfiConverterUInt8(_UniffiConverterPrimitiveInt):
+    CLASS_NAME = "u8"
+    VALUE_MIN = 0
+    VALUE_MAX = 2**8
+
+    @staticmethod
+    def read(buf):
+        return buf.read_u8()
+
+    @staticmethod
+    def write(value, buf):
+        buf.write_u8(value)
+
 __all__ = [
     "InternalError",
+    "AccessTokenProviderError",
     "HttpError",
     "SdkError",
     "ResourceMetadata",
@@ -2782,12 +3159,15 @@ __all__ = [
     "CreateClaimRequest",
     "CreatePoolRequest",
     "CyclopsConfiguration",
+    "CyclopsTokenProviderConfiguration",
     "HttpHeader",
     "HttpRequest",
     "HttpResponse",
     "Sandbox",
     "CyclopsCredentials",
     "CyclopsCredentialsProtocol",
+    "AccessTokenProviderImpl",
+    "AccessTokenProvider",
     "CyclopsClient",
     "CyclopsClientProtocol",
     "HttpClientImpl",

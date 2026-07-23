@@ -102,12 +102,39 @@ extension Lume {
     }
 
     private static func executeCommand() async throws {
-        var command = try parseAsRoot()
+        let arguments = Array(CommandLine.arguments.dropFirst())
+        let shouldRecordCompletion = !isTelemetryManagementInvocation()
+        let operation = TelemetryClient.commandOperation(arguments: arguments)
+        let startedAt = Date()
 
-        if var asyncCommand = command as? AsyncParsableCommand {
-            try await asyncCommand.run()
-        } else {
-            try command.run()
+        do {
+            var command = try parseAsRoot()
+
+            if var asyncCommand = command as? AsyncParsableCommand {
+                try await asyncCommand.run()
+            } else {
+                try command.run()
+            }
+            if shouldRecordCompletion {
+                TelemetryClient.shared.recordOperationCompleted(
+                    operation: operation,
+                    transport: .cli,
+                    success: true,
+                    errorClass: .none,
+                    elapsed: Date().timeIntervalSince(startedAt)
+                )
+            }
+        } catch {
+            if shouldRecordCompletion {
+                TelemetryClient.shared.recordOperationCompleted(
+                    operation: operation,
+                    transport: .cli,
+                    success: false,
+                    errorClass: error is ValidationError ? .invalidParams : .operationError,
+                    elapsed: Date().timeIntervalSince(startedAt)
+                )
+            }
+            throw error
         }
     }
 }

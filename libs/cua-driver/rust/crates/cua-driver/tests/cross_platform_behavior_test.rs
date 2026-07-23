@@ -1131,11 +1131,7 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
         Vec::new()
     };
     let expected_background_refusal = !expected_refusals.is_empty();
-    let mut oracles = if expected_background_refusal {
-        vec![OracleKind::FixtureState]
-    } else {
-        vec![OracleKind::FixtureState]
-    };
+    let mut oracles = vec![OracleKind::FixtureState];
     if delivery_kind == Delivery::Background {
         oracles.extend([
             OracleKind::Focus,

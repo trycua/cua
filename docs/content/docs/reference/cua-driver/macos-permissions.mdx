@@ -20,11 +20,30 @@ cua-driver permissions grant    # launch CuaDriver via LaunchServices so the pro
 | -------- | ------------------------------- |
 | `--json` | Machine-readable status output. |
 
-The JSON status also includes `screen_recording_capturable`, a live capture
-probe attributed to the CuaDriver daemon. macOS Tahoe can present separate
-consent dialogs when CuaDriver controls System Events or requests direct screen
-and audio capture without the system picker. The Automation grant is outside
-the `permissions status` payload.
+The JSON status distinguishes the ordinary Screen Recording preflight from
+direct ScreenCaptureKit readiness. Because macOS Tahoe can show a separate
+private-window-picker bypass dialog when ScreenCaptureKit is queried,
+`permissions status` never runs that probe: it returns
+`screen_recording_capturable: null` and
+`direct_capture_status: "not_checked"`. This preserves the command's read-only,
+no-prompt contract.
+
+`permissions grant` explains the additional dialog before deliberately
+triggering it, then requires a successful live capture probe. macOS describes
+the combined privacy category as screen and system-audio recording even though
+Cua Driver's current ScreenCaptureKit recorder captures screen video only and
+does not enable audio capture. The consent is limited to macOS capture; it does
+not authorize browser-profile access, browser data, or CDP attachment.
+
+If the installed app is not listed under **Screen & System Audio Recording**
+after the prompt, click **+**, add `/Applications/CuaDriver.app` (or
+`/Applications/CuaDriverLocal.app` for a local build), enable it, and run
+`permissions grant` again. This recovers a stale or missing macOS registration
+without granting the terminal or another build identity.
+
+Automation prompts can also appear when an explicitly requested browser or app
+operation uses Apple Events. Those grants are target-specific and remain
+outside the core `permissions status` payload.
 
 For the complete prompt sequence in a Lume guest, see [Run Cua Driver in a
 macOS Lume VM](/how-to-guides/driver/run-in-macos-lume-vm). Source-built test

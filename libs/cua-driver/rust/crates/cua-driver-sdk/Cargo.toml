@@ -1,0 +1,44 @@
+[package]
+name = "cua-driver-sdk"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Canonical typed SDK and UniFFI boundary for Cua Driver"
+publish = false
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+cua-driver-contract = { path = "../cua-driver-contract" }
+cua-driver-core = { path = "../cua-driver-core", default-features = false }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uniffi = { workspace = true, features = ["tokio"] }
+uuid = { workspace = true }
+cursor-overlay = { path = "../cursor-overlay" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+platform-macos = { path = "../platform-macos" }
+core-foundation = "0.10"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+platform-windows = { path = "../platform-windows" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+platform-linux = { path = "../platform-linux" }
+
+[features]
+default = []
+portal-input = ["platform-linux/portal-input"]
+portal-capture = ["platform-linux/portal-capture"]
+portal-libei = ["portal-input", "portal-capture"]
+
+[dev-dependencies]
+tempfile = "3"
+uniffi = { workspace = true, features = ["bindgen"] }

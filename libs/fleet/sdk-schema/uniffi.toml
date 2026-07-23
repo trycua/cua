@@ -1,0 +1,14 @@
+[bindings.python]
+cdylib_name = "cyclops_sdk"
+
+[bindings.kotlin]
+package_name = "ai.cua.cyclops.sdk.schema"
+cdylib_name = "cyclops_sdk"
+
+[bindings.swift]
+module_name = "CyclopsSdkSchema"
+ffi_module_name = "CyclopsSdkSchemaFFI"
+ffi_module_filename = "CyclopsSdkSchemaFFI"
+
+[bindings.ruby]
+cdylib_name = "cyclops_sdk"

@@ -1,15 +1,15 @@
 //! Session lifecycle hooks.
 //!
-//! The cua-driver daemon (`serve.rs`) drives ONE shared `ToolRegistry`; every
-//! `cua-driver mcp` proxy process connects to it and shares its state. A
+//! The public SDK runtime owns one shared platform registry; the cua-driver
+//! daemon and every `cua-driver mcp` proxy consume that runtime downstream. A
 //! proxy-minted `session_id` (carried in the daemon request envelope) lets the
 //! daemon OWN and CLEAN UP per-session state.
 //!
 //! Recording ownership lives on the core `RecordingSession` directly. But some
 //! session-scoped state is platform-specific (e.g. macOS per-session config
 //! overrides in `platform-macos::tools::SessionConfigRegistry`) and the daemon
-//! only holds an `Arc<ToolRegistry>` — it can't reach into a platform crate's
-//! `ToolState`. This module bridges that gap with a small process-global list
+//! cannot reach into a platform crate's private `ToolState`. This module
+//! bridges that gap with a small process-global list
 //! of cleanup callbacks: each platform registers a `Fn(&str)` once at startup,
 //! and the daemon's `session_end` arm fans the disconnecting `session_id` out
 //! to all of them.
@@ -21,6 +21,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
+
+use cua_driver_contract::{CaptureScope, EscalationReason};
 
 type SessionEndHook = Box<dyn Fn(&str) + Send + Sync>;
 
@@ -46,11 +48,25 @@ pub enum SessionTransport {
     McpHttp,
 }
 
+/// Closed entry-surface category for one explicit session episode. This is
+/// deliberately independent from transport: Python and TypeScript SDKs both
+/// use the direct daemon transport, while MCP can use stdio or HTTP.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionClientKind {
+    Cli,
+    Direct,
+    Mcp,
+    PythonSdk,
+    TypescriptSdk,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionStartObservation {
     pub declaration: SessionDeclaration,
     pub revived: bool,
     pub transport: SessionTransport,
+    pub client_kind: SessionClientKind,
+    pub capture_scope: CaptureScope,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,6 +153,7 @@ pub trait SessionObserver: Send + Sync + 'static {
         session_id: &str,
         transport: SessionTransport,
         computer_action: bool,
+        escalation_reason: Option<EscalationReason>,
         outcome: &crate::server::ToolCompletionObservation,
     );
     fn on_session_ended(
@@ -173,6 +190,7 @@ pub struct SessionToolContext {
     session_id: String,
     transport: SessionTransport,
     computer_action: bool,
+    escalation_reason: Option<EscalationReason>,
 }
 
 impl SessionToolContext {
@@ -182,6 +200,7 @@ impl SessionToolContext {
                 &self.session_id,
                 self.transport,
                 self.computer_action,
+                self.escalation_reason,
                 outcome,
             );
         }
@@ -216,6 +235,7 @@ pub fn begin_tool_call(
     args: &serde_json::Value,
     known_tool: bool,
     transport: SessionTransport,
+    client_kind: SessionClientKind,
 ) -> Option<SessionToolContext> {
     if !known_tool {
         return None;
@@ -232,6 +252,20 @@ pub fn begin_tool_call(
     }
 
     touch_session(session_id);
+    let capture_scope = if is_start {
+        args.get("capture_scope")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default()
+    } else {
+        crate::capture_scope::get_session(session_id)
+            .map(|state| state.policy)
+            .unwrap_or_default()
+    };
+    let escalation_reason = (tool_name == "escalate_session")
+        .then(|| args.get("reason").cloned())
+        .flatten()
+        .and_then(|value| serde_json::from_value(value).ok());
     if !is_end {
         if let Some(observer) = SESSION_OBSERVER.get() {
             observer.on_session_started(
@@ -244,6 +278,8 @@ pub fn begin_tool_call(
                     },
                     revived,
                     transport,
+                    client_kind,
+                    capture_scope,
                 },
             );
         }
@@ -256,6 +292,7 @@ pub fn begin_tool_call(
             tool_name,
             crate::server::tool_operation(tool_name, Some(args)),
         ),
+        escalation_reason,
     })
 }
 
@@ -435,6 +472,7 @@ mod tests {
             _: &str,
             _: SessionTransport,
             _: bool,
+            _: Option<EscalationReason>,
             _: &crate::server::ToolCompletionObservation,
         ) {
         }
@@ -636,6 +674,7 @@ mod tests {
             &serde_json::json!({"_session_id": "private-fallback"}),
             true,
             SessionTransport::McpStdio,
+            SessionClientKind::Mcp,
         )
         .is_none());
         assert!(begin_tool_call(
@@ -643,6 +682,7 @@ mod tests {
             &serde_json::json!({"session": "default"}),
             true,
             SessionTransport::McpStdio,
+            SessionClientKind::Mcp,
         )
         .is_none());
 
@@ -651,6 +691,7 @@ mod tests {
             &serde_json::json!({"session": "test-action-pointer-AB12"}),
             true,
             SessionTransport::McpStdio,
+            SessionClientKind::Mcp,
         )
         .unwrap();
         assert!(pointer.computer_action);
@@ -664,6 +705,7 @@ mod tests {
             }),
             true,
             SessionTransport::McpHttp,
+            SessionClientKind::Mcp,
         )
         .unwrap();
         assert!(page_write.computer_action);
@@ -678,6 +720,7 @@ mod tests {
             }),
             true,
             SessionTransport::McpHttp,
+            SessionClientKind::Mcp,
         )
         .unwrap();
         assert!(!page_read.computer_action);
@@ -687,9 +730,27 @@ mod tests {
             &serde_json::json!({"session": "test-action-read-GH78"}),
             true,
             SessionTransport::Daemon,
+            SessionClientKind::Direct,
         )
         .unwrap();
         assert!(!state_read.computer_action);
+
+        let escalation = begin_tool_call(
+            "escalate_session",
+            &serde_json::json!({
+                "session": "test-action-escalate-IJ90",
+                "reason": "no_window_target",
+                "detail": "private free-form detail is not observed"
+            }),
+            true,
+            SessionTransport::Daemon,
+            SessionClientKind::TypescriptSdk,
+        )
+        .unwrap();
+        assert_eq!(
+            escalation.escalation_reason,
+            Some(EscalationReason::NoWindowTarget)
+        );
     }
 
     #[test]
@@ -701,9 +762,10 @@ mod tests {
         let explicit = "test-observer-explicit-IJ90";
         begin_tool_call(
             "start_session",
-            &serde_json::json!({"session": explicit}),
+            &serde_json::json!({"session": explicit, "capture_scope": "desktop"}),
             true,
             SessionTransport::McpStdio,
+            SessionClientKind::Mcp,
         )
         .unwrap();
         end_session(explicit);
@@ -714,6 +776,7 @@ mod tests {
             &serde_json::json!({"session": idle}),
             true,
             SessionTransport::McpHttp,
+            SessionClientKind::Mcp,
         )
         .unwrap();
         end_session_with_reason(idle, SessionEndReason::IdleTimeout);
@@ -726,6 +789,7 @@ mod tests {
             &serde_json::json!({"session": revived}),
             true,
             SessionTransport::Daemon,
+            SessionClientKind::PythonSdk,
         )
         .unwrap();
 
@@ -735,6 +799,7 @@ mod tests {
             &serde_json::json!({"session": control}),
             true,
             SessionTransport::McpStdio,
+            SessionClientKind::Mcp,
         )
         .unwrap();
         fire_session_end(control);
@@ -744,6 +809,8 @@ mod tests {
             id == explicit
                 && observation.declaration == SessionDeclaration::StartSession
                 && !observation.revived
+                && observation.client_kind == SessionClientKind::Mcp
+                && observation.capture_scope == CaptureScope::Desktop
         }));
         assert!(starts.iter().any(|(id, observation)| {
             id == idle

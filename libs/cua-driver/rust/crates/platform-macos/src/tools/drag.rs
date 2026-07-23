@@ -8,9 +8,11 @@
 //! recent zoom crop context, same as click/double_click.
 
 use async_trait::async_trait;
+use cua_driver_contract::{ClickButton, DragInput};
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
+    tool_args::parse_typed_projection,
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -114,36 +116,20 @@ impl Tool for DragTool {
             && args.get("pid").is_none()
             && args.get("window_id").is_none()
         {
-            let coordinate = |key: &str| {
-                args.opt_f64(key)
-                    .or_else(|| args.opt_i64(key).map(|value| value as f64))
+            let input = match parse_typed_projection::<DragInput>("drag", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
             };
-            let Some(from_x) = coordinate("from_x") else {
-                return ToolResult::error("Missing required parameter: from_x");
-            };
-            let Some(from_y) = coordinate("from_y") else {
-                return ToolResult::error("Missing required parameter: from_y");
-            };
-            let Some(to_x) = coordinate("to_x") else {
-                return ToolResult::error("Missing required parameter: to_x");
-            };
-            let Some(to_y) = coordinate("to_y") else {
-                return ToolResult::error("Missing required parameter: to_y");
-            };
+            let (from_x, from_y, to_x, to_y) = (input.from_x, input.from_y, input.to_x, input.to_y);
             let (from_x, from_y) = super::desktop_screenshot_point(from_x, from_y).await;
             let (to_x, to_y) = super::desktop_screenshot_point(to_x, to_y).await;
-            let duration_ms = args.u64_or("duration_ms", 500).min(10_000);
-            let steps = args.u64_or("steps", 20).clamp(1, 200) as usize;
-            let modifiers: Vec<String> = args.str_array("modifier");
-            let button = match args.str_or("button", "left").to_lowercase().as_str() {
-                "left" => DragButton::Left,
-                "right" => DragButton::Right,
-                "middle" => DragButton::Middle,
-                other => {
-                    return ToolResult::error(format!(
-                        "Unknown button '{other}' — expected left, right, or middle."
-                    ))
-                }
+            let duration_ms = input.duration_ms.unwrap_or(500).min(10_000);
+            let steps = input.steps.unwrap_or(20).clamp(1, 200) as usize;
+            let modifiers = input.modifier.unwrap_or_default();
+            let button = match input.button.unwrap_or(ClickButton::Left) {
+                ClickButton::Left => DragButton::Left,
+                ClickButton::Right => DragButton::Right,
+                ClickButton::Middle => DragButton::Middle,
             };
             let result = tokio::task::spawn_blocking(move || {
                 let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
@@ -397,7 +383,7 @@ impl Tool for DragTool {
         )
         .await;
 
-        let changes = snapshot.detect_async().await;
+        let changes = super::finish_window_observation(snapshot, &args).await;
 
         // Animate cursor to end position.
         crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), to_sx, to_sy).await;

@@ -14,6 +14,7 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use base64::Engine as _;
 use cua_driver_testkit::e2e::{
     append_json_line, execute_case, recording_evidence, write_environment_from_env, CaseSpec,
     Delivery, DriverRoute, EnvironmentRecord, Evidence, Observation, OracleKind, RefusalCode,
@@ -302,7 +303,7 @@ fn browser_specs() -> Vec<BrowserSpec> {
     #[cfg(target_os = "macos")]
     {
         let home = PathBuf::from(std::env::var_os("HOME").expect("HOME"));
-        return select_browser_products(
+        select_browser_products(
             [
                 (
                     "chrome",
@@ -329,7 +330,7 @@ fn browser_specs() -> Vec<BrowserSpec> {
             })
             .collect(),
             false,
-        );
+        )
     }
     #[cfg(target_os = "linux")]
     {
@@ -615,31 +616,28 @@ fn cdp_target_for_url(port: u16, url: &str) -> String {
         .to_owned()
 }
 
-fn bring_harness_page_to_front(port: u16, url: &str) {
+fn cdp_page_websocket_for_url(port: u16, url: &str) -> String {
     let targets = browser_http_json(port, "/json/list")
         .unwrap_or_else(|error| panic!("read harness CDP targets: {error}"));
-    let ws_url = targets
+    targets
         .as_array()
         .into_iter()
         .flatten()
         .find(|target| target["type"] == "page" && target["url"] == url)
         .and_then(|target| target["webSocketDebuggerUrl"].as_str())
-        .unwrap_or_else(|| panic!("no harness page websocket for {url}"));
-    harness_cdp_call_at_url(ws_url, "Page.bringToFront", serde_json::json!({}));
+        .unwrap_or_else(|| panic!("no harness page websocket for {url}"))
+        .to_owned()
+}
+
+fn bring_harness_page_to_front(port: u16, url: &str) {
+    let ws_url = cdp_page_websocket_for_url(port, url);
+    harness_cdp_call_at_url(&ws_url, "Page.bringToFront", serde_json::json!({}));
 }
 
 fn harness_page_visibility(port: u16, url: &str) -> String {
-    let targets = browser_http_json(port, "/json/list")
-        .unwrap_or_else(|error| panic!("read harness CDP targets: {error}"));
-    let ws_url = targets
-        .as_array()
-        .into_iter()
-        .flatten()
-        .find(|target| target["type"] == "page" && target["url"] == url)
-        .and_then(|target| target["webSocketDebuggerUrl"].as_str())
-        .unwrap_or_else(|| panic!("no harness page websocket for {url}"));
+    let ws_url = cdp_page_websocket_for_url(port, url);
     harness_cdp_call_at_url(
-        ws_url,
+        &ws_url,
         "Runtime.evaluate",
         serde_json::json!({
             "expression": "document.visibilityState",
@@ -660,11 +658,11 @@ fn driver_profile_root() -> PathBuf {
     }
     #[cfg(target_os = "macos")]
     {
-        return PathBuf::from(std::env::var_os("HOME").expect("HOME"))
+        PathBuf::from(std::env::var_os("HOME").expect("HOME"))
             .join("Library")
             .join("Application Support")
             .join("CuaDriver")
-            .join("BrowserProfiles");
+            .join("BrowserProfiles")
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
@@ -2305,10 +2303,15 @@ fn run_multi_tab(spec: &BrowserSpec) {
         *evidence = recording_evidence(fixture.driver.recording_dir());
         let session = format!("standalone-multi-tab-{}", fixture.pid);
         let _ = bind(&mut fixture, &session);
-        let second_html = standalone_fixture_html().replace(
-            "<title>cua-driver Web Harness</title>",
-            "<title>cua-driver Background Harness</title>",
-        );
+        let second_html = standalone_fixture_html()
+            .replace(
+                "<title>cua-driver Web Harness</title>",
+                "<title>cua-driver Background Harness</title>",
+            )
+            .replace(
+                "</style>",
+                "body { background: rgb(18, 171, 52) !important; }</style>",
+            );
         let second_server = BrowserFixtureServer::start(&second_html);
         let created = harness_cdp_call(
             fixture.cdp_port,
@@ -2322,12 +2325,39 @@ fn run_multi_tab(spec: &BrowserSpec) {
         assert!(created["targetId"].is_string(), "{created}");
         wait_for_observed(&second_server, "WEB_HARNESS_MARKER_v1");
 
+        // Exercise screenshot/coordinate parity under a non-1 device scale.
+        // This is setup instrumentation and runs before the background sentinel;
+        // the driver action below must still leave the tab selected state and
+        // native foreground unchanged.
+        let background_ws = cdp_page_websocket_for_url(fixture.cdp_port, second_server.page_url());
+        harness_cdp_call_at_url(
+            &background_ws,
+            "Emulation.setDeviceMetricsOverride",
+            serde_json::json!({
+                "width": 400,
+                "height": 300,
+                "deviceScaleFactor": 2,
+                "mobile": false,
+            }),
+        );
+        let device_scale = harness_cdp_call_at_url(
+            &background_ws,
+            "Runtime.evaluate",
+            serde_json::json!({
+                "expression": "window.devicePixelRatio",
+                "returnByValue": true,
+            }),
+        )["result"]["value"]
+            .as_f64()
+            .expect("background tab device scale factor");
+        assert!((device_scale - 2.0).abs() < f64::EPSILON, "{device_scale}");
+
         // Establish a deterministic selected-tab baseline before the
         // foreground sentinel starts. Chromium does not consistently honor
         // createTarget(background=true) on every host, but Page.bringToFront
         // reliably selects the fixture tab. No browser action below this
         // setup point may activate a target.
-        bring_harness_page_to_front(fixture.cdp_port, &fixture.server.page_url());
+        bring_harness_page_to_front(fixture.cdp_port, fixture.server.page_url());
 
         // Begin the background proof only after Chromium has honored the
         // explicit selected-tab setup and the first fixture is observably
@@ -2335,9 +2365,9 @@ fn run_multi_tab(spec: &BrowserSpec) {
         let setup_deadline = Instant::now() + Duration::from_secs(5);
         loop {
             let foreground_visibility =
-                harness_page_visibility(fixture.cdp_port, &fixture.server.page_url());
+                harness_page_visibility(fixture.cdp_port, fixture.server.page_url());
             let background_visibility =
-                harness_page_visibility(fixture.cdp_port, &second_server.page_url());
+                harness_page_visibility(fixture.cdp_port, second_server.page_url());
             if foreground_visibility == "visible" && background_visibility == "hidden" {
                 break;
             }
@@ -2409,9 +2439,104 @@ fn run_multi_tab(spec: &BrowserSpec) {
                     "session": session,
                     "snapshot_format": "semantic_v2",
                     "query": "Increment txt-input",
+                    "include_screenshot": true,
                 }),
             );
             assert_eq!(snapshot.structured()["status"], "ok", "{}", snapshot.raw);
+            assert_eq!(
+                snapshot.structured()["screenshot"]["source"],
+                "cdp_tab",
+                "{}",
+                snapshot.raw
+            );
+            assert!(
+                snapshot.structured()["screenshot"]["width"]
+                    .as_u64()
+                    .is_some_and(|width| width > 0)
+                    && snapshot.structured()["screenshot"]["height"]
+                        .as_u64()
+                        .is_some_and(|height| height > 0),
+                "{}",
+                snapshot.raw
+            );
+            assert_eq!(
+                snapshot.structured()["screenshot_width"],
+                snapshot.structured()["screenshot"]["width"]
+            );
+            assert_eq!(
+                snapshot.structured()["screenshot_height"],
+                snapshot.structured()["screenshot"]["height"]
+            );
+            assert_eq!(snapshot.structured()["screenshot_mime_type"], "image/png");
+            assert_eq!(
+                snapshot.structured()["screenshot"]["coordinate_space"],
+                "viewport_css_px"
+            );
+            let png_width = snapshot.structured()["screenshot"]["width"]
+                .as_f64()
+                .expect("PNG width");
+            let png_height = snapshot.structured()["screenshot"]["height"]
+                .as_f64()
+                .expect("PNG height");
+            let viewport_width = snapshot.structured()["screenshot"]["viewport_css_width"]
+                .as_f64()
+                .expect("CSS viewport width");
+            let viewport_height = snapshot.structured()["screenshot"]["viewport_css_height"]
+                .as_f64()
+                .expect("CSS viewport height");
+            let pixel_to_css_x = snapshot.structured()["screenshot"]["pixel_to_css_scale_x"]
+                .as_f64()
+                .expect("screenshot x scale");
+            let pixel_to_css_y = snapshot.structured()["screenshot"]["pixel_to_css_scale_y"]
+                .as_f64()
+                .expect("screenshot y scale");
+            assert!((viewport_width - 400.0).abs() < 0.01, "{}", snapshot.raw);
+            assert!((viewport_height - 300.0).abs() < 0.01, "{}", snapshot.raw);
+            assert!(
+                (pixel_to_css_x - viewport_width / png_width).abs() < 1e-9,
+                "{}",
+                snapshot.raw
+            );
+            assert!(
+                (pixel_to_css_y - viewport_height / png_height).abs() < 1e-9,
+                "{}",
+                snapshot.raw
+            );
+            assert!(
+                snapshot.raw["result"]["content"]
+                    .as_array()
+                    .is_some_and(|content| content.iter().any(|item| {
+                        item["type"] == "image"
+                            && item["mimeType"] == "image/png"
+                            && item["data"]
+                                .as_str()
+                                .is_some_and(|data| data.starts_with("iVBOR"))
+                    })),
+                "{}",
+                snapshot.raw
+            );
+            let screenshot_data = snapshot.raw["result"]["content"]
+                .as_array()
+                .and_then(|content| {
+                    content
+                        .iter()
+                        .find(|item| item["type"] == "image")
+                        .and_then(|item| item["data"].as_str())
+                })
+                .expect("inactive-tab PNG data");
+            let screenshot_bytes = base64::engine::general_purpose::STANDARD
+                .decode(screenshot_data)
+                .expect("decode inactive-tab PNG");
+            let screenshot = image::load_from_memory(&screenshot_bytes)
+                .expect("decode inactive-tab image")
+                .to_rgba8();
+            let pixel = screenshot.get_pixel(2, 2).0;
+            assert!(
+                pixel[0].abs_diff(18) <= 2
+                    && pixel[1].abs_diff(171) <= 2
+                    && pixel[2].abs_diff(52) <= 2,
+                "screenshot did not come from the green inactive tab: rgba={pixel:?}"
+            );
             let click_ref = semantic_ref_by_name(&snapshot, "Increment", "click");
             let trusted = fixture.driver.call(
                 "browser_click",
@@ -2573,7 +2698,7 @@ fn run_same_title_tabs(spec: &BrowserSpec) {
             );
             assert!(created["targetId"].is_string(), "{created}");
             wait_for_observed(&second_server, "WEB_HARNESS_MARKER_v1");
-            bring_harness_page_to_front(fixture.cdp_port, &fixture.server.page_url());
+            bring_harness_page_to_front(fixture.cdp_port, fixture.server.page_url());
 
             run_with_background_oracles(&mut fixture, |fixture| {
                 let deadline = Instant::now() + Duration::from_secs(5);

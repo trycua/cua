@@ -343,7 +343,7 @@ fn def() -> &'static ToolDef {
         // The description is part of the public contract — downstream
         // consumers depend on it spelling out `schema_version="1"` and the per-
         // platform check matrix. A test pins this commitment.
-        description: r#"Single-call end-to-end driver diagnostics. Designed to let downstream consumers ship one stable call instead of stitching together check_permissions, doctor, version, bundle attribution, and a screenshot probe. cua-driver owns the health model; consumers stay thin.
+        description: r#"Single-call end-to-end driver diagnostics. Designed to let downstream consumers ship one stable call instead of stitching together check_permissions, doctor, version, bundle attribution, and platform capability status. On macOS, prompt-capable direct capture is deliberately skipped; use `cua-driver permissions grant` to verify it explicitly. cua-driver owns the health model; consumers stay thin.
 
 Input — all optional:
   {
@@ -717,8 +717,8 @@ mod tests {
         // Every entry must carry hint + message.
         for entry in structured["checks"].as_array().unwrap() {
             assert_eq!(entry["status"], "fail");
-            assert!(entry["hint"].as_str().unwrap_or("").len() > 0);
-            assert!(entry["message"].as_str().unwrap_or("").len() > 0);
+            assert!(!entry["hint"].as_str().unwrap_or("").is_empty());
+            assert!(!entry["message"].as_str().unwrap_or("").is_empty());
         }
     }
 

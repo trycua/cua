@@ -56,6 +56,15 @@ const ENV_CLI_COMPLETION_CLIENT_KIND: &str = "CUA_DRIVER_CLI_TELEMETRY_CLIENT_KI
 const ENV_CLI_COMPLETION_EXIT_CODE: &str = "CUA_DRIVER_CLI_TELEMETRY_EXIT_CODE";
 const ENV_CLI_COMPLETION_DURATION_MS: &str = "CUA_DRIVER_CLI_TELEMETRY_DURATION_MS";
 const ENV_LIFECYCLE_WORKER: &str = "CUA_DRIVER_LIFECYCLE_TELEMETRY_WORKER";
+const ENV_UPDATE_EVENT_WORKER: &str = "CUA_DRIVER_UPDATE_TELEMETRY_WORKER";
+const ENV_UPDATE_EVENT_NAME: &str = "CUA_DRIVER_UPDATE_TELEMETRY_EVENT";
+const ENV_UPDATE_SOURCE: &str = "CUA_DRIVER_UPDATE_TELEMETRY_SOURCE";
+const ENV_UPDATE_OUTCOME: &str = "CUA_DRIVER_UPDATE_TELEMETRY_OUTCOME";
+const ENV_UPDATE_TARGET_VERSION: &str = "CUA_DRIVER_UPDATE_TELEMETRY_TARGET_VERSION";
+const ENV_UPDATE_CACHE_HIT: &str = "CUA_DRIVER_UPDATE_TELEMETRY_CACHE_HIT";
+const ENV_UPDATE_DAEMON_WAS_RUNNING: &str = "CUA_DRIVER_UPDATE_TELEMETRY_DAEMON_RUNNING";
+const ENV_UPDATE_FAILURE_CLASS: &str = "CUA_DRIVER_UPDATE_TELEMETRY_FAILURE_CLASS";
+const ENV_UPDATE_DURATION_MS: &str = "CUA_DRIVER_UPDATE_TELEMETRY_DURATION_MS";
 pub const ENV_INSTALL_CHANNEL: &str = "CUA_DRIVER_INSTALL_CHANNEL";
 pub const ENV_RELEASE_VERSION: &str = "CUA_DRIVER_RELEASE_VERSION";
 
@@ -72,6 +81,9 @@ pub mod event {
     pub const PERMISSIONS_GATE_STARTED: &str = "cua_driver_permissions_gate_started";
     pub const PERMISSIONS_GATE_DISMISSED: &str = "cua_driver_permissions_gate_dismissed";
     pub const PERMISSIONS_GATE_COMPLETED: &str = "cua_driver_permissions_gate_completed";
+    pub const UPDATE_CHECKED: &str = "cua_driver_update_checked";
+    pub const UPDATE_APPLY_STARTED: &str = "cua_driver_update_apply_started";
+    pub const UPDATE_APPLY_COMPLETED: &str = "cua_driver_update_apply_completed";
 }
 
 const INSPECTABLE_EVENTS: &[&str] = &[
@@ -87,7 +99,80 @@ const INSPECTABLE_EVENTS: &[&str] = &[
     event::PERMISSIONS_GATE_STARTED,
     event::PERMISSIONS_GATE_DISMISSED,
     event::PERMISSIONS_GATE_COMPLETED,
+    event::UPDATE_CHECKED,
+    event::UPDATE_APPLY_STARTED,
+    event::UPDATE_APPLY_COMPLETED,
 ];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UpdateCheckSource {
+    Background,
+    Cli,
+    Mcp,
+}
+
+impl UpdateCheckSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Background => "background",
+            Self::Cli => "cli",
+            Self::Mcp => "mcp",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UpdateCheckOutcome {
+    UpToDate,
+    Available,
+    Unavailable,
+}
+
+impl UpdateCheckOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::UpToDate => "up_to_date",
+            Self::Available => "available",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UpdateApplyOutcome {
+    Installed,
+    AlreadyCurrent,
+    Failed,
+}
+
+impl UpdateApplyOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Installed => "installed",
+            Self::AlreadyCurrent => "already_current",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UpdateFailureClass {
+    None,
+    CheckFailed,
+    InstallerExit,
+    InstallerLaunch,
+}
+
+impl UpdateFailureClass {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::CheckFailed => "check_failed",
+            Self::InstallerExit => "installer_exit",
+            Self::InstallerLaunch => "installer_launch",
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Transport {
@@ -170,7 +255,9 @@ pub fn reset_id() -> Result<(), String> {
     let Some(home) = telemetry_home_dir() else {
         return Ok(());
     };
-    let legacy = if std::env::var_os(ENV_TELEMETRY_HOME).is_none() {
+    let legacy = if std::env::var_os(ENV_TELEMETRY_HOME).is_none()
+        && !crate::bundle::is_local_installation()
+    {
         home_root().map(|root| root.join(LEGACY_HOME_SUBDIRECTORY))
     } else {
         None
@@ -179,11 +266,11 @@ pub fn reset_id() -> Result<(), String> {
 }
 
 fn reset_id_in_homes(home: &Path, legacy: Option<&Path>) -> Result<(), String> {
-    let lifecycle_lock = open_lock_file(&home, TELEMETRY_LIFECYCLE_LOCK_FILE_NAME)?;
+    let lifecycle_lock = open_lock_file(home, TELEMETRY_LIFECYCLE_LOCK_FILE_NAME)?;
     lifecycle_lock
         .lock()
         .map_err(|error| format!("failed to lock telemetry lifecycle: {error}"))?;
-    let identity_lock = open_lock_file(&home, TELEMETRY_IDENTITY_LOCK_FILE_NAME)?;
+    let identity_lock = open_lock_file(home, TELEMETRY_IDENTITY_LOCK_FILE_NAME)?;
     identity_lock
         .lock()
         .map_err(|error| format!("failed to lock telemetry identity: {error}"))?;
@@ -279,6 +366,8 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
             ("revived", Value::Bool(false)),
             ("concurrent_sessions_bucket", Value::String("1".into())),
             ("entry_transport", Value::String("mcp_stdio".into())),
+            ("client_kind", Value::String("mcp".into())),
+            ("capture_scope", Value::String("auto".into())),
             ("execution_mode", Value::String(execution_mode().into())),
         ]),
         event::AGENT_SESSION_ENDED => bounded_properties(&[
@@ -306,6 +395,10 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
             ("cursor_motion_customized", Value::Bool(false)),
             ("multi_cursor_bucket", Value::String("1".into())),
             ("observed_multiple_transports", Value::Bool(false)),
+            ("client_kind", Value::String("mcp".into())),
+            ("capture_scope", Value::String("auto".into())),
+            ("auto_escalated_to_desktop", Value::Bool(true)),
+            ("escalation_reason", Value::String("other".into())),
             ("execution_mode", Value::String(execution_mode().into())),
         ]),
         event::PERMISSIONS_GATE_STARTED => bounded_properties(&[
@@ -323,6 +416,23 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
             ("panel_shown", Value::Bool(true)),
             ("dismissed", Value::Bool(false)),
             ("resolution", Value::String("granted".into())),
+            ("duration_bucket", Value::String("2s_9_999ms".into())),
+        ]),
+        event::UPDATE_CHECKED => bounded_properties(&[
+            ("source", Value::String("cli".into())),
+            ("outcome", Value::String("available".into())),
+            ("target_version", Value::String("1.2.3".into())),
+            ("cache_hit", Value::Bool(false)),
+        ]),
+        event::UPDATE_APPLY_STARTED => bounded_properties(&[
+            ("target_version", Value::String("1.2.3".into())),
+            ("daemon_was_running", Value::Bool(false)),
+        ]),
+        event::UPDATE_APPLY_COMPLETED => bounded_properties(&[
+            ("target_version", Value::String("1.2.3".into())),
+            ("outcome", Value::String("installed".into())),
+            ("failure_class", Value::String("none".into())),
+            ("daemon_was_running", Value::Bool(false)),
             ("duration_bucket", Value::String("2s_9_999ms".into())),
         ]),
         _ => Map::new(),
@@ -381,6 +491,10 @@ static AGENT_SESSIONS: OnceLock<Mutex<HashMap<String, AgentSessionState>>> = Onc
 struct AgentSessionState {
     started: std::time::Instant,
     entry_transport: Transport,
+    client_kind: cua_driver_core::session::SessionClientKind,
+    capture_scope: cua_driver_core::CaptureScope,
+    auto_escalated_to_desktop: bool,
+    escalation_reason: Option<cua_driver_core::EscalationReason>,
     transport_bits: u8,
     tool_count: u64,
     computer_action_count: u64,
@@ -396,10 +510,18 @@ struct AgentSessionState {
 }
 
 impl AgentSessionState {
-    fn new(entry_transport: Transport) -> Self {
+    fn new(
+        entry_transport: Transport,
+        client_kind: cua_driver_core::session::SessionClientKind,
+        capture_scope: cua_driver_core::CaptureScope,
+    ) -> Self {
         Self {
             started: std::time::Instant::now(),
             entry_transport,
+            client_kind,
+            capture_scope,
+            auto_escalated_to_desktop: false,
+            escalation_reason: None,
             transport_bits: transport_bit(entry_transport),
             tool_count: 0,
             computer_action_count: 0,
@@ -419,10 +541,20 @@ impl AgentSessionState {
         &mut self,
         transport: Transport,
         computer_action: bool,
+        escalation_reason: Option<cua_driver_core::EscalationReason>,
         outcome: &cua_driver_core::server::ToolCompletionObservation,
     ) {
         self.transport_bits |= transport_bit(transport);
         let tool_name = outcome.tool_name.as_str();
+        if tool_name == "escalate_session"
+            && outcome.success
+            && self.capture_scope == cua_driver_core::CaptureScope::Auto
+        {
+            if let Some(reason) = escalation_reason {
+                self.auto_escalated_to_desktop = true;
+                self.escalation_reason = Some(reason);
+            }
+        }
         if matches!(tool_name, "start_session" | "end_session") {
             return;
         }
@@ -551,6 +683,22 @@ impl AgentSessionState {
                 "observed_multiple_transports",
                 Value::Bool(self.transport_bits.count_ones() > 1),
             ),
+            (
+                "client_kind",
+                Value::String(session_client_kind(self.client_kind).into()),
+            ),
+            (
+                "capture_scope",
+                Value::String(capture_scope(self.capture_scope).into()),
+            ),
+            (
+                "auto_escalated_to_desktop",
+                Value::Bool(self.auto_escalated_to_desktop),
+            ),
+            (
+                "escalation_reason",
+                Value::String(escalation_reason(self.escalation_reason).into()),
+            ),
             ("execution_mode", Value::String(execution_mode().into())),
         ])
     }
@@ -571,6 +719,37 @@ fn session_transport(transport: cua_driver_core::session::SessionTransport) -> T
         cua_driver_core::session::SessionTransport::Daemon => Transport::Daemon,
         cua_driver_core::session::SessionTransport::McpStdio => Transport::McpStdio,
         cua_driver_core::session::SessionTransport::McpHttp => Transport::McpHttp,
+    }
+}
+
+fn session_client_kind(kind: cua_driver_core::session::SessionClientKind) -> &'static str {
+    match kind {
+        cua_driver_core::session::SessionClientKind::Cli => "cli",
+        cua_driver_core::session::SessionClientKind::Direct => "direct",
+        cua_driver_core::session::SessionClientKind::Mcp => "mcp",
+        cua_driver_core::session::SessionClientKind::PythonSdk => "python_sdk",
+        cua_driver_core::session::SessionClientKind::TypescriptSdk => "typescript_sdk",
+    }
+}
+
+fn capture_scope(scope: cua_driver_core::CaptureScope) -> &'static str {
+    match scope {
+        cua_driver_core::CaptureScope::Auto => "auto",
+        cua_driver_core::CaptureScope::Window => "window",
+        cua_driver_core::CaptureScope::Desktop => "desktop",
+    }
+}
+
+fn escalation_reason(reason: Option<cua_driver_core::EscalationReason>) -> &'static str {
+    match reason {
+        Some(cua_driver_core::EscalationReason::AxTreePixelMismatch) => "ax_tree_pixel_mismatch",
+        Some(cua_driver_core::EscalationReason::BackgroundDeliveryFailed) => {
+            "background_delivery_failed"
+        }
+        Some(cua_driver_core::EscalationReason::ForegroundIneffective) => "foreground_ineffective",
+        Some(cua_driver_core::EscalationReason::NoWindowTarget) => "no_window_target",
+        Some(cua_driver_core::EscalationReason::Other) => "other",
+        None => "not_applicable",
     }
 }
 
@@ -642,7 +821,14 @@ impl cua_driver_core::session::SessionObserver for TelemetryObserver {
             if sessions.len() >= MAX_TRACKED_AGENT_SESSIONS {
                 return;
             }
-            sessions.insert(session_id.to_owned(), AgentSessionState::new(transport));
+            sessions.insert(
+                session_id.to_owned(),
+                AgentSessionState::new(
+                    transport,
+                    observation.client_kind,
+                    observation.capture_scope,
+                ),
+            );
             sessions.len()
         };
         let declaration = match observation.declaration {
@@ -661,6 +847,14 @@ impl cua_driver_core::session::SessionObserver for TelemetryObserver {
                     Value::String(concurrent_sessions_bucket(concurrent).into()),
                 ),
                 ("entry_transport", Value::String(transport.as_str().into())),
+                (
+                    "client_kind",
+                    Value::String(session_client_kind(observation.client_kind).into()),
+                ),
+                (
+                    "capture_scope",
+                    Value::String(capture_scope(observation.capture_scope).into()),
+                ),
                 ("execution_mode", Value::String(execution_mode().into())),
             ]),
             transport,
@@ -672,6 +866,7 @@ impl cua_driver_core::session::SessionObserver for TelemetryObserver {
         session_id: &str,
         transport: cua_driver_core::session::SessionTransport,
         computer_action: bool,
+        escalation_reason: Option<cua_driver_core::EscalationReason>,
         outcome: &cua_driver_core::server::ToolCompletionObservation,
     ) {
         let sessions = AGENT_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()));
@@ -681,7 +876,12 @@ impl cua_driver_core::session::SessionObserver for TelemetryObserver {
             return;
         }
         if let Some(state) = sessions.get_mut(session_id) {
-            state.observe(session_transport(transport), computer_action, outcome);
+            state.observe(
+                session_transport(transport),
+                computer_action,
+                escalation_reason,
+                outcome,
+            );
         }
     }
 
@@ -1352,6 +1552,203 @@ pub(crate) fn capture_bounded(
     spawn_payload(event_name, payload);
 }
 
+/// Record an explicit or freshness-bounded update check. A detached worker
+/// owns delivery because CLI checks are one-shot processes and must not wait
+/// on PostHog before returning to the user.
+pub(crate) fn capture_update_checked(
+    source: UpdateCheckSource,
+    outcome: UpdateCheckOutcome,
+    target_version: Option<&str>,
+    cache_hit: bool,
+) {
+    spawn_update_event_worker(
+        event::UPDATE_CHECKED,
+        Some(source.as_str()),
+        Some(outcome.as_str()),
+        target_version,
+        Some(cache_hit),
+        None,
+        None,
+        None,
+    );
+}
+
+pub(crate) fn capture_update_apply_started(target_version: &str, daemon_was_running: bool) {
+    spawn_update_event_worker(
+        event::UPDATE_APPLY_STARTED,
+        None,
+        None,
+        Some(target_version),
+        None,
+        Some(daemon_was_running),
+        None,
+        None,
+    );
+}
+
+pub(crate) fn capture_update_apply_completed(
+    target_version: Option<&str>,
+    outcome: UpdateApplyOutcome,
+    failure_class: UpdateFailureClass,
+    daemon_was_running: bool,
+    elapsed: Duration,
+) {
+    spawn_update_event_worker(
+        event::UPDATE_APPLY_COMPLETED,
+        None,
+        Some(outcome.as_str()),
+        target_version,
+        None,
+        Some(daemon_was_running),
+        Some(failure_class.as_str()),
+        Some(elapsed),
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_update_event_worker(
+    event_name: &'static str,
+    source: Option<&str>,
+    outcome: Option<&str>,
+    target_version: Option<&str>,
+    cache_hit: Option<bool>,
+    daemon_was_running: Option<bool>,
+    failure_class: Option<&str>,
+    elapsed: Option<Duration>,
+) {
+    if !is_enabled() {
+        return;
+    }
+    let Ok(executable) = std::env::current_exe() else {
+        return;
+    };
+    let mut worker = std::process::Command::new(executable);
+    worker
+        .env(ENV_UPDATE_EVENT_WORKER, "1")
+        .env(ENV_UPDATE_EVENT_NAME, event_name)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if let Some(source) = source {
+        worker.env(ENV_UPDATE_SOURCE, source);
+    }
+    if let Some(outcome) = outcome {
+        worker.env(ENV_UPDATE_OUTCOME, outcome);
+    }
+    if let Some(version) = target_version.and_then(strict_release_version) {
+        worker.env(ENV_UPDATE_TARGET_VERSION, version);
+    }
+    if let Some(cache_hit) = cache_hit {
+        worker.env(ENV_UPDATE_CACHE_HIT, if cache_hit { "1" } else { "0" });
+    }
+    if let Some(daemon_was_running) = daemon_was_running {
+        worker.env(
+            ENV_UPDATE_DAEMON_WAS_RUNNING,
+            if daemon_was_running { "1" } else { "0" },
+        );
+    }
+    if let Some(failure_class) = failure_class {
+        worker.env(ENV_UPDATE_FAILURE_CLASS, failure_class);
+    }
+    if let Some(elapsed) = elapsed {
+        worker.env(ENV_UPDATE_DURATION_MS, elapsed.as_millis().to_string());
+    }
+    let _ = worker.spawn();
+}
+
+/// Run the hidden update-event delivery worker before CLI parsing. Every
+/// environment value is revalidated into a closed enum or strict SemVer before
+/// it can enter a payload.
+pub(crate) fn run_update_event_worker_if_requested() -> bool {
+    if !parse_env_bool(ENV_UPDATE_EVENT_WORKER).unwrap_or(false) {
+        return false;
+    }
+    let event_name = std::env::var(ENV_UPDATE_EVENT_NAME).unwrap_or_default();
+    let target_version = std::env::var(ENV_UPDATE_TARGET_VERSION)
+        .ok()
+        .and_then(|value| strict_release_version(&value))
+        .unwrap_or_else(|| "unknown".into());
+    let properties = match event_name.as_str() {
+        event::UPDATE_CHECKED => {
+            let source = match std::env::var(ENV_UPDATE_SOURCE).as_deref() {
+                Ok("background") => "background",
+                Ok("cli") => "cli",
+                Ok("mcp") => "mcp",
+                _ => return true,
+            };
+            let outcome = match std::env::var(ENV_UPDATE_OUTCOME).as_deref() {
+                Ok("up_to_date") => "up_to_date",
+                Ok("available") => "available",
+                Ok("unavailable") => "unavailable",
+                _ => return true,
+            };
+            bounded_properties(&[
+                ("source", Value::String(source.into())),
+                ("outcome", Value::String(outcome.into())),
+                ("target_version", Value::String(target_version)),
+                (
+                    "cache_hit",
+                    Value::Bool(parse_env_bool(ENV_UPDATE_CACHE_HIT).unwrap_or(false)),
+                ),
+            ])
+        }
+        event::UPDATE_APPLY_STARTED => bounded_properties(&[
+            ("target_version", Value::String(target_version)),
+            (
+                "daemon_was_running",
+                Value::Bool(parse_env_bool(ENV_UPDATE_DAEMON_WAS_RUNNING).unwrap_or(false)),
+            ),
+        ]),
+        event::UPDATE_APPLY_COMPLETED => {
+            let outcome = match std::env::var(ENV_UPDATE_OUTCOME).as_deref() {
+                Ok("installed") => "installed",
+                Ok("already_current") => "already_current",
+                Ok("failed") => "failed",
+                _ => return true,
+            };
+            let failure_class = match std::env::var(ENV_UPDATE_FAILURE_CLASS).as_deref() {
+                Ok("none") => "none",
+                Ok("check_failed") => "check_failed",
+                Ok("installer_exit") => "installer_exit",
+                Ok("installer_launch") => "installer_launch",
+                _ => return true,
+            };
+            let elapsed = std::env::var(ENV_UPDATE_DURATION_MS)
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .map(Duration::from_millis)
+                .unwrap_or_default();
+            bounded_properties(&[
+                ("target_version", Value::String(target_version)),
+                ("outcome", Value::String(outcome.into())),
+                ("failure_class", Value::String(failure_class.into())),
+                (
+                    "daemon_was_running",
+                    Value::Bool(parse_env_bool(ENV_UPDATE_DAEMON_WAS_RUNNING).unwrap_or(false)),
+                ),
+                (
+                    "duration_bucket",
+                    Value::String(duration_bucket(elapsed).into()),
+                ),
+            ])
+        }
+        _ => return true,
+    };
+    if !is_enabled() {
+        return true;
+    }
+    let Some(identity) = get_or_create_install_id() else {
+        return true;
+    };
+    let payload = build_payload(&event_name, &properties, &identity, Transport::Cli);
+    if let Err(error) =
+        post_to_posthog_with_timeout(&payload, Duration::from_secs(POSTHOG_TIMEOUT_SECS))
+    {
+        debug_log(format_args!("{event_name} failed: {error}"));
+    }
+    true
+}
+
 /// Record a finite CLI command only after its outcome is known. This is
 /// synchronous with a short timeout because one-shot processes may exit before
 /// a detached request is delivered.
@@ -1408,7 +1805,7 @@ pub(crate) fn capture_cli_completed(
         event::CLI_COMPLETED,
         &bounded_properties(&[
             ("command", Value::String(command.into())),
-            ("tool_name", Value::String(tool_name.into())),
+            ("tool_name", Value::String(tool_name)),
             ("operation", Value::String(operation.into())),
             (
                 "computer_action",
@@ -1771,7 +2168,7 @@ fn telemetry_home_dir() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os(ENV_TELEMETRY_HOME) {
         return Some(PathBuf::from(path));
     }
-    home_root().map(|home| home.join(HOME_SUBDIRECTORY))
+    home_root().map(|home| home.join(crate::bundle::user_home_subdirectory()))
 }
 
 fn home_root() -> Option<PathBuf> {
@@ -1856,6 +2253,7 @@ fn open_lock_file(home: &Path, name: &str) -> Result<File, String> {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(home.join(name))
         .map_err(|error| format!("failed to open telemetry state lock: {error}"))
 }
@@ -1882,7 +2280,7 @@ fn try_lifecycle_lock(home: &Path) -> Option<File> {
 }
 
 fn migrate_legacy_telemetry_home() {
-    if std::env::var_os(ENV_TELEMETRY_HOME).is_some() {
+    if std::env::var_os(ENV_TELEMETRY_HOME).is_some() || crate::bundle::is_local_installation() {
         return;
     }
     let Some(root) = home_root() else {
@@ -2809,6 +3207,45 @@ mod tests {
     }
 
     #[test]
+    fn update_events_expose_only_bounded_funnel_properties() {
+        let checked = inspect_event(event::UPDATE_CHECKED).unwrap();
+        assert_eq!(checked["properties"]["source"], "cli");
+        assert_eq!(checked["properties"]["outcome"], "available");
+        assert_eq!(checked["properties"]["target_version"], "1.2.3");
+        assert_eq!(checked["properties"]["cache_hit"], false);
+
+        let started = inspect_event(event::UPDATE_APPLY_STARTED).unwrap();
+        assert_eq!(started["properties"]["target_version"], "1.2.3");
+        assert_eq!(started["properties"]["daemon_was_running"], false);
+
+        let completed = inspect_event(event::UPDATE_APPLY_COMPLETED).unwrap();
+        assert_eq!(completed["properties"]["outcome"], "installed");
+        assert_eq!(completed["properties"]["failure_class"], "none");
+        assert_eq!(completed["properties"]["duration_bucket"], "2s_9_999ms");
+
+        for payload in [checked, started, completed] {
+            let serialized = serde_json::to_string(&payload)
+                .unwrap()
+                .to_ascii_lowercase();
+            for forbidden in [
+                "raw_error",
+                "exit_code",
+                "install_command",
+                "release_notes_url",
+                "file_path",
+                "arguments",
+                "prompt",
+                "$ip",
+            ] {
+                assert!(
+                    !serialized.contains(forbidden),
+                    "update payload contains {forbidden}: {serialized}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn session_observation_keys_are_bounded_by_transport_and_client_category() {
         assert_eq!(
             mcp_session_observation_key(Transport::McpStdio, "claude_code"),
@@ -2855,11 +3292,16 @@ mod tests {
             DurationBucket, OutputSizeBucket, OutputType, ToolCompletionObservation, ToolErrorClass,
         };
 
-        let mut state = AgentSessionState::new(Transport::McpStdio);
+        let mut state = AgentSessionState::new(
+            Transport::McpStdio,
+            cua_driver_core::session::SessionClientKind::PythonSdk,
+            cua_driver_core::CaptureScope::Auto,
+        );
         state.started = std::time::Instant::now() - Duration::from_secs(75);
         state.observe(
             Transport::McpHttp,
             true,
+            None,
             &ToolCompletionObservation {
                 tool_name: "click".into(),
                 operation: cua_driver_core::server::ToolOperation::NotApplicable,
@@ -2875,6 +3317,23 @@ mod tests {
         state.observe(
             Transport::McpHttp,
             false,
+            Some(cua_driver_core::EscalationReason::NoWindowTarget),
+            &ToolCompletionObservation {
+                tool_name: "escalate_session".into(),
+                operation: cua_driver_core::server::ToolOperation::NotApplicable,
+                computer_action: false,
+                success: true,
+                error_class: ToolErrorClass::None,
+                refusal_code: cua_driver_core::server::ToolRefusalCode::None,
+                duration_bucket: DurationBucket::Under10Ms,
+                output_type: OutputType::Text,
+                output_size_bucket: OutputSizeBucket::Under1KiB,
+            },
+        );
+        state.observe(
+            Transport::McpHttp,
+            false,
+            None,
             &ToolCompletionObservation {
                 tool_name: "page".into(),
                 operation: cua_driver_core::server::ToolOperation::QueryDom,
@@ -2914,6 +3373,10 @@ mod tests {
         assert_eq!(properties["cursor_motion_customized"], true);
         assert_eq!(properties["multi_cursor_bucket"], "3_5");
         assert_eq!(properties["observed_multiple_transports"], true);
+        assert_eq!(properties["client_kind"], "python_sdk");
+        assert_eq!(properties["capture_scope"], "auto");
+        assert_eq!(properties["auto_escalated_to_desktop"], true);
+        assert_eq!(properties["escalation_reason"], "no_window_target");
 
         let serialized = serde_json::to_string(&properties)
             .unwrap()
@@ -2933,6 +3396,60 @@ mod tests {
                 "aggregate contains {forbidden}: {serialized}"
             );
         }
+    }
+
+    #[test]
+    fn failed_or_non_auto_escalation_is_not_counted() {
+        use cua_driver_core::server::{
+            DurationBucket, OutputSizeBucket, OutputType, ToolCompletionObservation,
+            ToolErrorClass, ToolOperation, ToolRefusalCode,
+        };
+
+        let failed = ToolCompletionObservation {
+            tool_name: "escalate_session".into(),
+            operation: ToolOperation::NotApplicable,
+            computer_action: false,
+            success: false,
+            error_class: ToolErrorClass::InvalidParams,
+            refusal_code: ToolRefusalCode::None,
+            duration_bucket: DurationBucket::Under10Ms,
+            output_type: OutputType::Text,
+            output_size_bucket: OutputSizeBucket::Under1KiB,
+        };
+        let mut auto = AgentSessionState::new(
+            Transport::Daemon,
+            cua_driver_core::session::SessionClientKind::TypescriptSdk,
+            cua_driver_core::CaptureScope::Auto,
+        );
+        auto.observe(
+            Transport::Daemon,
+            false,
+            Some(cua_driver_core::EscalationReason::Other),
+            &failed,
+        );
+        let properties =
+            auto.ended_properties(cua_driver_core::session::SessionEndReason::Explicit, None);
+        assert_eq!(properties["auto_escalated_to_desktop"], false);
+        assert_eq!(properties["escalation_reason"], "not_applicable");
+
+        let mut desktop = AgentSessionState::new(
+            Transport::Daemon,
+            cua_driver_core::session::SessionClientKind::PythonSdk,
+            cua_driver_core::CaptureScope::Desktop,
+        );
+        let mut successful = failed;
+        successful.success = true;
+        successful.error_class = ToolErrorClass::None;
+        desktop.observe(
+            Transport::Daemon,
+            false,
+            Some(cua_driver_core::EscalationReason::Other),
+            &successful,
+        );
+        let properties =
+            desktop.ended_properties(cua_driver_core::session::SessionEndReason::Explicit, None);
+        assert_eq!(properties["auto_escalated_to_desktop"], false);
+        assert_eq!(properties["escalation_reason"], "not_applicable");
     }
 
     #[test]
@@ -2962,8 +3479,12 @@ mod tests {
         );
         assert_eq!(event_properties["operation"], "browser_click_trusted");
 
-        let mut state = AgentSessionState::new(Transport::McpStdio);
-        state.observe(Transport::McpStdio, true, &outcome);
+        let mut state = AgentSessionState::new(
+            Transport::McpStdio,
+            cua_driver_core::session::SessionClientKind::Mcp,
+            cua_driver_core::CaptureScope::Window,
+        );
+        state.observe(Transport::McpStdio, true, None, &outcome);
         let session_properties =
             state.ended_properties(cua_driver_core::session::SessionEndReason::Explicit, None);
         assert_eq!(session_properties["computer_action_count_bucket"], "0");
@@ -2993,10 +3514,15 @@ mod tests {
                 ToolOperation::BrowserPointerDoubleClickDomEvent,
             ),
         ] {
-            let mut state = AgentSessionState::new(Transport::McpStdio);
+            let mut state = AgentSessionState::new(
+                Transport::McpStdio,
+                cua_driver_core::session::SessionClientKind::Mcp,
+                cua_driver_core::CaptureScope::Window,
+            );
             state.observe(
                 Transport::McpStdio,
                 true,
+                None,
                 &ToolCompletionObservation {
                     tool_name: tool_name.into(),
                     operation,
@@ -3090,6 +3616,8 @@ mod tests {
                     declaration: SessionDeclaration::StartSession,
                     revived: false,
                     transport: SessionTransport::McpStdio,
+                    client_kind: cua_driver_core::session::SessionClientKind::Mcp,
+                    capture_scope: cua_driver_core::CaptureScope::Auto,
                 },
             );
             capture_tool_completed(

@@ -83,6 +83,9 @@ impl ExistingProfileGrants {
         }
     }
 
+    // Minting deliberately captures the complete immutable browser grant in
+    // one call so partially initialized grants cannot enter the registry.
+    #[allow(clippy::too_many_arguments)]
     pub fn mint(
         &self,
         public_session: &str,

@@ -17,14 +17,7 @@ use crate::{
     tool_args::ArgsExt,
 };
 
-/// MCP `tools/list` capability-vocabulary version. Bumped on BREAKING
-/// changes only (renaming a capability token, removing a capability
-/// claim from a tool). Additive changes — new capability tokens, new
-/// tools, new tools that newly claim an existing token — keep the
-/// version. Downstream consumers (Hermes, Codex) read this to gate
-/// strict-vs-tolerant capability matching. See
-/// `default_capabilities_for` for the live vocabulary.
-pub const CAPABILITY_VERSION: &str = "1";
+pub use cua_driver_contract::{CAPABILITY_VERSION, TOOLS_LIST_SCHEMA_VERSION};
 
 /// Metadata for a single tool.
 #[derive(Debug, Clone)]
@@ -39,18 +32,34 @@ pub struct ToolDef {
 }
 
 impl ToolDef {
+    /// Build the runtime MCP definition from a canonical client contract.
+    /// Only migrated tools use this bridge; platform-specific tools continue
+    /// to own their live schemas until they can pass parity checks.
+    pub fn from_contract(contract: &cua_driver_contract::ToolContract) -> Self {
+        assert_eq!(
+            contract.schema_mode,
+            cua_driver_contract::SchemaMode::CanonicalRuntime,
+            "portable subset contracts cannot replace live runtime schemas"
+        );
+        Self {
+            name: contract.name.clone(),
+            description: contract.description.clone(),
+            input_schema: contract.input_schema.clone(),
+            read_only: contract.annotations.read_only,
+            destructive: contract.annotations.destructive,
+            idempotent: contract.annotations.idempotent,
+            open_world: contract.annotations.open_world,
+        }
+    }
+
     pub fn to_list_entry(&self) -> Value {
         // `capabilities` is always emitted (even when empty) so consumers
         // can rely on the key existing. Additive only — old consumers
         // that ignore the field keep working unchanged.
         //
-        // Capabilities are resolved from the centralised
-        // `default_capabilities_for` name → tokens map. Keeping the
-        // mapping in one place — rather than scattered across every
-        // per-platform tool literal — means adding a new capability
-        // claim is a one-file change, and sibling PRs touching
-        // individual tool files don't conflict with this surface.
-        let caps = default_capabilities_for(&self.name);
+        // Published SDK tools resolve capabilities from their typed Rust
+        // contract. The legacy map remains only for runtime-only tools.
+        let caps = advertised_capabilities_for(&self.name, &self.input_schema);
         let risk = crate::authorization::risk_metadata_json(&self.name);
         serde_json::json!({
             "name": self.name,
@@ -84,6 +93,8 @@ impl ToolDef {
 ///   `input.pointer.move`, `input.pointer.button` (raw down/up)
 /// - `input.keyboard.type`, `input.keyboard.hotkey`,
 ///   `input.keyboard.press`
+/// - `input.delivery_mode` (the live tool schema accepts the shared
+///   `background` / `foreground` delivery ladder)
 /// - `screen.capture`, `screen.capture.window`,
 ///   `screen.capture.region`, `screen.dimensions`,
 ///   `screen.cursor.position`
@@ -114,6 +125,9 @@ impl ToolDef {
 /// Tools with no entry get `[]` — that's fine, it just means
 /// downstream consumers fall back to matching by tool name for them.
 pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
+    if let Some(capabilities) = cua_driver_contract::tool_capabilities(tool_name) {
+        return capabilities;
+    }
     let caps: &[&str] = match tool_name {
         // ── input.pointer ────────────────────────────────────────────
         //
@@ -122,11 +136,6 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         // `accessibility.element_tokens` token so consumers can branch
         // on its presence — Hermes' wrapper currently does this by name
         // for each tool; the capability token removes that coupling.
-        "click" => &[
-            "input.pointer.click",
-            "input.pointer.click.left",
-            "accessibility.element_tokens",
-        ],
         "double_click" => &[
             "input.pointer.click",
             "input.pointer.click.left",
@@ -138,19 +147,10 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
             "input.pointer.click.right",
             "accessibility.element_tokens",
         ],
-        "drag" => &["input.pointer.drag"],
         "mouse_drag" => &["input.pointer.drag"],
         "parallel_mouse_drag" => &["input.pointer.drag"],
         "mouse_button_down" => &["input.pointer.button"],
         "mouse_button_up" => &["input.pointer.button"],
-        "scroll" => &["input.pointer.scroll", "accessibility.element_tokens"],
-        "move_cursor" => &[
-            // Window scope moves the agent overlay; explicit desktop scope
-            // moves the real OS pointer.
-            "agent_cursor.move",
-            "input.pointer.move",
-        ],
-
         // ── input.keyboard ───────────────────────────────────────────
         // `type_text` claims `terminal_safe` because every platform
         // implementation detects terminal-emulator targets (bundle id
@@ -161,11 +161,6 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         // Terminal / mintty / GVim, etc. See the per-platform
         // `terminal` module for the matched list and the structured
         // `path: "ax" | "key_events"` field on the response.
-        "type_text" => &[
-            "input.keyboard.type",
-            "input.keyboard.type.terminal_safe",
-            "accessibility.element_tokens",
-        ],
         // `type_text_chars` is a deprecated alias resolved at invoke
         // time on macOS/Windows. On Linux it's still registered (see
         // platform-linux/impl_.rs). The Linux implementation runs
@@ -174,8 +169,6 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         // contract is intentionally narrower than `type_text`'s. It
         // still accepts `element_token`, hence the tokens claim.
         "type_text_chars" => &["input.keyboard.type", "accessibility.element_tokens"],
-        "press_key" => &["input.keyboard.press", "accessibility.element_tokens"],
-        "hotkey" => &["input.keyboard.hotkey"],
         "set_value" => &[
             // Bulk-set an editable field's value — semantically a
             // typing surface, even though the implementation skips
@@ -194,10 +187,6 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
             "screen.capture.window",
             "screen.capture.region",
         ],
-        "get_screen_size" => &["screen.dimensions"],
-        "get_desktop_state" => &["screen.capture", "screen.dimensions"],
-        "get_cursor_position" => &["screen.cursor.position"],
-
         // ── accessibility / window state ─────────────────────────────
         "get_accessibility_tree" => &["accessibility.tree", "accessibility.tree.structured"],
         "get_window_state" => &[
@@ -236,12 +225,6 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         ],
         "get_config" => &["system.config.read"],
         "set_config" => &["system.config.write"],
-
-        // ── sessions ─────────────────────────────────────────────────
-        "start_session" => &["session.lifecycle.start", "session.capture_scope"],
-        "escalate_session" => &["session.capture_scope.escalate"],
-        "get_session_state" => &["session.capture_scope.read"],
-        "end_session" => &["session.lifecycle.end"],
 
         // ── agent cursor ─────────────────────────────────────────────
         "set_agent_cursor_enabled" => &["agent_cursor.set_enabled"],
@@ -282,6 +265,31 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         _ => &[],
     };
     caps.iter().map(|s| (*s).to_owned()).collect()
+}
+
+/// Capabilities advertised by a concrete runtime tool definition.
+///
+/// Most capabilities are stable properties of a tool name and come from the
+/// typed portable contract (or the legacy runtime-only map). Delivery mode is
+/// different: the typed desktop SDK intentionally exposes a narrower,
+/// desktop-only input while the live platform schemas additionally accept
+/// window-targeted `delivery_mode`. Deriving this one token from the concrete
+/// schema keeps `tools/list` truthful on every platform and prevents either
+/// overclaiming a tool that cannot accept the field or omitting support from a
+/// richer live schema.
+pub fn advertised_capabilities_for(tool_name: &str, input_schema: &Value) -> Vec<String> {
+    let mut capabilities = default_capabilities_for(tool_name);
+    let accepts_delivery_mode = input_schema
+        .pointer("/properties/delivery_mode")
+        .is_some_and(Value::is_object);
+    if accepts_delivery_mode
+        && !capabilities
+            .iter()
+            .any(|capability| capability == "input.delivery_mode")
+    {
+        capabilities.push("input.delivery_mode".into());
+    }
+    capabilities
 }
 
 /// A callable tool handler. Object-safe — uses `Box<dyn Tool>`.
@@ -369,7 +377,7 @@ impl ToolRegistry {
         serde_json::json!({
             "tools": list,
             "capability_version": CAPABILITY_VERSION,
-            "schema_version": "1",
+            "schema_version": TOOLS_LIST_SCHEMA_VERSION,
         })
     }
 
@@ -441,7 +449,30 @@ impl ToolRegistry {
             })
             .flatten();
 
-        let result = tool.invoke(args.clone()).await;
+        let mut result = tool.invoke(args.clone()).await;
+        let validate_portable_output = match resolved_name {
+            "get_desktop_state" | "get_screen_size" | "get_cursor_position" => true,
+            "move_cursor" | "click" | "drag" | "scroll" | "type_text" | "press_key" | "hotkey" => {
+                args.get("scope").and_then(Value::as_str) == Some("desktop")
+            }
+            _ => true,
+        };
+        if result.is_error != Some(true) && validate_portable_output {
+            if let Some(structured) = result.structured_content.clone() {
+                if let Err(error) =
+                    cua_driver_contract::validate_success_output(resolved_name, structured)
+                {
+                    result = ToolResult::error(format!(
+                        "internal typed output mismatch for {resolved_name}: {error}"
+                    ))
+                    .with_structured(serde_json::json!({
+                        "code": "typed_output_mismatch",
+                        "tool": resolved_name,
+                        "detail": error,
+                    }));
+                }
+            }
+        }
         // Use the original name for downstream code paths below so the
         // exit-code matching and recording paths keep treating the alias
         // as a distinct call site.
@@ -780,6 +811,7 @@ mod capability_tests {
         "input.keyboard.type.terminal_safe",
         "input.keyboard.hotkey",
         "input.keyboard.press",
+        "input.delivery_mode",
         // screen
         "screen.capture",
         "screen.capture.window",
@@ -892,6 +924,28 @@ mod capability_tests {
     }
 
     #[test]
+    fn delivery_mode_capability_is_derived_from_the_runtime_schema() {
+        let with_delivery_mode = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "delivery_mode": crate::tool_schema::delivery_mode_schema()
+            }
+        });
+        let without_delivery_mode = serde_json::json!({"type": "object", "properties": {}});
+
+        assert!(
+            advertised_capabilities_for("press_key", &with_delivery_mode)
+                .iter()
+                .any(|capability| capability == "input.delivery_mode")
+        );
+        assert!(
+            !advertised_capabilities_for("press_key", &without_delivery_mode)
+                .iter()
+                .any(|capability| capability == "input.delivery_mode")
+        );
+    }
+
+    #[test]
     fn unknown_tools_get_empty_capabilities() {
         // Tools without a mapping (typically internal/stub tools like
         // `unsupported_platform`) return `[]`. Consumers fall back to
@@ -969,6 +1023,30 @@ mod capability_tests {
             cap_strs.contains(&"input.pointer.click.left"),
             "click missing input.pointer.click.left: {cap_strs:?}"
         );
+    }
+
+    #[test]
+    fn to_list_entry_advertises_delivery_mode_only_when_accepted() {
+        let mut accepting = dummy_def("press_key");
+        accepting.input_schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "delivery_mode": crate::tool_schema::delivery_mode_schema()
+            }
+        });
+        let accepting_entry = accepting.to_list_entry();
+        assert!(accepting_entry["capabilities"]
+            .as_array()
+            .expect("capabilities array")
+            .iter()
+            .any(|capability| capability == "input.delivery_mode"));
+
+        let rejecting_entry = dummy_def("press_key").to_list_entry();
+        assert!(!rejecting_entry["capabilities"]
+            .as_array()
+            .expect("capabilities array")
+            .iter()
+            .any(|capability| capability == "input.delivery_mode"));
     }
 
     #[test]

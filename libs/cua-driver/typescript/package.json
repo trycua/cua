@@ -1,0 +1,59 @@
+{
+  "name": "@trycua/cua-driver",
+  "version": "0.12.0",
+  "description": "Rust-backed Cua Driver SDK and embedded Node host",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/trycua/cua.git"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./embedded": {
+      "types": "./dist/embedded.d.ts",
+      "import": "./dist/embedded.js"
+    },
+    "./electron": {
+      "types": "./dist/electron.d.ts",
+      "import": "./dist/electron.js"
+    }
+  },
+  "files": [
+    "dist/index.js",
+    "dist/index.d.ts",
+    "dist/embedded.js",
+    "dist/embedded.d.ts",
+    "dist/electron.js",
+    "dist/electron.d.ts",
+    "dist/native",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "generate:uniffi": "node ../scripts/generate-uniffi-bindings.mjs",
+    "generate:uniffi:check": "node ../scripts/generate-uniffi-bindings.mjs --check",
+    "stage:uniffi": "node ../scripts/stage-uniffi-library.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "electron": "43.2.0",
+    "typescript": "^5.7.0",
+    "uniffi-bindgen-react-native": "0.31.0-3"
+  },
+  "dependencies": {
+    "@ubjs/core": "0.31.0-3",
+    "@ubjs/node": "0.31.0-3"
+  }
+}

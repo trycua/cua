@@ -67,6 +67,15 @@ impl CyclopsConfiguration {
     }
 }
 
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct CyclopsTokenProviderConfiguration {
+    pub base_url: String,
+    pub pool_poll_interval_ms: u64,
+    pub pool_poll_limit: u32,
+    pub claim_poll_interval_ms: u64,
+    pub claim_poll_limit: u32,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
 pub struct ResourceMetadata {
     pub namespace: String,

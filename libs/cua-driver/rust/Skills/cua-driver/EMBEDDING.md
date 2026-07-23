@@ -1,4 +1,4 @@
-# Embedding cua-driver in your agent harness without introducing new permissions
+# Embedding cua-driver in your application without introducing new permissions
 
 This guide is for teams shipping a macOS app (an "agent harness") that wants
 cua-driver's background computer-use and agent-cursor overlay **inside their
@@ -6,7 +6,7 @@ own app**, without shipping a second app bundle and without their users ever
 seeing a second macOS permission prompt. Your app requests Accessibility and
 Screen Recording once; the embedded driver inherits those grants.
 
-A working reference host lives in the cua repo at
+A working daemon-host reference lives in the cua repo at
 `libs/cua-driver/rust/examples/embedded-host-macos/`
 (https://github.com/trycua/cua). This doc ships standalone in the skill
 pack, so the path is given rather than a relative link.
@@ -40,7 +40,30 @@ non-sandboxed host, which is typical for agent harnesses; a sandboxed host
 spawning a non-sandboxed helper raises separate App Sandbox questions that
 embedded mode does not address.
 
-## Launching in embedded mode
+## Preferred application SDK: same-process runtime
+
+Python and TypeScript applications should normally import the packaged SDK and
+create `CuaDriver` directly. This path does not start an executable or open a
+socket, and TCC checks execute as the importing application:
+
+```ts
+import { CuaDriver } from '@trycua/cua-driver';
+
+const driver = CuaDriver.create(undefined);
+try {
+  const metadata = await driver.metadata();
+  // Invoke typed driver operations here.
+} finally {
+  await driver.shutdown();
+  driver.uniffiDestroy();
+}
+```
+
+Use the daemon-backed host below only when the application must also provide a
+stable MCP endpoint to an external agent, coordinate external clients, or keep
+the automation runtime isolated from the application process.
+
+## Launching the daemon-backed host
 
 ```sh
 # env var form — set by the host on the child process
@@ -98,6 +121,67 @@ the equivalent single CLI shortcut, `--dangerously-bypass-approvals`, which
 selects unrestricted mode and records the acknowledgement. The older
 `autonomous` mode name remains accepted as an alias for `bounded` during
 migration.
+
+### Node and Electron daemon hosts
+
+Use the embedded host in `@trycua/cua-driver` instead of implementing process
+and socket management in every host. It starts a private daemon directly, waits
+until its socket accepts connections, returns SDK and MCP connection details,
+and owns restart and cleanup:
+
+```ts
+import { CuaDriver, EmbeddedCuaDriverHost } from '@trycua/cua-driver';
+
+const embedded = new EmbeddedCuaDriverHost(
+  '/path/inside/YourApp.app/Contents/Resources/cua-driver',
+  'com.example.your-app',
+);
+const connection = await embedded.start();
+const driver = CuaDriver.connect(connection.socketPath);
+// Application calls use driver; an agent runtime uses connection.mcp.
+driver.uniffiDestroy();
+await embedded.stop();
+embedded.uniffiDestroy();
+```
+
+The package does not install or bundle cua-driver. Ship a compatible executable
+outside Electron's ASAR archive, preserve its executable bit, and sign the
+nested executable before signing and notarizing the enclosing macOS app.
+Electron main processes can use the package's `/electron` entry point for
+low-level Accessibility and Screen Recording requests after `app.whenReady()`;
+the calls run as the importing host, not the child driver. The host still owns
+permission UI, status, and restart policy. These functions use the same
+generated Rust SDK; there is no second native FFI dependency. Some macOS
+releases refuse to raise a Screen Recording prompt; in that case, open the
+Screen Recording settings pane with
+`openMacOSScreenRecordingSettings()`, ask the user to add the host app, and
+start the driver only after both checks return true.
+
+Destroy the SDK client and call `await embedded.stop()` from every orderly
+shutdown path. If grants change, destroy the SDK client, call
+`embedded.restart()`, and reconnect. Electron hosts must defer their first
+`before-quit` event until cleanup completes because asynchronous cleanup cannot
+run after the host process exits. Normal OpenClaw
+gateway and Hermes YAML configurations remain standalone integrations; use the
+package only when their signed Node or Electron app process directly owns the
+daemon child.
+
+### Lifecycle rules
+
+- Concurrent `start()` calls coalesce into one daemon generation.
+- Treat `connection` as generation-scoped. After `restart()`, destroy old SDK
+  clients and MCP proxies and reconnect from the newly returned descriptor.
+- Stop new work, end sessions, close proxies/clients, then await `stop()`.
+  `stop()` is idempotent and cancels an in-progress start.
+- Observe unexpected termination with `waitForExit(generation)` in Node or
+  `wait_for_exit(generation)` in Python. Never blindly replay an action whose
+  completion is unknown.
+- The Rust owner holds a parent-liveness pipe, so host death closes the daemon;
+  orderly shutdown should still await `stop()`.
+- Capture scope belongs to each session. One embedded daemon can concurrently
+  serve `auto`, strict `window`, and strict `desktop` sessions.
+- Permission changes require destroying clients, restarting the daemon, and
+  reconnecting. A connection from the old generation is never reusable.
 
 ## What embedded mode changes (and what it doesn't)
 
@@ -164,7 +248,8 @@ a dialog (the `prompt` argument is ignored) and returns:
 {
   "accessibility": true,
   "screen_recording": true,
-  "screen_recording_capturable": true,
+  "screen_recording_capturable": null,
+  "direct_capture_status": "not_checked",
   "source": {
     "attribution": "host",
     "host_bundle_id": "com.yourco.yourapp",
@@ -181,10 +266,11 @@ a dialog (the `prompt` argument is ignored) and returns:
 - `accessibility` / `screen_recording` — the live TCC state *of your app's
   grant*, answered from inside the driver process (which shares your
   identity). If both are true, it is safe to drive the desktop.
-- `screen_recording_capturable` — a live ScreenCaptureKit probe
-  (`SCShareableContent`), the authoritative signal. If it disagrees with
-  `screen_recording`, the preflight boolean is stale or belongs to a
-  different identity — see troubleshooting.
+- `screen_recording_capturable` / `direct_capture_status` — embedded
+  `check_permissions` is read-only and never runs Tahoe's prompt-capable
+  ScreenCaptureKit probe, so these are `null` / `not_checked`. The host owns
+  the consent UX and should verify pixels with an explicit screenshot or
+  capture operation after explaining the prompt.
 - `source.attribution` values:
   - `host` — embedded mode; booleans reflect the host's grant. What you
     should always see when embedding.
@@ -414,15 +500,13 @@ that the proxy uses the host's private socket. To see exactly which identity mac
 run: `log stream --debug --predicate 'subsystem == "com.apple.TCC" AND
 eventMessage BEGINSWITH "AttributionChain"'` and trigger the action again.
 
-**"Screenshots come back black (or `screen_recording: true` but
-`screen_recording_capturable: false`)."**
-The preflight boolean and the live probe disagree, which means the Screen
-Recording grant TCC found does not belong to the driver's current
-responsible identity. Either the host never actually got the grant (check
-System Settings), the grant was reset (`tccutil reset ScreenCapture`) after
-the app cached a `true`, or the driver escaped the host's chain (see the
-previous item). Restart the driver child after any grant change — TCC
-answers are cached per process.
+**"Screenshots come back black even though `screen_recording: true`."**
+The read-only permission check cannot verify direct ScreenCaptureKit access
+without risking a system dialog. Exercise an explicit screenshot only after
+the host has explained and requested consent. If that fails, the grant may not
+belong to the driver's current responsible identity, may have been reset, or
+the driver may have escaped the host's chain (see the previous item). Restart
+the driver child after any grant change — TCC answers are cached per process.
 
 **"The AX tree comes back empty / clicks do nothing."**
 `AXIsProcessTrusted()` is false for the effective identity. The host hasn't

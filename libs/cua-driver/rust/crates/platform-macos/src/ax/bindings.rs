@@ -93,6 +93,10 @@ extern "C" {
 
 /// Hit-test one process's accessibility tree at a screen point. The returned
 /// element is retained and must be released by the caller.
+///
+/// # Safety
+///
+/// The caller must release any returned element exactly once with `CFRelease`.
 pub unsafe fn element_at_screen_position(pid: i32, x: f64, y: f64) -> Option<AXUIElementRef> {
     let application = AXUIElementCreateApplication(pid);
     if application.is_null() {
@@ -120,6 +124,10 @@ extern "C" {
 use core_foundation::{array::CFArray, base::TCFType, string::CFString as CFStr};
 
 /// Copy a string attribute from an AX element. Returns `None` on any error.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
 pub unsafe fn copy_string_attr(element: AXUIElementRef, attr_name: &str) -> Option<String> {
     let attr = CFStr::new(attr_name);
     let mut value: CFTypeRef = std::ptr::null();
@@ -140,6 +148,10 @@ pub unsafe fn copy_string_attr(element: AXUIElementRef, attr_name: &str) -> Opti
 /// any error or if the attribute is not a `CFNumber`. SwiftUI sliders expose a
 /// readable numeric `AXValue` even when that value is not settable — this lets
 /// the stepping fallback read the control's current position for feedback.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
 pub unsafe fn copy_number_attr(element: AXUIElementRef, attr_name: &str) -> Option<f64> {
     use core_foundation::number::CFNumber;
     let attr = CFStr::new(attr_name);
@@ -157,7 +169,106 @@ pub unsafe fn copy_number_attr(element: AXUIElementRef, attr_name: &str) -> Opti
     n.to_f64()
 }
 
+/// Copy a boolean attribute from an AX element. Returns `None` on any error
+/// or if the attribute is neither a `CFBoolean` nor a `CFNumber` (some apps
+/// report AXEnabled/AXSelected as a 0/1 CFNumber instead of a CFBoolean).
+pub unsafe fn copy_bool_attr(element: AXUIElementRef, attr_name: &str) -> Option<bool> {
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::number::CFNumber;
+    let attr = CFStr::new(attr_name);
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if err != kAXErrorSuccess || value.is_null() {
+        return None;
+    }
+    let type_id = core_foundation::base::CFGetTypeID(value);
+    if type_id == CFBoolean::type_id() {
+        let b = CFBoolean::wrap_under_create_rule(value as _);
+        return Some(b.into());
+    }
+    if type_id == CFNumber::type_id() {
+        let n = CFNumber::wrap_under_create_rule(value as _);
+        return n.to_f64().map(|f| f != 0.0);
+    }
+    CFRelease(value);
+    None
+}
+
+/// A copied AX attribute represented for both existing string-only consumers
+/// and the wider structured control-state response.
+#[derive(Debug, PartialEq, Eq)]
+pub struct StringishAttrValue {
+    /// Present only when the source value was a CFString.
+    pub string_value: Option<String>,
+    /// CFString as-is, CFNumber as text, or CFBoolean as `"1"` / `"0"`.
+    pub state_value: String,
+}
+
+/// Convert a borrowed CF value without taking ownership of it.
+unsafe fn coerce_stringish_value(value: CFTypeRef) -> Option<StringishAttrValue> {
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::number::CFNumber;
+    let type_id = core_foundation::base::CFGetTypeID(value);
+    if type_id == CFStr::type_id() {
+        let string = CFStr::wrap_under_get_rule(value as _).to_string();
+        return Some(StringishAttrValue {
+            string_value: Some(string.clone()),
+            state_value: string,
+        });
+    }
+    if type_id == CFNumber::type_id() {
+        let n = CFNumber::wrap_under_get_rule(value as _);
+        let f = n.to_f64()?;
+        let state_value = if f == f.trunc() && f.abs() < 1e15 {
+            format!("{}", f as i64)
+        } else {
+            format!("{f}")
+        };
+        return Some(StringishAttrValue {
+            string_value: None,
+            state_value,
+        });
+    }
+    if type_id == CFBoolean::type_id() {
+        let b = CFBoolean::wrap_under_get_rule(value as _);
+        return Some(StringishAttrValue {
+            string_value: None,
+            state_value: if bool::from(b) {
+                "1".into()
+            } else {
+                "0".into()
+            },
+        });
+    }
+    None
+}
+
+/// Copy an attribute that may be a `CFString`, `CFNumber`, or `CFBoolean`.
+///
+/// The returned pair lets the tree walker preserve its historical CFString-only
+/// markdown while using the same single AX read for structured control state.
+/// Numbers render without a trailing `.0` when integral (`8`, not `8.0`), and
+/// booleans render as `1`/`0` to match AppKit's two-state controls.
+pub unsafe fn copy_stringish_attr(
+    element: AXUIElementRef,
+    attr_name: &str,
+) -> Option<StringishAttrValue> {
+    let attr = CFStr::new(attr_name);
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if err != kAXErrorSuccess || value.is_null() {
+        return None;
+    }
+    let result = coerce_stringish_value(value);
+    CFRelease(value);
+    result
+}
+
 /// Get the action names for an AX element.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
 pub unsafe fn copy_action_names(element: AXUIElementRef) -> Vec<String> {
     let mut names: CFArrayRef = std::ptr::null_mut();
     let err = AXUIElementCopyActionNames(element, &mut names);
@@ -177,6 +288,10 @@ pub unsafe fn copy_action_names(element: AXUIElementRef) -> Vec<String> {
 /// Read the on-screen center of an AX element (AXPosition + AXSize → center).
 /// Returns `(cx, cy)` in screen coordinates, or `None` if either attribute
 /// is unavailable or the element has zero size.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
 pub unsafe fn element_screen_center(element: AXUIElementRef) -> Option<(f64, f64)> {
     // AXPosition → CGPoint
     let pos_attr = CFStr::new("AXPosition");
@@ -229,6 +344,10 @@ pub unsafe fn element_screen_center(element: AXUIElementRef) -> Option<(f64, f64
 
 /// Read the on-screen bounding rect of an AX element.
 /// Returns `[x, y, width, height]` in screen coordinates (top-left origin), or `None`.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
 pub unsafe fn element_screen_rect(element: AXUIElementRef) -> Option<[f64; 4]> {
     // AXPosition → CGPoint
     let pos_attr = CFStr::new("AXPosition");
@@ -281,6 +400,10 @@ pub unsafe fn element_screen_rect(element: AXUIElementRef) -> Option<[f64; 4]> {
 
 /// Get the focused UI element of a running application by pid.
 /// Returns a retained `AXUIElementRef` that the caller must release, or `None`.
+///
+/// # Safety
+///
+/// The caller must release any returned element exactly once with `CFRelease`.
 pub unsafe fn focused_element_of_pid(pid: i32) -> Option<AXUIElementRef> {
     let app = AXUIElementCreateApplication(pid);
     if app.is_null() {
@@ -303,6 +426,10 @@ pub unsafe fn focused_element_of_pid(pid: i32) -> Option<AXUIElementRef> {
 }
 
 /// Get the children of an AX element.
+///
+/// # Safety
+///
+/// `element` must be valid, and the caller must release every returned element.
 pub unsafe fn copy_children(element: AXUIElementRef) -> Vec<AXUIElementRef> {
     let attr = CFStr::new("AXChildren");
     let mut value: CFTypeRef = std::ptr::null();
@@ -333,6 +460,10 @@ pub unsafe fn copy_children(element: AXUIElementRef) -> Vec<AXUIElementRef> {
 
 /// Copy an AX element-valued attribute. The returned element is retained and
 /// must be released by the caller.
+///
+/// # Safety
+///
+/// `element` must be valid, and the caller must release any returned element.
 pub unsafe fn copy_element_attr(
     element: AXUIElementRef,
     attr_name: &str,
@@ -351,12 +482,20 @@ pub unsafe fn copy_element_attr(
 }
 
 /// Perform an AX action using a string attribute name.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
 pub unsafe fn perform_action(element: AXUIElementRef, action_name: &str) -> AXError {
     let action = CFStr::new(action_name);
     AXUIElementPerformAction(element, action.as_concrete_TypeRef())
 }
 
 /// Set an AX attribute to a CFString value.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
 pub unsafe fn set_string_attr(element: AXUIElementRef, attr_name: &str, value: &str) -> AXError {
     let attr = CFStr::new(attr_name);
     let cf_value = CFStr::new(value);
@@ -368,6 +507,10 @@ pub unsafe fn set_string_attr(element: AXUIElementRef, attr_name: &str, value: &
 /// reject a `CFString` write — `-25200` (kAXErrorFailure, observed live on a
 /// SwiftUI `AXSlider`) or `-25201` (kAXErrorIllegalArgument); only a `CFNumber`
 /// is accepted. Text fields, by contrast, take a `CFString`.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
 pub unsafe fn set_number_attr(element: AXUIElementRef, attr_name: &str, value: f64) -> AXError {
     use core_foundation::number::CFNumber;
     let attr = CFStr::new(attr_name);
@@ -376,6 +519,10 @@ pub unsafe fn set_number_attr(element: AXUIElementRef, attr_name: &str, value: f
 }
 
 /// Set an AX attribute to a CFBoolean true value.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
 pub unsafe fn set_bool_attr_true(element: AXUIElementRef, attr_name: &str) -> AXError {
     use core_foundation::boolean::CFBoolean;
     let attr = CFStr::new(attr_name);
@@ -396,6 +543,10 @@ pub unsafe fn set_bool_attr_true(element: AXUIElementRef, attr_name: &str) -> AX
 /// effects; `AXEnhancedUserInterface` is the legacy fallback some Electron
 /// builds expose instead (the modern attribute returns
 /// `kAXErrorAttributeUnsupported` on those builds).
+///
+/// # Safety
+///
+/// `app_element` must be a valid, live application `AXUIElementRef`.
 pub unsafe fn enable_chromium_accessibility(app_element: AXUIElementRef) -> bool {
     let manual = set_bool_attr_true(app_element, "AXManualAccessibility");
     if manual == kAXErrorSuccess {
@@ -412,6 +563,10 @@ pub unsafe fn enable_chromium_accessibility(app_element: AXUIElementRef) -> bool
 
 /// Get the CGWindowID of an AX window element via the private `_AXUIElementGetWindow` SPI.
 /// Returns `None` if the element is not a composited window.
+///
+/// # Safety
+///
+/// `element` must be a valid, live window `AXUIElementRef`.
 pub unsafe fn ax_get_window_id(element: AXUIElementRef) -> Option<u32> {
     let mut wid: u32 = 0;
     let err = _AXUIElementGetWindow(element, &mut wid);
@@ -425,6 +580,10 @@ pub unsafe fn ax_get_window_id(element: AXUIElementRef) -> Option<u32> {
 /// Read the `AXWindows` attribute of an application element.
 /// Unlike `AXChildren`, this returns the window list regardless of whether
 /// the app is frontmost. Returns a Vec of retained AXUIElementRefs.
+///
+/// # Safety
+///
+/// `element` must be valid, and the caller must release every returned element.
 pub unsafe fn copy_ax_windows(element: AXUIElementRef) -> Vec<AXUIElementRef> {
     let attr = CFStr::new("AXWindows");
     let mut value: CFTypeRef = std::ptr::null();
@@ -450,4 +609,39 @@ pub unsafe fn copy_ax_windows(element: AXUIElementRef) -> Vec<AXUIElementRef> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core_foundation::{boolean::CFBoolean, number::CFNumber};
+
+    #[test]
+    fn stringish_value_coerces_cfstring_cfnumber_and_cfboolean() {
+        let string = CFStr::new("Search");
+        let integer = CFNumber::from(8.0);
+        let decimal = CFNumber::from(2.5);
+        let true_value = CFBoolean::true_value();
+        let false_value = CFBoolean::false_value();
+
+        let string_result = unsafe { coerce_stringish_value(string.as_CFTypeRef()) }.unwrap();
+        assert_eq!(string_result.string_value.as_deref(), Some("Search"));
+        assert_eq!(string_result.state_value, "Search");
+
+        let integer_result = unsafe { coerce_stringish_value(integer.as_CFTypeRef()) }.unwrap();
+        assert_eq!(integer_result.string_value, None);
+        assert_eq!(integer_result.state_value, "8");
+
+        let decimal_result = unsafe { coerce_stringish_value(decimal.as_CFTypeRef()) }.unwrap();
+        assert_eq!(decimal_result.string_value, None);
+        assert_eq!(decimal_result.state_value, "2.5");
+
+        let true_result = unsafe { coerce_stringish_value(true_value.as_CFTypeRef()) }.unwrap();
+        assert_eq!(true_result.string_value, None);
+        assert_eq!(true_result.state_value, "1");
+
+        let false_result = unsafe { coerce_stringish_value(false_value.as_CFTypeRef()) }.unwrap();
+        assert_eq!(false_result.string_value, None);
+        assert_eq!(false_result.state_value, "0");
+    }
 }

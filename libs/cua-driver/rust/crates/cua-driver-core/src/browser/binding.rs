@@ -313,7 +313,7 @@ mod tests {
         assert!(matches!(
             correlate(
                 &native("Docs - Chrome", visible_frame),
-                &[candidate.clone()],
+                std::slice::from_ref(&candidate),
                 8.0
             ),
             BindingOutcome::Bound {

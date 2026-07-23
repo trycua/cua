@@ -96,6 +96,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: libs/cua-driver/typescript/package-lock.json
       - name: Determine version
         id: version
         shell: bash
@@ -120,7 +125,14 @@ jobs:
             rust-cua-driver-rs-linux-${{ matrix.arch }}-
       - name: Build (release)
         working-directory: libs/cua-driver/rust
-        run: cargo build --locked -p cua-driver --release --features portal-input --target ${{ matrix.target }}
+        run: cargo build --locked -p cua-driver -p cua-driver-sdk --release --features cua-driver/portal-input --target ${{ matrix.target }}
+      - name: Build Electron-compatible Node runtime
+        working-directory: libs/cua-driver
+        run: |
+          npm --prefix typescript ci --ignore-scripts
+          node scripts/build-node-runtime.mjs \
+            --target "${{ matrix.target }}" \
+            --output "rust/target/${{ matrix.target }}/release/cua_driver_node_runtime.node"
       - name: Package
         working-directory: libs/cua-driver/rust
         run: |
@@ -130,11 +142,15 @@ jobs:
           STAGE="cua-driver-rs-${VERSION}-${LABEL}"
           mkdir -p "release/${STAGE}"
           cp "target/${TARGET}/release/cua-driver" "release/${STAGE}/"
+          cp "target/${TARGET}/release/libcua_driver_sdk.so" "release/${STAGE}/"
+          cp "target/${TARGET}/release/cua_driver_node_runtime.node" "release/${STAGE}/"
+          cp include/cua_driver_abi.h "release/${STAGE}/"
           cp ../../LICENSE.md "release/${STAGE}/LICENSE" 2>/dev/null || true
           (cd release && tar -czf "${STAGE}.tar.gz" "${STAGE}")
-          # Bare binary tarball — single file (cua-driver) at the archive root,
-          # mirroring the Swift cua-driver `*-binary.tar.gz` convention.
-          tar -czf "release/${STAGE}-binary.tar.gz" -C "release/${STAGE}" cua-driver
+          # Bare runtime tarball: CLI plus the UniFFI library consumed by the
+          # Python and Node imported-SDK packages.
+          tar -czf "release/${STAGE}-binary.tar.gz" -C "release/${STAGE}" \
+            cua-driver libcua_driver_sdk.so cua_driver_node_runtime.node cua_driver_abi.h
           ls -lh "release/${STAGE}.tar.gz" "release/${STAGE}-binary.tar.gz"
       - uses: actions/upload-artifact@v4
         with:
@@ -162,6 +178,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: libs/cua-driver/typescript/package-lock.json
       - name: Determine version
         id: version
         shell: bash
@@ -200,7 +221,15 @@ jobs:
         # `cua-driver-uia.exe` is the Windows-only sibling daemon that runs
         # at UIAccess integrity so SendInput / UI Automation can cross UIPI
         # into UWP apps — see crates/cua-driver-uia/ and #1602.
-        run: cargo build --locked -p cua-driver -p cua-driver-uia --release --target ${{ matrix.target }}
+        run: cargo build --locked -p cua-driver -p cua-driver-uia -p cua-driver-sdk --release --target ${{ matrix.target }}
+      - name: Build Electron-compatible Node runtime
+        working-directory: libs/cua-driver
+        shell: bash
+        run: |
+          npm --prefix typescript ci --ignore-scripts
+          node scripts/build-node-runtime.mjs \
+            --target "${{ matrix.target }}" \
+            --output "rust/target/${{ matrix.target }}/release/cua_driver_node_runtime.node"
       - name: Package
         working-directory: libs/cua-driver/rust
         shell: pwsh
@@ -212,6 +241,9 @@ jobs:
           New-Item -ItemType Directory -Force -Path "release/$stage" | Out-Null
           Copy-Item "target/$target/release/cua-driver.exe" "release/$stage/"
           Copy-Item "target/$target/release/cua-driver-uia.exe" "release/$stage/"
+          Copy-Item "target/$target/release/cua_driver_sdk.dll" "release/$stage/"
+          Copy-Item "target/$target/release/cua_driver_node_runtime.node" "release/$stage/"
+          Copy-Item "include/cua_driver_abi.h" "release/$stage/"
           if (Test-Path "../../LICENSE.md") { Copy-Item "../../LICENSE.md" "release/$stage/LICENSE" }
           # Zip the directory itself (no trailing /*) so the archive contains
           # the top-level "$stage" wrapper dir — install.ps1 walks into
@@ -226,7 +258,7 @@ jobs:
           # to UIAccess integrity on a default-policy machine. The main CLI/MCP
           # binary stays fully functional regardless; uia is opt-in dead-weight
           # until signed.
-          Compress-Archive -Path "release/$stage/cua-driver.exe","release/$stage/cua-driver-uia.exe" -DestinationPath "release/$stage-binary.zip" -Force
+          Compress-Archive -Path "release/$stage/cua-driver.exe","release/$stage/cua-driver-uia.exe","release/$stage/cua_driver_sdk.dll","release/$stage/cua_driver_node_runtime.node","release/$stage/cua_driver_abi.h" -DestinationPath "release/$stage-binary.zip" -Force
           Get-ChildItem "release/$stage*.zip"
       - uses: actions/upload-artifact@v4
         with:
@@ -260,6 +292,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: libs/cua-driver/typescript/package-lock.json
       - name: Determine version
         id: version
         shell: bash
@@ -318,18 +355,38 @@ jobs:
             rust-cua-driver-rs-darwin-universal-
       - name: Build arm64
         working-directory: libs/cua-driver/rust
-        run: cargo build --locked -p cua-driver --release --target aarch64-apple-darwin
+        run: cargo build --locked -p cua-driver -p cua-driver-sdk --release --target aarch64-apple-darwin
       - name: Build x86_64
         working-directory: libs/cua-driver/rust
-        run: cargo build --locked -p cua-driver --release --target x86_64-apple-darwin
+        run: cargo build --locked -p cua-driver -p cua-driver-sdk --release --target x86_64-apple-darwin
+      - name: Build Electron-compatible Node runtimes
+        working-directory: libs/cua-driver
+        run: |
+          npm --prefix typescript ci --ignore-scripts
+          node scripts/build-node-runtime.mjs \
+            --target aarch64-apple-darwin \
+            --output rust/target/aarch64-apple-darwin/release/cua_driver_node_runtime.node
+          node scripts/build-node-runtime.mjs \
+            --target x86_64-apple-darwin \
+            --output rust/target/x86_64-apple-darwin/release/cua_driver_node_runtime.node
       - name: Create universal binary (lipo)
         working-directory: libs/cua-driver/rust
         run: |
           ARM64="target/aarch64-apple-darwin/release/cua-driver"
           X86="target/x86_64-apple-darwin/release/cua-driver"
+          SDK_ARM64="target/aarch64-apple-darwin/release/libcua_driver_sdk.dylib"
+          SDK_X86="target/x86_64-apple-darwin/release/libcua_driver_sdk.dylib"
+          NODE_ARM64="target/aarch64-apple-darwin/release/cua_driver_node_runtime.node"
+          NODE_X86="target/x86_64-apple-darwin/release/cua_driver_node_runtime.node"
           mkdir -p release/universal
           lipo -create "$ARM64" "$X86" -output release/universal/cua-driver
+          lipo -create "$SDK_ARM64" "$SDK_X86" -output release/universal/libcua_driver_sdk.dylib
+          lipo -create "$NODE_ARM64" "$NODE_X86" -output release/universal/cua_driver_node_runtime.node
           lipo -info release/universal/cua-driver
+          lipo -info release/universal/libcua_driver_sdk.dylib
+          lipo -info release/universal/cua_driver_node_runtime.node
+          test "$(otool -D release/universal/libcua_driver_sdk.dylib | tail -n 1)" = \
+            '@rpath/libcua_driver_sdk.dylib'
       - name: Codesign universal binary (hardened runtime)
         if: env.DO_NOTARIZE == 'true'
         working-directory: libs/cua-driver/rust
@@ -341,7 +398,10 @@ jobs:
           codesign --force --timestamp --options runtime \
             --entitlements scripts/CuaDriver.entitlements \
             --sign "$IDENTITY" release/universal/cua-driver
+          codesign --force --timestamp --options runtime \
+            --sign "$IDENTITY" release/universal/libcua_driver_sdk.dylib
           codesign --verify --strict --verbose=2 release/universal/cua-driver
+          codesign --verify --strict --verbose=2 release/universal/libcua_driver_sdk.dylib
       - name: Assemble CuaDriver.app bundle
         working-directory: libs/cua-driver/rust
         run: |
@@ -426,6 +486,9 @@ jobs:
             # that download by arch still get the universal slice
             # (matches the Swift `cd-swift-cua-driver.yml` convention).
             cp release/universal/cua-driver "release/${STAGE}/"
+            cp release/universal/libcua_driver_sdk.dylib "release/${STAGE}/"
+            cp release/universal/cua_driver_node_runtime.node "release/${STAGE}/"
+            cp include/cua_driver_abi.h "release/${STAGE}/"
             # Ship the .app bundle in every macOS tarball so install.sh
             # can drop it into /Applications/CuaDriver.app for TCC
             # attribution (issue #1525). Tarball callers that want only
@@ -434,12 +497,11 @@ jobs:
             cp ../../LICENSE.md "release/${STAGE}/LICENSE" 2>/dev/null || true
             (cd release && tar -czf "${STAGE}.tar.gz" "${STAGE}")
           done
-          # Bare universal binary — single-file tarball matching Swift's
-          # `cua-driver-${VERSION}-darwin-universal-binary.tar.gz`. NO
-          # bundle here: callers that fetch the bare tarball deliberately
-          # skipped the .app workflow.
+          # Bare runtime tarball: universal CLI plus universal UniFFI library.
+          # No app bundle: callers of this asset deliberately skip that flow.
           tar -czf "release/cua-driver-rs-${VERSION}-darwin-universal-binary.tar.gz" \
-            -C release/universal cua-driver
+            -C release/universal cua-driver libcua_driver_sdk.dylib cua_driver_node_runtime.node \
+            -C ../../include cua_driver_abi.h
           ls -lh release/*.tar.gz
       - uses: actions/upload-artifact@v4
         with:
@@ -448,9 +510,14 @@ jobs:
           if-no-files-found: error
 
   # ── Release ──────────────────────────────────────────────────────────────────
+  # Tag pushes build immutable candidate artifacts only. Publishing is an
+  # explicit second step after the exact tag SHA passes the interactive E2E
+  # matrices and install-local smokes. This keeps Release Please from making a
+  # GitHub release (and therefore PyPI/npm SDK packages) public before that
+  # evidence exists.
   release:
     needs: [build-linux, build-windows, build-macos-universal]
-    if: startsWith(github.ref, 'refs/tags/cua-driver-rs-v') || inputs.publish == true
+    if: github.event_name == 'workflow_dispatch' && inputs.publish == true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

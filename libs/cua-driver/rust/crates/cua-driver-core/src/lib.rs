@@ -27,9 +27,22 @@ pub const EMBEDDED_ENV: &str = "CUA_DRIVER_EMBEDDED";
 /// OS responsibility chain.
 pub const HOST_BUNDLE_ID_ENV: &str = "CUA_DRIVER_HOST_BUNDLE_ID";
 
+/// Internal embedded-host contract: when set to the exact value `1`, the
+/// daemon treats EOF on stdin as proof that its owning host has exited. The
+/// Rust SDK sets this only on the directly-spawned `serve` child; MCP proxies
+/// continue to use stdin for JSON-RPC and never set it.
+pub const PARENT_LIVENESS_STDIN_ENV: &str = "CUA_DRIVER_PARENT_LIVENESS_STDIN";
+
 /// Only the exact value `1` counts — fail-safe for anything else.
 pub fn embedded_mode() -> bool {
     std::env::var_os(EMBEDDED_ENV).is_some_and(|v| v == "1")
+}
+
+/// Parent-EOF shutdown is valid only for a directly embedded daemon. Requiring
+/// both sentinels prevents an ambient variable from changing ordinary
+/// standalone or MCP stdin behavior.
+pub fn parent_liveness_stdin_enabled() -> bool {
+    embedded_mode() && std::env::var_os(PARENT_LIVENESS_STDIN_ENV).is_some_and(|value| value == "1")
 }
 
 pub mod authorization;
@@ -39,6 +52,7 @@ pub mod capture_scope;
 pub mod cdp;
 pub mod consent;
 pub mod cursor_sampler;
+pub mod daemon;
 pub mod element_cache;
 pub mod element_token;
 pub mod ffmpeg_install;
@@ -65,4 +79,5 @@ pub mod tool_schema;
 pub mod video;
 pub mod video_ffmpeg;
 
+pub use cua_driver_contract::{CaptureScope, EscalationReason};
 pub use recording::RecordingSession;

@@ -44,19 +44,16 @@
 //! - Claude Code: `~/.claude/skills/`
 //! - Codex:       `~/.agents/skills/`
 //! - OpenClaw:    `~/.openclaw/skills/`
-//! - OpenCode:    `~/.config/opencode/skills/` (macOS / Linux),
-//!                `%APPDATA%\opencode\skills\` (Windows)
+//! - OpenCode: `~/.config/opencode/skills/` (macOS / Linux),
+//!   `%APPDATA%\opencode\skills\` (Windows)
 //! - Antigravity: `~/.gemini/skills/` — shared between Antigravity CLI
-//!                (`agy`) and Antigravity IDE; same dir Google Gemini CLI
-//!                used before the May-2026 transition, so existing
-//!                installs migrate forward unchanged.
-//! - Hermes:      `~/.hermes/skills/` — NousResearch/hermes-agent.
-//!                The user-level skill space Hermes resolves at agent
-//!                load time (separate from the repo-bundled
-//!                `hermes-agent/skills/` tree, which is read-only and
-//!                version-controlled). Hermes' own `computer-use`
-//!                skill teaches its wrapper vocabulary; the
-//!                cua-driver pack provides the platform deep dives.
+//!   (`agy`) and Antigravity IDE; same dir Google Gemini CLI used before the
+//!   May-2026 transition, so existing installs migrate forward unchanged.
+//! - Hermes: `~/.hermes/skills/` — NousResearch/hermes-agent. The user-level
+//!   skill space Hermes resolves at agent load time (separate from the
+//!   repo-bundled `hermes-agent/skills/` tree, which is read-only and
+//!   version-controlled). Hermes' own `computer-use` skill teaches its wrapper
+//!   vocabulary; the cua-driver pack provides the platform deep dives.
 //!
 //! Only acts on a given agent when its parent skills dir already
 //! exists (i.e. the agent itself is installed). Never clobbers an
@@ -123,12 +120,6 @@ fn is_excluded_platform_doc(basename: &str, all_platforms: bool) -> bool {
     excluded.iter().any(|f| basename.eq_ignore_ascii_case(f))
 }
 
-/// Package-home subdir name (matches `telemetry::HOME_SUBDIRECTORY`).
-/// Pre-v0.2.16 this was `.cua-driver-rs`; the rename to `.cua-driver/` is
-/// the same rename the binary install path went through, kept in lock-
-/// step so all on-disk state lives under one dot-folder.
-const HOME_SUBDIRECTORY: &str = ".cua-driver";
-
 /// Legacy subdir name. `sweep_legacy_skill_pack` removes any skill-pack
 /// artifacts that landed here before the rename.
 const LEGACY_HOME_SUBDIRECTORY: &str = ".cua-driver-rs";
@@ -149,12 +140,12 @@ fn home_dir() -> Result<PathBuf> {
     {
         let userprofile =
             std::env::var("USERPROFILE").map_err(|_| anyhow!("USERPROFILE not set"))?;
-        return Ok(PathBuf::from(userprofile).join(HOME_SUBDIRECTORY));
+        return Ok(PathBuf::from(userprofile).join(crate::bundle::user_home_subdirectory()));
     }
     #[cfg(not(windows))]
     {
         let home = std::env::var("HOME").map_err(|_| anyhow!("HOME not set"))?;
-        return Ok(PathBuf::from(home).join(HOME_SUBDIRECTORY));
+        Ok(PathBuf::from(home).join(crate::bundle::user_home_subdirectory()))
     }
 }
 
@@ -162,7 +153,7 @@ fn home_dir() -> Result<PathBuf> {
 /// `None` when CUA_DRIVER_RS_HOME is set (the env var overrides both
 /// the new and legacy defaults — caller is on their own).
 fn legacy_home_dir() -> Option<PathBuf> {
-    if std::env::var("CUA_DRIVER_RS_HOME").is_ok() {
+    if std::env::var("CUA_DRIVER_RS_HOME").is_ok() || crate::bundle::is_local_installation() {
         return None;
     }
     #[cfg(windows)]
@@ -344,9 +335,10 @@ fn install(flags: &[String], force: bool) -> Result<()> {
 
 /// Best-effort removal of any pre-rename skill pack. Three legacy
 /// locations are swept:
-///   1. `<HomeDir>/skills/cua-driver-rs/`       — old pack NAME under new home dir
-///   2. `<LegacyHomeDir>/skills/cua-driver/`    — new pack NAME under old home dir
-///   3. `<LegacyHomeDir>/skills/cua-driver-rs/` — old pack NAME under old home dir
+/// 1. `<HomeDir>/skills/cua-driver-rs/`       — old pack NAME under new home dir
+/// 2. `<LegacyHomeDir>/skills/cua-driver/`    — new pack NAME under old home dir
+/// 3. `<LegacyHomeDir>/skills/cua-driver-rs/` — old pack NAME under old home dir
+///
 /// Plus every `<agent_skills>/cua-driver-rs` symlink/junction.
 ///
 /// Then attempts to remove the empty `<LegacyHomeDir>/skills/` and
@@ -409,7 +401,7 @@ fn sweep_legacy_skill_pack() {
             Err(_) => continue,
         };
         let legacy_link = parent.join(LEGACY_SKILL_PACK_NAME);
-        if !parent.exists() || !legacy_link.symlink_metadata().is_ok() {
+        if !parent.exists() || legacy_link.symlink_metadata().is_err() {
             continue;
         }
         if !is_symlink_or_junction(&legacy_link) {
@@ -825,6 +817,25 @@ mod tests {
             manifest, canonical,
             "SKILL_FILES must include every canonical Markdown file"
         );
+    }
+
+    #[test]
+    fn macos_skill_keeps_ax_only_and_non_prompting_permission_guidance() {
+        let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let macos = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/MACOS.md"))
+            .expect("canonical macOS skill must be readable");
+
+        for required in [
+            "screen_recording_capturable` is `null",
+            "direct_capture_status` is `\"not_checked\"",
+            "include_screenshot:false",
+            "element-indexed AX actions",
+        ] {
+            assert!(
+                macos.contains(required),
+                "macOS skill lost required permission guidance: {required}"
+            );
+        }
     }
 
     #[test]

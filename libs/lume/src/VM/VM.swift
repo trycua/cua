@@ -44,6 +44,7 @@ class VM {
     // MARK: - Properties
 
     var vmDirContext: VMDirContext
+    var telemetryTransport: TelemetryTransport?
 
     @MainActor
     private var virtualizationService: VMVirtualizationService?
@@ -314,6 +315,12 @@ class VM {
                 "Starting VM via virtualization service", metadata: ["name": vmDirContext.name])
             try await service.start()
             Logger.info("VM started successfully", metadata: ["name": vmDirContext.name])
+            if let telemetryTransport {
+                TelemetryClient.shared.recordVMStarted(
+                    transport: telemetryTransport,
+                    guestOS: vmDirContext.config.os
+                )
+            }
 
             // Open the VNC client only after VM start to avoid connecting to an empty framebuffer.
             if !noDisplay {

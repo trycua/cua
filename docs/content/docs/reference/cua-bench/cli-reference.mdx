@@ -1,0 +1,51 @@
+---
+title: 'CLI reference'
+description: 'Cua-Bench command groups for tasks, datasets, benchmark runs, environments, agents, and traces.'
+---
+
+The Cua-Bench CLI is available as `cb` from the `libs/cua-bench` environment.
+Run `cb --help` or `cb <command> --help` for the complete options supported by
+your installed version.
+
+## Task and dataset commands
+
+| Command | Purpose |
+|---------|---------|
+| `cb task info <path>` | Inspect a task's provider, variants, and lifecycle functions. |
+| `cb task list [path]` | List available task directories. |
+| `cb task create` | Scaffold a task interactively. |
+| `cb task generate` | Generate a task scaffold from a prompt. |
+| `cb dataset list` | List known datasets. |
+| `cb dataset build <path>` | Build a dataset artifact. |
+
+## Run commands
+
+| Command | Purpose |
+|---------|---------|
+| `cb interact <task-path>` | Run one task interactively with its UI visible. |
+| `cb run task <task-path>` | Run one task, optionally with an agent or oracle. |
+| `cb run dataset <dataset>` | Run tasks from a dataset in parallel. |
+| `cb run list` | List runs and their status. |
+| `cb run info <run-id>` | Show details for a run. |
+| `cb run watch <run-id>` | Follow a run in the terminal. |
+| `cb run logs <run-id>` | Print run or session logs. |
+| `cb run stop <run-id>` | Stop a running benchmark. |
+
+Common run options include `--agent`, `--model`, `--oracle`,
+`--max-steps`, `--image`, `--platform`, and `--output-dir`. Use the command's
+`--help` output for defaults and compatibility constraints.
+
+## Environment and artifact commands
+
+| Command group | Purpose |
+|---------------|---------|
+| `cb image` | List, inspect, create, clone, open, and remove environment images. |
+| `cb platform` | Inspect the available execution platforms. |
+| `cb agent` | Scaffold, build, and publish agent images. |
+| `cb trace` | View traces and render trajectories from completed runs. |
+| `cb status` | Inspect running Cua-Bench resources. |
+| `cb prune` | Review and remove unused run or environment resources. |
+
+Start with [Run a Cua-Bench task](/how-to-guides/cua-bench/run-a-task) for a
+guided simulated task, or read [What is Cua-Bench?](/concepts/what-is-cua-bench)
+for the task and evaluator model.

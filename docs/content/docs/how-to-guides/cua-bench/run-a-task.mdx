@@ -1,0 +1,73 @@
+---
+title: 'Run a Cua-Bench task'
+description: 'Inspect and execute a bundled computer-use task with its oracle and evaluator.'
+---
+
+Use this guide to run a simulated 2048 task from the Cua-Bench source tree.
+The task includes setup, an oracle solution, and an evaluator, so you can see
+the complete task lifecycle without downloading a VM image.
+
+## Before you start
+
+Install:
+
+- Git;
+- [uv](https://docs.astral.sh/uv/);
+- Python 3.12 or 3.13.
+
+## Get Cua-Bench
+
+Clone Cua and install Cua-Bench with its browser dependencies:
+
+```bash
+git clone https://github.com/trycua/cua.git
+cd cua/libs/cua-bench
+uv sync --extra browser
+```
+
+## Inspect the task
+
+Ask the CLI to load the task and report its provider, variants, and lifecycle
+functions:
+
+```bash
+uv run cb task info example_tasks/2048_env_simulated
+```
+
+The task uses the simulated provider and includes three variants. Each variant
+has setup, oracle, and evaluation functions.
+
+## Run the oracle and evaluator
+
+Run the first variant with its bundled oracle:
+
+```bash
+uv run cb interact \
+  example_tasks/2048_env_simulated \
+  --variant-id 0 \
+  --oracle \
+  --no-wait
+```
+
+Cua-Bench prepares the environment, runs the oracle, and prints the evaluator's
+reward before closing the task.
+
+To operate the task yourself, omit `--oracle` and `--no-wait`:
+
+```bash
+uv run cb interact example_tasks/2048_env_simulated --variant-id 0
+```
+
+The task remains open until you return to the terminal and press Enter.
+
+## Explore other tasks
+
+List the bundled task directories:
+
+```bash
+uv run cb task list example_tasks
+```
+
+Use `cb task info <path>` before running a task to check its provider and
+variants. Read [What is Cua-Bench?](/concepts/what-is-cua-bench) for the task,
+environment, and evaluator model.

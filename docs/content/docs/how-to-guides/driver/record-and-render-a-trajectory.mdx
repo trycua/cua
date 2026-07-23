@@ -3,7 +3,6 @@ title: Record and render a Cua Driver trajectory
 description: Capture an agent's Cua Driver actions and turn the trajectory into a zoom-on-click MP4.
 ---
 
-import { Callout } from 'fumadocs-ui/components/callout';
 import { Steps, Step } from 'fumadocs-ui/components/steps';
 
 Record an agent-driven task when you need both the action evidence and a short product demo. Cua Driver saves each action with before-and-after state, screenshots, and arguments. With video enabled, it also captures the display so you can render the trajectory with zoom effects around each action.
@@ -17,12 +16,6 @@ Record an agent-driven task when you need both the action evidence and a short p
   The agent clicks cells in a numbered grid, then Cua Driver renders the recorded actions as a
   focused product demo.
 </VideoDemo>
-
-<Callout type="info">
-  This guide records an agent's Cua Driver actions. To record a task you perform by hand over VNC
-  and turn it into a reusable skill, see [Record a demonstration as a
-  skill](/how-to-guides/skills/record-a-demonstration).
-</Callout>
 
 ## Before you start
 
@@ -55,10 +48,6 @@ sudo apt install ffmpeg
     ```
 
     The recording directory will contain one `turn-NNNNN` folder for each action and a display capture named `recording.mp4`.
-
-    <Callout type="warn">
-      `cua-driver recording start` records per-action evidence but does not enable display video. Use the MCP tool with `record_video: true` when you plan to render an MP4.
-    </Callout>
 
   </Step>
 

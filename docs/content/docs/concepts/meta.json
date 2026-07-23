@@ -4,15 +4,20 @@
   "pages": [
     "index",
     "what-is-computer-use",
+    "---Cua Driver---",
     "sdk-mcp-and-hosting",
     "the-no-foreground-contract",
     "capture-and-delivery-modalities",
     "browser-targeting-and-background-delivery",
     "how-permission-policies-work",
     "how-cua-driver-is-validated",
+    "---Cua Sandbox---",
     "how-sandboxes-work",
+    "---Lume---",
     "how-lume-unattended-setup-works",
     "how-sip-works-in-lume-vms",
-    "how-lume-expands-macos-disks"
+    "how-lume-expands-macos-disks",
+    "---Cua-Bench---",
+    "what-is-cua-bench"
   ]
 }

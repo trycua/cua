@@ -6,6 +6,7 @@
     "cua-driver",
     "lume",
     "sandbox-sdk",
+    "cua-bench",
     "docs-code-mcp"
   ]
 }

@@ -108,6 +108,26 @@ Reconstruct an `Image` from a serialized spec dict (e.g. the output of `to_dict(
 
 ---
 
+## Fleet compatibility
+
+Fleet cloud sandboxes currently require an **unmodified** `Image.from_registry(...)` with optional `.expose(...)` ports.
+
+That means the following are currently valid Fleet deployment inputs:
+
+- `Image.from_registry("registry.example/workspace@sha256:...")`
+- `Image.from_registry("registry.example/workspace@sha256:...").expose(3000)`
+
+The rest of the image-builder surface remains part of the Sandbox SDK, but it is not currently accepted by the Fleet cloud transport as a pool deployment input. That includes:
+
+- built-in constructors such as `Image.linux()`, `Image.macos()`, `Image.windows()`, and `Image.android()`
+- builder layers such as `apt_install`, `pip_install`, `uv_install`, `run`, `copy`, and `env`
+- `Image.from_file(...)`
+- snapshot-derived images
+
+Fleet expects the referenced OCI artifact to already carry the bootable guest image and satisfy Fleet's publication/runtime requirements. Read [Prepare and reference a Fleet image](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image) for the operational workflow and [How Fleet images work](/concepts/how-fleet-images-work) for the conceptual model.
+
+---
+
 ## Builder methods
 
 Each method returns a new `Image`. Builder calls are composable and can be chained in any order.

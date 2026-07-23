@@ -11,6 +11,10 @@ In this tutorial, you create an *ephemeral* cloud Linux sandbox, run `uname -a` 
   Prerequisites: Python 3.12 or 3.13. A free account at cua.ai for cloud sandboxes.
 </Callout>
 
+<Callout type="warn">
+  This tutorial shows the legacy API-key cloud path using `Image.linux()`. If you are targeting Fleet cloud sandboxes, start with [Prepare and reference a Fleet image](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image) instead. Fleet currently expects a published registry image rather than the full SDK image-builder flow.
+</Callout>
+
 ## Sign in and create an API key
 
 Sign in at cua.ai.
@@ -43,10 +47,14 @@ Create a file named `first_sandbox.py`:
 
 ```python
 import asyncio
+import os
 from cua import Sandbox, Image
 
 async def main():
-    async with Sandbox.ephemeral(Image.linux()) as sb:
+    async with Sandbox.ephemeral(
+        Image.linux(),
+        api_key=os.environ["CUA_API_KEY"],
+    ) as sb:
         result = await sb.shell.run("uname -a")
         print(result.stdout)
 
@@ -76,7 +84,7 @@ You should also see a new file named `screenshot.png` in the current directory.
 
 ## What just happened
 
-`Sandbox.ephemeral(Image.linux())` created a cloud Linux container. The script ran `uname -a` inside that container, printed the command output, changed and read the sandbox desktop clipboard, took a screenshot, and wrote it to `screenshot.png`.
+`Sandbox.ephemeral(Image.linux(), api_key=...)` created a legacy API-key cloud Linux container. The script ran `uname -a` inside that container, printed the command output, changed and read the sandbox desktop clipboard, took a screenshot, and wrote it to `screenshot.png`.
 
 When the `async with` block exited, **the sandbox destroyed itself**. No cleanup is needed.
 
@@ -84,6 +92,7 @@ When the `async with` block exited, **the sandbox destroyed itself**. No cleanup
 
 - [Manage sandbox lifecycle](/how-to-guides/sandbox/lifecycle)
 - [Create and restore snapshots](/how-to-guides/sandbox/snapshots)
+- [Prepare and reference a Fleet image](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image)
 - [Pass secrets to sandboxes](/how-to-guides/sandbox/secrets)
 - [Run parallel sandboxes](/how-to-guides/sandbox/scale-out)
 - [Sandbox SDK API reference](/reference/sandbox-sdk)

@@ -1,0 +1,73 @@
+---
+title: "How Fleet images work"
+description: "How Fleet boot artifacts define the operating system, compatibility boundary, and service contract for managed sandbox capacity."
+---
+
+A Fleet image is the boot artifact from which a Fleet pool starts its reusable sandbox replicas. It is an infrastructure-level input such as a VM disk or container-backed boot artifact. It is **not** the public `Image` abstraction from the Sandbox SDK.
+
+That distinction matters because the two layers solve different problems. The public Sandbox SDK `Image` describes the starting environment for a sandbox created through the SDK. A Fleet image is the deployed guest artifact that a pool repeatedly boots as shared capacity for later claims.
+
+## Fleet images are a different boundary than Sandbox SDK Images
+
+The public `Image` type is the sandbox API's immutable environment specification. It lets you describe a sandbox's operating system, packages, copied files, setup commands, and ports before you start that sandbox.
+
+A Fleet image sits one layer lower. It is the guest boot artifact that a pool definition points at when it creates compatible replicas. A pool can keep many replicas warm from the same artifact, and later workloads claim one of those replicas. That means a Fleet image is part of capacity management and compatibility, not just one sandbox's setup sequence.
+
+If you need the public SDK model, read [How sandboxes work](/concepts/how-sandboxes-work#images-as-starting-state-contracts), [Choose and build a sandbox image](/how-to-guides/sandbox/images), and the [Image reference](/reference/sandbox-sdk/image).
+
+## Fleet uses a constrained subset of the SDK image surface
+
+Fleet currently accepts only `Image.from_registry(...)` and optional `.expose(...)` ports when you create a cloud sandbox through the Fleet transport.
+
+That means Fleet does **not** build an environment from SDK layers such as `apt_install`, `pip_install`, `uv_install`, `run`, `copy`, `env`, `from_file`, or snapshot-derived images. Those APIs still matter for local runtimes and the broader Sandbox SDK, but Fleet expects you to publish the guest artifact ahead of time and then reference it by registry address.
+
+| Fleet image input | Supported today |
+|-------------------|-----------------|
+| `Image.from_registry(...)` | Yes |
+| `.expose(...)` on a registry image | Yes |
+| Built-in constructors such as `Image.linux()` or `Image.macos()` | No |
+| Builder layers such as `apt_install`, `run`, `copy`, `env`, `pip_install` | No |
+| `Image.from_file(...)` | No |
+| Snapshot images | No |
+
+Read [Choose and build a sandbox image](/how-to-guides/sandbox/images#fleet-compatibility) for the compatibility summary and [Prepare and reference a Fleet image](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image) for the operational workflow.
+
+## Fleet references an OCI artifact that carries the boot image
+
+At the pool layer, Fleet stores the registry reference as the deployed boot artifact for the pool template. In practice that means the OCI artifact you publish has to carry the bootable guest image that Fleet expects. The SDK contract is the registry reference itself; how your build pipeline packages the bootable guest inside that artifact is part of Fleet image preparation.
+
+`Image.from_registry(...)` does not assemble that artifact for you. It only points Fleet at a prebuilt OCI image that already carries the bootable environment. Publishing the artifact is therefore part of image preparation, not part of the claim path.
+
+## Image identity defines compatibility
+
+A pool's image reference is part of what makes one replica compatible with another. Two pools with different boot artifacts can differ in operating system, installed software, startup behavior, readiness checks, and service endpoints even if they request the same CPU and memory.
+
+Treat a deployed Fleet image as versioned and immutable in practice. A pinned image reference makes it possible to say exactly what environment a pool booted. Mutable tags weaken that guarantee because the same pool specification can start different software over time.
+
+## Boot assumptions belong to the image
+
+The image and the pool's boot configuration have to agree. Firmware expectations, disk layout, guest drivers, and startup services are part of the image boundary, not optional details layered on afterward.
+
+This is why image choice is more than package selection. A Linux-oriented artifact and a Windows-oriented artifact can require different firmware, device expectations, and service startup contracts before a replica is actually useful to a claimant.
+
+## Service behavior starts at the image boundary
+
+A Fleet image does not only determine what operating system boots. It also determines what software is already present when a replica starts and which services can become ready inside that guest.
+
+That means readiness has to match the image's actual workload. A pool is only meaningfully ready when the guest started from that image has reached the service state the claimant needs. A running replica without its expected service is capacity in progress, not yet a ready environment.
+
+Ports you mark with `.expose(...)` become named Fleet services. When a client later calls `sb.tunnel.forward(...)`, Fleet returns the authenticated service URL for that exposed service. It is not creating a localhost tunnel on the caller's machine, and direct requests to that URL still need Fleet authentication.
+
+There is also a non-optional default service contract: the published image must already start the computer-server endpoint on port `8000`. Fleet always creates that `server` service, probes port `8000` for readiness, and waits for `/status` before the sandbox is considered ready.
+
+## Immutability improves repeatability
+
+Preinstalling dependencies and startup behavior into a versioned image makes replicas more uniform and reduces setup work in the claim path. The trade-off is that changing the environment means publishing a new image version and updating the pool deliberately.
+
+That trade-off is usually desirable for managed capacity. Fleet images are the stable boundary between a reproducible guest environment and the reusable pool capacity that runs it.
+
+## Related pages
+
+- [How sandboxes work](/concepts/how-sandboxes-work)
+- [Choose and build a sandbox image](/how-to-guides/sandbox/images)
+- [Image reference](/reference/sandbox-sdk/image)

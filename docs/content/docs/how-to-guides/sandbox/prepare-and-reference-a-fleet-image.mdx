@@ -1,0 +1,119 @@
+---
+title: Prepare and reference a Fleet image
+description: Publish a Fleet-compatible OCI image and reference it from the Sandbox SDK.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Fleet does not build a sandbox environment from the full SDK image-builder surface. Instead, Fleet expects a **prebuilt OCI artifact** that already carries the bootable guest image for the pool.
+
+<Callout type="info">
+  The current Fleet cloud path uses `CUA_CLIENT_ID` plus `CUA_CLIENT_SECRET` (or `cua.configure(client_id=..., client_secret=...)`) and currently supports `us-east-1`.
+</Callout>
+
+## What Fleet accepts today
+
+Fleet cloud sandboxes currently accept:
+
+- `Image.from_registry(...)`
+- optional `.expose(...)` calls on that registry image
+
+Fleet currently does **not** accept:
+
+- built-in constructors such as `Image.linux()` or `Image.macos()` as Fleet deployment inputs
+- image builder layers such as `apt_install`, `pip_install`, `uv_install`, `run`, `copy`, or `env`
+- `Image.from_file(...)`
+- snapshots or custom disks
+
+<Callout type="warn">
+  Treat Fleet as a published-image workflow. Build first, publish first, then reference the resulting registry artifact from the SDK.
+</Callout>
+
+## 1. Build the guest image outside the claim path
+
+Prepare the operating system, installed software, startup behavior, and service layout before you ask Fleet to boot it.
+
+The important boundary is that the published OCI artifact must already carry the bootable guest image Fleet expects. In current Fleet image pipelines that often means an OCI artifact that embeds the bootable disk payload, but the public SDK contract is simply that you publish a Fleet-compatible registry artifact and point `Image.from_registry(...)` at it. The SDK does not build that artifact, convert a disk file, or apply SDK layers on your behalf.
+
+## 2. Publish the OCI artifact immutably
+
+Push the finished artifact to a registry and prefer an immutable digest over a mutable tag.
+
+```text
+registry.example/fleet/workspace@sha256:...
+```
+
+Pinned digests make it possible to say exactly which boot image a pool launched. Mutable tags weaken that guarantee because the same pool spec can resolve to different guest images over time.
+
+## 3. Reference the published image from the SDK
+
+Use `Image.from_registry(...)` with any additional Fleet services declared through `.expose(...)`.
+
+Your published image must already boot the default computer-server service on port `8000`. Fleet always creates that `server` service, probes port `8000` for readiness, and waits for the `/status` endpoint before the sandbox is considered ready. Extra `.expose(...)` ports are only for additional services your image starts.
+
+```python
+import asyncio
+from cua import Image, Sandbox
+
+async def main():
+    image = (
+        Image.from_registry("registry.example/fleet/workspace@sha256:...")
+        .expose(3000)
+    )
+
+    async with Sandbox.ephemeral(image) as sb:
+        result = await sb.shell.run("uname -a")
+        print(result.stdout)
+
+asyncio.run(main())
+```
+
+## 4. Expose only the services your image actually starts
+
+`expose()` is how you declare additional named Fleet services that your guest brings up after boot.
+
+If your image only needs the default computer-server endpoint on `8000`, you do not need extra exposed ports. If it serves additional application traffic on another port, expose that port on the registry image you reference.
+
+## 5. Expect a service URL, not a localhost tunnel
+
+When you forward an exposed Fleet service, the SDK returns the Fleet service URL for that service.
+
+```python
+async with sb.tunnel.forward(3000) as service:
+    print(service.url)
+```
+
+That URL is the Fleet service endpoint. It is not a localhost listener created on the caller's machine.
+
+The current public SDK does not yet expose the internal authenticated HTTP client it uses for Fleet service calls, so `service.url` by itself is not enough for direct HTTP requests. If you want to call that endpoint yourself, mint an OAuth access token with the same Fleet credentials and pass it as a bearer token.
+
+```python
+import os
+import httpx
+
+token = httpx.post(
+    "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token",
+    data={
+        "grant_type": "client_credentials",
+        "client_id": os.environ["CUA_CLIENT_ID"],
+        "client_secret": os.environ["CUA_CLIENT_SECRET"],
+    },
+    headers={"Accept": "application/json"},
+    timeout=30.0,
+).json()["access_token"]
+
+async with sb.tunnel.forward(3000) as service:
+    response = httpx.get(
+        service.url,
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=30.0,
+    )
+    response.raise_for_status()
+    print(response.text)
+```
+
+## Related pages
+
+- [How Fleet images work](/concepts/how-fleet-images-work)
+- [Choose and build a sandbox image](/how-to-guides/sandbox/images#fleet-compatibility)
+- [Image reference](/reference/sandbox-sdk/image#fleet-compatibility)

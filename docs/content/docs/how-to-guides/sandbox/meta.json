@@ -1,1 +1,13 @@
-{ "title": "Sandbox", "pages": ["lifecycle", "snapshots", "secrets", "scale-out", "tunneling", "images", "interactive-shell"] }
+{
+  "title": "Sandbox",
+  "pages": [
+    "lifecycle",
+    "snapshots",
+    "secrets",
+    "scale-out",
+    "tunneling",
+    "images",
+    "prepare-and-reference-a-fleet-image",
+    "interactive-shell"
+  ]
+}

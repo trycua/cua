@@ -30,18 +30,23 @@ jobs:
 
       - name: Determine version
         id: get-version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF_RAW: ${{ github.ref }}
+          EVENT_INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
-          if [ -n "${{ inputs.version }}" ]; then
-            VERSION=${{ inputs.version }}
-          elif [ "${{ github.event_name }}" == "push" ]; then
-            if [[ "${{ github.ref }}" =~ ^refs/tags/cloud-v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+          if [ -n "$INPUT_VERSION" ]; then
+            VERSION=$INPUT_VERSION
+          elif [ "$EVENT_NAME" == "push" ]; then
+            if [[ "$GITHUB_REF_RAW" =~ ^refs/tags/cloud-v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
               VERSION=${BASH_REMATCH[1]}
             else
               echo "Invalid tag format for cloud"
               exit 1
             fi
-          elif [ -n "${{ github.event.inputs.version }}" ]; then
-            VERSION=${{ github.event.inputs.version }}
+          elif [ -n "$EVENT_INPUT_VERSION" ]; then
+            VERSION=$EVENT_INPUT_VERSION
           else
             echo "ERROR: No version found!"
             exit 1

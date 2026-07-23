@@ -25,6 +25,7 @@ packages = ["cua_train"]
 
 [project.optional-dependencies]
 dev = [
+    "build>=1.2",
     "pytest>=7.0",
     "pytest-httpx>=0.30.0",
     "ruff>=0.6",

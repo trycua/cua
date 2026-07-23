@@ -69,6 +69,8 @@ Run a virtual machine
 | `--usb-storage` | [String] | - | Disk image to attach as USB mass storage device |
 | `--registry` | String | ghcr.io | Container registry URL |
 | `--organization` | String | trycua | Organization to pull from |
+| `--display` | DisplayMode | native | Local viewer to open: vnc, native, or none. The VNC server remains available in every mode |
+| `--log-file` | String | ~/Library/Logs/lume/VM_NAME.log | Log path for --detach |
 | `--vnc-port` | Int | 0 | Port for VNC server (0 for auto-assign) |
 | `--recovery-mode` | Bool | false | For macOS VMs only, boot in recovery mode |
 | `--storage` | String | - | VM storage location to use |
@@ -77,7 +79,64 @@ Run a virtual machine
 
 | Name | Default | Description |
 | ---- | ------- | ----------- |
-| `-d, --no-display` | false | Do not start the VNC client |
+| `-d, --no-display` | false | Compatibility alias for --display none |
+| `--detach` | false | Run the VM in the background and return immediately |
+| `--clipboard` | false | Enable bidirectional clipboard sync via SSH. Automatic for native macOS display |
+
+### lume attach
+
+Open a viewer for a running virtual machine
+
+**Arguments:**
+
+| Name | Type | Required | Description |
+| ---- | ---- | -------- | ----------- |
+| `<name>` | String | Yes | Name of the virtual machine |
+
+**Options:**
+
+| Name | Type | Default | Description |
+| ---- | ---- | ------- | ----------- |
+| `--display` | AttachDisplayMode | native with VNC fallback | Viewer to open: native or vnc |
+| `--storage` | String | - | VM storage location to use |
+
+### lume shutdown
+
+Gracefully shut down a virtual machine
+
+**Arguments:**
+
+| Name | Type | Required | Description |
+| ---- | ---- | -------- | ----------- |
+| `<name>` | String | Yes | Name of the virtual machine |
+
+**Options:**
+
+| Name | Type | Default | Description |
+| ---- | ---- | ------- | ----------- |
+| `-u, --user` | String | lume | SSH username |
+| `-p, --password` | String | lume | SSH and sudo password |
+| `--storage` | String | - | VM storage location to use |
+| `-t, --timeout` | Int | 30 | SSH command timeout in seconds |
+
+### lume restart
+
+Gracefully restart a virtual machine
+
+**Arguments:**
+
+| Name | Type | Required | Description |
+| ---- | ---- | -------- | ----------- |
+| `<name>` | String | Yes | Name of the virtual machine |
+
+**Options:**
+
+| Name | Type | Default | Description |
+| ---- | ---- | ------- | ----------- |
+| `-u, --user` | String | lume | SSH username |
+| `-p, --password` | String | lume | SSH and sudo password |
+| `--storage` | String | - | VM storage location to use |
+| `-t, --timeout` | Int | 30 | SSH command timeout in seconds |
 
 ### lume stop
 

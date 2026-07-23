@@ -3,6 +3,7 @@ import Testing
 import Virtualization
 @testable import lume
 
+@MainActor
 @Test("VMVirtualizationService starts correctly")
 func testVMVirtualizationServiceStart() async throws {
     let service = MockVMVirtualizationService()
@@ -17,6 +18,7 @@ func testVMVirtualizationServiceStart() async throws {
     #expect(await service.startCallCount == 1)
 }
 
+@MainActor
 @Test("VMVirtualizationService stops correctly")
 func testVMVirtualizationServiceStop() async throws {
     let service = MockVMVirtualizationService()
@@ -29,6 +31,7 @@ func testVMVirtualizationServiceStop() async throws {
     #expect(await service.stopCallCount == 1)
 }
 
+@MainActor
 @Test("VMVirtualizationService handles pause and resume")
 func testVMVirtualizationServicePauseResume() async throws {
     let service = MockVMVirtualizationService()
@@ -45,6 +48,7 @@ func testVMVirtualizationServicePauseResume() async throws {
     #expect(await service.resumeCallCount == 1)
 }
 
+@MainActor
 @Test("VMVirtualizationService handles operation failures")
 func testVMVirtualizationServiceFailures() async throws {
     let service = MockVMVirtualizationService()
@@ -65,4 +69,46 @@ func testVMVirtualizationServiceFailures() async throws {
     
     #expect(await service.state == .stopped)
     #expect(await service.startCallCount == 1)
-} 
+}
+
+@MainActor
+@Test("macOS automount directories keep a live-update placeholder and disambiguate names")
+func testSharedDirectoryGrouping() throws {
+    let tag = VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag
+    let sharedDirectories = [
+        SharedDirectory(hostPath: "/tmp/first/Shared", tag: tag, readOnly: false),
+        SharedDirectory(hostPath: "/tmp/second/Shared", tag: tag, readOnly: true),
+    ]
+
+    let devices = BaseVirtualizationService.createDirectorySharingDevices(
+        sharedDirectories: sharedDirectories
+    )
+    let device = try #require(devices.first as? VZVirtioFileSystemDeviceConfiguration)
+    let share = try #require(device.share as? VZMultipleDirectoryShare)
+
+    #expect(devices.count == 1)
+    #expect(device.tag == tag)
+    let names = Swift.Set<String>(share.directories.keys)
+    #expect(names == Swift.Set([".lume-live-share", "Shared", "Shared (2)"]))
+    #expect(share.directories[".lume-live-share"]?.isReadOnly == true)
+    #expect(share.directories[".lume-live-share"]?.url.path == "/var/empty")
+    #expect(share.directories["Shared"]?.isReadOnly == false)
+    #expect(share.directories["Shared (2)"]?.isReadOnly == true)
+}
+
+@MainActor
+@Test("Only live macOS automount shares receive the placeholder")
+func testLiveSharePlaceholderScope() throws {
+    let automountShare = try #require(
+        BaseVirtualizationService.createDirectoryShare(
+            [],
+            withLiveUpdatePlaceholder: true
+        ) as? VZMultipleDirectoryShare
+    )
+    let regularShare = try #require(
+        BaseVirtualizationService.createDirectoryShare([]) as? VZMultipleDirectoryShare
+    )
+
+    #expect(Swift.Set(automountShare.directories.keys) == [".lume-live-share"])
+    #expect(regularShare.directories.isEmpty)
+}

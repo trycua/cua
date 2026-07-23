@@ -330,7 +330,10 @@ export function generateCLIReferenceMDX(docs: CLIDocumentation): string {
   lines.push('');
 
   const groups = [
-    { title: 'VM Management', commands: ['create', 'run', 'stop', 'delete', 'clone'] },
+    {
+      title: 'VM Management',
+      commands: ['create', 'run', 'attach', 'shutdown', 'restart', 'stop', 'delete', 'clone'],
+    },
     { title: 'VM Information and Configuration', commands: ['ls', 'get', 'set'] },
     {
       title: 'Image Management',

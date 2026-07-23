@@ -83,6 +83,7 @@ BUILD_BUNDLE=".build/release/lume_lume.bundle"
 if [ -d "$BUILD_BUNDLE" ]; then
   cp -rf "$BUILD_BUNDLE" "$APP_BUNDLE/Contents/Resources/"
 fi
+cp -f ./resources/AppIcon.icns "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 
 # Stamp and copy Info.plist
 sed "s/__VERSION__/$VERSION/g" "./resources/Info.plist" > "$APP_BUNDLE/Contents/Info.plist"

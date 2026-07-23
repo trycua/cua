@@ -77,6 +77,15 @@ fi
 
 BUILD_CONFIG="debug"
 INSTALL_AUTOSTART=false
+case "${CUA_DRIVER_REQUIRE_STABLE_SIGNING:-0}" in
+    0|false|no|"") CUA_DRIVER_REQUIRE_STABLE_SIGNING=0 ;;
+    1|true|yes) CUA_DRIVER_REQUIRE_STABLE_SIGNING=1 ;;
+    *)
+        echo "${RED}Error: CUA_DRIVER_REQUIRE_STABLE_SIGNING must be 0 or 1.${NORMAL}" >&2
+        exit 2
+        ;;
+esac
+export CUA_DRIVER_REQUIRE_STABLE_SIGNING
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -85,6 +94,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --autostart)
             INSTALL_AUTOSTART=true
+            ;;
+        --require-stable-signing)
+            CUA_DRIVER_REQUIRE_STABLE_SIGNING=1
+            export CUA_DRIVER_REQUIRE_STABLE_SIGNING
             ;;
         --help|-h)
             echo "${BOLD}${BLUE}cua-driver-rs local installer${NORMAL}"
@@ -99,6 +112,10 @@ while [ "$#" -gt 0 ]; do
             echo "                is attributed to com.trycua.driver.local (not your terminal),"
             echo "                so you grant Accessibility + Screen Recording once and"
             echo "                every cua-driver-local call/mcp routes through it correctly."
+            echo "  --require-stable-signing"
+            echo "                On macOS, stop before replacing the installed app unless"
+            echo "                a certificate-backed identity is available. Recommended"
+            echo "                for behavior and E2E verification."
             echo "  --help        Show this help."
             echo ""
             echo "Examples:"
@@ -245,107 +262,11 @@ echo ""
 
 # --- macOS: stable local code-signing identity (so TCC grants survive rebuilds) ---
 #
-# Ad-hoc signing (`codesign --sign -`) keys the TCC grant
-# (Accessibility / Screen Recording) on the binary's *cdhash*, which changes
-# on EVERY rebuild — so the grant silently invalidates on each install-local
-# and the daemon re-prompts ("I already granted!"). Signing with a certificate
-# keys the grant on the cert identity instead, which is stable across rebuilds.
-# We create a self-signed code-signing cert once (idempotent, in the login
-# keychain by default) and reuse it. A maintainer VM may point
-# CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN at a dedicated, already-unlocked keychain;
-# this avoids image-specific login-keychain ACL failures. Local dev only;
-# releases are CI-signed.
-#
-# Echoes the `codesign --sign` argument: a matching identity's SHA-1 when
-# available, or "-" when it can't be created — no codesign/openssl, CI,
-# locked keychain. The installer creates a self-signed local certificate, which
-# `security find-identity -v` filters out as untrusted even when its private key
-# is present and codesign can use it. Query matching code-signing identities
-# without the valid-only filter; the bounded codesign call below remains the
-# authoritative usability check. Use the identity hash rather than the
-# certificate name because duplicate certificate names are ambiguous.
-CUA_LOCAL_SIGN_CN="CuaDriver Local Signing (cua-driver-rs)"
-ensure_local_signing_identity() {
-    { [ "$OS" = "Darwin" ] && command -v codesign >/dev/null 2>&1; } || { printf -- '-'; return; }
-    local kc="${CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN:-$HOME/Library/Keychains/login.keychain-db}"
-    if [ -z "${CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN:-}" ] && [ ! -f "$kc" ]; then
-        kc="$HOME/Library/Keychains/login.keychain"
-    fi
-    [ -f "$kc" ] || { printf -- '-'; return; }
-    local identity
-    identity="$(security find-identity -p codesigning "$kc" 2>/dev/null \
-        | awk -v cn="$CUA_LOCAL_SIGN_CN" 'index($0, "\"" cn "\"") { print $2; exit }')"
-    if [ -n "$identity" ]; then
-        printf '%s' "$identity"; return
-    fi
-    command -v openssl >/dev/null 2>&1 || { printf -- '-'; return; }
-    local tmp; tmp="$(mktemp -d)" || { printf -- '-'; return; }
-    printf '[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n[dn]\nCN=%s\n[ext]\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=critical,codeSigning\n' \
-        "$CUA_LOCAL_SIGN_CN" > "$tmp/req.cnf"
-    # Transient password for the p12 handoff (deleted right after import).
-    # Apple's `security` rejects the empty-password p12 that openssl 3.x emits
-    # by default ("MAC verification failed"), so use a real password + `-legacy`
-    # PBE (Apple-compatible). Fall back to non-legacy for LibreSSL/older openssl
-    # which lacks `-legacy` but already writes a compatible p12.
-    local pw="cua-local-$$"
-    if openssl req -x509 -newkey rsa:2048 -keyout "$tmp/key.pem" -out "$tmp/cert.pem" \
-            -days 3650 -nodes -config "$tmp/req.cnf" >/dev/null 2>&1 \
-       && { openssl pkcs12 -export -legacy -inkey "$tmp/key.pem" -in "$tmp/cert.pem" \
-                -out "$tmp/id.p12" -passout pass:"$pw" -name "$CUA_LOCAL_SIGN_CN" >/dev/null 2>&1 \
-            || openssl pkcs12 -export -inkey "$tmp/key.pem" -in "$tmp/cert.pem" \
-                -out "$tmp/id.p12" -passout pass:"$pw" -name "$CUA_LOCAL_SIGN_CN" >/dev/null 2>&1; } \
-       && security import "$tmp/id.p12" -k "$kc" -P "$pw" -A -T /usr/bin/codesign >/dev/null 2>&1; then
-        identity="$(security find-identity -p codesigning "$kc" 2>/dev/null \
-            | awk -v cn="$CUA_LOCAL_SIGN_CN" 'index($0, "\"" cn "\"") { print $2; exit }')"
-        rm -rf "$tmp"
-        if [ -n "$identity" ]; then
-            printf '%s' "$identity"; return
-        fi
-        printf -- '-'; return
-    fi
-    rm -rf "$tmp"
-    printf -- '-'
-}
-
-# Keychain-backed codesign can wait forever for a GUI authorization prompt when
-# install-local is launched from a headless shell. Keep the install bounded;
-# ad-hoc signing remains a usable fallback for local development.
-codesign_bounded() {
-    local timeout_seconds="$1"
-    shift
-    if command -v gtimeout >/dev/null 2>&1; then
-        if [ -n "${CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN:-}" ]; then
-            gtimeout "$timeout_seconds" codesign \
-                --keychain "$CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN" "$@"
-        else
-            gtimeout "$timeout_seconds" codesign "$@"
-        fi
-    elif command -v perl >/dev/null 2>&1; then
-        if [ -n "${CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN:-}" ]; then
-            perl -e 'alarm shift; exec @ARGV' "$timeout_seconds" codesign \
-                --keychain "$CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN" "$@"
-        else
-            perl -e 'alarm shift; exec @ARGV' "$timeout_seconds" codesign "$@"
-        fi
-    else
-        if [ -n "${CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN:-}" ]; then
-            codesign --keychain "$CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN" "$@"
-        else
-            codesign "$@"
-        fi
-    fi
-}
-
-clean_partial_bundle_signature() {
-    local app="$1"
-    # A certificate-backed codesign killed by the timeout can leave both a
-    # partial resource seal and `<executable>.cstemp`. Signing over that state
-    # seals the transient file; when the interrupted signer removes it later,
-    # the fallback bundle becomes invalid. Always restart fallback signing from
-    # the unsigned staged bundle.
-    rm -rf "$app/Contents/_CodeSignature"
-    find "$app" -type f -name '*.cstemp' -delete
-}
+# Keep policy in a sourceable helper so strict/fallback behavior can be tested
+# without building or installing the app.
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=_local-signing.sh
+. "$SCRIPT_DIR/_local-signing.sh"
 
 # --- macOS: wrap the binary in CuaDriverLocal.app for a stable TCC identity ---
 #
@@ -393,31 +314,18 @@ if [ "$OS" = "Darwin" ]; then
     # never downgrade an existing certificate-signed installation to ad-hoc,
     # because that would invalidate its working TCC grants.
     if command -v codesign >/dev/null 2>&1; then
-        SIGN_ID="$(ensure_local_signing_identity)"
-        if [ "$SIGN_ID" != "-" ] \
-           && codesign_bounded 20 --force --deep --sign "$SIGN_ID" "$APP_STAGE" 2>/dev/null; then
-            echo "${GREEN}signed staged app with a stable local identity — TCC grants survive future install-local rebuilds${NORMAL}"
-        elif [ -d "$APP_DEST" ] \
-             && codesign -d -r- "$APP_DEST" 2>&1 | grep -q 'certificate leaf'; then
-            echo "${RED}Error: stable signing failed; preserving the existing certificate-signed $APP_DEST and its TCC grants.${NORMAL}" >&2
-            echo "Unlock/authorize the configured signing-keychain key, then rerun install-local." >&2
+        if ! sign_staged_local_app "$APP_STAGE" "$APP_DEST"; then
             exit 1
-        else
-            clean_partial_bundle_signature "$APP_STAGE"
-            if codesign_bounded 20 --force --deep --sign - "$APP_STAGE" 2>/dev/null; then
-                if [ "$SIGN_ID" != "-" ]; then
-                    echo "${YELLOW}note: stable-identity signing failed; signed ad-hoc instead (Accessibility/Screen Recording will reset on the next rebuild)${NORMAL}" >&2
-                fi
-            else
-                clean_partial_bundle_signature "$APP_STAGE"
-                echo "${RED}Error: codesign of staged CuaDriverLocal.app failed; live installation was not changed.${NORMAL}" >&2
-                exit 1
-            fi
         fi
         if ! codesign --verify --deep --strict "$APP_STAGE" 2>/dev/null; then
             echo "${RED}Error: staged CuaDriverLocal.app failed signature verification; live installation was not changed.${NORMAL}" >&2
             exit 1
         fi
+        STAGED_REQUIREMENT="$(designated_requirement "$APP_STAGE")"
+        STAGED_SIGNING_CLASS="$(classify_designated_requirement "$STAGED_REQUIREMENT")"
+    else
+        echo "${RED}Error: codesign is required to install CuaDriverLocal.app safely.${NORMAL}" >&2
+        exit 1
     fi
 
     # Install to /Applications (user-writable for admins; no sudo — same as
@@ -428,17 +336,33 @@ if [ "$OS" = "Darwin" ]; then
     if [ -d "$APP_DEST" ]; then
         mv "$APP_DEST" "$APP_BACKUP"
     fi
-    if ditto "$APP_STAGE" "$APP_DEST"; then
+    install_valid=false
+    if ditto "$APP_STAGE" "$APP_DEST" \
+       && codesign --verify --deep --strict "$APP_DEST" 2>/dev/null; then
+        INSTALLED_REQUIREMENT="$(designated_requirement "$APP_DEST")"
+        INSTALLED_SIGNING_CLASS="$(classify_designated_requirement "$INSTALLED_REQUIREMENT")"
+        if [ "$INSTALLED_REQUIREMENT" = "$STAGED_REQUIREMENT" ] \
+           && [ "$INSTALLED_SIGNING_CLASS" = "$STAGED_SIGNING_CLASS" ] \
+           && [ "$INSTALLED_SIGNING_CLASS" != "unknown" ]; then
+            install_valid=true
+        fi
+    fi
+    if [ "$install_valid" = true ]; then
         rm -rf "$APP_BACKUP"
     else
         rm -rf "$APP_DEST"
         if [ -d "$APP_BACKUP" ]; then
             mv "$APP_BACKUP" "$APP_DEST"
         fi
-        echo "${RED}Error: failed to install CuaDriverLocal.app; restored the previous bundle.${NORMAL}" >&2
+        echo "${RED}Error: installed CuaDriverLocal.app did not preserve its verified signing identity; restored the previous bundle.${NORMAL}" >&2
         exit 1
     fi
     echo "${GREEN}installed $APP_DEST${NORMAL}"
+    if [ "$INSTALLED_SIGNING_CLASS" = "certificate-backed" ]; then
+        echo "${GREEN}verified installed designated requirement: certificate-backed (stable across rebuilds)${NORMAL}"
+    else
+        echo "${YELLOW}verified installed designated requirement: ad-hoc cdhash (changes on rebuild)${NORMAL}" >&2
+    fi
 
     # --- Force LaunchServices registration of the freshly-copied bundle ----
     #

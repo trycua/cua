@@ -280,19 +280,19 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertNotIn("launches CuaDriver", shared_hints)
 
     def test_local_macos_signing_uses_an_unambiguous_identity_hash(self) -> None:
-        installer = self.read("libs/cua-driver/scripts/_install-local-rust.sh")
+        signing = self.read("libs/cua-driver/scripts/_local-signing.sh")
 
         self.assertIn(
             'security find-identity -p codesigning "$kc"',
-            installer,
+            signing,
         )
-        self.assertNotIn('security find-identity -v -p codesigning "$kc"', installer)
-        self.assertIn('SIGN_ID="$(ensure_local_signing_identity)"', installer)
+        self.assertNotIn('security find-identity -v -p codesigning "$kc"', signing)
+        self.assertIn('sign_id="$(ensure_local_signing_identity)"', signing)
         self.assertIn(
-            'codesign_bounded 20 --force --deep --sign "$SIGN_ID" "$APP_STAGE"',
-            installer,
+            'codesign_bounded 20 --force --deep --sign "$sign_id" "$app_stage"',
+            signing,
         )
-        self.assertNotIn("printf '%s' \"$CUA_LOCAL_SIGN_CN\"; return", installer)
+        self.assertNotIn("printf '%s' \"$CUA_LOCAL_SIGN_CN\"; return", signing)
 
     def test_release_installers_persist_channel_before_binary_swap(self) -> None:
         shell = self.read("libs/cua-driver/scripts/_install-rust.sh")

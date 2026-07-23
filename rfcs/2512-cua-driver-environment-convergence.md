@@ -7,7 +7,7 @@ created: 2026-07-23
 last_updated: 2026-07-23
 status: review
 discussion: https://github.com/trycua/cua/issues/2512
-rfc_pr:
+rfc_pr: https://github.com/trycua/cua/pull/2513
 implementation:
   - https://linear.app/trycua/issue/CUA-962/implement-rfc-2512-converge-cua-driver-across-sandbox-lume-fleet-and
 supersedes:

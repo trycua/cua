@@ -137,7 +137,8 @@ echo "[BUILD IDENTITY] Invalidating the macOS backend for ${SOURCE_SHA}"
 cargo clean --manifest-path "${RUST_ROOT}/Cargo.toml" -p platform-macos
 
 echo "[INSTALL] Building and installing ${SOURCE_SHA} with the golden signing identity"
-bash "${DRIVER_ROOT}/scripts/install-local.sh" --release --autostart \
+bash "${DRIVER_ROOT}/scripts/install-local.sh" \
+  --release --autostart --require-stable-signing \
   2>&1 | tee "${ARTIFACT_DIR}/install-local.log"
 
 codesign -d -r- /Applications/CuaDriverLocal.app \

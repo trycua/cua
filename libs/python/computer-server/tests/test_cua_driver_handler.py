@@ -4,9 +4,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-
-import cua_driver
-
 from computer_server.handlers.cua_driver import CuaDriverAutomationHandler
 from computer_server.handlers.factory import HandlerFactory
 
@@ -248,6 +245,7 @@ async def test_session_capture_scope_is_configurable(sdk, fallback, capture_scop
 
 @pytest.mark.asyncio
 async def test_adapter_uses_the_generated_python_contract(fallback):
+    cua_driver = pytest.importorskip("cua_driver")
     driver = _Driver()
     handler = CuaDriverAutomationHandler(
         fallback,

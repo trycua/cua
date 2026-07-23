@@ -886,9 +886,9 @@ def run_mcp_server(
     try:
         mcp.run()
     finally:
-        from .handlers.factory import HandlerFactory
-
         import asyncio
+
+        from .handlers.factory import HandlerFactory
 
         asyncio.run(HandlerFactory.close_handlers())
 

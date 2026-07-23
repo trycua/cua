@@ -37,7 +37,6 @@ elif OS_TYPE == "windows":
 
 from .generic import GenericDesktopHandler, GenericFileHandler, GenericWindowHandler
 
-
 HandlerTuple = Tuple[
     BaseAccessibilityHandler,
     BaseAutomationHandler,

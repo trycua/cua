@@ -543,6 +543,12 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     let _: () = msg_send![win, setBackgroundColor: clear];
     let _: () = msg_send![win, setHasShadow: false];
     let _: () = msg_send![win, setIgnoresMouseEvents: true];
+    // NSWindowSharingReadOnly = 1. AppKit documents this as the default, but
+    // set it explicitly for the transparent agent overlay so ScreenCaptureKit
+    // includes browser-session cursors in Cua Driver recordings. Tahoe can
+    // otherwise show the overlay live while omitting it from an in-process
+    // display recording.
+    let _: () = msg_send![win, setSharingType: 1u64];
     // NSNormalWindowLevel = 0.  The overlay lives at the normal window level so
     // it appears in CGWindowList layer=0 results (which agents inspect via
     // list_windows).  Z-ordering above the target is managed dynamically via
@@ -823,6 +829,34 @@ fn dispatch_set_layer_contents(layer_ptr: usize, pixmap: tiny_skia::Pixmap) {
 ///
 /// `NSWindowAbove = 1`; `orderWindow:relativeTo:` accepts any CGWindowID as
 /// the `relativeTo` argument — it works cross-application via CGS.
+fn target_is_frontmost_visible_window(
+    target_wid: u64,
+    frontmost_pid: Option<i32>,
+    windows: &[crate::windows::WindowInfo],
+) -> bool {
+    let Some(target) = windows
+        .iter()
+        .find(|window| u64::from(window.window_id) == target_wid)
+    else {
+        return false;
+    };
+    if !target.is_on_screen || target.layer != 0 || frontmost_pid != Some(target.pid) {
+        return false;
+    }
+
+    windows
+        .iter()
+        .filter(|window| {
+            window.is_on_screen
+                && window.layer == 0
+                && window.pid == target.pid
+                && window.bounds.width > 1.0
+                && window.bounds.height > 1.0
+        })
+        .max_by_key(|window| window.z_index)
+        .is_some_and(|window| u64::from(window.window_id) == target_wid)
+}
+
 fn dispatch_pin_above(win_ptr: usize, target_wid: u64) {
     use std::ffi::c_void;
 
@@ -837,13 +871,27 @@ fn dispatch_pin_above(win_ptr: usize, target_wid: u64) {
     }
 
     unsafe extern "C" fn reorder_cb(ctx: *mut c_void) {
-        let (win_ptr, target_wid): (usize, u64) = *Box::from_raw(ctx as *mut (usize, u64));
+        let (win_ptr, target_wid, raise_front): (usize, u64, bool) =
+            *Box::from_raw(ctx as *mut (usize, u64, bool));
         let win = win_ptr as *mut objc2::runtime::AnyObject;
         // NSWindowAbove = 1; relativeTo: takes NSInteger (i64 on 64-bit)
         let _: () = objc2::msg_send![win, orderWindow: 1i64 relativeTo: target_wid as i64];
+
+        // Tahoe can leave a normal-level transparent window behind an
+        // already-frontmost cross-process target even after the relative
+        // ordering request. `orderFrontRegardless` does not activate the
+        // driver app. Use it only when the exact target is already the
+        // frontmost visible normal window, so background browser actions do
+        // not put the overlay above the user's foreground app.
+        if raise_front {
+            let _: () = objc2::msg_send![win, orderFrontRegardless];
+        }
     }
 
-    let payload = Box::new((win_ptr, target_wid));
+    let windows = crate::windows::visible_windows();
+    let raise_front =
+        target_is_frontmost_visible_window(target_wid, crate::apps::frontmost_pid(), &windows);
+    let payload = Box::new((win_ptr, target_wid, raise_front));
     unsafe {
         let main_queue = &raw const _dispatch_main_q as *const c_void;
         dispatch_async_f(
@@ -989,6 +1037,26 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
+    fn window(window_id: u32, pid: i32, z_index: usize) -> crate::windows::WindowInfo {
+        crate::windows::WindowInfo {
+            window_id,
+            pid,
+            app_name: format!("app-{pid}"),
+            title: String::new(),
+            bounds: crate::windows::WindowBounds {
+                x: 0.0,
+                y: 0.0,
+                width: 800.0,
+                height: 600.0,
+            },
+            layer: 0,
+            z_index,
+            is_on_screen: true,
+            on_current_space: None,
+            space_ids: None,
+        }
+    }
+
     fn empty_map() -> RenderMap {
         let mut cursors = IndexMap::new();
         cursors.insert(
@@ -1003,6 +1071,31 @@ mod tests {
             template: CursorConfig::default(),
             ended: std::collections::HashSet::new(),
         }
+    }
+
+    #[test]
+    fn frontmost_target_can_raise_overlay_without_covering_another_app() {
+        let target_pid = 100;
+        let mut windows = vec![window(10, target_pid, 20), window(11, 200, 10)];
+        // WindowServer may retain another app's window ahead in its global
+        // list; the active app identity is the authoritative cross-app guard.
+        windows[1].z_index = 30;
+        assert!(target_is_frontmost_visible_window(
+            10,
+            Some(target_pid),
+            &windows,
+        ));
+
+        // A different foreground app blocks the fallback raise.
+        assert!(!target_is_frontmost_visible_window(10, Some(200), &windows,));
+
+        // So does another visible window belonging to the active target app.
+        windows.push(window(13, target_pid, 40));
+        assert!(!target_is_frontmost_visible_window(
+            10,
+            Some(target_pid),
+            &windows,
+        ));
     }
 
     fn move_msg(key: &str, x: f64, y: f64) -> OverlayMsg {

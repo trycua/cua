@@ -18,6 +18,7 @@ use crate::tool_args::ArgsExt;
 
 use super::cdp_ws::CdpConnection;
 use super::engine::{BrowserEngine, ValidatedTab};
+use super::platform::BrowserVisualActionKind;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::store::{BrowserActionKind, FrameKind, FrameRef};
 
@@ -52,6 +53,16 @@ impl PointerAction {
             Self::Scroll => "scroll",
             Self::Drag => "drag",
         }
+    }
+}
+
+fn visual_kind(action: PointerAction) -> BrowserVisualActionKind {
+    match action {
+        PointerAction::Hover => BrowserVisualActionKind::Hover,
+        PointerAction::RightClick => BrowserVisualActionKind::RightClick,
+        PointerAction::DoubleClick => BrowserVisualActionKind::DoubleClick,
+        PointerAction::Scroll => BrowserVisualActionKind::Scroll,
+        PointerAction::Drag => BrowserVisualActionKind::Drag,
     }
 }
 
@@ -381,6 +392,7 @@ impl BrowserPointerTool {
 
     async fn dom_event(
         &self,
+        session: &str,
         request: &PointerRequest,
         validated: &ValidatedTab,
         origin: &ResolvedRef,
@@ -392,6 +404,19 @@ impl BrowserPointerTool {
                 Ok(id) => id,
                 Err(result) => return result,
             };
+
+        if let Ok((x, y)) = point_for_ref(conn, &origin.cdp_session, origin.backend_node_id).await {
+            self.engine
+                .visualize_browser_action(
+                    session,
+                    validated,
+                    &origin.cdp_session,
+                    x,
+                    y,
+                    visual_kind(request.action),
+                )
+                .await;
+        }
 
         let (function, arguments) = match request.action {
             PointerAction::Hover => (
@@ -530,6 +555,7 @@ impl BrowserPointerTool {
 
     async fn trusted(
         &self,
+        session: &str,
         request: &PointerRequest,
         validated: &ValidatedTab,
         origin_ref: Option<&ResolvedRef>,
@@ -560,6 +586,17 @@ impl BrowserPointerTool {
             (None, None) => None,
             _ => unreachable!("destination resolution matches request"),
         };
+
+        self.engine
+            .visualize_browser_action(
+                session,
+                validated,
+                cdp_session,
+                origin.0,
+                origin.1,
+                visual_kind(request.action),
+            )
+            .await;
 
         if let Err(error) = conn
             .call(
@@ -804,6 +841,7 @@ impl Tool for BrowserPointerTool {
         match request.route {
             InputRoute::DomEvent => {
                 self.dom_event(
+                    &session,
                     &request,
                     &validated,
                     origin_ref.as_ref().expect("dom route requires ref"),
@@ -813,6 +851,7 @@ impl Tool for BrowserPointerTool {
             }
             InputRoute::Trusted => {
                 self.trusted(
+                    &session,
                     &request,
                     &validated,
                     origin_ref.as_ref(),

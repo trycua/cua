@@ -155,6 +155,42 @@ pub enum BrowserConsentOutcome {
     NotPresent,
 }
 
+/// Visual-only feedback for an already-authorized browser mutation.
+///
+/// This is deliberately separate from input delivery: platform adapters may
+/// animate an agent cursor, but must never synthesize input, activate a
+/// browser, or change whether the browser action succeeds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrowserVisualActionKind {
+    Click,
+    Type,
+    Hover,
+    RightClick,
+    DoubleClick,
+    Scroll,
+    Drag,
+}
+
+#[derive(Debug, Clone)]
+pub struct BrowserVisualAction {
+    pub session: String,
+    pub window_id: u64,
+    /// Real CDP page target that owns this cursor. Platform adapters may use
+    /// it to keep several session cursors associated with separate tabs.
+    pub cdp_target_id: String,
+    /// Live, non-activating page-visibility proof collected immediately
+    /// before the action. False also covers an unavailable proof so visual
+    /// feedback fails closed instead of appearing over the wrong tab.
+    pub tab_is_active: bool,
+    /// Screen coordinates in the platform-normalized device-independent
+    /// space used by [`NativeWindowInfo::bounds`]. Child-frame or
+    /// untrustworthy geometry intentionally produces no visual point while
+    /// still allowing the platform to update active-tab visibility.
+    pub screen_x: Option<f64>,
+    pub screen_y: Option<f64>,
+    pub kind: BrowserVisualActionKind,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PrepareSideEffects {
     pub launched_browser: bool,
@@ -188,6 +224,12 @@ pub trait BrowserPlatform: Send + Sync {
     fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
         None
     }
+
+    /// Best-effort, visual-only feedback for an authorized browser action.
+    /// The default is a no-op so platforms without an agent-cursor overlay do
+    /// not change behavior. Implementations must not deliver input or alter
+    /// focus/z-order; failures are intentionally not part of browser results.
+    async fn visualize_browser_action(&self, _action: BrowserVisualAction) {}
 
     /// Classify `pid`: is it a browser, which engine family, can it do
     /// CDP at all. Must not have side effects.

@@ -1039,6 +1039,7 @@ final class LumeController {
         diskPath: Path? = nil,
         nvramPath: Path? = nil,
         usbMassStoragePaths: [Path]? = nil,
+        additionalDiskPaths: [Path]? = nil,
         networkMode: NetworkMode? = nil,
         clipboard: Bool = false,
         telemetryTransport: TelemetryTransport = .cli
@@ -1058,6 +1059,7 @@ final class LumeController {
                 "disk_path_override": diskPath?.path ?? "none",
                 "nvram_path_override": nvramPath?.path ?? "none",
                 "usb_storage_devices": "\(usbMassStoragePaths?.count ?? 0)",
+                "additional_disks": "\(additionalDiskPaths?.count ?? 0)",
                 "network_override": networkMode?.description ?? "vm-config",
             ])
 
@@ -1145,9 +1147,11 @@ final class LumeController {
             // Validate parameters using the located VMDirectory
             try validateRunParameters(
                 vmDir: vmDir, // Pass vmDir
+                primaryDiskPath: diskPath ?? vmDir.diskPath,
                 sharedDirectories: sharedDirectories,
                 mount: mount,
-                usbMassStoragePaths: usbMassStoragePaths
+                usbMassStoragePaths: usbMassStoragePaths,
+                additionalDiskPaths: additionalDiskPaths
             )
 
             // Load the VM directly using the located VMDirectory and storage context
@@ -1163,6 +1167,7 @@ final class LumeController {
                 vncPassword: vncPassword,
                 recoveryMode: recoveryMode,
                 usbMassStoragePaths: usbMassStoragePaths,
+                additionalDiskPaths: additionalDiskPaths,
                 networkMode: networkMode,
                 clipboard: clipboard)
             Logger.info("VM started successfully", metadata: ["name": normalizedName])
@@ -1624,13 +1629,40 @@ final class LumeController {
 
     private func validateRunParameters(
         vmDir: VMDirectory, // Changed signature: accept VMDirectory
+        primaryDiskPath: Path,
         sharedDirectories: [SharedDirectory]?,
         mount: Path?,
-        usbMassStoragePaths: [Path]? = nil
+        usbMassStoragePaths: [Path]? = nil,
+        additionalDiskPaths: [Path]? = nil
     ) throws {
         // VM existence is confirmed by having vmDir, no need for validateVMExists
         if let dirs = sharedDirectories {
             try self.validateSharedDirectories(dirs)
+        }
+
+        // Validate additional disk paths
+        if let extraDisks = additionalDiskPaths {
+            let canonicalPrimaryDiskPath =
+                primaryDiskPath.url.resolvingSymlinksInPath().standardizedFileURL.path(
+                    percentEncoded: false)
+            var canonicalAdditionalDiskPaths = Swift.Set<String>()
+
+            for path in extraDisks {
+                if !FileManager.default.fileExists(atPath: path.path) {
+                    throw ValidationError("Additional disk image not found: \(path.path)")
+                }
+
+                let canonicalPath =
+                    path.url.resolvingSymlinksInPath().standardizedFileURL.path(
+                        percentEncoded: false)
+                if canonicalPath == canonicalPrimaryDiskPath {
+                    throw ValidationError(
+                        "Additional disk image must differ from the primary boot disk: \(path.path)")
+                }
+                guard canonicalAdditionalDiskPaths.insert(canonicalPath).inserted else {
+                    throw ValidationError("Duplicate additional disk image: \(path.path)")
+                }
+            }
         }
 
         // Validate USB mass storage paths

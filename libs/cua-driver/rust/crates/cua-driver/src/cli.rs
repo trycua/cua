@@ -12,7 +12,6 @@
 //! Cursor-overlay flags (--cursor-id, --no-overlay, etc.) are consumed by
 //! `CursorConfig::from_args()` and are ignored here.
 
-use cua_driver_core::tool::ToolRegistry;
 use std::process;
 
 /// Which CLI command was requested.
@@ -1013,13 +1012,25 @@ fn flag_value(args: &[String], flag: &str) -> Option<String> {
 }
 
 /// Print all tools in the registry, one per line: `name: first sentence`.
-pub fn run_list_tools(registry: &ToolRegistry) {
+pub fn run_list_tools(tools_list: &serde_json::Value) {
     // Sort alphabetically by name to match Swift's
     // `ListToolsCommand.run()` `tools.sorted(by: { $0.name < $1.name })`.
-    let mut entries: Vec<(&str, &cua_driver_core::tool::ToolDef)> = registry.iter_defs().collect();
-    entries.sort_by(|a, b| a.0.cmp(b.0));
-    for (name, def) in entries {
-        let summary = first_sentence(&def.description);
+    let mut entries = tools_list
+        .get("tools")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    entries.sort_by_key(|tool| tool.get("name").and_then(serde_json::Value::as_str));
+    for tool in entries {
+        let Some(name) = tool.get("name").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let description = tool
+            .get("description")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        let summary = first_sentence(description);
         if summary.is_empty() {
             println!("{name}");
         } else {
@@ -1030,31 +1041,50 @@ pub fn run_list_tools(registry: &ToolRegistry) {
 
 /// Print a tool's full description and JSON input schema.
 /// Exits 64 (EX_USAGE) if the tool is unknown.
-pub fn run_describe(registry: &ToolRegistry, name: &str) {
-    match registry.get_def(name) {
+pub fn run_describe(tools_list: &serde_json::Value, name: &str) {
+    let tools = tools_list
+        .get("tools")
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    match tools
+        .iter()
+        .find(|tool| tool.get("name").and_then(serde_json::Value::as_str) == Some(name))
+    {
         None => {
             eprintln!("Unknown tool: {name}");
             eprintln!("Available tools:");
             // Sort alphabetically to match Swift's `printUnknownTool`
             // (`registry.allTools.map(\.name).sorted()`).
-            let mut names: Vec<&str> = registry.tool_names().collect();
+            let mut names = tools
+                .iter()
+                .filter_map(|tool| tool.get("name").and_then(serde_json::Value::as_str))
+                .collect::<Vec<_>>();
             names.sort();
             for n in names {
                 eprintln!("  {n}");
             }
             process::exit(64);
         }
-        Some(def) => {
-            println!("name: {}", def.name);
-            if !def.description.is_empty() {
-                print!("\ndescription:\n{}", def.description);
-                if !def.description.ends_with('\n') {
+        Some(tool) => {
+            let description = tool
+                .get("description")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            println!("name: {name}");
+            if !description.is_empty() {
+                print!("\ndescription:\n{description}");
+                if !description.ends_with('\n') {
                     println!();
                 }
             }
             print!("\ninput_schema:\n");
-            let pretty = serde_json::to_string_pretty(&def.input_schema)
-                .unwrap_or_else(|_| def.input_schema.to_string());
+            let input_schema = tool
+                .get("inputSchema")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({"type": "object"}));
+            let pretty = serde_json::to_string_pretty(&input_schema)
+                .unwrap_or_else(|_| input_schema.to_string());
             println!("{pretty}");
         }
     }
@@ -2988,20 +3018,24 @@ fn cli_docs_json() -> serde_json::Value {
 /// - `"mcp"` — only MCP tool docs (`{version, tools: [...]}`)
 /// - `"cli"` — CLI docs
 /// - `"all"` — `{cli, mcp}` matching Swift `CombinedDocs`
-pub fn run_dump_docs_with_type(registry: &ToolRegistry, pretty: bool, doc_type: &str) {
+pub fn run_dump_docs_with_type(tools_list: &serde_json::Value, pretty: bool, doc_type: &str) {
     // Each MCP tool: `{name, description, input_schema}` (Swift's MCPToolDoc
     // shape — Rust adds read_only/destructive/idempotent as intentional
     // extras).
-    let tools: Vec<serde_json::Value> = registry
-        .iter_defs()
-        .map(|(_, def)| {
+    let tools: Vec<serde_json::Value> = tools_list
+        .get("tools")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|tool| {
+            let annotations = tool.get("annotations").unwrap_or(&serde_json::Value::Null);
             serde_json::json!({
-                "name":         def.name,
-                "description":  def.description,
-                "input_schema": def.input_schema,
-                "read_only":    def.read_only,
-                "destructive":  def.destructive,
-                "idempotent":   def.idempotent,
+                "name":         tool.get("name").cloned().unwrap_or(serde_json::Value::Null),
+                "description":  tool.get("description").cloned().unwrap_or(serde_json::Value::String(String::new())),
+                "input_schema": tool.get("inputSchema").cloned().unwrap_or_else(|| serde_json::json!({"type": "object"})),
+                "read_only":    annotations.get("readOnlyHint").cloned().unwrap_or(serde_json::Value::Bool(false)),
+                "destructive":  annotations.get("destructiveHint").cloned().unwrap_or(serde_json::Value::Bool(false)),
+                "idempotent":   annotations.get("idempotentHint").cloned().unwrap_or(serde_json::Value::Bool(false)),
             })
         })
         .collect();

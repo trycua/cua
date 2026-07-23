@@ -12,18 +12,10 @@ pip install cua-cli
 
 ```bash
 # Authentication
-cua auth login              # Authenticate via browser
-cua auth login --api-key    # Authenticate with API key
-cua auth list               # List authenticated workspaces
-cua auth status             # Show auth status and credits
-cua auth logout             # Remove active workspace credentials
-cua auth logout --workspace <slug>  # Remove specific workspace
-cua auth logout --all       # Remove all credentials
-cua auth env                # Export API key to .env file
-
-# Workspace Management
-cua ws set <slug>           # Switch active workspace
-cua ws set                  # Interactive workspace picker
+cua auth login              # Authenticate with run.cua.ai device authorization
+cua auth login --no-browser # Print the verification URL without opening a browser
+cua auth status             # Show local session status
+cua auth logout             # Revoke the refresh token and remove local credentials
 
 # Sandbox Management
 cua sb list                 # List all sandboxes
@@ -101,8 +93,12 @@ Individual permissions: `sandbox:list`, `sandbox:create`, `sandbox:delete`, `san
 
 ## Environment Variables
 
-- `CUA_API_KEY`: API key for authentication
-- `CUA_API_BASE`: API base URL (default: `https://api.cua.ai`)
-- `CUA_WEBSITE_URL`: Website URL for OAuth (default: https://cua.ai)
+- Authentication uses OIDC device authorization discovered from `https://auth.cua.ai/realms/cyclops-cs`, while authenticated cloud requests use `https://run.cua.ai`. Tokens are stored in the operating system credential vault; the CLI does not read API keys from environment variables or write them to `.env` files.
 - `CUA_MCP_PERMISSIONS`: Default MCP permissions (comma-separated)
 - `CUA_SANDBOX`: Default sandbox name for computer commands
+
+## Cloud Authentication
+
+`cua auth login` uses the standard OAuth device authorization flow. It discovers Keycloak endpoints from `https://auth.cua.ai/realms/cyclops-cs`, while the short verification UI is served from `https://run.cua.ai/device`. The CLI prints a verification URL and code, so it also works over SSH or in CI-style terminals; use `--no-browser` to prevent an automatic browser attempt. Complete the verification in any browser, then return to the terminal while the CLI polls for approval.
+
+Access tokens refresh automatically before authenticated `run.cua.ai` requests. `cua auth logout` asks the issuer to revoke the refresh token and always removes the local credential-vault entry, even when the network is unavailable. The CLI never prints access or refresh tokens.

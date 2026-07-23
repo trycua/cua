@@ -9,6 +9,8 @@
 #   --release              build the release configuration (default: debug)
 #   --autostart            register an auto-start daemon (macOS: LaunchAgent;
 #                          Linux: systemd user unit). Default off.
+#   --require-stable-signing
+#                          on macOS, refuse to install an ad-hoc-signed app
 #   --bin-dir <path>       override the symlink destination (default ~/.local/bin)
 #   --backend=rust         explicit Rust backend (no-op; Rust is the only option)
 #   --experimental-rust    legacy alias for --backend=rust (no-op)

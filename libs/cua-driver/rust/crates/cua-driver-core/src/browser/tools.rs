@@ -17,7 +17,9 @@ use crate::tool_args::ArgsExt;
 use super::approval::MCP_HOST_APPROVAL_ARG;
 use super::download::BrowserDownloadTool;
 use super::engine::{BrowserEngine, BrowserTabScreenshot};
-use super::platform::{PrepareAuthorization, PrepareProfile, PrepareRequest, PrepareStrategy};
+use super::platform::{
+    BrowserVisualActionKind, PrepareAuthorization, PrepareProfile, PrepareRequest, PrepareStrategy,
+};
 use super::pointer::BrowserPointerTool;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::store::BrowserActionKind;
@@ -916,6 +918,36 @@ impl Tool for BrowserClickTool {
                     .to_tool_result()
                 }
             };
+            // Cursor feedback is best-effort and visual-only. A missing box
+            // must not turn a valid DOM-event action into a refusal.
+            let _ = conn
+                .call(
+                    Some(cdp),
+                    "DOM.scrollIntoViewIfNeeded",
+                    json!({ "backendNodeId": backend }),
+                )
+                .await;
+            if let Ok(box_model) = conn
+                .call(
+                    Some(cdp),
+                    "DOM.getBoxModel",
+                    json!({ "backendNodeId": backend }),
+                )
+                .await
+            {
+                if let Some((x, y)) = quad_center(&box_model) {
+                    self.engine
+                        .visualize_browser_action(
+                            &session,
+                            &validated,
+                            cdp,
+                            x,
+                            y,
+                            BrowserVisualActionKind::Click,
+                        )
+                        .await;
+                }
+            }
             return match conn
                 .call(
                     Some(cdp),
@@ -985,6 +1017,17 @@ impl Tool for BrowserClickTool {
             (None, Some(pt)) => pt,
             (None, None) => unreachable!("validated above"),
         };
+
+        self.engine
+            .visualize_browser_action(
+                &session,
+                &validated,
+                cdp,
+                x,
+                y,
+                BrowserVisualActionKind::Click,
+            )
+            .await;
 
         if let Err(error) = conn
             .call(
@@ -1285,6 +1328,37 @@ impl Tool for BrowserTypeTool {
                 "the requested ref is not a focused editable element",
             )
             .to_tool_result();
+        }
+
+        // Give the recording a visual target before text delivery. Keep this
+        // best-effort: editability/input semantics never depend on the overlay.
+        let _ = conn
+            .call(
+                Some(cdp),
+                "DOM.scrollIntoViewIfNeeded",
+                json!({ "backendNodeId": entry.backend_node_id }),
+            )
+            .await;
+        if let Ok(box_model) = conn
+            .call(
+                Some(cdp),
+                "DOM.getBoxModel",
+                json!({ "backendNodeId": entry.backend_node_id }),
+            )
+            .await
+        {
+            if let Some((x, y)) = quad_center(&box_model) {
+                self.engine
+                    .visualize_browser_action(
+                        &session,
+                        &validated,
+                        cdp,
+                        x,
+                        y,
+                        BrowserVisualActionKind::Type,
+                    )
+                    .await;
+            }
         }
 
         let requested_chars = text.chars().count();

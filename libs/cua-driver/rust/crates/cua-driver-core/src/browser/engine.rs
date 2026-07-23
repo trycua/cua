@@ -39,7 +39,10 @@ use super::binding::{
 use super::cdp_ws::{CdpConnection, CdpPool};
 use super::grant::{ExistingProfileGrant, ExistingProfileGrants, GrantLookup};
 use super::mutation::{MutationGates, MutationKey};
-use super::platform::{BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform};
+use super::platform::{
+    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
+    BrowserVisualActionKind,
+};
 use super::prepare::ManagedBrowsers;
 use super::reconnect::ReconnectGates;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
@@ -148,8 +151,56 @@ pub(crate) struct ValidatedTab {
     pub conn: Arc<CdpConnection>,
     pub record: TargetRecord,
     pub tab: TabRecord,
+    /// Live native metadata from this mutation's revalidation, rather than
+    /// the bind-time geometry retained in `record`.
+    pub native: NativeWindowInfo,
     /// Flattened CDP session id attached to the tab's target.
     pub cdp_session: String,
+}
+
+fn viewport_point_to_screen(
+    native: Rect,
+    metrics: &Value,
+    viewport_x: f64,
+    viewport_y: f64,
+) -> Option<(f64, f64)> {
+    if !viewport_x.is_finite() || !viewport_y.is_finite() {
+        return None;
+    }
+    let viewport = metrics
+        .get("cssVisualViewport")
+        .or_else(|| metrics.get("cssLayoutViewport"))?;
+    let width = viewport.get("clientWidth")?.as_f64()?;
+    let height = viewport.get("clientHeight")?.as_f64()?;
+    if !width.is_finite()
+        || !height.is_finite()
+        || width <= 0.0
+        || height <= 0.0
+        || viewport_x < 0.0
+        || viewport_y < 0.0
+        || viewport_x > width
+        || viewport_y > height
+    {
+        return None;
+    }
+
+    // CDP viewport coordinates and native/CDP window bounds are all DIPs.
+    // Chromium centers the content viewport horizontally and places its
+    // browser chrome above it. A negative inset means the geometry is not
+    // trustworthy enough for visual feedback, so skip rather than mislead.
+    let horizontal_inset = (native.width - width) / 2.0;
+    let top_inset = native.height - height;
+    if !horizontal_inset.is_finite()
+        || !top_inset.is_finite()
+        || horizontal_inset < -1.0
+        || top_inset < -1.0
+    {
+        return None;
+    }
+    Some((
+        native.x + horizontal_inset.max(0.0) + viewport_x,
+        native.y + top_inset.max(0.0) + viewport_y,
+    ))
 }
 
 /// Whether a CDP error is Chromium's "method not implemented" shape.
@@ -1346,8 +1397,78 @@ impl BrowserEngine {
             conn,
             record,
             tab,
+            native,
             cdp_session,
         })
+    }
+
+    /// Animate platform-owned browser feedback without coupling it to input
+    /// delivery. Only main-frame viewport points are mapped: child-frame CDP
+    /// coordinates are not necessarily in the top-level viewport space, and a
+    /// misleading cursor is worse than no cursor.
+    pub(crate) async fn visualize_browser_action(
+        &self,
+        session: &str,
+        validated: &ValidatedTab,
+        cdp_session: &str,
+        viewport_x: f64,
+        viewport_y: f64,
+        kind: BrowserVisualActionKind,
+    ) {
+        // `document.visibilityState` distinguishes the selected tab without
+        // focusing its native window or invoking any CDP activation command.
+        // Treat an unavailable or malformed proof as inactive: omitting
+        // feedback is safer than drawing a cursor over another tab.
+        let tab_is_active = validated
+            .conn
+            .call(
+                Some(&validated.cdp_session),
+                "Runtime.evaluate",
+                json!({
+                    "expression": "document.visibilityState === 'visible'",
+                    "returnByValue": true,
+                    "awaitPromise": false,
+                }),
+            )
+            .await
+            .ok()
+            .and_then(|result| result.pointer("/result/value").and_then(Value::as_bool))
+            .unwrap_or(false);
+
+        let screen_point = if cdp_session == validated.cdp_session {
+            validated
+                .conn
+                .call(Some(cdp_session), "Page.getLayoutMetrics", json!({}))
+                .await
+                .ok()
+                .and_then(|metrics| {
+                    viewport_point_to_screen(
+                        validated.native.bounds,
+                        &metrics,
+                        viewport_x,
+                        viewport_y,
+                    )
+                })
+        } else {
+            // Child-frame coordinates are not necessarily in the top-level
+            // viewport. Still update active-tab gating, but do not guess a
+            // pointer position.
+            None
+        };
+        let (screen_x, screen_y) = screen_point
+            .map(|(x, y)| (Some(x), Some(y)))
+            .unwrap_or((None, None));
+        self.platform
+            .visualize_browser_action(BrowserVisualAction {
+                session: session.to_owned(),
+                window_id: validated.native.window_id,
+                cdp_target_id: validated.tab.cdp_target_id.clone(),
+                tab_is_active,
+                screen_x,
+                screen_y,
+                kind,
+            })
+            .await;
     }
 
     /// Serialize the full revalidate-dispatch-verify interval by the real CDP
@@ -2513,6 +2634,45 @@ fn collect_interactive(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn viewport_point_maps_below_browser_chrome_in_live_native_bounds() {
+        let point = viewport_point_to_screen(
+            Rect::new(100.0, 50.0, 1000.0, 800.0),
+            &json!({
+                "cssVisualViewport": {
+                    "clientWidth": 980.0,
+                    "clientHeight": 700.0
+                }
+            }),
+            240.0,
+            120.0,
+        );
+        assert_eq!(point, Some((350.0, 270.0)));
+    }
+
+    #[test]
+    fn viewport_point_refuses_untrustworthy_or_out_of_view_geometry() {
+        let native = Rect::new(0.0, 0.0, 800.0, 600.0);
+        assert_eq!(
+            viewport_point_to_screen(
+                native,
+                &json!({"cssVisualViewport":{"clientWidth":900.0,"clientHeight":600.0}}),
+                10.0,
+                10.0,
+            ),
+            None
+        );
+        assert_eq!(
+            viewport_point_to_screen(
+                native,
+                &json!({"cssVisualViewport":{"clientWidth":800.0,"clientHeight":500.0}}),
+                801.0,
+                10.0,
+            ),
+            None
+        );
+    }
 
     fn fixture_doc() -> Value {
         json!({

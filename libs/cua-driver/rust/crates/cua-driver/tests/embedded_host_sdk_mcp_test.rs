@@ -42,6 +42,28 @@ fn process_is_alive(_pid: u32) -> bool {
     false
 }
 
+#[cfg(unix)]
+fn write_test_shell_script(path: &std::path::Path, body: &str) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    // Nix build sandboxes intentionally do not provide `/bin/sh`. Resolve the
+    // shell supplied by the test environment so these lifecycle fixtures test
+    // the host behavior instead of the host filesystem layout.
+    let shell = std::env::var_os("SHELL")
+        .map(std::path::PathBuf::from)
+        .filter(|candidate| candidate.is_file())
+        .or_else(|| {
+            std::env::var_os("PATH").and_then(|path| {
+                std::env::split_paths(&path)
+                    .map(|directory| directory.join("sh"))
+                    .find(|candidate| candidate.is_file())
+            })
+        })
+        .expect("test environment must provide a shell");
+    std::fs::write(path, format!("#!{}\n{body}\n", shell.display())).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn embedded_host_serves_sdk_and_mcp_with_one_contract() {
     let host = EmbeddedCuaDriverHost::new(
@@ -53,7 +75,7 @@ async fn embedded_host_serves_sdk_and_mcp_with_one_contract() {
     assert_eq!(host.state(), EmbeddedDriverHostState::Ready);
 
     let sdk = CuaDriver::connect(Some(connection.socket_path.clone())).expect("connect SDK");
-    let metadata = sdk.metadata().expect("SDK metadata handshake");
+    let metadata = sdk.metadata().await.expect("SDK metadata handshake");
     assert!(metadata.embedded);
     assert_eq!(metadata.pid, connection.pid);
     assert_eq!(metadata.contract_version, connection.contract_version);
@@ -62,7 +84,7 @@ async fn embedded_host_serves_sdk_and_mcp_with_one_contract() {
         Some("com.trycua.embedded-contract-test")
     );
     let sdk_tools: Value =
-        serde_json::from_str(&sdk.list_tools_json().expect("SDK tools/list")).unwrap();
+        serde_json::from_str(&sdk.list_tools_json().await.expect("SDK tools/list")).unwrap();
 
     let mut proxy_command = Command::new(&connection.mcp.command);
     proxy_command
@@ -121,6 +143,7 @@ async fn embedded_host_serves_sdk_and_mcp_with_one_contract() {
             session: "embedded-sdk-window".into(),
             capture_scope: Some(CaptureScope::Window),
         })
+        .await
         .expect("start SDK-owned session");
     assert_eq!(sdk_session.state.capture_scope, CaptureScope::Window);
 
@@ -155,11 +178,13 @@ async fn embedded_host_serves_sdk_and_mcp_with_one_contract() {
         .get_session_state(GetSessionStateInput {
             session: "embedded-sdk-window".into(),
         })
+        .await
         .expect("read SDK session");
     let mcp_state = sdk
         .get_session_state(GetSessionStateInput {
             session: "embedded-mcp-desktop".into(),
         })
+        .await
         .expect("read MCP-created session through SDK");
     assert_eq!(sdk_state.capture_scope, CaptureScope::Window);
     assert_eq!(mcp_state.capture_scope, CaptureScope::Desktop);
@@ -239,12 +264,9 @@ async fn concurrent_start_coalesces_and_restart_rotates_generation() {
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn stop_cancels_startup_and_unblocks_every_waiter() {
-    use std::os::unix::fs::PermissionsExt as _;
-
     let directory = tempfile::tempdir().unwrap();
     let binary = directory.path().join("never-ready-driver");
-    std::fs::write(&binary, "#!/bin/sh\nread _\n").unwrap();
-    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+    write_test_shell_script(&binary, "read _");
     let host = EmbeddedCuaDriverHost::new(
         binary.to_string_lossy().into_owned(),
         "com.trycua.embedded-cancel-test".into(),
@@ -270,12 +292,9 @@ async fn stop_cancels_startup_and_unblocks_every_waiter() {
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn early_child_exit_resets_the_host_to_stopped() {
-    use std::os::unix::fs::PermissionsExt as _;
-
     let directory = tempfile::tempdir().unwrap();
     let binary = directory.path().join("early-exit-driver");
-    std::fs::write(&binary, "#!/bin/sh\nexit 7\n").unwrap();
-    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+    write_test_shell_script(&binary, "exit 7");
     let host = EmbeddedCuaDriverHost::new(
         binary.to_string_lossy().into_owned(),
         "com.trycua.embedded-early-exit-test".into(),

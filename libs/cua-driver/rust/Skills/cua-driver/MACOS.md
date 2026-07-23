@@ -514,6 +514,17 @@ background delivery. Use `input_route:"dom_event"` only when synthetic click
 semantics are acceptable. Embedded Electron has a separately bounded route;
 do not infer that route for arbitrary WKWebView or Tauri hosts.
 
+For a declared session, typed browser click, type, and pointer mutations animate
+the macOS agent-cursor overlay at the live main-page target. This is a
+recording/observation aid only: the physical pointer stays put and the overlay
+does not deliver input or foreground Chrome. Navigation itself has no pointer
+target and therefore does not synthesize cursor motion.
+
+Before drawing, the browser route checks the target page's live visibility
+without selecting it. An inactive tab's cursor stays hidden. For concurrent
+recordings, assign one session to each tab; the active tab's session color is
+the only browser cursor displayed in that Chrome window.
+
 Browser chrome, permission prompts, downloads, file pickers, Safari, Firefox,
 and unbound embedded webviews remain native surfaces. Inspect them with
 `get_window_state` and use the AX/PX ladder in this file. The legacy `page`

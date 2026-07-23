@@ -1,0 +1,93 @@
+---
+title: 'SDK, MCP, and process hosting'
+description: 'How Cua Driver separates its typed application contract, agent protocol, and desktop process identity.'
+---
+
+Cua Driver has two caller interfaces and two execution topologies. They solve
+different problems:
+
+- The **SDK** is a typed application API for Python, TypeScript, and Rust.
+- **MCP** is the runtime-neutral agent protocol exposed by the Cua Driver
+  server.
+- A **same-process runtime** performs desktop work inside the importing app.
+- A **daemon runtime** performs desktop work in a long-lived process with a
+  stable operating-system identity.
+
+These dimensions form a grid, but only two cells are primary:
+
+|              | Typed SDK                           | MCP / CLI                                        |
+| ------------ | ----------------------------------- | ------------------------------------------------ |
+| Same process | **Primary for client applications** | Not a separate public client mode                |
+| Daemon       | Compatibility or app-shared runtime | **Primary for agents and short-lived CLI calls** |
+
+The SDK adds unique value in the same-process cell: typed records and direct
+calls across the generated native boundary without a socket. If application
+code talks to the same daemon as an agent, the SDK is mainly a typed
+compatibility adapter over that existing daemon.
+
+## One typed contract
+
+The public typed `CuaDriver` SDK contract is canonical:
+
+```text
+private platform implementations
+              |
+              v
+public typed CuaDriver SDK contract
+       |          |          |
+       v          v          v
+   Rust apps   UniFFI      MCP server adapter
+              /    \             |
+          Python  TypeScript   agents and CLI
+```
+
+The MCP server is downstream of the same public SDK contract as an
+application. It does not maintain a second implementation of desktop tools.
+MCP remains valuable because it standardizes discovery, calls, results, tasks,
+and transport for agent runtimes; the generated language SDKs are for
+applications embedding the native runtime.
+
+## Why the daemon still exists
+
+External agents and CLI calls are short-lived or run outside the desktop app
+that owns permissions. A daemon gives them a stable execution identity,
+long-lived session state, and one controlled gateway to the physical desktop.
+
+On macOS, Accessibility and Screen Recording grants attach to an application
+identity and responsibility chain. The standalone `CuaDriver.app` daemon keeps
+that identity stable across CLI and agent reconnects. A signed app that needs
+to expose MCP can instead spawn a private daemon directly so the child reuses
+the app's TCC grants.
+
+On Windows, a daemon can remain in the logged-in interactive session while an
+SSH or service-side client cannot access that desktop. On every platform, it
+also owns cleanup for recordings, cursors, policy, and per-session state when a
+client disconnects.
+
+## Why embedded applications may choose either topology
+
+Apps such as signed Electron desktop clients may want their own permission row
+and onboarding. If only the app calls Cua Driver, `CuaDriver.create()` runs the
+runtime in that permission-owning process. If external agents must connect,
+the app can host a private daemon and publish its MCP connection. Both routes
+consume the same typed behavior; the difference is lifecycle and process
+identity, not a different action implementation.
+
+See [Process model](/reference/cua-driver/process-model) for platform details
+and [Expose MCP from a desktop app](/how-to-guides/driver/expose-mcp-from-desktop-app)
+for the hosted-daemon procedure.
+
+## Agent SDK integration is intentionally asymmetric
+
+| Agent SDK | Native application callbacks | External MCP route |
+| --------- | ---------------------------- | ------------------ |
+| Claude Agent SDK | Supported in Python and TypeScript through its in-process custom-tool server | Supported in Python and TypeScript |
+| Codex SDK | No direct custom-tool callback boundary | Supported in Python and TypeScript |
+
+Claude's in-process custom-tool server is an adapter inside the host
+application; the callbacks still call the native Cua Driver SDK directly.
+Codex uses `cua-driver mcp` because MCP is its supported tool-extension
+boundary. Generating another language client would not add a new capability.
+
+See [Use Cua Driver with Claude Agent SDK](/how-to-guides/driver/use-claude-agent-sdk)
+and [Use Cua Driver with Codex SDK](/how-to-guides/driver/use-codex-sdk).

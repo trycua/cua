@@ -420,6 +420,7 @@ dependencies = [
     { name = "cua-auto", extra = ["all"] },
     { name = "cua-computer" },
     { name = "cua-core" },
+    { name = "keyring" },
     { name = "pillow" },
     { name = "rich" },
     { name = "websockets" },
@@ -452,6 +453,7 @@ requires-dist = [
     { name = "cua-computer", specifier = ">=0.5.0" },
     { name = "cua-core", specifier = ">=0.3.0,<0.4.0" },
     { name = "fastmcp", marker = "extra == 'mcp'", specifier = ">=2.0" },
+    { name = "keyring", specifier = ">=25.0" },
     { name = "litellm", marker = "extra == 'skills'", specifier = "==1.86.2" },
     { name = "pillow", specifier = ">=10.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
@@ -560,7 +562,7 @@ name = "ewmhlib"
 version = "0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "python-xlib", marker = "sys_platform == 'linux'" },
+    { name = "python-xlib" },
     { name = "typing-extensions" },
 ]
 wheels = [

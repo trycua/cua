@@ -1,13 +1,22 @@
 ---
 title: "Process model"
-description: "How Cua Driver maps one tool surface onto CLI, MCP, and daemon-backed processes."
+description: "How Cua Driver maps one typed surface onto same-process SDK and daemon-backed execution."
 ---
 
-Cua Driver has several process shapes, but they are adapters around one driver surface: list windows, read accessibility, capture the screen, click, type, record, configure, and report state. The process model places that surface in the operating-system context that can perform it.
+Cua Driver has two execution families around one typed driver surface: list
+windows, read accessibility, capture the screen, click, type, record,
+configure, and report state.
 
-All Cua Driver tool execution happens in a long-lived `cua-driver serve` daemon. MCP stdio and one-shot CLI calls are client adapters: they send requests to the daemon and never execute tools locally.
+- `CuaDriver.create()` runs the Rust driver in the importing Python,
+  TypeScript, or Rust process. It requires no daemon, executable, or IPC.
+- `cua-driver serve` runs the same SDK contract in a long-lived daemon. MCP
+  stdio, one-shot CLI calls, and `CuaDriver.connect()` send requests to it.
 
-## Three process roles
+The MCP server is a downstream consumer of the public typed SDK contract, not a
+parallel desktop implementation. See
+[SDK, MCP, and process hosting](/concepts/sdk-mcp-and-hosting).
+
+## Daemon-backed process roles
 
 The MCP stdio proxy is *client-owned*. The parent process starts `cua-driver mcp`, keeps stdin and stdout connected, and sends MCP tool calls over that transport. The proxy forwards every call to the daemon.
 
@@ -15,7 +24,8 @@ The daemon shape is *machine-owned*. A single `cua-driver serve` process listens
 
 The one-shot CLI adapter is *call-owned*. `cua-driver call <tool>` connects to the daemon, prints one result, and exits. If the daemon is unavailable, the command fails instead of executing the tool in the CLI process.
 
-These are transport roles around one daemon-owned implementation.
+These are transport roles around a daemon-owned instance of the same typed
+runtime that applications can create in process.
 
 ## Why a daemon proxy exists
 
@@ -23,18 +33,29 @@ The **daemon-proxy pattern** separates the process that speaks to the caller fro
 
 On macOS, the root issue is **TCC**, Transparency Consent and Control. Accessibility and Screen Recording grants are attached to a specific app identity, represented by a bundle ID. Grants to `CuaDriver.app` do not automatically cover every subprocess named `cua-driver`.
 
-## Supported macOS launch modes
+## Supported macOS identities
 
-Use one of two supported daemon identities:
+macOS supports three intentional identities:
 
-- **Standalone:** grant permissions to the installed `CuaDriver.app` and launch its daemon through LaunchServices. See [macOS permissions](/reference/cua-driver/macos-permissions).
-- **Embedded:** have the macOS app that owns the grants spawn `cua-driver serve --embedded` directly, then connect an MCP proxy to its socket. See [Embedding](/reference/cua-driver/embedding).
+- **Same-process SDK:** import `CuaDriver.create()` in the signed app that owns
+  the grants. Desktop operations inherit that host process's identity.
+- **Standalone daemon:** grant permissions to the installed `CuaDriver.app` and
+  launch its daemon through LaunchServices. See
+  [macOS permissions](/reference/cua-driver/macos-permissions).
+- **App-hosted daemon:** have the macOS app that owns the grants spawn
+  `cua-driver serve --embedded` directly, then connect an MCP proxy to its
+  socket. See [Embedding](/reference/cua-driver/embedding).
 
 A raw daemon launched outside `CuaDriver.app` without embedded mode has no stable TCC identity and is unsupported. Do not grant permissions to arbitrary binary paths or use that configuration in production.
 
 If an IDE terminal starts `cua-driver` directly, macOS attributes that subprocess to the terminal app's bundle, not to `CuaDriver.app`. The binary is right, but the privacy identity is wrong.
 
-The daemon path fixes the attribution. The daemon is launched through LaunchServices with `open -n -g -a CuaDriver`, so macOS treats it as part of `CuaDriver.app`. The MCP stdio process remains where the assistant spawned it, but becomes a thin proxy: it forwards tool calls to the daemon over a Unix socket and returns the daemon's responses. There are two processes, but one tool surface.
+The standalone daemon path fixes attribution for external callers. It launches
+through LaunchServices with `open -n -g -a CuaDriver`, so macOS treats it as
+part of `CuaDriver.app`. The MCP stdio process remains where the assistant
+spawned it, but becomes a thin proxy: it forwards tool calls to the daemon over
+a Unix socket and returns the daemon's responses. There are two processes, but
+one tool surface.
 
 ## Windows has the same shape for a different reason
 
@@ -65,4 +86,9 @@ Cleanup follows the proxy connection, not a final message. The proxy keeps a lon
 
 The proxy and one-shot CLI processes may come and go, but the daemon owns element-index caches, active recordings, configuration, policy, and cursor state. This makes the execution identity and permission-policy boundary stable across client reconnects.
 
-If the daemon disappears, clients fail closed. They do not construct a fresh tool registry or continue with partial state.
+If the daemon disappears, daemon-backed clients fail closed. They do not
+construct a fresh tool registry or continue with partial state.
+
+For a same-process SDK runtime, the importing application owns the equivalent
+lifetime. End every session, await `shutdown()`, and release the generated
+binding handle during orderly teardown.

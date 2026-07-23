@@ -116,7 +116,20 @@ impl ForegroundSentinel {
             wait_for_journal(&journal_path, focus_deadline, r#""kind":"ready""#, "ready");
             try_activate_native_foreground(driver, target)?;
             wait_for_native_focus_stable(target);
+            // On macOS the Electron renderer can report `document.hasFocus()`
+            // as false at DOMContentLoaded, then become natively focused
+            // without emitting a later DOM `focus` event. Require the setup
+            // click below to reach the WebContents instead: that proves the
+            // renderer is the input target before the journal is reset.
+            #[cfg(not(target_os = "macos"))]
             wait_for_journal(&journal_path, focus_deadline, r#""kind":"focus""#, "focus");
+            #[cfg(target_os = "macos")]
+            wait_for_journal(
+                &journal_path,
+                focus_deadline,
+                r#""kind":"click""#,
+                "focused by setup click",
+            );
         }
         fs::write(&journal_path, "")
             .map_err(|error| format!("reset focused sentinel journal: {error}"))?;
@@ -483,6 +496,36 @@ fn try_activate_native_foreground(
     })?;
     #[cfg(target_os = "windows")]
     physically_focus_windows_sentinel(target);
+    #[cfg(target_os = "macos")]
+    focus_macos_sentinel_contents(driver, target)?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn focus_macos_sentinel_contents(
+    driver: &mut impl Driver,
+    target: TargetWindow,
+) -> Result<(), String> {
+    // A native app activation can leave Electron's renderer without keyboard
+    // focus even though WindowServer reports its window at the front. This
+    // bounded setup click lands well inside every canonical sentinel window
+    // and is cleared from the journal before any behavioral action begins.
+    let response = driver.call(
+        "click",
+        serde_json::json!({
+            "pid": target.pid,
+            "window_id": target.native_id,
+            "x": 320.0,
+            "y": 240.0,
+            "delivery_mode": "background",
+        }),
+    );
+    if response.is_error() {
+        return Err(format!(
+            "could not focus foreground sentinel WebContents: {}",
+            response.text()
+        ));
+    }
     Ok(())
 }
 

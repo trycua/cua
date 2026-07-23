@@ -24,6 +24,7 @@ class MockVM: VM {
     override func run(
         noDisplay: Bool, sharedDirectories: [SharedDirectory], mount: Path?, vncPort: Int = 0,
         vncPassword: String? = nil, recoveryMode: Bool = false, usbMassStoragePaths: [Path]? = nil,
+        additionalDiskPaths: [Path]? = nil,
         networkMode: NetworkMode? = nil, clipboard: Bool = false
     ) async throws {
         mockIsRunning = true
@@ -31,6 +32,7 @@ class MockVM: VM {
             noDisplay: noDisplay, sharedDirectories: sharedDirectories, mount: mount,
             vncPort: vncPort, vncPassword: vncPassword, recoveryMode: recoveryMode,
             usbMassStoragePaths: usbMassStoragePaths,
+            additionalDiskPaths: additionalDiskPaths,
             networkMode: networkMode, clipboard: clipboard
         )
     }

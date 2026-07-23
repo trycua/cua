@@ -48,6 +48,7 @@ observation and interaction. Do not substitute shell, filesystem, web, or code
 execution. Pass session ${JSON.stringify(session)} to every Cua tool that
 accepts a session. Inspect state before each action and verify state after it.
 Do not call start_session or end_session; the host owns lifecycle cleanup. Do
+not blindly retry a mutation after a timeout or disconnect; observe first. Do
 not perform purchases, send messages, delete data, expose credentials, or take
 another irreversible action unless the task explicitly requests that exact
 action. Return a concise result and mention any step you could not verify.`;
@@ -74,6 +75,7 @@ async function main(): Promise<void> {
             command: binary,
             args: ['mcp'],
             startup_timeout_sec: 30,
+            required: true,
           },
         },
       },

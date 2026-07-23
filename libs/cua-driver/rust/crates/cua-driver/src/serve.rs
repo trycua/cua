@@ -54,23 +54,6 @@ fn inject_browser_approvals(tool_name: &str, args: &mut serde_json::Value, sessi
     }
 }
 
-// ── Recording idle-TTL backstop (#1764) ─────────────────────────────────────────
-
-/// Default TTL of zero `call` activity after which an active recording is
-/// auto-stopped. Generous: a single agent turn can be slow. Overridable via the
-/// `CUA_DRIVER_RS_RECORDING_IDLE_TTL_SECS` env var (used by the #1764 verify
-/// harness to exercise the backstop quickly).
-const RECORDING_IDLE_TTL_SECS_DEFAULT: u64 = 300;
-
-/// Wall-clock seconds since the Unix epoch. Same idiom `recording.rs` uses for
-/// `now_ms`.
-fn now_unix_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
-
 /// Resolve + apply the session identity for a tool call at the daemon boundary.
 ///
 /// A session is a **caller-declared** identity (the public `session` arg), not a
@@ -121,128 +104,6 @@ fn apply_session_identity(args: &mut serde_json::Value, minted: &Option<String>)
 /// would be wrongly rejected if the guard gated them on an already-ended id.
 fn is_session_lifecycle_tool(tool_name: &str) -> bool {
     matches!(tool_name, "start_session" | "end_session")
-}
-
-/// Resolve the recording idle TTL, honoring the env override.
-fn recording_idle_ttl_secs() -> u64 {
-    std::env::var("CUA_DRIVER_RS_RECORDING_IDLE_TTL_SECS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .filter(|v| *v > 0)
-        .unwrap_or(RECORDING_IDLE_TTL_SECS_DEFAULT)
-}
-
-/// Spawn a detached daemon task that auto-stops a recording after the idle TTL.
-///
-/// Defense-in-depth for #1764: the primary teardown is now the per-session
-/// reaper (the proxy's persistent control connection EOF fires `session_end`,
-/// covering proxy SIGKILL/crash). This TTL covers the residual case a non-proxy
-/// raw client starts a recording and dies without ever sending `session_begin`.
-/// It MUST NOT stop a still-active session: it only reaps when BOTH
-/// the recording is enabled AND there has been no `call` activity for the full
-/// TTL. As long as a session keeps issuing tool calls, `last_activity` is bumped
-/// every turn and the idle window never reaches the TTL. `stop()` is idempotent,
-/// so racing with the proxy-exit hook or an explicit `stop_recording` is benign.
-fn spawn_recording_idle_backstop(
-    registry: std::sync::Arc<cua_driver_core::tool::ToolRegistry>,
-    last_activity: std::sync::Arc<std::sync::atomic::AtomicU64>,
-) {
-    let ttl = recording_idle_ttl_secs();
-    tokio::spawn(async move {
-        // 30s tick granularity: reap latency is `ttl` rounded up to the next
-        // tick, so a sub-30s TTL override (e.g. in tests) still fires no sooner
-        // than ~30s. Fine for the 300s production default.
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
-        loop {
-            tick.tick().await;
-            if registry.recording.current_state().enabled {
-                let idle = now_unix_secs()
-                    .saturating_sub(last_activity.load(std::sync::atomic::Ordering::Relaxed));
-                if idle >= ttl {
-                    tracing::warn!(
-                        "recording idle {idle}s ≥ {ttl}s TTL; auto-stopping \
-                         (proxy-exit hook likely missed)"
-                    );
-                    // Unconditional (`None`): the idle backstop is a last-resort
-                    // GLOBAL kill of whatever recording is active after global
-                    // inactivity — not an owner reclaiming a specific session.
-                    // It already targets the live recording by definition, so a
-                    // requester id would be redundant and could only make it
-                    // wrongly no-op. Session-scoped teardown is the proxy-exit
-                    // `session_end` path (#1764 / session-identity work).
-                    // stop_owner can SYNCHRONOUSLY finalize the recording's mp4
-                    // (SCStream::stop_capture blocks on disk I/O), so run it on a
-                    // blocking thread to keep the reactor free (see the EOF reaper).
-                    let reg2 = registry.clone();
-                    let _ =
-                        tokio::task::spawn_blocking(move || reg2.recording.stop_owner(None)).await;
-                }
-            }
-        }
-    });
-}
-
-/// Default idle-TTL for a caller-declared session (seconds). A session that
-/// isn't touched (no tool call carrying its `session`) for this long is reclaimed
-/// by [`spawn_session_idle_sweep`] — its cursor removed, recording stopped,
-/// config cleared. Overridable via `CUA_DRIVER_RS_SESSION_IDLE_TTL_SECS`.
-const SESSION_IDLE_TTL_SECS_DEFAULT: u64 = 300;
-
-fn session_idle_ttl_secs() -> u64 {
-    std::env::var("CUA_DRIVER_RS_SESSION_IDLE_TTL_SECS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .filter(|v| *v > 0)
-        .unwrap_or(SESSION_IDLE_TTL_SECS_DEFAULT)
-}
-
-/// Spawn the detached idle-TTL sweep for caller-declared sessions.
-///
-/// A session is no longer tied to a connection's lifetime (it's a caller-declared
-/// identity that can span connections, transports, and apps), so a run that ends
-/// — or crashes — without calling `end_session` is reclaimed here. Each tick ends
-/// every session whose last activity is older than the TTL; `session::evict_idle`
-/// fans `fire_session_end` out to the cursor/recording/config cleanup hooks. A
-/// session that keeps issuing tool calls bumps its activity every turn and never
-/// reaches the idle window. Idempotent and cheap.
-fn spawn_session_idle_sweep() {
-    let ttl = std::time::Duration::from_secs(session_idle_ttl_secs());
-    tokio::spawn(async move {
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
-        loop {
-            tick.tick().await;
-            let ended = cua_driver_core::session::evict_idle(ttl);
-            if !ended.is_empty() {
-                tracing::info!(
-                    count = ended.len(),
-                    "idle-TTL reclaimed sessions: {ended:?}"
-                );
-            }
-        }
-    });
-}
-
-/// Register a `session_end` hook that stops a recording the ending session owns.
-///
-/// The per-platform cursor-remove + config-clear hooks already run on
-/// `fire_session_end`; this adds recording teardown to the SAME signal, so
-/// `end_session`, the idle-TTL sweep, and the control-connection EOF reaper all
-/// stop a session's recording uniformly (matching `end_session`'s contract).
-/// `stop_owner(Some(sid))` is a no-op unless `sid` owns the live recording, and
-/// runs on a detached thread so finalizing the mp4 never blocks the synchronous
-/// `fire_session_end` caller (the sweep task or an async tool invoke). The EOF
-/// arm keeps its own inline `spawn_blocking` stop for ordered finalize-then-reply;
-/// a second stop here is an idempotent no-op.
-fn register_recording_session_end_hook(
-    recording: std::sync::Arc<cua_driver_core::recording::RecordingSession>,
-) {
-    cua_driver_core::session::register_session_end_hook(move |sid| {
-        let recording = recording.clone();
-        let sid = sid.to_owned();
-        std::thread::spawn(move || {
-            let _ = recording.stop_owner(Some(&sid));
-        });
-    });
 }
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
@@ -353,7 +214,7 @@ fn observe_daemon_error(
 }
 
 async fn invoke_daemon_tool(
-    registry: &std::sync::Arc<cua_driver_core::tool::ToolRegistry>,
+    sdk: &std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
     req: DaemonRequest,
 ) -> DaemonResponse {
     let observation_transport = daemon_observation_transport(&req);
@@ -367,7 +228,7 @@ async fn invoke_daemon_tool(
     } else {
         raw_name
     };
-    let known_tool = registry.get_def(&tool_name).is_some();
+    let known_tool = sdk.is_known_tool(&tool_name);
     let mut args = req
         .args
         .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
@@ -457,27 +318,13 @@ async fn invoke_daemon_tool(
         cua_driver_core::session::begin_tool_call(&tool_name, &args, true, transport, client_kind)
     });
 
-    let result = registry.invoke(&tool_name, args).await;
-    let is_error = result.is_error.unwrap_or(false);
-    let content: Vec<serde_json::Value> = result
-        .content
-        .iter()
-        .map(|item| match item {
-            cua_driver_core::protocol::Content::Text { text, .. } => {
-                serde_json::json!({"type":"text","text":text})
-            }
-            cua_driver_core::protocol::Content::Image {
-                data, mime_type, ..
-            } => serde_json::json!({"type":"image","data":data,"mimeType":mime_type}),
-        })
-        .collect();
-    let mut result_value = serde_json::json!({
-        "content": content,
-        "isError": is_error,
-    });
-    if let Some(structured) = result.structured_content {
-        result_value["structuredContent"] = structured;
-    }
+    let result_value = match sdk.invoke_raw(&tool_name, args).await {
+        Ok(result) => result,
+        Err(error) => {
+            observe_daemon_error(observation, 1);
+            return DaemonResponse::err(error, 1);
+        }
+    };
     DaemonResponse::ok(observe_daemon_result(
         observation,
         session_context,
@@ -574,7 +421,7 @@ async fn wait_for_parent_stdin_eof() {
 /// This is `async` and must be called from a tokio runtime.
 #[cfg(unix)]
 pub async fn run_serve(
-    registry: std::sync::Arc<cua_driver_core::tool::ToolRegistry>,
+    sdk: std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
     socket_path: &str,
     pid_file_path: Option<&str>,
 ) -> anyhow::Result<()> {
@@ -620,31 +467,18 @@ pub async fn run_serve(
     };
     tokio::pin!(parent_liveness);
 
-    // Idle-TTL recording backstop (#1764), now demoted to SECONDARY cover. The
-    // PRIMARY teardown is the per-session reaper: the proxy holds a persistent
-    // control connection (session_begin) whose EOF — on graceful exit AND on
-    // kill -9 — fires session_end, stopping that session's recording reliably.
-    // This TTL still uniquely covers (a) a non-proxy raw client that starts a
-    // recording and dies without ever sending session_begin and (b) a
-    // daemon-internal wedge. We track the last `call` activity timestamp; a
-    // background task auto-stops the recording after `RECORDING_IDLE_TTL_SECS`
-    // of zero tool activity. Keyed on call activity (NOT connection liveness),
-    // so an actively-used session is never reaped.
-    let last_activity = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(now_unix_secs()));
-    spawn_recording_idle_backstop(registry.clone(), last_activity.clone());
-    spawn_session_idle_sweep();
+    // Idle-session and recording maintenance is owned by the SDK runtime so
+    // direct embedded applications and daemon-backed clients behave alike.
     if let Some(port) = crate::mcp_http::configured_port() {
-        crate::mcp_http::spawn(registry.clone(), port);
+        crate::mcp_http::spawn(sdk.clone(), port);
     }
-    register_recording_session_end_hook(registry.recording.clone());
 
     loop {
         tokio::select! {
             result = listener.accept() => {
                 let (stream, _) = result?;
-                let reg = registry.clone();
+                let reg = sdk.clone();
                 let shutdown_tx2 = shutdown_tx.clone();
-                let last_activity = last_activity.clone();
 
                 tokio::spawn(async move {
                     let (reader, mut writer) = stream.into_split();
@@ -701,49 +535,16 @@ pub async fn run_serve(
                                 // `capabilities` is sourced from the centralised
                                 // name + concrete-schema resolver so daemon
                                 // responses match the core MCP capability contract.
-                                let tools: Vec<serde_json::Value> = reg.iter_defs()
-                                    .map(|(name, def)| {
-                                        let caps = cua_driver_core::tool::advertised_capabilities_for(
-                                            name,
-                                            &def.input_schema,
-                                        );
-                                        let risk = cua_driver_core::authorization::risk_metadata_json(name);
-                                        serde_json::json!({
-                                            "name": name,
-                                            "description": def.description,
-                                            "input_schema": def.input_schema,
-                                            "read_only": def.read_only,
-                                            "destructive": def.destructive,
-                                            "idempotent": def.idempotent,
-                                            "open_world": def.open_world,
-                                            "capabilities": caps,
-                                            "risk": risk,
-                                        })
-                                    })
-                                    .collect();
-                                // Mirror `tools_list` envelope: include
-                                // capability_version + schema_version so MCP
-                                // proxy callers can pass them through verbatim
-                                // (one daemon round-trip, complete response).
-                                let resp = DaemonResponse::ok(serde_json::json!({
-                                    "tools": tools,
-                                    "capability_version": cua_driver_core::tool::CAPABILITY_VERSION,
-                                    "schema_version": cua_driver_core::tool::TOOLS_LIST_SCHEMA_VERSION,
-                                    "tool_observation_owner": "daemon",
-                                }));
+                                let resp = DaemonResponse::ok(reg.daemon_tools_list());
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
                             }
                             "describe" => {
                                 let name = req.name.as_deref().unwrap_or("");
-                                match reg.get_def(name) {
-                                    Some(def) => {
-                                        let resp = DaemonResponse::ok(serde_json::json!({
-                                            "name": def.name,
-                                            "description": def.description,
-                                            "input_schema": def.input_schema
-                                        }));
+                                match reg.describe(name) {
+                                    Some(description) => {
+                                        let resp = DaemonResponse::ok(description);
                                         let _ = writer.write_all(
                                             (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                         ).await;
@@ -773,19 +574,21 @@ pub async fn run_serve(
                                 let session = args.get("session")
                                     .and_then(serde_json::Value::as_str)
                                     .filter(|value| !value.is_empty());
-                                let result = if all && session.is_none() {
+                                let result: Result<serde_json::Value, String> = if all && session.is_none() {
                                     let count = cua_driver_core::session::revoke_all_sessions();
                                     Ok(serde_json::json!({"revoked": count, "scope": "all"}))
                                 } else if !all {
-                                    session.map_or_else(
-                                        || Err("revoke_authorization requires session or all=true"),
-                                        |session| {
-                                            cua_driver_core::session::end_session(session);
-                                            Ok(serde_json::json!({"revoked": 1, "scope": "session"}))
-                                        },
-                                    )
+                                    match session {
+                                        Some(session) => reg.end_session(session).await.map(|()| {
+                                            serde_json::json!({"revoked": 1, "scope": "session"})
+                                        }),
+                                        None => Err(
+                                            "revoke_authorization requires session or all=true"
+                                                .to_owned(),
+                                        ),
+                                    }
                                 } else {
-                                    Err("revoke_authorization accepts exactly one of session or all=true")
+                                    Err("revoke_authorization accepts exactly one of session or all=true".to_owned())
                                 };
                                 let resp = match result {
                                     Ok(value) => DaemonResponse::ok(value),
@@ -796,12 +599,6 @@ pub async fn run_serve(
                                 ).await;
                             }
                             "call" => {
-                                // Recording idle-TTL liveness: any serviced tool
-                                // call counts as activity (#1764).
-                                last_activity.store(
-                                    now_unix_secs(),
-                                    std::sync::atomic::Ordering::Relaxed,
-                                );
                                 let resp = invoke_daemon_tool(&reg, req).await;
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
@@ -838,24 +635,9 @@ pub async fn run_serve(
                                 // proxies never send it — the control-connection
                                 // EOF is the single teardown path. Always ACK ok.
                                 if let Some(sid) = req.session_id.as_deref() {
-                                    // stop_owner can SYNCHRONOUSLY finalize the
-                                    // recording's mp4 — run it off the reactor on
-                                    // a blocking thread (see the EOF reaper).
-                                    // fire_session_end stays inline (non-blocking).
-                                    // Mark the session ended FIRST so an in-flight
-                                    // start_recording sees ended=true and bails — the
-                                    // mark-before-reap invariant the cursor/config hooks
-                                    // already satisfy (their reap runs inside
-                                    // fire_session_end, after the mark). stop_owner does
-                                    // not consult is_session_ended, so reaping after the
-                                    // mark is safe.
-                                    cua_driver_core::session::fire_session_end(sid);
-                                    let reg2 = reg.clone();
-                                    let sid_for_stop = sid.to_owned();
-                                    let _ = tokio::task::spawn_blocking(move || {
-                                        reg2.recording.stop_owner(Some(&sid_for_stop))
-                                    })
-                                    .await;
+                                    if let Err(error) = reg.end_session(sid).await {
+                                        tracing::warn!("legacy session_end failed: {error}");
+                                    }
                                 }
                                 let resp = DaemonResponse::ok(
                                     serde_json::json!({"session_end": true})
@@ -886,23 +668,9 @@ pub async fn run_serve(
                     // benign.
                     if let Some(sid) = control_session_id {
                         active_proxy_sessions().lock().unwrap().remove(&sid);
-                        // stop_owner can SYNCHRONOUSLY finalize the recording's
-                        // mp4 — on macOS it hits SCStream::stop_capture(), which
-                        // blocks on disk I/O (video_sckit.rs). Run it on a
-                        // blocking thread so it does not stall a runtime worker.
-                        // fire_session_end stays inline: its hooks (overlay
-                        // Remove, config-override clear) are non-blocking.
-                        // Mark the session ended FIRST so an in-flight start_recording
-                        // sees ended=true and bails (mark-before-reap; the cursor/config
-                        // hooks already reap inside fire_session_end after the mark).
-                        // stop_owner ignores is_session_ended, so reaping after is safe.
-                        cua_driver_core::session::fire_session_end(&sid);
-                        let reg2 = reg.clone();
-                        let sid_for_stop = sid.clone();
-                        let _ = tokio::task::spawn_blocking(move || {
-                            reg2.recording.stop_owner(Some(&sid_for_stop))
-                        })
-                        .await;
+                        if let Err(error) = reg.end_session(&sid).await {
+                            tracing::warn!("control-session cleanup failed: {error}");
+                        }
                     }
                 });
             }
@@ -922,6 +690,9 @@ pub async fn run_serve(
     if let Some(pid_path) = pid_file_path {
         let _ = std::fs::remove_file(pid_path);
     }
+    sdk.shutdown()
+        .await
+        .map_err(|error| anyhow::anyhow!("shut down SDK runtime: {error}"))?;
 
     Ok(())
 }
@@ -1187,7 +958,7 @@ struct SecurityAttributesRaw {
 
 #[cfg(target_os = "windows")]
 pub async fn run_serve(
-    registry: std::sync::Arc<cua_driver_core::tool::ToolRegistry>,
+    sdk: std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
     socket_path: &str,
     pid_file_path: Option<&str>,
 ) -> anyhow::Result<()> {
@@ -1244,15 +1015,10 @@ pub async fn run_serve(
     };
     tokio::pin!(parent_liveness);
 
-    // Idle-TTL recording backstop (#1764). See the unix branch above for the
-    // full rationale; the leak (record_video via ffmpeg) is platform-independent.
-    let last_activity = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(now_unix_secs()));
-    spawn_recording_idle_backstop(registry.clone(), last_activity.clone());
-    spawn_session_idle_sweep();
+    // Idle-session and recording maintenance is owned by the SDK runtime.
     if let Some(port) = crate::mcp_http::configured_port() {
-        crate::mcp_http::spawn(registry.clone(), port);
+        crate::mcp_http::spawn(sdk.clone(), port);
     }
-    register_recording_session_end_hook(registry.recording.clone());
 
     let mut first_pipe = true;
     loop {
@@ -1279,9 +1045,8 @@ pub async fn run_serve(
             result = server.connect() => {
                 result.map_err(|e| anyhow::anyhow!("named pipe connect: {e}"))?;
 
-                let reg = registry.clone();
+                let reg = sdk.clone();
                 let shutdown_tx2 = shutdown_tx.clone();
-                let last_activity = last_activity.clone();
 
                 tokio::spawn(async move {
                     let (reader, mut writer) = tokio::io::split(server);
@@ -1327,47 +1092,15 @@ pub async fn run_serve(
                                 // build a complete `tools/list` response from
                                 // one daemon round-trip. See the unix branch
                                 // above for rationale (capabilities map, etc.).
-                                let tools: Vec<serde_json::Value> = reg.iter_defs()
-                                    .map(|(name, def)| {
-                                        let caps = cua_driver_core::tool::advertised_capabilities_for(
-                                            name,
-                                            &def.input_schema,
-                                        );
-                                        let risk = cua_driver_core::authorization::risk_metadata_json(name);
-                                        serde_json::json!({
-                                            "name": name,
-                                            "description": def.description,
-                                            "input_schema": def.input_schema,
-                                            "read_only": def.read_only,
-                                            "destructive": def.destructive,
-                                            "idempotent": def.idempotent,
-                                            "open_world": def.open_world,
-                                            "capabilities": caps,
-                                            "risk": risk,
-                                        })
-                                    })
-                                    .collect();
-                                // Mirror `tools_list` envelope: include
-                                // capability_version + schema_version so MCP
-                                // proxy callers can pass them through verbatim
-                                // (one daemon round-trip, complete response).
-                                let resp = DaemonResponse::ok(serde_json::json!({
-                                    "tools": tools,
-                                    "capability_version": cua_driver_core::tool::CAPABILITY_VERSION,
-                                    "schema_version": cua_driver_core::tool::TOOLS_LIST_SCHEMA_VERSION,
-                                    "tool_observation_owner": "daemon",
-                                }));
+                                let resp = DaemonResponse::ok(reg.daemon_tools_list());
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
                             }
                             "describe" => {
                                 let name = req.name.as_deref().unwrap_or("");
-                                let resp = match reg.get_def(name) {
-                                    Some(def) => DaemonResponse::ok(serde_json::json!({
-                                        "name": def.name, "description": def.description,
-                                        "input_schema": def.input_schema
-                                    })),
+                                let resp = match reg.describe(name) {
+                                    Some(description) => DaemonResponse::ok(description),
                                     None => DaemonResponse::err(format!("Unknown tool: {name}"), 64),
                                 };
                                 let _ = writer.write_all(
@@ -1389,19 +1122,21 @@ pub async fn run_serve(
                                 let session = args.get("session")
                                     .and_then(serde_json::Value::as_str)
                                     .filter(|value| !value.is_empty());
-                                let result = if all && session.is_none() {
+                                let result: Result<serde_json::Value, String> = if all && session.is_none() {
                                     let count = cua_driver_core::session::revoke_all_sessions();
                                     Ok(serde_json::json!({"revoked": count, "scope": "all"}))
                                 } else if !all {
-                                    session.map_or_else(
-                                        || Err("revoke_authorization requires session or all=true"),
-                                        |session| {
-                                            cua_driver_core::session::end_session(session);
-                                            Ok(serde_json::json!({"revoked": 1, "scope": "session"}))
-                                        },
-                                    )
+                                    match session {
+                                        Some(session) => reg.end_session(session).await.map(|()| {
+                                            serde_json::json!({"revoked": 1, "scope": "session"})
+                                        }),
+                                        None => Err(
+                                            "revoke_authorization requires session or all=true"
+                                                .to_owned(),
+                                        ),
+                                    }
                                 } else {
-                                    Err("revoke_authorization accepts exactly one of session or all=true")
+                                    Err("revoke_authorization accepts exactly one of session or all=true".to_owned())
                                 };
                                 let resp = match result {
                                     Ok(value) => DaemonResponse::ok(value),
@@ -1412,11 +1147,6 @@ pub async fn run_serve(
                                 ).await;
                             }
                             "call" => {
-                                // Recording idle-TTL liveness (#1764).
-                                last_activity.store(
-                                    now_unix_secs(),
-                                    std::sync::atomic::Ordering::Relaxed,
-                                );
                                 let resp = invoke_daemon_tool(&reg, req).await;
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
@@ -1446,24 +1176,9 @@ pub async fn run_serve(
                                 // connection; control_session_id stays None so no
                                 // EOF double-fire. fire_session_end is idempotent.
                                 if let Some(sid) = req.session_id.as_deref() {
-                                    // stop_owner can SYNCHRONOUSLY finalize the
-                                    // recording's mp4 — run it off the reactor on
-                                    // a blocking thread (see the EOF reaper).
-                                    // fire_session_end stays inline (non-blocking).
-                                    // Mark the session ended FIRST so an in-flight
-                                    // start_recording sees ended=true and bails — the
-                                    // mark-before-reap invariant the cursor/config hooks
-                                    // already satisfy (their reap runs inside
-                                    // fire_session_end, after the mark). stop_owner does
-                                    // not consult is_session_ended, so reaping after the
-                                    // mark is safe.
-                                    cua_driver_core::session::fire_session_end(sid);
-                                    let reg2 = reg.clone();
-                                    let sid_for_stop = sid.to_owned();
-                                    let _ = tokio::task::spawn_blocking(move || {
-                                        reg2.recording.stop_owner(Some(&sid_for_stop))
-                                    })
-                                    .await;
+                                    if let Err(error) = reg.end_session(sid).await {
+                                        tracing::warn!("legacy session_end failed: {error}");
+                                    }
                                 }
                                 let resp = DaemonResponse::ok(
                                     serde_json::json!({"session_end": true})
@@ -1488,20 +1203,9 @@ pub async fn run_serve(
                     // control_session_id None.
                     if let Some(sid) = control_session_id {
                         active_proxy_sessions().lock().unwrap().remove(&sid);
-                        // Run stop_owner off the reactor (see the unix branch):
-                        // recording finalize can be a synchronous blocking call.
-                        // fire_session_end stays inline (non-blocking hooks).
-                        // Mark the session ended FIRST so an in-flight start_recording
-                        // sees ended=true and bails (mark-before-reap; the cursor/config
-                        // hooks already reap inside fire_session_end after the mark).
-                        // stop_owner ignores is_session_ended, so reaping after is safe.
-                        cua_driver_core::session::fire_session_end(&sid);
-                        let reg2 = reg.clone();
-                        let sid_for_stop = sid.clone();
-                        let _ = tokio::task::spawn_blocking(move || {
-                            reg2.recording.stop_owner(Some(&sid_for_stop))
-                        })
-                        .await;
+                        if let Err(error) = reg.end_session(&sid).await {
+                            tracing::warn!("control-session cleanup failed: {error}");
+                        }
                     }
                 });
             }
@@ -1519,12 +1223,15 @@ pub async fn run_serve(
     if let Some(pid_path) = pid_file_path {
         let _ = std::fs::remove_file(pid_path);
     }
+    sdk.shutdown()
+        .await
+        .map_err(|error| anyhow::anyhow!("shut down SDK runtime: {error}"))?;
     Ok(())
 }
 
 #[cfg(not(any(unix, target_os = "windows")))]
 pub async fn run_serve(
-    _registry: std::sync::Arc<cua_driver_core::tool::ToolRegistry>,
+    _sdk: std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
     _socket_path: &str,
     _pid_file_path: Option<&str>,
 ) -> anyhow::Result<()> {
@@ -1535,7 +1242,7 @@ pub async fn run_serve(
 
 /// `cua-driver serve` implementation.
 pub fn run_serve_cmd(
-    registry: std::sync::Arc<cua_driver_core::tool::ToolRegistry>,
+    driver: std::sync::Arc<cua_driver_sdk::CuaDriver>,
     socket_path: &str,
     pid_file_path: Option<&str>,
 ) {
@@ -1583,7 +1290,14 @@ pub fn run_serve_cmd(
         .build()
         .expect("tokio runtime");
 
-    if let Err(e) = rt.block_on(run_serve(registry, &socket_path, pid_file_path.as_deref())) {
+    let sdk = match rt.block_on(crate::sdk_adapter::SdkAdapter::load(driver)) {
+        Ok(sdk) => sdk,
+        Err(error) => {
+            eprintln!("cua-driver serve error: {error}");
+            std::process::exit(1);
+        }
+    };
+    if let Err(e) = rt.block_on(run_serve(sdk, &socket_path, pid_file_path.as_deref())) {
         eprintln!("cua-driver serve error: {e}");
         std::process::exit(1);
     }
@@ -1810,13 +1524,11 @@ mod gate_tests {
     //! again. Live and anonymous calls always pass through.
 
     use super::{run_serve, send_request, DaemonRequest};
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
-
     use async_trait::async_trait;
     use cua_driver_core::protocol::ToolResult;
     use cua_driver_core::tool::{Tool, ToolDef, ToolRegistry};
     use serde_json::Value;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     static PROBE_INVOCATIONS: AtomicUsize = AtomicUsize::new(0);
 
@@ -1838,6 +1550,10 @@ mod gate_tests {
                 },
             }
         }
+    }
+
+    fn register_probe(registry: &mut ToolRegistry) {
+        registry.register(Box::new(ProbeTool::new()));
     }
 
     #[async_trait]
@@ -1866,12 +1582,27 @@ mod gate_tests {
     async fn ended_session_call_is_gated_live_and_anon_pass() {
         PROBE_INVOCATIONS.store(0, Ordering::SeqCst);
 
-        let mut reg = ToolRegistry::new();
-        reg.register(Box::new(ProbeTool::new()));
-        // The real start_session tool so we can prove an explicit re-declare
-        // REVIVES an ended id end-to-end through the daemon boundary.
-        reg.register(Box::new(cua_driver_core::session_tools::StartSessionTool));
-        let registry = Arc::new(reg);
+        let driver =
+            cua_driver_sdk::CuaDriver::create_for_host(cua_driver_sdk::DriverHostOptions {
+                cursor: cursor_overlay::CursorConfig {
+                    enabled: false,
+                    ..cursor_overlay::CursorConfig::default()
+                },
+                claude_code_compatibility: false,
+                prepare_desktop_environment: false,
+                register_host_tools: Some(register_probe),
+            });
+        let direct_driver = driver.clone();
+        let sdk = crate::sdk_adapter::SdkAdapter::load(driver)
+            .await
+            .expect("SDK adapter");
+        let direct = direct_driver
+            .call_tool("probe".into(), "{}".into())
+            .await
+            .expect("direct SDK probe");
+        assert!(direct.raw_json.contains("probe ran"));
+        assert_eq!(PROBE_INVOCATIONS.load(Ordering::SeqCst), 1);
+        PROBE_INVOCATIONS.store(0, Ordering::SeqCst);
 
         // Unique temp socket — never the default socket / CuaDriver.app daemon.
         let socket = format!(
@@ -1883,7 +1614,7 @@ mod gate_tests {
                 .as_nanos()
         );
         let socket_for_server = socket.clone();
-        let reg_for_server = registry.clone();
+        let reg_for_server = sdk.clone();
         let server = tokio::spawn(async move {
             let _ = run_serve(reg_for_server, &socket_for_server, None).await;
         });

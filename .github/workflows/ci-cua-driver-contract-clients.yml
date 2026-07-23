@@ -9,6 +9,8 @@ on:
       - "libs/cua-driver/python/**"
       - "libs/cua-driver/rust/Cargo.toml"
       - "libs/cua-driver/rust/Cargo.lock"
+      - "libs/cua-driver/rust/include/**"
+      - "libs/cua-driver/rust/tests/**"
       - "libs/cua-driver/rust/crates/cua-driver/**"
       - "libs/cua-driver/rust/crates/cua-driver-contract/**"
       - "libs/cua-driver/rust/crates/cua-driver-bindgen/**"
@@ -32,6 +34,8 @@ on:
       - "libs/cua-driver/python/**"
       - "libs/cua-driver/rust/Cargo.toml"
       - "libs/cua-driver/rust/Cargo.lock"
+      - "libs/cua-driver/rust/include/**"
+      - "libs/cua-driver/rust/tests/**"
       - "libs/cua-driver/rust/crates/cua-driver/**"
       - "libs/cua-driver/rust/crates/cua-driver-contract/**"
       - "libs/cua-driver/rust/crates/cua-driver-bindgen/**"
@@ -99,6 +103,12 @@ jobs:
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           workspaces: "libs/cua-driver/rust -> target"
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
+            libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -121,6 +131,10 @@ jobs:
       - name: Verify generated UniFFI bindings
         working-directory: libs/cua-driver
         run: node scripts/generate-uniffi-bindings.mjs --check
+
+      - name: Verify generated public C ABI header
+        working-directory: libs/cua-driver/rust
+        run: cargo run --locked -p cua-driver-bindgen --bin cua-driver-abi-header -- --check
 
       - name: Test contract crate
         working-directory: libs/cua-driver/rust
@@ -145,6 +159,29 @@ jobs:
         run: |
           npm --prefix typescript run build
           node scripts/stage-uniffi-library.mjs
+
+      - name: Verify stable C ABI symbols and external client
+        working-directory: libs/cua-driver/rust
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror \
+            -I include tests/c_abi_smoke.c \
+            -L target/release -lcua_driver_sdk \
+            -Wl,-rpath,'$ORIGIN/release' \
+            -o target/cua-driver-abi-smoke
+          LD_LIBRARY_PATH=target/release target/cua-driver-abi-smoke
+          nm -D --defined-only target/release/libcua_driver_sdk.so > /tmp/cua-driver-abi-symbols.txt
+          for symbol in \
+            cua_driver_abi_version_v1 \
+            cua_driver_abi_is_compatible_v1 \
+            cua_driver_buffer_free_v1 \
+            cua_driver_create_v1 \
+            cua_driver_destroy_v1 \
+            cua_driver_invoke_v1 \
+            cua_driver_shutdown_v1 \
+            cua_driver_operation_cancel_v1 \
+            cua_driver_operation_release_v1; do
+            grep -Eq "[[:space:]]${symbol}$" /tmp/cua-driver-abi-symbols.txt
+          done
 
       - name: Test Python UniFFI loader
         working-directory: libs/cua-driver/python
@@ -193,8 +230,18 @@ jobs:
           node --input-type=module -e \
             "const sdk = await import('@trycua/cua-driver'); const driver = sdk.CuaDriver.connect(undefined); console.log(driver.socketPath()); driver.uniffiDestroy(); const embedded = await import('@trycua/cua-driver/embedded'); if (embedded.EmbeddedCuaDriverHost !== sdk.EmbeddedCuaDriverHost) process.exit(1)"
 
-      - name: Check Python agent SDK example
-        run: python -m py_compile libs/cua-driver/examples/agent-sdks/claude_agent.py
+      - name: Install Python agent SDK example dependencies
+        working-directory: libs/cua-driver/examples/agent-sdks
+        run: python -m pip install -r requirements.txt
+
+      - name: Check Python agent SDK examples and fixture
+        working-directory: libs/cua-driver/examples/agent-sdks
+        run: |
+          python -m py_compile \
+            claude_agent.py codex_agent.py fixture_server.py \
+            native_driver.py native_tools.py test_fixture_server.py
+          python -m unittest test_fixture_server.py -v
+          python -c "import claude_agent_sdk, openai_codex, cua_driver"
 
       - name: Install agent SDK example dependencies
         working-directory: libs/cua-driver/examples/agent-sdks

@@ -1,8 +1,14 @@
 # Cua Driver integration surfaces: MCP/CLI and SDK bindings
 
-Status: accepted and implemented as an experimental imported-SDK vertical slice
+Status: superseded in part by RFC 2447
 
 Decision date: 2026-07-21
+
+> This document preserves the rationale for the 0.11.0 daemon-client SDK.
+> [RFC 2447](../../../rfcs/2447-cua-driver-native-core-and-mcp-adapter.md)
+> keeps MCP as the agent boundary but replaces the imported SDK topology with a
+> same-process runtime and makes MCP a downstream SDK consumer. Where this
+> document says the SDK is only a daemon client, RFC 2447 is authoritative.
 
 This document separates two Cua products that were previously discussed as if
 they were one: Cua as a tool used by an agent, and Cua as an API imported by an
@@ -184,8 +190,8 @@ already-running MCP server.
 
 The UniFFI surface adds:
 
-- one Rust implementation of daemon discovery, calls, error mapping, and result
-  normalization for Python and Node;
+- one same-process Rust desktop runtime, lifecycle implementation, error mapping,
+  and result normalization for Python and Node;
 - generated bindings for every one of the 14 published typed request records;
 - canonical typed session results generated from the same Rust records returned
   by the live handlers; and
@@ -194,12 +200,13 @@ The UniFFI surface adds:
 It does not add:
 
 - agent/runtime interoperability, because MCP already provides it;
-- an in-process GUI engine; or
 - automatic publication of every native OS/architecture artifact.
 
-The host application now calls Rust in process, but Rust deliberately delegates
-GUI execution to the daemon. A host can build a server around this library; it
-does not receive an embedded automation engine.
+`CuaDriver.create()` executes desktop behavior in the importing application and
+does not require a daemon. The socket-backed `connect()` constructor remains for
+external clients and permission identities that intentionally use the installed
+host. An application can build an MCP or HTTP server around either SDK mode;
+the transport remains downstream of the same public SDK contract.
 
 ## Compatibility and migration
 

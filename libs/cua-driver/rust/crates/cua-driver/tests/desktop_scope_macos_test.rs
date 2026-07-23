@@ -129,6 +129,48 @@ fn increment_center(snap: &serde_json::Value) -> Option<(i64, i64)> {
     Some(((x + w / 2.0) as i64, (y + h / 2.0) as i64))
 }
 
+fn element_center_labeled(snap: &serde_json::Value, label: &str) -> Option<(i64, i64)> {
+    let element = snap["elements"].as_array()?.iter().find(|element| {
+        element["label"]
+            .as_str()
+            .map(|candidate| candidate.contains(label))
+            .unwrap_or(false)
+    })?;
+    let frame = &element["frame"];
+    Some((
+        (frame["x"].as_f64()? + frame["w"].as_f64()? / 2.0) as i64,
+        (frame["y"].as_f64()? + frame["h"].as_f64()? / 2.0) as i64,
+    ))
+}
+
+/// The AppKit fixture exposes the scroll document as one tall AXTextArea.
+/// Its geometric center may be below the visible NSScrollView viewport (and
+/// under the Dock on compact CI displays), so target a point near its visible
+/// top edge instead of the document's off-screen center.
+fn visible_scroll_point(snap: &serde_json::Value, marker: &str) -> Option<(i64, i64)> {
+    let element = snap["elements"].as_array()?.iter().find(|element| {
+        element["label"]
+            .as_str()
+            .map(|candidate| candidate.contains(marker))
+            .unwrap_or(false)
+    })?;
+    let frame = &element["frame"];
+    Some((
+        (frame["x"].as_f64()? + frame["w"].as_f64()? / 2.0) as i64,
+        (frame["y"].as_f64()? + frame["h"].as_f64()?.min(60.0) / 2.0) as i64,
+    ))
+}
+
+fn marker_value(snap: &serde_json::Value, marker: &str) -> Option<u64> {
+    let tree = snap["tree_markdown"].as_str()?;
+    let idx = tree.find(marker)? + marker.len();
+    let digits: String = tree[idx..]
+        .chars()
+        .take_while(|character| character.is_ascii_digit())
+        .collect();
+    digits.parse().ok()
+}
+
 /// The current counter value parsed from the snapshot's `tree_markdown`
 /// (`counter=N`). The AppKit AXStaticText label doesn't propagate to
 /// `elements[].label`, so the value lives in the rendered tree text.
@@ -140,6 +182,18 @@ fn counter(snap: &serde_json::Value) -> Option<u64> {
         .take_while(|c| c.is_ascii_digit())
         .collect();
     digits.parse().ok()
+}
+
+fn start_scope(driver: &mut McpDriver, session: &str, capture_scope: &str) {
+    let started = driver.call(
+        "start_session",
+        serde_json::json!({"session": session, "capture_scope": capture_scope}),
+    );
+    assert!(
+        !started.is_error(),
+        "start_session capture_scope={capture_scope} failed: {}",
+        started.text()
+    );
 }
 
 /// Bring the harness process to the foreground. Desktop scope is the
@@ -245,6 +299,202 @@ fn desktop_scope_windowless_click_lands_on_control() {
             post > pre,
             "desktop click did not advance AppKit counter at ({cx},{cy}): {pre} -> {post}"
         );
+        Observation::delivered_with_fixture_state(Vec::new())
+    });
+}
+
+/// A desktop wheel must move the AppKit scroll view, not merely report that a
+/// CGEvent was posted.
+#[test]
+#[ignore]
+fn desktop_scope_windowless_scroll_lands_on_control() {
+    let cell_id = "macos-appkit-desktop-scroll-px-foreground";
+    let case = CaseSpec::delivered(
+        cell_id,
+        "appkit",
+        "appkit",
+        "scroll",
+        Targeting::Px,
+        Delivery::Foreground,
+        Scope::Desktop,
+        DriverRoute::MacosCgEventHid,
+        vec![OracleKind::FixtureState],
+    );
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named(cell_id)
+            .expect("start installed macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let window_session = format!("{cell_id}-window");
+        let desktop_session = format!("{cell_id}-desktop");
+        start_scope(&mut driver, &window_session, "window");
+        start_scope(&mut driver, &desktop_session, "desktop");
+        let (pid, wid) = launch(&mut driver).expect("required AppKit harness did not launch");
+
+        let mut snap = ax_snapshot(&mut driver, &window_session, pid, wid);
+        let deadline = Instant::now() + Duration::from_secs(8);
+        let (x, y) = loop {
+            if let Some(center) = visible_scroll_point(&snap, "SCROLL_TOP_MARKER_v1") {
+                break center;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "visible AppKit scroll target was not exposed in the AX tree"
+            );
+            std::thread::sleep(Duration::from_millis(300));
+            snap = ax_snapshot(&mut driver, &window_session, pid, wid);
+        };
+        let before = marker_value(&snap, "scroll_offset=").unwrap_or(0);
+
+        activate_pid(pid);
+        driver.start_behavior_recording();
+        let response = driver.call(
+            "scroll",
+            serde_json::json!({
+                "session": desktop_session, "scope": "desktop", "x": x, "y": y,
+                "direction": "down", "by": "line", "amount": 5
+            }),
+        );
+        assert!(
+            !response.is_error(),
+            "desktop scroll failed: {}; raw={}",
+            response.text(),
+            response.raw
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let after = loop {
+            let state = ax_snapshot(&mut driver, &window_session, pid, wid);
+            let offset = marker_value(&state, "scroll_offset=").unwrap_or(before);
+            if offset > before || Instant::now() >= deadline {
+                break offset;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        assert!(
+            after > before,
+            "desktop scroll reported success but AppKit scroll_offset did not change: \
+             {before} -> {after}; response={}; raw={}",
+            response.text(),
+            response.raw
+        );
+        Observation::delivered_with_fixture_state(Vec::new())
+    });
+}
+
+/// A desktop chord must reach the foreground app and release every modifier.
+/// The immediate ordinary click catches macOS control-click leakage; the exact
+/// unmodified F5 binding catches any remaining Ctrl/Shift state.
+#[test]
+#[ignore]
+fn desktop_scope_hotkey_releases_modifiers() {
+    let cell_id = "macos-appkit-desktop-hotkey-px-foreground";
+    let case = CaseSpec::delivered(
+        cell_id,
+        "appkit",
+        "appkit",
+        "hotkey",
+        Targeting::Px,
+        Delivery::Foreground,
+        Scope::Desktop,
+        DriverRoute::MacosCgEventHid,
+        vec![OracleKind::FixtureState],
+    );
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named(cell_id)
+            .expect("start installed macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let window_session = format!("{cell_id}-window");
+        let desktop_session = format!("{cell_id}-desktop");
+        start_scope(&mut driver, &window_session, "window");
+        start_scope(&mut driver, &desktop_session, "desktop");
+        let (pid, wid) = launch(&mut driver).expect("required AppKit harness did not launch");
+
+        let mut snap = ax_snapshot(&mut driver, &window_session, pid, wid);
+        let deadline = Instant::now() + Duration::from_secs(8);
+        let (click_x, click_y) = loop {
+            if let Some(center) = element_center_labeled(&snap, "Click target") {
+                break center;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "AppKit click target was not exposed in the AX tree"
+            );
+            std::thread::sleep(Duration::from_millis(300));
+            snap = ax_snapshot(&mut driver, &window_session, pid, wid);
+        };
+
+        activate_pid(pid);
+        driver.start_behavior_recording();
+        let hotkey = driver.call(
+            "hotkey",
+            serde_json::json!({
+                "session": desktop_session, "scope": "desktop",
+                "keys": ["ctrl", "shift", "k"]
+            }),
+        );
+        assert!(
+            !hotkey.is_error(),
+            "desktop hotkey failed: {}",
+            hotkey.text()
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            snap = ax_snapshot(&mut driver, &window_session, pid, wid);
+            if marker_value(&snap, "accel_fired=").unwrap_or(0) >= 1 {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "AppKit did not observe ctrl+shift+k: {}",
+                hotkey.text()
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        let click = driver.call(
+            "click",
+            serde_json::json!({
+                "session": desktop_session, "scope": "desktop",
+                "x": click_x, "y": click_y
+            }),
+        );
+        assert!(
+            !click.is_error(),
+            "post-hotkey click failed: {}",
+            click.text()
+        );
+        std::thread::sleep(Duration::from_millis(300));
+        snap = ax_snapshot(&mut driver, &window_session, pid, wid);
+        let tree = snap["tree_markdown"].as_str().unwrap_or_default();
+        assert!(
+            tree.contains("last_action=click") && !tree.contains("last_action=right_click"),
+            "desktop hotkey leaked modifiers into the next ordinary click: {tree}"
+        );
+
+        let plain_key = driver.call(
+            "press_key",
+            serde_json::json!({
+                "session": desktop_session, "scope": "desktop", "key": "f5"
+            }),
+        );
+        assert!(
+            !plain_key.is_error(),
+            "post-hotkey plain F5 failed: {}",
+            plain_key.text()
+        );
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            snap = ax_snapshot(&mut driver, &window_session, pid, wid);
+            if marker_value(&snap, "accel_fired=").unwrap_or(0) >= 2 {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "plain F5 did not match after hotkey; modifier state may still be latched"
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
         Observation::delivered_with_fixture_state(Vec::new())
     });
 }

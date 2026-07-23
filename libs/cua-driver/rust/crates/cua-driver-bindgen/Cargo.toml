@@ -11,5 +11,10 @@ publish = false
 name = "cua-driver-bindgen"
 path = "src/main.rs"
 
+[[bin]]
+name = "cua-driver-abi-header"
+path = "src/abi_header.rs"
+
 [dependencies]
 uniffi = { workspace = true, features = ["cli"] }
+cbindgen = "=0.29.4"

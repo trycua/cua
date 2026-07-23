@@ -1,4 +1,4 @@
-# Embedding cua-driver in your agent harness without introducing new permissions
+# Embedding cua-driver in your application without introducing new permissions
 
 This guide is for teams shipping a macOS app (an "agent harness") that wants
 cua-driver's background computer-use and agent-cursor overlay **inside their
@@ -6,7 +6,7 @@ own app**, without shipping a second app bundle and without their users ever
 seeing a second macOS permission prompt. Your app requests Accessibility and
 Screen Recording once; the embedded driver inherits those grants.
 
-A working reference host lives in the cua repo at
+A working daemon-host reference lives in the cua repo at
 `libs/cua-driver/rust/examples/embedded-host-macos/`
 (https://github.com/trycua/cua). This doc ships standalone in the skill
 pack, so the path is given rather than a relative link.
@@ -40,7 +40,30 @@ non-sandboxed host, which is typical for agent harnesses; a sandboxed host
 spawning a non-sandboxed helper raises separate App Sandbox questions that
 embedded mode does not address.
 
-## Launching in embedded mode
+## Preferred application SDK: same-process runtime
+
+Python and TypeScript applications should normally import the packaged SDK and
+create `CuaDriver` directly. This path does not start an executable or open a
+socket, and TCC checks execute as the importing application:
+
+```ts
+import { CuaDriver } from '@trycua/cua-driver';
+
+const driver = CuaDriver.create(undefined);
+try {
+  const metadata = await driver.metadata();
+  // Invoke typed driver operations here.
+} finally {
+  await driver.shutdown();
+  driver.uniffiDestroy();
+}
+```
+
+Use the daemon-backed host below only when the application must also provide a
+stable MCP endpoint to an external agent, coordinate external clients, or keep
+the automation runtime isolated from the application process.
+
+## Launching the daemon-backed host
 
 ```sh
 # env var form — set by the host on the child process
@@ -99,7 +122,7 @@ selects unrestricted mode and records the acknowledgement. The older
 `autonomous` mode name remains accepted as an alias for `bounded` during
 migration.
 
-### Node and Electron hosts
+### Node and Electron daemon hosts
 
 Use the embedded host in `@trycua/cua-driver` instead of implementing process
 and socket management in every host. It starts a private daemon directly, waits

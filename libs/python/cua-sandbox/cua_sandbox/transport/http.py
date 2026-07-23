@@ -7,13 +7,16 @@ and returns an SSE stream with a single ``data: {...}`` frame containing the res
 from __future__ import annotations
 
 import asyncio
-import base64
-import json
 import logging
 from typing import Any, Dict, Optional
 
 import httpx
 from cua_sandbox.transport.base import Transport
+from cua_sandbox.transport.computer_server import (
+    decode_screenshot_response,
+    normalize_screen_size,
+    parse_command_response,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -112,55 +115,7 @@ class HTTPTransport(Transport):
         resp.raise_for_status()
         return self._parse_sse(resp.text)
 
-    @staticmethod
-    def _parse_sse(text: str) -> Dict[str, Any]:
-        """Extract the first ``data: {...}`` frame from an SSE response.
-
-        The server returns one of two failure shapes when ``success`` is
-        false:
-
-        1. Generic handler error — ``{"success": false, "error": "<msg>"}``
-        2. Shell-command shape — ``{"success": false, "stdout": "...",
-           "stderr": "...", "return_code": <n>}`` (no ``error`` key)
-
-        The old code stringified ``payload.get('error', 'unknown')`` for
-        both shapes, which turned every shell-command failure into
-        ``Remote error: unknown`` and hid the actual ``stderr`` + exit
-        code.  That masking made ``Command timed out after 10s``,
-        ``UI hierchary dump failed``, and similar concrete failures
-        indistinguishable from a genuine internal error — the common
-        pattern where ``await sb.shell.run(cmd)`` returned non-zero
-        became a debugging dead end.
-
-        This rewrite preserves the ``error``-key path verbatim and falls
-        back to a composite ``return_code=...`` / ``stderr=...`` /
-        ``stdout=...`` string when no ``error`` key is present.
-        """
-        for line in text.splitlines():
-            if line.startswith("data: "):
-                payload = json.loads(line[6:])
-                if isinstance(payload, dict) and not payload.get("success", True):
-                    if "error" in payload:
-                        raise RuntimeError(f"Remote error: {payload['error']}")
-                    # Shell-command shape: surface return_code/stderr/stdout.
-                    parts = []
-                    rc = payload.get("return_code")
-                    if rc is not None:
-                        parts.append(f"return_code={rc}")
-                    stderr = (payload.get("stderr") or "").strip()
-                    if stderr:
-                        parts.append(f"stderr={stderr!r}")
-                    stdout = (payload.get("stdout") or "").strip()
-                    if stdout and not stderr:
-                        # Only surface stdout when there's nothing on
-                        # stderr — saves bloating the message for noisy
-                        # successful-output commands that happened to
-                        # return non-zero.
-                        parts.append(f"stdout={stdout!r}")
-                    detail = ", ".join(parts) or "no detail"
-                    raise RuntimeError(f"Remote error: {detail}")
-                return payload
-        raise RuntimeError(f"No SSE data frame in response: {text[:200]}")
+    _parse_sse = staticmethod(parse_command_response)
 
     async def send(self, action: str, **params: Any) -> Any:
         result = await self._cmd(action, params if params else None)
@@ -169,25 +124,11 @@ class HTTPTransport(Transport):
     async def screenshot(self, format: str = "png", quality: int = 95) -> bytes:
         params = None if format == "png" else {"format": format, "quality": quality}
         result = await self._cmd("screenshot", params)
-        # computer-server returns {"success": true, "image_data": "..."}
-        b64 = result.get("image_data", result.get("base64_image", result.get("result", "")))
-        if isinstance(b64, dict):
-            b64 = b64.get("image_data", b64.get("base64_image", b64.get("base64", "")))
-        return base64.b64decode(b64)
+        return decode_screenshot_response(result)
 
     async def get_screen_size(self) -> Dict[str, int]:
         result = await self._cmd("get_screen_size")
-        # Flatten nested responses and normalize key names
-        data = result
-        if isinstance(data, dict):
-            # Unwrap nested: {"result": {...}}, {"size": {...}}
-            data = data.get("size", data.get("result", data))
-        if isinstance(data, dict):
-            w = data.get("width") or data.get("screen_width") or data.get("w")
-            h = data.get("height") or data.get("screen_height") or data.get("h")
-            if w is not None and h is not None:
-                return {"width": int(w), "height": int(h)}
-        raise KeyError(f"Cannot extract screen size from response: {result}")
+        return normalize_screen_size(result)
 
     # ── PTY over dedicated /pty_* routes ────────────────────────────────
     async def pty_create(

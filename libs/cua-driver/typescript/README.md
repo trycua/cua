@@ -58,7 +58,8 @@ try {
 ```
 
 SDK operations are asynchronous and require a native library matching the host
-OS and architecture. Desktop calls return a typed `ToolResult` with text,
+OS and architecture. The macOS native package requires macOS 13 or newer.
+Desktop calls return a typed `ToolResult` with text,
 images, verification/error metadata, and `structuredJson` / `rawJson` for
 platform-extensible results. Session lifecycle calls return dedicated generated
 records.

@@ -355,9 +355,13 @@ jobs:
             rust-cua-driver-rs-darwin-universal-
       - name: Build arm64
         working-directory: libs/cua-driver/rust
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "13.0"
         run: cargo build --locked -p cua-driver -p cua-driver-sdk --release --target aarch64-apple-darwin
       - name: Build x86_64
         working-directory: libs/cua-driver/rust
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "13.0"
         run: cargo build --locked -p cua-driver -p cua-driver-sdk --release --target x86_64-apple-darwin
       - name: Build Electron-compatible Node runtimes
         working-directory: libs/cua-driver
@@ -387,6 +391,12 @@ jobs:
           lipo -info release/universal/cua_driver_node_runtime.node
           test "$(otool -D release/universal/libcua_driver_sdk.dylib | tail -n 1)" = \
             '@rpath/libcua_driver_sdk.dylib'
+          otool -l release/universal/libcua_driver_sdk.dylib | \
+            grep -A2 LC_RPATH | grep -Fq 'path /usr/lib/swift'
+          otool -l release/universal/libcua_driver_sdk.dylib | \
+            grep -A2 LC_RPATH | grep -Fq 'path @loader_path'
+          test "$(otool -l release/universal/libcua_driver_sdk.dylib | \
+            awk '/LC_BUILD_VERSION/{seen=1} seen && $1 == "minos" {print $2; exit}')" = '13.0'
       - name: Codesign universal binary (hardened runtime)
         if: env.DO_NOTARIZE == 'true'
         working-directory: libs/cua-driver/rust

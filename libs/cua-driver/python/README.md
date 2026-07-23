@@ -130,7 +130,7 @@ exit_code = run_cua_driver(["mcp"])
 
 | Platform | Architecture | Status |
 | --- | --- | --- |
-| macOS | Universal (ARM64 + x86_64) | Supported |
+| macOS 13+ | Universal (ARM64 + x86_64) | Supported |
 | Linux | x86_64 | Supported |
 | Windows | x86_64 | Supported |
 | Windows | ARM64 | Supported |

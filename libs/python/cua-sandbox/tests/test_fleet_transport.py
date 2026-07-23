@@ -2,8 +2,8 @@ import base64
 import json
 
 import pytest
-from cyclops_sdk import HttpResponse, Sandbox
 from cua_sandbox.transport.fleet import FleetTransport
+from cyclops_sdk import HttpResponse, Sandbox
 
 
 class FakeSDK:

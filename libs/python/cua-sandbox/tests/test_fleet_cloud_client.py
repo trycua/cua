@@ -9,7 +9,9 @@ async def test_list_pools_enumerates_namespaces(monkeypatch):
     class Http:
         async def execute(self, request):
             assert request.url.endswith("/api/namespaces")
-            return type("Response", (), {"status": 200, "body": b'{"items":[{"name":"one"},"two"]}'})()
+            return type(
+                "Response", (), {"status": 200, "body": b'{"items":[{"name":"one"},"two"]}'}
+            )()
 
     class SDK:
         async def list_pools(self, namespace):

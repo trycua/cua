@@ -25,7 +25,9 @@ class CyclopsHttpClient(HttpClient):
             raise HttpError.Transport(str(error)) from error
         return HttpResponse(
             status=response.status_code,
-            headers=[HttpHeader(name=name, value=value) for name, value in response.headers.multi_items()],
+            headers=[
+                HttpHeader(name=name, value=value) for name, value in response.headers.multi_items()
+            ],
             body=response.content,
         )
 

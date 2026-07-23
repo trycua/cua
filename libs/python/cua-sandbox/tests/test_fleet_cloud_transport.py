@@ -1,7 +1,7 @@
 import pytest
-from cyclops_sdk import Sandbox
 from cua_sandbox import Image
 from cua_sandbox.transport.fleet_cloud import FleetCloudTransport
+from cyclops_sdk import Sandbox
 
 
 def test_registry_image_becomes_typed_pool_request():
@@ -21,7 +21,9 @@ def test_registry_image_becomes_typed_pool_request():
     ]
 
 
-@pytest.mark.parametrize("image", [Image.linux(), Image.from_registry("example:latest").apt_install("curl")])
+@pytest.mark.parametrize(
+    "image", [Image.linux(), Image.from_registry("example:latest").apt_install("curl")]
+)
 def test_rejects_unsupported_images(image):
     with pytest.raises(ValueError):
         FleetCloudTransport._validate_image(image)
@@ -52,7 +54,9 @@ async def test_cleanup_stops_after_claim_failure():
 async def test_forward_tunnel_uses_named_service_url():
     transport = FleetCloudTransport(image=Image.from_registry("example:latest"), name="demo")
     transport._provisioned = True
-    transport._bound = Sandbox(namespace="demo", claim="claim", name="sandbox", services=["port-3000"])
+    transport._bound = Sandbox(
+        namespace="demo", claim="claim", name="sandbox", services=["port-3000"]
+    )
 
     class Client:
         def service_url(self, sandbox, service):

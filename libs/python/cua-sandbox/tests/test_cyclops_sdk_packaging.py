@@ -1,9 +1,8 @@
 import importlib.util
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BUILD_HOOK_PATH = PROJECT_ROOT / "hatch_build.py"

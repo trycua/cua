@@ -8,6 +8,15 @@ import logging
 from typing import TYPE_CHECKING, Any, Optional
 from urllib.parse import urlparse
 
+from cua_sandbox._config import (
+    get_client_id,
+    get_client_secret,
+    get_fleet_base_url,
+    get_token_url,
+)
+from cua_sandbox.image import Image
+from cua_sandbox.transport.cyclops_http_client import CyclopsHttpClient
+from cua_sandbox.transport.fleet import FleetTransport
 from cyclops_sdk import (
     ClaimSpec,
     CreateClaimRequest,
@@ -20,18 +29,9 @@ from cyclops_sdk import (
     PoolTemplate,
     PreservedJson,
     SandboxService,
-    ServiceProtocol,
     SandboxTemplateRef,
+    ServiceProtocol,
 )
-from cua_sandbox._config import (
-    get_client_id,
-    get_client_secret,
-    get_fleet_base_url,
-    get_token_url,
-)
-from cua_sandbox.image import Image
-from cua_sandbox.transport.cyclops_http_client import CyclopsHttpClient
-from cua_sandbox.transport.fleet import FleetTransport
 
 if TYPE_CHECKING:
     from cua_sandbox.interfaces.tunnel import TunnelInfo
@@ -83,7 +83,9 @@ class _FleetClient:
                     return current_pool
                 break
             if asyncio.get_running_loop().time() >= deadline:
-                raise TimeoutError(f"Timed out waiting for Fleet pool {pool.metadata.name!r} to warm up")
+                raise TimeoutError(
+                    f"Timed out waiting for Fleet pool {pool.metadata.name!r} to warm up"
+                )
             await asyncio.sleep(poll_interval)
 
     async def wait_claim(self, claim: Any) -> Any:
@@ -95,7 +97,9 @@ class _FleetClient:
     async def delete_pool(self, pool: Any) -> None:
         await self._client.delete_pool(pool)
 
-    async def service_request(self, sandbox: Any, service: str, path: str, request: HttpRequest) -> Any:
+    async def service_request(
+        self, sandbox: Any, service: str, path: str, request: HttpRequest
+    ) -> Any:
         return await self._client.service_request(sandbox, service, path, request)
 
     async def get_pool(self, name: str) -> Any:
@@ -120,7 +124,11 @@ class _FleetClient:
         payload = json.loads(response.body)
         items = payload if isinstance(payload, list) else payload.get("items", [])
         namespaces = [
-            item if isinstance(item, str) else item.get("name") or item.get("metadata", {}).get("name")
+            (
+                item
+                if isinstance(item, str)
+                else item.get("name") or item.get("metadata", {}).get("name")
+            )
             for item in items
         ]
         pools = await asyncio.gather(
@@ -142,12 +150,16 @@ class _FleetClient:
                 sandbox,
                 service,
                 "/status",
-                HttpRequest(method="GET", url="https://service.invalid/status", headers=[], body=None),
+                HttpRequest(
+                    method="GET", url="https://service.invalid/status", headers=[], body=None
+                ),
             )
             if 200 <= response.status < 500:
                 return
             if asyncio.get_running_loop().time() >= deadline:
-                raise TimeoutError(f"Fleet service {service!r} did not become ready within {timeout} seconds")
+                raise TimeoutError(
+                    f"Fleet service {service!r} did not become ready within {timeout} seconds"
+                )
             await asyncio.sleep(2)
 
     def service_url(self, sandbox: Any, service: str) -> str:
@@ -211,7 +223,9 @@ class FleetCloudTransport(FleetTransport):
                             CreateClaimRequest(
                                 pool=self._pool,
                                 spec=ClaimSpec(
-                                    sandbox_template_ref=SandboxTemplateRef(name=self._pool.metadata.name),
+                                    sandbox_template_ref=SandboxTemplateRef(
+                                        name=self._pool.metadata.name
+                                    ),
                                     warmpool=None,
                                     bind_deadline=600,
                                     lifecycle=None,
@@ -225,11 +239,17 @@ class FleetCloudTransport(FleetTransport):
                     if self._owns_resources:
                         await self._cleanup_resources()
                 except BaseException as cleanup_error:
-                    logger.warning("Failed to clean up Fleet sandbox %r: %s", self._name, cleanup_error)
+                    logger.warning(
+                        "Failed to clean up Fleet sandbox %r: %s", self._name, cleanup_error
+                    )
                     raise provisioning_error from cleanup_error
                 raise
             FleetTransport.__init__(
-                self, sdk=self._sdk, bound=bound, service_name="server", timeout=self._request_timeout
+                self,
+                sdk=self._sdk,
+                bound=bound,
+                service_name="server",
+                timeout=self._request_timeout,
             )
             self._provisioned = True
         await FleetTransport.connect(self)
@@ -248,7 +268,10 @@ class FleetCloudTransport(FleetTransport):
         endpoint = self._sdk.service_url(self._bound, service)
         parsed = urlparse(endpoint)
         return TunnelInfo(
-            parsed.hostname or "", parsed.port or (443 if parsed.scheme == "https" else 80), sandbox_port, url=endpoint
+            parsed.hostname or "",
+            parsed.port or (443 if parsed.scheme == "https" else 80),
+            sandbox_port,
+            url=endpoint,
         )
 
     async def delete_vm(self) -> None:
@@ -313,15 +336,9 @@ class FleetCloudTransport(FleetTransport):
 
     def _pool_request(self) -> CreatePoolRequest:
         assert self._image is not None
-        services = [
-            SandboxService(
-                name="server", target_port=8000, protocol=ServiceProtocol.TCP
-            )
-        ]
+        services = [SandboxService(name="server", target_port=8000, protocol=ServiceProtocol.TCP)]
         services.extend(
-            SandboxService(
-                name=f"port-{port}", target_port=port, protocol=ServiceProtocol.TCP
-            )
+            SandboxService(name=f"port-{port}", target_port=port, protocol=ServiceProtocol.TCP)
             for port in self._image._ports
             if port != 8000
         )
@@ -341,7 +358,9 @@ class FleetCloudTransport(FleetTransport):
                     cpu_cores=self._cpu,
                     memory=None if self._memory_mb is None else f"{self._memory_mb}Mi",
                     firmware=None,
-                    probes=PreservedJson.from_json(json.dumps({"readinessProbe": {"tcpSocket": {"port": 8000}}})),
+                    probes=PreservedJson.from_json(
+                        json.dumps({"readinessProbe": {"tcpSocket": {"port": 8000}}})
+                    ),
                     oidc=None,
                 ),
                 autoscaling=None,
@@ -356,5 +375,13 @@ class FleetCloudTransport(FleetTransport):
     def _validate_image(image: Image) -> None:
         if not image._registry:
             raise ValueError("Fleet cloud sandboxes require Image.from_registry(...)")
-        if image._layers or image._env or image._files or image._snapshot_source or image._disk_path:
-            raise ValueError("Fleet cloud supports registry images with optional exposed services only")
+        if (
+            image._layers
+            or image._env
+            or image._files
+            or image._snapshot_source
+            or image._disk_path
+        ):
+            raise ValueError(
+                "Fleet cloud supports registry images with optional exposed services only"
+            )

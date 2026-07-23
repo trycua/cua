@@ -7,13 +7,13 @@ import json
 from typing import Any, Dict, Optional
 
 import httpx
-from cyclops_sdk import HttpHeader, HttpRequest
 from cua_sandbox.transport.base import Transport
 from cua_sandbox.transport.computer_server import (
     decode_screenshot_response,
     normalize_screen_size,
     parse_command_response,
 )
+from cyclops_sdk import HttpHeader, HttpRequest
 
 _CMD_MAX_RETRIES = 3
 _CMD_RETRY_BACKOFF_S = 0.5
@@ -48,12 +48,16 @@ class FleetTransport(Transport):
     async def _request(self, method: str, path: str, *, json_body: Any = None) -> httpx.Response:
         assert self._connected, "Transport not connected"
         body = None if json_body is None else json.dumps(json_body).encode()
-        headers = [] if body is None else [HttpHeader(name="content-type", value="application/json")]
+        headers = (
+            [] if body is None else [HttpHeader(name="content-type", value="application/json")]
+        )
         result = await self._sdk.service_request(
             self._bound,
             self._service_name,
             path,
-            HttpRequest(method=method, url=f"https://service.invalid{path}", headers=headers, body=body),
+            HttpRequest(
+                method=method, url=f"https://service.invalid{path}", headers=headers, body=body
+            ),
         )
         request = httpx.Request(method, f"https://service.invalid{path}")
         return httpx.Response(

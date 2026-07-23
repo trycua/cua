@@ -5,6 +5,7 @@
 
 ### Bug Fixes
 
+* **cua-driver:** tolerate fileno-less Python stdio ([#2482](https://github.com/trycua/cua/issues/2482)) ([d041f1a](https://github.com/trycua/cua/commit/d041f1a580d413bbe5da6645fd58b9088b2cdd4a))
 * **cua-driver:** trust native macOS sentinel focus ([#2481](https://github.com/trycua/cua/issues/2481)) ([6c2bbcc](https://github.com/trycua/cua/commit/6c2bbccfe5ad6690ef0961c492b34a3493354e84))
 
 ## [0.12.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.0...cua-driver-rs-v0.12.1) (2026-07-23)

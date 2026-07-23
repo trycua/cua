@@ -1105,6 +1105,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+driver = [
+    { name = "cua-driver" },
+]
 linux = [
     { name = "python-xlib" },
 ]
@@ -1125,6 +1128,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.9.1" },
     { name = "cua-auto", editable = "libs/python/cua-auto" },
     { name = "cua-core", editable = "libs/python/core" },
+    { name = "cua-driver", marker = "extra == 'driver'", specifier = ">=0.12.2,<0.13.0" },
     { name = "fastapi", specifier = ">=0.111.0" },
     { name = "fastmcp", specifier = ">=3.2.0,<3.3.0" },
     { name = "grpcio", specifier = "==1.78.0" },
@@ -1150,7 +1154,7 @@ requires-dist = [
     { name = "vncdotool", marker = "extra == 'vnc'", specifier = ">=1.2.0" },
     { name = "websockets", specifier = ">=12.0" },
 ]
-provides-extras = ["macos", "linux", "windows", "vnc"]
+provides-extras = ["macos", "linux", "windows", "vnc", "driver"]
 
 [[package]]
 name = "cua-core"
@@ -1191,6 +1195,18 @@ provides-extras = ["otel", "telemetry"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.3.5" }]
+
+[[package]]
+name = "cua-driver"
+version = "0.12.2"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1f/9a/b77097f4dd4ee0f0a6a92ea9fb9bd7acabdeb134fe10a76440ebe3cccb8e/cua_driver-0.12.2-py3-none-macosx_13_0_universal2.whl", hash = "sha256:be45a102f92031b424e84dbfeba7afa3fcc6cd957bee0276f0e3a26f2d3efc58", size = 32083206, upload-time = "2026-07-23T05:33:11.238Z" },
+    { url = "https://files.pythonhosted.org/packages/32/c5/65facce8ae822e9c756a0aa4339496f88bb2a708ce7b40786b4da8673797/cua_driver-0.12.2-py3-none-manylinux_2_31_aarch64.whl", hash = "sha256:dc494710c3cf13139d715f3c117be46fabf6a388afdad71cb9a4f08ee8b2b4e5", size = 22983041, upload-time = "2026-07-23T05:33:13.654Z" },
+    { url = "https://files.pythonhosted.org/packages/2b/34/6f4ba52bbc23f114546987c7e59851769af334e6e70975a3616f5c82e017/cua_driver-0.12.2-py3-none-manylinux_2_31_x86_64.whl", hash = "sha256:ce58c405f677d73f34f60c5e5f622a4426225517c15e55094f145b1f1e47a7db", size = 22840183, upload-time = "2026-07-23T05:33:16.195Z" },
+    { url = "https://files.pythonhosted.org/packages/2b/9a/f9280da9bbdad5e7596e1ab7e77bcb8f18efe71ee2d33cfe3aa278cfa57a/cua_driver-0.12.2-py3-none-win_amd64.whl", hash = "sha256:f1b5f05174720fd63a8797ab34d4227f1169a59ef1e04c54d1db2596a8e10f55", size = 21756824, upload-time = "2026-07-23T05:33:18.864Z" },
+    { url = "https://files.pythonhosted.org/packages/35/e5/98707a7d45744510c863417d2b859aaab9d35e6bc18e6e4660e52ab2cdee/cua_driver-0.12.2-py3-none-win_arm64.whl", hash = "sha256:69ce4c5c54c54a70e3fb7e8baeb8b476cc151277a6ba6dab0eda052faf2918ff", size = 19943506, upload-time = "2026-07-23T05:33:21.521Z" },
+]
 
 [[package]]
 name = "cua-mcp-server"

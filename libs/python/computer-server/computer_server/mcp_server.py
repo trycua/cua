@@ -21,9 +21,6 @@ from fastmcp.utilities.types import Image
 logger = logging.getLogger(__name__)
 
 
-# Lazy handler initialization to avoid crashes during import
-_handlers = None
-
 # Resolution scaling configuration
 _scale_x: float = 1.0
 _scale_y: float = 1.0
@@ -34,13 +31,11 @@ _actual_height: Optional[int] = None
 
 
 def _get_handlers():
-    """Lazily initialize handlers on first use."""
-    global _handlers
-    if _handlers is None:
-        from .handlers.factory import HandlerFactory
+    """Lazily initialize the handler set shared with the HTTP server."""
 
-        _handlers = HandlerFactory.create_handlers()
-    return _handlers
+    from .handlers.factory import HandlerFactory
+
+    return HandlerFactory.get_handlers()
 
 
 async def _detect_actual_resolution_async() -> Tuple[int, int]:
@@ -224,6 +219,60 @@ def create_mcp_server() -> FastMCP:
             scaled_x, scaled_y = _scale_to_target(int(result["x"]), int(result["y"]))
             return {"x": scaled_x, "y": scaled_y}
         return result
+
+    @mcp.tool
+    async def computer_get_desktop_state(
+        screenshot_out_file: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Capture the whole desktop through the active Cua Driver session.
+
+        This tool is available only with ``CUA_BACKEND=cua-driver``. In an
+        ``auto`` session, explicitly escalate the capture scope only after the
+        window-focused ladder is exhausted.
+        """
+
+        _, automation_handler, _, _, _, _ = _get_handlers()
+        capture = getattr(automation_handler, "get_desktop_state", None)
+        if capture is None:
+            return {
+                "success": False,
+                "error": "computer_get_desktop_state requires the cua-driver backend",
+            }
+        return await capture(screenshot_out_file=screenshot_out_file)
+
+    @mcp.tool
+    async def computer_get_capture_scope_state() -> Dict[str, Any]:
+        """Return the active Cua Driver session's capture-scope policy."""
+
+        _, automation_handler, _, _, _, _ = _get_handlers()
+        state = getattr(automation_handler, "get_capture_scope_state", None)
+        if state is None:
+            return {
+                "success": False,
+                "error": "capture-scope sessions require the cua-driver backend",
+            }
+        return await state()
+
+    @mcp.tool
+    async def computer_escalate_capture_scope(
+        reason: str, detail: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Unlock desktop scope for an ``auto`` session after ladder exhaustion.
+
+        Accepted reasons are ``ax_tree_pixel_mismatch``,
+        ``background_delivery_failed``, ``foreground_ineffective``,
+        ``no_window_target``, and ``other``. Strict ``window`` sessions refuse
+        escalation.
+        """
+
+        _, automation_handler, _, _, _, _ = _get_handlers()
+        escalate = getattr(automation_handler, "escalate_capture_scope", None)
+        if escalate is None:
+            return {
+                "success": False,
+                "error": "capture-scope sessions require the cua-driver backend",
+            }
+        return await escalate(reason=reason, detail=detail)
 
     @mcp.tool
     async def computer_click(x: int, y: int, button: str = "left") -> Dict[str, Any]:
@@ -834,7 +883,14 @@ def run_mcp_server(
     )
 
     mcp = create_mcp_server()
-    mcp.run()
+    try:
+        mcp.run()
+    finally:
+        import asyncio
+
+        from .handlers.factory import HandlerFactory
+
+        asyncio.run(HandlerFactory.close_handlers())
 
 
 if __name__ == "__main__":

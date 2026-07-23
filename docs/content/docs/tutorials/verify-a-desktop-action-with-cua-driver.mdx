@@ -1,0 +1,89 @@
+---
+title: 'Verify a desktop action with Cua Driver'
+description: 'Build a deterministic perceive, act, and verify loop in Python or TypeScript.'
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+In this tutorial, you will capture the desktop, enter a unique value in a local
+browser fixture, and prove that the page received it. The proof comes from a
+loopback state endpoint, not from trusting the action response.
+
+## Get the example
+
+Clone Cua and enter the executable example directory:
+
+```bash
+git clone https://github.com/trycua/cua.git
+cd cua/libs/cua-driver/examples/agent-sdks
+```
+
+The fixture listens only on `127.0.0.1`. Start it in one terminal:
+
+```bash
+python3 fixture_server.py
+```
+
+Your browser opens a page containing one autofocus input. Keep that window
+focused. On macOS, grant Screen Recording and Accessibility permission to the
+Python or Node process that imports Cua Driver.
+
+## Run the native SDK loop
+
+<Tabs groupId="language" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+```bash
+python3.12 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python native_driver.py
+```
+
+The complete executable is
+`libs/cua-driver/examples/agent-sdks/native_driver.py`.
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```bash
+npm install
+npm run native
+```
+
+The complete executable is
+`libs/cua-driver/examples/agent-sdks/native_driver.ts`.
+
+  </Tab>
+</Tabs>
+
+The program performs four observable steps:
+
+1. `CuaDriver.create()` loads the Rust runtime in the importing process.
+2. `get_desktop_state` returns the initial whole-desktop image.
+3. `type_text` and `press_key` submit a randomly generated value.
+4. The program polls the fixture's `/state` endpoint and captures the desktop
+   again only after the exact value appears.
+
+Successful output resembles:
+
+```text
+perceived desktop: image/png
+verified submitted value: cua-2ca7d7cc81
+```
+
+## See how uncertain actions are handled
+
+An input action can reach the OS even if the caller times out before receiving
+the response. The examples catch that condition but do not repeat the action.
+They check the independent fixture first. If the value is present, the
+postcondition resolves the unknown response; if it is absent, the run fails
+without silently replaying a mutation.
+
+## Shut down the fixture
+
+Press `Ctrl+C` in the fixture terminal. The SDK examples already end their
+session in `finally` and await runtime shutdown.
+
+Next, connect the same driver to
+[Claude Agent SDK](/how-to-guides/driver/use-claude-agent-sdk) or
+[Codex SDK](/how-to-guides/driver/use-codex-sdk).

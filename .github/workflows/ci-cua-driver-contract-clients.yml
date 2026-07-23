@@ -230,8 +230,18 @@ jobs:
           node --input-type=module -e \
             "const sdk = await import('@trycua/cua-driver'); const driver = sdk.CuaDriver.connect(undefined); console.log(driver.socketPath()); driver.uniffiDestroy(); const embedded = await import('@trycua/cua-driver/embedded'); if (embedded.EmbeddedCuaDriverHost !== sdk.EmbeddedCuaDriverHost) process.exit(1)"
 
-      - name: Check Python agent SDK example
-        run: python -m py_compile libs/cua-driver/examples/agent-sdks/claude_agent.py
+      - name: Install Python agent SDK example dependencies
+        working-directory: libs/cua-driver/examples/agent-sdks
+        run: python -m pip install -r requirements.txt
+
+      - name: Check Python agent SDK examples and fixture
+        working-directory: libs/cua-driver/examples/agent-sdks
+        run: |
+          python -m py_compile \
+            claude_agent.py codex_agent.py fixture_server.py \
+            native_driver.py native_tools.py test_fixture_server.py
+          python -m unittest test_fixture_server.py -v
+          python -c "import claude_agent_sdk, openai_codex, cua_driver"
 
       - name: Install agent SDK example dependencies
         working-directory: libs/cua-driver/examples/agent-sdks

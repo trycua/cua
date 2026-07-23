@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.12.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.2...cua-driver-rs-v0.12.3) (2026-07-23)
+
+
+### Bug Fixes
+
+* **cua-driver:** diagnose stale local MCP registrations ([#2498](https://github.com/trycua/cua/issues/2498)) ([df10b6d](https://github.com/trycua/cua/commit/df10b6d3d4b194a714656d3d8758db5017234de0))
+* **cua-driver:** prevent silent ad-hoc local signing ([#2495](https://github.com/trycua/cua/issues/2495)) ([b680ff2](https://github.com/trycua/cua/commit/b680ff2db0c87407e188f6d8fdd28a6bc77228b0))
+* **cua-driver:** show active-tab browser cursors on macOS ([#2493](https://github.com/trycua/cua/issues/2493)) ([c7675a0](https://github.com/trycua/cua/commit/c7675a04d5d3b53a0809db8347b11a23ac81ce63))
+* **cua-driver:** verify desktop input effects and release modifiers ([#2492](https://github.com/trycua/cua/issues/2492)) ([5b68ef5](https://github.com/trycua/cua/commit/5b68ef596f9adf183121e864d19db5e0ee7ddd4d))
+
 ## [0.12.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.1...cua-driver-rs-v0.12.2) (2026-07-23)
 
 

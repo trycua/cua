@@ -10,7 +10,7 @@ import webbrowser
 from typing import Any, Optional
 
 import aiohttp
-from cua_cli.auth.store import get_api_key, require_api_key
+from cua_cli.auth.oidc import get_access_token
 from cua_cli.utils.async_utils import run_async
 from cua_cli.utils.output import (
     print_error,
@@ -146,7 +146,7 @@ async def _get_sandbox_api_url(name: str, local: bool) -> tuple[str, Optional[st
         url = f"http://{state['host']}:{state['api_port']}"
         return url, None
 
-    api_key = require_api_key()
+    api_key = await get_access_token()
     from cua_sandbox.transport.cloud import CloudTransport, cloud_get_vm
 
     vm = await cloud_get_vm(name, api_key=api_key)
@@ -442,7 +442,7 @@ def cmd_launch(args: argparse.Namespace) -> int:
                     create_kwargs["memory_mb"] = memory_mb
                 if disk_gb is not None:
                     create_kwargs["disk_gb"] = disk_gb
-                api_key = require_api_key()
+                api_key = await get_access_token()
                 create_kwargs["api_key"] = api_key
                 sb = await Sandbox.create(image, **create_kwargs)
 
@@ -491,7 +491,7 @@ def cmd_ls(args: argparse.Namespace) -> int:
 
         if show_all or not local:
             try:
-                api_key = get_api_key()
+                api_key = await get_access_token()
                 cloud_list = await Sandbox.list(local=False, api_key=api_key)
                 for s in cloud_list:
                     results.append(
@@ -531,7 +531,7 @@ def cmd_info(args: argparse.Namespace) -> int:
         try:
             kwargs: dict[str, Any] = {}
             if not local:
-                kwargs["api_key"] = require_api_key()
+                kwargs["api_key"] = await get_access_token()
             info = await Sandbox.get_info(args.name, local=local, **kwargs)
         except Exception as e:
             print_error(str(e))
@@ -575,7 +575,7 @@ def cmd_suspend(args: argparse.Namespace) -> int:
         try:
             kwargs: dict[str, Any] = {}
             if not local:
-                kwargs["api_key"] = require_api_key()
+                kwargs["api_key"] = await get_access_token()
             await Sandbox.suspend(args.name, local=local, **kwargs)
         except Exception as e:
             print_error(f"Failed to suspend sandbox: {e}")
@@ -596,7 +596,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
         try:
             kwargs: dict[str, Any] = {}
             if not local:
-                kwargs["api_key"] = require_api_key()
+                kwargs["api_key"] = await get_access_token()
             await Sandbox.resume(args.name, local=local, **kwargs)
         except Exception as e:
             print_error(f"Failed to resume sandbox: {e}")
@@ -617,7 +617,7 @@ def cmd_restart(args: argparse.Namespace) -> int:
         try:
             kwargs: dict[str, Any] = {}
             if not local:
-                kwargs["api_key"] = require_api_key()
+                kwargs["api_key"] = await get_access_token()
             await Sandbox.restart(args.name, local=local, **kwargs)
         except Exception as e:
             print_error(f"Failed to restart sandbox: {e}")
@@ -654,7 +654,7 @@ def cmd_delete(args: argparse.Namespace) -> int:
         try:
             kwargs: dict[str, Any] = {}
             if not local:
-                kwargs["api_key"] = require_api_key()
+                kwargs["api_key"] = await get_access_token()
             await Sandbox.delete(args.name, local=local, **kwargs)
         except Exception as e:
             print_error(f"Failed to delete sandbox: {e}")
@@ -675,7 +675,7 @@ def cmd_vnc(args: argparse.Namespace) -> int:
         try:
             kwargs: dict[str, Any] = {}
             if not local:
-                kwargs["api_key"] = require_api_key()
+                kwargs["api_key"] = await get_access_token()
             sb = await Sandbox.connect(args.name, local=local, **kwargs)
             vnc_url = await sb.get_display_url(share=True)
             await sb.disconnect()
@@ -725,8 +725,7 @@ async def _shell_interactive(
         "container_name": name,
     }
     if api_key:
-        headers["X-API-Key"] = api_key
-        ws_params["api_key"] = api_key
+        headers["Authorization"] = f"Bearer {api_key}"
 
     try:
         async with aiohttp.ClientSession() as http:
@@ -870,7 +869,7 @@ async def _exec_noninteractive(
         "Content-Type": "application/json",
     }
     if api_key:
-        headers["X-API-Key"] = api_key
+        headers["Authorization"] = f"Bearer {api_key}"
 
     async with aiohttp.ClientSession() as http:
         async with http.post(

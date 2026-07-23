@@ -488,6 +488,23 @@ else
     echo "Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver/rust"
 fi
 
+# The local/release identity split deliberately stopped source installs from
+# creating or repairing the published `cua-driver` name. Make the resulting
+# migration state explicit when only the local product is present: otherwise
+# an existing MCP client can keep launching a now-missing release path even
+# though this install completed successfully. Do not create a compatibility
+# symlink here; that would collapse the separate product identities again.
+RELEASE_BIN="$BIN_DIR/cua-driver"
+if [ ! -e "$RELEASE_BIN" ]; then
+    echo ""
+    echo "${YELLOW}Migration note: the published cua-driver CLI is not installed at $RELEASE_BIN.${NORMAL}" >&2
+    echo "  Existing MCP clients configured for 'cua-driver' will not use this local build." >&2
+    echo "  To configure Codex for the local build, run:" >&2
+    echo "    $INSTALLED_BIN mcp-config --client codex" >&2
+    echo "  To restore the published product instead, run:" >&2
+    echo '    /bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"' >&2
+fi
+
 # OS-specific autostart hint (kept inline; per-shell natural location).
 if [ "$INSTALL_AUTOSTART" != true ]; then
     echo ""

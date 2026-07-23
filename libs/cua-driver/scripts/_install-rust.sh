@@ -512,7 +512,7 @@ done
 # the baked line hasn't been updated yet (dev / pre-release checkouts).
 #
 # ~~~ BAKED_VERSION: auto-updated in the release PR — do not edit ~~~
-CUA_DRIVER_RS_BAKED_VERSION="0.12.1" # x-release-please-version
+CUA_DRIVER_RS_BAKED_VERSION="0.12.2" # x-release-please-version
 # ~~~ END_BAKED_VERSION ~~~
 
 if [[ -n "${CUA_DRIVER_RS_VERSION:-}" ]]; then

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.1...cua-driver-rs-v0.12.2) (2026-07-23)
+
+
+### Bug Fixes
+
+* **cua-driver:** trust native macOS sentinel focus ([#2481](https://github.com/trycua/cua/issues/2481)) ([6c2bbcc](https://github.com/trycua/cua/commit/6c2bbccfe5ad6690ef0961c492b34a3493354e84))
+
 ## [0.12.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.0...cua-driver-rs-v0.12.1) (2026-07-23)
 
 

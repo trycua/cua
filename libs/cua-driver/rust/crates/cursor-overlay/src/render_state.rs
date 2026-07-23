@@ -96,6 +96,7 @@ impl RenderStateCore {
         let palette = cfg.palette();
         let motion = cfg.motion.clone();
         let shape = cfg.shape.clone();
+        let visible = cfg.enabled;
         Self {
             cfg,
             palette,
@@ -111,7 +112,7 @@ impl RenderStateCore {
             spring_tgt: None,
             click_t: None,
             pressed: false,
-            visible: true,
+            visible, // was hardcoded true — respect config.enabled (#1777)
             idle_secs: 0.0,
             idle_alpha: 1.0,
             pinned_wid: None,
@@ -460,6 +461,7 @@ impl RenderStateCore {
             }
             OverlayCommand::SetEnabled(v) => {
                 self.visible = v;
+                self.cfg.enabled = v; // keep cfg.enabled in sync with visible (#1900)
                 true
             }
             OverlayCommand::SetMotion(m) => {

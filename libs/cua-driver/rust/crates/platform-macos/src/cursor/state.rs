@@ -59,8 +59,17 @@ pub struct CursorRegistry {
 impl CursorRegistry {
     pub fn new() -> Self {
         let mut map = HashMap::new();
+        let default_cfg = CursorConfig {
+            // Default cursor starts DISABLED. The anonymous / non-session
+            // path must never render a cursor — the documented contract is
+            // "without a session, actions run cursor-less." A session's
+            // first enable/start_session call activates its own cursor.
+            // See #1777.
+            enabled: false,
+            ..CursorConfig::default()
+        };
         let default = CursorState {
-            config: CursorConfig::default(),
+            config: default_cfg,
             position: None,
         };
         map.insert("default".into(), default);
@@ -235,15 +244,17 @@ mod tests {
     }
 
     #[test]
-    fn default_cursor_unaffected_by_guard() {
-        // "default" is seeded and is never tombstoned — its mutators still work.
+    fn default_cursor_starts_disabled() {
+        // Default cursor is seeded disabled — anonymous calls must be
+        // cursor-less per the documented contract. See #1777.
         let reg = CursorRegistry::new();
         assert!(!cua_driver_core::session::is_session_ended("default"));
-        reg.set_enabled("default", false);
-        reg.update_position("default", 1.0, 2.0);
         let s = reg.get("default").expect("default cursor always present");
-        assert!(!s.config.enabled);
-        assert_eq!(s.position.as_ref().map(|p| (p.x, p.y)), Some((1.0, 2.0)));
+        assert!(!s.config.enabled, "default cursor must start disabled");
+        // But mutators still work — a session that enables it should succeed.
+        reg.set_enabled("default", true);
+        let s2 = reg.get("default").unwrap();
+        assert!(s2.config.enabled);
     }
 
     #[test]

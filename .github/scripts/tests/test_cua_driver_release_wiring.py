@@ -328,6 +328,21 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertNotIn("softprops/action-gh-release", workflow)
         self.assertNotIn("bake version into install scripts", workflow.lower())
 
+        skill_installer = self.read(
+            "libs/cua-driver/rust/crates/cua-driver/src/skills.rs"
+        )
+        self.assertIn(
+            "releases/download/cua-driver-rs-v{version}/"
+            "cua-driver-rs-v{version}-skills.tar.gz",
+            skill_installer,
+        )
+        self.assertIn(
+            "raw.githubusercontent.com/trycua/cua/main/"
+            "libs/cua-driver/rust/Skills/cua-driver",
+            skill_installer,
+        )
+        self.assertNotIn("releases/latest", skill_installer)
+
         windows_skill = self.read("libs/cua-driver/rust/Skills/cua-driver/WINDOWS.md")
         self.assertIn("https://cua.ai/driver/install.ps1", windows_skill)
         self.assertNotIn("/releases/latest/download/install.ps1", windows_skill)

@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 import httpx
 from cua_sandbox.image import Image
 from cua_sandbox.runtime.base import Runtime, RuntimeInfo
-from cua_sandbox.runtime.docker import DockerRuntime, _has_kvm
+from cua_sandbox.runtime.docker import DockerRuntime, _has_kvm, _docker_bin as _docker_bin_path
 from cua_sandbox.runtime.images import (
     DEFAULT_API_PORT,
     QEMU_VNC_PORT,
@@ -88,12 +88,61 @@ class QEMUDockerRuntime(DockerRuntime):
         super().__init__(api_port=api_port, vnc_port=vnc_port, ephemeral=ephemeral)
 
     async def start(self, image: Image, name: str, **opts) -> RuntimeInfo:
-        # Resolve storage directory
-        storage = self._storage_dir or QEMU_STORAGE_ROOT / name
+        # For Linux VMs: install Ubuntu once into a shared golden storage dir,
+        # then give each sandbox its own qcow2 overlay backed by the golden disk.
+        # This avoids QEMU write-lock conflicts when multiple sandboxes run in parallel.
+        if image.os_type == "linux" and not self._storage_dir:
+            version = image.version or "24.04"
+            golden_storage = QEMU_STORAGE_ROOT / f"linux-{version}-golden"
+            golden_storage.mkdir(parents=True, exist_ok=True)
+
+            # Check if a golden disk already exists (raw or qcow2)
+            golden_raw = golden_storage / "data.img"
+            golden_qcow2 = golden_storage / "data.qcow2"
+            golden_disk = golden_qcow2 if golden_qcow2.exists() else (golden_raw if golden_raw.exists() else None)
+
+            if golden_disk is not None:
+                # Golden disk exists — create a per-container qcow2 overlay
+                container_storage = QEMU_STORAGE_ROOT / f"linux-{name}"
+                container_storage.mkdir(parents=True, exist_ok=True)
+                overlay = container_storage / "data.qcow2"
+                if not overlay.exists():
+                    golden_fmt = "qcow2" if golden_disk.suffix == ".qcow2" else "raw"
+                    docker = _docker_bin_path()
+                    result = subprocess.run(
+                        [
+                            docker, "run", "--rm",
+                            "--entrypoint", "qemu-img",
+                            "-v", f"{golden_disk.parent}:/golden:ro",
+                            "-v", f"{container_storage}:/overlay",
+                            "trycua/qemu-local:latest",
+                            "create", "-f", "qcow2",
+                            "-b", f"/golden/{golden_disk.name}", "-F", golden_fmt,
+                            "/overlay/data.qcow2",
+                        ],
+                        capture_output=True, text=True,
+                    )
+                    if result.returncode != 0:
+                        raise RuntimeError(f"qemu-img overlay failed: {result.stderr}")
+                # Write ubuntu.boot so install.sh skips ISO remaster and QEMU boots the overlay
+                (container_storage / "ubuntu.boot").touch()
+                storage = container_storage
+                # Also mount golden dir read-only at /golden so QEMU can resolve the backing file
+                self._golden_storage = golden_storage
+            else:
+                # No golden disk yet — first run installs Ubuntu into golden storage
+                storage = golden_storage
+        else:
+            storage = self._storage_dir or QEMU_STORAGE_ROOT / name
         storage.mkdir(parents=True, exist_ok=True)
 
         # Volume: host storage dir → /storage in container
         self.volumes = [f"{storage}:/storage"]
+        # If using a qcow2 overlay, also mount the golden dir read-only at /golden
+        # so QEMU can resolve the backing file path embedded in the overlay.
+        golden = getattr(self, "_golden_storage", None)
+        if golden is not None:
+            self.volumes.append(f"{golden}:/golden:ro")
 
         # Environment
         self.environment = {
@@ -115,7 +164,14 @@ class QEMUDockerRuntime(DockerRuntime):
         if image.os_type == "android":
             self.environment["ADB_PORT"] = "5555"
 
-        # Longer boot timeout for Windows/Android VMs
+        # Linux VMs may need to run a full OS install (30-60 min) on first boot.
+        # Windows/Android need 3-5 min. Use a long timeout for linux.
+        if image.os_type == "linux":
+            self._boot_timeout = 3600
+        elif image.os_type in ("windows", "android"):
+            self._boot_timeout = 600
+        else:
+            self._boot_timeout = 300
         opts.pop("boot_timeout", None)
 
         info = await super().start(image, name, **opts)
@@ -124,9 +180,20 @@ class QEMUDockerRuntime(DockerRuntime):
     async def is_ready(self, info: RuntimeInfo, timeout: float = 300) -> bool:
         """Wait for the QEMU VM's computer-server to come up.
 
-        Windows VMs take longer to boot (3-5 min), so default timeout is 300s.
+        Linux VMs may need a full OS install on first boot (up to 60 min).
+        Windows VMs take 3-5 min. Default 300s for other VMs.
         """
-        return await super().is_ready(info, timeout=timeout)
+        actual_timeout = getattr(self, "_boot_timeout", timeout)
+        return await super().is_ready(info, timeout=actual_timeout)
+
+    async def stop(self, name: str) -> None:
+        await super().stop(name)
+        # Clean up per-container overlay storage (ephemeral sandboxes only)
+        if self.ephemeral:
+            import shutil as _shutil
+            overlay_dir = QEMU_STORAGE_ROOT / f"linux-{name}"
+            if overlay_dir.exists():
+                _shutil.rmtree(overlay_dir, ignore_errors=True)
 
     async def suspend(self, name: str) -> None:
         """Pause the Docker container running this QEMU VM."""

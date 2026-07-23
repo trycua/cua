@@ -1167,7 +1167,7 @@ class Sandbox:
                 transport = OSWorldTransport(
                     f"http://{rt_info.host}:{rt_info.api_port}",
                 )
-            elif rt_info.vnc_port and rt_info.ssh_port:
+            elif rt_info.vnc_port and rt_info.ssh_port and not rt_info.api_port:
                 from cua_sandbox.transport.vncssh import VNCSSHTransport
 
                 await runtime.is_ready(rt_info)

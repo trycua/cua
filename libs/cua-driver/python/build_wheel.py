@@ -78,7 +78,8 @@ def get_platform_info(arch_override: str = None):
 def get_wheel_tag(platform_name: str, arch: str) -> str:
     """Return the Python wheel tag for the bundled binary target."""
     if platform_name == "darwin":
-        return "py3-none-macosx_11_0_universal2"
+        # Keep this aligned with the SDK dylib's LC_BUILD_VERSION minimum.
+        return "py3-none-macosx_13_0_universal2"
     if platform_name == "linux":
         # Rust Linux release binaries are built in debian:11, whose glibc floor is 2.31.
         if arch == "x86_64":

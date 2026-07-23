@@ -18,7 +18,6 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -96,3 +95,5 @@ dev = [
 
 [tool.uv.sources]
 cua-agent = { path = "../agent", editable = true }
+
+[tool.hatch.build.hooks.custom]

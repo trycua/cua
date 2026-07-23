@@ -77,3 +77,27 @@ async with Localhost.connect() as host:
     await host.shell.run("echo hello")
     await host.screenshot()
 ```
+
+
+## Cloud sandbox
+
+Fleet is the OAuth cloud backend. Configure OAuth credentials once; Fleet uses `https://run.cua.ai` by default and can be overridden with `configure(fleet_base_url=...)` or `CUA_FLEET_BASE_URL`. The legacy API-key VM API continues to use `https://api.cua.ai`. Cloud images must use a registry reference; `expose()` declares additional Fleet services.
+
+Fleet does not support snapshots or custom disks, and currently supports only `us-east-1`. `await sb.tunnel.forward(3000)` returns the authenticated Fleet service URL for an exposed port; it does not open a local SSH tunnel.
+
+```python
+import os
+
+import cua_sandbox as cua
+from cua_sandbox import Image, Sandbox
+
+cua.configure(
+    client_id=os.environ["CUA_CLIENT_ID"],
+    client_secret=os.environ["CUA_CLIENT_SECRET"],
+)
+
+async with Sandbox.ephemeral(
+    Image.from_registry("registry.example/desktop-workspace@sha256:...").expose(3000)
+) as sb:
+    await sb.shell.run("uname -a")
+```

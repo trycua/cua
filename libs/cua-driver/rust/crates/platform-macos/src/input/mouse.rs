@@ -114,12 +114,17 @@ pub fn scroll_wheel_desktop(
     for _ in 0..ticks.max(1) {
         let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
             .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
-        let wheel_y = (delta_y_per_tick / 120).clamp(-10, 10);
-        let wheel_x = (delta_x_per_tick / 120).clamp(-10, 10);
+        // AppKit does not reliably consume synthetic LINE-unit events posted
+        // through the global HID queue. pynput's proven macOS desktop path uses
+        // PIXEL units and scales each logical wheel notch to ten pixels.
+        let wheel_y = (delta_y_per_tick / 12).clamp(-100, 100);
+        let wheel_x = (delta_x_per_tick / 12).clamp(-100, 100);
         let event =
-            CGEvent::new_scroll_event(source, ScrollEventUnit::LINE, 2, wheel_y, wheel_x, 0)
+            CGEvent::new_scroll_event(source, ScrollEventUnit::PIXEL, 2, wheel_y, wheel_x, 0)
                 .map_err(|_| anyhow::anyhow!("CGEvent::new_scroll_event failed"))?;
-        unsafe { CGEventSetLocation(event.as_ptr() as *mut std::ffi::c_void, x, y) };
+        // The cursor warp above is the hit-test authority. Setting a location
+        // field on a wheel event can make AppKit treat it as a non-wheel mouse
+        // event and silently drop it.
         event.post(CGEventTapLocation::HID);
         std::thread::sleep(std::time::Duration::from_millis(30));
     }

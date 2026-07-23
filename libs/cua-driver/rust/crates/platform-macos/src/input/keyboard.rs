@@ -131,19 +131,111 @@ pub fn press_key_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
     use core_graphics::event::CGEventTapLocation;
 
     let key_code = key_name_to_code(key)?;
-    let flags = modifier_flags(modifiers);
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
-    let down = CGEvent::new_keyboard_event(source.clone(), key_code, true)
-        .map_err(|_| anyhow::anyhow!("CGEvent keyboard down failed"))?;
-    down.set_flags(flags);
-    down.post(CGEventTapLocation::HID);
-    std::thread::sleep(std::time::Duration::from_millis(8));
-    let up = CGEvent::new_keyboard_event(source, key_code, false)
-        .map_err(|_| anyhow::anyhow!("CGEvent keyboard up failed"))?;
-    up.set_flags(flags);
-    up.post(CGEventTapLocation::HID);
+    let mut active_flags = CGEventFlags::CGEventFlagNull;
+    let mut pressed_modifiers: Vec<(u16, CGEventFlags)> = Vec::new();
+
+    // A flag-only base-key event can leave the HID modifier state latched on
+    // macOS. Model a physical chord instead: modifier downs in caller order,
+    // base down/up, then modifier ups in reverse order. This also matches the
+    // Windows SendInput and Linux XTest implementations.
+    for modifier in modifiers {
+        let Some((modifier_code, modifier_flag)) = modifier_key_code_and_flag(modifier) else {
+            continue;
+        };
+        if pressed_modifiers
+            .iter()
+            .any(|(pressed_code, _)| *pressed_code == modifier_code)
+        {
+            continue;
+        }
+        active_flags |= modifier_flag;
+        if let Err(error) = post_global_key(
+            &source,
+            modifier_code,
+            true,
+            active_flags,
+            CGEventTapLocation::HID,
+        ) {
+            release_global_modifiers(
+                &source,
+                &pressed_modifiers,
+                active_flags,
+                CGEventTapLocation::HID,
+            );
+            return Err(error);
+        }
+        pressed_modifiers.push((modifier_code, modifier_flag));
+        std::thread::sleep(std::time::Duration::from_millis(8));
+    }
+
+    let result = (|| {
+        post_global_key(
+            &source,
+            key_code,
+            true,
+            active_flags,
+            CGEventTapLocation::HID,
+        )?;
+        std::thread::sleep(std::time::Duration::from_millis(8));
+        post_global_key(
+            &source,
+            key_code,
+            false,
+            active_flags,
+            CGEventTapLocation::HID,
+        )
+    })();
+
+    release_global_modifiers(
+        &source,
+        &pressed_modifiers,
+        active_flags,
+        CGEventTapLocation::HID,
+    );
+    result
+}
+
+fn post_global_key(
+    source: &CGEventSource,
+    key_code: u16,
+    key_down: bool,
+    flags: CGEventFlags,
+    tap: core_graphics::event::CGEventTapLocation,
+) -> anyhow::Result<()> {
+    let event = CGEvent::new_keyboard_event(source.clone(), key_code, key_down)
+        .map_err(|_| anyhow::anyhow!("CGEvent keyboard event creation failed"))?;
+    event.set_flags(flags);
+    event.post(tap);
     Ok(())
+}
+
+fn release_global_modifiers(
+    source: &CGEventSource,
+    pressed: &[(u16, CGEventFlags)],
+    mut active_flags: CGEventFlags,
+    tap: core_graphics::event::CGEventTapLocation,
+) {
+    for &(key_code, flag) in pressed.iter().rev() {
+        active_flags.remove(flag);
+        if let Ok(event) = CGEvent::new_keyboard_event(source.clone(), key_code, false) {
+            event.set_flags(active_flags);
+            event.post(tap);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(8));
+    }
+}
+
+fn modifier_key_code_and_flag(modifier: &str) -> Option<(u16, CGEventFlags)> {
+    match modifier.to_lowercase().as_str() {
+        "cmd" | "command" => Some((55, CGEventFlags::CGEventFlagCommand)),
+        "shift" => Some((56, CGEventFlags::CGEventFlagShift)),
+        "option" | "alt" => Some((58, CGEventFlags::CGEventFlagAlternate)),
+        "ctrl" | "control" => Some((59, CGEventFlags::CGEventFlagControl)),
+        "fn" => Some((63, CGEventFlags::CGEventFlagSecondaryFn)),
+        _ => None,
+    }
 }
 
 /// Type Unicode text into the frontmost application through the global HID

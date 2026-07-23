@@ -2,196 +2,194 @@
 
 ## Purpose
 
-Enable an application that already owns a renewable user access-token source to
-use Fleet through the public `cua-sandbox` API. This is a plan only: it does not
-change authentication, routing, or documentation behavior.
+Enable short-lived interactive and prototyping Fleet sessions through the public
+`cua-sandbox` API with a caller-supplied device access token. This is a plan
+only: it does not change authentication, routing, or documentation behavior.
 
 The recommended public entry point is:
 
 ```python
-cua.configure(access_token_provider=provider)
+cua.configure(access_token="temporary-device-access-token")
 ```
 
-`provider` supplies an access token asynchronously and accepts a
-`force_refresh: bool` request. The CLI will provide an adapter over its existing
-device-login credentials; `cua-sandbox` will not read the CLI keyring itself.
+Device tokens are deliberately short-lived. Expiration is a security property,
+not a defect: Fleet should return an actionable re-authentication error rather
+than silently refreshing a device token. Long-lived or unattended workloads
+continue to use existing client ID/client secret authentication.
 
 ## Refreshed Baseline And Evidence
 
 - Historical inspection SHA: `ee15ae942cefe809fd97a565220eca9c6a295ac0`.
-  This SHA is retained only to explain the prior tutorial observation; it is not
-  the implementation or PR base.
-- Refreshed PR base: `e3983eb27e47a87b6f6641651e00d05cb2eb8cfe`
-  (`origin/main`, refreshed before creating this plan branch).
+  This SHA explains the prior tutorial observation only; it is not the PR base.
+- Current PR base: `e3983eb27e47a87b6f6641651e00d05cb2eb8cfe`
+  (`origin/main`, refreshed before the plan branch was created).
 - `libs/python/cua-sandbox/cua_sandbox/_config.py` defines `_Config` at about
   line 15 and `configure()` at about line 27. It currently accepts legacy
-  `api_key` settings and Fleet client-credential settings, but no access token
-  or access-token-provider setting.
+  `api_key` settings and Fleet client-credential settings, but no device access
+  token setting.
 - `libs/python/cua-sandbox/cua_sandbox/sandbox.py` selects Fleet in
   `Sandbox._uses_fleet()` at about line 698 only when the call has no explicit
-  `api_key` and `get_client_id()` plus `get_client_secret()` are available. A
-  bearer token passed through `api_key` therefore stays on the legacy cloud
-  transport today.
+  `api_key` and both `get_client_id()` and `get_client_secret()` are available.
+  A bearer token passed via `api_key` currently selects the legacy cloud
+  transport, so device-token support needs an explicit public configuration.
 - `libs/python/cua-sandbox/cua_sandbox/transport/fleet_cloud.py` has
   `_FleetClient` at about line 42. Its constructor requires confidential
   `CUA_CLIENT_ID` and `CUA_CLIENT_SECRET`; `list_pools()` at about line 118
-  issues a raw `/api/namespaces` request through `CyclopsHttpClient`.
+  makes a raw `/api/namespaces` request through `CyclopsHttpClient`.
 - `FleetCloudTransport.connect()` at about line 206 creates a pool and claim
   for a newly provisioned sandbox. `_cleanup_resources()` at about line 280
   deletes the claim before deleting the pool, and `delete_sandbox()` follows
-  the same resource order.
+  that same resource order.
 - The generated binding at
-  `libs/fleet/sdk-bindings/python/cyclops_sdk/_sdk.py` exposes both
-  `CyclopsClient.connect_with_access_token()` (about line 2700) and
-  `CyclopsClient.connect_with_access_token_provider()` (about line 2721).
-  Its callback interface is `AccessTokenProvider.get_access_token(force_refresh:
-  bool) -> str` (about line 2439). The provider connection retries one
-  control-plane `401` after requesting a forced refresh; the hand-written
-  `/api/namespaces` path must implement equivalent behavior.
-- `libs/python/cua-cli/cua_cli/auth/oidc.py:get_access_token()` (about line
-  229) loads saved device credentials, refreshes them when near expiry, and
-  persists the refresh result. `libs/python/cua-cli/cua_cli/auth/store.py`
-  stores those credentials in the OS keyring. Tokens and refresh credentials
-  must never be printed, exported, written to test output, or copied into an
-  environment variable.
+  `libs/fleet/sdk-bindings/python/cyclops_sdk/_sdk.py` exposes
+  `CyclopsClient.connect_with_access_token()` at about line 2700 and
+  `CyclopsClient.connect_with_access_token_provider()` at about line 2721.
+  CUA-954 will use the static access-token constructor only.
+- `libs/python/cua-cli/cua_cli/auth/oidc.py:get_access_token()` at about line
+  229 loads and refreshes device credentials from the CLI's OS keyring. Those
+  credentials must never be printed, exported, copied into examples, or read
+  automatically by `cua-sandbox`.
 - `libs/fleet/backend/auth/authz.rego` recognizes `input.user.azp ==
-  "cua-cli"` (about line 54). For an authenticated non-empty subject from that
-  exact interactive client, it permits `/api/namespaces` and customer-facing
-  `/api/k8s/{path...}` routes; infrastructure paths remain restricted. This
-  must be proven against the live issuer, claims, and entitlement state before
+  "cua-cli"` at about line 54. An authenticated non-empty subject from that
+  exact interactive client is allowed `/api/namespaces` and customer-facing
+  `/api/k8s/{path...}` routes, while infrastructure paths remain restricted.
+  Live issuer, claims, and entitlement verification remains required before
   treating CLI device login as production-ready Fleet access.
 
 ## Documentation State
 
 The historical SHA contains
-`docs/content/docs/tutorials/your-first-cloud-sandbox.mdx`; it has no
-`_FleetClient`, `monkeypatch`, or `monkey-patch` reference. On refreshed
+`docs/content/docs/tutorials/your-first-cloud-sandbox.mdx`; it contains no
+`_FleetClient`, `monkeypatch`, or `monkey-patch` reference. On current
 `origin/main` (`e3983eb27e47a87b6f6641651e00d05cb2eb8cfe`), that tutorial file
-is absent. The current tutorial index in
-`docs/content/docs/tutorials/meta.json` contains local sandbox, Lume VM,
-application-driving, and Cua Bench tutorials only. `docs/next.config.mjs`
-still permanently redirects `/tutorials/your-first-cloud-sandbox` to
-`/tutorials/your-first-local-sandbox`. The implementation documentation must
-therefore add or update a current public SDK guide; it must not modify a
-nonexistent tutorial or describe a private-client monkey-patch.
+is absent. `docs/content/docs/tutorials/meta.json` lists local sandbox, Lume
+VM, application-driving, and Cua Bench tutorials only, while
+`docs/next.config.mjs` permanently redirects
+`/tutorials/your-first-cloud-sandbox` to
+`/tutorials/your-first-local-sandbox`.
 
-## Public API Options
+The implementation must add or update a current public SDK guide. Its example
+must use supported public surfaces only, avoid private `_FleetClient` imports or
+patches, and make clear that a device token is temporary. The exact supported
+CLI token handoff mechanism must be confirmed before documenting it. If no
+safe public mechanism exists, define one as an implementation/design requirement
+without inventing a command that prints or persists secrets.
 
-### Option 1: Static Access Token
+## Authentication Options
 
-Add `cua.configure(access_token="...")` and call the SDK's static-token
-connection.
+### Option 1: Static Device Access Token
 
-- Advantages: minimal API and direct use of the generated SDK constructor.
-- Costs: tokens expire, callers must invent refresh handling, and examples tend
-  to encourage copied secrets.
-- Decision: reject. Do not recommend copied static tokens for device auth.
+Add `cua.configure(access_token="...")` and construct the generated Fleet
+client with `CyclopsClient.connect_with_access_token()`.
 
-### Option 2: Public Async Provider
+- Advantages: small public surface, matches the generated SDK, makes the
+  caller explicitly own a short-lived token, and is suitable for interactive
+  device-auth prototyping.
+- Costs: a token expires; callers must authenticate again when told to do so.
+- Decision: recommend for short-lived interactive and prototyping sessions.
 
-Add `cua.configure(access_token_provider=provider)`, where the provider
-implements `async get_access_token(force_refresh: bool) -> str`.
+### Option 2: Async Refreshable Token Provider
 
-- Advantages: matches the generated SDK callback contract, supports refresh on
-  a `401`, keeps credential ownership with the caller, and is usable outside
-  the CLI.
-- Costs: introduces a small public protocol/type and requires explicit retry
-  support for raw control-plane requests.
-- Decision: recommend this option.
+Add a public provider that refreshes device credentials after a `401`.
 
-### Option 3: Implicit CLI-Keyring Lookup In `cua-sandbox`
+- Advantages: avoids an explicit re-authentication interruption.
+- Costs: expands the public API, obscures token expiration, couples CUA-954 to
+  refresh lifecycle design, and risks spreading credential-store behavior.
+- Decision: reject for CUA-954. Do not add a provider API, refresh behavior,
+  provider tests, or a CLI keyring adapter.
 
-Have `cua-sandbox` import the CLI OIDC helper and silently read the OS keyring.
+### Option 3: Implicit CLI-Keyring Lookup
 
-- Advantages: a short CLI integration path.
-- Costs: couples the SDK to an optional CLI package and local credential-store
-  behavior, surprises library consumers, complicates headless use, and makes
-  credential boundaries unclear.
-- Decision: reject. The CLI owns its keyring and supplies an explicit adapter.
+Have `cua-sandbox` import CLI authentication code and read the OS keyring.
+
+- Advantages: a short integration path for the CLI.
+- Costs: couples the SDK to an optional CLI package and local credential store,
+  surprises library consumers, complicates headless use, and weakens the
+  credential boundary.
+- Decision: reject. `cua-sandbox` must not automatically read the CLI keyring.
 
 ## Recommended Behavior And Precedence
 
-1. Add an exported async provider protocol or equivalent typed callable in
-   `libs/python/cua-sandbox/cua_sandbox/_config.py`; save it in `_Config` and
-   expose it through `cua.configure(access_token_provider=...)`.
+1. Add `access_token: Optional[str]` to the public `cua.configure()` contract
+   and `_Config` in `libs/python/cua-sandbox/cua_sandbox/_config.py`. Treat it
+   as an in-memory caller-supplied device token; do not add environment-based
+   discovery, persistence, refresh, or CLI keyring access.
 2. Resolve Fleet routing in `Sandbox._uses_fleet()` and the transport factory
-   with this order:
+   in this order:
 
    ```text
    explicit per-call api_key -> legacy cloud
-   explicit configured access_token_provider -> Fleet
-   configured/environment client_id + client_secret -> Fleet
+   configured access_token -> Fleet static-token authentication
+   configured/environment client_id + client_secret -> Fleet client credentials
    otherwise -> existing legacy API-key behavior and errors
    ```
 
-   An explicit `api_key` remains authoritative even if a provider and client
-   credentials are configured. A provider intentionally takes precedence over
-   ambient client credentials.
-3. Update `_FleetClient` to accept the configured provider. For provider mode,
-   construct `CyclopsClient` with the generated
-   `connect_with_access_token_provider()` path. Preserve the client-credential
-   constructor as Fleet's fallback.
-4. Route `list_pools()` through a small authenticated request helper. It must
-   obtain a token with `force_refresh=False`, send `Authorization: Bearer
-   <token>`, and, only after one `401`, obtain a replacement with
-   `force_refresh=True` and retry once. It must not log either token or its
-   authorization header.
-5. In `libs/python/cua-cli`, add an adapter that implements the sandbox
-   provider contract by calling the existing OIDC client. Normal calls may use
-   the existing valid cached token; forced calls must refresh even when the
-   cached access token has more than the normal 60-second validity window.
-   Persist refreshed credentials through the existing keyring store without
-   exposing them.
-6. Update CLI sandbox call sites only where the CLI should choose Fleet. Pass
-   the adapter through public `cua.configure()` or the agreed public API; do
-   not pass a CLI bearer token via `api_key` for Fleet operations. Preserve
-   intentional legacy-cloud command paths that explicitly pass `api_key`.
+   An explicit `api_key` remains authoritative even when `access_token` or
+   client credentials are configured. A configured device token takes
+   precedence over ambient client credentials for the interactive session.
+3. Update `_FleetClient` to use
+   `CyclopsClient.connect_with_access_token()` when `access_token` is present,
+   retaining the client-credential constructor as the long-lived Fleet path.
+4. Send `Authorization: Bearer <access_token>` for `list_pools()` and other raw
+   `/api/namespaces` requests. Do not add forced-refresh-on-`401` semantics.
+   A `401` or token-expiry response must fail with an actionable error that
+   directs the user to authenticate again through the supported device-login
+   flow, without echoing token material or authorization headers.
+5. Do not add a CLI adapter. The CLI may integrate only through a confirmed
+   supported handoff mechanism and public `cua-sandbox` configuration; it must
+   not expose credentials in terminal output, files, environment exports, or
+   logs. If that mechanism is absent, resolve it before promising CLI-driven
+   Fleet device-auth examples.
 
 ## Sequential Implementation Plan
 
-1. Define and export the provider type in
-   `libs/python/cua-sandbox/cua_sandbox/_config.py`; extend `_Config`,
-   `configure()`, and a getter without reading any CLI credential store.
-2. Update `Sandbox._uses_fleet()` and each relevant transport-construction
-   path in `libs/python/cua-sandbox/cua_sandbox/sandbox.py` so the precedence
-   above is enforced consistently for create, connect, list, lookup, suspend,
-   resume, restart, and delete operations.
+1. Extend `_Config`, `configure()`, and a token getter in
+   `libs/python/cua-sandbox/cua_sandbox/_config.py` with an optional static
+   `access_token`. Ensure its docstring identifies device tokens as temporary
+   and does not imply background renewal.
+2. Update `Sandbox._uses_fleet()` and relevant transport-construction paths in
+   `libs/python/cua-sandbox/cua_sandbox/sandbox.py` to enforce the precedence
+   above for create, connect, list, lookup, suspend, resume, restart, and
+   delete operations.
 3. Refactor `_FleetClient` in
-   `libs/python/cua-sandbox/cua_sandbox/transport/fleet_cloud.py` to choose the
-   generated provider connection when configured, preserve client-credential
-   construction otherwise, and add the one-retry authenticated
-   `CyclopsHttpClient` helper for `/api/namespaces`.
-4. Keep provisioning and cleanup semantics unchanged: a newly created Fleet
-   sandbox still creates a pool then claim, and cleanup still deletes claim
-   then pool. Make errors retain the original provisioning failure while
-   reporting cleanup failure as the cause, as the current transport does.
-5. Add focused SDK tests in
+   `libs/python/cua-sandbox/cua_sandbox/transport/fleet_cloud.py` to construct
+   the generated client with `connect_with_access_token()` in token mode and
+   preserve the existing client-credentials construction otherwise.
+4. Add an authenticated raw-request helper for `/api/namespaces` that attaches
+   the static bearer token. Translate an unauthorized or expired response into
+   a credential-safe, actionable re-authentication error. Make exactly one
+   request per operation; do not retry by refreshing the token.
+5. Preserve lifecycle semantics: a newly created Fleet sandbox still creates a
+   pool then claim, and cleanup still deletes claim then pool. Retain the
+   existing behavior that preserves the provisioning failure if cleanup also
+   fails.
+6. Add focused SDK tests in
    `libs/python/cua-sandbox/tests/test_config.py`,
    `libs/python/cua-sandbox/tests/test_fleet_cloud_client.py`, and
-   `libs/python/cua-sandbox/tests/test_fleet_cloud_transport.py`. Cover
-   provider selection, explicit-`api_key` legacy precedence, client-credential
-   fallback, absent-configuration legacy behavior, initial bearer header,
-   exactly one forced-refresh retry after `401`, and no retry for a non-`401`.
-6. Add a CLI adapter and tests under
-   `libs/python/cua-cli/cua_cli/auth/` and
-   `libs/python/cua-cli/tests/auth/test_oidc.py`. Assert forced refresh calls
-   the refresh flow and persists credentials; test token values with inert
-   fixtures only and never print them. Update
-   `libs/python/cua-cli/cua_cli/commands/sandbox.py` call sites only after the
-   intended command-level Fleet behavior is agreed.
-7. Add the opt-in live test
-   `tests/integration/sandbox_sdk/test_fleet_cli_device_auth.py`. It must run
-   only after an interactive `cua auth login` and only when
-   `CUA_FLEET_TEST_IMAGE` is set to an approved image. Generate a unique name,
-   create the Fleet sandbox through the public provider API, run a harmless
-   command such as `printf fleet-device-auth-ok`, and in `finally` call the
-   public sandbox delete API. Afterward, verify the named sandbox is absent.
-   Do not read, print, snapshot, or export access or refresh credentials.
-8. Add a current SDK guide or update the appropriate existing sandbox docs,
-   documenting the provider protocol, precedence, login prerequisite for the
-   CLI adapter, opt-in test image requirement, and credential-safety rules.
-   Keep the existing old-tutorial redirect unless documentation owners request
-   a deliberate redirect change.
+   `libs/python/cua-sandbox/tests/test_fleet_cloud_transport.py`. Cover static
+   token configuration, explicit-`api_key` legacy precedence, static-token
+   precedence over client credentials, client-credential fallback, absent
+   configuration legacy behavior, raw bearer authorization, and actionable
+   no-retry handling of `401`/expiry.
+7. Do not change CLI OIDC refresh behavior, add a CLI keyring adapter, or add
+   CLI force-refresh tests for this issue. Separately confirm the supported,
+   non-secret token handoff surface before wiring any optional CLI sandbox call
+   sites.
+8. Add the opt-in live test
+   `tests/integration/sandbox_sdk/test_fleet_cli_device_auth.py`. Run it only
+   after interactive `cua auth login`, only after the safe public handoff
+   mechanism is confirmed, and only when `CUA_FLEET_TEST_IMAGE` names an
+   approved image. Generate a unique name, configure the public static-token
+   API, create the Fleet sandbox, run `printf fleet-device-auth-ok`, and in
+   `finally` call the public delete API. Verify the named sandbox is absent
+   afterward. Never read, print, snapshot, export, or persist access or refresh
+   credentials.
+9. Add a current SDK guide or update an appropriate existing sandbox document.
+   Show only a supported safe way to obtain and supply the temporary token;
+   state expiration and re-authentication behavior, recommend client
+   credentials for long-lived/unattended sessions, and forbid persistence.
+   Keep the old-tutorial redirect unless documentation owners explicitly change
+   it.
 
 ## Validation Plan
 
@@ -201,53 +199,59 @@ Run focused unit tests from the repository root after implementation:
 uv run python -m pytest \
   libs/python/cua-sandbox/tests/test_config.py \
   libs/python/cua-sandbox/tests/test_fleet_cloud_client.py \
-  libs/python/cua-sandbox/tests/test_fleet_cloud_transport.py \
-  libs/python/cua-cli/tests/auth/test_oidc.py -v
+  libs/python/cua-sandbox/tests/test_fleet_cloud_transport.py -v
 ```
 
-Run the opt-in credential-safe integration test only on an authorized machine
-after interactive login and approval of the Fleet image:
+Run the opt-in credential-safe integration test only on an authorized machine,
+after interactive login, approval of the Fleet image, and confirmation of the
+safe public token handoff design:
 
 ```bash
-cua auth login
 CUA_FLEET_TEST_IMAGE='approved-image-reference' \
   uv run python -m pytest \
   tests/integration/sandbox_sdk/test_fleet_cli_device_auth.py -v
 ```
 
-The integration test must skip with a clear non-secret message when
-`CUA_FLEET_TEST_IMAGE` is not set. Review its captured output and logs to
-confirm they contain neither `Authorization` headers nor token-shaped values.
-Run the repository's applicable Markdown/docs formatter or docs build after
-the documentation target is selected; do not add a new formatter solely for
-this change.
+The integration test must skip with a clear non-secret message when the image
+or approved token handoff prerequisite is unavailable. Review test output and
+logs to confirm they contain neither `Authorization` headers nor token-shaped
+values. Exercise a deliberately expired or unauthorized inert test token in a
+mocked unit test and assert one actionable re-authentication failure with no
+retry. Run the repository's applicable Markdown/docs formatter or docs build
+after the documentation target is selected; do not add a formatter for this
+change.
 
 ## Risks And Decisions Required Before Shipping
 
-- An approved Fleet image value for `CUA_FLEET_TEST_IMAGE` is not yet known.
-  Keep the live test opt-in until an owner provides one.
-- Live Keycloak issuer configuration, `azp`, subject, scopes/claims, and any
-  Fleet entitlement must be verified with a real CLI device-login token by an
-  authorized operator. The checked-in authorization policy is necessary but
-  not sufficient evidence of production access.
-- Confirm whether service-proxy `401` refresh is in scope. The generated Fleet
-  SDK covers one control-plane retry; the raw `/api/namespaces` request must
-  receive the same treatment. Service-proxy behavior may require a separate
-  design and test if it does not flow through that SDK retry path.
+- An approved Fleet image value for `CUA_FLEET_TEST_IMAGE` is not yet known;
+  keep the live test opt-in until an owner provides one.
+- Live Keycloak issuer configuration, `azp`, subject, scopes/claims, and Fleet
+  entitlement must be verified with a real CLI device-login token by an
+  authorized operator. The checked-in policy is necessary but not sufficient
+  evidence of production access.
+- The supported, credential-safe CLI device-token handoff path is not yet
+  confirmed. Do not document a token-printing command, an environment export,
+  or a persistence workflow. Resolve the public handoff design before adding a
+  tutorial or CLI call-site integration.
+- A device token is intentionally unsuitable for long-lived or unattended
+  workloads. Documentation and errors must direct those users to client ID and
+  client secret authentication instead of retrying or refreshing a token.
 - Preserve legacy compatibility: an explicit `api_key` must never silently
-  switch to Fleet, and an application without provider or client credentials
-  must retain today's legacy API-key errors and routing.
-- Treat provider failures as authentication failures without including token
+  switch to Fleet, and an application without static token or client
+  credentials must retain today's legacy API-key errors and routing.
+- Treat unauthorized responses as credential-safe errors; do not include token
   material in exceptions, tracing, test assertion output, or telemetry.
 
 ## Acceptance Mapping
 
 | Acceptance criterion | Planned evidence |
 | --- | --- |
-| Public SDK can use renewable device authentication | `cua.configure(access_token_provider=...)` plus provider-mode transport tests |
-| CLI credentials remain private | CLI adapter reads/refreshes only through the OS keyring; tests and logs use no real credentials |
-| Fleet routing is deterministic | Precedence tests for explicit `api_key`, provider, client credentials, and legacy fallback |
-| Expired or rejected access token recovers once | SDK-provider behavior plus raw `/api/namespaces` initial request, forced refresh, and one-retry tests |
-| Fleet lifecycle remains safe | Existing/new tests preserve pool-then-claim creation and claim-then-pool cleanup; E2E uses public delete in `finally` and verifies absence |
+| Public SDK supports temporary device authentication | `cua.configure(access_token=...)` and static-token Fleet transport tests |
+| Device-token lifetime is explicit | Docs and `401`/expiry tests direct users to authenticate again without retry or silent refresh |
+| Long-lived workloads retain a safe path | Client ID/client secret remains Fleet fallback and is documented for unattended use |
+| Fleet routing is deterministic | Precedence tests cover explicit `api_key`, static token, client credentials, and legacy fallback |
+| Raw namespace requests authenticate correctly | Tests assert the static bearer header and a single actionable no-retry `401`/expiry failure |
+| CLI and SDK credential boundaries remain private | No SDK keyring reads, no CLI adapter, no token output/export/persistence, and safe-handoff design is required before examples |
+| Fleet lifecycle remains safe | Tests preserve pool-then-claim creation and claim-then-pool cleanup; E2E deletes publicly in `finally` and verifies absence |
 | Live coverage cannot consume an unapproved image | Integration test requires `CUA_FLEET_TEST_IMAGE` and skips otherwise |
-| Documentation reflects current repository state | Current public SDK guide; no reference to a nonexistent old cloud tutorial or private `_FleetClient` patching |
+| Documentation reflects current repository state | Current public SDK guide avoids nonexistent old tutorial and private `_FleetClient` patching |

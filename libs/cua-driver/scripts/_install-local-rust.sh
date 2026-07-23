@@ -187,6 +187,16 @@ fi
 
 # --- Build --------------------------------------------------------------
 
+# Keep Cargo's output directory and the binary staged below on one path.
+# Cargo resolves a relative CARGO_TARGET_DIR from the workspace we build in,
+# so make that resolution explicit before invoking it.
+BUILD_TARGET_DIR="${CARGO_TARGET_DIR:-$REPO_ROOT/target}"
+case "$BUILD_TARGET_DIR" in
+    /*) ;;
+    *) BUILD_TARGET_DIR="$REPO_ROOT/$BUILD_TARGET_DIR" ;;
+esac
+export CARGO_TARGET_DIR="$BUILD_TARGET_DIR"
+
 echo "${BOLD}Building cua-driver ($BUILD_CONFIG)...${NORMAL}"
 cd "$REPO_ROOT"
 if [ "$BUILD_CONFIG" = "release" ]; then
@@ -195,7 +205,7 @@ else
     cargo build -p cua-driver
 fi
 
-BUILT_BINARY="$REPO_ROOT/target/$BUILD_CONFIG/cua-driver"
+BUILT_BINARY="$BUILD_TARGET_DIR/$BUILD_CONFIG/cua-driver"
 if [ ! -x "$BUILT_BINARY" ]; then
     echo "${RED}Error: build produced no binary at $BUILT_BINARY${NORMAL}"
     exit 1

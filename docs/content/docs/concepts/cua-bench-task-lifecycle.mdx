@@ -1,0 +1,73 @@
+---
+title: 'The Cua-Bench task lifecycle'
+description: 'Understand how task variants, setup, solutions, and evaluators form a repeatable experiment.'
+---
+
+A Cua-Bench task is a repeatable experiment, not only a natural-language
+instruction. It combines the state an agent starts from, the interface it can
+operate, and the evidence used to score the result.
+
+## One definition, many variants
+
+The task configuration returns one or more variants. Every variant has its own
+prompt and may carry different metadata, provider settings, operating-system
+theme, or initial state.
+
+Variants let a benchmark change inputs without duplicating its setup and
+evaluation code. An agent can therefore face the same underlying skill across
+different labels, layouts, or operating systems.
+
+## Four lifecycle functions
+
+A task module describes four distinct phases:
+
+1. **Configuration** returns the task variants available for a dataset split.
+2. **Setup** prepares the selected variant and opens the applications or
+   interface the agent will use.
+3. **Solve** provides an optional oracle: a known procedure that exercises the
+   task and checks whether the environment can produce a successful result.
+4. **Evaluate** inspects final state and returns one or more rewards.
+
+Configuration is shared while setup, solving, and evaluation operate on one
+selected variant and its session.
+
+## Why the oracle and evaluator are separate
+
+The oracle describes one way to reach the goal. The evaluator defines what
+counts as reaching it. Keeping them separate prevents a benchmark from scoring
+an agent by whether it copied one prescribed sequence of clicks.
+
+The same evaluator can score an oracle, a human attempt, or an agent
+trajectory. An oracle reward below the expected score usually indicates a task
+or environment problem rather than an agent-quality result.
+
+## Providers and sessions
+
+The provider in a variant's computer configuration determines where the task
+runs:
+
+- a **simulated** provider renders a lightweight desktop through Playwright;
+- a **native** provider supplies a real operating-system environment through
+  the configured container or virtual-machine platform.
+
+Setup, solve, and evaluate functions receive a session interface. The task uses
+that interface to open windows, execute input actions, capture screenshots, or
+read state needed for evaluation. This keeps the lifecycle consistent while
+the underlying environment changes.
+
+## From one task to a benchmark
+
+A dataset groups task definitions. The runner expands their variants, assigns
+them to environments, records their results, and aggregates rewards. Traces
+preserve the observations and actions from individual sessions so failures can
+be inspected after the run.
+
+The benchmark score is therefore the end of a chain:
+
+```text
+dataset → task → variant → environment session → trajectory → evaluator → reward
+```
+
+The [task definition reference](/reference/cua-bench/task-definition) describes
+the exact Python contract. To see the lifecycle operate end to end, build
+[your first Cua-Bench task](/tutorials/your-first-cua-bench-task).

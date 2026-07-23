@@ -1,6 +1,7 @@
 {
   "title": "Cua-Bench",
   "pages": [
-    "cli-reference"
+    "cli-reference",
+    "task-definition"
   ]
 }

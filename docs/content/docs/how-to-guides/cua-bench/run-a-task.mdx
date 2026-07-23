@@ -1,73 +1,81 @@
 ---
-title: 'Run a Cua-Bench task'
-description: 'Inspect and execute a bundled computer-use task with its oracle and evaluator.'
+title: 'Run and validate a Cua-Bench task'
+description: 'Inspect a task, verify its oracle, and exercise a variant manually.'
 ---
 
-Use this guide to run a simulated 2048 task from the Cua-Bench source tree.
-The task includes setup, an oracle solution, and an evaluator, so you can see
-the complete task lifecycle without downloading a VM image.
+Use this guide to validate an existing task before running it with an agent or
+including it in a dataset.
 
 ## Before you start
 
-Install:
-
-- Git;
-- [uv](https://docs.astral.sh/uv/);
-- Python 3.12 or 3.13.
-
-## Get Cua-Bench
-
-Clone Cua and install Cua-Bench with its browser dependencies:
-
-```bash
-git clone https://github.com/trycua/cua.git
-cd cua/libs/cua-bench
-uv sync --extra browser
-```
+- Install Cua-Bench and any dependencies required by the task's provider.
+- Have a local task directory containing `main.py`.
 
 ## Inspect the task
 
-Ask the CLI to load the task and report its provider, variants, and lifecycle
-functions:
+Load the task before starting an environment:
 
 ```bash
-uv run cb task info example_tasks/2048_env_simulated
+cb task info <task-path>
 ```
 
-The task uses the simulated provider and includes three variants. Each variant
-has setup, oracle, and evaluation functions.
+Confirm:
 
-## Run the oracle and evaluator
+- the provider and operating-system types are the ones you expect;
+- the selected variant exists;
+- setup and evaluation show check marks;
+- solve shows a check mark when the task is supposed to include an oracle.
 
-Run the first variant with its bundled oracle:
+## Verify the oracle and evaluator
+
+Run the selected variant with its oracle and close it after evaluation:
 
 ```bash
-uv run cb interact \
-  example_tasks/2048_env_simulated \
+cb interact <task-path> \
   --variant-id 0 \
   --oracle \
   --no-wait
 ```
 
-Cua-Bench prepares the environment, runs the oracle, and prints the evaluator's
-reward before closing the task.
+Check the reported evaluation result against the reward the task considers
+successful. A failed oracle is a task or environment validation failure; do not
+use that result as an agent score.
 
-To operate the task yourself, omit `--oracle` and `--no-wait`:
-
-```bash
-uv run cb interact example_tasks/2048_env_simulated --variant-id 0
-```
-
-The task remains open until you return to the terminal and press Enter.
-
-## Explore other tasks
-
-List the bundled task directories:
+## Exercise the task manually
 
 ```bash
-uv run cb task list example_tasks
+cb interact <task-path> --variant-id 0
 ```
 
-Use `cb task info <path>` before running a task to check its provider and
-variants. Read [What is Cua-Bench?](/concepts/what-is-cua-bench) for the task,
-environment, and evaluator model.
+Complete the task in its visible environment. Return to the terminal and press
+Enter to evaluate and close it.
+
+## Check additional variants
+
+Repeat the oracle check for each variant:
+
+```bash
+cb interact <task-path> --variant-id <variant> --oracle --no-wait
+```
+
+Changing only `--variant-id` exercises the same lifecycle functions with the
+selected variant's prompt, metadata, and computer configuration.
+
+## Troubleshooting
+
+### Playwright reports that the browser executable is missing
+
+For a simulated task, install Chromium in the same environment as Cua-Bench:
+
+```bash
+uv tool run --from 'cua-bench[browser]' playwright install chromium
+```
+
+### A lifecycle function is missing
+
+Confirm that the task's `main.py` decorates each function with the same split.
+Refer to the [task definition reference](/reference/cua-bench/task-definition)
+for the supported decorators and signatures.
+
+If you have not created a task before, follow
+[Build your first Cua-Bench task](/tutorials/your-first-cua-bench-task).

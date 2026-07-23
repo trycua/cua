@@ -1,0 +1,120 @@
+---
+title: 'Build your first Cua-Bench task'
+description: 'Create, inspect, solve, and evaluate a simulated computer-use task.'
+---
+
+In this tutorial, you will create a small computer-use task and verify it with
+its oracle solution. The task runs in a simulated desktop, so it does not need
+Docker, a VM, or an API key.
+
+## Before you start
+
+Install:
+
+- Python 3.12 or 3.13;
+- [uv](https://docs.astral.sh/uv/).
+
+## Install Cua-Bench
+
+Install the CLI and the browser support used by simulated tasks:
+
+```bash
+uv tool install 'cua-bench[browser]'
+uv tool run --from 'cua-bench[browser]' playwright install chromium
+```
+
+Confirm that the CLI is available:
+
+```bash
+cb --help
+```
+
+You should see command groups including `run`, `interact`, `task`, `trace`, and
+`dataset`.
+
+## Create a task
+
+Create a working directory, enter it, and start the task scaffolder:
+
+```bash
+mkdir cua-bench-tutorial
+cd cua-bench-tutorial
+cb task create first-task
+```
+
+Use these values when prompted:
+
+```text
+Author name: Your name
+Author email: you@example.com
+License [MIT]:
+Task description: Click the Submit button
+Task difficulty (easy|medium|hard) [easy]:
+Task category (e.g., grounding, software-engineering) [grounding]:
+Tags (comma-separated): button,simulated
+```
+
+The scaffold contains the task definition and a small HTML interface:
+
+```text
+first-task/
+├── main.py
+├── pyproject.toml
+└── gui/
+    └── index.html
+```
+
+## Inspect the task
+
+Ask Cua-Bench to load the definition:
+
+```bash
+cb task info first-task
+```
+
+The output reports a simulated provider, one macOS-themed variant, and check
+marks for the setup, solve, and evaluate functions. This confirms that the CLI
+can discover the complete task lifecycle.
+
+## Run the oracle
+
+Run the task with its reference solution:
+
+```bash
+cb interact first-task --variant-id 0 --oracle --no-wait
+```
+
+A desktop window opens while Cua-Bench sets up the interface, clicks the
+button, and evaluates the final state. The final lines should include:
+
+```text
+✓ Solution complete
+✓ Evaluation result: [1.0]
+✓ Task completed successfully!
+```
+
+The reward of `1.0` means the evaluator observed the state produced by the
+oracle.
+
+## Try the task yourself
+
+Run the same variant without the oracle:
+
+```bash
+cb interact first-task --variant-id 0
+```
+
+Click **Submit** in the task window. Return to the terminal and press Enter to
+evaluate and close the task.
+
+## What you built
+
+You created a task with a prompt, simulated desktop, setup function, oracle
+solution, and evaluator. You then used the same evaluator to verify both a
+reference solution and a manual attempt.
+
+## Next steps
+
+- Understand [the Cua-Bench task lifecycle](/concepts/cua-bench-task-lifecycle).
+- Learn how to [run and validate an existing task](/how-to-guides/cua-bench/run-a-task).
+- Consult the [task definition reference](/reference/cua-bench/task-definition).

@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 from computer_server.handlers.cua_driver import CuaDriverAutomationHandler
-from computer_server.handlers.factory import HandlerFactory
 
 
 class _Record:
@@ -338,7 +337,11 @@ def test_invalid_driver_configuration_is_rejected(sdk, fallback):
 
 
 @pytest.mark.asyncio
-async def test_factory_closes_and_clears_the_shared_runtime():
+async def test_factory_closes_and_clears_the_shared_runtime(monkeypatch):
+    # pynput needs an explicit no-display backend in headless Linux CI.
+    monkeypatch.setenv("PYNPUT_BACKEND", "dummy")
+    from computer_server.handlers.factory import HandlerFactory
+
     automation = SimpleNamespace(close=AsyncMock())
     handlers = (object(), automation, object(), object(), object(), object())
     HandlerFactory._shared_handlers = handlers

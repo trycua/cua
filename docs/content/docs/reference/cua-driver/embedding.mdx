@@ -1,9 +1,18 @@
 ---
-title: Embedding
-description: Run a Cua Driver daemon as a direct child of your host app and connect an MCP proxy to it.
+title: App-hosted daemon reference
+description: Run a private Cua Driver daemon when a desktop app must expose MCP using its permission identity.
 ---
 
-Embedding runs a dedicated `cua-driver serve` daemon as a direct child of your host app instead of launching the standalone `CuaDriver.app`. On macOS, the daemon inherits the host app's Accessibility and Screen Recording grants, so users only approve your app. A second `cua-driver mcp` child proxies stdio MCP traffic to that daemon; it never executes tools itself.
+This reference describes the daemon-backed host for an application that must
+expose MCP to an external agent. It is not required for ordinary SDK use:
+[`CuaDriver.create()`](/how-to-guides/driver/use-sdk-in-process) runs the driver
+inside the importing process with no daemon or socket.
+
+The app-hosted form runs a dedicated `cua-driver serve` daemon as a direct
+child of your host app instead of launching the standalone `CuaDriver.app`. On
+macOS, the daemon inherits the host app's Accessibility and Screen Recording
+grants, so users only approve your app. A second `cua-driver mcp` child proxies
+stdio MCP traffic to that daemon; it never executes tools itself.
 
 A complete macOS reference host and demo live in the repo at `libs/cua-driver/rust/examples/embedded-host-macos`.
 

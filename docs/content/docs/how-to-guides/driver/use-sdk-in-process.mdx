@@ -1,0 +1,124 @@
+---
+title: 'Use Cua Driver in process'
+description: 'Call the typed Cua Driver SDK directly from Python or TypeScript without a daemon.'
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+Use the same-process SDK when your application owns the desktop-control
+lifecycle. `CuaDriver.create()` loads the Rust runtime into the importing
+process; it does not launch `cua-driver serve` or use IPC.
+
+## Install the SDK
+
+<Tabs groupId="language" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+```bash
+python -m pip install cua-driver
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```bash
+npm install @trycua/cua-driver
+```
+
+  </Tab>
+</Tabs>
+
+## Start a session and capture the desktop
+
+Choose the capture scope when the session starts:
+
+- `AUTO` begins with the window-focused action ladder and permits an explicit
+  escalation to desktop tools when narrower options are exhausted.
+- `WINDOW` is strict window-only mode.
+- `DESKTOP` is strict whole-desktop mode.
+
+<Tabs groupId="language" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+```python
+import asyncio
+
+from cua_driver import (
+    CaptureScope,
+    CuaDriver,
+    EndSessionInput,
+    GetDesktopStateInput,
+    StartSessionInput,
+)
+
+
+async def main() -> None:
+    driver = CuaDriver.create()
+    session = "desktop-capture"
+    await driver.start_session(
+        StartSessionInput(
+            session=session,
+            capture_scope=CaptureScope.DESKTOP,
+        )
+    )
+    try:
+        result = await driver.get_desktop_state(
+            GetDesktopStateInput(
+                session=session,
+                screenshot_out_file=None,
+            )
+        )
+        if result.is_error:
+            raise RuntimeError(result.text)
+        print(result.images[0].mime_type)
+    finally:
+        await driver.end_session(EndSessionInput(session=session))
+        await driver.shutdown()
+
+
+asyncio.run(main())
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```ts
+import {
+  CaptureScope,
+  CuaDriver,
+  EndSessionInput,
+  GetDesktopStateInput,
+  StartSessionInput,
+} from '@trycua/cua-driver';
+
+const driver = CuaDriver.create(undefined);
+const session = 'desktop-capture';
+
+await driver.startSession(
+  StartSessionInput.new({
+    session,
+    captureScope: CaptureScope.Desktop,
+  })
+);
+
+try {
+  const result = await driver.getDesktopState(GetDesktopStateInput.new({ session }));
+  if (result.isError) throw new Error(result.text);
+  console.log(result.images[0]?.mimeType);
+} finally {
+  await driver.endSession(EndSessionInput.new({ session }));
+  await driver.shutdown();
+  driver.uniffiDestroy();
+}
+```
+
+  </Tab>
+</Tabs>
+
+Keep one `CuaDriver` object for the application lifetime. End every session you
+start. `shutdown()` is idempotent and rejects new work after shutdown while
+allowing already-admitted operations to finish.
+
+If an external agent must also connect to your signed desktop application, use
+[Expose MCP from a desktop app](/how-to-guides/driver/expose-mcp-from-desktop-app)
+instead.

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.0...cua-driver-rs-v0.12.1) (2026-07-23)
+
+
+### Bug Fixes
+
+* **cua-driver:** make macOS SDK load standalone ([#2477](https://github.com/trycua/cua/issues/2477)) ([457b17e](https://github.com/trycua/cua/commit/457b17eae8ea2d2ca1b45ad5b23fc342787769a7))
+
 ## [0.12.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.11.0...cua-driver-rs-v0.12.0) (2026-07-22)
 
 

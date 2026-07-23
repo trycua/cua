@@ -181,6 +181,8 @@ struct PreparedProfile {
 
 pub(crate) struct ManagedBrowser {
     child: Child,
+    #[cfg(target_os = "windows")]
+    owned_pid: i64,
     profile: PathBuf,
     delete_profile: bool,
     marker: ProfileMarker,
@@ -195,6 +197,19 @@ impl Drop for ManagedBrowser {
             // fans out into renderer/utility descendants, so killing only the
             // root Child can leave profile writers alive after cleanup.
             libc::kill(-(self.child.id() as i32), libc::SIGKILL);
+        }
+        #[cfg(target_os = "windows")]
+        if self.owned_pid != i64::from(self.child.id()) {
+            // Edge on Windows ARM may use a short-lived launcher process and
+            // transfer the browser role to a descendant. The listener owner
+            // was attested inside that driver-spawned process tree, so reap
+            // that exact process tree when its owning session ends.
+            let _ = Command::new("taskkill.exe")
+                .args(["/PID", &self.owned_pid.to_string(), "/T", "/F"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -517,11 +532,14 @@ async fn attest_spawned_endpoint(
                     http_port: live.http_port,
                     ownership: EndpointOwnershipProof {
                         method: EndpointOwnershipMethod::SpawnedByDriver,
-                        owner_pid: child_pid,
-                        detail: Some(
+                        owner_pid: live.ownership.owner_pid,
+                        detail: Some(if live.ownership.owner_pid == child_pid {
                             "driver-owned profile port file plus live loopback socket owner"
-                                .to_owned(),
-                        ),
+                                .to_owned()
+                        } else {
+                            "driver-owned profile port file plus live loopback socket owner promoted from a short-lived launcher process"
+                                    .to_owned()
+                        }),
                     },
                 });
             }
@@ -651,6 +669,8 @@ impl BrowserEngine {
         }
         self.managed_browsers.lock().unwrap().push(ManagedBrowser {
             child,
+            #[cfg(target_os = "windows")]
+            owned_pid: prepared_pid,
             profile: prepared_profile.path,
             delete_profile: prepared_profile.delete_on_cleanup,
             marker: prepared_profile.marker,

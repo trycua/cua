@@ -69,8 +69,8 @@ fn def() -> &'static ToolDef {
              field is fully back-compat — omit it and you get the legacy left-click behaviour. \
              Pixel path: routes through the CGEvent left/right/middle mouse-button primitives. \
              AX path: \"right\" maps to AXShowMenu (same surface as the dedicated `right_click` \
-             tool); \"middle\" has no AX equivalent and falls back to a pixel middle-click at the \
-             element's center.\n\
+             tool). \"middle\" has no AX equivalent; token-targeted middle clicks fail closed, \
+             while legacy element_index targeting retains its pixel-center fallback.\n\
              action: press (default), show_menu, pick, confirm, cancel, open.\n\
              from_zoom: set true after a zoom call to auto-translate zoom-image pixel \
              coordinates to full-window space."
@@ -88,14 +88,14 @@ fn def() -> &'static ToolDef {
                 "pid":           { "type": "integer", "description": "Target process ID." },
                 "window_id":     { "type": "integer", "description": "Target window ID. Required for element_index. Optional when element_token is supplied (the token carries it)." },
                 "element_index": { "type": "integer", "description": "Element index from last get_window_state. REQUIRES `pid` and `window_id` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op." },
-                "element_token": { "type": "string",  "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token` of the last get_window_state. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded — re-snapshot in that case." },
+                "element_token": { "type": "string",  "description": "Opaque stable AX node handle from `structuredContent.elements[].element_token` of the last get_window_state. Strictly bound to pid, window_id, generation, element_index, and AX node identity. If window_id or element_index are also supplied they must match. Unknown, cross-target, stale-generation, or identity-mismatch tokens fail closed." },
                 "x":             { "type": "number",  "description": "X in screenshot pixels, read straight off the image you were handed — no scaling math needed. With pid+window_id (capture_scope=window): window-local pixels from the get_window_state PNG (top-left origin). Windowless (no pid/window_id, capture_scope=desktop): pixels from the get_desktop_state PNG (the native full-display image). Either way, the pixel you read IS the pixel that gets clicked; the driver undoes the Retina backing scale + any downscale internally." },
                 "y":             { "type": "number",  "description": "Y in screenshot pixels (see x). Window-local from get_window_state, or full-display from get_desktop_state under capture_scope=desktop." },
                 "action":        { "type": "string",  "description": "AX action: press, show_menu, pick, confirm, cancel, open." },
                 "button":        {
                     "type": "string",
                     "enum": ["left", "right", "middle"],
-                    "description": "Mouse button. Default: \"left\" — omit for legacy left-click behaviour. Pixel path uses the matching CGEvent primitive; AX path maps \"right\" to AXShowMenu and falls back to a pixel middle-click at the element's center for \"middle\"."
+                    "description": "Mouse button. Default: \"left\" — omit for legacy left-click behaviour. Pixel path uses the matching CGEvent primitive; AX path maps \"right\" to AXShowMenu. Token-targeted \"middle\" fails closed because AX has no middle-click action; pass x,y explicitly for a pixel middle-click."
                 },
                 "count":         { "type": "integer", "description": "Click count (pixel path only). Default 1." },
                 "modifier": {
@@ -258,31 +258,29 @@ impl Tool for ClickTool {
         // the calling session's cursor, not the shared "default" one.
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
 
-        // Surface 6: resolve element_token / element_index precedence
-        // BEFORE the pixel-path fallback. Token wins on disagreement; a
-        // stale token returns an explicit error instead of silently
-        // falling back to the integer (Surface 6 hard constraint).
         let element_token_arg = args.opt_str("element_token");
+        let token_targeted = element_token_arg.is_some();
         let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match cua_driver_core::element_token::resolve_element_args(
-            pid,
-            element_index_arg,
-            element_token_arg.as_deref(),
-            window_id_arg,
-            "click",
-        ) {
-            Ok(r) => r,
-            Err(e) => return e,
-        };
-        let (element_index, window_id, _via_token) = match resolved {
-            cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg, false),
-            cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: wid,
-                element_index: idx,
-                via_token,
-            } => (Some(idx), wid, via_token),
-        };
+        let (element_index, window_id, token_guard, token_generation) =
+            if let Some(token) = element_token_arg.as_deref() {
+                match self.state.element_cache.resolve_token(
+                    pid,
+                    window_id_arg,
+                    element_index_arg,
+                    token,
+                ) {
+                    Ok(validated) => (
+                        Some(validated.element_index),
+                        Some(validated.window_id),
+                        Some(validated.element),
+                        Some(validated.generation),
+                    ),
+                    Err(error) => return error.into_tool_result(),
+                }
+            } else {
+                (element_index_arg, window_id_arg, None, None)
+            };
         let x = args
             .opt_f64("x")
             .or_else(|| args.opt_i64("x").map(|i| i as f64));
@@ -292,9 +290,8 @@ impl Tool for ClickTool {
         let action = args.str_or("action", "press");
         // Surface 5: optional `button` arg, default "left" preserves legacy behaviour.
         // Pixel path: routes to left/right/middle CGEvent primitives.
-        // AX path: "right" delegates to AXShowMenu (same surface as right_click);
-        // "middle" has no AX equivalent and falls back to a pixel middle-click
-        // at the element's screen-space center.
+        // AX path: "right" delegates to AXShowMenu. Token-targeted middle
+        // clicks fail closed; legacy index targeting keeps its pixel fallback.
         let button_str = args.str_or("button", "left").to_lowercase();
         // delivery_mode: per-call ladder rung. Foreground briefly activates the
         // target for both AX and pixel paths, then restores the prior app.
@@ -322,14 +319,17 @@ impl Tool for ClickTool {
             // concurrent get_window_state on the same (pid, window_id) while
             // this click is mid-flight (use-after-free → daemon crash). The
             // guard lives to the end of this method, past the AX action below.
-            let element_guard = match self.state.element_cache.get_element_retained(pid, wid, idx) {
-                Some(e) => e,
-                None => {
-                    return ToolResult::error(format!(
-                        "Element index {idx} not found in cache for pid={pid} window_id={wid}. \
-                     Call get_window_state first."
-                    ))
-                }
+            let element_guard = match token_guard {
+                Some(element) => element,
+                None => match self.state.element_cache.get_element_retained(pid, wid, idx) {
+                    Some(e) => e,
+                    None => {
+                        return ToolResult::error(format!(
+                            "Element index {idx} not found in cache for pid={pid} window_id={wid}. \
+                             Call get_window_state first."
+                        ))
+                    }
+                },
             };
             let element_ptr = element_guard.as_ptr();
 
@@ -352,11 +352,12 @@ impl Tool for ClickTool {
             .ok()
             .flatten();
 
-            // Surface 5: button=middle on the AX path has no AX equivalent.
-            // Fall back to a pixel middle-click at the element's screen-space center
-            // so the request still produces a real middle-button event (browser tab
-            // close, autoscroll, etc.). If we can't resolve a center, error rather
-            // than silently degrade to AXPress.
+            if let Some(error) = token_middle_click_error(token_targeted, &button_str) {
+                return error;
+            }
+
+            // Legacy element_index targeting retains the explicit pixel-center
+            // middle-click behavior. Capability targeting never reaches here.
             if button_str == "middle" {
                 let (cx, cy) = match center {
                     Some(c) => c,
@@ -493,6 +494,11 @@ impl Tool for ClickTool {
                         "verified": false,
                         "effect": if suspected_noop { "suspected_noop" } else { "unverifiable" },
                     });
+                    if let Some(generation) = token_generation {
+                        structured["element_token"] =
+                            serde_json::json!(element_token_arg.as_deref());
+                        structured["generation"] = serde_json::json!(generation);
+                    }
                     if suspected_noop {
                         structured["escalation"] = serde_json::json!({
                             "recommended": "px",
@@ -825,6 +831,20 @@ impl Tool for ClickTool {
     }
 }
 
+fn token_middle_click_error(token_targeted: bool, button: &str) -> Option<ToolResult> {
+    (token_targeted && button == "middle").then(|| {
+        ToolResult::error(
+            "click(button=middle) with element_token is unsupported because AX has no \
+             middle-click action; refusing implicit CGEvent/pixel fallback. Pass x and y \
+             explicitly to request a pixel middle-click.",
+        )
+        .with_structured(serde_json::json!({
+            "code": "element_token_middle_click_unsupported",
+            "path": "ax",
+        }))
+    })
+}
+
 // ── AX click implementation (blocking) ───────────────────────────────────────
 
 /// Returns `(summary_text, needs_webkit_delay, suspected_noop)`.
@@ -1030,5 +1050,16 @@ mod tests {
             let s = args.str_or("button", "left").to_lowercase();
             assert_eq!(s, v);
         }
+    }
+
+    #[test]
+    fn token_targeted_middle_click_fails_closed_before_pixel_dispatch() {
+        let result = token_middle_click_error(true, "middle")
+            .expect("token-targeted middle click must be rejected");
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.expect("structured error");
+        assert_eq!(structured["code"], "element_token_middle_click_unsupported");
+        assert!(token_middle_click_error(false, "middle").is_none());
+        assert!(token_middle_click_error(true, "left").is_none());
     }
 }

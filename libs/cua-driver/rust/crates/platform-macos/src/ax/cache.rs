@@ -61,19 +61,33 @@ pub struct CacheKey {
 
 /// Cached snapshot for one (pid, window_id) pair.
 pub struct CachedSnapshot {
-    /// element_index → raw AXUIElementRef pointer (retained, as usize for Send).
-    pub elements: Vec<usize>,
+    pub generation: u32,
+    /// element_index → raw AXUIElementRef pointer plus exact node identity.
+    pub elements: Vec<CachedElement>,
+}
+
+pub struct CachedElement {
+    pub ptr: usize,
+    pub node_identity: u64,
 }
 
 impl Drop for CachedSnapshot {
     fn drop(&mut self) {
         // Release the extra CFRetain that walk_element added for each cached ptr.
-        for ptr in &self.elements {
-            if *ptr != 0 {
-                unsafe { CFRelease(*ptr as AXUIElementRef as CFTypeRef) };
+        for element in &self.elements {
+            if element.ptr != 0 {
+                unsafe { CFRelease(element.ptr as AXUIElementRef as CFTypeRef) };
             }
         }
     }
+}
+
+pub struct ValidatedElement {
+    pub element: RetainedElement,
+    pub window_id: u32,
+    pub element_index: usize,
+    pub generation: u32,
+    pub node_identity: u64,
 }
 
 /// Global element cache.
@@ -90,13 +104,31 @@ impl ElementCache {
 
     /// Replace the snapshot for (pid, window_id) with the nodes from a fresh walk.
     pub fn update(&self, pid: i32, window_id: u32, nodes: &[AXNode]) {
-        let elements: Vec<usize> = nodes
+        self.update_with_generation(pid, window_id, 0, nodes);
+    }
+
+    pub fn update_with_generation(
+        &self,
+        pid: i32,
+        window_id: u32,
+        generation: u32,
+        nodes: &[AXNode],
+    ) {
+        let elements: Vec<CachedElement> = nodes
             .iter()
             .filter(|n| n.element_index.is_some())
-            .map(|n| n.element_ptr)
+            .map(|n| CachedElement {
+                ptr: n.element_ptr,
+                node_identity: n.node_identity,
+            })
             .collect();
-        self.core
-            .insert(CacheKey { pid, window_id }, CachedSnapshot { elements });
+        self.core.insert(
+            CacheKey { pid, window_id },
+            CachedSnapshot {
+                generation,
+                elements,
+            },
+        );
     }
 
     /// Look up + `CFRetain` the element for `element_index` in (pid, window_id),
@@ -114,7 +146,7 @@ impl ElementCache {
     ) -> Option<RetainedElement> {
         self.core
             .with_snapshot(&CacheKey { pid, window_id }, |s| {
-                let ptr = s.elements.get(element_index).copied()?;
+                let ptr = s.elements.get(element_index)?.ptr;
                 if ptr != 0 {
                     // Safety: still inside `with_snapshot`'s lock, so the
                     // snapshot (and thus this CFTypeRef) is alive right now.
@@ -123,6 +155,73 @@ impl ElementCache {
                 Some(RetainedElement(ptr))
             })
             .flatten()
+    }
+
+    pub fn resolve_token(
+        &self,
+        pid: i32,
+        args_window_id: Option<u32>,
+        args_element_index: Option<usize>,
+        token: &str,
+    ) -> Result<ValidatedElement, cua_driver_core::element_token::StableTokenError> {
+        let binding = cua_driver_core::element_token::global().resolve_stable(
+            pid,
+            args_window_id,
+            args_element_index,
+            token,
+        )?;
+        self.core
+            .with_snapshot(
+                &CacheKey {
+                    pid,
+                    window_id: binding.window_id,
+                },
+                |snapshot| {
+                    if snapshot.generation != binding.generation {
+                        return Err(
+                            cua_driver_core::element_token::StableTokenError::stale_generation(
+                                binding.generation,
+                                pid,
+                                binding.window_id,
+                            ),
+                        );
+                    }
+                    let cached = snapshot
+                        .elements
+                        .get(binding.element_index)
+                        .ok_or_else(|| {
+                            cua_driver_core::element_token::StableTokenError::identity_mismatch(
+                                binding.element_index,
+                            )
+                        })?;
+                    if cached.node_identity != binding.node_identity {
+                        return Err(
+                            cua_driver_core::element_token::StableTokenError::identity_mismatch(
+                                binding.element_index,
+                            ),
+                        );
+                    }
+                    if cached.ptr != 0 {
+                        unsafe { CFRetain(cached.ptr as AXUIElementRef as CFTypeRef) };
+                    }
+                    Ok(ValidatedElement {
+                        element: RetainedElement(cached.ptr),
+                        window_id: binding.window_id,
+                        element_index: binding.element_index,
+                        generation: binding.generation,
+                        node_identity: binding.node_identity,
+                    })
+                },
+            )
+            .unwrap_or_else(|| {
+                Err(
+                    cua_driver_core::element_token::StableTokenError::stale_generation(
+                        binding.generation,
+                        pid,
+                        binding.window_id,
+                    ),
+                )
+            })
     }
 
     /// Number of indexed elements for (pid, window_id), or 0 if not cached.
@@ -159,6 +258,7 @@ mod tests {
             help: None,
             actions: Vec::new(),
             element_ptr: ptr,
+            node_identity: ptr as u64,
             depth: 0,
             parent_element_index: None,
             frame: None,
@@ -229,5 +329,123 @@ mod tests {
         assert!(cache.get_element_retained(1, 2, 0).is_none());
         cache.update(1, 2, &[]);
         assert!(cache.get_element_retained(1, 2, 5).is_none());
+    }
+
+    #[test]
+    fn stable_token_resolves_only_exact_cached_ax_identity() {
+        let s = CFString::new("cua-driver-stable-token-exact-identity");
+        let ptr = s.as_concrete_TypeRef() as usize;
+        unsafe { CFRetain(ptr as CFTypeRef) };
+        let pid = 0x6afe_0001;
+        let window_id = 77;
+        let generation = cua_driver_core::element_token::global()
+            .register_snapshot_with_identities(pid, window_id, 1, [(0, ptr as u64)]);
+        let cache = ElementCache::new();
+        cache.update_with_generation(pid, window_id, generation, &[node_with_ptr(ptr)]);
+
+        let token = cua_driver_core::element_token::token_for(generation, 0);
+        let resolved = cache
+            .resolve_token(pid, Some(window_id), Some(0), &token)
+            .expect("exact identity resolves");
+        assert_eq!(resolved.element.as_ptr(), ptr);
+        assert_eq!(resolved.node_identity, ptr as u64);
+    }
+
+    #[test]
+    fn stable_token_fails_closed_on_identity_mismatch() {
+        let s = CFString::new("cua-driver-stable-token-identity-mismatch");
+        let ptr = s.as_concrete_TypeRef() as usize;
+        unsafe { CFRetain(ptr as CFTypeRef) };
+        let pid = 0x6afe_0002;
+        let window_id = 78;
+        let generation = cua_driver_core::element_token::global()
+            .register_snapshot_with_identities(
+                pid,
+                window_id,
+                1,
+                [(0, (ptr as u64).wrapping_add(1))],
+            );
+        let cache = ElementCache::new();
+        cache.update_with_generation(pid, window_id, generation, &[node_with_ptr(ptr)]);
+
+        let token = cua_driver_core::element_token::token_for(generation, 0);
+        let error = cache
+            .resolve_token(pid, Some(window_id), Some(0), &token)
+            .err()
+            .expect("identity mismatch must fail");
+        assert_eq!(
+            error.code,
+            cua_driver_core::element_token::TOKEN_IDENTITY_MISMATCH_CODE
+        );
+    }
+
+    #[test]
+    fn stable_token_fails_closed_on_cache_generation_mismatch() {
+        let s = CFString::new("cua-driver-stable-token-generation-mismatch");
+        let ptr = s.as_concrete_TypeRef() as usize;
+        unsafe { CFRetain(ptr as CFTypeRef) };
+        let pid = 0x6afe_0003;
+        let window_id = 79;
+        let generation = cua_driver_core::element_token::global()
+            .register_snapshot_with_identities(pid, window_id, 1, [(0, ptr as u64)]);
+        let cache = ElementCache::new();
+        cache.update_with_generation(
+            pid,
+            window_id,
+            generation.wrapping_add(1),
+            &[node_with_ptr(ptr)],
+        );
+
+        let token = cua_driver_core::element_token::token_for(generation, 0);
+        let error = cache
+            .resolve_token(pid, Some(window_id), Some(0), &token)
+            .err()
+            .expect("generation mismatch must fail");
+        assert_eq!(
+            error.code,
+            cua_driver_core::element_token::TOKEN_STALE_GENERATION_CODE
+        );
+    }
+
+    #[test]
+    fn superseded_snapshot_same_index_replacement_fails_closed() {
+        let first = CFString::new("cua-driver-stable-token-first-node");
+        let second = CFString::new("cua-driver-stable-token-replacement-node");
+        let first_ptr = first.as_concrete_TypeRef() as usize;
+        let second_ptr = second.as_concrete_TypeRef() as usize;
+        unsafe {
+            CFRetain(first_ptr as CFTypeRef);
+            CFRetain(second_ptr as CFTypeRef);
+        }
+        let pid = 0x6afe_0004;
+        let window_id = 80;
+        let first_generation = cua_driver_core::element_token::global()
+            .register_snapshot_with_identities(pid, window_id, 1, [(0, first_ptr as u64)]);
+        let cache = ElementCache::new();
+        cache.update_with_generation(
+            pid,
+            window_id,
+            first_generation,
+            &[node_with_ptr(first_ptr)],
+        );
+        let stale_token = cua_driver_core::element_token::token_for(first_generation, 0);
+
+        let second_generation = cua_driver_core::element_token::global()
+            .register_snapshot_with_identities(pid, window_id, 1, [(0, second_ptr as u64)]);
+        cache.update_with_generation(
+            pid,
+            window_id,
+            second_generation,
+            &[node_with_ptr(second_ptr)],
+        );
+
+        let error = cache
+            .resolve_token(pid, Some(window_id), Some(0), &stale_token)
+            .err()
+            .expect("old token must not resolve replacement node at the same index");
+        assert_eq!(
+            error.code,
+            cua_driver_core::element_token::TOKEN_STALE_GENERATION_CODE
+        );
     }
 }

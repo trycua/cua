@@ -38,7 +38,59 @@ use cua_driver_core::tool::ToolRegistry;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::{ax::cache::ElementCache, cursor::state::CursorRegistry};
+use crate::{
+    ax::cache::{ElementCache, RetainedElement},
+    cursor::state::CursorRegistry,
+};
+
+pub(crate) struct ResolvedElementTarget {
+    pub element_index: Option<usize>,
+    pub window_id: Option<u32>,
+    pub retained: Option<RetainedElement>,
+    pub via_token: bool,
+}
+
+pub(crate) fn resolve_element_target(
+    state: &ToolState,
+    pid: i32,
+    window_id: Option<u32>,
+    element_index: Option<usize>,
+    element_token: Option<&str>,
+) -> Result<ResolvedElementTarget, cua_driver_core::protocol::ToolResult> {
+    if let Some(token) = element_token {
+        let validated = state
+            .element_cache
+            .resolve_token(pid, window_id, element_index, token)
+            .map_err(|error| error.into_tool_result())?;
+        return Ok(ResolvedElementTarget {
+            element_index: Some(validated.element_index),
+            window_id: Some(validated.window_id),
+            retained: Some(validated.element),
+            via_token: true,
+        });
+    }
+    Ok(ResolvedElementTarget {
+        element_index,
+        window_id,
+        retained: None,
+        via_token: false,
+    })
+}
+
+pub(crate) fn allow_pixel_fallback(via_token: bool) -> bool {
+    !via_token
+}
+
+#[cfg(test)]
+mod stable_token_policy_tests {
+    use super::allow_pixel_fallback;
+
+    #[test]
+    fn exact_node_capabilities_never_allow_pixel_fallback() {
+        assert!(!allow_pixel_fallback(true));
+        assert!(allow_pixel_fallback(false));
+    }
+}
 
 /// Per-process zoom context — stores the padded crop origin and resize scale
 /// from the most recent `zoom` call, so `click(from_zoom=true)` can translate

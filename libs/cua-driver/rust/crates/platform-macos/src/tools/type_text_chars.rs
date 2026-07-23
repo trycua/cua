@@ -72,25 +72,27 @@ impl Tool for TypeTextCharsTool {
         let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match cua_driver_core::element_token::resolve_element_args(
+        let resolved = match super::resolve_element_target(
+            &self.state,
             pid,
+            window_id_arg,
             element_index_arg,
             element_token_arg.as_deref(),
-            window_id_arg,
-            "type_text_chars",
         ) {
             Ok(r) => r,
             Err(e) => return e,
         };
-        let (element_index, window_id) = match resolved {
-            cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg),
-            cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: wid,
-                element_index: idx,
-                via_token: _,
-            } => (Some(idx), wid),
-        };
+        let token_targeted = resolved.via_token;
+        let element_index = resolved.element_index;
+        let window_id = resolved.window_id;
+        let token_guard = resolved.retained;
         let type_chars_only = args.bool_or("type_chars_only", false);
+        if token_targeted && type_chars_only {
+            return ToolResult::error(
+                "type_chars_only cannot be used with element_token because it would discard \
+                 the exact-node focus binding.",
+            );
+        }
 
         // Pre-focus element if requested.
         if !type_chars_only {
@@ -98,17 +100,36 @@ impl Tool for TypeTextCharsTool {
                 // Retain so a concurrent get_window_state can't free the element
                 // during the focus call (use-after-free → daemon crash). The
                 // guard outlives the awaited spawn_blocking below.
-                if let Some(element_guard) =
-                    self.state.element_cache.get_element_retained(pid, wid, idx)
+                let element_guard = match token_guard
+                    .or_else(|| self.state.element_cache.get_element_retained(pid, wid, idx))
                 {
-                    let element_ptr = element_guard.as_ptr();
-                    let _ = tokio::task::spawn_blocking(move || {
+                    Some(element) => element,
+                    None => {
+                        return ToolResult::error(format!(
+                            "Element index {idx} not found. Call get_window_state first."
+                        ))
+                    }
+                };
+                let element_ptr = element_guard.as_ptr();
+                let focus = tokio::task::spawn_blocking(move || {
+                    if token_targeted {
+                        crate::input::ax_actions::focus_element_strict(element_ptr)
+                    } else {
                         crate::input::ax_actions::focus_element(element_ptr)
-                    })
-                    .await;
-                    drop(element_guard);
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    }
+                })
+                .await;
+                match focus {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => {
+                        return ToolResult::error(format!(
+                            "type_text_chars exact-node focus failed: {error}"
+                        ))
+                    }
+                    Err(error) => return ToolResult::error(format!("Focus task failed: {error}")),
                 }
+                drop(element_guard);
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
         }
 

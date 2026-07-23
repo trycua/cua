@@ -29,10 +29,21 @@ fn map_action(action: &str) -> &'static str {
 /// Set AXFocused=true on an element (for pre-focusing before key press).
 pub fn focus_element(element_ptr: usize) -> anyhow::Result<()> {
     let err = unsafe { set_bool_attr_true(element_ptr as AXUIElementRef, "AXFocused") };
+    focus_result(err, false)
+}
+
+pub fn focus_element_strict(element_ptr: usize) -> anyhow::Result<()> {
+    let err = unsafe { set_bool_attr_true(element_ptr as AXUIElementRef, "AXFocused") };
+    focus_result(err, true)
+}
+
+fn focus_result(err: i32, strict: bool) -> anyhow::Result<()> {
     if err == kAXErrorSuccess {
         Ok(())
+    } else if strict {
+        anyhow::bail!("AXSetAttribute(AXFocused) failed with error {err}")
     } else {
-        // Focus errors are often benign (element doesn't support focus).
+        // Focus errors are often benign for legacy index targeting.
         tracing::warn!("AXSetAttribute(AXFocused) returned {err}");
         Ok(())
     }
@@ -45,5 +56,17 @@ pub fn set_ax_value(element_ptr: usize, value: &str) -> anyhow::Result<()> {
         Ok(())
     } else {
         anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::focus_result;
+
+    #[test]
+    fn token_focus_miss_fails_closed_while_legacy_focus_remains_best_effort() {
+        let focus_miss = -25205;
+        assert!(focus_result(focus_miss, true).is_err());
+        assert!(focus_result(focus_miss, false).is_ok());
     }
 }

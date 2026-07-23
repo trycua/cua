@@ -48,7 +48,7 @@ UPDATE_ON_LOGIN=false
 #   installer path does not need a GitHub API call.
 LUME_VERSION="${LUME_VERSION:-}"
 # ~~~ BAKED_VERSION: auto-updated in the release PR — do not edit ~~~
-LUME_BAKED_VERSION="0.3.16" # x-release-please-version
+LUME_BAKED_VERSION="0.4.0" # x-release-please-version
 # ~~~ END_BAKED_VERSION ~~~
 
 # Default port for lume serve (default: 7777)

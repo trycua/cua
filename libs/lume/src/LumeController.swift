@@ -1147,6 +1147,7 @@ final class LumeController {
             // Validate parameters using the located VMDirectory
             try validateRunParameters(
                 vmDir: vmDir, // Pass vmDir
+                primaryDiskPath: diskPath ?? vmDir.diskPath,
                 sharedDirectories: sharedDirectories,
                 mount: mount,
                 usbMassStoragePaths: usbMassStoragePaths,
@@ -1628,6 +1629,7 @@ final class LumeController {
 
     private func validateRunParameters(
         vmDir: VMDirectory, // Changed signature: accept VMDirectory
+        primaryDiskPath: Path,
         sharedDirectories: [SharedDirectory]?,
         mount: Path?,
         usbMassStoragePaths: [Path]? = nil,
@@ -1640,9 +1642,25 @@ final class LumeController {
 
         // Validate additional disk paths
         if let extraDisks = additionalDiskPaths {
+            let canonicalPrimaryDiskPath =
+                primaryDiskPath.url.resolvingSymlinksInPath().standardizedFileURL.path(
+                    percentEncoded: false)
+            var canonicalAdditionalDiskPaths = Swift.Set<String>()
+
             for path in extraDisks {
                 if !FileManager.default.fileExists(atPath: path.path) {
                     throw ValidationError("Additional disk image not found: \(path.path)")
+                }
+
+                let canonicalPath =
+                    path.url.resolvingSymlinksInPath().standardizedFileURL.path(
+                        percentEncoded: false)
+                if canonicalPath == canonicalPrimaryDiskPath {
+                    throw ValidationError(
+                        "Additional disk image must differ from the primary boot disk: \(path.path)")
+                }
+                guard canonicalAdditionalDiskPaths.insert(canonicalPath).inserted else {
+                    throw ValidationError("Duplicate additional disk image: \(path.path)")
                 }
             }
         }

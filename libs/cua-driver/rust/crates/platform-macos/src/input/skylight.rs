@@ -569,6 +569,47 @@ pub fn with_foreground_assist(
     with_menu_shortcut_activation(target_pid, target_wid, body)
 }
 
+/// Activate an exact target window for a global HID keyboard action.
+///
+/// Unlike [`with_menu_shortcut_activation`], this helper must not run `action`
+/// when the private foreground SPI is unavailable: a global HID event has no
+/// pid addressing and would otherwise land in whichever application is
+/// currently frontmost. The short settles keep the target frontmost until
+/// WindowServer has routed both sides of the key chord, then restore the prior
+/// process even when the action fails.
+pub fn with_foreground_hid_activation(
+    target_pid: libc::pid_t,
+    target_wid: u32,
+    action: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let set_front = set_front_process_fn()
+        .ok_or_else(|| anyhow::anyhow!("foreground HID delivery is unavailable"))?;
+
+    let mut prev_psn = [0u8; 8];
+    let prev_ok = get_front_process_fn()
+        .map(|f| unsafe { f(prev_psn.as_mut_ptr() as *mut c_void) } == 0)
+        .unwrap_or(false);
+
+    let mut target_psn = [0u8; 8];
+    if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
+        anyhow::bail!("could not resolve target window for foreground HID delivery");
+    }
+    let activated = unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) };
+    if activated != 0 {
+        anyhow::bail!("WindowServer rejected foreground HID activation");
+    }
+
+    std::thread::sleep(std::time::Duration::from_millis(40));
+    let result = action();
+    std::thread::sleep(std::time::Duration::from_millis(40));
+
+    if prev_ok {
+        unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
+    }
+
+    result
+}
+
 /// Activate `target_pid`'s window `target_wid` for NSMenu key dispatch, run `action`,
 /// then immediately restore the prior frontmost process.
 ///

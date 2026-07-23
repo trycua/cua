@@ -3,6 +3,8 @@
   "pages": [
     "install",
     "use-sdk-in-process",
+    "use-claude-agent-sdk",
+    "use-codex-sdk",
     "expose-mcp-from-desktop-app",
     "install-agent-skill",
     "run-in-macos-lume-vm",

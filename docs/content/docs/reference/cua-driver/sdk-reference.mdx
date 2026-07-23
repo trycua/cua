@@ -37,9 +37,12 @@ same-process runtime and `Daemon` for a socket-backed connection.
 | `is_available()`   | `isAvailable()`   | Whether the runtime can serve calls                     |
 | `shutdown()`       | `shutdown()`      | Stops admission and awaits admitted work                |
 
-In TypeScript, call `uniffiDestroy()` after `shutdown()` to release the binding
-handle. Python releases the handle during finalization, but applications should
-still await `shutdown()`.
+In TypeScript, `shutdown()` and `uniffiDestroy()` have separate jobs:
+`shutdown()` closes runtime admission and awaits admitted operations;
+`uniffiDestroy()` immediately frees the generated UniFFI object handle.
+JavaScript's `FinalizationRegistry` is only a nondeterministic fallback, so
+orderly applications call both, in that order. Python finalization releases its
+handle automatically, but applications must still await `shutdown()`.
 
 ## Session methods
 

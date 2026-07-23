@@ -76,3 +76,18 @@ identity, not a different action implementation.
 See [Process model](/reference/cua-driver/process-model) for platform details
 and [Expose MCP from a desktop app](/how-to-guides/driver/expose-mcp-from-desktop-app)
 for the hosted-daemon procedure.
+
+## Agent SDK integration is intentionally asymmetric
+
+| Agent SDK | Native application callbacks | External MCP route |
+| --------- | ---------------------------- | ------------------ |
+| Claude Agent SDK | Supported in Python and TypeScript through its in-process custom-tool server | Supported in Python and TypeScript |
+| Codex SDK | No direct custom-tool callback boundary | Supported in Python and TypeScript |
+
+Claude's in-process custom-tool server is an adapter inside the host
+application; the callbacks still call the native Cua Driver SDK directly.
+Codex uses `cua-driver mcp` because MCP is its supported tool-extension
+boundary. Generating another language client would not add a new capability.
+
+See [Use Cua Driver with Claude Agent SDK](/how-to-guides/driver/use-claude-agent-sdk)
+and [Use Cua Driver with Codex SDK](/how-to-guides/driver/use-codex-sdk).

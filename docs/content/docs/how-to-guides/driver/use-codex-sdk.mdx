@@ -1,0 +1,79 @@
+---
+title: 'Use Cua Driver with Codex SDK'
+description: 'Configure Cua Driver MCP for the Python and TypeScript Codex SDKs.'
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+Codex SDK supports MCP servers but does not expose application-owned custom
+tool callbacks. Use `cua-driver mcp` as its Cua Driver boundary. Do not build a
+second tool loop that translates the native SDK back into an ad hoc protocol.
+
+## Install the executable examples
+
+From `libs/cua-driver/examples/agent-sdks`:
+
+<Tabs groupId="language" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+```bash
+python3.12 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
+This installs `openai-codex` and imports it as `openai_codex`.
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```bash
+npm install
+```
+
+This installs `@openai/codex-sdk`.
+
+  </Tab>
+</Tabs>
+
+Install Cua Driver so `cua-driver` is on `PATH`, or set
+`CUA_DRIVER_BIN` to its absolute path.
+
+## Run a desktop task
+
+<Tabs groupId="language" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+```bash
+CUA_CAPTURE_SCOPE=window \
+  .venv/bin/python codex_agent.py \
+  "Inspect the active app and summarize what is visible without changing it"
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```bash
+CUA_CAPTURE_SCOPE=window \
+  npm run codex -- \
+  "Inspect the active app and summarize what is visible without changing it"
+```
+
+  </Tab>
+</Tabs>
+
+The complete scripts are
+[`codex_agent.py`](https://github.com/trycua/cua/blob/main/libs/cua-driver/examples/agent-sdks/codex_agent.py)
+and
+[`codex_agent.ts`](https://github.com/trycua/cua/blob/main/libs/cua-driver/examples/agent-sdks/codex_agent.ts).
+
+Both scripts:
+
+1. start a uniquely named Cua session outside Codex;
+2. mark the Cua MCP server required;
+3. run Codex in a read-only filesystem sandbox;
+4. instruct Codex to use only Cua tools for desktop work; and
+5. end the session in `finally`.
+
+The filesystem sandbox does not sandbox the separate desktop MCP server.
+Restrict the task itself, choose an appropriate Cua capture scope and policy,
+and never blindly retry a mutation after a timeout or disconnect.

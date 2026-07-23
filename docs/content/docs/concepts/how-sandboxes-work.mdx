@@ -57,10 +57,8 @@ Snapshots are useful when setup is expensive. Packages can be installed once, mo
 
 Each *fork* starts from the same snapshot but gets its own writable disk. Changes in one fork do not affect the snapshot or sibling forks. On copy-on-write storage, forks can be near-instant because unchanged blocks are shared until a sandbox writes to them.
 
-## Cloud and local execution
+## Local execution
 
-The same lifecycle concepts apply in local mode and cloud mode. The sandbox still starts from an `Image`, exposes a code half and a GUI half, can be ephemeral or persistent, and can be snapshotted or deleted.
+Local mode runs on the developer's hardware. Linux containers use Docker Desktop, macOS VMs use Lume, and VM backends can use QEMU or Hyper-V. Local execution depends on the machine's available CPU, memory, disk, and virtualization support. Select it with `local=True`.
 
-Local mode runs on the developer's hardware. Linux containers use Docker Desktop, macOS VMs use Lume, and VM backends can use QEMU. Local execution depends on the machine's available CPU, memory, disk, and virtualization support. Local mode is selected with `local=True`.
-
-Cloud mode runs managed VMs on Cua infrastructure with the same API surface. Provisioning, placement, and capacity are handled by the service. Cloud mode uses a Cua API key through `CUA_API_KEY`.
+The sandbox still starts from an `Image`, exposes a code half and a GUI half, and can be ephemeral or persistent. Start with [Your first local sandbox](/tutorials/your-first-local-sandbox).

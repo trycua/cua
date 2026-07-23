@@ -6,8 +6,8 @@
     "driver",
     "sandbox",
     "lume",
+    "cua-bench",
     "recipes",
-    "skills",
     "agent-context"
   ]
 }

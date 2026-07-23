@@ -65,6 +65,6 @@ Kick off the task before you leave. In the morning, open `~/contacts.csv` and sp
 
 ## Scale this out
 
-One logged-in browser profile handles one account at a time. To process many accounts, events, or platforms in parallel overnight, move each authenticated session into its own **Cua Sandbox** cloud desktop. Log in once per sandbox, persist the session in the image, then fan the jobs out.
+One logged-in browser profile handles one account at a time. To process several accounts, events, or platforms in parallel overnight, use one local Cua Sandbox per authenticated session and cap concurrency to the resources available on the host.
 
-Use [Run sandboxes in parallel](/how-to-guides/sandbox/scale-out) to run many desktops at once, [Images](/how-to-guides/sandbox/images) to bake the logged-in session into an image, and [Your first cloud sandbox](/tutorials/your-first-cloud-sandbox) for the basic SDK lifecycle.
+Use [Run sandboxes in parallel](/how-to-guides/sandbox/scale-out) to run several local desktops, [Images](/how-to-guides/sandbox/images) to prepare their starting state, and [Your first local sandbox](/tutorials/your-first-local-sandbox) for the basic SDK lifecycle.

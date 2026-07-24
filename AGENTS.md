@@ -41,3 +41,29 @@ Before declaring a pull request ready or merging it, inspect its final changed
 files and query its current GitHub title. Correct the title yourself when the
 scope or release impact changed during implementation, and wait for
 `CI: Release metadata` to pass. Do not leave title correction for a maintainer.
+
+## Monorepo component release resolution
+
+Cua is a monorepo with independent component release streams. Never use
+GitHub's repository-wide "Latest" release badge, the `/releases/latest`
+endpoint, or a generic "stable" designation to determine whether a component
+has shipped or which version users receive.
+
+Inspect the component's canonical installer and release workflow instead. For
+Cua Driver, both the Unix and Windows installers normally use a
+release-managed baked version. Their API fallback selects the highest semantic
+version whose tag matches `cua-driver-rs-v*`. Both download assets from the
+exact component tag; neither depends on GitHub's repository-wide "Latest"
+release.
+
+Before making a release-status or installation-version claim:
+
+- identify the component's tag prefix and canonical installer entry points;
+- inspect version-override and baked-version precedence;
+- verify that the component-tagged release and expected assets exist; and
+- confirm which exact version the canonical installer currently resolves.
+
+Describe a component as shipped when its own release artifacts exist and its
+canonical distribution path resolves them. Do not add a separate
+"promoted to GitHub Latest/stable" requirement unless that component's
+distribution code explicitly uses one.

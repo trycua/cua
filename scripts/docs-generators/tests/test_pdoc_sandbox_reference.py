@@ -169,7 +169,7 @@ __all__ = ["Tunnel", "TunnelInfo"]
     def test_escapes_mdx_angle_brackets_in_docstrings(self) -> None:
         self.assertEqual(
             generator.mdx_docstring("http://localhost:<random>/json"),
-            "http://localhost:&lt;random&gt;/json",
+            "`http://localhost:&lt;random&gt;/json`",
         )
 
     def test_uses_the_member_declaration_for_async_detection(self) -> None:
@@ -217,6 +217,12 @@ __all__ = ["Tunnel", "TunnelInfo"]
             stdout=subprocess.PIPE,
             text=True,
         )
+
+    def test_preserves_shared_generator_dependencies(self) -> None:
+        requirements = (ROOT / "scripts/docs-generators/requirements.txt").read_text()
+
+        self.assertIn("pdoc==16.0.0", requirements)
+        self.assertIn("griffe>=0.40.0", requirements)
 
     def test_loads_the_source_package_without_native_fleet_bindings(self) -> None:
         fixture_parent = str(self.package_root.parent)

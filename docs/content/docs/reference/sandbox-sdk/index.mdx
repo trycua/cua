@@ -1919,7 +1919,7 @@ Returns a context manager (or awaitable) that yields:
 Example — Chrome DevTools over ADB::
 
     async with sb.tunnel.forward("chrome_devtools_remote") as t:
-        # http://localhost:&lt;random&gt;/json lists CDP targets
+        # `http://localhost:&lt;random&gt;/json` lists CDP targets
         print(t.url)
 
 Raises: `ValueError`

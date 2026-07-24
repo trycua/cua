@@ -24,6 +24,7 @@ OUTPUT = DOCS / "content/docs/reference/sandbox-sdk/index.mdx"
 PRETTIER = DOCS / "node_modules/.bin/prettier"
 EXCLUDED_MODULE_PARTS = (".transport.fleet", "cyclops_sdk")
 PUBLIC_PROTOCOL_METHODS = frozenset(("__aenter__", "__aexit__"))
+PLACEHOLDER_URL = re.compile(r"https?://[^\s`]*<[^\s>]+>[^\s`]*")
 
 # pdoc resolves annotations lazily; rendered signatures come from source declarations below.
 warnings.filterwarnings(
@@ -126,6 +127,7 @@ def mdx_docstring(docstring: str) -> str:
         if line.lstrip().startswith("```"):
             in_fence = not in_fence
         if not in_fence:
+            line = PLACEHOLDER_URL.sub(lambda match: f"`{match.group(0)}`", line)
             line = (
                 line.replace("{", "\\{")
                 .replace("}", "\\}")

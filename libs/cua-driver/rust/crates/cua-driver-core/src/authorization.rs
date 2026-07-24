@@ -470,7 +470,26 @@ pub fn authorize_tool_call(
     tool: &str,
     args: &Value,
 ) -> Result<RiskAssessment, crate::policy::AuthorizationError> {
+    let context = crate::session_authorization::configured_registry()
+        .and_then(crate::session_authorization::SessionAuthorizationRegistry::legacy_context)
+        .map_err(crate::policy::AuthorizationError::Loading)?;
+    authorize_tool_call_with_context(tool, args, &context)
+}
+
+/// Context-aware authorization entry point. The context must originate from
+/// the process-owned registry; caller-supplied session strings or tool
+/// arguments are never authorization inputs.
+pub fn authorize_tool_call_with_context(
+    tool: &str,
+    args: &Value,
+    context: &crate::session_authorization::EffectiveAuthorizationContext,
+) -> Result<RiskAssessment, crate::policy::AuthorizationError> {
     enforce_hard_invariants(tool, args)?;
+    if context.is_expired() {
+        return Err(crate::policy::AuthorizationError::Denied(
+            "authorization context expired".to_owned(),
+        ));
+    }
     crate::policy::authorize_tool_call(tool, args)?;
     let risk = classify_tool_call(tool, args);
     if risk.class == RiskClass::Unclassified {
@@ -478,15 +497,13 @@ pub fn authorize_tool_call(
             "tool '{tool}' has no reviewed risk classification"
         )));
     }
-    let mode = configured_permission_mode().map_err(crate::policy::AuthorizationError::Loading)?;
+    let mode = context.mode();
     if mode == PermissionMode::Bounded {
-        let manifest = crate::session_manifest::configured_session_manifest()
-            .map_err(crate::policy::AuthorizationError::Loading)?
-            .ok_or_else(|| {
-                crate::policy::AuthorizationError::Loading(
-                    "bounded session policy is unavailable".to_owned(),
-                )
-            })?;
+        let manifest = context.bounded_manifest().ok_or_else(|| {
+            crate::policy::AuthorizationError::Loading(
+                "bounded session policy is unavailable".to_owned(),
+            )
+        })?;
         if manifest.is_expired() {
             return Err(crate::policy::AuthorizationError::Denied(
                 "bounded session policy expired".to_owned(),
@@ -518,6 +535,9 @@ pub fn authorize_tool_call(
             }
         }
     }
+    context
+        .authorize_dispatch()
+        .map_err(crate::policy::AuthorizationError::Denied)?;
     Ok(risk)
 }
 
@@ -558,7 +578,7 @@ fn enforce_hard_invariants(
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionMode {
     Standard,
@@ -723,7 +743,7 @@ pub fn status_json() -> serde_json::Value {
                 "ask_count": ask,
             })
         });
-    serde_json::json!({
+    let mut status = serde_json::json!({
         "permission_mode": mode.as_ref().map(|mode| mode.as_str()).ok(),
         "permission_mode_valid": mode.is_ok(),
         "permission_mode_source": if std::env::var_os(PERMISSION_MODE_ENV).is_some() {
@@ -752,7 +772,14 @@ pub fn status_json() -> serde_json::Value {
         "session_policy_approved_at_startup": env_flag(crate::session_manifest::SESSION_POLICY_APPROVED_ENV),
         "session_policy_valid": session_policy.is_ok(),
         "session_policy": session_policy_status,
-    })
+    });
+    let session_status = crate::session_authorization::status_json();
+    if let (Some(target), Some(session_status)) =
+        (status.as_object_mut(), session_status.as_object())
+    {
+        target.extend(session_status.clone());
+    }
+    status
 }
 
 #[cfg(test)]
@@ -943,6 +970,17 @@ mod tests {
         assert_eq!(
             status["enforcement_adapters"],
             enforcement_adapter_inventory_json()
+        );
+        assert_eq!(status["effective_session_mode_source"], "process");
+        assert_eq!(status["session_mode_delegation_enabled"], false);
+        assert_eq!(status["session_mode_delegation_ready"], false);
+        assert_eq!(
+            status["session_mode_delegation_blocker"],
+            "authenticated_action_connection_required"
+        );
+        assert_eq!(
+            status["daemon_authorization_ceiling"]["allowed_modes"],
+            serde_json::json!(["standard"])
         );
     }
 }

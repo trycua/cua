@@ -53,6 +53,13 @@ same registry authorization boundary before platform dispatch. MCP, HTTP, CLI,
 and daemon adapters may reject a call earlier for defense in depth, but they do
 not replace or weaken that native check.
 
+Today that boundary resolves a process-owned authorization context: one
+runtime or daemon still has one mode. The core also models an immutable daemon
+ceiling and connection-bound delegated contexts, but deliberately exposes no
+model-facing session-mode selector. Shared-daemon mixed modes remain disabled
+until a trusted host can bind actions to an authenticated accepted connection;
+a public `session` string only scopes lifecycle state.
+
 ## Why the daemon still exists
 
 External agents and CLI calls are short-lived or run outside the desktop app

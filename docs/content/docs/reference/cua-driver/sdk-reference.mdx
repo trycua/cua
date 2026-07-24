@@ -31,6 +31,12 @@ authorization coordinator used by daemon-backed calls. An invalid
 configuration returns `DriverError.Configuration`; a denied generic call
 returns a tool error with stable code `permission_denied`.
 
+The current SDK does not accept a per-session permission mode. Same-process
+calls inherit the process-owned authorization context, and daemon connections
+inherit the daemon mode. Trusted mixed-mode session creation will require an
+opaque authenticated action connection; public session IDs and ordinary
+socket options cannot select or widen a mode.
+
 `execution_mode()` / `executionMode()` reports the generated
 `DriverExecutionMode` value. The current enum variants are `Embedded` for the
 same-process runtime and `Daemon` for a socket-backed connection.

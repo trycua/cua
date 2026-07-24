@@ -69,6 +69,7 @@ pub mod recording_tools;
 pub mod recording_zoom;
 pub mod server;
 pub mod session;
+pub mod session_authorization;
 pub mod session_manifest;
 pub mod session_tools;
 pub mod socket_io;

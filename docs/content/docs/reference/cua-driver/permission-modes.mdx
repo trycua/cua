@@ -181,6 +181,15 @@ boundary. Run one daemon per mode unless the host can supply an authenticated
 session/action connection; caller-chosen session IDs are lifecycle labels, not
 credentials.
 
+The native coordinator now represents every call with an immutable
+authorization context and exposes a separate daemon ceiling. Current calls use
+a process-owned context, so this is compatibility-preserving groundwork, not a
+mixed-mode claim. Delegated contexts are designed to bind an effective mode,
+policy hashes, expiry, idle expiry, exact public/transport session pair, and an
+optional immutable bounded manifest to an opaque accepted-connection
+authority. The ordinary socket, MCP metadata, and tool schemas expose no way
+to create that authority.
+
 ## Managed controls
 
 Set `CUA_DRIVER_MANAGED_POLICY_FILE` to apply an administrator-owned YAML or
@@ -195,8 +204,12 @@ then rejects unrestricted startup even when the danger flag is present.
 
 `cua-driver status` reports the process mode, policy hashes, session-manifest
 hash and expiry, active/metadata-only/not-exposed adapter IDs, the complete
-content-free adapter inventory, and protected-provider availability. It does
-not print policy contents or browser data.
+content-free adapter inventory, protected-provider availability, the daemon
+authorization ceiling, and whether trusted session delegation is enabled and
+ready. Until authenticated action binding ships,
+`session_mode_delegation_ready` is `false` with blocker
+`authenticated_action_connection_required`. Status does not print policy
+contents, session labels, connection authority, or browser data.
 
 End one session and every grant it owns:
 

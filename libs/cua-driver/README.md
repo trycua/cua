@@ -109,9 +109,18 @@ under MIT-0. Before a release, retain an internal record that Cua AI has the
 right to distribute every bundled file under MIT-0.
 
 Pull requests that change the skill run a publish dry-run with the pinned
-ClawHub CLI. A real release is available only through the
-`ClawHub: cua-driver skill` workflow's manual dispatch. The publish job requires
-all of the following:
+ClawHub CLI. After the cross-platform Driver CD workflow publishes a successful,
+immutable `cua-driver-rs-v*` GitHub release, the `ClawHub: cua-driver skill`
+workflow automatically publishes the matching skill and requests its security
+scan. Successful diagnostic CD runs without a matching tag and GitHub release
+are ignored.
+
+Merging a Driver skill change confirms that Cua AI may distribute every bundled
+file under MIT-0 when the next Driver release is cut. Keep the supporting rights
+record internally. If that invariant cannot be confirmed for a change, do not
+merge it into the published skill directory.
+
+Manual dispatch remains the recovery path. It requires all of the following:
 
 1. Dispatch the workflow from `main`.
 2. Enter a version that matches both `rust/Cargo.toml` and the `version` field
@@ -120,8 +129,11 @@ all of the following:
 4. Configure a repository Actions secret named `CLAWHUB_TOKEN` for a publisher
    that can release under the selected owner. The default owner is `cua`.
 
-The workflow pins the ClawHub CLI, records the source repository, commit, ref,
-and path, and uploads the JSON publish result as an Actions artifact.
+Both paths pin the ClawHub CLI, verify that Cargo and skill versions match,
+record the source repository, commit, ref, and path, request a security scan,
+and upload the publish and scan results as Actions artifacts. The automatic path
+also requires a successful Driver CD run, a unique Driver release tag at the
+triggering SHA, and a non-draft GitHub release for that tag.
 
 After publishing, inspect and scan the exact version, then install it into an
 empty work directory:

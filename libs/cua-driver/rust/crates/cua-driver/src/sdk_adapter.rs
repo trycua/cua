@@ -123,6 +123,7 @@ fn daemon_tools_list_from(tools_list: &Value) -> Value {
         "tools": tools,
         "capability_version": tools_list.get("capability_version").cloned().unwrap_or(Value::Null),
         "schema_version": tools_list.get("schema_version").cloned().unwrap_or(Value::Null),
+        "enforcement_adapters": tools_list.get("enforcement_adapters").cloned().unwrap_or_else(|| json!([])),
         "tool_observation_owner": "daemon",
     })
 }
@@ -159,11 +160,19 @@ mod tests {
                 "risk": {"level": "low"}
             }],
             "capability_version": "1",
-            "schema_version": "1"
+            "schema_version": "1",
+            "enforcement_adapters": [{
+                "id": "browser_prepare.existing_profile",
+                "state": "active"
+            }]
         });
         let daemon = daemon_tools_list_from(&tools_list);
         assert_eq!(daemon["tools"][0]["input_schema"]["type"], "object");
         assert_eq!(daemon["tools"][0]["read_only"], true);
+        assert_eq!(
+            daemon["enforcement_adapters"][0]["id"],
+            "browser_prepare.existing_profile"
+        );
         assert_eq!(daemon["tool_observation_owner"], "daemon");
     }
 }

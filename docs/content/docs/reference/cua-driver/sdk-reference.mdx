@@ -24,6 +24,13 @@ asynchronous. Python uses `snake_case`; TypeScript uses `camelCase`.
 `claude_code_compatibility` / `claudeCodeCompatibility`, which defaults to
 `false`.
 
+`create()` validates the immutable permission-mode, managed-policy,
+user-policy, and bounded-manifest startup configuration before constructing
+the native runtime. Every subsequent same-process call passes the same native
+authorization coordinator used by daemon-backed calls. An invalid
+configuration returns `DriverError.Configuration`; a denied generic call
+returns a tool error with stable code `permission_denied`.
+
 `execution_mode()` / `executionMode()` reports the generated
 `DriverExecutionMode` value. The current enum variants are `Embedded` for the
 same-process runtime and `Daemon` for a socket-backed connection.
@@ -73,8 +80,9 @@ explicit escalation before desktop tools are enabled.
 | `hotkey`              | `hotkey`            | `HotkeyInput`            |
 
 Use `list_tools_json()` / `listToolsJson()` and `call_tool()` / `callTool()` for
-the generic, platform-extensible tool surface. Prefer typed methods when one is
-available.
+the generic, platform-extensible tool surface. Its top-level
+`enforcement_adapters` array distinguishes active, metadata-only, and
+not-exposed permission adapters. Prefer typed methods when one is available.
 
 ## `ToolResult`
 

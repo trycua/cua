@@ -39,7 +39,7 @@
     "@types/react-dom": "^19.1.5",
     "fast-glob": "^3.3.3",
     "next-validate-link": "^1.6.6",
-    "postcss": "^8.5.10",
+    "postcss": "^8.5.18",
     "prettier": "^3.6.2",
     "tailwindcss": "^4.1.8",
     "tsx": "^4.7.0",
@@ -47,7 +47,7 @@
   },
   "pnpm": {
     "overrides": {
-      "postcss": "8.5.10"
+      "postcss": "8.5.18"
     }
   }
 }

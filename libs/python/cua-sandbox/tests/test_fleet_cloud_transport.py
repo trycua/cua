@@ -1,5 +1,6 @@
 import pytest
 from cua_sandbox import Image
+from cua_sandbox.transport import fleet_cloud
 from cua_sandbox.transport.fleet_cloud import FleetCloudTransport
 from cyclops_sdk import Sandbox
 
@@ -27,6 +28,37 @@ def test_registry_image_becomes_typed_pool_request():
 def test_rejects_unsupported_images(image):
     with pytest.raises(ValueError):
         FleetCloudTransport._validate_image(image)
+
+
+@pytest.mark.asyncio
+async def test_connect_uses_generated_pool_template_claim_default(monkeypatch):
+    pool = type("Pool", (), {"metadata": type("Metadata", (), {"name": "demo"})()})()
+    requests = []
+
+    class Client:
+        async def create_pool(self, request):
+            return pool
+
+        async def wait_pool(self, created_pool):
+            return created_pool
+
+        async def create_claim(self, request):
+            requests.append(request)
+            return "claim"
+
+        async def wait_claim(self, claim):
+            return Sandbox(namespace="demo", claim=claim, name="sandbox", services=["server"])
+
+        async def wait_service_ready(self, sandbox, service, time_to_start):
+            assert service == "server"
+
+    client = Client()
+    monkeypatch.setattr(fleet_cloud, "_FleetClient", lambda: client)
+
+    await FleetCloudTransport(image=Image.from_registry("example:latest"), name="demo").connect()
+
+    assert len(requests) == 1
+    assert requests[0].spec is None
 
 
 @pytest.mark.asyncio

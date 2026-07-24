@@ -431,6 +431,10 @@ impl EmbeddedCuaDriverHost {
         for variable in safe_environment(&self.options.environment) {
             command.env(variable.name, variable.value);
         }
+        command.env(
+            "CUA_DRIVER_EMBEDDED_HOST_PID",
+            std::process::id().to_string(),
+        );
 
         let mut child = command
             .spawn()
@@ -805,7 +809,7 @@ fn configuration_error<T>(reason: impl Into<String>) -> Result<T, EmbeddedDriver
     })
 }
 
-fn allowed_environment_name(name: &str) -> bool {
+pub(crate) fn allowed_environment_name(name: &str) -> bool {
     let upper = name.to_ascii_uppercase();
     upper.starts_with("LC_")
         || matches!(
@@ -836,20 +840,53 @@ fn allowed_environment_name(name: &str) -> bool {
         )
 }
 
-fn safe_environment(overrides: &[EmbeddedEnvironmentVariable]) -> Vec<EmbeddedEnvironmentVariable> {
+pub(crate) fn inherited_managed_environment_name(name: &str) -> bool {
+    matches!(
+        name.to_ascii_uppercase().as_str(),
+        "CUA_DRIVER_PERMISSION_MODE"
+            | "CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS"
+            | "CUA_DRIVER_DISABLE_UNRESTRICTED"
+            | "CUA_DRIVER_ALLOW_LEGACY_EXISTING_PROFILE_APPROVAL"
+            | "CUA_DRIVER_SESSION_POLICY_FILE"
+            | "CUA_DRIVER_SESSION_POLICY_APPROVED"
+            | "CUA_DRIVER_POLICY_FILE"
+            | "CUA_DRIVER_MANAGED_POLICY_FILE"
+    )
+}
+
+pub(crate) fn safe_environment(
+    overrides: &[EmbeddedEnvironmentVariable],
+) -> Vec<EmbeddedEnvironmentVariable> {
+    merge_safe_environment(std::env::vars(), overrides)
+}
+
+fn merge_safe_environment(
+    inherited: impl IntoIterator<Item = (String, String)>,
+    overrides: &[EmbeddedEnvironmentVariable],
+) -> Vec<EmbeddedEnvironmentVariable> {
     let mut values = BTreeMap::new();
-    for (name, value) in std::env::vars() {
-        if allowed_environment_name(&name) {
-            values.insert(name, value);
+    for (name, value) in inherited {
+        if allowed_environment_name(&name) || inherited_managed_environment_name(&name) {
+            let canonical_name = if inherited_managed_environment_name(&name) {
+                name.to_ascii_uppercase()
+            } else {
+                name
+            };
+            values.insert(
+                canonical_name.to_ascii_uppercase(),
+                EmbeddedEnvironmentVariable {
+                    name: canonical_name,
+                    value,
+                },
+            );
         }
     }
     for variable in overrides {
-        values.insert(variable.name.clone(), variable.value.clone());
+        if allowed_environment_name(&variable.name) {
+            values.insert(variable.name.to_ascii_uppercase(), variable.clone());
+        }
     }
-    values
-        .into_iter()
-        .map(|(name, value)| EmbeddedEnvironmentVariable { name, value })
-        .collect()
+    values.into_values().collect()
 }
 
 fn validate_metadata(
@@ -1115,6 +1152,41 @@ mod tests {
         assert!(!allowed_environment_name("CUA_DRIVER_PERMISSION_MODE"));
         assert!(!allowed_environment_name("LD_PRELOAD"));
         assert!(!allowed_environment_name("NODE_OPTIONS"));
+    }
+
+    #[test]
+    fn managed_environment_is_inherited_case_insensitively_but_never_overridden() {
+        assert!(inherited_managed_environment_name(
+            "cua_driver_disable_unrestricted"
+        ));
+        let values = merge_safe_environment(
+            [
+                ("Path".into(), "inherited-path".into()),
+                (
+                    "cua_driver_disable_unrestricted".into(),
+                    "inherited-lock".into(),
+                ),
+            ],
+            &[
+                EmbeddedEnvironmentVariable {
+                    name: "PATH".into(),
+                    value: "host-path".into(),
+                },
+                EmbeddedEnvironmentVariable {
+                    name: "CUA_DRIVER_DISABLE_UNRESTRICTED".into(),
+                    value: "forged-lock".into(),
+                },
+            ],
+        );
+        assert!(values
+            .iter()
+            .any(|variable| variable.name == "PATH" && variable.value == "host-path"));
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_DRIVER_DISABLE_UNRESTRICTED" && variable.value == "inherited-lock"
+        }));
+        assert!(!values
+            .iter()
+            .any(|variable| variable.value == "forged-lock"));
     }
 
     #[test]

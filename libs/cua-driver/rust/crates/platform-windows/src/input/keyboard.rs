@@ -720,6 +720,14 @@ fn is_extended(vk: VIRTUAL_KEY) -> bool {
 
 fn key_name_to_vk(key: &str) -> Result<VIRTUAL_KEY> {
     use windows::Win32::UI::Input::KeyboardAndMouse::*;
+    // Windows reserves the ASCII values themselves as the virtual-key codes
+    // for A-Z and 0-9. Resolve the documented alphanumeric vocabulary
+    // directly so it does not depend on the daemon thread having a current
+    // keyboard layout, which VkKeyScanW requires.
+    if let Some(vk) = crate::keycodes::ascii_alphanumeric_virtual_key_code(key) {
+        return Ok(VIRTUAL_KEY(vk));
+    }
+
     let vk = match key.to_lowercase().as_str() {
         "enter" | "return" => VK_RETURN,
         "tab" => VK_TAB,

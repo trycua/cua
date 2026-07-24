@@ -737,12 +737,16 @@ impl BrowserEngine {
             window_id,
             session: request.session.clone(),
         };
-        let mode = crate::authorization::configured_permission_mode().map_err(|error| {
-            refusal(
-                BrowserRefusalCode::BrowserConsentRequired,
-                format!("permission mode is unavailable: {error}"),
-            )
-        })?;
+        let mode = crate::tool::current_dispatch_authorization_context()
+            .map(|context| context.mode())
+            .map(Ok)
+            .unwrap_or_else(crate::authorization::configured_permission_mode)
+            .map_err(|error| {
+                refusal(
+                    BrowserRefusalCode::BrowserConsentRequired,
+                    format!("permission mode is unavailable: {error}"),
+                )
+            })?;
         let consent_path = if mode == crate::authorization::PermissionMode::Unrestricted {
             ConsentPath::Unrestricted
         } else if self.approval_broker.provider_id().is_some() {

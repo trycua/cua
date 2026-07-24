@@ -29,17 +29,33 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{debug, info, warn};
 
+const MCP_HTTP_TOKEN_ENV: &str = "CUA_DRIVER_RS_MCP_HTTP_TOKEN";
+
 /// Resolve the configured HTTP MCP port: `CUA_DRIVER_RS_MCP_HTTP_PORT` (> 0), or
 /// `None` (disabled — the daemon spawns the listener only when this is set).
-pub fn configured_port() -> Option<u16> {
-    std::env::var("CUA_DRIVER_RS_MCP_HTTP_PORT")
-        .ok()
-        .and_then(|v| v.parse::<u16>().ok())
-        .filter(|p| *p > 0)
+pub fn configured_port() -> anyhow::Result<Option<u16>> {
+    configured_port_from(std::env::var_os("CUA_DRIVER_RS_MCP_HTTP_PORT"))
+}
+
+fn configured_port_from(value: Option<std::ffi::OsString>) -> anyhow::Result<Option<u16>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value
+        .into_string()
+        .map_err(|_| anyhow::anyhow!("CUA_DRIVER_RS_MCP_HTTP_PORT must be valid UTF-8"))?;
+    let port = value.parse::<u16>().map_err(|_| {
+        anyhow::anyhow!("CUA_DRIVER_RS_MCP_HTTP_PORT must be an integer from 1 to 65535")
+    })?;
+    if port == 0 {
+        anyhow::bail!("CUA_DRIVER_RS_MCP_HTTP_PORT must be greater than zero");
+    }
+    Ok(Some(port))
 }
 
 /// Spawn the HTTP MCP listener bound to `127.0.0.1:port` (loopback only).
-pub fn spawn(sdk: Arc<crate::sdk_adapter::SdkAdapter>, port: u16) {
+pub fn spawn(sdk: Arc<crate::sdk_adapter::SdkAdapter>, port: u16) -> anyhow::Result<()> {
+    let token = Arc::<str>::from(configured_auth_token().map_err(anyhow::Error::msg)?);
     tokio::spawn(async move {
         let addr: SocketAddr = ([127, 0, 0, 1], port).into();
         match TcpListener::bind(addr).await {
@@ -49,8 +65,9 @@ pub fn spawn(sdk: Arc<crate::sdk_adapter::SdkAdapter>, port: u16) {
                     match listener.accept().await {
                         Ok((stream, peer)) => {
                             let sdk = sdk.clone();
+                            let token = token.clone();
                             tokio::spawn(async move {
-                                if let Err(e) = serve_conn(stream, sdk).await {
+                                if let Err(e) = serve_conn(stream, sdk, token).await {
                                     debug!(%peer, "MCP HTTP connection closed: {e}");
                                 }
                             });
@@ -65,6 +82,7 @@ pub fn spawn(sdk: Arc<crate::sdk_adapter::SdkAdapter>, port: u16) {
             Err(e) => warn!("MCP HTTP transport disabled — bind {addr} failed: {e}"),
         }
     });
+    Ok(())
 }
 
 /// Handle one TCP connection: a keep-alive loop of HTTP requests. Requests on a
@@ -73,13 +91,23 @@ pub fn spawn(sdk: Arc<crate::sdk_adapter::SdkAdapter>, port: u16) {
 async fn serve_conn(
     mut stream: TcpStream,
     sdk: Arc<crate::sdk_adapter::SdkAdapter>,
+    token: Arc<str>,
 ) -> anyhow::Result<()> {
     loop {
-        let Some(req) = read_http_request(&mut stream).await? else {
+        let Some(req) = read_http_request(&mut stream, &token).await? else {
             return Ok(()); // clean EOF
         };
         let keep_alive = req.keep_alive;
-        if !req.method.eq_ignore_ascii_case("POST") {
+        if !req.authorized {
+            write_http(
+                &mut stream,
+                401,
+                br#"{"jsonrpc":"2.0","id":null,"error":{"code":-32001,"message":"Authentication required"}}"#,
+                false,
+            )
+            .await?;
+            return Ok(());
+        } else if !req.method.eq_ignore_ascii_case("POST") {
             write_http(
                 &mut stream,
                 405,
@@ -186,11 +214,15 @@ struct HttpRequest {
     /// Whether to keep the connection open after responding (HTTP/1.1 default;
     /// false if the client sent `Connection: close` or spoke HTTP/1.0).
     keep_alive: bool,
+    authorized: bool,
 }
 
 /// Read one HTTP/1.1 request, or `None` on clean EOF. Minimal: request line +
 /// headers until CRLFCRLF, then `Content-Length` bytes.
-async fn read_http_request(stream: &mut TcpStream) -> anyhow::Result<Option<HttpRequest>> {
+async fn read_http_request(
+    stream: &mut TcpStream,
+    token: &str,
+) -> anyhow::Result<Option<HttpRequest>> {
     let mut head = Vec::with_capacity(1024);
     let mut byte = [0u8; 1];
     loop {
@@ -215,6 +247,7 @@ async fn read_http_request(stream: &mut TcpStream) -> anyhow::Result<Option<Http
     let version = parts.next().unwrap_or("HTTP/1.1");
     let mut content_length = 0usize;
     let mut keep_alive = version.eq_ignore_ascii_case("HTTP/1.1"); // 1.1 defaults to keep-alive
+    let mut authorized = false;
     for line in lines {
         if let Some((k, v)) = line.split_once(':') {
             let (k, v) = (k.trim(), v.trim());
@@ -226,6 +259,10 @@ async fn read_http_request(stream: &mut TcpStream) -> anyhow::Result<Option<Http
                 } else if v.eq_ignore_ascii_case("keep-alive") {
                     keep_alive = true;
                 }
+            } else if k.eq_ignore_ascii_case("authorization") {
+                authorized = v.split_once(' ').is_some_and(|(scheme, candidate)| {
+                    scheme.eq_ignore_ascii_case("bearer") && constant_time_equal(candidate, token)
+                });
             }
         }
     }
@@ -241,7 +278,48 @@ async fn read_http_request(stream: &mut TcpStream) -> anyhow::Result<Option<Http
         path,
         body,
         keep_alive,
+        authorized,
     }))
+}
+
+fn configured_auth_token() -> Result<String, String> {
+    configured_auth_token_from(std::env::var_os(MCP_HTTP_TOKEN_ENV))
+}
+
+fn configured_auth_token_from(value: Option<std::ffi::OsString>) -> Result<String, String> {
+    let token = value
+        .ok_or_else(|| {
+            format!(
+                "{MCP_HTTP_TOKEN_ENV} must be set to a host-generated bearer token when the HTTP endpoint is enabled"
+            )
+        })?
+        .into_string()
+        .map_err(|_| format!("{MCP_HTTP_TOKEN_ENV} must be valid UTF-8"))?;
+    if token.len() < 32
+        || token.len() > 4096
+        || token
+            .chars()
+            .any(|character| character.is_control() || character.is_whitespace())
+    {
+        return Err(format!(
+            "{MCP_HTTP_TOKEN_ENV} must contain 32-4096 non-whitespace, non-control characters"
+        ));
+    }
+    Ok(token)
+}
+
+fn constant_time_equal(left: &str, right: &str) -> bool {
+    let left = left.as_bytes();
+    let right = right.as_bytes();
+    let mut difference = left.len() ^ right.len();
+    let width = left.len().max(right.len());
+    for index in 0..width {
+        difference |= usize::from(
+            left.get(index).copied().unwrap_or_default()
+                ^ right.get(index).copied().unwrap_or_default(),
+        );
+    }
+    difference == 0
 }
 
 async fn write_http(
@@ -253,6 +331,7 @@ async fn write_http(
     let reason = match status {
         200 => "OK",
         202 => "Accepted",
+        401 => "Unauthorized",
         405 => "Method Not Allowed",
         _ => "OK",
     };
@@ -318,13 +397,47 @@ mod tests {
 
     #[test]
     fn configured_port_parses_env() {
-        // Default (unset) → None is environment-dependent; just assert the parse
-        // helper handles a bad value gracefully.
-        assert!(configured_port().is_none() || configured_port().is_some());
+        assert_eq!(configured_port_from(None).unwrap(), None);
+        assert_eq!(
+            configured_port_from(Some("43123".into())).unwrap(),
+            Some(43123)
+        );
+        assert!(configured_port_from(Some("0".into())).is_err());
+        assert!(configured_port_from(Some("not-a-port".into())).is_err());
+    }
+
+    #[test]
+    fn bearer_comparison_requires_the_exact_value() {
+        assert!(constant_time_equal(
+            "0123456789abcdef0123456789abcdef",
+            "0123456789abcdef0123456789abcdef"
+        ));
+        assert!(!constant_time_equal(
+            "0123456789abcdef0123456789abcdee",
+            "0123456789abcdef0123456789abcdef"
+        ));
+        assert!(!constant_time_equal(
+            "0123456789abcdef0123456789abcdef-extra",
+            "0123456789abcdef0123456789abcdef"
+        ));
+    }
+
+    #[test]
+    fn configured_auth_token_fails_closed() {
+        assert!(configured_auth_token_from(None).is_err());
+        assert!(configured_auth_token_from(Some("too-short".into())).is_err());
+        assert!(
+            configured_auth_token_from(Some("0123456789abcdef 123456789abcdef".into())).is_err()
+        );
+        assert_eq!(
+            configured_auth_token_from(Some("0123456789abcdef0123456789abcdef".into())).unwrap(),
+            "0123456789abcdef0123456789abcdef"
+        );
     }
 
     #[tokio::test]
     async fn http_tools_list_is_the_sdk_inventory() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
         let sdk = crate::sdk_adapter::SdkAdapter::load(crate::build_driver_without_cursor())
             .await
             .expect("SDK adapter");
@@ -337,6 +450,41 @@ mod tests {
         .expect("JSON-RPC response");
         let response: serde_json::Value = serde_json::from_str(&response).expect("response JSON");
         assert_eq!(response["result"]["tools"], expected["tools"]);
+        sdk.shutdown().await.expect("SDK shutdown");
+    }
+
+    #[tokio::test]
+    async fn invalid_bearer_receives_401_before_json_rpc_dispatch() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
+        let sdk = crate::sdk_adapter::SdkAdapter::load(crate::build_driver_without_cursor())
+            .await
+            .expect("SDK adapter");
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server_sdk = sdk.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            serve_conn(
+                stream,
+                server_sdk,
+                Arc::<str>::from("0123456789abcdef0123456789abcdef"),
+            )
+            .await
+            .unwrap();
+        });
+        let mut client = TcpStream::connect(address).await.unwrap();
+        client
+            .write_all(
+                b"POST /mcp HTTP/1.1\r\nAuthorization: Bearer wrong\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+            )
+            .await
+            .unwrap();
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+        let response = String::from_utf8(response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 401 Unauthorized\r\n"));
+        assert!(response.contains("Authentication required"));
+        server.await.unwrap();
         sdk.shutdown().await.expect("SDK shutdown");
     }
 }

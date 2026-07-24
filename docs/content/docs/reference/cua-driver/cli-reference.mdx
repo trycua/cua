@@ -62,15 +62,15 @@ Requires a Cua Driver daemon. JSON arguments may be passed as a positional JSON 
 
 ### `cua-driver mcp`
 
-Run the daemon-backed stdio MCP proxy.
+Run the stdio MCP server.
 
-Every MCP tool call is forwarded to a Cua Driver daemon. On macOS the proxy can auto-launch CuaDriver.app; on Windows and Linux the daemon must already be running.
+On Windows and Linux, bare cua-driver mcp owns its runtime directly and shuts it down on stdin EOF. On macOS it proxies to CuaDriver.app so desktop permissions retain the app identity. Pass --socket to select an explicit daemon endpoint.
 
 **Options:**
 
 | Name | Type | Default | Description |
 | ---- | ---- | ------- | ----------- |
-| `--socket` | String | — | Override the required daemon socket or named-pipe path. |
+| `--socket` | String | — | Select an explicit daemon socket or named-pipe endpoint. |
 | `--host-bundle-id` | String | — | Advisory host bundle id label echoed in check_permissions output (embedded mode). |
 
 **Flags:**

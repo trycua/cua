@@ -29,6 +29,7 @@ requires-python = ">=3.11,<3.14"
 dependencies = [
     "cua-core>=0.3.0,<0.4.0",
     "cua-auto>=0.1.2",
+    "cua-train==0.1.1",
     "websockets>=12.0",
     "httpx>=0.27.0",
     "oras>=0.2.40",
@@ -95,5 +96,9 @@ dev = [
 
 [tool.uv.sources]
 cua-agent = { path = "../agent", editable = true }
+cua-train = { index = "cua-wheels" }
 
-[tool.hatch.build.hooks.custom]
+[[tool.uv.index]]
+name = "cua-wheels"
+url = "https://wheels.cua.ai/simple"
+explicit = true

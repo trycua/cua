@@ -17,8 +17,9 @@ use std::process;
 /// Which CLI command was requested.
 pub enum Command {
     Mcp {
-        /// Override the daemon Unix socket path used by the proxy
-        /// transport. Defaults to `serve::default_socket_path()`.
+        /// Select an explicit daemon socket/pipe path. Without one, Windows
+        /// and Linux own a direct runtime while macOS uses the default app
+        /// daemon to preserve TCC attribution.
         socket: Option<String>,
         /// `--claude-code-computer-use-compat`: register the compat
         /// `screenshot` tool (window-scoped, JPEG @ 85%, pid + window_id
@@ -497,9 +498,7 @@ pub fn parse_command() -> Command {
         println!(
             "  --host-bundle-id <id>   Advisory host bundle id label for check_permissions output."
         );
-        println!(
-            "  --socket <path>         Override the required daemon socket used by the proxy."
-        );
+        println!("  --socket <path>         Select an explicit daemon socket/pipe endpoint.");
         println!("  --claude-code-computer-use-compat");
         println!("                          Select the Claude Code computer-use compat surface.");
         println!(
@@ -1400,9 +1399,9 @@ pub fn build_manifest() -> serde_json::Value {
         // consumer can render uniformly.
         "subcommands": [
             { "name": "mcp",
-              "description": "Run the MCP stdio proxy backed by the required Cua Driver daemon (the default invocation).",
+              "description": "Run the MCP stdio server: direct runtime on Windows/Linux, app-daemon proxy on macOS, or explicit service with --socket.",
               "args": [
-                  { "name": "--socket", "type": "string", "description": "Override the required daemon socket path." },
+                  { "name": "--socket", "type": "string", "description": "Select an explicit daemon socket or named-pipe endpoint." },
                   { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Select the Claude Code computer-use compat tool surface." },
                   { "name": "--embedded", "type": "flag", "description": "Require a daemon spawned by the embedding host instead of auto-launching the standalone app." },
                   { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." }
@@ -2741,11 +2740,11 @@ fn cli_docs_json() -> serde_json::Value {
         "commands": [
             {
                 "name": "mcp",
-                "abstract": "Run the daemon-backed stdio MCP proxy.",
-                "discussion": "Every MCP tool call is forwarded to a Cua Driver daemon. On macOS the proxy can auto-launch CuaDriver.app; on Windows and Linux the daemon must already be running.",
+                "abstract": "Run the stdio MCP server.",
+                "discussion": "On Windows and Linux, bare cua-driver mcp owns its runtime directly and shuts it down on stdin EOF. On macOS it proxies to CuaDriver.app so desktop permissions retain the app identity. Pass --socket to select an explicit daemon endpoint.",
                 "arguments": no_args,
                 "options": [
-                    {"name":"socket","short_name":null,"help":"Override the required daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true},
+                    {"name":"socket","short_name":null,"help":"Select an explicit daemon socket or named-pipe endpoint.","type":"String","default_value":null,"is_optional":true},
                     {"name":"host-bundle-id","short_name":null,"help":"Advisory host bundle id label echoed in check_permissions output (embedded mode).","type":"String","default_value":null,"is_optional":true}
                 ],
                 "flags": [

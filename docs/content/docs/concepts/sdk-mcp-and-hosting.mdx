@@ -3,22 +3,25 @@ title: 'SDK, MCP, and process hosting'
 description: 'How Cua Driver separates its typed application contract, agent protocol, and desktop process identity.'
 ---
 
-Cua Driver has two caller interfaces and two execution topologies. They solve
-different problems:
+Cua Driver has two caller interfaces and three local execution topologies.
+These solve different problems:
 
 - The **SDK** is a typed application API for Python, TypeScript, and Rust.
 - **MCP** is the runtime-neutral agent protocol exposed by the Cua Driver
   server.
 - A **same-process runtime** performs desktop work inside the importing app.
+- A **private worker** gives one SDK host a supervised child-process boundary
+  over inherited pipes, without a listener or reconnect path.
 - A **daemon runtime** performs desktop work in a long-lived process with a
   stable operating-system identity.
 
-These dimensions form a grid, but only two cells are primary:
+These dimensions form a grid:
 
-|              | Typed SDK                           | MCP / CLI                                        |
-| ------------ | ----------------------------------- | ------------------------------------------------ |
-| Same process | **Primary for client applications** | Not a separate public client mode                |
-| Daemon       | Compatibility or app-shared runtime | **Primary for agents and short-lived CLI calls** |
+| Topology | Typed SDK | MCP / CLI |
+| --- | --- | --- |
+| Same process | **Primary for client applications** | Default stdio MCP owner on Windows and Linux |
+| Private worker | `create_private_worker()` / `createPrivateWorker()` for per-host process isolation | Not reconnectable and not advertised as an MCP endpoint |
+| Daemon | Compatibility or app-shared runtime | Standalone macOS default and explicit `--socket` service mode |
 
 The SDK adds unique value in the same-process cell: typed records and direct
 calls across the generated native boundary without a socket. If application
@@ -53,10 +56,18 @@ same registry authorization boundary before platform dispatch. MCP, HTTP, CLI,
 and daemon adapters may reject a call earlier for defense in depth, but they do
 not replace or weaken that native check.
 
+Released calls resolve a process-owned compatibility context. A trusted
+same-process host can additionally construct immutable session-bound action
+objects beneath an immutable runtime ceiling. No model-facing tool, public
+session string, environment field, or reconnect label can select that
+authority. An embedded service may additionally bind a session only on its
+original authenticated host connection. A standalone shared daemon still
+refuses trusted-session creation.
+
 ## Why the daemon still exists
 
-External agents and CLI calls are short-lived or run outside the desktop app
-that owns permissions. A daemon gives them a stable execution identity,
+Some external agents and CLI calls are short-lived or run outside the desktop
+app that owns permissions. A daemon gives them a stable execution identity,
 long-lived session state, and one controlled gateway to the physical desktop.
 
 On macOS, Accessibility and Screen Recording grants attach to an application
@@ -65,10 +76,31 @@ that identity stable across CLI and agent reconnects. A signed app that needs
 to expose MCP can instead spawn a private daemon directly so the child reuses
 the app's TCC grants.
 
-On Windows, a daemon can remain in the logged-in interactive session while an
-SSH or service-side client cannot access that desktop. On every platform, it
+On Windows, an explicit daemon can remain in the logged-in interactive session
+while an SSH or service-side client cannot access that desktop. Ordinary
+Windows and Linux stdio MCP processes now own their runtime directly and shut
+it down on stdin EOF. On every platform, service mode
 also owns cleanup for recordings, cursors, policy, and per-session state when a
 client disconnects.
+
+Bare `cua-driver mcp` therefore no longer discovers and joins an already
+running default service on Windows or Linux. Use `cua-driver mcp --socket
+<endpoint>` when an agent must share that service's sessions and resources.
+The explicit connection path preserves the released daemon protocol.
+
+Private workers use the same generated SDK contract but exchange versioned
+request/response envelopes over child stdin/stdout. The host supplies the
+authorization ceiling before readiness, owns the only channel, and terminates
+the child when that channel closes. A timed-out or broken action reports
+whether it was definitely not started, completed, or has unknown completion.
+The worker provides native cursor and main-thread facilities without opening a
+daemon socket.
+
+Remote carriers use the same transport-free Rust envelope seam. The carrier
+must authenticate a principal, bind a connection generation, preserve request
+IDs and deadlines, and return a separately bound channel for trusted sessions.
+The Cua Driver core does not depend on gRPC, HTTP/2, or another carrier, and no
+generated Python/TypeScript remote constructor is shipped yet.
 
 ## Why embedded applications may choose either topology
 
@@ -83,6 +115,41 @@ See [Process model](/reference/cua-driver/process-model) for platform details
 and [Expose MCP from a desktop app](/how-to-guides/driver/expose-mcp-from-desktop-app)
 for the hosted-daemon procedure.
 
+## Current process facility contract
+
+The first SDK-owned-runtime milestone deliberately permits one direct runtime
+per process. This makes the remaining process facilities explicit without
+pretending that two in-process objects are isolated:
+
+| Facility | Current ownership | Concurrency rule |
+| --- | --- | --- |
+| Runtime ceiling, effective session contexts, revocation | Runtime-owned | Isolated within the one runtime generation |
+| Tool registry, browser engine and grants, recording session | Runtime-owned | Released on session/runtime shutdown |
+| Permission/policy compatibility caches and bounded compatibility manifest | Immutable process configuration | Explicit configured constructors must agree with contradictory environment values or fail |
+| Session activity, capture scopes, element-token registry, CDP port claims | Process-coordinated | Safe only under the one-direct-runtime guard |
+| Recording platform callbacks, video/PiP factories, observers, ABI executor | Immutable process callbacks/coordinator | First installation is shared by the runtime generation |
+| macOS cursor overlay and other UI event-loop facilities | Process/platform coordinated | Requires the appropriate host main-thread adapter or an explicit worker/service |
+
+A second direct `CuaDriver.create()` returns the structured
+`runtime_already_exists` conflict. Separate trust domains use separate
+runtime-owner processes. Complete same-process multi-runtime support remains a
+later isolation gate; it cannot be enabled merely by removing the guard.
+
+## Service transport hardening
+
+The optional loopback HTTP MCP listener is disabled unless
+`CUA_DRIVER_RS_MCP_HTTP_PORT` is set. When enabled,
+`CUA_DRIVER_RS_MCP_HTTP_TOKEN` is also required and must contain 32–4096
+non-whitespace characters. Clients send it as `Authorization: Bearer
+<token>`. A port-only configuration now fails daemon startup instead of
+silently exposing or disabling the endpoint.
+
+Windows daemon named pipes now grant access only to the daemon owner's user
+SID and verify the connected process SID before reading a request. Clients
+running as another user or security principal are rejected; run the client and
+daemon under the same intended interactive user. This is an intentional
+fail-closed change from the earlier broad local ACL.
+
 ## Agent SDK integration is intentionally asymmetric
 
 | Agent SDK | Native application callbacks | External MCP route |
@@ -93,7 +160,8 @@ for the hosted-daemon procedure.
 Claude's in-process custom-tool server is an adapter inside the host
 application; the callbacks still call the native Cua Driver SDK directly.
 Codex uses `cua-driver mcp` because MCP is its supported tool-extension
-boundary. Generating another language client would not add a new capability.
+boundary. MCP remains an adapter over the same SDK-owned runtime; using MCP
+does not imply that a daemon is present.
 
 See [Use Cua Driver with Claude Agent SDK](/how-to-guides/driver/use-claude-agent-sdk)
 and [Use Cua Driver with Codex SDK](/how-to-guides/driver/use-codex-sdk).

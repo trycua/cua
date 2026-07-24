@@ -342,9 +342,9 @@ struct PoolEntry {
     generation: Option<u64>,
 }
 
-fn claimed_ports() -> &'static StdMutex<HashSet<u16>> {
-    static CLAIMED: OnceLock<StdMutex<HashSet<u16>>> = OnceLock::new();
-    CLAIMED.get_or_init(|| StdMutex::new(HashSet::new()))
+fn claimed_ports() -> &'static StdMutex<HashMap<u16, usize>> {
+    static CLAIMED: OnceLock<StdMutex<HashMap<u16, usize>>> = OnceLock::new();
+    CLAIMED.get_or_init(|| StdMutex::new(HashMap::new()))
 }
 
 fn loopback_port(url: &str) -> Option<u16> {
@@ -359,19 +359,21 @@ fn loopback_port(url: &str) -> Option<u16> {
 /// Whether an existing-profile grant owns the DevTools listener used by this
 /// URL. The legacy page route consults this before opening its own page socket.
 pub fn endpoint_port_is_grant_owned(url: &str) -> bool {
-    loopback_port(url).is_some_and(|port| claimed_ports().lock().unwrap().contains(&port))
+    loopback_port(url).is_some_and(|port| claimed_ports().lock().unwrap().contains_key(&port))
 }
 
 /// One pooled browser-level connection per endpoint URL. Existing-profile
 /// entries are additionally owned by one explicit connection generation.
 pub struct CdpPool {
     conns: Mutex<HashMap<String, PoolEntry>>,
+    claimed_loopback_ports: StdMutex<HashSet<u16>>,
 }
 
 impl CdpPool {
     pub fn new() -> Self {
         Self {
             conns: Mutex::new(HashMap::new()),
+            claimed_loopback_ports: StdMutex::new(HashSet::new()),
         }
     }
 
@@ -426,7 +428,9 @@ impl CdpPool {
                 generation: Some(generation),
             },
         );
-        claimed_ports().lock().unwrap().insert(port);
+        if self.claimed_loopback_ports.lock().unwrap().insert(port) {
+            *claimed_ports().lock().unwrap().entry(port).or_default() += 1;
+        }
         Ok(conn)
     }
 
@@ -506,7 +510,9 @@ impl CdpPool {
 
     pub fn release_claim_marker(&self, ws_url: &str) {
         if let Some(port) = loopback_port(ws_url) {
-            claimed_ports().lock().unwrap().remove(&port);
+            if self.claimed_loopback_ports.lock().unwrap().remove(&port) {
+                release_claimed_port(port);
+            }
         }
     }
 
@@ -526,6 +532,34 @@ impl CdpPool {
 impl Default for CdpPool {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Drop for CdpPool {
+    fn drop(&mut self) {
+        let claimed_loopback_ports = self.claimed_loopback_ports.get_mut().unwrap();
+        if claimed_loopback_ports.is_empty() {
+            return;
+        }
+        let mut global = claimed_ports().lock().unwrap();
+        for port in claimed_loopback_ports.drain() {
+            if let Some(count) = global.get_mut(&port) {
+                *count -= 1;
+                if *count == 0 {
+                    global.remove(&port);
+                }
+            }
+        }
+    }
+}
+
+fn release_claimed_port(port: u16) {
+    let mut global = claimed_ports().lock().unwrap();
+    if let Some(count) = global.get_mut(&port) {
+        *count -= 1;
+        if *count == 0 {
+            global.remove(&port);
+        }
     }
 }
 
@@ -595,6 +629,33 @@ mod tests {
             pool.get(&url).await.is_ok(),
             "session cleanup releases ownership"
         );
+    }
+
+    #[tokio::test]
+    async fn dropping_a_pool_releases_its_claim_marker() {
+        let server = MockCdpServer::start(StdArc::new(|_| MockReply::ok(json!({})))).await;
+        let url = server.ws_url();
+        {
+            let pool = CdpPool::new();
+            pool.claim_existing(&url, 1).await.unwrap();
+            assert!(endpoint_port_is_grant_owned(&url));
+        }
+        assert!(!endpoint_port_is_grant_owned(&url));
+    }
+
+    #[tokio::test]
+    async fn claim_marker_is_reference_counted_across_pools() {
+        let server = MockCdpServer::start(StdArc::new(|_| MockReply::ok(json!({})))).await;
+        let url = server.ws_url();
+        let first = CdpPool::new();
+        let second = CdpPool::new();
+        first.claim_existing(&url, 1).await.unwrap();
+        second.claim_existing(&url, 2).await.unwrap();
+
+        drop(first);
+        assert!(endpoint_port_is_grant_owned(&url));
+        drop(second);
+        assert!(!endpoint_port_is_grant_owned(&url));
     }
 
     #[tokio::test]

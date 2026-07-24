@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "libs/cua-driver/contract/**"
+      - "libs/cua-driver/compat-fixtures/**"
       - "libs/cua-driver/examples/agent-sdks/**"
       - "libs/cua-driver/typescript/**"
       - "libs/cua-driver/python/**"
@@ -29,6 +30,7 @@ on:
     branches: [main]
     paths:
       - "libs/cua-driver/contract/**"
+      - "libs/cua-driver/compat-fixtures/**"
       - "libs/cua-driver/examples/agent-sdks/**"
       - "libs/cua-driver/typescript/**"
       - "libs/cua-driver/python/**"
@@ -84,6 +86,10 @@ jobs:
       - name: Prove portable contracts match the live registry
         working-directory: libs/cua-driver/rust
         run: cargo test --locked -p cua-driver --test schema_consistency_test portable_desktop_contracts_are_accepted_by_active_backend
+
+      - name: Verify released CLI and MCP compatibility
+        working-directory: libs/cua-driver/rust
+        run: cargo test --locked -p cua-driver --test compatibility_contract_test
 
       - name: Compile the UniFFI SDK library
         working-directory: libs/cua-driver/rust
@@ -152,7 +158,10 @@ jobs:
         working-directory: libs/cua-driver/python
         run: |
           python -m pip install pytest
-          python -m pytest tests/test_build_wheel.py -q
+          python -m pytest \
+            tests/test_build_wheel.py \
+            tests/test_compatibility_contract.py \
+            -q
 
       - name: Build and stage host-native UniFFI library
         working-directory: libs/cua-driver
@@ -177,6 +186,9 @@ jobs:
             cua_driver_create_v1 \
             cua_driver_destroy_v1 \
             cua_driver_invoke_v1 \
+            cua_driver_session_create_v1 \
+            cua_driver_session_destroy_v1 \
+            cua_driver_session_invoke_v1 \
             cua_driver_shutdown_v1 \
             cua_driver_operation_cancel_v1 \
             cua_driver_operation_release_v1; do
@@ -185,7 +197,11 @@ jobs:
 
       - name: Test Python UniFFI loader
         working-directory: libs/cua-driver/python
-        run: CUA_DRIVER_REQUIRE_UNIFFI=1 PYTHONPATH=src python -m unittest tests/test_uniffi_loader.py -v
+        run: |
+          CUA_DRIVER_REQUIRE_UNIFFI=1 PYTHONPATH=src \
+            python -m unittest tests/test_uniffi_loader.py -v
+          CUA_DRIVER_REQUIRE_UNIFFI=1 PYTHONPATH=src python -c \
+            "import cua_driver; missing = [name for name in cua_driver.__all__ if not hasattr(cua_driver, name)]; assert not missing, f'unresolved package exports: {missing}'"
 
       - name: Test TypeScript SDK
         working-directory: libs/cua-driver/typescript

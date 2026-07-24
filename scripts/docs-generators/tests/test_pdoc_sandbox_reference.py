@@ -115,6 +115,39 @@ async def sandbox(name: str) -> AsyncIterator[Sandbox]:
 
         self.assertEqual(generator.render_reference(module), generator.render_reference(module))
 
+    def test_loads_the_source_package_without_native_fleet_bindings(self) -> None:
+        fixture_parent = str(self.package_root.parent)
+        sys.path.remove(fixture_parent)
+        self.addCleanup(sys.path.insert, 0, fixture_parent)
+        for module_name in tuple(sys.modules):
+            if module_name == "cua_sandbox" or module_name.startswith("cua_sandbox."):
+                sys.modules.pop(module_name)
+        sys.modules.pop("cyclops_sdk", None)
+
+        module = generator.load_public_module()
+        rendered = generator.render_reference(module)
+
+        self.assertEqual(
+            [member.name for member in generator.public_members(module)],
+            [
+                "configure",
+                "login",
+                "whoami",
+                "Image",
+                "Sandbox",
+                "SandboxInfo",
+                "sandbox",
+                "Localhost",
+                "localhost",
+                "CloudTransport",
+                "RuntimeSupport",
+                "check_local_support",
+                "skip_if_unsupported",
+            ],
+        )
+        self.assertNotIn("FleetTransport", rendered)
+        self.assertNotIn("cyclops_sdk", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

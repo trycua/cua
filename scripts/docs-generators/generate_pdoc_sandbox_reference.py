@@ -8,6 +8,7 @@ import difflib
 import inspect
 import re
 import sys
+import types
 from pathlib import Path
 
 from pdoc.doc import Class, Doc, Function, Module, Variable, empty
@@ -18,11 +19,28 @@ OUTPUT = ROOT / "docs/content/docs/reference/sandbox-sdk/index.mdx"
 EXCLUDED_MODULE_PARTS = (".transport.fleet", "cyclops_sdk")
 
 
+def install_fleet_import_stub() -> None:
+    """Avoid requiring Fleet's native binding for excluded documentation."""
+    if "cyclops_sdk" in sys.modules:
+        return
+
+    binding_stub = types.ModuleType("cyclops_sdk")
+
+    def placeholder(name: str) -> type[object]:
+        value = type(name, (), {})
+        setattr(binding_stub, name, value)
+        return value
+
+    binding_stub.__getattr__ = placeholder
+    sys.modules["cyclops_sdk"] = binding_stub
+
+
 def load_public_module() -> Module:
     """Load the installed source package through pdoc's supported API."""
     package_parent = str(PACKAGE_PARENT)
     if package_parent not in sys.path:
         sys.path.insert(0, package_parent)
+    install_fleet_import_stub()
     return Module.from_name("cua_sandbox")
 
 

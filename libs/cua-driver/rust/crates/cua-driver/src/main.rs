@@ -279,6 +279,10 @@ fn test_runtime_lock() -> &'static tokio::sync::Mutex<()> {
 }
 
 fn run_mcp_direct(compatibility_mode: bool) -> anyhow::Result<()> {
+    // Validate immutable process policy before platform initialization. The
+    // adapter repeats this check before reading stdin as defense in depth.
+    cua_driver_core::authorization::validate_startup_authorization()?;
+    cua_driver_core::policy::validate_configured_policy()?;
     let driver = build_driver(
         cursor_overlay::CursorConfig::from_args(),
         compatibility_mode,

@@ -115,7 +115,7 @@ fn direct_mcp_rejects_admin_disabled_unrestricted_mode_before_requests() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("unrestricted mode is disabled"),
+        stderr.contains("unrestricted is disabled"),
         "unexpected stderr: {stderr}"
     );
     assert!(

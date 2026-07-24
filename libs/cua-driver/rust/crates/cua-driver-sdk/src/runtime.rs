@@ -87,6 +87,13 @@ impl DriverRuntime {
         if !self.is_running() {
             return None;
         }
+        if name == "__host_revoke_all_sessions" {
+            let revoked = self.registry.revoke_all_sessions().await;
+            return Some(
+                CoreToolResult::default()
+                    .with_structured(serde_json::json!({ "revoked": revoked })),
+            );
+        }
         let ending_session = (name == "end_session")
             .then(|| {
                 args.get("session")

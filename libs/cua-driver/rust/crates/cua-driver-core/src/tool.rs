@@ -104,6 +104,9 @@ impl ToolDef {
 ///   opaque `element_token` arg alongside the integer `element_index`)
 /// - `app.launch`, `app.list`, `app.kill`, `window.list`,
 ///   `window.activate`, `window.debug_info`
+/// - `workspace.backends.read`, `workspace.lifecycle.create`,
+///   `workspace.lifecycle.close`, `workspace.state.read`,
+///   `workspace.window.move`
 /// - `system.permissions.tcc`,
 ///   `system.permissions.tcc.accessibility`,
 ///   `system.permissions.tcc.screen_recording`
@@ -206,6 +209,13 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
 
         // ── apps / windows ───────────────────────────────────────────
         "launch_app" => &["app.launch"],
+        "list_workspace_backends" => &["workspace.backends.read"],
+        "create_workspace" => &["workspace.lifecycle.create"],
+        "list_workspaces" => &["workspace.state.read"],
+        "get_workspace" => &["workspace.state.read"],
+        "get_workspace_state" => &["workspace.state.read", "window.list"],
+        "close_workspace" => &["workspace.lifecycle.close"],
+        "move_window_to_workspace" => &["workspace.window.move"],
         "list_apps" => &["app.list"],
         "kill_app" => &["app.kill"],
         "list_windows" => &["window.list"],
@@ -299,11 +309,55 @@ pub trait Tool: Send + Sync {
     async fn invoke(&self, args: Value) -> ToolResult;
 }
 
+/// Tools in this set can route through a workspace-bound window reference.
+/// Keeping the declaration beside the capability map makes workspace behavior
+/// part of the public tool contract instead of an interceptor-side name list.
+pub fn workspace_targeted(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "get_window_state"
+            | "get_accessibility_tree"
+            | "zoom"
+            | "click"
+            | "double_click"
+            | "right_click"
+            | "drag"
+            | "mouse_drag"
+            | "scroll"
+            | "type_text"
+            | "press_key"
+            | "hotkey"
+            | "set_value"
+    )
+}
+
+fn add_workspace_target_schema(schema: &mut Value) {
+    let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) else {
+        return;
+    };
+    properties.entry("workspace_id").or_insert_with(|| {
+        serde_json::json!({
+            "type": "string",
+            "description": "Explicit workspace. It must match the session binding when both are supplied."
+        })
+    });
+    properties.entry("workspace_ref").or_insert_with(|| {
+        serde_json::json!({
+            "type": "string",
+            "description": "Workspace-bound window reference returned by get_workspace_state. Required when workspace_id or a workspace-bound session is used."
+        })
+    });
+}
+
 /// Thread-safe collection of all registered tools.
 pub struct ToolRegistry {
     tools: HashMap<String, Box<dyn Tool>>,
+    definitions: HashMap<String, ToolDef>,
     /// Ordered list of tool names for `tools/list`.
     order: Vec<String>,
+    /// Session, capture, token, and workspace state are scoped to this host.
+    host_namespace: String,
+    workspace_manager: Option<Arc<crate::workspace::WorkspaceManager>>,
     /// Shared recording session — auto-records each non-read-only tool call.
     pub recording: Arc<RecordingSession>,
 }
@@ -312,15 +366,41 @@ impl ToolRegistry {
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
+            definitions: HashMap::new(),
             order: Vec::new(),
+            host_namespace: uuid::Uuid::new_v4().simple().to_string(),
+            workspace_manager: None,
             recording: Arc::new(RecordingSession::new()),
         }
     }
 
     pub fn register(&mut self, tool: Box<dyn Tool>) {
-        let name = tool.def().name.clone();
+        let mut definition = tool.def().clone();
+        if workspace_targeted(&definition.name) {
+            add_workspace_target_schema(&mut definition.input_schema);
+        }
+        let name = definition.name.clone();
         self.order.push(name.clone());
+        self.definitions.insert(name.clone(), definition);
         self.tools.insert(name, tool);
+    }
+
+    pub(crate) fn host_namespace(&self) -> &str {
+        &self.host_namespace
+    }
+
+    pub fn register_session_end_hook(&self, hook: impl Fn(&str) + Send + Sync + 'static) {
+        crate::session::register_session_end_hook_for_namespace(self.host_namespace.clone(), hook);
+    }
+
+    pub(crate) fn set_workspace_manager(
+        &mut self,
+        manager: Arc<crate::workspace::WorkspaceManager>,
+    ) {
+        assert!(
+            self.workspace_manager.replace(manager).is_none(),
+            "a tool registry can own only one workspace manager"
+        );
     }
 
     /// Register the four platform-independent recording/replay tools.
@@ -347,6 +427,16 @@ impl ToolRegistry {
         self.register(Box::new(EndSessionTool));
     }
 
+    /// Register the platform-neutral workspace lifecycle tools against a
+    /// platform backend. The same manager is installed for launch and session
+    /// integration, so workspace selection is consistent across transports.
+    pub fn register_workspace_tools(
+        &mut self,
+        backend: Arc<dyn crate::workspace::WorkspaceBackend>,
+    ) -> Arc<crate::workspace::WorkspaceManager> {
+        crate::workspace::register_tools(self, backend)
+    }
+
     /// Wire up the replay tool's weak self-reference.
     /// Call this once, immediately after `Arc::new(registry)`.
     pub fn init_self_weak(self: &Arc<Self>) {
@@ -357,8 +447,8 @@ impl ToolRegistry {
         let list: Vec<Value> = self
             .order
             .iter()
-            .filter_map(|n| self.tools.get(n))
-            .map(|t| t.def().to_list_entry())
+            .filter_map(|n| self.definitions.get(n))
+            .map(ToolDef::to_list_entry)
             .collect();
         // `capability_version` is the contract version for the
         // capability tokens claimed by each tool entry. Bumped on
@@ -385,12 +475,12 @@ impl ToolRegistry {
     pub fn iter_defs(&self) -> impl Iterator<Item = (&str, &ToolDef)> {
         self.order
             .iter()
-            .filter_map(move |n| self.tools.get(n).map(|t| (n.as_str(), t.def())))
+            .filter_map(move |n| self.definitions.get(n).map(|def| (n.as_str(), def)))
     }
 
     /// Get a tool's ToolDef by name, or None if unknown.
     pub fn get_def(&self, name: &str) -> Option<&ToolDef> {
-        self.tools.get(name).map(|t| t.def())
+        self.definitions.get(name)
     }
 
     /// List all tool names in registration order.
@@ -400,6 +490,38 @@ impl ToolRegistry {
 
     /// Invoke a tool by name and (if recording is enabled) write its result to disk.
     pub async fn invoke(&self, name: &str, args: Value) -> ToolResult {
+        let invocation = async {
+            if let Some(manager) = self.workspace_manager.clone() {
+                crate::workspace::with_manager(manager, self.invoke_scoped(name, args)).await
+            } else {
+                self.invoke_scoped(name, args).await
+            }
+        };
+        crate::session::with_namespace(self.host_namespace.clone(), invocation).await
+    }
+
+    pub async fn fire_session_end(&self, session: &str) -> bool {
+        crate::session::with_namespace(self.host_namespace.clone(), async {
+            crate::session::fire_session_end(session)
+        })
+        .await
+    }
+
+    pub async fn evict_idle_sessions(&self, ttl: std::time::Duration) -> Vec<String> {
+        crate::session::with_namespace(self.host_namespace.clone(), async {
+            crate::session::evict_idle(ttl)
+        })
+        .await
+    }
+
+    pub async fn revoke_all_sessions(&self) -> usize {
+        crate::session::with_namespace(self.host_namespace.clone(), async {
+            crate::session::revoke_all_sessions()
+        })
+        .await
+    }
+
+    async fn invoke_scoped(&self, name: &str, mut args: Value) -> ToolResult {
         // Deprecated alias: `type_text_chars` → `type_text`.  Swift's
         // ToolRegistry.swift keeps the same alias (with stderr warning) for
         // backwards compatibility with hermes-agent builds that still emit
@@ -416,6 +538,27 @@ impl ToolRegistry {
         let Some(tool) = self.tools.get(resolved_name) else {
             return ToolResult::error(format!("Unknown tool: {name}"));
         };
+        let definition = self
+            .definitions
+            .get(resolved_name)
+            .expect("registered tool definition");
+        let _workspace_lease = match crate::workspace::validate_operation_target(
+            self.workspace_manager.as_ref(),
+            workspace_targeted(resolved_name),
+            resolved_name,
+            &mut args,
+        )
+        .await
+        {
+            Ok(lease) => lease,
+            Err(error) => {
+                return ToolResult::error(error.to_string()).with_structured(serde_json::json!({
+                    "code": error.code(),
+                    "workspace_id": self.workspace_manager.as_ref()
+                        .and_then(|manager| manager.resolve_workspace_id(&args).ok().flatten()),
+                }))
+            }
+        };
         // Reject modality violations before reserving a recording turn. A
         // rejected action has no before/after evidence and must not leave a
         // pending recorder entry behind.
@@ -430,7 +573,7 @@ impl ToolRegistry {
 
         // Reserve and capture the turn before dispatch so recorded evidence
         // shows the application immediately before the action changed it.
-        let should_record = !tool.def().read_only
+        let should_record = !definition.read_only
             && !matches!(
                 resolved_name,
                 "start_recording" | "stop_recording" | "get_recording_state" | "replay_trajectory"
@@ -449,7 +592,14 @@ impl ToolRegistry {
             })
             .flatten();
 
-        let mut result = tool.invoke(args.clone()).await;
+        let mut dispatch_args = args.clone();
+        if let Some(object) = dispatch_args.as_object_mut() {
+            object.remove("workspace_ref");
+            if workspace_targeted(resolved_name) {
+                object.remove("workspace_id");
+            }
+        }
+        let mut result = tool.invoke(dispatch_args).await;
         let validate_portable_output = match resolved_name {
             "get_desktop_state" | "get_screen_size" | "get_cursor_position" => true,
             "move_cursor" | "click" | "drag" | "scroll" | "type_text" | "press_key" | "hotkey" => {
@@ -756,6 +906,14 @@ mod capability_tests {
         "list_windows",
         "bring_to_front",
         "debug_window_info",
+        // workspaces
+        "list_workspace_backends",
+        "create_workspace",
+        "list_workspaces",
+        "get_workspace",
+        "get_workspace_state",
+        "close_workspace",
+        "move_window_to_workspace",
         // permissions / config
         "check_permissions",
         "get_config",
@@ -833,6 +991,12 @@ mod capability_tests {
         "window.list",
         "window.activate",
         "window.debug_info",
+        // workspaces
+        "workspace.backends.read",
+        "workspace.lifecycle.create",
+        "workspace.lifecycle.close",
+        "workspace.state.read",
+        "workspace.window.move",
         // permissions
         "system.permissions.tcc",
         "system.permissions.tcc.accessibility",

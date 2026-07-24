@@ -1061,6 +1061,8 @@ async fn protected_provider_accepts_exact_attach_and_stop_revokes_the_grant() {
     const PROTECTED_SESSION: &str = "protected-provider-v2";
     const PROTECTED_TRANSPORT: &str = "protected-transport-v2";
     let (f, provider) = protected_existing_profile_fixture().await;
+    let registry = crate::tool::ToolRegistry::new();
+    f.engine.register_session_cleanup(&registry);
     let prepare = BrowserPrepareTool::new(f.engine.clone())
         .invoke(json!({
             "pid": 1,
@@ -1079,7 +1081,7 @@ async fn protected_provider_accepts_exact_attach_and_stop_revokes_the_grant() {
     assert!(provider.consent_seen.load(Ordering::SeqCst));
     assert!(!provider.stopped.load(Ordering::SeqCst));
 
-    crate::session::fire_session_end(PROTECTED_TRANSPORT);
+    registry.fire_session_end(PROTECTED_TRANSPORT).await;
     tokio::task::yield_now().await;
     assert!(provider.stopped.load(Ordering::SeqCst));
 

@@ -93,7 +93,7 @@ struct SnapshotEntry {
 /// pid's vec is the LRU (newest at the back). Vec instead of VecDeque
 /// because the cap is tiny (8) and walks are linear either way.
 pub struct TokenRegistry {
-    by_pid: Mutex<HashMap<i32, Vec<SnapshotEntry>>>,
+    by_pid: Mutex<HashMap<(String, i32), Vec<SnapshotEntry>>>,
 }
 
 impl TokenRegistry {
@@ -116,6 +116,21 @@ impl TokenRegistry {
     /// in its lane, the oldest is evicted and any token that referenced
     /// it becomes stale — that's the contract.
     pub fn register_snapshot(&self, pid: i32, window_id: u32, element_count: usize) -> u32 {
+        self.register_snapshot_for(
+            crate::session::current_namespace(),
+            pid,
+            window_id,
+            element_count,
+        )
+    }
+
+    pub fn register_snapshot_for(
+        &self,
+        namespace: String,
+        pid: i32,
+        window_id: u32,
+        element_count: usize,
+    ) -> u32 {
         // Truncate to the 16-bit space the token format actually
         // surfaces. The full u32 still increments monotonically — we
         // just don't widen the on-the-wire token namespace beyond what
@@ -123,7 +138,7 @@ impl TokenRegistry {
         // `resolve(format_token(id, idx))` always finds the entry.
         let id = mint_snapshot_id() & 0xffff;
         let mut by_pid = self.by_pid.lock().unwrap();
-        let lane = by_pid.entry(pid).or_default();
+        let lane = by_pid.entry((namespace, pid)).or_default();
         lane.push(SnapshotEntry {
             snapshot_id: id,
             window_id,
@@ -154,7 +169,7 @@ impl TokenRegistry {
             parse_token(token).ok_or_else(|| "element_token has invalid format".to_string())?;
         let by_pid = self.by_pid.lock().unwrap();
         let lane = by_pid
-            .get(&pid)
+            .get(&(crate::session::current_namespace(), pid))
             .ok_or_else(|| STALE_TOKEN_ERROR.to_string())?;
         let entry = lane
             .iter()
@@ -184,7 +199,7 @@ impl TokenRegistry {
         self.by_pid
             .lock()
             .unwrap()
-            .get(&pid)
+            .get(&(crate::session::current_namespace(), pid))
             .map(|v| v.len())
             .unwrap_or(0)
     }
@@ -478,6 +493,20 @@ mod tests {
         // Oldest must be stale now.
         let err = reg.resolve(pid, &format_token(oldest, 0)).unwrap_err();
         assert_eq!(err, STALE_TOKEN_ERROR);
+    }
+
+    #[tokio::test]
+    async fn tokens_do_not_cross_host_namespaces() {
+        let registry = TokenRegistry::new();
+        let snapshot = crate::session::with_namespace("host-a".into(), async {
+            registry.register_snapshot(77, 9, 1)
+        })
+        .await;
+        let token = format_token(snapshot, 0);
+        let resolved =
+            crate::session::with_namespace("host-b".into(), async { registry.resolve(77, &token) })
+                .await;
+        assert_eq!(resolved.unwrap_err(), STALE_TOKEN_ERROR);
     }
 
     #[test]

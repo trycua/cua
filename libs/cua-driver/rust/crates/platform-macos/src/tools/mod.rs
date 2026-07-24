@@ -529,7 +529,7 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
     {
         let session_config = state.session_config.clone();
         let cursor_registry = state.cursor_registry.clone();
-        cua_driver_core::session::register_session_end_hook(move |session_id| {
+        registry.register_session_end_hook(move |session_id| {
             session_config.clear(session_id);
             // Per-session agent cursor: the session_id is the cursor key when
             // the caller gave no explicit cursor_id, so dropping it here both
@@ -620,6 +620,7 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
         crate::browser::MacOsBrowserPlatform::new(state.cursor_registry.clone()),
     ));
     cua_driver_core::browser::register_browser_tools(&browser_engine, registry);
+    registry.register_workspace_tools(Arc::new(crate::workspace::MacosWorkspaceBackend::new()));
     // Recording / replay + session-lifecycle tools are platform-independent.
     registry.register_recording_tools();
     registry.register_session_tools();

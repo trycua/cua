@@ -248,6 +248,10 @@ pub struct StartSessionInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "capture_scope_schema")]
     pub capture_scope: Option<CaptureScope>,
+    /// Optional live workspace to bind to this session. Immutable until the session ends; launch_app inherits it when workspace_id is omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "string_schema")]
+    pub workspace_id: Option<String>,
 }
 
 impl ToolInput for StartSessionInput {
@@ -509,6 +513,7 @@ mod tests {
         assert_eq!(schema["additionalProperties"], true);
         assert_eq!(schema["required"], json!(["session"]));
         assert_eq!(schema["properties"]["capture_scope"]["default"], "auto");
+        assert_eq!(schema["properties"]["workspace_id"]["type"], "string");
         assert_eq!(
             schema["properties"]["capture_scope"]["enum"],
             json!(["auto", "window", "desktop"])

@@ -30,8 +30,6 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::session::register_session_end_hook;
-
 use super::binding::{
     cardinality_exact_candidate, correlate, selected_tab_target_id, BindingOutcome,
     CdpWindowCandidate,
@@ -544,8 +542,12 @@ impl BrowserEngine {
             mutation_gates: MutationGates::new(),
             reconnect_gates: ReconnectGates::new(),
         });
-        let weak: Weak<Self> = Arc::downgrade(&engine);
-        register_session_end_hook(move |session_id| {
+        engine
+    }
+
+    pub(crate) fn register_session_cleanup(self: &Arc<Self>, registry: &crate::tool::ToolRegistry) {
+        let weak: Weak<Self> = Arc::downgrade(self);
+        registry.register_session_end_hook(move |session_id| {
             if let Some(engine) = weak.upgrade() {
                 engine.store.remove_session(session_id);
                 engine.cleanup_prepared_session(session_id);
@@ -569,7 +571,6 @@ impl BrowserEngine {
                 }
             }
         });
-        engine
     }
 
     // ── Endpoint / CDP plumbing ─────────────────────────────────────────

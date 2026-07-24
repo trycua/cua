@@ -37,7 +37,7 @@ fn contract<I: ToolInput, O: ToolOutput>(
 fn start() -> ToolContract {
     contract::<StartSessionInput, StartSessionOutput>(
         "start_session",
-        "Declare a session — a named, color-coded identity for THIS agent run. Pass a stable `session` id and choose capture_scope=auto|window|desktop; the agent cursor, capture policy, per-session config, and recording all key on it, and it follows the run across any apps/windows. The cursor's color is derived from the id, so distinct runs are visually distinct. A cursor is shown only for a declared session — call this (or pass `session` on your first action) to opt in. Idempotent: re-calling with the same id just refreshes its idle-TTL. End it with `end_session` (or let the idle-TTL reclaim it). Concurrent runs/subagents each pass their own `session` to get their own cursor.",
+        "Declare a session — a named, color-coded identity for THIS agent run. Pass a stable `session` id and choose capture_scope=auto|window|desktop; optionally bind a live `workspace_id` so later launches inherit it. The agent cursor, capture policy, per-session config, recording, and workspace binding follow the run across apps/windows. The cursor's color is derived from the id, so distinct runs are visually distinct. A cursor is shown only for a declared session — call this (or pass `session` on your first action) to opt in. Idempotent: re-calling with the same id just refreshes its idle-TTL. End it with `end_session` (or let the idle-TTL reclaim it). Concurrent runs/subagents each pass their own `session` to get their own cursor.",
         &["session.lifecycle.start", "session.capture_scope"],
         ToolAnnotations {
             read_only: false,

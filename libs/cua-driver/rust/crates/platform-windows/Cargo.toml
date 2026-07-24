@@ -79,3 +79,7 @@ windows = { version = "0.58", features = [
     "Win32_System_WinRT_Graphics_Capture",
 ] }
 base64 = { workspace = true }
+# Opt-in Windows 11 24H2+ virtual-desktop creation and cross-process moves.
+# winvd wraps the undocumented, build-sensitive shell COM interfaces; the
+# public backend keeps this path disabled unless the daemon explicitly opts in.
+winvd = "0.0.49"

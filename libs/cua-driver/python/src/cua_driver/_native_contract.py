@@ -1958,19 +1958,20 @@ class SessionStateOutput:
     """
     Successful structured result shared by session state and escalation tools.
 """
-    def __init__(self, *, session:str, capture_scope:CaptureScope, effective_scope:EffectiveScope, desktop_unlocked:bool, escalation_reason:typing.Optional[EscalationReason], escalation_detail:typing.Optional[str]):
+    def __init__(self, *, session:str, capture_scope:CaptureScope, effective_scope:EffectiveScope, desktop_unlocked:bool, escalation_reason:typing.Optional[EscalationReason], escalation_detail:typing.Optional[str], workspace_id:typing.Optional[str]):
         self.session = session
         self.capture_scope = capture_scope
         self.effective_scope = effective_scope
         self.desktop_unlocked = desktop_unlocked
         self.escalation_reason = escalation_reason
         self.escalation_detail = escalation_detail
+        self.workspace_id = workspace_id
 
 
 
 
     def __str__(self):
-        return "SessionStateOutput(session={}, capture_scope={}, effective_scope={}, desktop_unlocked={}, escalation_reason={}, escalation_detail={})".format(self.session, self.capture_scope, self.effective_scope, self.desktop_unlocked, self.escalation_reason, self.escalation_detail)
+        return "SessionStateOutput(session={}, capture_scope={}, effective_scope={}, desktop_unlocked={}, escalation_reason={}, escalation_detail={}, workspace_id={})".format(self.session, self.capture_scope, self.effective_scope, self.desktop_unlocked, self.escalation_reason, self.escalation_detail, self.workspace_id)
     def __eq__(self, other):
         if self.session != other.session:
             return False
@@ -1984,6 +1985,8 @@ class SessionStateOutput:
             return False
         if self.escalation_detail != other.escalation_detail:
             return False
+        if self.workspace_id != other.workspace_id:
+            return False
         return True
 
 class _UniffiFfiConverterTypeSessionStateOutput(_UniffiConverterRustBuffer):
@@ -1996,6 +1999,7 @@ class _UniffiFfiConverterTypeSessionStateOutput(_UniffiConverterRustBuffer):
             desktop_unlocked=_UniffiFfiConverterBoolean.read(buf),
             escalation_reason=_UniffiFfiConverterOptionalTypeEscalationReason.read(buf),
             escalation_detail=_UniffiFfiConverterOptionalString.read(buf),
+            workspace_id=_UniffiFfiConverterOptionalString.read(buf),
         )
 
     @staticmethod
@@ -2006,6 +2010,7 @@ class _UniffiFfiConverterTypeSessionStateOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.check_lower(value.desktop_unlocked)
         _UniffiFfiConverterOptionalTypeEscalationReason.check_lower(value.escalation_reason)
         _UniffiFfiConverterOptionalString.check_lower(value.escalation_detail)
+        _UniffiFfiConverterOptionalString.check_lower(value.workspace_id)
 
     @staticmethod
     def write(value, buf):
@@ -2015,6 +2020,7 @@ class _UniffiFfiConverterTypeSessionStateOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.write(value.desktop_unlocked, buf)
         _UniffiFfiConverterOptionalTypeEscalationReason.write(value.escalation_reason, buf)
         _UniffiFfiConverterOptionalString.write(value.escalation_detail, buf)
+        _UniffiFfiConverterOptionalString.write(value.workspace_id, buf)
 
 class _UniffiFfiConverterOptionalTypeCaptureScope(_UniffiConverterRustBuffer):
     @classmethod
@@ -2043,19 +2049,22 @@ class _UniffiFfiConverterOptionalTypeCaptureScope(_UniffiConverterRustBuffer):
 
 @dataclass
 class StartSessionInput:
-    def __init__(self, *, session:str, capture_scope:typing.Optional[CaptureScope]):
+    def __init__(self, *, session:str, capture_scope:typing.Optional[CaptureScope], workspace_id:typing.Optional[str]):
         self.session = session
         self.capture_scope = capture_scope
+        self.workspace_id = workspace_id
 
 
 
 
     def __str__(self):
-        return "StartSessionInput(session={}, capture_scope={})".format(self.session, self.capture_scope)
+        return "StartSessionInput(session={}, capture_scope={}, workspace_id={})".format(self.session, self.capture_scope, self.workspace_id)
     def __eq__(self, other):
         if self.session != other.session:
             return False
         if self.capture_scope != other.capture_scope:
+            return False
+        if self.workspace_id != other.workspace_id:
             return False
         return True
 
@@ -2065,17 +2074,20 @@ class _UniffiFfiConverterTypeStartSessionInput(_UniffiConverterRustBuffer):
         return StartSessionInput(
             session=_UniffiFfiConverterString.read(buf),
             capture_scope=_UniffiFfiConverterOptionalTypeCaptureScope.read(buf),
+            workspace_id=_UniffiFfiConverterOptionalString.read(buf),
         )
 
     @staticmethod
     def check_lower(value):
         _UniffiFfiConverterString.check_lower(value.session)
         _UniffiFfiConverterOptionalTypeCaptureScope.check_lower(value.capture_scope)
+        _UniffiFfiConverterOptionalString.check_lower(value.workspace_id)
 
     @staticmethod
     def write(value, buf):
         _UniffiFfiConverterString.write(value.session, buf)
         _UniffiFfiConverterOptionalTypeCaptureScope.write(value.capture_scope, buf)
+        _UniffiFfiConverterOptionalString.write(value.workspace_id, buf)
 
 @dataclass
 class StartSessionOutput:

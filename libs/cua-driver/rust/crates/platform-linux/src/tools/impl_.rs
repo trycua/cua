@@ -1,5 +1,6 @@
 //! Real Linux tool implementations (compiled only on Linux).
 
+use anyhow::Context as _;
 use async_trait::async_trait;
 use cua_driver_contract::{
     ClickButton, ClickInput, DragInput, GetCursorPositionInput, GetDesktopStateInput,
@@ -841,7 +842,9 @@ impl Tool for LaunchAppTool {
                 "name":{"type":"string","description":"App name or command to launch."},
                 "bundle_id":{"type":"string","description":"Ignored on Linux (macOS/Windows concept)."},
                 "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open via xdg-open."},
-                "additional_arguments":{"type":"array","items":{"type":"string"},"description":"Extra command-line arguments passed to the launched process."}
+                "additional_arguments":{"type":"array","items":{"type":"string"},"description":"Extra command-line arguments passed to the launched process."},
+                "workspace_id":{"type":"string","description":"Optional live nested_compositor workspace. The child receives only that workspace's Wayland/control-socket environment."},
+                "session":{"type":"string","description":"Optional session id; inherits its workspace binding when workspace_id is omitted."}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: false, open_world: true,
         })
@@ -849,6 +852,30 @@ impl Tool for LaunchAppTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        let workspace_id = match cua_driver_core::workspace::resolve_workspace_id(&args) {
+            Ok(value) => value,
+            Err(error) => {
+                return ToolResult::error(error.to_string()).with_structured(json!({
+                    "code": error.code(),
+                }))
+            }
+        };
+        let _workspace_lease = if let Some(workspace_id) = workspace_id.as_deref() {
+            let manager = cua_driver_core::workspace::current_manager()
+                .expect("workspace id resolution requires a manager");
+            match manager.lease_operation(workspace_id) {
+                Ok(lease) => Some(lease),
+                Err(error) => {
+                    return ToolResult::error(error.to_string()).with_structured(json!({
+                        "code": error.code(),
+                        "workspace_id": workspace_id,
+                        "app_launched": false,
+                    }))
+                }
+            }
+        } else {
+            None
+        };
         let launch_path_opt = args.opt_str("launch_path");
         let name_opt = args.opt_str("name");
         let urls: Vec<String> = args.str_array("urls");
@@ -873,13 +900,31 @@ impl Tool for LaunchAppTool {
         if launch_path_opt.is_none() && name_opt.is_none() && urls.is_empty() {
             return ToolResult::error("Provide at least one of: launch_path, name, or urls.");
         }
+        if workspace_id.is_some() && !urls.is_empty() {
+            return ToolResult::error(
+                "Workspace launches require a direct launch_path or command; xdg-open URL dispatch can hand the request to a host-compositor process.",
+            )
+            .with_structured(json!({
+                "code": "workspace_direct_launch_required",
+                "workspace_id": workspace_id,
+            }));
+        }
 
+        let workspace_id_for_launch = workspace_id.clone();
+        let workspace_manager_for_launch = cua_driver_core::workspace::current_manager();
         let result = tokio::task::spawn_blocking(
-            move || -> anyhow::Result<(String, Option<u32>, String)> {
+            move || -> anyhow::Result<(String, Option<std::process::Child>, String)> {
                 // Open URLs via xdg-open.
                 if !urls.is_empty() {
                     for url in &urls {
-                        std::process::Command::new("xdg-open").arg(url).spawn()?;
+                        let mut command = std::process::Command::new("xdg-open");
+                        command.arg(url);
+                        configure_workspace_launch(
+                            &mut command,
+                            workspace_id_for_launch.as_deref(),
+                            workspace_manager_for_launch.as_ref(),
+                        )?;
+                        command.spawn()?;
                     }
                     return Ok((
                         format!("Opened {} URL(s) via xdg-open.", urls.len()),
@@ -912,19 +957,56 @@ impl Tool for LaunchAppTool {
                     {
                         launch.arg("--force-renderer-accessibility");
                     }
+                    configure_workspace_launch(
+                        &mut launch,
+                        workspace_id_for_launch.as_deref(),
+                        workspace_manager_for_launch.as_ref(),
+                    )?;
+                    if workspace_id_for_launch.is_some()
+                        && chromium_family_program(prog)
+                        && !rest.iter().any(|arg| arg.starts_with("--user-data-dir"))
+                    {
+                        let runtime_dir = launch
+                            .get_envs()
+                            .find_map(|(key, value)| {
+                                (key == "XDG_RUNTIME_DIR").then_some(value).flatten()
+                            })
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "workspace launch did not provide XDG_RUNTIME_DIR"
+                                )
+                            })?;
+                        let profile = std::path::Path::new(runtime_dir)
+                            .join(crate::workspace::CHROMIUM_PROFILE_DIR_NAME);
+                        launch.arg(format!("--user-data-dir={}", profile.display()));
+                    }
                     match launch.spawn() {
                         Ok(child) => {
                             let pid = child.id();
                             return Ok((
                                 format!("✅ Launched {cmd} (pid {pid}) in background."),
-                                Some(pid),
+                                Some(child),
                                 cmd.to_owned(),
                             ));
+                        }
+                        Err(error) if workspace_id_for_launch.is_some() => {
+                            return Err(error).with_context(|| {
+                                format!(
+                                    "direct workspace launch of '{cmd}' failed; xdg-open fallback is unsafe for compositor routing"
+                                )
+                            });
                         }
                         Err(_) => {
                             // Fall back to xdg-open for .desktop app names. xdg-open may
                             // spawn a helper and exit, so do not claim its pid is the app pid.
-                            std::process::Command::new("xdg-open").arg(cmd).spawn()?;
+                            let mut fallback = std::process::Command::new("xdg-open");
+                            fallback.arg(cmd);
+                            configure_workspace_launch(
+                                &mut fallback,
+                                workspace_id_for_launch.as_deref(),
+                                workspace_manager_for_launch.as_ref(),
+                            )?;
+                            fallback.spawn()?;
                             return Ok((
                                 format!("Opened '{cmd}' via xdg-open."),
                                 None,
@@ -939,21 +1021,52 @@ impl Tool for LaunchAppTool {
         .await;
 
         match result {
-            Ok(Ok((message, pid_opt, name))) => {
-                if let Some(pid) = pid_opt {
-                    let windows = tokio::task::spawn_blocking(move || {
-                        let deadline =
-                            std::time::Instant::now() + std::time::Duration::from_secs(3);
-                        loop {
-                            let windows = crate::wayland::list_windows_dispatch(Some(pid));
-                            if !windows.is_empty() || std::time::Instant::now() >= deadline {
-                                return windows.iter().map(window_record_json).collect::<Vec<_>>();
-                            }
-                            std::thread::sleep(std::time::Duration::from_millis(100));
+            Ok(Ok((message, child_opt, name))) => {
+                if let Some(mut child) = child_opt {
+                    let pid = child.id();
+                    if let Some(workspace_id) = workspace_id.as_deref() {
+                        let workspace_lease = _workspace_lease
+                            .as_ref()
+                            .expect("workspace launch holds a lease");
+                        if let Err(error) = workspace_lease.note_launch(pid) {
+                            // Retain the exact Child handle until ownership is
+                            // recorded so a failed handoff cannot leak it.
+                            let _ = tokio::task::spawn_blocking(move || {
+                                let _ = child.kill();
+                                let _ = child.wait();
+                            })
+                            .await;
+                            return ToolResult::error(format!(
+                                "App launched as pid {pid}, but workspace ownership could not be recorded: {error}"
+                            ))
+                            .with_structured(json!({
+                                "code": error.code(),
+                                "workspace_id": workspace_id,
+                                "pid": pid,
+                                "app_launched": true,
+                            }));
                         }
-                    })
-                    .await
-                    .unwrap_or_default();
+                    }
+                    let windows = if workspace_id.is_some() {
+                        Vec::new()
+                    } else {
+                        tokio::task::spawn_blocking(move || {
+                            let deadline =
+                                std::time::Instant::now() + std::time::Duration::from_secs(3);
+                            loop {
+                                let windows = crate::wayland::list_windows_dispatch(Some(pid));
+                                if !windows.is_empty() || std::time::Instant::now() >= deadline {
+                                    return windows
+                                        .iter()
+                                        .map(window_record_json)
+                                        .collect::<Vec<_>>();
+                                }
+                                std::thread::sleep(std::time::Duration::from_millis(100));
+                            }
+                        })
+                        .await
+                        .unwrap_or_default()
+                    };
                     ToolResult::text(message).with_structured(json!({
                         "pid": pid,
                         "bundle_id": Value::Null,
@@ -961,6 +1074,8 @@ impl Tool for LaunchAppTool {
                         "running": true,
                         "active": false,
                         "windows": windows,
+                        "workspace_id": workspace_id,
+                        "workspace_window_enumeration_supported": workspace_id.is_none(),
                     }))
                 } else {
                     ToolResult::text(message).with_structured(json!({
@@ -970,6 +1085,7 @@ impl Tool for LaunchAppTool {
                         "running": Value::Null,
                         "active": false,
                         "windows": [],
+                        "workspace_id": workspace_id,
                     }))
                 }
             }
@@ -988,6 +1104,20 @@ fn chromium_family_program(program: &str) -> bool {
     ["chrome", "chromium", "electron", "brave", "edge"]
         .iter()
         .any(|needle| basename.contains(needle))
+}
+
+fn configure_workspace_launch(
+    command: &mut std::process::Command,
+    workspace_id: Option<&str>,
+    manager: Option<&std::sync::Arc<cua_driver_core::workspace::WorkspaceManager>>,
+) -> anyhow::Result<()> {
+    let Some(workspace_id) = workspace_id else {
+        return Ok(());
+    };
+    manager
+        .ok_or_else(|| anyhow::anyhow!("workspace backend is not registered"))?
+        .configure_command(workspace_id, command)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
 // ── shared helpers ────────────────────────────────────────────────────────────
@@ -6996,10 +7126,11 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
             },
         ));
     }
+    let mut r = ToolRegistry::new();
     {
         let cursor_registry = state.cursor_registry.clone();
         let state_for_session_end = state.clone();
-        cua_driver_core::session::register_session_end_hook(move |session_id| {
+        r.register_session_end_hook(move |session_id| {
             cursor_registry.remove(session_id);
             crate::overlay::remove_cursor(session_id.to_owned());
             state_for_session_end
@@ -7010,7 +7141,6 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
             crate::input::forget_master_pointer(session_id);
         });
     }
-    let mut r = ToolRegistry::new();
     r.register(Box::new(ListAppsTool));
     r.register(Box::new(ListWindowsTool));
     r.register(Box::new(GetWindowStateTool {
@@ -7107,6 +7237,9 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
         crate::browser_platform::LinuxBrowserPlatform,
     ));
     cua_driver_core::browser::register_browser_tools(&browser_engine, &mut r);
+    r.register_workspace_tools(std::sync::Arc::new(
+        crate::workspace::LinuxWorkspaceBackend::new(),
+    ));
     r.register_recording_tools();
     r.register_session_tools();
     r

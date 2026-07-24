@@ -52,13 +52,15 @@ impl SessionCaptureScope {
             desktop_unlocked: self.desktop_unlocked,
             escalation_reason: self.escalation_reason,
             escalation_detail: self.escalation_detail.clone(),
+            workspace_id: None,
         }
     }
 }
 
-static SESSION_SCOPES: OnceLock<Mutex<HashMap<String, SessionCaptureScope>>> = OnceLock::new();
+static SESSION_SCOPES: OnceLock<Mutex<HashMap<(String, String), SessionCaptureScope>>> =
+    OnceLock::new();
 
-fn scopes() -> &'static Mutex<HashMap<String, SessionCaptureScope>> {
+fn scopes() -> &'static Mutex<HashMap<(String, String), SessionCaptureScope>> {
     SESSION_SCOPES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -79,10 +81,11 @@ pub fn bind_session(
     requested: Option<CaptureScopePolicy>,
 ) -> Result<(SessionCaptureScope, bool), BindError> {
     let mut registry = scopes().lock().unwrap();
+    let key = crate::session::session_key(session);
     if crate::session::is_session_ended(session) {
         return Err(BindError::Ended);
     }
-    if let Some(existing) = registry.get(session) {
+    if let Some(existing) = registry.get(&key) {
         if let Some(requested) = requested {
             if existing.policy != requested {
                 return Err(BindError::Conflict {
@@ -94,16 +97,23 @@ pub fn bind_session(
         return Ok((existing.clone(), false));
     }
     let state = SessionCaptureScope::new(requested.unwrap_or_default());
-    registry.insert(session.to_owned(), state.clone());
+    registry.insert(key, state.clone());
     Ok((state, true))
 }
 
 pub fn get_session(session: &str) -> Option<SessionCaptureScope> {
-    scopes().lock().unwrap().get(session).cloned()
+    scopes()
+        .lock()
+        .unwrap()
+        .get(&crate::session::session_key(session))
+        .cloned()
 }
 
 pub fn clear_session(session: &str) {
-    scopes().lock().unwrap().remove(session);
+    scopes()
+        .lock()
+        .unwrap()
+        .remove(&crate::session::session_key(session));
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,6 +130,7 @@ pub fn escalate_session(
     detail: Option<&str>,
 ) -> Result<SessionCaptureScope, EscalateError> {
     let mut registry = scopes().lock().unwrap();
+    let key = crate::session::session_key(session);
     // This check deliberately happens while holding the scope lock. If an end
     // races with escalation, either this write wins first and end removes it,
     // or the tombstone wins first and this write is rejected. A late action
@@ -127,7 +138,7 @@ pub fn escalate_session(
     if crate::session::is_session_ended(session) {
         return Err(EscalateError::Ended);
     }
-    let Some(state) = registry.get_mut(session) else {
+    let Some(state) = registry.get_mut(&key) else {
         return Err(EscalateError::NotStarted);
     };
     if state.desktop_unlocked {
@@ -186,6 +197,8 @@ fn tool_scope(tool_name: &str, args: &Value) -> ToolScope {
             | "screenshot_compat"
             | "zoom"
             | "page"
+            | "move_window_to_workspace"
+            | "get_workspace_state"
     ) || tool_name == "get_browser_state"
         || (tool_name.starts_with("browser_")
             && !matches!(tool_name, "browser_prepare" | "browser_download"))

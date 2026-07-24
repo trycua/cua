@@ -47,6 +47,12 @@ MCP remains valuable because it standardizes discovery, calls, results, tasks,
 and transport for agent runtimes; the generated language SDKs are for
 applications embedding the native runtime.
 
+Authorization is part of the native runtime, below this topology choice. A
+same-process `CuaDriver.create()` call and a daemon-backed call both pass the
+same registry authorization boundary before platform dispatch. MCP, HTTP, CLI,
+and daemon adapters may reject a call earlier for defense in depth, but they do
+not replace or weaken that native check.
+
 ## Why the daemon still exists
 
 External agents and CLI calls are short-lived or run outside the desktop app

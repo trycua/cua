@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import importlib
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from pdoc.doc import Module
 
@@ -114,6 +116,33 @@ async def sandbox(name: str) -> AsyncIterator[Sandbox]:
         module = self.module()
 
         self.assertEqual(generator.render_reference(module), generator.render_reference(module))
+
+    def test_formats_generated_mdx_with_the_locked_docs_prettier(self) -> None:
+        result = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="formatted MDX\n",
+            stderr="",
+        )
+        with (
+            patch.object(generator, "PRETTIER", Path("/tmp/prettier")),
+            patch.object(generator.subprocess, "run", return_value=result) as run,
+        ):
+            self.assertEqual(generator.format_mdx("unformatted MDX\n"), "formatted MDX\n")
+
+        run.assert_called_once_with(
+            [
+                "/tmp/prettier",
+                "--stdin-filepath",
+                str(generator.OUTPUT.relative_to(generator.DOCS)),
+            ],
+            check=False,
+            cwd=generator.DOCS,
+            input="unformatted MDX\n",
+            stderr=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
 
     def test_loads_the_source_package_without_native_fleet_bindings(self) -> None:
         fixture_parent = str(self.package_root.parent)

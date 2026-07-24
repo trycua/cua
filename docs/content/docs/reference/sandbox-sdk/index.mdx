@@ -27,7 +27,7 @@ def configure(
 
 Set global configuration for cloud sandboxes.
 
-API-key cloud operations use ``base_url``. Fleet uses ``fleet_base_url`` and
+API-key cloud operations use `base_url`. Fleet uses `fleet_base_url` and
 OAuth client credentials.
 
 ## `cua_sandbox.login`
@@ -51,7 +51,7 @@ def whoami(*, api_key: Optional[str] = None) -> Dict[str, Any]
 Return info about the authenticated user.
 
 Returns:
-    Dict with user info (id, email, etc.) from the CUA API.
+Dict with user info (id, email, etc.) from the CUA API.
 
 ## `Image`
 
@@ -109,7 +109,7 @@ def macos(cls, version: str = '26', kind: str = 'vm') -> Image
 
 macOS image. Always a VM (Apple Virtualization / Lume).
 
-Supported versions: ``"15"`` / ``"sequoia"``, ``"26"`` / ``"tahoe"``.
+Supported versions: `"15"` / `"sequoia"`, `"26"` / `"tahoe"`.
 
 ### `cua_sandbox.Image.windows`
 
@@ -156,10 +156,10 @@ For ISOs, the runtime will create a qcow2 disk and attach the ISO
 as a CD-ROM for installation/boot.
 
 Args:
-    path: Local file path or URL (http/https).
-    os_type: OS type hint ("linux", "windows", "macos", "android").
-    kind: "vm" or "container".
-    agent_type: Agent type hint (e.g. "osworld" for OSWorld Flask server).
+path: Local file path or URL (http/https).
+os_type: OS type hint ("linux", "windows", "macos", "android").
+kind: "vm" or "container".
+agent_type: Agent type hint (e.g. "osworld" for OSWorld Flask server).
 
 ### `cua_sandbox.Image.from_dict`
 
@@ -228,31 +228,31 @@ Build an APK from a PWA manifest URL and install it (Android only).
 
 Two builder backends are supported:
 
-* ``"pwa2apk"`` (default) — generates a lightweight WebView-based APK.
+- `"pwa2apk"` (default) — generates a lightweight WebView-based APK.
   No Chrome dependency, no "Running in Chrome" banner, no Digital Asset
-  Links needed.  ~10 KB APK.
-* ``"bubblewrap"`` — generates a Chrome Trusted Web Activity (TWA) APK.
+  Links needed. ~10 KB APK.
+- `"bubblewrap"` — generates a Chrome Trusted Web Activity (TWA) APK.
   Requires Chrome on the device and a matching
-  ``/.well-known/assetlinks.json`` on the server.  Shows a mandatory
+  `/.well-known/assetlinks.json` on the server. Shows a mandatory
   "Running in Chrome" privacy disclosure on every launch.
 
 Args:
-    manifest_url: Full URL to the PWA's ``manifest.json`` or
-                  ``manifest.webmanifest``.
-                  Example: ``"http://10.0.2.2:3000/manifest.json"``
-    package_name: Android package ID.  Defaults to a reversed-hostname
-                  derivation (e.g. ``"com.example.app"``).
-    keystore:     Path to a ``*.keystore`` / ``*.jks`` file.  When
-                  omitted a fresh keystore is generated and cached.
-                  Pass the keystore bundled with your PWA repo so the
-                  fingerprint is deterministic.
-    keystore_alias:    Key alias inside the keystore (default ``"android"``).
-    keystore_password: Password for both the store and the key
-                       (default ``"android"``).
-    builder:      ``"pwa2apk"`` (default) or ``"bubblewrap"``.
-    push_timeout: Optional seconds for the ``write_bytes`` ``adb push``
-                  of the built APK.  When ``None`` the server default
-                  applies.
+manifest_url: Full URL to the PWA's `manifest.json` or
+`manifest.webmanifest`.
+Example: `"http://10.0.2.2:3000/manifest.json"`
+package_name: Android package ID. Defaults to a reversed-hostname
+derivation (e.g. `"com.example.app"`).
+keystore: Path to a `*.keystore` / `*.jks` file. When
+omitted a fresh keystore is generated and cached.
+Pass the keystore bundled with your PWA repo so the
+fingerprint is deterministic.
+keystore_alias: Key alias inside the keystore (default `"android"`).
+keystore_password: Password for both the store and the key
+(default `"android"`).
+builder: `"pwa2apk"` (default) or `"bubblewrap"`.
+push_timeout: Optional seconds for the `write_bytes` `adb push`
+of the built APK. When `None` the server default
+applies.
 
 ### `cua_sandbox.Image.uv_install`
 
@@ -278,7 +278,7 @@ def app_install(self, app_id: str) -> Image
 
 Install an app from the cua-sandbox-apps catalog.
 
-Requires ``cua-sandbox-apps`` to be installed. The app's install
+Requires `cua-sandbox-apps` to be installed. The app's install
 script for this image's OS is executed as a build layer.
 
 ### `cua_sandbox.Image.run`
@@ -339,11 +339,11 @@ Check whether this image can run locally on the current host.
 
 Returns a :class:`~cua_sandbox.runtime.compat.RuntimeSupport` describing:
 
-- ``supported``  — runtime is available or auto-installable on this OS
-- ``hw_accel``   — hardware acceleration (HVF / KVM / Hyper-V) is available
-- ``runtime_installed`` — runtime binary found right now (no install needed)
-- ``auto_installable`` — SDK can install the runtime automatically
-- ``reason``     — human-readable explanation
+- `supported` — runtime is available or auto-installable on this OS
+- `hw_accel` — hardware acceleration (HVF / KVM / Hyper-V) is available
+- `runtime_installed` — runtime binary found right now (no install needed)
+- `auto_installable` — SDK can install the runtime automatically
+- `reason` — human-readable explanation
 
 In tests, use the bundled helper instead of checking manually::
 
@@ -363,8 +363,8 @@ class Sandbox(transport: 'Transport', name: 'Optional[str]' = None, _runtime: 'O
 A sandboxed computer environment.
 
 Provides programmatic control of a VM or container through a unified
-interface: ``.mouse``, ``.keyboard``, ``.screen``, ``.clipboard``,
-``.shell``, ``.window``, and ``.terminal``.
+interface: `.mouse`, `.keyboard`, `.screen`, `.clipboard`,
+`.shell`, `.window`, and `.terminal`.
 
 Sandboxes are always isolated — they never control the host machine
 directly. For unsandboxed host control, use :func:`cua_sandbox.localhost`.
@@ -373,20 +373,20 @@ There are three ways to obtain a Sandbox:
 
 1. **Persistent** — provision and keep alive after the script exits::
 
-       sb = await Sandbox.create(Image.desktop("ubuntu"))
-       await sb.shell.run("whoami")
-       await sb.disconnect()
+   sb = await Sandbox.create(Image.desktop("ubuntu"))
+   await sb.shell.run("whoami")
+   await sb.disconnect()
 
 2. **Connect** — attach to an already-running sandbox by name::
 
-       sb = await Sandbox.connect("my-sandbox")
-       await sb.screenshot()
-       await sb.disconnect()
+   sb = await Sandbox.connect("my-sandbox")
+   await sb.screenshot()
+   await sb.disconnect()
 
-3. **Ephemeral** — auto-destroyed when the ``async with`` block exits::
+3. **Ephemeral** — auto-destroyed when the `async with` block exits::
 
-       async with Sandbox.ephemeral(Image.desktop("ubuntu")) as sb:
-           await sb.shell.run("whoami")
+   async with Sandbox.ephemeral(Image.desktop("ubuntu")) as sb:
+   await sb.shell.run("whoami")
 
 ### `cua_sandbox.Sandbox.name`
 
@@ -490,11 +490,11 @@ The returned Image can be passed to Sandbox.create() or Sandbox.ephemeral()
 to boot a new sandbox from the snapshot (COW fork — instant on btrfs).
 
 Args:
-    name: Optional human-readable name for the snapshot.
-    stateful: Whether to capture memory state (VMs only).
+name: Optional human-readable name for the snapshot.
+stateful: Whether to capture memory state (VMs only).
 
 Returns:
-    An Image with _snapshot_source set, ready to pass to Sandbox.ephemeral().
+An Image with \_snapshot_source set, ready to pass to Sandbox.ephemeral().
 
 ### `cua_sandbox.Sandbox.destroy`
 
@@ -541,8 +541,8 @@ async def get_display_url(self, *, share: bool = False) -> str
 Return a URL to view this sandbox's display.
 
 Args:
-    share: If True, return a public link with embedded credentials
-           (cloud only). If False, return a direct connection URL.
+share: If True, return a public link with embedded credentials
+(cloud only). If False, return a direct connection URL.
 
 ### `cua_sandbox.Sandbox.get_dimensions`
 
@@ -573,28 +573,28 @@ async def create(
 
 Provision a new persistent sandbox and return it connected.
 
-The sandbox is kept alive after your script exits — call ``close()``
+The sandbox is kept alive after your script exits — call `close()`
 when you are done, or use :meth:`ephemeral` if you want it destroyed
 automatically.
 
 Args:
-    image: Image to run (e.g. ``Image.desktop("ubuntu")``).
-    name: Optional name to assign to the sandbox.
-    api_key: Legacy CUA API key. Providing one uses the legacy VM API;
-        Fleet cloud sandboxes use OAuth client credentials instead.
-    local: Use a local runtime instead of cloud.
-    runtime: Explicit runtime backend (DockerRuntime, QEMURuntime, etc.).
-    cpu: Number of CPUs for the cloud sandbox.
-    memory_mb: Memory in MB for the cloud sandbox.
-    disk_gb: Unsupported by Fleet; API-key legacy cloud only.
-    region: Fleet currently supports only ``"us-east-1"``.
-    time_to_start: Max seconds to wait for Fleet provisioning and
-        service readiness (default 600).
-    request_timeout: Default HTTP request timeout in seconds for
-        commands sent to the computer-server (default 30, cloud only).
-        Individual commands with a server-side timeout automatically
-        extend the client timeout to match.
-    telemetry_enabled: Set to False to disable telemetry for this instance.
+image: Image to run (e.g. `Image.desktop("ubuntu")`).
+name: Optional name to assign to the sandbox.
+api_key: Legacy CUA API key. Providing one uses the legacy VM API;
+Fleet cloud sandboxes use OAuth client credentials instead.
+local: Use a local runtime instead of cloud.
+runtime: Explicit runtime backend (DockerRuntime, QEMURuntime, etc.).
+cpu: Number of CPUs for the cloud sandbox.
+memory_mb: Memory in MB for the cloud sandbox.
+disk_gb: Unsupported by Fleet; API-key legacy cloud only.
+region: Fleet currently supports only `"us-east-1"`.
+time_to_start: Max seconds to wait for Fleet provisioning and
+service readiness (default 600).
+request_timeout: Default HTTP request timeout in seconds for
+commands sent to the computer-server (default 30, cloud only).
+Individual commands with a server-side timeout automatically
+extend the client timeout to match.
+telemetry_enabled: Set to False to disable telemetry for this instance.
 
 Example::
 
@@ -625,16 +625,16 @@ async def connect(
 
 Connect to an existing sandbox by name.
 
-Supports both ``await`` and ``async with``. When used as a context
-manager, ``disconnect()`` is called on exit — the sandbox keeps running.
+Supports both `await` and `async with`. When used as a context
+manager, `disconnect()` is called on exit — the sandbox keeps running.
 
 Args:
-    name: Name of the existing sandbox.
-    api_key: CUA API key for cloud sandboxes.
-    ws_url: WebSocket URL for a remote computer-server.
-    http_url: HTTP base URL for a remote computer-server.
-    container_name: Container name for cloud auth (HTTP transport).
-    region: Cloud region (default ``"us-east-1"``).
+name: Name of the existing sandbox.
+api_key: CUA API key for cloud sandboxes.
+ws_url: WebSocket URL for a remote computer-server.
+http_url: HTTP base URL for a remote computer-server.
+container_name: Container name for cloud auth (HTTP transport).
+region: Cloud region (default `"us-east-1"`).
 
 Examples::
 
@@ -671,22 +671,22 @@ async def ephemeral(
 Create an ephemeral sandbox that is automatically destroyed on exit.
 
 Args:
-    image: Image to run (e.g. ``Image.desktop("ubuntu")``).
-    name: Optional name to assign to the sandbox.
-    api_key: Legacy CUA API key. Providing one uses the legacy VM API;
-        Fleet cloud sandboxes use OAuth client credentials instead.
-    local: Use a local runtime instead of cloud.
-    runtime: Explicit runtime backend (DockerRuntime, QEMURuntime, etc.).
-    cpu: Number of CPUs for the cloud sandbox.
-    memory_mb: Memory in MB for the cloud sandbox.
-    disk_gb: Unsupported by Fleet; API-key legacy cloud only.
-    region: Fleet currently supports only ``"us-east-1"``.
-    time_to_start: Max seconds to wait for Fleet provisioning and
-        service readiness (default 600).
-    request_timeout: Default HTTP request timeout in seconds for
-        commands sent to the computer-server (default 30, cloud only).
-        Individual commands with a server-side timeout automatically
-        extend the client timeout to match.
+image: Image to run (e.g. `Image.desktop("ubuntu")`).
+name: Optional name to assign to the sandbox.
+api_key: Legacy CUA API key. Providing one uses the legacy VM API;
+Fleet cloud sandboxes use OAuth client credentials instead.
+local: Use a local runtime instead of cloud.
+runtime: Explicit runtime backend (DockerRuntime, QEMURuntime, etc.).
+cpu: Number of CPUs for the cloud sandbox.
+memory_mb: Memory in MB for the cloud sandbox.
+disk_gb: Unsupported by Fleet; API-key legacy cloud only.
+region: Fleet currently supports only `"us-east-1"`.
+time_to_start: Max seconds to wait for Fleet provisioning and
+service readiness (default 600).
+request_timeout: Default HTTP request timeout in seconds for
+commands sent to the computer-server (default 30, cloud only).
+Individual commands with a server-side timeout automatically
+extend the client timeout to match.
 
 Example::
 
@@ -708,9 +708,9 @@ async def list(
 List running and suspended sandboxes.
 
 Args:
-    local: If True, list local sandboxes (Lume, Docker, QEMU).
-           If False, list cloud sandboxes.
-    api_key: CUA API key for cloud sandboxes.
+local: If True, list local sandboxes (Lume, Docker, QEMU).
+If False, list cloud sandboxes.
+api_key: CUA API key for cloud sandboxes.
 
 ### `cua_sandbox.Sandbox.get_info`
 
@@ -727,9 +727,9 @@ async def get_info(
 Get metadata for a specific sandbox.
 
 Args:
-    name: Sandbox name.
-    local: If True, look up in local runtimes.
-    api_key: CUA API key for cloud.
+name: Sandbox name.
+local: If True, look up in local runtimes.
+api_key: CUA API key for cloud.
 
 ### `cua_sandbox.Sandbox.suspend`
 
@@ -751,9 +751,9 @@ For local Lume: stops the Lume VM (Lume persists state).
 For cloud: calls POST /v1/vms/\{name\}/stop.
 
 Args:
-    name: Sandbox name.
-    local: If True, operate on a local sandbox.
-    api_key: CUA API key for cloud.
+name: Sandbox name.
+local: If True, operate on a local sandbox.
+api_key: CUA API key for cloud.
 
 ### `cua_sandbox.Sandbox.resume`
 
@@ -770,12 +770,12 @@ async def resume(
 Resume a suspended sandbox and return a connected Sandbox.
 
 Args:
-    name: Sandbox name.
-    local: If True, resume a local sandbox.
-    api_key: CUA API key for cloud.
+name: Sandbox name.
+local: If True, resume a local sandbox.
+api_key: CUA API key for cloud.
 
 Returns:
-    A connected Sandbox ready to use.
+A connected Sandbox ready to use.
 
 ### `cua_sandbox.Sandbox.restart`
 
@@ -792,12 +792,12 @@ async def restart(
 Restart a sandbox (suspend then resume) and return a connected Sandbox.
 
 Args:
-    name: Sandbox name.
-    local: If True, restart a local sandbox.
-    api_key: CUA API key for cloud.
+name: Sandbox name.
+local: If True, restart a local sandbox.
+api_key: CUA API key for cloud.
 
 Returns:
-    A connected Sandbox ready to use.
+A connected Sandbox ready to use.
 
 ### `cua_sandbox.Sandbox.delete`
 
@@ -817,9 +817,9 @@ For local sandboxes, stops the VM and removes the state file.
 For cloud sandboxes, calls DELETE /v1/vms/\{name\}.
 
 Args:
-    name: Sandbox name.
-    local: If True, delete a local sandbox.
-    api_key: CUA API key for cloud.
+name: Sandbox name.
+local: If True, delete a local sandbox.
+api_key: CUA API key for cloud.
 
 ## `SandboxInfo`
 
@@ -901,8 +901,8 @@ async def sandbox(
 Async context manager for a sandboxed environment.
 
 .. deprecated::
-    Prefer ``Sandbox.create()``, ``Sandbox.connect()``, or
-    ``Sandbox.ephemeral()`` instead.
+Prefer `Sandbox.create()`, `Sandbox.connect()`, or
+`Sandbox.ephemeral()` instead.
 
 ## `Localhost`
 
@@ -992,7 +992,7 @@ async def connect(cls) -> _ConnectResult
 
 Connect to the local machine.
 
-Supports both ``await`` and ``async with``.
+Supports both `await` and `async with`.
 
 Examples::
 
@@ -1014,7 +1014,7 @@ async def localhost() -> AsyncIterator[Localhost]
 Async context manager yielding a Localhost instance.
 
 .. deprecated::
-    Prefer ``Localhost.connect()`` instead.
+Prefer `Localhost.connect()` instead.
 
 ## `CloudTransport`
 
@@ -1089,8 +1089,8 @@ async def screenshot(self, format: str = 'png', quality: int = 95) -> bytes
 Capture a screenshot and return raw image bytes.
 
 Args:
-    format: "png" (lossless, default) or "jpeg" (lossy, ~5-10x smaller).
-    quality: JPEG quality 1-95, ignored for PNG.
+format: "png" (lossless, default) or "jpeg" (lossy, ~5-10x smaller).
+quality: JPEG quality 1-95, ignored for PNG.
 
 ### `cua_sandbox.CloudTransport.get_screen_size`
 
@@ -1117,9 +1117,9 @@ async def get_display_url(self, *, share: bool = False) -> str
 Return a URL to view this sandbox's display.
 
 Args:
-    share: If True, return a public link with embedded credentials
-           (cloud only). If False, return a direct connection URL
-           (localhost VNC for local runtimes; auth-gated URL for cloud).
+share: If True, return a public link with embedded credentials
+(cloud only). If False, return a direct connection URL
+(localhost VNC for local runtimes; auth-gated URL for cloud).
 
 Raises NotImplementedError for transports that don't expose a display
 (e.g. HTTP, ADB).
@@ -1139,22 +1139,22 @@ class RuntimeSupport(supported: 'bool', hw_accel: 'bool', runtime_installed: 'bo
 Result of a local runtime compatibility check for a given Image.
 
 Attributes:
-    supported:         Image can run locally at all (runtime available or
-                       auto-installable, and host/guest OS is compatible).
-    hw_accel:          Hardware acceleration is available for the guest on
-                       this host (HVF on Apple Silicon, KVM on Linux, etc.).
-                       Always True for containers — they run natively.
-    runtime_installed: Required runtime binary/daemon is found right now
-                       without any installation step.
-    auto_installable:  Runtime can be downloaded and installed automatically
-                       by the SDK without user intervention (e.g. Android SDK).
-    runtime_name:      Name of the runtime that would be used
-                       ("docker", "lume", "qemu", "android_emulator", "hyperv").
-    host_os:           Detected host OS ("darwin", "linux", "windows").
-    host_arch:         Detected host CPU architecture ("arm64", "x86_64").
-    guest_os:          Guest OS from the image ("linux", "macos", "windows", "android").
-    reason:            Human-readable explanation — always set, describes
-                       the limiting factor when supported=False or hw_accel=False.
+supported: Image can run locally at all (runtime available or
+auto-installable, and host/guest OS is compatible).
+hw_accel: Hardware acceleration is available for the guest on
+this host (HVF on Apple Silicon, KVM on Linux, etc.).
+Always True for containers — they run natively.
+runtime_installed: Required runtime binary/daemon is found right now
+without any installation step.
+auto_installable: Runtime can be downloaded and installed automatically
+by the SDK without user intervention (e.g. Android SDK).
+runtime_name: Name of the runtime that would be used
+("docker", "lume", "qemu", "android_emulator", "hyperv").
+host_os: Detected host OS ("darwin", "linux", "windows").
+host_arch: Detected host CPU architecture ("arm64", "x86_64").
+guest_os: Guest OS from the image ("linux", "macos", "windows", "android").
+reason: Human-readable explanation — always set, describes
+the limiting factor when supported=False or hw_accel=False.
 
 ### `cua_sandbox.RuntimeSupport.supported`
 
@@ -1218,13 +1218,13 @@ def check_local_support(
 ) -> RuntimeSupport
 ```
 
-Return a RuntimeSupport describing whether *image* can run locally.
+Return a RuntimeSupport describing whether _image_ can run locally.
 
 Args:
-    image: The Image to check. Use Image.linux(), Image.macos(), etc.
+image: The Image to check. Use Image.linux(), Image.macos(), etc.
 
 Returns:
-    RuntimeSupport with .supported, .hw_accel, .reason, and more.
+RuntimeSupport with .supported, .hw_accel, .reason, and more.
 
 ## `cua_sandbox.skip_if_unsupported`
 
@@ -1236,12 +1236,12 @@ async def skip_if_unsupported(
 ) -> None
 ```
 
-Call at the top of a pytest test/fixture to skip when the host can't run *image*.
+Call at the top of a pytest test/fixture to skip when the host can't run _image_.
 
 Args:
-    image:            The Image the test intends to boot with local=True.
-    require_hw_accel: If True, also skip when hardware acceleration is unavailable
-                      (e.g. skip Android tests that would run in software emulation).
+image: The Image the test intends to boot with local=True.
+require_hw_accel: If True, also skip when hardware acceleration is unavailable
+(e.g. skip Android tests that would run in software emulation).
 
 Example::
 

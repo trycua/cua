@@ -1,3 +1,12 @@
-# Python dependencies for documentation generation
-griffe>=0.40.0
+# pdoc is pinned so generated signatures and MDX stay reproducible.
 pdoc==16.0.0
+
+# Import cua_sandbox directly from source without building its Fleet binding.
+httpx>=0.27.0
+oras>=0.2.40
+websockets>=12.0
+vncdotool>=1.2.0
+paramiko>=5.0.0
+grpcio==1.78.0
+protobuf==6.33.6
+pycdlib>=1.14.0

@@ -7,6 +7,7 @@ import argparse
 import difflib
 import inspect
 import re
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -14,8 +15,10 @@ from pathlib import Path
 from pdoc.doc import Class, Doc, Function, Module, Variable, empty
 
 ROOT = Path(__file__).resolve().parents[2]
+DOCS = ROOT / "docs"
 PACKAGE_PARENT = ROOT / "libs/python/cua-sandbox"
-OUTPUT = ROOT / "docs/content/docs/reference/sandbox-sdk/index.mdx"
+OUTPUT = DOCS / "content/docs/reference/sandbox-sdk/index.mdx"
+PRETTIER = DOCS / "node_modules/.bin/prettier"
 EXCLUDED_MODULE_PARTS = (".transport.fleet", "cyclops_sdk")
 
 
@@ -163,6 +166,27 @@ def render_reference(module: Module) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def format_mdx(reference: str) -> str:
+    """Format generated MDX through the lockfile-pinned docs formatter."""
+    try:
+        result = subprocess.run(
+            [str(PRETTIER), "--stdin-filepath", str(OUTPUT.relative_to(DOCS))],
+            check=False,
+            cwd=DOCS,
+            input=reference,
+            stderr=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+    except FileNotFoundError as error:
+        raise RuntimeError(
+            "install docs dependencies before generating the sandbox reference"
+        ) from error
+    if result.returncode:
+        raise RuntimeError(f"Prettier failed to format sandbox reference:\n{result.stderr}")
+    return result.stdout
+
+
 def check_output(expected: str, output: Path = OUTPUT) -> bool:
     actual = output.read_text() if output.exists() else ""
     if actual == expected:
@@ -185,7 +209,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    reference = render_reference(load_public_module())
+    reference = format_mdx(render_reference(load_public_module()))
     if args.check:
         return 0 if check_output(reference) else 1
     OUTPUT.write_text(reference)

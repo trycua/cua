@@ -53,9 +53,13 @@ mcp = [
 skills = [
     "litellm==1.86.2",
 ]
+# Fleet SDK integration
+fleet = [
+    "cua-train==0.1.1",
+]
 # Full installation
 all = [
-    "cua-cli[mcp,skills]",
+    "cua-cli[mcp,skills,fleet]",
 ]
 # Development
 dev = [
@@ -109,6 +113,14 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "W"]
 ignore = ["E501"]
+
+[[tool.uv.index]]
+name = "cua-wheels"
+url = "https://wheels.cua.ai/simple/"
+explicit = true
+
+[tool.uv.sources]
+cua-train = { index = "cua-wheels" }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

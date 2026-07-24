@@ -10,14 +10,6 @@ from typing import Any
 import aiohttp
 from cua_cli.auth.store import OAuthCredentials, load_credentials, save_credentials
 
-try:
-    from cyclops_sdk import AccessTokenProvider as _FleetTokenProvider
-except ImportError:
-
-    class _FleetTokenProvider:
-        pass
-
-
 DEFAULT_RUN_API_BASE = "https://run.cua.ai"
 DEFAULT_OIDC_ISSUER = "https://auth.cua.ai/realms/cyclops-cs"
 DEFAULT_CLIENT_ID = "cua-cli"
@@ -248,8 +240,21 @@ async def get_access_token(*, force_refresh: bool = False) -> str:
     return refreshed.access_token
 
 
-class FleetAccessTokenProvider(_FleetTokenProvider):
-    """Adapt CLI device credentials to the Fleet SDK token-provider callback."""
+def _fleet_access_token_provider_type() -> type[Any]:
+    try:
+        from cyclops_sdk import AccessTokenProvider
+    except (ImportError, OSError) as error:
+        raise OidcError(
+            "Fleet integration requires cua-cli[fleet] with its generated SDK bindings."
+        ) from error
 
-    async def get_access_token(self, force_refresh: bool) -> str:
-        return await get_access_token(force_refresh=force_refresh)
+    class FleetAccessTokenProvider(AccessTokenProvider):
+        async def get_access_token(self, force_refresh: bool) -> str:
+            return await get_access_token(force_refresh=force_refresh)
+
+    return FleetAccessTokenProvider
+
+
+def FleetAccessTokenProvider() -> Any:
+    """Create a generated Fleet SDK token provider backed by CLI device credentials."""
+    return _fleet_access_token_provider_type()()

@@ -2,11 +2,14 @@
 
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
+from importlib.metadata import version
+import builtins
 
 import pytest
 from cua_cli.auth.oidc import (
     DEVICE_GRANT_TYPE,
     FleetAccessTokenProvider,
+    OidcError,
     OidcClient,
     get_access_token,
 )
@@ -183,6 +186,9 @@ async def test_get_access_token_forces_refresh_of_an_unexpired_token(monkeypatch
 
 @pytest.mark.asyncio
 async def test_fleet_access_token_provider_forwards_force_refresh(monkeypatch) -> None:
+    from cyclops_sdk import AccessTokenProvider
+    from cyclops_sdk._sdk import _UniffiFfiConverterTypeAccessTokenProvider
+
     refresh_requests = []
 
     async def access_token(*, force_refresh: bool = False) -> str:
@@ -192,7 +198,26 @@ async def test_fleet_access_token_provider_forwards_force_refresh(monkeypatch) -
     monkeypatch.setattr("cua_cli.auth.oidc.get_access_token", access_token)
     provider = FleetAccessTokenProvider()
 
+    assert isinstance(provider, AccessTokenProvider)
+    _UniffiFfiConverterTypeAccessTokenProvider.check_lower(provider)
+
     await provider.get_access_token(False)
     await provider.get_access_token(True)
 
     assert refresh_requests == [False, True]
+
+
+def test_fleet_provider_fails_closed_without_its_generated_binding(monkeypatch) -> None:
+    assert version("cua-train") == "0.1.1"
+
+    original_import = builtins.__import__
+
+    def import_without_cyclops_sdk(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "cyclops_sdk" or name.startswith("cyclops_sdk."):
+            raise ModuleNotFoundError("No module named 'cyclops_sdk'", name="cyclops_sdk")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_cyclops_sdk)
+
+    with pytest.raises(OidcError, match=r"cua-cli\[fleet\]"):
+        FleetAccessTokenProvider()

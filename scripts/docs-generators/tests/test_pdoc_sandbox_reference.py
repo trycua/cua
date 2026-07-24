@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from pdoc.doc import Module
@@ -67,6 +68,8 @@ class Image:
 
     def expose(self, port: int) -> "Image":
         """Expose a service port."""
+        if port < 1:
+            raise ValueError("port must be positive")
 
 
 class ConnectResult:
@@ -93,6 +96,24 @@ async def sandbox(name: str) -> AsyncIterator[Sandbox]:
     yield Sandbox()
 '''
         )
+        (self.package_root / "interfaces.py").write_text(
+            '''"""Public interface handles."""
+
+
+class Tunnel:
+    """Port-forwarding interface."""
+
+    async def open(self, port: int) -> str:
+        """Open a tunnel for a service port."""
+
+
+class TunnelInfo:
+    """Information about an open tunnel."""
+
+
+__all__ = ["Tunnel", "TunnelInfo"]
+'''
+        )
         cyclops = Path(self.temporary_directory.name) / "cyclops_sdk.py"
         cyclops.write_text("class RawOperation: pass\n")
         sys.path.insert(0, self.temporary_directory.name)
@@ -100,6 +121,7 @@ async def sandbox(name: str) -> AsyncIterator[Sandbox]:
         importlib.invalidate_caches()
         self.addCleanup(sys.modules.pop, "fixture_sdk", None)
         self.addCleanup(sys.modules.pop, "fixture_sdk.api", None)
+        self.addCleanup(sys.modules.pop, "fixture_sdk.interfaces", None)
         self.addCleanup(sys.modules.pop, "cyclops_sdk", None)
 
     def module(self) -> Module:
@@ -113,6 +135,8 @@ async def sandbox(name: str) -> AsyncIterator[Sandbox]:
     def test_renders_signatures_async_context_and_public_members(self) -> None:
         rendered = generator.render_reference(self.module())
 
+        self.assertIn("pdoc imports `cua_sandbox` source at generation time", rendered)
+        self.assertIn("does not statically analyze", rendered)
         self.assertIn("class Sandbox", rendered)
         self.assertIn("async def disconnect(self) -> None", rendered)
         self.assertIn("async def destroy(self) -> None", rendered)
@@ -121,6 +145,23 @@ async def sandbox(name: str) -> AsyncIterator[Sandbox]:
         self.assertIn("service_ports: dict[str, int]", rendered)
         self.assertIn("def expose(self, port: int) -> Image", rendered)
         self.assertIn("async def sandbox(name: str) -> AsyncIterator[Sandbox]", rendered)
+        self.assertIn("## Interfaces", rendered)
+        self.assertIn("### `Tunnel`", rendered)
+        self.assertIn("async def open(self, port: int) -> str", rendered)
+
+    def test_includes_directly_raised_exceptions(self) -> None:
+        def raises_value_error() -> None:
+            raise ValueError("invalid fixture")
+
+        self.assertEqual(
+            generator.raised_exceptions(SimpleNamespace(obj=raises_value_error)), ["ValueError"]
+        )
+
+    def test_escapes_mdx_angle_brackets_in_docstrings(self) -> None:
+        self.assertEqual(
+            generator.mdx_docstring("http://localhost:<random>/json"),
+            "http://localhost:&lt;random&gt;/json",
+        )
 
     def test_uses_the_member_declaration_for_async_detection(self) -> None:
         rendered = generator.render_reference(self.module())
@@ -200,6 +241,9 @@ async def sandbox(name: str) -> AsyncIterator[Sandbox]:
         )
         self.assertNotIn("FleetTransport", rendered)
         self.assertNotIn("cyclops_sdk", rendered)
+        interface_module = generator.load_pdoc_module("cua_sandbox.interfaces")
+        for name in interface_module.obj.__all__:
+            self.assertIn(f"### `{name}`", rendered)
 
 
 if __name__ == "__main__":

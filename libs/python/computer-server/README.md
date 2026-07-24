@@ -35,8 +35,8 @@ python -m computer_server
 # Or with custom port
 python -m computer_server --port 8080
 
-# Allow external access explicitly
-python -m computer_server --host 0.0.0.0
+# Authenticated sandbox/cloud deployments can bind externally
+CONTAINER_NAME=my-sandbox python -m computer_server --host 0.0.0.0
 
 # With resolution scaling (useful for Retina displays or VMs)
 python -m computer_server --width 1512 --height 982
@@ -49,7 +49,11 @@ python -m computer_server --backend cua-driver --driver-mode daemon
 ```
 
 By default the server binds to `127.0.0.1`. Deployments that need access from
-other hosts should pass `--host 0.0.0.0` or another explicit interface.
+other hosts must configure `CONTAINER_NAME` authentication before passing
+`--host 0.0.0.0` or another non-loopback interface. Local mode has no request
+authentication, so remote binds are refused by default. For isolated development
+networks only, `CUA_ALLOW_UNAUTHENTICATED_REMOTE=1` explicitly acknowledges the
+remote shell and filesystem exposure.
 
 This provides:
 

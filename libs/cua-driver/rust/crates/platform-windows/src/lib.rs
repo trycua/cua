@@ -32,6 +32,9 @@ pub mod tools;
 // where the multi-monitor normalization bug was diagnosable by pure math.
 pub mod virtualdesk;
 
+#[cfg(any(target_os = "windows", test))]
+mod keycodes;
+
 // Cross-platform: pure math for packing `(x, y)` into the `LPARAM` payload
 // every `WM_MOUSE*` / `WM_*BUTTON*` message carries. Lives outside the
 // Windows-only `input` module for the same reason as `virtualdesk` — the

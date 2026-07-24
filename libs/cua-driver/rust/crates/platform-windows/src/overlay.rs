@@ -221,6 +221,12 @@ fn wake_overlay() {
     // arm the ACTIVE-period timer. The WM_TIMER handler re-confirms the cadence
     // from render state, so an over-eager wake just costs one cheap idle tick.
     TIMER_PERIOD_MS.store(TIMER_MS_ACTIVE, Relaxed);
+    // Raise the 1 ms timer resolution alongside the ACTIVE arm — this is the
+    // only wake path that bypasses the WM_TIMER re-arm (it pre-stores ACTIVE,
+    // so the handler's cadence flip won't fire). `timeBeginPeriod` is
+    // process-global and thread-safe; the atomic in the helper keeps the
+    // begin/end calls balanced across this and the render thread.
+    set_timer_resolution_raised(true);
     unsafe {
         use windows::Win32::Foundation::HWND;
         use windows::Win32::UI::WindowsAndMessaging::SetTimer;
@@ -465,12 +471,16 @@ impl RenderState {
 
     /// True while the render loop must keep ticking at frame cadence because
     /// the next tick can still change pixels: an in-flight glide path, a
-    /// spring-settle, a click pulse, or an idle-fade that has not yet fully
-    /// faded the cursor out. A brand-new sentinel cursor (off-screen at
-    /// `(-200, -200)`) and a cursor that has already faded to `idle_alpha ≈ 0`
-    /// are both quiescent, so `mcp`/`serve` with no agent activity can let the
-    /// timer go cheap instead of compositing a full virtual-screen pixmap at
-    /// ~125 Hz. Mirrors `platform_macos::cursor::overlay`'s `needs_frame_tick`.
+    /// spring-settle, a click pulse, or an idle-fade actively fading
+    /// (`0.004 <= idle_alpha < 1.0`). A brand-new sentinel cursor (off-screen
+    /// at `(-200, -200)`), a cursor that has already faded to
+    /// `idle_alpha ≈ 0`, AND a cursor resting at constant `idle_alpha == 1.0`
+    /// waiting out the idle-hide countdown are all non-rendering states: the
+    /// countdown phase leaves every frame pixel-identical, so compositing a
+    /// full virtual-screen pixmap through it burned ~1 core for the whole
+    /// `idle_hide_ms` window after every action (render-gate fix; the
+    /// countdown itself is advanced by [`RenderState::in_idle_countdown`]
+    /// ticks at the slow cadence).
     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     fn needs_frame_tick(&self) -> bool {
         self.core.path.is_some()
@@ -479,7 +489,24 @@ impl RenderState {
             || (self.core.motion.idle_hide_ms > 0.0
                 && self.core.visible
                 && self.core.pos.0 >= -100.0
-                && self.core.idle_alpha >= 0.004)
+                && self.core.idle_alpha >= 0.004
+                && self.core.idle_alpha < 1.0)
+    }
+
+    /// True while the cursor rests on-screen at full alpha with idle-hide
+    /// pending: pixels are static (alpha pinned at 1.0) but `idle_secs` must
+    /// keep accruing wall-clock time so the fade still starts on schedule.
+    /// Ticked at the slow IDLE cadence; see the `real_dt` catch-up in the
+    /// WM_TIMER handler, which compensates for the 0.05 s motion-dt clamp.
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    fn in_idle_countdown(&self) -> bool {
+        self.core.path.is_none()
+            && self.core.spring.is_none()
+            && self.core.click_t.is_none()
+            && self.core.motion.idle_hide_ms > 0.0
+            && self.core.visible
+            && self.core.pos.0 >= -100.0
+            && self.core.idle_alpha >= 1.0
     }
 }
 
@@ -498,15 +525,14 @@ fn render_map_needs_frame_tick(map: &RenderMap) -> bool {
 #[cfg(target_os = "windows")]
 fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMsg>) {
     use windows::core::PCWSTR;
-    use windows::Win32::Media::timeBeginPeriod;
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::WindowsAndMessaging::*;
 
-    // Raise multimedia timer resolution to 1ms so SetTimer can deliver
-    // WM_TIMER messages at ~8ms intervals (default is ~15ms).
-    unsafe {
-        let _ = timeBeginPeriod(1);
-    }
+    // NOTE: the 1 ms multimedia timer resolution (`timeBeginPeriod`) is NOT
+    // raised unconditionally here any more — it is scoped to the ACTIVE
+    // render cadence via `set_timer_resolution_raised` so an idle daemon no
+    // longer holds the global resolution at 1 ms for its whole lifetime
+    // (it raises system-wide timer-interrupt/wakeup rates and power draw).
 
     // Collect virtual screen bounds (all monitors).
     let virt_x = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
@@ -586,6 +612,9 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         SetTimer(hwnd, TIMER_ID, TIMER_MS_ACTIVE, None);
     }
     TIMER_PERIOD_MS.store(TIMER_MS_ACTIVE, std::sync::atomic::Ordering::Relaxed);
+    // Timer starts ACTIVE, so the 1 ms resolution is needed until the first
+    // quiescent tick parks the loop (and lowers it again).
+    set_timer_resolution_raised(true);
 
     // Store hwnd and rx globally for the wnd_proc callback.
     OVERLAY_HWND.store(hwnd.0 as isize, std::sync::atomic::Ordering::Relaxed);
@@ -603,6 +632,10 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
             DispatchMessageW(&msg);
         }
     }
+
+    // Message loop ended (WM_DESTROY): release the raised timer resolution
+    // if the loop went down while still at the ACTIVE cadence.
+    set_timer_resolution_raised(false);
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -616,6 +649,338 @@ static OVERLAY_HWND: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicI
 static CMD_RX_WIN: Mutex<Option<std::sync::mpsc::Receiver<OverlayMsg>>> = Mutex::new(None);
 static LAST_ZTICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static Z_ORDER: OnceLock<WinZOrderEnforcer> = OnceLock::new();
+
+// ── Scoped multimedia timer resolution ────────────────────────────────────
+//
+// `timeBeginPeriod(1)` raises the GLOBAL Windows timer resolution to 1 ms —
+// more timer interrupts and CPU wakeups machine-wide. The overlay only needs
+// it while WM_TIMER runs at the 8 ms ACTIVE cadence, so it is raised on the
+// IDLE→ACTIVE flip and released on ACTIVE→IDLE instead of being held for the
+// daemon's whole lifetime (the old behaviour leaked it: `timeBeginPeriod` at
+// thread start with no `timeEndPeriod` anywhere).
+/// Tracks whether we currently hold a `timeBeginPeriod(1)` request, so the
+/// begin/end calls stay balanced no matter which thread flips the cadence.
+static TIMER_RES_RAISED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(target_os = "windows")]
+fn set_timer_resolution_raised(raise: bool) {
+    use std::sync::atomic::Ordering::Relaxed;
+    use windows::Win32::Media::{timeBeginPeriod, timeEndPeriod};
+    if TIMER_RES_RAISED.swap(raise, Relaxed) != raise {
+        unsafe {
+            if raise {
+                let _ = timeBeginPeriod(1);
+            } else {
+                let _ = timeEndPeriod(1);
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_timer_resolution_raised(_raise: bool) {}
+
+// ── Dirty-rect render surface ─────────────────────────────────────────────
+//
+// The composite path used to rebuild everything per frame: allocate + zero a
+// full virtual-screen RGBA pixmap (~28 MB on a large desktop), create a full
+// DIB section, swizzle EVERY pixel RGBA→BGRA, `UpdateLayeredWindow` the whole
+// surface, then free it all — ~52 ms/frame measured, which saturated a core
+// whenever the loop ran at frame cadence. Cursors only ever touch a tiny
+// region, so the surface is now persistent and only the union of last frame's
+// and this frame's cursor bounds is cleared, repainted, swizzled, and pushed
+// via `UpdateLayeredWindowIndirect(prcDirty)`. The surface is freed whenever
+// the loop parks at the IDLE cadence (the DWM keeps its own copy of the
+// layered surface), so idle memory returns to baseline.
+
+/// Half-open pixel rect `[x0, x1) × [y0, y1)` in overlay-window-local
+/// coordinates.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct DirtyRect {
+    x0: i32,
+    y0: i32,
+    x1: i32,
+    y1: i32,
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+impl DirtyRect {
+    fn union(a: Option<DirtyRect>, b: Option<DirtyRect>) -> Option<DirtyRect> {
+        match (a, b) {
+            (Some(a), Some(b)) => Some(DirtyRect {
+                x0: a.x0.min(b.x0),
+                y0: a.y0.min(b.y0),
+                x1: a.x1.max(b.x1),
+                y1: a.y1.max(b.y1),
+            }),
+            (r, None) | (None, r) => r,
+        }
+    }
+
+    /// Clamp to `[0, w) × [0, h)`; `None` if nothing remains.
+    fn clamped(self, w: i32, h: i32) -> Option<DirtyRect> {
+        let r = DirtyRect {
+            x0: self.x0.max(0),
+            y0: self.y0.max(0),
+            x1: self.x1.min(w),
+            y1: self.y1.min(h),
+        };
+        (r.x1 > r.x0 && r.y1 > r.y0).then_some(r)
+    }
+}
+
+/// Conservative half-extent of everything `paint_cursor` can draw around the
+/// cursor anchor at backing_scale 1.0: bloom ≤ 34 px, click ring ≤ ~37 px,
+/// arrow/teardrop ≤ ~20 px, plus anti-aliasing margin.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+const CURSOR_PAD: i32 = 64;
+
+#[cfg(target_os = "windows")]
+struct WinSurface {
+    pixmap: tiny_skia::Pixmap,
+    /// Memory DC with the DIB selected, stored as isize (HDC is !Send).
+    hdc_mem: isize,
+    /// The DIB section bitmap handle.
+    hbmp: isize,
+    /// Pointer to the DIB's BGRA pixel bits (owned by the DIB section).
+    bits: *mut u8,
+    w: i32,
+    h: i32,
+    virt_x: i32,
+    virt_y: i32,
+}
+
+#[cfg(target_os = "windows")]
+impl WinSurface {
+    unsafe fn create(virt_x: i32, virt_y: i32, w: i32, h: i32) -> Option<WinSurface> {
+        use windows::Win32::Graphics::Gdi::*;
+
+        let pixmap = tiny_skia::Pixmap::new(w.max(1) as u32, h.max(1) as u32)?;
+        let hdc_screen = GetDC(None);
+        let hdc_mem = CreateCompatibleDC(hdc_screen);
+        let bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: w,
+                biHeight: -h, // negative = top-down
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut bits_ptr = std::ptr::null_mut::<std::ffi::c_void>();
+        let hbmp = CreateDIBSection(hdc_mem, &bmi, DIB_RGB_COLORS, &mut bits_ptr, None, 0);
+        ReleaseDC(None, hdc_screen);
+        let Ok(hbmp) = hbmp else {
+            let _ = DeleteDC(hdc_mem);
+            return None;
+        };
+        if bits_ptr.is_null() {
+            let _ = DeleteObject(hbmp);
+            let _ = DeleteDC(hdc_mem);
+            return None;
+        }
+        SelectObject(hdc_mem, hbmp);
+        Some(WinSurface {
+            pixmap,
+            hdc_mem: hdc_mem.0 as isize,
+            hbmp: hbmp.0 as isize,
+            bits: bits_ptr as *mut u8,
+            w,
+            h,
+            virt_x,
+            virt_y,
+        })
+    }
+
+    /// Zero the pixmap pixels inside `r` (rect must already be clamped).
+    fn clear_rect(&mut self, r: DirtyRect) {
+        let w = self.w as usize;
+        let data = self.pixmap.data_mut();
+        let row_len = (r.x1 - r.x0) as usize * 4;
+        for y in r.y0..r.y1 {
+            let start = (y as usize * w + r.x0 as usize) * 4;
+            data[start..start + row_len].fill(0);
+        }
+    }
+
+    /// Copy the pixels inside `r` from the pixmap (premultiplied RGBA) into
+    /// the DIB bits (premultiplied BGRA). Only the dirty region is touched —
+    /// this replaces the old full-surface per-frame swizzle.
+    fn swizzle_rect(&mut self, r: DirtyRect) {
+        let w = self.w as usize;
+        let src = self.pixmap.data();
+        // SAFETY: `bits` points at a live DIB section of exactly w*h*4 bytes;
+        // the DIB outlives `self` (freed only in Drop) and only this (overlay)
+        // thread touches it.
+        let dst =
+            unsafe { std::slice::from_raw_parts_mut(self.bits, w * self.h as usize * 4) };
+        for y in r.y0..r.y1 {
+            let row = (y as usize * w + r.x0 as usize) * 4;
+            let row_end = (y as usize * w + r.x1 as usize) * 4;
+            let (s, d) = (&src[row..row_end], &mut dst[row..row_end]);
+            for i in (0..s.len()).step_by(4) {
+                d[i] = s[i + 2]; // B
+                d[i + 1] = s[i + 1]; // G
+                d[i + 2] = s[i]; // R
+                d[i + 3] = s[i + 3]; // A
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for WinSurface {
+    fn drop(&mut self) {
+        use windows::Win32::Graphics::Gdi::{DeleteDC, DeleteObject, HBITMAP, HDC};
+        unsafe {
+            let _ = DeleteObject(HBITMAP(self.hbmp as *mut _));
+            let _ = DeleteDC(HDC(self.hdc_mem as *mut _));
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+thread_local! {
+    /// The persistent render surface. Overlay-thread only. `None` while the
+    /// loop is parked at the IDLE cadence (freed to keep idle memory flat).
+    static SURFACE: std::cell::RefCell<Option<WinSurface>> =
+        const { std::cell::RefCell::new(None) };
+    /// Window-local region painted by the previous rendered frame. Survives
+    /// surface teardown so the first frame after a re-park correctly clears
+    /// the stale cursor pixels the DWM is still displaying.
+    static PREV_DIRTY: std::cell::Cell<Option<DirtyRect>> =
+        const { std::cell::Cell::new(None) };
+    /// The very first `UpdateLayeredWindowIndirect` must push the full
+    /// surface to establish the layered window's backing store; after that,
+    /// dirty rects suffice (even across surface recreations).
+    static FIRST_PRESENT: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+/// Paint this frame's cursors into the persistent surface and return the
+/// window-local region that must be pushed to the screen (`None` = nothing
+/// painted and nothing stale to erase — skip the present entirely).
+#[cfg(target_os = "windows")]
+fn composite_dirty(map: &RenderMap) -> Option<DirtyRect> {
+    let (w, h) = (map.virt_w.max(1), map.virt_h.max(1));
+    SURFACE.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if slot.as_ref().map(|s| (s.w, s.h)) != Some((w, h)) {
+            *slot = unsafe { WinSurface::create(map.virt_x, map.virt_y, w, h) };
+        }
+        let surf = slot.as_mut()?;
+        surf.virt_x = map.virt_x;
+        surf.virt_y = map.virt_y;
+
+        // Union of every cursor that will produce pixels this frame
+        // (mirrors paint_cursor's own visibility early-return).
+        let mut current: Option<DirtyRect> = None;
+        for rs in map.cursors.values() {
+            if !rs.core.visible || rs.core.pos.0 < -100.0 || rs.core.idle_alpha < 0.004 {
+                continue;
+            }
+            let cx = (rs.core.pos.0 - map.virt_x as f64).round() as i32;
+            let cy = (rs.core.pos.1 - map.virt_y as f64).round() as i32;
+            let r = DirtyRect {
+                x0: cx - CURSOR_PAD,
+                y0: cy - CURSOR_PAD,
+                x1: cx + CURSOR_PAD,
+                y1: cy + CURSOR_PAD,
+            }
+            .clamped(w, h);
+            current = DirtyRect::union(current, r);
+        }
+
+        let prev = PREV_DIRTY.with(std::cell::Cell::get);
+        for r in [prev, current].into_iter().flatten() {
+            surf.clear_rect(r);
+        }
+        for rs in map.cursors.values() {
+            cursor_overlay::paint_cursor(
+                &mut surf.pixmap,
+                &rs.core,
+                map.virt_x as f64,
+                map.virt_y as f64,
+                None, // focus-rect is macOS-only
+                1.0,
+            );
+        }
+        PREV_DIRTY.with(|p| p.set(current));
+
+        let upload = DirtyRect::union(prev, current)?;
+        surf.swizzle_rect(upload);
+        Some(upload)
+    })
+}
+
+/// Push `dirty` from the persistent surface to the layered window via
+/// `UpdateLayeredWindowIndirect`. The DWM copies the region into its own
+/// backing store, so the surface itself may be freed afterwards.
+#[cfg(target_os = "windows")]
+unsafe fn present_surface(hwnd: windows::Win32::Foundation::HWND, dirty: DirtyRect) {
+    use windows::Win32::Foundation::{COLORREF, POINT, RECT, SIZE};
+    use windows::Win32::Graphics::Gdi::{GetDC, ReleaseDC, BLENDFUNCTION, HDC};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        UpdateLayeredWindowIndirect, ULW_ALPHA, UPDATELAYEREDWINDOWINFO,
+    };
+
+    SURFACE.with(|cell| {
+        let slot = cell.borrow();
+        let Some(surf) = slot.as_ref() else { return };
+        let dirty = if FIRST_PRESENT.with(std::cell::Cell::get) {
+            DirtyRect {
+                x0: 0,
+                y0: 0,
+                x1: surf.w,
+                y1: surf.h,
+            }
+        } else {
+            dirty
+        };
+        let hdc_screen = GetDC(None);
+        let pt_dst = POINT {
+            x: surf.virt_x,
+            y: surf.virt_y,
+        };
+        let sz = SIZE {
+            cx: surf.w,
+            cy: surf.h,
+        };
+        let pt_src = POINT { x: 0, y: 0 };
+        let blend = BLENDFUNCTION {
+            BlendOp: 0, // AC_SRC_OVER
+            BlendFlags: 0,
+            SourceConstantAlpha: 255,
+            AlphaFormat: 1, // AC_SRC_ALPHA
+        };
+        let rc_dirty = RECT {
+            left: dirty.x0,
+            top: dirty.y0,
+            right: dirty.x1,
+            bottom: dirty.y1,
+        };
+        let info = UPDATELAYEREDWINDOWINFO {
+            cbSize: std::mem::size_of::<UPDATELAYEREDWINDOWINFO>() as u32,
+            hdcDst: hdc_screen,
+            pptDst: &pt_dst,
+            psize: &sz,
+            hdcSrc: HDC(surf.hdc_mem as *mut _),
+            pptSrc: &pt_src,
+            crKey: COLORREF(0),
+            pblend: &blend,
+            dwFlags: ULW_ALPHA,
+            prcDirty: &rc_dirty,
+        };
+        if UpdateLayeredWindowIndirect(hwnd, &info).as_bool() {
+            FIRST_PRESENT.with(|f| f.set(false));
+        }
+        ReleaseDC(None, hdc_screen);
+    });
+}
 
 // ── Idle render gate (issue #1808) ────────────────────────────────────────
 //
@@ -715,7 +1080,7 @@ unsafe extern "system" fn wnd_proc(
             // the slow IDLE cadence below.
             let was_active =
                 TIMER_PERIOD_MS.load(std::sync::atomic::Ordering::Relaxed) == TIMER_MS_ACTIVE;
-            let (pixmap, arrived, pinned_wid, needs_tick) = {
+            let (upload, arrived, pinned_wid, needs_tick) = {
                 let mut guard = RENDER.lock().unwrap();
                 if let Some(map) = guard.as_mut() {
                     // Drain the channel via get-or-create; track the last-touched
@@ -733,10 +1098,10 @@ unsafe extern "system" fn wnd_proc(
                     }
 
                     let now = Instant::now();
-                    let dt = now
-                        .duration_since(map.last_tick)
-                        .as_secs_f64()
-                        .clamp(0.0, 0.05);
+                    let real_dt = now.duration_since(map.last_tick).as_secs_f64();
+                    // Clamped dt for the motion physics: a large gap between
+                    // ticks must not teleport an in-flight glide.
+                    let dt = real_dt.clamp(0.0, 0.05);
                     map.last_tick = now;
 
                     // Tick every cursor; record the ones that just arrived.
@@ -744,6 +1109,20 @@ unsafe extern "system" fn wnd_proc(
                     for (k, rs) in map.cursors.iter_mut() {
                         if rs.tick(dt) {
                             arrived.push(k.clone());
+                        }
+                        // Idle-countdown wall-clock catch-up (render-gate fix):
+                        // cursors parked in the constant-alpha countdown tick at
+                        // the slow IDLE cadence, where the 0.05 s motion clamp
+                        // would stretch the `idle_hide_ms` countdown ~5x. Credit
+                        // the unclamped remainder so the fade starts on real
+                        // time — but never advance past `fade_start`, so the
+                        // 180 ms fade itself always plays out at frame cadence
+                        // (a single 250 ms step would otherwise skip the fade
+                        // and pop the cursor out).
+                        if real_dt > dt && rs.in_idle_countdown() {
+                            let fade_start = rs.core.motion.idle_hide_ms / 1000.0;
+                            rs.core.idle_secs =
+                                (rs.core.idle_secs + (real_dt - dt)).min(fade_start);
                         }
                     }
 
@@ -790,40 +1169,28 @@ unsafe extern "system" fn wnd_proc(
                         }
                         let pinned = unsafe { topmost_of(&driven) };
 
-                        // Composite every cursor into ONE virtual-screen pixmap.
-                        // While ACTIVE this runs every ~8ms, so a steady
-                        // per-frame blit keeps resting cursors flicker-free as
-                        // others animate; once the loop goes idle the whole block
-                        // is skipped (the `should_render` gate above).
-                        let w = map.virt_w.max(1) as u32;
-                        let h = map.virt_h.max(1) as u32;
-                        let mut pm = tiny_skia::Pixmap::new(w.max(1), h.max(1))
-                            .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
-                        for (_k, rs) in &map.cursors {
-                            // TODO: thread `GetDpiForWindow` / per-monitor
-                            // DPI awareness here so cursors render crisp on
-                            // HiDPI Windows displays. For now we default to
-                            // 1.0 — preserves pre-retina-fix behaviour on
-                            // Windows.
-                            cursor_overlay::paint_cursor(
-                                &mut pm,
-                                &rs.core,
-                                map.virt_x as f64,
-                                map.virt_y as f64,
-                                None, // focus-rect is macOS-only
-                                1.0,
-                            );
-                        }
+                        // Dirty-rect composite: paint only the union of last
+                        // frame's and this frame's cursor bounds into the
+                        // persistent surface (see `composite_dirty`). The old
+                        // path re-allocated, fully repainted, and fully
+                        // swizzled a virtual-screen pixmap every frame —
+                        // ~52 ms/frame on a large desktop.
+                        //
+                        // TODO: thread `GetDpiForWindow` / per-monitor DPI
+                        // awareness into the paint so cursors render crisp on
+                        // HiDPI Windows displays (backing_scale stays 1.0 —
+                        // preserves pre-retina-fix behaviour on Windows).
+                        let upload = composite_dirty(map);
 
-                        (Some(pm), arrived, pinned, needs_tick)
+                        (upload, arrived, pinned, needs_tick)
                     }
                 } else {
                     (None, Vec::new(), None, false)
                 }
             };
 
-            if let Some(pm) = pixmap {
-                update_layered_window(hwnd, &pm);
+            if let Some(dirty) = upload {
+                unsafe { present_surface(hwnd, dirty) };
 
                 // Z-order maintenance every 80ms — delegate to the cross-platform
                 // ZOrderEnforcer so the contract for "z+1 of the application under
@@ -856,10 +1223,23 @@ unsafe extern "system" fn wnd_proc(
             } else {
                 TIMER_MS_IDLE
             };
+            // Hold the 1 ms global timer resolution only while at the ACTIVE
+            // cadence (the helper no-ops unless the raised state changes).
+            set_timer_resolution_raised(desired_ms == TIMER_MS_ACTIVE);
             if TIMER_PERIOD_MS.swap(desired_ms, std::sync::atomic::Ordering::Relaxed) != desired_ms
             {
                 unsafe {
                     SetTimer(hwnd, TIMER_ID, desired_ms, None);
+                }
+                if desired_ms == TIMER_MS_IDLE {
+                    // Parked: free the render surface (pixmap + DIB, tens of
+                    // MB on a large desktop). The DWM keeps its own copy of
+                    // the layered window's contents, and PREV_DIRTY survives
+                    // so the next rendered frame clears any stale cursor
+                    // pixels before presenting.
+                    SURFACE.with(|cell| {
+                        cell.borrow_mut().take();
+                    });
                 }
             }
 
@@ -871,108 +1251,6 @@ unsafe extern "system" fn wnd_proc(
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
-}
-
-// ── UpdateLayeredWindow helper ────────────────────────────────────────────
-
-#[cfg(target_os = "windows")]
-unsafe fn update_layered_window(
-    hwnd: windows::Win32::Foundation::HWND,
-    pixmap: &tiny_skia::Pixmap,
-) {
-    use windows::Win32::Foundation::*;
-    use windows::Win32::Graphics::Gdi::*;
-    use windows::Win32::UI::WindowsAndMessaging::{UpdateLayeredWindow, ULW_ALPHA};
-
-    let w = pixmap.width() as i32;
-    let h = pixmap.height() as i32;
-    if w <= 0 || h <= 0 {
-        return;
-    }
-
-    let hdc_screen = GetDC(None);
-    let hdc_mem = CreateCompatibleDC(hdc_screen);
-
-    // Create a 32-bit top-down DIB section (BGRA).
-    let bmi = BITMAPINFO {
-        bmiHeader: BITMAPINFOHEADER {
-            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-            biWidth: w,
-            biHeight: -h, // negative = top-down
-            biPlanes: 1,
-            biBitCount: 32,
-            biCompression: BI_RGB.0,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-
-    let mut bits_ptr = std::ptr::null_mut::<std::ffi::c_void>();
-    let hbmp = CreateDIBSection(hdc_mem, &bmi, DIB_RGB_COLORS, &mut bits_ptr, None, 0);
-    if hbmp.is_err() || bits_ptr.is_null() {
-        let _ = DeleteDC(hdc_mem);
-        ReleaseDC(None, hdc_screen);
-        return;
-    }
-    let hbmp = hbmp.unwrap();
-    SelectObject(hdc_mem, hbmp);
-
-    // Copy pixels: tiny-skia produces premultiplied RGBA; Win32 expects premultiplied BGRA.
-    let src = pixmap.data();
-    let dst = std::slice::from_raw_parts_mut(bits_ptr as *mut u8, (w * h * 4) as usize);
-    for i in 0..(w * h) as usize {
-        let r = src[i * 4];
-        let g = src[i * 4 + 1];
-        let b = src[i * 4 + 2];
-        let a = src[i * 4 + 3];
-        // Swap R <-> B for BGRA.
-        dst[i * 4] = b;
-        dst[i * 4 + 1] = g;
-        dst[i * 4 + 2] = r;
-        dst[i * 4 + 3] = a;
-    }
-
-    // UpdateLayeredWindow.
-    let virt_x;
-    let virt_y;
-    {
-        let guard = RENDER.lock().unwrap();
-        if let Some(map) = &*guard {
-            virt_x = map.virt_x;
-            virt_y = map.virt_y;
-        } else {
-            virt_x = 0;
-            virt_y = 0;
-        }
-    }
-
-    let pt_src = POINT { x: 0, y: 0 };
-    let pt_dst = POINT {
-        x: virt_x,
-        y: virt_y,
-    };
-    let sz = SIZE { cx: w, cy: h };
-    let blend = BLENDFUNCTION {
-        BlendOp: 0, // AC_SRC_OVER
-        BlendFlags: 0,
-        SourceConstantAlpha: 255,
-        AlphaFormat: 1, // AC_SRC_ALPHA
-    };
-    let _ = UpdateLayeredWindow(
-        hwnd,
-        hdc_screen,
-        Some(&pt_dst),
-        Some(&sz),
-        hdc_mem,
-        Some(&pt_src),
-        COLORREF(0),
-        Some(&blend),
-        ULW_ALPHA,
-    );
-
-    let _ = DeleteObject(hbmp);
-    let _ = DeleteDC(hdc_mem);
-    ReleaseDC(None, hdc_screen);
 }
 
 // ── Z-order enforcer (Windows impl of cursor_overlay::ZOrderEnforcer) ────
@@ -1128,6 +1406,70 @@ mod tests {
                 end_heading_radians: 0.0,
             },
         })
+    }
+
+    #[test]
+    fn idle_countdown_does_not_request_frame_ticks_but_fade_does() {
+        let mut map = empty_map();
+        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
+
+        // Run the glide + spring settle to completion.
+        for _ in 0..2000 {
+            for rs in map.cursors.values_mut() {
+                rs.tick(0.016);
+            }
+            if !render_map_needs_frame_tick(&map) {
+                break;
+            }
+        }
+        let rs = &map.cursors["sessA"];
+        assert!(
+            rs.core.path.is_none() && rs.core.spring.is_none(),
+            "glide must have completed"
+        );
+
+        // Landed cursor at constant alpha 1.0, idle-hide pending: this is the
+        // countdown phase. Pixels cannot change, so it must NOT demand frame
+        // ticks (the render-gate fix — previously this phase composited the
+        // full virtual screen at frame cadence for the whole idle_hide_ms
+        // window), but it must still be ticked for wall-clock accrual.
+        assert!((rs.core.idle_alpha - 1.0).abs() < f64::EPSILON);
+        assert!(
+            !render_map_needs_frame_tick(&map),
+            "constant-alpha countdown must not request frame ticks"
+        );
+        assert!(
+            rs.in_idle_countdown(),
+            "landed cursor with idle-hide pending must report in_idle_countdown"
+        );
+
+        // Advance idle_secs to the fade window: the fade animates pixels, so
+        // frame ticks are required again until alpha reaches ~0.
+        let fade_start = map.cursors["sessA"].core.motion.idle_hide_ms / 1000.0;
+        for rs in map.cursors.values_mut() {
+            rs.core.idle_secs = fade_start;
+        }
+        for rs in map.cursors.values_mut() {
+            rs.tick(0.016);
+        }
+        let rs = &map.cursors["sessA"];
+        assert!(rs.core.idle_alpha < 1.0 && rs.core.idle_alpha >= 0.004);
+        assert!(
+            rs.needs_frame_tick(),
+            "an actively fading cursor must request frame ticks"
+        );
+        assert!(!rs.in_idle_countdown());
+
+        // Run the fade out: fully hidden must be quiescent again.
+        for _ in 0..60 {
+            for rs in map.cursors.values_mut() {
+                rs.tick(0.016);
+            }
+        }
+        assert!(
+            !render_map_needs_frame_tick(&map),
+            "fully faded cursor must be quiescent"
+        );
     }
 
     #[test]

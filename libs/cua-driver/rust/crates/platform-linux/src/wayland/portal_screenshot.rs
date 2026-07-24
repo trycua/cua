@@ -41,9 +41,11 @@ fn screenshot_via_portal_blocking() -> anyhow::Result<Vec<u8>> {
         .build()
         .map_err(|e| anyhow::anyhow!("failed to build tokio runtime for ashpd: {e}"))?;
     let uri = rt.block_on(async {
+        let connection = super::portal::fresh_session_connection().await?;
         Screenshot::request()
             .interactive(false)
             .modal(false)
+            .connection(Some(connection))
             .send()
             .await
             .map_err(map_ashpd_err)?
@@ -116,23 +118,25 @@ pub fn probe_portal() -> anyhow::Result<bool> {
         .build()
         .map_err(|e| anyhow::anyhow!("failed to build tokio runtime for ashpd probe: {e}"))?;
     rt.block_on(async {
-        // Cheapest possible probe: open a session bus and check that the
-        // portal name has an owner. We avoid Screenshot::request() because
-        // that would cache a (potentially undesired) consent grant.
-        let conn = zbus::Connection::session()
-            .await
-            .map_err(|e| anyhow::anyhow!("session bus unreachable: {e}"))?;
-        let proxy = zbus::fdo::DBusProxy::new(&conn)
-            .await
-            .map_err(|e| anyhow::anyhow!("dbus proxy creation failed: {e}"))?;
-        let has_owner = proxy
-            .name_has_owner(
-                "org.freedesktop.portal.Desktop"
-                    .try_into()
-                    .map_err(|e| anyhow::anyhow!("bus name parse failed: {e}"))?,
-            )
-            .await
-            .map_err(|e| anyhow::anyhow!("name_has_owner failed: {e}"))?;
-        Ok(has_owner)
+        tokio::time::timeout(super::portal::PROBE_TIMEOUT, async {
+            // Cheapest possible probe: open a session bus and check that the
+            // portal name has an owner. We avoid Screenshot::request() because
+            // that would cache a (potentially undesired) consent grant.
+            let conn = super::portal::fresh_session_connection().await?;
+            let proxy = zbus::fdo::DBusProxy::new(&conn)
+                .await
+                .map_err(|e| anyhow::anyhow!("dbus proxy creation failed: {e}"))?;
+            let has_owner = proxy
+                .name_has_owner(
+                    "org.freedesktop.portal.Desktop"
+                        .try_into()
+                        .map_err(|e| anyhow::anyhow!("bus name parse failed: {e}"))?,
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("name_has_owner failed: {e}"))?;
+            Ok(has_owner)
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("xdg-desktop-portal availability probe timed out"))?
     })
 }

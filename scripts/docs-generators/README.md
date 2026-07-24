@@ -130,3 +130,11 @@ npx tsx scripts/docs-generators/runner.ts --library lume
 # Check without modifying files
 npx tsx scripts/docs-generators/runner.ts --check
 ```
+
+### Sandbox SDK reference
+
+`generate_mkdocstrings_sandbox_reference.py` collects public source metadata with
+the official `mkdocstrings-python` handler and writes a bounded MDX artifact.
+Fumadocs does not process MkDocs `:::` directives, so it consumes this static
+artifact instead. Private transports, Cyclops SDK details, and raw operations
+are excluded.

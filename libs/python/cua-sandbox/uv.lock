@@ -414,7 +414,7 @@ wheels = [
 
 [[package]]
 name = "cua-agent"
-version = "0.8.3"
+version = "0.8.4"
 source = { editable = "../agent" }
 dependencies = [
     { name = "aiohttp" },
@@ -450,12 +450,14 @@ requires-dist = [
     { name = "cua-som", marker = "extra == 'omni'", editable = "../som" },
     { name = "einops", marker = "extra == 'all'" },
     { name = "einops", marker = "extra == 'internvl-hf'" },
+    { name = "fastmcp", marker = "extra == 'hud'", specifier = ">=3.2.0,<3.3.0" },
     { name = "google-genai", marker = "extra == 'all'", specifier = ">=1.41.0" },
     { name = "google-genai", marker = "extra == 'cloud'", specifier = ">=1.41.0" },
     { name = "google-genai", marker = "extra == 'gemini'", specifier = ">=1.41.0" },
     { name = "gradio", marker = "extra == 'all'", specifier = ">=6.0.0" },
     { name = "gradio", marker = "extra == 'ui'", specifier = ">=6.0.0" },
     { name = "httpx", specifier = ">=0.27.0" },
+    { name = "hud-python", marker = "extra == 'hud'", specifier = "==0.4.52" },
     { name = "litellm", specifier = "==1.86.2" },
     { name = "mlx-vlm", marker = "sys_platform == 'darwin' and extra == 'all'", specifier = ">=0.1.27" },
     { name = "mlx-vlm", marker = "sys_platform == 'darwin' and extra == 'uitars-mlx'", specifier = ">=0.1.27" },
@@ -537,11 +539,12 @@ dev = [{ name = "pytest", specifier = ">=8.3.5" }]
 
 [[package]]
 name = "cua-sandbox"
-version = "0.1.16"
+version = "0.1.17"
 source = { editable = "." }
 dependencies = [
     { name = "cua-auto" },
     { name = "cua-core" },
+    { name = "cua-train" },
     { name = "grpcio" },
     { name = "httpx" },
     { name = "oras" },
@@ -573,6 +576,7 @@ dev = [
 requires-dist = [
     { name = "cua-auto", specifier = ">=0.1.2" },
     { name = "cua-core", specifier = ">=0.3.0,<0.4.0" },
+    { name = "cua-train", specifier = "==0.1.1", index = "https://wheels.cua.ai/simple" },
     { name = "grpcio", specifier = "==1.78.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "oras", specifier = ">=0.2.40" },
@@ -596,6 +600,22 @@ dev = [
 ]
 
 [[package]]
+name = "cua-train"
+version = "0.1.1"
+source = { registry = "https://wheels.cua.ai/simple" }
+dependencies = [
+    { name = "attrs" },
+    { name = "httpx" },
+    { name = "python-dateutil" },
+]
+wheels = [
+    { url = "https://wheels.cua.ai/simple/cua-train/cua_train-0.1.1-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:1822fb9a63c6566d2763a9fb2e384ba4cc6a3771d97fb2cd3f1f9af66916e6df" },
+    { url = "https://wheels.cua.ai/simple/cua-train/cua_train-0.1.1-py3-none-macosx_11_0_arm64.whl", hash = "sha256:045b51e3ebebc7bf2107ec5a97801250b551e9617bcbbeec97a1e4f4c2ebd884" },
+    { url = "https://wheels.cua.ai/simple/cua-train/cua_train-0.1.1-py3-none-manylinux_2_34_aarch64.whl", hash = "sha256:6f8eb7f450f05d4a495de70a0a8f7acdb3dce20d842bae96f2aec27e2869fb85" },
+    { url = "https://wheels.cua.ai/simple/cua-train/cua_train-0.1.1-py3-none-manylinux_2_34_x86_64.whl", hash = "sha256:9ab37ae89ef6f95a1c0e315226af7716625bc6225e54770f94315905a744c5ad" },
+]
+
+[[package]]
 name = "distro"
 version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -615,7 +635,7 @@ name = "ewmhlib"
 version = "0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "python-xlib", marker = "sys_platform == 'linux'" },
+    { name = "python-xlib" },
     { name = "typing-extensions" },
 ]
 wheels = [

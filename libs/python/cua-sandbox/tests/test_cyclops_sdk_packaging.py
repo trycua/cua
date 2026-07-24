@@ -1,75 +1,45 @@
-import importlib.util
-import tempfile
+import tomllib
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-BUILD_HOOK_PATH = PROJECT_ROOT / "hatch_build.py"
-
-
-def load_build_hook():
-    spec = importlib.util.spec_from_file_location("cua_sandbox_hatch_build", BUILD_HOOK_PATH)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.CustomBuildHook
+PYPROJECT_PATH = PROJECT_ROOT / "pyproject.toml"
+FLEET_IMPORTS = (
+    PROJECT_ROOT / "cua_sandbox" / "transport" / "cyclops_http_client.py",
+    PROJECT_ROOT / "cua_sandbox" / "transport" / "fleet.py",
+    PROJECT_ROOT / "cua_sandbox" / "transport" / "fleet_cloud.py",
+)
 
 
 class CyclopsSdkPackagingTests(unittest.TestCase):
-    def test_build_hook_stages_mirrored_cyclops_sdk(self):
-        CustomBuildHook = load_build_hook()
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            temporary_root = Path(temporary_directory)
-            repository_root = temporary_root / "repository"
-            mirror_root = repository_root / "libs" / "fleet"
-            binding_root = mirror_root / "sdk-bindings" / "python" / "cyclops_sdk"
-            binding_root.mkdir(parents=True)
-            native_library = temporary_root / "native" / "debug" / "libcyclops_sdk.so"
-            calls = []
+    def test_declares_packaged_cyclops_sdk_distribution(self):
+        with PYPROJECT_PATH.open("rb") as pyproject_file:
+            project = tomllib.load(pyproject_file)
 
-            def fake_run(command, check):
-                calls.append((command, check))
-                native_library.parent.mkdir(parents=True)
-                native_library.touch()
+        self.assertIn("cua-train==0.1.1", project["project"]["dependencies"])
+        self.assertEqual(project["tool"]["uv"]["sources"]["cua-train"], {"index": "cua-wheels"})
+        self.assertEqual(
+            project["tool"]["uv"]["index"][0],
+            {
+                "name": "cua-wheels",
+                "url": "https://wheels.cua.ai/simple",
+                "explicit": True,
+            },
+        )
 
-            with (
-                patch("platform.system", return_value="Linux"),
-                patch("subprocess.run", fake_run),
-                patch.object(CustomBuildHook, "repository_root", repository_root),
-                patch.object(CustomBuildHook, "native_target_dir", temporary_root / "native"),
-            ):
-                hook = object.__new__(CustomBuildHook)
-                build_data = {"force_include": {}}
-                hook.initialize("0.1.0", build_data)
+    def test_package_does_not_copy_the_binding_from_the_checkout(self):
+        self.assertFalse((PROJECT_ROOT / "hatch_build.py").exists())
+        with PYPROJECT_PATH.open("rb") as pyproject_file:
+            project = tomllib.load(pyproject_file)
+        self.assertNotIn("hooks", project.get("tool", {}).get("hatch", {}).get("build", {}))
 
-            self.assertEqual(
-                calls,
-                [
-                    (
-                        [
-                            "cargo",
-                            "build",
-                            "--locked",
-                            "--manifest-path",
-                            str(mirror_root / "Cargo.toml"),
-                            "--package",
-                            "cyclops-sdk",
-                            "--target-dir",
-                            str(temporary_root / "native"),
-                        ],
-                        True,
-                    )
-                ],
-            )
-            self.assertEqual(
-                build_data["force_include"],
-                {
-                    str(binding_root): "cyclops_sdk",
-                    str(native_library): "cyclops_sdk/libcyclops_sdk.so",
-                },
-            )
-            self.assertTrue(build_data["infer_tag"])
+    def test_fleet_imports_do_not_mutate_paths_or_load_native_libraries(self):
+        for source_path in FLEET_IMPORTS:
+            source = source_path.read_text()
+            self.assertIn("from cyclops_sdk import", source)
+            self.assertNotIn("sys.path", source)
+            self.assertNotIn("site.addsitedir", source)
+            self.assertNotIn("ctypes.CDLL", source)
 
 
 if __name__ == "__main__":

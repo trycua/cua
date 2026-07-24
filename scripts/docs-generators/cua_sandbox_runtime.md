@@ -17,10 +17,19 @@ itself, but imported dependencies remain responsible for their import behavior.
 
 The `cua-sandbox` package's Hatch build hook invokes Cargo to build the generated
 Fleet/Cyclops binding. The public documentation explicitly excludes Fleet and
-`cyclops_sdk`, so the documented command installs declared Python dependencies,
-adds the sandbox source tree to `sys.path`, and supplies an in-memory stub only
-for the excluded `cyclops_sdk` import. Use `--no-excluded-dependency-stub` in an
-environment with the real binding to verify the full import path.
+`cyclops_sdk`, so the documented command installs the pinned dependencies used by
+the imported public surface, adds the sandbox source tree to `sys.path`, and
+supplies an in-memory stub only for the excluded `cyclops_sdk` import. It does not
+install `cua-auto`: that optional runtime is not imported by this reference and
+its Linux `evdev` dependency requires native Python headers. Use
+`--no-excluded-dependency-stub` in an environment with the real binding to verify
+the full import path.
+
+Static candidates can analyze source without executing imports, but can miss the
+resolved runtime export list, descriptor signatures, coroutine behavior, and
+conditional imports. This generator deliberately accepts the trusted-checkout
+import tradeoff, while constraining that import to the public surface and the
+minimal pinned helper environment above.
 
 ```bash
 uv venv .venv-cua-957-runtime --python 3.11

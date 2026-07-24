@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "cua_sandbox_runtime.py"
+REQUIREMENTS = Path(__file__).resolve().parents[1] / "cua_sandbox_runtime_requirements.txt"
 
 
 def load_generator():
@@ -39,10 +40,25 @@ class RuntimeGeneratorTests(unittest.TestCase):
 
         _ConnectResult.__module__ = "cua_sandbox.sandbox"
 
+        class Image:
+            """A sandbox image definition."""
+
+            @classmethod
+            def linux(cls, version: str = "latest") -> "Image":
+                """Create a Linux image."""
+
+        Image.__module__ = "cua_sandbox.image"
+
         class Sandbox:
             """A sandbox lifecycle handle."""
 
             tunnel: Tunnel
+
+            async def create(self, image: Image) -> _ConnectResult:
+                """Create the sandbox."""
+
+            async def delete(self) -> None:
+                """Delete the sandbox."""
 
             async def start(self, image: str = "base") -> _ConnectResult:
                 """Start the sandbox."""
@@ -67,9 +83,10 @@ class RuntimeGeneratorTests(unittest.TestCase):
             """Configure the client."""
 
         configure.__module__ = "cua_sandbox._config"
-        module.__all__ = ["Sandbox", "configure", "FleetClient"]
+        module.__all__ = ["Sandbox", "configure", "Image"]
         module.Sandbox = Sandbox
         module.configure = configure
+        module.Image = Image
         module.FleetClient = FleetClient
         return module
 
@@ -78,17 +95,37 @@ class RuntimeGeneratorTests(unittest.TestCase):
         document = generator.collect_public_api(self.make_module())
 
         names = [item.name for item in document.items]
-        self.assertEqual(names, ["Sandbox", "configure", "Tunnel"])
+        self.assertEqual(names, ["Sandbox", "configure", "Image", "Tunnel"])
         sandbox = document.items[0]
         self.assertTrue(sandbox.context_manager)
-        self.assertIn("start", [member.name for member in sandbox.members])
+        self.assertTrue({"create", "delete", "start"}.issubset(member.name for member in sandbox.members))
         self.assertNotIn("raw_request", [member.name for member in sandbox.members])
         self.assertNotIn("_ConnectResult", names)
+        image = document.items[2]
+        self.assertIn("linux", [member.name for member in image.members])
         tunnel = document.items[-1]
         self.assertTrue(tunnel.members[0].is_async)
         self.assertEqual(
             tunnel.members[0].raises, ("RuntimeError: When the service cannot be reached.",)
         )
+
+    def test_rejects_excluded_public_exports(self):
+        generator = load_generator()
+        module = self.make_module()
+        module.__all__.append("FleetClient")
+
+        with self.assertRaisesRegex(ValueError, "unsupported public export: FleetClient"):
+            generator.collect_public_api(module)
+
+    def test_runtime_helper_requirements_are_pinned(self):
+        requirements = [
+            line.strip()
+            for line in REQUIREMENTS.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+
+        self.assertTrue(requirements)
+        self.assertTrue(all("==" in requirement for requirement in requirements))
 
     def test_render_is_deterministic_and_check_reports_drift(self):
         generator = load_generator()

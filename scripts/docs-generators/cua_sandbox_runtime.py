@@ -270,9 +270,19 @@ def collect_public_api(module: ModuleType) -> APIDocument:
             related_queue.extend(related)
 
     for name in exports:
-        if not isinstance(name, str) or not is_supported_name(name):
-            continue
-        add_value(name, getattr(module, name))
+        if not isinstance(name, str) or name.startswith("_"):
+            raise ValueError(f"invalid public export: {name!r}")
+        try:
+            value = getattr(module, name)
+        except AttributeError as error:
+            raise ValueError(f"missing public export: {name}") from error
+        if (
+            not is_supported_name(name)
+            or not is_supported_object(value)
+            or not (inspect.isclass(value) or inspect.isroutine(value))
+        ):
+            raise ValueError(f"unsupported public export: {name}")
+        add_value(name, value)
 
     interfaces_module = sys.modules.get(f"{module.__name__}.interfaces")
     if interfaces_module is not None:

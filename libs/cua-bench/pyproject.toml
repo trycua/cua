@@ -133,8 +133,8 @@ dev = [
 
 # RL training
 rl = [
-    "torch>=2.12.1",
-    "torchvision>=0.27.1",
+    "torch>=2.13.0",
+    "torchvision>=0.28.0",
     "transformers>=5.0.0rc3,<6.0",
 ]
 

@@ -7,8 +7,7 @@ import Cairo from 'cairo';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
-Gio._promisify(Shell.Screenshot.prototype, 'screenshot_stage_to_content');
-Gio._promisify(Shell.Screenshot, 'composite_to_stream');
+Gio._promisify(Shell.Screenshot.prototype, 'screenshot');
 
 const IFACE = `<node><interface name="org.cua.WinRects">
 <method name="GetVersion"><arg type="u" direction="out" name="version"/></method>
@@ -112,15 +111,16 @@ export default class WinRectsExtension extends Extension {
     async CaptureAsync(_params, invocation) {
         try {
             const shooter = new Shell.Screenshot();
-            const [content, scale] = await shooter.screenshot_stage_to_content();
             const stream = Gio.MemoryOutputStream.new_resizable();
-            await Shell.Screenshot.composite_to_stream(
-                content.get_texture(),
-                0, 0, -1, -1,
-                scale,
-                null, 0, 0, 1,
-                stream
-            );
+            const [width, height] = global.display.get_size();
+            if (width <= 0 || height <= 0)
+                throw new Error(`Invalid display size ${width}x${height}`);
+            // GNOME 50's stage-content capture copies the real cursor sprite
+            // after painting the stage. Remote/headless pointer seats can
+            // expose a 0x0 sprite, and that copy can crash Shell. The stream
+            // API has an explicit include_cursor flag, so keep cursor capture
+            // disabled; cua-driver draws its own agent cursor.
+            await shooter.screenshot(false, stream);
             stream.close(null);
             const encoded = GLib.base64_encode(stream.steal_as_bytes().get_data());
             invocation.return_value(new GLib.Variant('(s)', [encoded]));

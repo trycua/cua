@@ -5,7 +5,7 @@ use std::future::Future;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -339,6 +339,18 @@ fn isolated_browser_command(executable: &str, profile: &Path) -> Command {
     command
 }
 
+fn clean_spawn_exit_can_be_launcher_handoff(status: &ExitStatus) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        status.success()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = status;
+        false
+    }
+}
+
 fn write_profile_marker(path: &Path, marker: &ProfileMarker) -> Result<(), BrowserRefusal> {
     let marker_path = path.join(PROFILE_MARKER);
     let mut options = OpenOptions::new();
@@ -469,6 +481,7 @@ async fn wait_for_spawned_endpoint(
 ) -> Result<OwnedEndpoint, BrowserRefusal> {
     let deadline = Instant::now() + Duration::from_secs(20);
     let port_file = profile.join("DevToolsActivePort");
+    let mut observed_clean_launcher_exit = false;
     loop {
         if let Some(status) = child.try_wait().map_err(|error| {
             refusal(
@@ -476,10 +489,18 @@ async fn wait_for_spawned_endpoint(
                 format!("could not inspect the isolated browser process: {error}"),
             )
         })? {
-            return Err(refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("isolated browser exited before exposing DevTools ({status})"),
-            ));
+            if clean_spawn_exit_can_be_launcher_handoff(&status) {
+                // Edge on Windows ARM can transfer the browser role to a
+                // descendant and let its launcher exit successfully. Keep
+                // waiting for the driver-owned profile's port file; the live
+                // listener and its descendant ownership are attested below.
+                observed_clean_launcher_exit = true;
+            } else {
+                return Err(refusal(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("isolated browser exited before exposing DevTools ({status})"),
+                ));
+            }
         }
         if let Ok(text) = fs::read_to_string(&port_file) {
             let mut lines = text.lines();
@@ -509,7 +530,11 @@ async fn wait_for_spawned_endpoint(
         if Instant::now() >= deadline {
             return Err(refusal(
                 BrowserRefusalCode::BrowserRouteUnavailable,
-                "isolated browser did not expose a loopback DevTools endpoint before timeout",
+                if observed_clean_launcher_exit {
+                    "isolated browser launcher exited cleanly, but its process tree did not expose a loopback DevTools endpoint before timeout"
+                } else {
+                    "isolated browser did not expose a loopback DevTools endpoint before timeout"
+                },
             ));
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -1227,6 +1252,24 @@ mod tests {
         }
         #[cfg(target_os = "linux")]
         assert!(args.iter().any(|arg| arg == "--password-store=basic"));
+    }
+
+    #[test]
+    fn clean_launcher_exit_is_only_deferred_on_windows() {
+        let mut command = if cfg!(target_os = "windows") {
+            let mut command = Command::new("cmd.exe");
+            command.args(["/C", "exit", "0"]);
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args(["-c", "exit 0"]);
+            command
+        };
+        let status = command.status().unwrap();
+        assert_eq!(
+            clean_spawn_exit_can_be_launcher_handoff(&status),
+            cfg!(target_os = "windows")
+        );
     }
 
     #[cfg(target_os = "linux")]

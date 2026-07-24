@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.12.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.3...cua-driver-rs-v0.12.4) (2026-07-24)
+
+
+### Bug Fixes
+
+* **cua-driver:** deliver foreground pixel hotkeys through HID ([#2464](https://github.com/trycua/cua/issues/2464)) ([bc1a58d](https://github.com/trycua/cua/commit/bc1a58d7926fadbc79b7d2925895878b9ab81cda))
+* **cua-driver:** expose skill install failure details ([#2510](https://github.com/trycua/cua/issues/2510)) ([d614d8d](https://github.com/trycua/cua/commit/d614d8db689cd663f9e8d784ff03ac1bd388f506))
+* **cua-driver:** honor Cargo target dir in local installs ([#2486](https://github.com/trycua/cua/issues/2486)) ([7cb6810](https://github.com/trycua/cua/commit/7cb6810b429ec9723c9e2050d6670340eeda4265))
+* **cua-driver:** show Windows browser action cursors ([#2532](https://github.com/trycua/cua/issues/2532)) ([8271dd8](https://github.com/trycua/cua/commit/8271dd8abaafe49f774f5f6a9ba676b0596510d0))
+* **cua-driver:** support Windows ARM64 browser sessions ([9c5a78b](https://github.com/trycua/cua/commit/9c5a78b65b09bedceea1faafe09f1ac9488e588b))
+* **cua-driver:** wait for generic type_text completion ([#2463](https://github.com/trycua/cua/issues/2463)) ([3858c7f](https://github.com/trycua/cua/commit/3858c7f2aafc3d03f5a6342d255a625d79b184fb))
+
 ## [0.12.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.2...cua-driver-rs-v0.12.3) (2026-07-23)
 
 

@@ -931,7 +931,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver"
-version = "0.12.5"
+version = "0.12.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -966,7 +966,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-bindgen"
-version = "0.12.5"
+version = "0.12.6"
 dependencies = [
  "cbindgen",
  "uniffi",
@@ -974,7 +974,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-contract"
-version = "0.12.5"
+version = "0.12.6"
 dependencies = [
  "schemars",
  "serde",
@@ -984,7 +984,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-core"
-version = "0.12.5"
+version = "0.12.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1011,7 +1011,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-sdk"
-version = "0.12.5"
+version = "0.12.6"
 dependencies = [
  "core-foundation",
  "cua-driver-contract",
@@ -1032,7 +1032,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-testkit"
-version = "0.12.5"
+version = "0.12.6"
 dependencies = [
  "core-foundation",
  "libc",
@@ -1046,7 +1046,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-uia"
-version = "0.12.5"
+version = "0.12.6"
 dependencies = [
  "anyhow",
  "cua-driver-core",
@@ -1061,7 +1061,7 @@ dependencies = [
 
 [[package]]
 name = "cursor-overlay"
-version = "0.12.5"
+version = "0.12.6"
 dependencies = [
  "anyhow",
  "image",
@@ -2589,7 +2589,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pip-preview"
-version = "0.12.5"
+version = "0.12.6"
 dependencies = [
  "anyhow",
  "serde_json",
@@ -2649,7 +2649,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "platform-linux"
-version = "0.12.5"
+version = "0.12.6"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -2692,7 +2692,7 @@ dependencies = [
 
 [[package]]
 name = "platform-macos"
-version = "0.12.5"
+version = "0.12.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2726,7 +2726,7 @@ dependencies = [
 
 [[package]]
 name = "platform-windows"
-version = "0.12.5"
+version = "0.12.6"
 dependencies = [
  "anyhow",
  "async-trait",

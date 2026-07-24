@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.6](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.5...cua-driver-rs-v0.12.6) (2026-07-24)
+
+
+### Bug Fixes
+
+* **cua-driver:** isolate Wayland portal connections ([#2552](https://github.com/trycua/cua/issues/2552)) ([074ec16](https://github.com/trycua/cua/commit/074ec16647809619aed56454967225b67c945ee5))
+
 ## [0.12.5](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.4...cua-driver-rs-v0.12.5) (2026-07-24)
 
 

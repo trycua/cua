@@ -89,3 +89,25 @@ Output:
 - Average step time
 - Average finish time
 - Step throughput (steps/sec)
+
+## Daytona provider
+
+On Linux, use `--provider-type daytona` with `DAYTONA_API_KEY` and a Daytona
+snapshot that starts supervisord and cua-computer-server. The environment and
+solver run together in that sandbox.
+
+### Windows
+
+For Windows, the Daytona sandbox is only the desktop. The solver runs locally
+against the sandbox's signed preview URL, so API keys and other solver secrets
+stay local.
+
+```bash
+DAYTONA_API_KEY=... cb run task <task-dir> --provider-type daytona --platform windows-qemu --image <windows-snapshot> --wait
+```
+
+Instead of `--image`, set `DAYTONA_WINDOWS_SNAPSHOT` to the Windows snapshot
+name. The snapshot builder, `python -m
+cua_bench.scripts.build_daytona_windows_snapshot`, creates
+`cua-bench-windows-v1` by default. Tasks with
+`setup_config.os_type == "windows"` automatically select the Windows platform.

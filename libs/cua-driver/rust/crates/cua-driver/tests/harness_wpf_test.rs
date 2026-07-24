@@ -638,19 +638,23 @@ fn harness_wpf_set_value() {
 // In test-batch mode (many harnesses launched/killed in sequence) the WPF
 // window's input pump occasionally misses background PostMessage events —
 // reproducibly passes in isolation, intermittently fails in batch.
-// `bring_to_front` pays the foreground swap once so the click test
-// exercises the click-event-handling path itself, not the
-// background-delivery path (which the counter_invoke test already
-// covers via UIA Invoke).
+// Start recording before the final foreground swap. On hosted Windows
+// runners, recording setup can briefly activate another window; focusing
+// afterward makes the target posture deterministic for SendInput actions.
 fn focus_harness(driver: &mut McpDriver, pid: u32, wid: u64) {
-    let _ = driver.call(
+    driver.start_behavior_recording();
+    let response = driver.call(
         "bring_to_front",
         serde_json::json!({
             "pid": pid as i64, "window_id": wid
         }),
     );
+    assert!(
+        !response.is_error(),
+        "failed to establish WPF foreground posture: {}",
+        response.text()
+    );
     std::thread::sleep(Duration::from_millis(300));
-    driver.start_behavior_recording();
 }
 
 #[test]

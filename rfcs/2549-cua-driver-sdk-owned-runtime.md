@@ -26,6 +26,10 @@ for deployments that need a protocol or process boundary. They consume the same
 typed SDK and preserve the same behavior. A daemon becomes an explicit service
 choice instead of a prerequisite for every integration.
 
+The native runtime and public typed contract remain transport-free. gRPC,
+HTTP, MCP, local sockets, and environment-specific forwarding are adapters
+around a generated Driver connection, not dependencies of the core.
+
 Authorization moves from process-global configuration into each runtime.
 Trusted host code selects an immutable permission mode and policy ceiling when
 it constructs the runtime. Agent-visible requests, session IDs, and transport
@@ -122,6 +126,10 @@ needs them.
 - Keep an explicit daemon or service topology for shared external clients and
   compatibility.
 - Preserve one typed contract and one authorization path across every topology.
+- Keep the native runtime and public SDK contract independent of gRPC, HTTP,
+  MCP, local sockets, and environment-specific forwarding.
+- Allow authenticated remote clients through generated Driver envelopes and a
+  transport adapter without creating a second desktop-control contract.
 - Preserve stable macOS TCC ownership for host-owned and Cua-owned
   applications.
 
@@ -139,6 +147,8 @@ needs them.
   arbitrary code in that process.
 - Let a model create, select, or upgrade a runtime permission mode.
 - Replace the versioned C ABI or generated SDK bindings from RFC 2447.
+- Make gRPC, MCP, HTTP, or the current daemon framing the native core or public
+  SDK contract.
 - Define every future protected-consent adapter tracked by
   [#2385](https://github.com/trycua/cua/issues/2385).
 - Change macOS TCC, Windows interactive-session, or Linux display security
@@ -174,6 +184,11 @@ intentionally serves external clients.
 **Adapter**
 : A component that maps another interface, such as MCP or HTTP, to the typed
 SDK.
+
+**Remote Driver connection**
+: An internal SDK backend that exchanges generated, versioned Driver envelopes
+through an authenticated asynchronous channel. gRPC may implement that channel,
+but the runtime does not depend on gRPC.
 
 **Runtime authorization**
 : The immutable mode, policy ceiling, optional bounded manifest, consent
@@ -300,7 +315,7 @@ flowchart LR
 
     subgraph Service["Service, explicit"]
         CLIENTS["External clients"]
-        SERVER["MCP, HTTP, or daemon adapter"]
+        SERVER["gRPC, MCP, HTTP, or daemon adapter"]
         SRT["Service-owned runtime"]
         CLIENTS --> SERVER --> SRT
     end
@@ -348,6 +363,7 @@ flowchart TB
     TS["TypeScript application"]
     MCP["MCP adapter"]
     HTTP["HTTP adapter"]
+    REMOTE["Generated remote Driver adapter"]
     SERVICE["Daemon compatibility adapter"]
 
     SDK["Typed CuaDriver contract"]
@@ -359,6 +375,7 @@ flowchart TB
     TS --> SDK
     MCP --> SDK
     HTTP --> SDK
+    REMOTE --> SDK
     SERVICE --> SDK
     SDK --> AUTH --> TOOLS
 ```
@@ -366,6 +383,26 @@ flowchart TB
 An adapter may reject an invalid request before calling the SDK. It cannot
 authorize a request that the runtime denies, invent a second tool schema, or
 call private core operations.
+
+#### Keep remote transport below the typed SDK
+
+Remote clients use the same generated SDK methods as local clients. Internally,
+the SDK may select an embedded, local-daemon, or remote connection backend. The
+remote backend exchanges generated, versioned Driver request and result
+envelopes over a minimal asynchronous channel with deadlines, cancellation,
+request identity, capability negotiation, and structured transport errors.
+
+The channel carries opaque Driver envelopes. It does not expose one hand-written
+method per tool. gRPC, a Fleet channel, an HTTP/2 stream, or another
+environment-specific route may implement the channel without entering the
+native core or changing the public desktop-control contract.
+
+The service-side adapter authenticates the remote principal, validates the
+generated envelope, applies lifecycle controls, and invokes the same typed SDK.
+Remote protocol generation and exhaustive dispatch remain coordinated with
+[the environment-convergence proposal](https://github.com/trycua/cua/pull/2513).
+They are not prerequisites for the local browser release or the first
+SDK-owned-runtime milestone.
 
 ### 4. Move mutable authority into the runtime
 
@@ -778,6 +815,16 @@ contract with generated language bindings.
 
 This RFC keeps that decision.
 
+### Make gRPC the native core contract
+
+gRPC provides useful framing, streaming, deadlines, and generated service
+stubs. Making it the core or public application contract would couple local
+embedded use to a network transport and let gRPC service evolution shape the
+desktop API.
+
+This RFC keeps gRPC as one optional carrier for generated Driver envelopes.
+The public contract remains the typed `CuaDriver` SDK.
+
 ## Compatibility and migration
 
 Migration is additive until a separate deprecation decision.
@@ -792,6 +839,12 @@ An internal ownership change is blocked when it changes a command line,
 constructor, package export, tool schema, result envelope, structured error,
 exit code, lifecycle outcome, or default platform identity without a separate
 public decision.
+
+The generated remote-connection work in
+[PR #2513](https://github.com/trycua/cua/pull/2513) is complementary. It may add
+an internal remote backend and authenticated service adapter, but it cannot
+replace local `create()` or `connect()`, introduce a second tool vocabulary, or
+make gRPC a core dependency.
 
 ### Phase 0: Canonical authorization
 
@@ -1025,6 +1078,8 @@ The RFC is implemented when all of the following evidence passes.
 - Rust, Python, and TypeScript expose the same typed operations and lifecycle.
 - Direct, private-worker, MCP, HTTP, and daemon paths produce compatible
   results and structured errors.
+- A generated remote Driver path produces compatible typed results without
+  exposing its transport through the public operation contract.
 - Generated contract and symbol checks pass on macOS, Windows, and Linux.
 - CLI help, subcommand, flag, exit-code, JSON, and MCP-schema fixtures remain
   unchanged unless an independently reviewed compatibility change says

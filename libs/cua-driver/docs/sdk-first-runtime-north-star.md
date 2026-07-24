@@ -26,6 +26,9 @@ The migration preserves the released CLI, MCP, Rust, Python, and TypeScript
 interfaces. Runtime ownership may change behind them only after compatibility
 and behavior-parity gates pass.
 
+The runtime and public SDK stay transport-free. gRPC, MCP, HTTP, local sockets,
+and environment forwarding carry generated Driver envelopes outside the core.
+
 ```mermaid
 flowchart TB
     subgraph Consumers["Applications and adapters"]
@@ -86,7 +89,7 @@ flowchart LR
 
     subgraph Service["Optional: explicit service"]
         CLIENTS["External clients"]
-        ADAPTER["MCP or HTTP service"]
+        ADAPTER["gRPC, MCP, HTTP, or daemon adapter"]
         SRUNTIME["Service-owned runtime"]
         CLIENTS --> ADAPTER --> SRUNTIME
     end
@@ -281,6 +284,11 @@ embedded macOS paths. Standalone installed macOS MCP keeps the signed
 CuaDriver.app service identity by default. It does not add a second proxy layer
 unless the deployment asks for service ownership or shared state.
 
+Remote applications use the same generated SDK through an internal remote
+connection backend. The backend exchanges generated Driver envelopes through a
+minimal authenticated channel. gRPC may implement that channel, but it does not
+become the native core, public SDK contract, or a second tool vocabulary.
+
 ## Explicit single-runtime ownership is the first refactor
 
 The current implementation still has process-global authorization and platform
@@ -376,7 +384,9 @@ service.
     identity.
 12. Released CLI, MCP, and SDK interfaces remain compatible across topology
     changes.
-13. The daemon remains available only where a service topology earns its
+13. gRPC and other remote protocols remain adapters outside the native runtime
+    and typed application contract.
+14. The daemon remains available only where a service topology earns its
     operational cost.
 
 ## Exit criteria

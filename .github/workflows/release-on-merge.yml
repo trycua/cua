@@ -102,6 +102,7 @@ jobs:
             ["libs/typescript/fleet/"]="npm/fleet"
             ["libs/typescript/playground/"]="npm/playground"
             ["libs/cuabot/"]="npm/cuabot"
+            ["libs/xfce-cua/"]="docker/xfce-cua"
             ["libs/xfce/"]="docker/xfce"
             ["libs/kasm/"]="docker/kasm"
             ["libs/lumier/"]="docker/lumier"

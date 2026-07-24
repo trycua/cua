@@ -32,6 +32,7 @@ on:
           - npm/cuabot
           - docker/cuabot
           - docker/kasm
+          - docker/xfce-cua
           - docker/xfce
           - docker/lumier
           - docker/qemu-android
@@ -178,6 +179,10 @@ jobs:
               ;;
             "docker/kasm")
               echo "directory=libs/kasm" >> $GITHUB_OUTPUT
+              echo "type=docker" >> $GITHUB_OUTPUT
+              ;;
+            "docker/xfce-cua")
+              echo "directory=libs/xfce-cua" >> $GITHUB_OUTPUT
               echo "type=docker" >> $GITHUB_OUTPUT
               ;;
             "docker/xfce")

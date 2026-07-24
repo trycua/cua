@@ -27,10 +27,10 @@ class PdocSandboxReferenceTests(unittest.TestCase):
         (self.package_root / "__init__.py").write_text(
             '''"""Fixture SDK."""
 
-from .api import Image, Sandbox, configure, sandbox
+from .api import Image, Lifecycle, Sandbox, configure, sandbox
 from cyclops_sdk import RawOperation
 
-__all__ = ["Sandbox", "Image", "configure", "sandbox"]
+__all__ = ["Sandbox", "Image", "Lifecycle", "configure", "sandbox"]
 '''
         )
         (self.package_root / "api.py").write_text(
@@ -45,6 +45,9 @@ class Sandbox:
 
     tunnel: str
     """Port-forwarding interface."""
+
+    service_ports: dict[str, int]
+    """Named service ports exposed by the sandbox."""
 
     async def disconnect(self) -> None:
         """Disconnect without deleting the sandbox."""
@@ -64,6 +67,20 @@ class Image:
 
     def expose(self, port: int) -> "Image":
         """Expose a service port."""
+
+
+class ConnectResult:
+    """Awaitable async-context wrapper."""
+
+
+class Lifecycle:
+    def connect(self) -> ConnectResult:
+        """Return a wrapper that supports await and async with."""
+
+        async def factory() -> None:
+            """Connect asynchronously after the wrapper is invoked."""
+
+        return ConnectResult()
 
 
 def configure(*, api_key: str | None = None) -> None:
@@ -91,7 +108,7 @@ async def sandbox(name: str) -> AsyncIterator[Sandbox]:
     def test_uses_root_all_as_the_public_contract(self) -> None:
         names = [member.name for member in generator.public_members(self.module())]
 
-        self.assertEqual(names, ["Sandbox", "Image", "configure", "sandbox"])
+        self.assertEqual(names, ["Sandbox", "Image", "Lifecycle", "configure", "sandbox"])
 
     def test_renders_signatures_async_context_and_public_members(self) -> None:
         rendered = generator.render_reference(self.module())
@@ -101,8 +118,15 @@ async def sandbox(name: str) -> AsyncIterator[Sandbox]:
         self.assertIn("async def destroy(self) -> None", rendered)
         self.assertIn(r'\{"status": "deleted"\}', rendered)
         self.assertIn("tunnel", rendered)
+        self.assertIn("service_ports: dict[str, int]", rendered)
         self.assertIn("def expose(self, port: int) -> Image", rendered)
         self.assertIn("async def sandbox(name: str) -> AsyncIterator[Sandbox]", rendered)
+
+    def test_uses_the_member_declaration_for_async_detection(self) -> None:
+        rendered = generator.render_reference(self.module())
+
+        self.assertIn("def connect(self) -> ConnectResult", rendered)
+        self.assertNotIn("async def connect(self) -> ConnectResult", rendered)
 
     def test_excludes_private_and_non_exported_symbols(self) -> None:
         rendered = generator.render_reference(self.module())

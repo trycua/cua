@@ -78,7 +78,8 @@ def normalize_annotation(value: str, member: Doc) -> str:
 
 def signature(member: Function) -> str:
     """Format pdoc's normalized signature as a Python declaration."""
-    prefix = "async def" if re.search(r"^\s*async\s+def\s", member.source, re.MULTILINE) else "def"
+    declaration = re.search(r"^\s*(async\s+)?def\s", member.source, re.MULTILINE)
+    prefix = "async def" if declaration and declaration.group(1) else "def"
     return normalize_annotation(f"{prefix} {member.name}{member.signature}", member)
 
 
@@ -114,10 +115,12 @@ def render_variable(lines: list[str], member: Variable, level: str) -> None:
     annotation_value = member.annotation
     if annotation_value is empty:
         annotation_value = None
-    elif hasattr(annotation_value, "__name__"):
+    elif isinstance(annotation_value, type):
         annotation_value = annotation_value.__name__
     annotation = (
-        f": {normalize_annotation(str(annotation_value), member)}" if annotation_value else ""
+        f": {normalize_annotation(str(annotation_value).replace('typing.', ''), member)}"
+        if annotation_value
+        else ""
     )
     lines.extend(
         (f"{level} `{member.fullname}`", "", "```python", f"{member.name}{annotation}", "```", "")

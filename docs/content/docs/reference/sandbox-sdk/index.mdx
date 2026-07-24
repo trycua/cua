@@ -85,7 +85,7 @@ version: str
 ### `cua_sandbox.Image.kind`
 
 ```python
-kind: Optional
+kind: Optional[str]
 ```
 
 ### `cua_sandbox.Image.linux`
@@ -332,7 +332,7 @@ Generate a cloud-init user-data script from the image layers.
 ### `cua_sandbox.Image.local_support`
 
 ```python
-async def local_support(self)
+def local_support(self)
 ```
 
 Check whether this image can run locally on the current host.
@@ -606,7 +606,7 @@ Example::
 ### `cua_sandbox.Sandbox.connect`
 
 ```python
-async def connect(
+def connect(
     cls,
     name: str,
     *,
@@ -850,31 +850,31 @@ source: str
 ### `cua_sandbox.SandboxInfo.os_type`
 
 ```python
-os_type: Optional
+os_type: Optional[str]
 ```
 
 ### `cua_sandbox.SandboxInfo.host`
 
 ```python
-host: Optional
+host: Optional[str]
 ```
 
 ### `cua_sandbox.SandboxInfo.vnc_url`
 
 ```python
-vnc_url: Optional
+vnc_url: Optional[str]
 ```
 
 ### `cua_sandbox.SandboxInfo.api_url`
 
 ```python
-api_url: Optional
+api_url: Optional[str]
 ```
 
 ### `cua_sandbox.SandboxInfo.created_at`
 
 ```python
-created_at: Optional
+created_at: Optional[str]
 ```
 
 ## `cua_sandbox.sandbox`
@@ -987,7 +987,7 @@ async def get_dimensions(self) -> tuple[int, int]
 ### `cua_sandbox.Localhost.connect`
 
 ```python
-async def connect(cls) -> _ConnectResult
+def connect(cls) -> _ConnectResult
 ```
 
 Connect to the local machine.
@@ -1127,7 +1127,7 @@ Raises NotImplementedError for transports that don't expose a display
 ### `cua_sandbox.CloudTransport.name`
 
 ```python
-name: Optional
+name: Optional[str]
 ```
 
 ## `RuntimeSupport`
@@ -1229,7 +1229,7 @@ RuntimeSupport with .supported, .hw_accel, .reason, and more.
 ## `cua_sandbox.skip_if_unsupported`
 
 ```python
-async def skip_if_unsupported(
+def skip_if_unsupported(
     image: Image,
     *,
     require_hw_accel: bool = False

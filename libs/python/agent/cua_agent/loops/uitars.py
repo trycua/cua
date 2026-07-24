@@ -195,6 +195,27 @@ def parse_action(action_str):
         return None
 
 
+def parse_box_coordinates(box: str) -> Optional[Tuple[float, float, float, float]]:
+    """Parse a normalized UITARS coordinate box without evaluating code."""
+    try:
+        value = ast.literal_eval(box)
+    except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+        return None
+
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        return None
+    if not all(
+        isinstance(number, (int, float)) and not isinstance(number, bool) for number in value
+    ):
+        return None
+
+    coordinates = tuple(float(number) for number in value)
+    if not all(math.isfinite(number) for number in coordinates):
+        return None
+
+    return coordinates[0], coordinates[1], coordinates[2], coordinates[3]
+
+
 def parse_uitars_response(text: str, image_width: int, image_height: int) -> List[Dict[str, Any]]:
     """Parse UITARS model response into structured actions."""
     text = text.strip()
@@ -303,7 +324,9 @@ def convert_to_computer_actions(
         elif action_type in ["click", "left_single"]:
             start_box = action_inputs.get("start_box")
             if start_box:
-                coords = eval(start_box)
+                coords = parse_box_coordinates(start_box)
+                if coords is None:
+                    continue
                 x = int((coords[0] + coords[2]) / 2 * image_width)
                 y = int((coords[1] + coords[3]) / 2 * image_height)
 
@@ -312,7 +335,9 @@ def convert_to_computer_actions(
         elif action_type in ["double_click", "left_double"]:
             start_box = action_inputs.get("start_box")
             if start_box:
-                coords = eval(start_box)
+                coords = parse_box_coordinates(start_box)
+                if coords is None:
+                    continue
                 x = int((coords[0] + coords[2]) / 2 * image_width)
                 y = int((coords[1] + coords[3]) / 2 * image_height)
 
@@ -321,7 +346,9 @@ def convert_to_computer_actions(
         elif action_type in ["right_click", "right_single"]:
             start_box = action_inputs.get("start_box")
             if start_box:
-                coords = eval(start_box)
+                coords = parse_box_coordinates(start_box)
+                if coords is None:
+                    continue
                 x = int((coords[0] + coords[2]) / 2 * image_width)
                 y = int((coords[1] + coords[3]) / 2 * image_height)
 
@@ -345,7 +372,9 @@ def convert_to_computer_actions(
             direction = action_inputs.get("direction", "down")
 
             if start_box:
-                coords = eval(start_box)
+                coords = parse_box_coordinates(start_box)
+                if coords is None:
+                    continue
                 x = int((coords[0] + coords[2]) / 2 * image_width)
                 y = int((coords[1] + coords[3]) / 2 * image_height)
             else:
@@ -359,8 +388,10 @@ def convert_to_computer_actions(
             end_box = action_inputs.get("end_box")
 
             if start_box and end_box:
-                start_coords = eval(start_box)
-                end_coords = eval(end_box)
+                start_coords = parse_box_coordinates(start_box)
+                end_coords = parse_box_coordinates(end_box)
+                if start_coords is None or end_coords is None:
+                    continue
 
                 start_x = int((start_coords[0] + start_coords[2]) / 2 * image_width)
                 start_y = int((start_coords[1] + start_coords[3]) / 2 * image_height)

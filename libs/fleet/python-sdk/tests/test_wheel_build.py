@@ -32,7 +32,7 @@ class WheelBuildTest(unittest.TestCase):
             )
 
             wheels = list(output.glob("*.whl"))
-            self.assertEqual([wheel.name for wheel in wheels], ["cua_train-0.1.0-py3-none-test_platform.whl"])
+            self.assertEqual([wheel.name for wheel in wheels], ["cua_train-0.1.1-py3-none-test_platform.whl"])
             with zipfile.ZipFile(wheels[0]) as archive:
                 names = archive.namelist()
                 self.assertIn("cyclops_sdk/__init__.py", names)

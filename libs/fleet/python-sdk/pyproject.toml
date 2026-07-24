@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cua-train"
-version = "0.1.0"
+version = "0.1.1"
 description = "Python SDK for the CUA training / batch backend API — generated from OpenAPI spec."
 readme = "README.md"
 license = { text = "MIT" }

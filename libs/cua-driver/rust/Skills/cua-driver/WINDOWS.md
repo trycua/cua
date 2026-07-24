@@ -711,6 +711,12 @@ content. Windows has validated trusted background browser clicks when the
 driver runs in an interactive user desktop. A daemon in Session 0 cannot
 provide representative UIA, capture, focus, or browser evidence.
 
+Ref- and coordinate-targeted browser mutations also drive the declared
+session's agent cursor. The adapter converts the live CDP page point into the
+bound window's DPI-aware screen coordinates, pins the overlay above that
+window, and keeps only the selected tab's session cursor visible. This visual
+feedback never moves the physical pointer or changes browser input delivery.
+
 Keep browser chrome and native dialogs on the normal UIA/PX ladder in this
 file. This includes tabs, the address bar, menus, permission prompts,
 downloads, file pickers, and authentication windows. Avoid `Ctrl+L`, tab

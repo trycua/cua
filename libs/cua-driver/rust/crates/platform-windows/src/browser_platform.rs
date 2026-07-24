@@ -1,14 +1,17 @@
 //! Windows identity and endpoint evidence for the first-class browser tools.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::process::Stdio;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use cua_driver_core::browser::existing_profile_setup_descriptor;
 use cua_driver_core::browser::platform::{
-    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, ExistingProfileSetupOutcome,
-    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
+    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
+    BrowserVisualActionKind, ExistingProfileSetupOutcome, ExistingProfileSetupRequest,
+    PrepareAction, PrepareOutcome, PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
@@ -23,10 +26,72 @@ use windows::Win32::System::Threading::{
     PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
-use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GetWindowRect, GA_ROOT};
+
+#[derive(Clone)]
+pub struct WindowsBrowserPlatform {
+    cursor_registry: Arc<cursor_overlay::CursorRegistry>,
+    browser_cursors: Arc<Mutex<BrowserCursorTracker>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BrowserCursorBinding {
+    window_id: u64,
+    cdp_target_id: String,
+}
 
 #[derive(Debug, Default)]
-pub struct WindowsBrowserPlatform;
+struct BrowserCursorTracker {
+    bindings: HashMap<String, BrowserCursorBinding>,
+}
+
+impl BrowserCursorTracker {
+    fn update(
+        &mut self,
+        session: &str,
+        window_id: u64,
+        cdp_target_id: &str,
+        tab_is_active: bool,
+    ) -> Vec<(String, bool)> {
+        self.bindings.insert(
+            session.to_owned(),
+            BrowserCursorBinding {
+                window_id,
+                cdp_target_id: cdp_target_id.to_owned(),
+            },
+        );
+
+        if !tab_is_active {
+            return vec![(session.to_owned(), false)];
+        }
+
+        self.bindings
+            .iter()
+            .filter(|(_, binding)| binding.window_id == window_id)
+            .map(|(key, binding)| {
+                (
+                    key.clone(),
+                    key == session && binding.cdp_target_id == cdp_target_id,
+                )
+            })
+            .collect()
+    }
+}
+
+impl WindowsBrowserPlatform {
+    pub fn new(cursor_registry: Arc<cursor_overlay::CursorRegistry>) -> Self {
+        Self {
+            cursor_registry,
+            browser_cursors: Arc::new(Mutex::new(BrowserCursorTracker::default())),
+        }
+    }
+}
+
+impl Default for WindowsBrowserPlatform {
+    fn default() -> Self {
+        Self::new(Arc::new(cursor_overlay::CursorRegistry::new()))
+    }
+}
 
 fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
     BrowserRefusal::new(code, message)
@@ -145,6 +210,22 @@ fn cdp_comparable_window_bounds(window_id: u64) -> Result<Rect, BrowserRefusal> 
         f64::from(outer.right - outer.left) / scale,
         f64::from(outer.bottom - outer.top) / scale,
     ))
+}
+
+fn overlay_window_and_scale(window_id: u64) -> Option<(u64, f64)> {
+    let hwnd = HWND(window_id as *mut _);
+    if hwnd.0.is_null() {
+        return None;
+    }
+    let root = unsafe { GetAncestor(hwnd, GA_ROOT) };
+    let overlay_window = if root.0.is_null() {
+        window_id
+    } else {
+        root.0 as u64
+    };
+    let dpi = unsafe { GetDpiForWindow(hwnd) };
+    let scale = if dpi == 0 { 1.0 } else { f64::from(dpi) / 96.0 };
+    Some((overlay_window, scale))
 }
 
 fn parse_netstat_loopback_listeners(text: &str, allowed_pids: &[u32]) -> Vec<(u16, u32)> {
@@ -350,6 +431,78 @@ where
 
 #[async_trait]
 impl BrowserPlatform for WindowsBrowserPlatform {
+    async fn visualize_browser_action(&self, action: BrowserVisualAction) {
+        if action.session.is_empty()
+            || action.cdp_target_id.is_empty()
+            || cua_driver_core::session::is_session_ended(&action.session)
+        {
+            return;
+        }
+
+        let visibility_updates = self.browser_cursors.lock().unwrap().update(
+            &action.session,
+            action.window_id,
+            &action.cdp_target_id,
+            action.tab_is_active,
+        );
+        let cursor_enabled = self
+            .cursor_registry
+            .get_or_create(&action.session)
+            .config
+            .enabled;
+        for (key, visible) in visibility_updates {
+            let enabled = if key == action.session {
+                visible && cursor_enabled
+            } else {
+                visible
+                    && self
+                        .cursor_registry
+                        .get(&key)
+                        .is_some_and(|state| state.config.enabled)
+            };
+            crate::overlay::send_command(key, cursor_overlay::OverlayCommand::SetEnabled(enabled));
+        }
+        if !action.tab_is_active || !cursor_enabled {
+            return;
+        }
+        let (Some(screen_x), Some(screen_y)) = (action.screen_x, action.screen_y) else {
+            return;
+        };
+        if !screen_x.is_finite() || !screen_y.is_finite() {
+            return;
+        }
+        let Some((overlay_window, scale)) = overlay_window_and_scale(action.window_id) else {
+            return;
+        };
+        let screen_x = screen_x * scale;
+        let screen_y = screen_y * scale;
+
+        crate::overlay::send_command(
+            action.session.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(overlay_window),
+        );
+        crate::overlay::animate_cursor_to(action.session.clone(), screen_x, screen_y).await;
+        self.cursor_registry
+            .update_position(&action.session, screen_x, screen_y);
+
+        if matches!(
+            action.kind,
+            BrowserVisualActionKind::Click
+                | BrowserVisualActionKind::Type
+                | BrowserVisualActionKind::RightClick
+                | BrowserVisualActionKind::DoubleClick
+                | BrowserVisualActionKind::Drag
+        ) {
+            crate::overlay::send_command(
+                action.session,
+                cursor_overlay::OverlayCommand::ClickPulse {
+                    x: screen_x,
+                    y: screen_y,
+                },
+            );
+        }
+    }
+
     async fn classify_browser(&self, pid: i64) -> Result<BrowserClassification, BrowserRefusal> {
         let pid_u32 = u32::try_from(pid).map_err(|_| {
             refusal(
@@ -784,6 +937,33 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+
+    #[test]
+    fn browser_cursor_tracker_shows_only_the_active_tabs_session_per_window() {
+        let mut tracker = BrowserCursorTracker::default();
+        assert_eq!(
+            tracker.update("tab-a", 101, "target-a", false),
+            vec![("tab-a".to_owned(), false)]
+        );
+        assert_eq!(
+            tracker.update("tab-b", 101, "target-b", false),
+            vec![("tab-b".to_owned(), false)]
+        );
+
+        let mut updates = tracker.update("tab-a", 101, "target-a", true);
+        updates.sort();
+        assert_eq!(
+            updates,
+            vec![("tab-a".to_owned(), true), ("tab-b".to_owned(), false)]
+        );
+
+        let mut updates = tracker.update("tab-b", 101, "target-b", true);
+        updates.sort();
+        assert_eq!(
+            updates,
+            vec![("tab-a".to_owned(), false), ("tab-b".to_owned(), true)]
+        );
+    }
 
     #[test]
     fn netstat_parser_requires_loopback_listening_and_browser_process_tree() {

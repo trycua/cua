@@ -1,16 +1,16 @@
 """Tests for the Keycloak OIDC device flow used by run.cua.ai."""
 
+import builtins
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from importlib.metadata import version
-import builtins
 
 import pytest
 from cua_cli.auth.oidc import (
     DEVICE_GRANT_TYPE,
     FleetAccessTokenProvider,
-    OidcError,
     OidcClient,
+    OidcError,
     get_access_token,
 )
 from cua_cli.auth.store import OAuthCredentials

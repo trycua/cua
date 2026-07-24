@@ -1,2 +1,3 @@
 # Python dependencies for documentation generation
 griffe>=0.40.0
+pdoc==16.0.0

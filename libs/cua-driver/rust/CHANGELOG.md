@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.5](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.4...cua-driver-rs-v0.12.5) (2026-07-24)
+
+
+### Bug Fixes
+
+* **cua-driver:** enforce authorization in embedded SDK ([#2542](https://github.com/trycua/cua/issues/2542)) ([06bda89](https://github.com/trycua/cua/commit/06bda89f078e882a64ecccb78700ff26dc4d210f))
+* **cua-driver:** refuse dropped ConsoleHost typing on Windows ARM64 ([bd5a8d3](https://github.com/trycua/cua/commit/bd5a8d343cec5b9125b144e62d5348bc7814a425))
+
 ## [0.12.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.3...cua-driver-rs-v0.12.4) (2026-07-24)
 
 

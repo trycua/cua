@@ -3,12 +3,15 @@ title: "Process model"
 description: "How Cua Driver maps one typed surface onto same-process SDK and daemon-backed execution."
 ---
 
-Cua Driver has two execution families around one typed driver surface: list
+Cua Driver has three local execution families around one typed driver surface: list
 windows, read accessibility, capture the screen, click, type, record,
 configure, and report state.
 
 - `CuaDriver.create()` runs the Rust driver in the importing Python,
   TypeScript, or Rust process. It requires no daemon, executable, or IPC.
+- `CuaDriver.create_private_worker()` /
+  `CuaDriver.createPrivateWorker()` directly supervises one child runtime over
+  inherited pipes. The child has no listener, discovery, or reconnect path.
 - `cua-driver serve` runs the same SDK contract in a long-lived daemon. MCP
   stdio, one-shot CLI calls, and `CuaDriver.connect()` send requests to it.
 
@@ -18,14 +21,17 @@ parallel desktop implementation. See
 
 ## Daemon-backed process roles
 
-The MCP stdio proxy is *client-owned*. The parent process starts `cua-driver mcp`, keeps stdin and stdout connected, and sends MCP tool calls over that transport. The proxy forwards every call to the daemon.
+The MCP stdio process is *client-owned*. The parent starts `cua-driver mcp`,
+keeps stdin and stdout connected, and sends MCP tool calls over that transport.
+On Windows and Linux it owns the runtime directly unless `--socket` is
+specified. On macOS it proxies to the permission-owning app daemon.
 
 The daemon shape is *machine-owned*. A single `cua-driver serve` process listens on a local IPC endpoint, such as a Unix socket or named pipe, and keeps driver state in memory while it lives.
 
 The one-shot CLI adapter is *call-owned*. `cua-driver call <tool>` connects to the daemon, prints one result, and exits. If the daemon is unavailable, the command fails instead of executing the tool in the CLI process.
 
-These are transport roles around a daemon-owned instance of the same typed
-runtime that applications can create in process.
+These are transport roles around the same typed runtime that applications can
+create in process or in a directly supervised private worker.
 
 ## Why a daemon proxy exists
 

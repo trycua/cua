@@ -5,8 +5,15 @@
 //! opaque handles, caller-visible ownership, and status codes that a future
 //! non-Rust native core can reproduce without implementing UniFFI internals.
 
-use crate::runtime::{DriverRuntime, RuntimeOptions};
+use crate::runtime::{DriverRuntime, RuntimeCreateError, RuntimeOptions, RuntimeSession};
 use crate::{DriverError, DriverMetadata};
+use cua_driver_core::{
+    authorization::{
+        PermissionMode, DANGEROUS_BYPASS_ENV, DISABLE_UNRESTRICTED_ENV, PERMISSION_MODE_ENV,
+    },
+    session_authorization::{DelegatedSessionRequest, SessionModeCeiling},
+    session_manifest::{load_manifest, SESSION_POLICY_APPROVED_ENV, SESSION_POLICY_FILE_ENV},
+};
 use serde::Deserialize;
 use serde_json::Value;
 use std::ffi::c_void;
@@ -17,10 +24,11 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex, OnceLock,
 };
+use std::time::Duration;
 use tokio::sync::{oneshot, Notify};
 
 pub const CUA_DRIVER_ABI_MAJOR: u16 = 1;
-pub const CUA_DRIVER_ABI_MINOR: u16 = 0;
+pub const CUA_DRIVER_ABI_MINOR: u16 = 1;
 pub const CUA_DRIVER_ABI_PATCH: u16 = 0;
 
 #[repr(C)]
@@ -46,6 +54,7 @@ pub enum CuaDriverStatus {
     Cancelled = 5,
     Internal = 6,
     Panic = 7,
+    RuntimeConflict = 8,
 }
 
 #[repr(C)]
@@ -85,6 +94,12 @@ impl CuaDriverBuffer {
 /// Opaque driver runtime handle.
 pub struct CuaDriverHandle {
     runtime: Arc<DriverRuntime>,
+}
+
+/// Opaque session handle whose actions are already bound to one immutable
+/// authorization context.
+pub struct CuaDriverSessionHandle {
+    session: Arc<RuntimeSession>,
 }
 
 struct OperationState {
@@ -152,6 +167,154 @@ impl AbiFailure {
 #[serde(default, deny_unknown_fields)]
 struct AbiDriverOptions {
     claude_code_compatibility: bool,
+    authorization: Option<AbiRuntimeAuthorizationOptions>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AbiRuntimeAuthorizationOptions {
+    allowed_modes: Vec<PermissionMode>,
+    compatibility_mode: PermissionMode,
+    compatibility_bounded_manifest_path: Option<String>,
+    unrestricted_acknowledged: bool,
+    max_session_ttl_seconds: u64,
+    max_idle_ttl_seconds: u64,
+}
+
+fn validate_explicit_authorization_sources(
+    authorization: &AbiRuntimeAuthorizationOptions,
+) -> Result<(), AbiFailure> {
+    if std::env::var_os(PERMISSION_MODE_ENV).is_some()
+        || std::env::var_os(DANGEROUS_BYPASS_ENV).is_some()
+    {
+        let compatibility_mode =
+            cua_driver_core::authorization::configured_permission_mode().map_err(|error| {
+                AbiFailure::new(
+                    CuaDriverStatus::InvalidArgument,
+                    format!(
+                        "explicit runtime authorization conflicts with invalid compatibility environment: {error}"
+                    ),
+                )
+            })?;
+        if compatibility_mode != authorization.compatibility_mode {
+            return Err(AbiFailure::new(
+                CuaDriverStatus::InvalidArgument,
+                format!(
+                    "explicit compatibility mode '{}' conflicts with trusted environment mode '{}'",
+                    authorization.compatibility_mode.as_str(),
+                    compatibility_mode.as_str(),
+                ),
+            ));
+        }
+    }
+
+    if authorization
+        .allowed_modes
+        .contains(&PermissionMode::Unrestricted)
+        && environment_flag(DISABLE_UNRESTRICTED_ENV)
+    {
+        return Err(AbiFailure::new(
+            CuaDriverStatus::InvalidArgument,
+            "explicit runtime ceiling conflicts with managed configuration disabling unrestricted mode",
+        ));
+    }
+
+    let environment_manifest =
+        std::env::var_os(SESSION_POLICY_FILE_ENV).map(std::path::PathBuf::from);
+    if let Some(environment_manifest) = environment_manifest {
+        let Some(explicit_manifest) = authorization
+            .compatibility_bounded_manifest_path
+            .as_deref()
+            .map(std::path::Path::new)
+        else {
+            return Err(AbiFailure::new(
+                CuaDriverStatus::InvalidArgument,
+                "explicit runtime authorization conflicts with a compatibility session policy environment value",
+            ));
+        };
+        let environment_manifest =
+            std::fs::canonicalize(&environment_manifest).map_err(|error| {
+                AbiFailure::new(
+                    CuaDriverStatus::InvalidArgument,
+                    format!(
+                        "canonicalize compatibility session policy {}: {error}",
+                        environment_manifest.display()
+                    ),
+                )
+            })?;
+        let explicit_manifest = std::fs::canonicalize(explicit_manifest).map_err(|error| {
+            AbiFailure::new(
+                CuaDriverStatus::InvalidArgument,
+                format!(
+                    "canonicalize explicit compatibility session policy {}: {error}",
+                    explicit_manifest.display()
+                ),
+            )
+        })?;
+        if environment_manifest != explicit_manifest {
+            return Err(AbiFailure::new(
+                CuaDriverStatus::InvalidArgument,
+                "explicit compatibility session policy conflicts with the trusted environment path",
+            ));
+        }
+    } else if environment_flag(SESSION_POLICY_APPROVED_ENV)
+        && authorization.compatibility_bounded_manifest_path.is_none()
+    {
+        return Err(AbiFailure::new(
+            CuaDriverStatus::InvalidArgument,
+            "explicit runtime authorization conflicts with a compatibility session-policy approval",
+        ));
+    }
+    Ok(())
+}
+
+fn runtime_options_from_abi(options: AbiDriverOptions) -> Result<RuntimeOptions, AbiFailure> {
+    match options.authorization {
+        Some(authorization) => {
+            validate_explicit_authorization_sources(&authorization)?;
+            let ceiling = SessionModeCeiling::for_trusted_sessions(
+                authorization.allowed_modes.clone(),
+                authorization.unrestricted_acknowledged,
+                Duration::from_secs(authorization.max_session_ttl_seconds),
+                Duration::from_secs(authorization.max_idle_ttl_seconds),
+            )
+            .map_err(|error| AbiFailure::new(CuaDriverStatus::InvalidArgument, error))?;
+            let manifest = authorization
+                .compatibility_bounded_manifest_path
+                .as_deref()
+                .map(std::path::Path::new)
+                .map(load_manifest)
+                .transpose()
+                .map_err(|error| AbiFailure::new(CuaDriverStatus::InvalidArgument, error))?
+                .map(Arc::new);
+            Ok(RuntimeOptions::embedded_with_ceiling(
+                options.claude_code_compatibility,
+                ceiling,
+                authorization.compatibility_mode,
+                manifest,
+            ))
+        }
+        None => Ok(RuntimeOptions::embedded(options.claude_code_compatibility)),
+    }
+}
+
+fn environment_flag(name: &str) -> bool {
+    std::env::var(name).is_ok_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AbiTrustedSessionOptions {
+    public_session: String,
+    mode: PermissionMode,
+    ttl_seconds: u64,
+    idle_ttl_seconds: u64,
+    bounded_manifest_path: Option<String>,
 }
 
 fn with_ffi_guard(
@@ -207,6 +370,17 @@ unsafe fn required_handle<'a>(
         AbiFailure::new(
             CuaDriverStatus::NullPointer,
             "driver handle must not be null",
+        )
+    })
+}
+
+unsafe fn required_session_handle<'a>(
+    handle: *mut CuaDriverSessionHandle,
+) -> Result<&'a CuaDriverSessionHandle, AbiFailure> {
+    handle.as_ref().ok_or_else(|| {
+        AbiFailure::new(
+            CuaDriverStatus::NullPointer,
+            "session handle must not be null",
         )
     })
 }
@@ -347,8 +521,9 @@ pub unsafe extern "C" fn cua_driver_buffer_free_v1(buffer: *mut CuaDriverBuffer)
 }
 
 #[no_mangle]
-/// Create an in-process driver. `options_json` is empty or a UTF-8 JSON object;
-/// the current option is `{"claude_code_compatibility": boolean}`.
+/// Create an in-process driver. `options_json` is empty or a UTF-8 JSON object.
+/// It accepts `claude_code_compatibility` and an optional immutable
+/// `authorization` ceiling. Unknown fields fail closed.
 pub unsafe extern "C" fn cua_driver_create_v1(
     options_json: *const u8,
     options_len: usize,
@@ -371,8 +546,8 @@ pub unsafe extern "C" fn cua_driver_create_v1(
                 )
             })?
         };
-        let runtime =
-            DriverRuntime::create(RuntimeOptions::embedded(options.claude_code_compatibility));
+        let runtime_options = runtime_options_from_abi(options)?;
+        let runtime = DriverRuntime::create(runtime_options).map_err(runtime_create_failure)?;
         *out_handle = Box::into_raw(Box::new(CuaDriverHandle { runtime }));
         Ok(())
     })
@@ -539,6 +714,168 @@ pub unsafe extern "C" fn cua_driver_invoke_v1(
 }
 
 #[no_mangle]
+/// Create a trusted, immutable session binding below this runtime's ceiling.
+///
+/// This is a host API, not an agent tool. The returned handle carries its
+/// authority in memory and cannot be reconstructed from a public session ID.
+pub unsafe extern "C" fn cua_driver_session_create_v1(
+    handle: *mut CuaDriverHandle,
+    options_json: *const u8,
+    options_len: usize,
+    out_session: *mut *mut CuaDriverSessionHandle,
+    out_error: *mut CuaDriverBuffer,
+) -> CuaDriverStatus {
+    with_ffi_guard(out_error, || {
+        let driver = required_handle(handle)?;
+        let out_session = out_session.as_mut().ok_or_else(|| {
+            AbiFailure::new(CuaDriverStatus::NullPointer, "out_session must not be null")
+        })?;
+        *out_session = ptr::null_mut();
+        let options: AbiTrustedSessionOptions =
+            serde_json::from_slice(input_bytes(options_json, options_len)?).map_err(|error| {
+                AbiFailure::new(
+                    CuaDriverStatus::InvalidArgument,
+                    format!("invalid trusted session options JSON: {error}"),
+                )
+            })?;
+        if options.public_session.trim().is_empty() {
+            return Err(AbiFailure::new(
+                CuaDriverStatus::InvalidArgument,
+                "public_session must not be empty",
+            ));
+        }
+        let bounded_manifest = options
+            .bounded_manifest_path
+            .as_deref()
+            .map(|path| {
+                cua_driver_core::session_manifest::load_manifest(std::path::Path::new(path))
+                    .map(Arc::new)
+                    .map_err(|error| {
+                        AbiFailure::new(
+                            CuaDriverStatus::InvalidArgument,
+                            format!("invalid bounded session manifest: {error}"),
+                        )
+                    })
+            })
+            .transpose()?;
+        let request = DelegatedSessionRequest {
+            public_session: options.public_session,
+            transport_session: format!("direct-{}", uuid::Uuid::new_v4()),
+            mode: options.mode,
+            ttl: Duration::from_secs(options.ttl_seconds),
+            idle_ttl: Duration::from_secs(options.idle_ttl_seconds),
+            bounded_manifest,
+        };
+        let session = driver
+            .runtime
+            .create_trusted_session(request)
+            .map_err(|error| {
+                let status = if matches!(
+                    error,
+                    cua_driver_core::session_authorization::SessionAuthorizationError::RuntimeUnavailable
+                ) {
+                    CuaDriverStatus::Shutdown
+                } else {
+                    CuaDriverStatus::InvalidArgument
+                };
+                AbiFailure::new(status, error.to_string())
+            })?;
+        *out_session = Box::into_raw(Box::new(CuaDriverSessionHandle { session }));
+        Ok(())
+    })
+}
+
+#[no_mangle]
+/// Destroy a trusted session handle and revoke its connection-bound grants.
+pub unsafe extern "C" fn cua_driver_session_destroy_v1(handle: *mut *mut CuaDriverSessionHandle) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        let Some(handle) = handle.as_mut() else {
+            return;
+        };
+        let owned = std::mem::replace(handle, ptr::null_mut());
+        if !owned.is_null() {
+            drop(Box::from_raw(owned));
+        }
+    }));
+}
+
+#[no_mangle]
+/// Invoke through an already-bound trusted session context.
+pub unsafe extern "C" fn cua_driver_session_invoke_v1(
+    handle: *mut CuaDriverSessionHandle,
+    name: *const u8,
+    name_len: usize,
+    arguments_json: *const u8,
+    arguments_len: usize,
+    callback: Option<CuaDriverCompletionV1>,
+    context: *mut c_void,
+    out_operation: *mut *mut CuaDriverOperation,
+    out_error: *mut CuaDriverBuffer,
+) -> CuaDriverStatus {
+    with_ffi_guard(out_error, || {
+        let session = required_session_handle(handle)?;
+        let callback = callback.ok_or_else(|| {
+            AbiFailure::new(
+                CuaDriverStatus::NullPointer,
+                "completion callback must not be null",
+            )
+        })?;
+        let out_operation = out_operation.as_mut().ok_or_else(|| {
+            AbiFailure::new(
+                CuaDriverStatus::NullPointer,
+                "out_operation must not be null",
+            )
+        })?;
+        *out_operation = ptr::null_mut();
+        let name = std::str::from_utf8(input_bytes(name, name_len)?)
+            .map_err(|error| {
+                AbiFailure::new(
+                    CuaDriverStatus::InvalidArgument,
+                    format!("tool name must be UTF-8: {error}"),
+                )
+            })?
+            .to_owned();
+        if name.is_empty() {
+            return Err(AbiFailure::new(
+                CuaDriverStatus::InvalidArgument,
+                "tool name must not be empty",
+            ));
+        }
+        let arguments: Value = serde_json::from_slice(input_bytes(arguments_json, arguments_len)?)
+            .map_err(|error| {
+                AbiFailure::new(
+                    CuaDriverStatus::InvalidArgument,
+                    format!("invalid tool arguments JSON: {error}"),
+                )
+            })?;
+        if !arguments.is_object() {
+            return Err(AbiFailure::new(
+                CuaDriverStatus::InvalidArgument,
+                "tool arguments must be a JSON object",
+            ));
+        }
+        let session = session.session.clone();
+        let executor = abi_executor()?.handle().clone();
+        *out_operation = spawn_completion(
+            executor,
+            async move {
+                let result = session.invoke(&name, arguments).await.ok_or_else(|| {
+                    AbiFailure::new(
+                        CuaDriverStatus::Shutdown,
+                        "the owning Cua Driver runtime has been shut down",
+                    )
+                })?;
+                serde_json::to_string(&result)
+                    .map_err(|error| AbiFailure::new(CuaDriverStatus::Internal, error.to_string()))
+            },
+            callback,
+            context,
+        )?;
+        Ok(())
+    })
+}
+
+#[no_mangle]
 /// Stop admission, drain admitted calls, and finalize SDK-owned resources.
 pub unsafe extern "C" fn cua_driver_shutdown_v1(
     handle: *mut CuaDriverHandle,
@@ -645,6 +982,11 @@ mod ffi {
         _private: [u8; 0],
     }
 
+    #[repr(C)]
+    pub(super) struct Session {
+        _private: [u8; 0],
+    }
+
     unsafe extern "C" {
         #[link_name = "cua_driver_buffer_free_v1"]
         pub(super) fn buffer_free(buffer: *mut CuaDriverBuffer);
@@ -678,6 +1020,28 @@ mod ffi {
         #[link_name = "cua_driver_invoke_v1"]
         pub(super) fn invoke(
             handle: *mut Handle,
+            name: *const u8,
+            name_len: usize,
+            arguments_json: *const u8,
+            arguments_len: usize,
+            callback: Option<CuaDriverCompletionV1>,
+            context: *mut c_void,
+            out_operation: *mut *mut Operation,
+            out_error: *mut CuaDriverBuffer,
+        ) -> CuaDriverStatus;
+        #[link_name = "cua_driver_session_create_v1"]
+        pub(super) fn session_create(
+            handle: *mut Handle,
+            options_json: *const u8,
+            options_len: usize,
+            out_session: *mut *mut Session,
+            out_error: *mut CuaDriverBuffer,
+        ) -> CuaDriverStatus;
+        #[link_name = "cua_driver_session_destroy_v1"]
+        pub(super) fn session_destroy(handle: *mut *mut Session);
+        #[link_name = "cua_driver_session_invoke_v1"]
+        pub(super) fn session_invoke(
+            handle: *mut Session,
             name: *const u8,
             name_len: usize,
             arguments_json: *const u8,
@@ -745,6 +1109,10 @@ pub(crate) struct NativeAbiDriver {
     handle: Mutex<*mut ffi::Handle>,
 }
 
+pub(crate) struct NativeAbiSession {
+    handle: Mutex<*mut ffi::Session>,
+}
+
 // The pointer is an owned opaque handle. Operations only read it while `self`
 // is borrowed, and destruction requires exclusive `Drop` access.
 unsafe impl Send for NativeAbiDriver {}
@@ -752,10 +1120,13 @@ unsafe impl Sync for NativeAbiDriver {}
 
 impl NativeAbiDriver {
     pub(crate) fn create(claude_code_compatibility: bool) -> Result<Self, DriverError> {
-        let options = serde_json::json!({
+        Self::create_configured(serde_json::json!({
             "claude_code_compatibility": claude_code_compatibility,
-        })
-        .to_string();
+        }))
+    }
+
+    pub(crate) fn create_configured(options: Value) -> Result<Self, DriverError> {
+        let options = options.to_string();
         let mut handle = ptr::null_mut();
         let mut error = CuaDriverBuffer::empty();
         let status =
@@ -766,12 +1137,32 @@ impl NativeAbiDriver {
         })
     }
 
-    pub(crate) fn create_for_host(options: RuntimeOptions) -> Self {
-        let runtime = DriverRuntime::create(options);
+    pub(crate) fn create_for_host(options: RuntimeOptions) -> Result<Self, DriverError> {
+        let runtime = DriverRuntime::create(options).map_err(map_runtime_create_error)?;
         let handle = Box::into_raw(Box::new(CuaDriverHandle { runtime })).cast::<ffi::Handle>();
-        Self {
+        Ok(Self {
             handle: Mutex::new(handle),
-        }
+        })
+    }
+
+    pub(crate) fn create_configured_for_host(
+        options: Value,
+        cursor: cursor_overlay::CursorConfig,
+        prepare_desktop_environment: bool,
+        register_host_tools: Option<fn(&mut cua_driver_core::tool::ToolRegistry)>,
+    ) -> Result<Self, DriverError> {
+        let options: AbiDriverOptions =
+            serde_json::from_value(options).map_err(|error| DriverError::Configuration {
+                reason: format!("invalid configured host options: {error}"),
+            })?;
+        let mut runtime_options =
+            runtime_options_from_abi(options).map_err(|error| DriverError::Configuration {
+                reason: error.message,
+            })?;
+        runtime_options.cursor = cursor;
+        runtime_options.prepare_desktop_environment = prepare_desktop_environment;
+        runtime_options.register_host_tools = register_host_tools;
+        Self::create_for_host(runtime_options)
     }
 
     fn raw_handle(&self) -> *mut ffi::Handle {
@@ -800,6 +1191,25 @@ impl NativeAbiDriver {
         })
     }
 
+    pub(crate) fn create_session(&self, options: Value) -> Result<NativeAbiSession, DriverError> {
+        let options = options.to_string();
+        let mut handle = ptr::null_mut();
+        let mut error = CuaDriverBuffer::empty();
+        let status = unsafe {
+            ffi::session_create(
+                self.raw_handle(),
+                options.as_ptr(),
+                options.len(),
+                &mut handle,
+                &mut error,
+            )
+        };
+        status_result(status, &mut error, "create trusted session")?;
+        Ok(NativeAbiSession {
+            handle: Mutex::new(handle),
+        })
+    }
+
     fn read_json(
         &self,
         function: unsafe extern "C" fn(
@@ -817,6 +1227,9 @@ impl NativeAbiDriver {
     }
 
     pub(crate) async fn invoke(&self, name: &str, arguments: Value) -> Result<Value, DriverError> {
+        if self.raw_handle().is_null() {
+            return Err(DriverError::Shutdown);
+        }
         let arguments = serde_json::to_vec(&arguments).map_err(|error| DriverError::Protocol {
             reason: format!("serialize {name} ABI arguments: {error}"),
         })?;
@@ -918,6 +1331,81 @@ impl Drop for NativeAbiDriver {
     }
 }
 
+unsafe impl Send for NativeAbiSession {}
+unsafe impl Sync for NativeAbiSession {}
+
+impl NativeAbiSession {
+    pub(crate) fn close(&self) {
+        let mut handle = self.handle.lock().unwrap();
+        unsafe { ffi::session_destroy(&mut *handle) };
+    }
+
+    pub(crate) async fn invoke(&self, name: &str, arguments: Value) -> Result<Value, DriverError> {
+        let arguments = serde_json::to_vec(&arguments).map_err(|error| DriverError::Protocol {
+            reason: format!("serialize {name} session ABI arguments: {error}"),
+        })?;
+        let (receiver, guard) = {
+            // Keep the session-handle lock through the synchronous FFI call.
+            // `close()` is exported on the generated-language object and may
+            // run concurrently from another thread/finalizer; reading the
+            // pointer and then dropping the lock would let close free it
+            // before `session_invoke` has retained the underlying session.
+            let handle = self.handle.lock().unwrap();
+            if handle.is_null() {
+                return Err(DriverError::Shutdown);
+            }
+            let (sender, receiver) = oneshot::channel();
+            let context = Box::into_raw(Box::new(CallbackContext { sender })).cast::<c_void>();
+            let mut operation = ptr::null_mut();
+            let mut error = CuaDriverBuffer::empty();
+            let status = unsafe {
+                ffi::session_invoke(
+                    *handle,
+                    name.as_ptr(),
+                    name.len(),
+                    arguments.as_ptr(),
+                    arguments.len(),
+                    Some(rust_completion),
+                    context,
+                    &mut operation,
+                    &mut error,
+                )
+            };
+            if status != CuaDriverStatus::Ok {
+                unsafe { drop(Box::from_raw(context.cast::<CallbackContext>())) };
+                status_result(status, &mut error, name)?;
+                return Err(DriverError::Protocol {
+                    reason: format!("{name} session ABI invocation failed without an error"),
+                });
+            }
+            (
+                receiver,
+                OperationGuard {
+                    operation,
+                    completed: false,
+                },
+            )
+        };
+        let completed = receiver.await.map_err(|_| DriverError::Protocol {
+            reason: format!("{name} session ABI completion callback was dropped"),
+        })?;
+        guard.complete();
+        if completed.status != CuaDriverStatus::Ok {
+            return Err(map_status(completed.status, completed.error, name));
+        }
+        serde_json::from_str(&completed.result).map_err(|error| DriverError::Protocol {
+            reason: format!("{name} returned invalid session JSON: {error}"),
+        })
+    }
+}
+
+impl Drop for NativeAbiSession {
+    fn drop(&mut self) {
+        let handle = self.handle.get_mut().unwrap();
+        unsafe { ffi::session_destroy(handle) };
+    }
+}
+
 fn status_result(
     status: CuaDriverStatus,
     error: &mut CuaDriverBuffer,
@@ -934,12 +1422,32 @@ fn status_result(
 fn map_status(status: CuaDriverStatus, message: String, operation: &str) -> DriverError {
     match status {
         CuaDriverStatus::Shutdown => DriverError::Shutdown,
+        CuaDriverStatus::RuntimeConflict => DriverError::RuntimeAlreadyExists,
         CuaDriverStatus::InvalidArgument | CuaDriverStatus::NullPointer => {
             DriverError::Configuration { reason: message }
         }
         _ => DriverError::Protocol {
             reason: format!("{operation}: {message}"),
         },
+    }
+}
+
+fn runtime_create_failure(error: RuntimeCreateError) -> AbiFailure {
+    match error {
+        RuntimeCreateError::AlreadyExists => AbiFailure::new(
+            CuaDriverStatus::RuntimeConflict,
+            "runtime_already_exists: one direct Cua Driver runtime is already active in this process",
+        ),
+        RuntimeCreateError::Authorization(reason) => {
+            AbiFailure::new(CuaDriverStatus::InvalidArgument, reason)
+        }
+    }
+}
+
+fn map_runtime_create_error(error: RuntimeCreateError) -> DriverError {
+    match error {
+        RuntimeCreateError::AlreadyExists => DriverError::RuntimeAlreadyExists,
+        RuntimeCreateError::Authorization(reason) => DriverError::Configuration { reason },
     }
 }
 
@@ -953,7 +1461,10 @@ mod tests {
         assert_eq!(std::mem::size_of::<CuaDriverAbiVersion>(), 12);
         assert_eq!(CuaDriverStatus::Ok as i32, 0);
         assert_eq!(CuaDriverStatus::Panic as i32, 7);
+        assert_eq!(CuaDriverStatus::RuntimeConflict as i32, 8);
         assert!(cua_driver_abi_is_compatible_v1(1, 0));
+        assert!(cua_driver_abi_is_compatible_v1(1, 1));
+        assert!(!cua_driver_abi_is_compatible_v1(1, 2));
         assert!(!cua_driver_abi_is_compatible_v1(2, 0));
     }
 
@@ -963,7 +1474,7 @@ mod tests {
         assert!(header.contains("Do not edit"));
         for declaration in [
             "#define CUA_DRIVER_ABI_MAJOR 1",
-            "#define CUA_DRIVER_ABI_MINOR 0",
+            "#define CUA_DRIVER_ABI_MINOR 1",
             "#define CUA_DRIVER_ABI_PATCH 0",
             "CUA_DRIVER_STATUS_OK = 0",
             "CUA_DRIVER_STATUS_INVALID_ARGUMENT = 1",
@@ -973,6 +1484,7 @@ mod tests {
             "CUA_DRIVER_STATUS_CANCELLED = 5",
             "CUA_DRIVER_STATUS_INTERNAL = 6",
             "CUA_DRIVER_STATUS_PANIC = 7",
+            "CUA_DRIVER_STATUS_RUNTIME_CONFLICT = 8",
             "cua_driver_abi_version_v1",
             "cua_driver_abi_is_compatible_v1",
             "cua_driver_buffer_free_v1",
@@ -982,6 +1494,9 @@ mod tests {
             "cua_driver_metadata_json_v1",
             "cua_driver_list_tools_json_v1",
             "cua_driver_invoke_v1",
+            "cua_driver_session_create_v1",
+            "cua_driver_session_destroy_v1",
+            "cua_driver_session_invoke_v1",
             "cua_driver_shutdown_v1",
             "cua_driver_operation_cancel_v1",
             "cua_driver_operation_release_v1",
@@ -1003,6 +1518,7 @@ mod tests {
 
     #[test]
     fn owned_buffers_and_handles_are_idempotently_released() {
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
         let mut buffer = CuaDriverBuffer::from_string("owned".into());
         unsafe {
             cua_driver_buffer_free_v1(&mut buffer);

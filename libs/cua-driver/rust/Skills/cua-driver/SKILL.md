@@ -23,6 +23,9 @@ metadata:
       - name: CUA_DRIVER_RS_MCP_HTTP_PORT
         required: false
         description: Optional port for the local MCP HTTP endpoint.
+      - name: CUA_DRIVER_RS_MCP_HTTP_TOKEN
+        required: false
+        description: Required host-generated bearer token when the local MCP HTTP endpoint is enabled.
     homepage: https://cua.ai/docs/cua-driver
 ---
 
@@ -501,8 +504,10 @@ connection have their tool calls **serialized** by the transport — they take
 turns, not run in parallel. That's not a correctness problem (session + window
 isolation means they can't collide), just a throughput one. For genuinely
 parallel agents, give each its **own connection**: separate `cua-driver mcp`
-processes, or point each agent's MCP client at the daemon's HTTP endpoint
-(`CUA_DRIVER_RS_MCP_HTTP_PORT` → `POST http://127.0.0.1:<port>/mcp`). The daemon
+processes, or point each agent's MCP client at the daemon's HTTP endpoint.
+Set `CUA_DRIVER_RS_MCP_HTTP_PORT` and a host-generated
+`CUA_DRIVER_RS_MCP_HTTP_TOKEN` of at least 32 characters, then send
+`Authorization: Bearer <token>` to `POST http://127.0.0.1:<port>/mcp`. The daemon
 serves connections concurrently; per-connection ordering keeps each agent's own
 sequence (e.g. `3 → + → 1 → =`) correct.
 

@@ -837,7 +837,13 @@ pub async fn handle_request(
             Ok(mut call) => {
                 crate::tool_args::sanitize_reserved_args(&mut call.args);
                 if let Err(error) = authorize_tool_call(&call.name, &call.args) {
-                    return Response::error(id, -32603, error.to_string());
+                    return Response::ok(
+                        id,
+                        tool_error_result(
+                            error.to_string(),
+                            serde_json::json!({"code": "permission_denied"}),
+                        ),
+                    );
                 }
 
                 let public_session = call
@@ -878,7 +884,10 @@ pub async fn handle_request(
 
                 match provider.invoke_tool(&call.name, call.args).await {
                     Ok(result) => Response::ok(id, result),
-                    Err(error) => Response::error(id, -32603, error),
+                    Err(error) => Response::ok(
+                        id,
+                        tool_error_result(error, serde_json::json!({"exit_code": 1})),
+                    ),
                 }
             }
         },
@@ -888,6 +897,14 @@ pub async fn handle_request(
             Response::method_not_found(id, other)
         }
     }
+}
+
+fn tool_error_result(message: String, structured: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "content": [{"type": "text", "text": message}],
+        "isError": true,
+        "structuredContent": structured,
+    })
 }
 
 #[cfg(test)]

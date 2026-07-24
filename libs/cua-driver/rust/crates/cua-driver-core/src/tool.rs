@@ -17,6 +17,24 @@ use crate::{
     tool_args::ArgsExt,
 };
 
+tokio::task_local! {
+    /// Authorization inherited by nested registry dispatch such as trajectory
+    /// replay. The value is installed only by a trusted runtime/session action
+    /// surface; caller arguments and public session labels cannot influence it.
+    static DISPATCH_AUTHORIZATION_CONTEXT:
+        Arc<crate::session_authorization::EffectiveAuthorizationContext>;
+}
+
+/// Return the immutable authorization context bound to the current dispatch.
+///
+/// Resource adapters use this instead of consulting process-global
+/// compatibility configuration. The value exists only while the canonical
+/// registry chokepoint is executing a tool, including nested dispatch.
+pub(crate) fn current_dispatch_authorization_context(
+) -> Option<Arc<crate::session_authorization::EffectiveAuthorizationContext>> {
+    DISPATCH_AUTHORIZATION_CONTEXT.try_with(Arc::clone).ok()
+}
+
 pub use cua_driver_contract::{CAPABILITY_VERSION, TOOLS_LIST_SCHEMA_VERSION};
 
 /// Metadata for a single tool.
@@ -401,6 +419,47 @@ impl ToolRegistry {
 
     /// Invoke a tool by name and (if recording is enabled) write its result to disk.
     pub async fn invoke(&self, name: &str, args: Value) -> ToolResult {
+        if let Ok(context) = DISPATCH_AUTHORIZATION_CONTEXT.try_with(Arc::clone) {
+            return self.invoke_authorized(name, args, context.as_ref()).await;
+        }
+        let context = match crate::session_authorization::configured_registry()
+            .and_then(crate::session_authorization::SessionAuthorizationRegistry::legacy_context)
+        {
+            Ok(context) => context,
+            Err(error) => {
+                return permission_denied_result(format!(
+                    "authorization configuration is invalid: {error}"
+                ))
+            }
+        };
+        self.invoke_with_context(name, args, context).await
+    }
+
+    /// Invoke through an immutable context chosen by the trusted runtime host.
+    ///
+    /// The task-local scope deliberately propagates the same authority through
+    /// nested registry calls. Without this, replay or another composite tool
+    /// could accidentally fall back to the process compatibility context.
+    pub async fn invoke_with_context(
+        &self,
+        name: &str,
+        args: Value,
+        context: Arc<crate::session_authorization::EffectiveAuthorizationContext>,
+    ) -> ToolResult {
+        DISPATCH_AUTHORIZATION_CONTEXT
+            .scope(
+                context.clone(),
+                self.invoke_authorized(name, args, context.as_ref()),
+            )
+            .await
+    }
+
+    async fn invoke_authorized(
+        &self,
+        name: &str,
+        args: Value,
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+    ) -> ToolResult {
         // Deprecated alias: `type_text_chars` → `type_text`.  Swift's
         // ToolRegistry.swift keeps the same alias (with stderr warning) for
         // backwards compatibility with hermes-agent builds that still emit
@@ -427,15 +486,10 @@ impl ToolRegistry {
         // Transports may still reject earlier for defense in depth, but those
         // checks must remain side-effect free. Active consent/grant adapters
         // run only downstream of this boundary so a call cannot prompt twice.
-        if let Err(error) = crate::authorization::authorize_tool_call(resolved_name, &args) {
-            let message = error.to_string();
-            return ToolResult::error(message.clone()).with_structured(serde_json::json!({
-                "status": "refused",
-                "refusal": {
-                    "code": "permission_denied",
-                    "message": message,
-                }
-            }));
+        if let Err(error) =
+            crate::authorization::authorize_tool_call_with_context(resolved_name, &args, context)
+        {
+            return permission_denied_result(error.to_string());
         }
 
         // Reject modality violations before reserving a recording turn. A
@@ -540,6 +594,16 @@ impl ToolRegistry {
 
         result
     }
+}
+
+fn permission_denied_result(message: String) -> ToolResult {
+    ToolResult::error(message.clone()).with_structured(serde_json::json!({
+        "status": "refused",
+        "refusal": {
+            "code": "permission_denied",
+            "message": message,
+        }
+    }))
 }
 
 fn is_existing_profile_prepare(tool_name: &str, args: &Value) -> bool {

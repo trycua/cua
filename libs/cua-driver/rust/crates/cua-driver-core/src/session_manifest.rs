@@ -215,7 +215,9 @@ fn load_configured_manifest() -> Result<Option<SessionManifest>, String> {
     load_manifest(Path::new(&path)).map(Some)
 }
 
-pub(crate) fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
+/// Load and validate an immutable bounded-session manifest for a trusted
+/// runtime/session constructor.
+pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
     let bytes = std::fs::read(path)
         .map_err(|error| format!("failed to read session policy {}: {error}", path.display()))?;
     if bytes.is_empty() {

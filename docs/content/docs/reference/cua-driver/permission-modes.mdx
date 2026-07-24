@@ -5,10 +5,12 @@ description: Standard, bounded, and unrestricted startup modes, protected consen
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Cua Driver resolves one process permission mode when a same-process runtime or
-daemon starts. A tool call cannot change the mode. The mode controls when work
-stops for protected human approval; permission policies still decide which
-calls are allowed.
+Cua Driver resolves authorization before a runtime accepts actions. Released
+CLI and SDK calls inherit one compatibility mode, so their behavior is
+unchanged. A trusted application may instead construct an immutable runtime
+ceiling and create session-bound action objects beneath it. A tool call cannot
+change either setting. Permission mode controls when work stops for protected
+human approval; permission policies still decide which calls are allowed.
 
 ## Modes
 
@@ -160,10 +162,10 @@ Launch supervisors must preserve `--permission-mode`, the session-policy path,
 and its explicit approval flag on restart; falling back to default `standard`
 is a fail-closed change, not a continuation of the bounded session.
 
-## Embedded and managed launchers
+## Compatibility and managed launchers
 
-The CLI flag is intentionally convenient, but programmatic launchers retain a
-two-part contract. Set both values on the trusted daemon process:
+The CLI flag is intentionally convenient. Compatibility service launchers
+retain a two-part contract and set both values on the trusted daemon process:
 
 ```sh
 CUA_DRIVER_PERMISSION_MODE=unrestricted \
@@ -171,15 +173,29 @@ CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS=1 \
   cua-driver serve --embedded --socket <private-socket>
 ```
 
-Setting only the mode or only the acknowledgement fails before the daemon
+Setting only the mode or only the acknowledgement fails before the service
 binds. Treat these as trusted-launch configuration, not tool arguments an
 agent can choose at runtime.
 
-One process still has one mode and, in bounded mode, one immutable manifest.
-Shared-daemon per-session mode selection is not yet a supported security
-boundary. Run one daemon per mode unless the host can supply an authenticated
-session/action connection; caller-chosen session IDs are lifecycle labels, not
-credentials.
+The direct SDK adds an explicit constructor for trusted hosts. Its immutable
+ceiling lists the modes the runtime may host, the compatibility mode, maximum
+session and idle lifetimes, and the separate unrestricted acknowledgement.
+The host can then use the top-level trusted-session factory to create a
+`CuaDriverSession` already bound to one effective mode and, for bounded mode,
+one immutable manifest. The returned native object
+carries opaque in-memory authority; its public `session` string remains only a
+lifecycle label. Substituting that label, replaying reserved arguments, using
+an expired or revoked object, or retaining it after runtime shutdown fails
+before platform dispatch.
+
+This mixed-mode capability is available to a trusted direct SDK host and a
+directly supervised private worker. An embedded service can create a
+session-bound action surface only on the original authenticated host
+connection; the authority never becomes a bearer token or reconnect label. A
+standalone shared daemon remains on one compatibility mode because a same-user
+socket by itself does not prove that a particular caller is the trusted
+gateway. The ordinary socket, MCP metadata, environment, and tool schemas
+expose no way to create or select trusted-session authority.
 
 ## Managed controls
 
@@ -193,10 +209,18 @@ then rejects unrestricted startup even when the danger flag is present.
 
 ## Status and revocation
 
-`cua-driver status` reports the process mode, policy hashes, session-manifest
-hash and expiry, active/metadata-only/not-exposed adapter IDs, the complete
-content-free adapter inventory, and protected-provider availability. It does
-not print policy contents or browser data.
+`cua-driver status` reports the compatibility mode, policy hashes,
+session-manifest hash and expiry, active/metadata-only/not-exposed adapter IDs,
+the complete content-free adapter inventory, protected-provider availability,
+the service authorization ceiling, and whether that service supports trusted
+session delegation. Direct SDK hosts inspect the outcome of runtime and
+session construction instead; their opaque session bindings are deliberately
+not serialized into global status. An embedded service with its authenticated
+original-host connection reports `session_mode_delegation_ready: true` and
+`session_mode_binding: authenticated_embedded_host_connection`. A standalone
+service reports `session_mode_delegation_ready: false` with blocker
+`authenticated_action_connection_required`. Status does not print policy
+contents, session labels, connection authority, or browser data.
 
 End one session and every grant it owns:
 

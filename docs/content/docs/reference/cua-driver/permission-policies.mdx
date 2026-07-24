@@ -5,7 +5,7 @@ description: YAML and Rego permission policy schema, environment variable, evalu
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Cua Driver evaluates every daemon tool call against the configured policy stack. The daemon loads policies once at process startup; the MCP proxy may repeat the user-policy check as defense in depth. CLI, MCP, and raw-socket calls share the daemon enforcement point. This page describes the user and managed policy formats. [Permission modes](/reference/cua-driver/permission-modes) control when a permitted call also needs protected approval.
+Cua Driver evaluates every same-process SDK and daemon tool call against the configured policy stack at the native registry boundary. The runtime loads policies once at process startup; transport adapters may repeat an early policy check as defense in depth. SDK, CLI, MCP, and raw-socket calls cannot bypass the native enforcement point. This page describes the user and managed policy formats. [Permission modes](/reference/cua-driver/permission-modes) control when a permitted call also needs protected approval.
 
 ---
 

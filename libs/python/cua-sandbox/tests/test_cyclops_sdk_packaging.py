@@ -16,7 +16,7 @@ class CyclopsSdkPackagingTests(unittest.TestCase):
         with PYPROJECT_PATH.open("rb") as pyproject_file:
             project = tomllib.load(pyproject_file)
 
-        self.assertIn("cua-train==0.1.0", project["project"]["dependencies"])
+        self.assertIn("cua-train==0.1.1", project["project"]["dependencies"])
         self.assertEqual(project["tool"]["uv"]["sources"]["cua-train"], {"index": "cua-wheels"})
         self.assertEqual(
             project["tool"]["uv"]["index"][0],

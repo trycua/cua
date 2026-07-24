@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.13.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.6...cua-driver-rs-v0.13.0) (2026-07-24)
+
+
+### Features
+
+* **cua-driver:** make SDK-owned runtime the default ([#2545](https://github.com/trycua/cua/issues/2545)) ([a62e821](https://github.com/trycua/cua/commit/a62e8219255f15f6ed747c03337198d6fe32912f))
+
+
+### Bug Fixes
+
+* **cua-driver:** accept letter keys on Windows ([#2551](https://github.com/trycua/cua/issues/2551)) ([506a4ed](https://github.com/trycua/cua/commit/506a4ede22dfe791b3630640bc0c24e0f03c6d96))
+
 ## [0.12.6](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.5...cua-driver-rs-v0.12.6) (2026-07-24)
 
 

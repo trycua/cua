@@ -3002,6 +3002,15 @@ fn cli_docs_json() -> serde_json::Value {
                 ]
             },
             {
+                "name": "manifest",
+                "abstract": "Emit a stable JSON description of the CLI surface.",
+                "discussion": "Consumers can use this instead of hardcoding launch arguments such as the MCP invocation.",
+                "arguments": no_args,
+                "options": no_options,
+                "flags": [{"name":"pretty","short_name":"p","help":"Pretty-print JSON.","default_value":false}],
+                "subcommands": no_subcommands
+            },
+            {
                 "name": "dump-docs",
                 "abstract": "Output machine-readable CLI and MCP documentation JSON.",
                 "discussion": "Used by the docs generator to keep reference pages in sync with the live binary.",

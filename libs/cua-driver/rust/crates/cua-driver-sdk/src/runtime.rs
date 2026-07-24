@@ -300,8 +300,15 @@ impl Drop for DriverRuntime {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Release);
         self.authorization_registry.revoke_all();
-        cua_driver_core::session::revoke_all_sessions();
-        let _ = self.registry.recording.stop_owner(None);
+        // Explicit `shutdown()` drains work, finalizes recordings, and clears
+        // compatibility sessions. Drop can happen later than shutdown in
+        // garbage-collected bindings, after a replacement runtime has already
+        // acquired process ownership. It must therefore stay runtime-scoped
+        // and non-blocking rather than touching process-global session state.
+        let recording = self.registry.recording.clone();
+        std::thread::spawn(move || {
+            let _ = recording.stop_owner(None);
+        });
         self.ownership.release();
     }
 }

@@ -452,4 +452,39 @@ mod tests {
         assert_eq!(response["result"]["tools"], expected["tools"]);
         sdk.shutdown().await.expect("SDK shutdown");
     }
+
+    #[tokio::test]
+    async fn invalid_bearer_receives_401_before_json_rpc_dispatch() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
+        let sdk = crate::sdk_adapter::SdkAdapter::load(crate::build_driver_without_cursor())
+            .await
+            .expect("SDK adapter");
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server_sdk = sdk.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            serve_conn(
+                stream,
+                server_sdk,
+                Arc::<str>::from("0123456789abcdef0123456789abcdef"),
+            )
+            .await
+            .unwrap();
+        });
+        let mut client = TcpStream::connect(address).await.unwrap();
+        client
+            .write_all(
+                b"POST /mcp HTTP/1.1\r\nAuthorization: Bearer wrong\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+            )
+            .await
+            .unwrap();
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+        let response = String::from_utf8(response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 401 Unauthorized\r\n"));
+        assert!(response.contains("Authentication required"));
+        server.await.unwrap();
+        sdk.shutdown().await.expect("SDK shutdown");
+    }
 }

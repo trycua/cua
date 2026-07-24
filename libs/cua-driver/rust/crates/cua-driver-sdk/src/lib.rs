@@ -22,10 +22,17 @@ use thiserror::Error;
 
 mod abi;
 mod embedded;
+pub mod remote;
 mod runtime;
+mod service_session;
+#[doc(hidden)]
+pub mod worker;
 use abi::{NativeAbiDriver, NativeAbiSession};
 pub use embedded::*;
+use remote::{DriverEnvelopeChannel, RemoteBoundSession, RemoteDriverClient};
 use runtime::RuntimeOptions;
+use service_session::ServiceSessionClient;
+use worker::{ActionCompletion, PrivateWorkerClient};
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ImageContent {
@@ -198,6 +205,15 @@ pub enum DriverError {
         "runtime_already_exists: one direct Cua Driver runtime is already active in this process"
     )]
     RuntimeAlreadyExists,
+    #[error("private worker error: {reason}")]
+    Worker { reason: String },
+    #[error("remote Driver error: {reason}")]
+    Remote { reason: String },
+    #[error("driver action was interrupted ({completion:?}): {reason}")]
+    ActionInterrupted {
+        completion: ActionCompletion,
+        reason: String,
+    },
 }
 
 #[derive(uniffi::Object)]
@@ -209,6 +225,8 @@ pub struct CuaDriver {
 enum DriverBackend {
     Embedded(Arc<NativeAbiDriver>),
     Daemon { socket_path: String },
+    PrivateWorker(Arc<PrivateWorkerClient>),
+    Remote(Arc<RemoteDriverClient>),
 }
 
 /// Process topology used by this SDK object.
@@ -216,6 +234,8 @@ enum DriverBackend {
 pub enum DriverExecutionMode {
     Embedded,
     Daemon,
+    PrivateWorker,
+    Remote,
 }
 
 /// Options for a same-process Cua Driver SDK runtime.
@@ -227,7 +247,8 @@ pub struct DriverOptions {
 }
 
 /// Permission mode chosen by trusted host code for a runtime or session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, uniffi::Enum)]
+#[serde(rename_all = "snake_case")]
 pub enum SessionPermissionMode {
     Standard,
     Bounded,
@@ -245,7 +266,7 @@ impl SessionPermissionMode {
 }
 
 /// Immutable authorization ceiling supplied before a runtime accepts actions.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
 pub struct RuntimeAuthorizationOptions {
     pub allowed_modes: Vec<SessionPermissionMode>,
     /// Mode inherited by calls made through the released `CuaDriver` object
@@ -260,14 +281,14 @@ pub struct RuntimeAuthorizationOptions {
 
 /// Additive configured-runtime constructor options. Existing callers continue
 /// to use [`DriverOptions`] and inherit the compatibility session.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
 pub struct ConfiguredDriverOptions {
     pub claude_code_compatibility: bool,
     pub authorization: RuntimeAuthorizationOptions,
 }
 
 /// Trusted host request for one immutable, connection-bound action surface.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
 pub struct TrustedSessionOptions {
     pub public_session: String,
     pub mode: SessionPermissionMode,
@@ -278,7 +299,117 @@ pub struct TrustedSessionOptions {
 
 #[derive(uniffi::Object)]
 pub struct CuaDriverSession {
-    backend: Arc<NativeAbiSession>,
+    backend: SessionBackend,
+}
+
+enum SessionBackend {
+    Embedded(Arc<NativeAbiSession>),
+    PrivateWorker {
+        client: Arc<PrivateWorkerClient>,
+        session_handle: String,
+        closed: std::sync::atomic::AtomicBool,
+    },
+    Service {
+        client: Arc<ServiceSessionClient>,
+        closed: std::sync::atomic::AtomicBool,
+    },
+    Remote(Arc<RemoteBoundSession>),
+}
+
+impl SessionBackend {
+    async fn close_async(&self) {
+        match self {
+            Self::Embedded(session) => session.close(),
+            Self::PrivateWorker {
+                client,
+                session_handle,
+                closed,
+            } => {
+                if !closed.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                    let client = client.clone();
+                    let session_handle = session_handle.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        client.close_session(&session_handle);
+                    })
+                    .await;
+                }
+            }
+            Self::Service { client, closed } => {
+                if !closed.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                    let client = client.clone();
+                    let _ = tokio::task::spawn_blocking(move || client.close()).await;
+                }
+            }
+            Self::Remote(session) => session.close(),
+        }
+    }
+
+    fn close(&self) {
+        match self {
+            Self::Embedded(session) => session.close(),
+            Self::PrivateWorker {
+                client,
+                session_handle,
+                closed,
+            } => {
+                if !closed.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                    client.close_session(session_handle);
+                }
+            }
+            Self::Service { client, closed } => {
+                if !closed.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                    client.close();
+                }
+            }
+            Self::Remote(session) => session.close(),
+        }
+    }
+
+    fn abandon(&self) {
+        match self {
+            Self::Embedded(session) => session.close(),
+            Self::PrivateWorker {
+                client,
+                session_handle,
+                closed,
+            } => {
+                if !closed.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                    let client = client.clone();
+                    let session_handle = session_handle.clone();
+                    std::thread::spawn(move || client.close_session(&session_handle));
+                }
+            }
+            Self::Service { client, closed } => {
+                if !closed.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                    client.abandon();
+                }
+            }
+            Self::Remote(session) => session.close(),
+        }
+    }
+}
+
+impl Drop for CuaDriverSession {
+    fn drop(&mut self) {
+        // Language finalizers may run on arbitrary threads. They must revoke
+        // local authority without waiting on a child, socket, or network peer.
+        self.backend.abandon();
+    }
+}
+
+/// Options for a directly supervised process-isolated runtime.
+///
+/// The child receives configuration and actions only over inherited stdio. It
+/// exposes no socket and cannot be reconnected after the host channel closes.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PrivateWorkerOptions {
+    pub binary_path: String,
+    pub host_bundle_id: String,
+    pub startup_timeout_ms: Option<u64>,
+    pub shutdown_timeout_ms: Option<u64>,
+    pub configured_driver: ConfiguredDriverOptions,
+    pub environment: Vec<EmbeddedEnvironmentVariable>,
+    pub inherit_stderr: bool,
 }
 
 /// Rust-only host configuration used by the standalone daemon. Language
@@ -486,10 +617,32 @@ impl CuaDriver {
         }))
     }
 
+    /// Create a process-isolated runtime owned by this SDK object.
+    ///
+    /// This constructor directly spawns the supplied Cua Driver binary and
+    /// communicates only over inherited stdio. No daemon or reusable endpoint
+    /// is created.
+    #[uniffi::constructor]
+    pub fn create_private_worker(options: PrivateWorkerOptions) -> Result<Arc<Self>, DriverError> {
+        create_private_worker_for_client(options, DaemonClientKind::Unknown)
+    }
+
+    /// Language-package entry point that preserves the worker constructor
+    /// while attaching the importing SDK runtime category.
+    #[uniffi::constructor]
+    pub fn create_private_worker_with_client_kind(
+        options: PrivateWorkerOptions,
+        client_kind: SdkClientKind,
+    ) -> Result<Arc<Self>, DriverError> {
+        create_private_worker_for_client(options, client_kind.into())
+    }
+
     pub fn execution_mode(&self) -> DriverExecutionMode {
         match &self.backend {
             DriverBackend::Embedded(_) => DriverExecutionMode::Embedded,
             DriverBackend::Daemon { .. } => DriverExecutionMode::Daemon,
+            DriverBackend::PrivateWorker(_) => DriverExecutionMode::PrivateWorker,
+            DriverBackend::Remote(_) => DriverExecutionMode::Remote,
         }
     }
 
@@ -499,6 +652,8 @@ impl CuaDriver {
         match &self.backend {
             DriverBackend::Embedded(_) => String::new(),
             DriverBackend::Daemon { socket_path } => socket_path.clone(),
+            DriverBackend::PrivateWorker(_) => String::new(),
+            DriverBackend::Remote(_) => String::new(),
         }
     }
 
@@ -506,33 +661,108 @@ impl CuaDriver {
         match &self.backend {
             DriverBackend::Embedded(runtime) => runtime.is_available(),
             DriverBackend::Daemon { socket_path } => is_daemon_listening(socket_path),
+            DriverBackend::PrivateWorker(worker) => worker.is_available(),
+            DriverBackend::Remote(remote) => remote.is_available(),
         }
     }
 }
 
+fn create_private_worker_for_client(
+    options: PrivateWorkerOptions,
+    client_kind: DaemonClientKind,
+) -> Result<Arc<CuaDriver>, DriverError> {
+    let validated = worker::validate_worker_options(
+        options.binary_path,
+        options.host_bundle_id,
+        options.startup_timeout_ms,
+        options.shutdown_timeout_ms,
+        options.configured_driver,
+        options.environment,
+        options.inherit_stderr,
+    )?;
+    Ok(Arc::new(CuaDriver {
+        backend: DriverBackend::PrivateWorker(PrivateWorkerClient::spawn(validated)?),
+        client_kind,
+    }))
+}
+
 impl CuaDriver {
+    /// Rust-only constructor for a transport adapter that exchanges generated
+    /// Driver envelopes over an authenticated asynchronous channel.
+    pub fn connect_remote(
+        channel: Arc<dyn DriverEnvelopeChannel>,
+    ) -> Result<Arc<Self>, DriverError> {
+        Ok(Arc::new(Self {
+            backend: DriverBackend::Remote(RemoteDriverClient::connect(channel)?),
+            client_kind: DaemonClientKind::Unknown,
+        }))
+    }
+
     /// Rust host API for an action surface already bound to one trusted
     /// immutable authorization context.
     pub fn create_trusted_session(
         &self,
         options: TrustedSessionOptions,
     ) -> Result<Arc<CuaDriverSession>, DriverError> {
-        let DriverBackend::Embedded(runtime) = &self.backend else {
-            return Err(DriverError::Configuration {
+        match &self.backend {
+            DriverBackend::Embedded(runtime) => {
+                let native_options = serde_json::json!({
+                    "public_session": options.public_session,
+                    "mode": options.mode.as_str(),
+                    "ttl_seconds": options.ttl_seconds,
+                    "idle_ttl_seconds": options.idle_ttl_seconds,
+                    "bounded_manifest_path": options.bounded_manifest_path,
+                });
+                Ok(Arc::new(CuaDriverSession {
+                    backend: SessionBackend::Embedded(Arc::new(
+                        runtime.create_session(native_options)?,
+                    )),
+                }))
+            }
+            DriverBackend::PrivateWorker(worker) => {
+                let session_handle = worker.bind_session(options)?;
+                Ok(Arc::new(CuaDriverSession {
+                    backend: SessionBackend::PrivateWorker {
+                        client: worker.clone(),
+                        session_handle,
+                        closed: std::sync::atomic::AtomicBool::new(false),
+                    },
+                }))
+            }
+            DriverBackend::Daemon { socket_path } => {
+                let client = ServiceSessionClient::connect_and_bind(
+                    socket_path.clone(),
+                    options,
+                    self.client_kind,
+                )?;
+                Ok(Arc::new(CuaDriverSession {
+                    backend: SessionBackend::Service {
+                        client,
+                        closed: std::sync::atomic::AtomicBool::new(false),
+                    },
+                }))
+            }
+            DriverBackend::Remote(_) => Err(DriverError::Configuration {
                 reason:
-                    "trusted sessions require a configured SDK-owned runtime; daemon connections must bind sessions after peer authentication"
-                        .to_owned(),
+                    "remote trusted sessions require create_remote_trusted_session so the authenticated carrier can bind a new logical channel"
+                        .into(),
+            }),
+        }
+    }
+
+    /// Bind a trusted session through an authenticated remote carrier without
+    /// exposing serialized authority to the caller.
+    pub async fn create_remote_trusted_session(
+        &self,
+        options: TrustedSessionOptions,
+    ) -> Result<Arc<CuaDriverSession>, DriverError> {
+        let DriverBackend::Remote(remote) = &self.backend else {
+            return Err(DriverError::Configuration {
+                reason: "create_remote_trusted_session requires a remote Driver backend".into(),
             });
         };
-        let native_options = serde_json::json!({
-            "public_session": options.public_session,
-            "mode": options.mode.as_str(),
-            "ttl_seconds": options.ttl_seconds,
-            "idle_ttl_seconds": options.idle_ttl_seconds,
-            "bounded_manifest_path": options.bounded_manifest_path,
-        });
         Ok(Arc::new(CuaDriverSession {
-            backend: Arc::new(runtime.create_session(native_options)?),
+            backend: SessionBackend::Remote(remote.bind_session(options).await?),
         }))
     }
 
@@ -563,6 +793,90 @@ impl CuaDriver {
             client_kind: DaemonClientKind::Unknown,
         }))
     }
+
+    /// Construct a runtime for a service adapter that can bind trusted
+    /// sessions after authenticating an accepted connection.
+    ///
+    /// The service's existing process mode remains the compatibility mode and
+    /// the only delegated mode. Mixed ceilings require the explicit configured
+    /// constructor and are never inferred from a caller request.
+    pub fn try_create_service_for_host(
+        options: DriverHostOptions,
+    ) -> Result<Arc<Self>, DriverError> {
+        let mode =
+            cua_driver_core::authorization::configured_permission_mode().map_err(|error| {
+                DriverError::Configuration {
+                    reason: format!("authorization configuration is invalid: {error}"),
+                }
+            })?;
+        let manifest = if mode == cua_driver_core::authorization::PermissionMode::Bounded {
+            cua_driver_core::session_manifest::configured_session_manifest()
+                .map_err(|error| DriverError::Configuration { reason: error })?
+                .cloned()
+                .map(Arc::new)
+        } else {
+            None
+        };
+        let ceiling =
+            cua_driver_core::session_authorization::SessionModeCeiling::for_trusted_sessions(
+                [mode],
+                mode == cua_driver_core::authorization::PermissionMode::Unrestricted,
+                std::time::Duration::from_secs(24 * 60 * 60),
+                std::time::Duration::from_secs(60 * 60),
+            )
+            .map_err(|reason| DriverError::Configuration { reason })?;
+        Ok(Arc::new(Self {
+            backend: DriverBackend::Embedded(Arc::new(NativeAbiDriver::create_for_host(
+                RuntimeOptions {
+                    cursor: options.cursor,
+                    compatibility_mode: options.claude_code_compatibility,
+                    prepare_desktop_environment: options.prepare_desktop_environment,
+                    register_host_tools: options.register_host_tools,
+                    authorization_ceiling: Some(ceiling),
+                    compatibility_authorization: Some((mode, manifest)),
+                },
+            )?)),
+            client_kind: DaemonClientKind::Unknown,
+        }))
+    }
+
+    /// Construct an explicitly authorized runtime with native host facilities
+    /// such as the cursor overlay. Directly supervised private workers use
+    /// this Rust-only entry point; generated-language callers cannot inject
+    /// host callbacks.
+    pub fn try_create_configured_for_host(
+        options: ConfiguredDriverOptions,
+        host: DriverHostOptions,
+    ) -> Result<Arc<Self>, DriverError> {
+        let allowed_modes = options
+            .authorization
+            .allowed_modes
+            .iter()
+            .map(|mode| mode.as_str())
+            .collect::<Vec<_>>();
+        let native_options = serde_json::json!({
+            "claude_code_compatibility": options.claude_code_compatibility,
+            "authorization": {
+                "allowed_modes": allowed_modes,
+                "compatibility_mode": options.authorization.compatibility_mode.as_str(),
+                "compatibility_bounded_manifest_path": options.authorization.compatibility_bounded_manifest_path,
+                "unrestricted_acknowledged": options.authorization.unrestricted_acknowledged,
+                "max_session_ttl_seconds": options.authorization.max_session_ttl_seconds,
+                "max_idle_ttl_seconds": options.authorization.max_idle_ttl_seconds,
+            }
+        });
+        Ok(Arc::new(Self {
+            backend: DriverBackend::Embedded(Arc::new(
+                NativeAbiDriver::create_configured_for_host(
+                    native_options,
+                    host.cursor,
+                    host.prepare_desktop_environment,
+                    host.register_host_tools,
+                )?,
+            )),
+            client_kind: DaemonClientKind::Unknown,
+        }))
+    }
 }
 
 /// Generated-language host factory for a session-bound action surface.
@@ -583,6 +897,8 @@ impl CuaDriver {
     pub async fn metadata(&self) -> Result<DriverMetadata, DriverError> {
         match &self.backend {
             DriverBackend::Embedded(runtime) => runtime.metadata(),
+            DriverBackend::PrivateWorker(worker) => worker.metadata().await,
+            DriverBackend::Remote(remote) => remote.metadata().await,
             DriverBackend::Daemon { socket_path } => {
                 let socket_path = socket_path.clone();
                 let request_path = socket_path.clone();
@@ -627,6 +943,8 @@ impl CuaDriver {
     pub async fn list_tools_json(&self) -> Result<String, DriverError> {
         let result = match &self.backend {
             DriverBackend::Embedded(runtime) => runtime.tools_list()?,
+            DriverBackend::PrivateWorker(worker) => worker.list_tools().await?,
+            DriverBackend::Remote(remote) => remote.list_tools().await?,
             DriverBackend::Daemon { socket_path } => {
                 let socket_path = socket_path.clone();
                 let request_path = socket_path.clone();
@@ -702,8 +1020,11 @@ impl CuaDriver {
     /// Stop accepting new embedded operations. Repeated calls are harmless;
     /// daemon compatibility clients do not own the daemon and therefore no-op.
     pub async fn shutdown(&self) -> Result<(), DriverError> {
-        if let DriverBackend::Embedded(runtime) = &self.backend {
-            runtime.shutdown().await?;
+        match &self.backend {
+            DriverBackend::Embedded(runtime) => runtime.shutdown().await?,
+            DriverBackend::PrivateWorker(worker) => worker.shutdown().await?,
+            DriverBackend::Remote(remote) => remote.shutdown().await?,
+            DriverBackend::Daemon { .. } => {}
         }
         Ok(())
     }
@@ -758,7 +1079,7 @@ impl CuaDriverSession {
             .invoke_typed(EndSessionInput::TOOL_NAME, input)
             .await?
             .typed_success(EndSessionInput::TOOL_NAME);
-        self.backend.close();
+        self.backend.close_async().await;
         result
     }
 }
@@ -795,7 +1116,29 @@ impl CuaDriverSession {
                 reason: "arguments must be a JSON object".into(),
             });
         }
-        normalize_result(self.backend.invoke(name, arguments).await?)
+        let raw = match &self.backend {
+            SessionBackend::Embedded(runtime) => runtime.invoke(name, arguments).await?,
+            SessionBackend::PrivateWorker {
+                client,
+                session_handle,
+                closed,
+            } => {
+                if closed.load(std::sync::atomic::Ordering::Acquire) {
+                    return Err(DriverError::Shutdown);
+                }
+                client
+                    .invoke(name, arguments, Some(session_handle.clone()))
+                    .await?
+            }
+            SessionBackend::Service { client, closed } => {
+                if closed.load(std::sync::atomic::Ordering::Acquire) {
+                    return Err(DriverError::Shutdown);
+                }
+                client.invoke(name, arguments).await?
+            }
+            SessionBackend::Remote(session) => session.invoke(name, arguments).await?,
+        };
+        normalize_result(raw)
     }
 }
 
@@ -840,6 +1183,8 @@ impl CuaDriver {
         }
         let raw = match &self.backend {
             DriverBackend::Embedded(runtime) => runtime.invoke(name, arguments).await?,
+            DriverBackend::PrivateWorker(worker) => worker.invoke(name, arguments, None).await?,
+            DriverBackend::Remote(remote) => remote.invoke(name, arguments).await?,
             DriverBackend::Daemon { socket_path } => {
                 let socket_path = socket_path.clone();
                 let request_path = socket_path.clone();
@@ -1017,6 +1362,21 @@ mod tests {
         (directory, socket.to_string_lossy().into_owned(), handle)
     }
 
+    fn configured_standard_driver() -> Arc<CuaDriver> {
+        CuaDriver::create_configured(ConfiguredDriverOptions {
+            claude_code_compatibility: false,
+            authorization: RuntimeAuthorizationOptions {
+                allowed_modes: vec![SessionPermissionMode::Standard],
+                compatibility_mode: SessionPermissionMode::Standard,
+                compatibility_bounded_manifest_path: None,
+                unrestricted_acknowledged: false,
+                max_session_ttl_seconds: 60,
+                max_idle_ttl_seconds: 30,
+            },
+        })
+        .unwrap()
+    }
+
     #[tokio::test]
     async fn embedded_runtime_owns_tools_without_daemon_ipc_and_shuts_down_idempotently() {
         let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
@@ -1085,10 +1445,75 @@ mod tests {
             Err(DriverError::RuntimeAlreadyExists)
         ));
         first.shutdown().await.unwrap();
-        let replacement = CuaDriver::create(None).unwrap();
-        drop(replacement);
+        let replacement = configured_standard_driver();
+        let replacement_session = replacement
+            .create_trusted_session(TrustedSessionOptions {
+                public_session: "replacement-after-stale-runtime".into(),
+                mode: SessionPermissionMode::Standard,
+                ttl_seconds: 60,
+                idle_ttl_seconds: 30,
+                bounded_manifest_path: None,
+            })
+            .unwrap();
+
+        // Dropping the already-shut-down generation must not revoke sessions
+        // owned by the replacement runtime.
+        drop(first);
+        let result = replacement_session
+            .call_tool("health_report".into(), "{}".into())
+            .await
+            .unwrap();
+        assert_ne!(result.error_code.as_deref(), Some("permission_denied"));
+
+        replacement_session.close();
+        replacement.shutdown().await.unwrap();
         let after_drop = CuaDriver::create(None).unwrap();
         after_drop.shutdown().await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn native_session_close_can_race_with_invoke_without_invalidating_the_handle() {
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let driver = configured_standard_driver();
+
+        for iteration in 0..64 {
+            let session = driver
+                .create_trusted_session(TrustedSessionOptions {
+                    public_session: format!("close-race-{iteration}"),
+                    mode: SessionPermissionMode::Standard,
+                    ttl_seconds: 60,
+                    idle_ttl_seconds: 30,
+                    bounded_manifest_path: None,
+                })
+                .unwrap();
+            let barrier = Arc::new(tokio::sync::Barrier::new(3));
+            let invoke_session = session.clone();
+            let invoke_barrier = barrier.clone();
+            let invoke = tokio::spawn(async move {
+                invoke_barrier.wait().await;
+                invoke_session
+                    .call_tool("health_report".into(), "{}".into())
+                    .await
+            });
+            let close_session = session.clone();
+            let close_barrier = barrier.clone();
+            let close = tokio::spawn(async move {
+                close_barrier.wait().await;
+                close_session.close();
+            });
+
+            barrier.wait().await;
+            close.await.unwrap();
+            match invoke.await.unwrap() {
+                Ok(result) => {
+                    assert_ne!(result.error_code.as_deref(), Some("permission_denied"));
+                }
+                Err(DriverError::Shutdown) => {}
+                Err(error) => panic!("unexpected close-race error: {error}"),
+            }
+        }
+
+        driver.shutdown().await.unwrap();
     }
 
     #[tokio::test]
@@ -1271,5 +1696,169 @@ mod tests {
         assert!(output.active);
         assert_eq!(output.state.session, "run-2");
         server.join().unwrap();
+    }
+
+    struct FakeRemoteChannel {
+        bound: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl remote::DriverEnvelopeChannel for FakeRemoteChannel {
+        async fn exchange(
+            &self,
+            request: remote::DriverRequestEnvelope,
+        ) -> Result<remote::DriverResponseEnvelope, String> {
+            let result = match request.operation.as_str() {
+                "metadata" => serde_json::to_value(DriverMetadata {
+                    driver_version: env!("CARGO_PKG_VERSION").into(),
+                    contract_version: cua_driver_contract::CONTRACT_VERSION.into(),
+                    tools_list_schema_version: cua_driver_contract::TOOLS_LIST_SCHEMA_VERSION
+                        .into(),
+                    capability_version: cua_driver_contract::CAPABILITY_VERSION.into(),
+                    mcp_protocol_version: cua_driver_contract::MCP_PROTOCOL_VERSION.into(),
+                    pid: 42,
+                    embedded: false,
+                    host_bundle_id: None,
+                })
+                .unwrap(),
+                "list" => serde_json::json!({"tools": []}),
+                "call" => serde_json::json!({
+                    "content": [{"type": "text", "text": if self.bound { "bound" } else { "compatibility" }}],
+                    "structuredContent": {"ok": true},
+                    "isError": false,
+                }),
+                other => return Err(format!("unexpected operation {other}")),
+            };
+            Ok(remote::DriverResponseEnvelope {
+                envelope_version: remote::DRIVER_ENVELOPE_VERSION,
+                request_id: request.request_id,
+                ok: true,
+                result: Some(result),
+                error: None,
+                error_code: None,
+                completion_known: true,
+            })
+        }
+
+        async fn bind_session(
+            &self,
+            _options: TrustedSessionOptions,
+        ) -> Result<Arc<dyn remote::DriverEnvelopeChannel>, String> {
+            Ok(Arc::new(Self { bound: true }))
+        }
+
+        async fn close(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn authenticated_principal(&self) -> &str {
+            "test-principal"
+        }
+
+        fn connection_generation(&self) -> &str {
+            "test-generation"
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_carrier_uses_generated_envelopes_behind_the_typed_sdk() {
+        let driver = CuaDriver::connect_remote(Arc::new(FakeRemoteChannel { bound: false }))
+            .expect("authenticated carrier");
+        assert_eq!(driver.execution_mode(), DriverExecutionMode::Remote);
+        assert_eq!(driver.metadata().await.unwrap().pid, 42);
+        assert_eq!(
+            driver
+                .call_tool("health_report".into(), "{}".into())
+                .await
+                .unwrap()
+                .text,
+            "compatibility"
+        );
+
+        let session = driver
+            .create_remote_trusted_session(TrustedSessionOptions {
+                public_session: "remote-bound".into(),
+                mode: SessionPermissionMode::Standard,
+                ttl_seconds: 60,
+                idle_ttl_seconds: 30,
+                bounded_manifest_path: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            session
+                .call_tool("health_report".into(), "{}".into())
+                .await
+                .unwrap()
+                .text,
+            "bound"
+        );
+        session.close();
+        driver.shutdown().await.unwrap();
+    }
+
+    struct UncertainRemoteChannel {
+        transport_error: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl remote::DriverEnvelopeChannel for UncertainRemoteChannel {
+        async fn exchange(
+            &self,
+            request: remote::DriverRequestEnvelope,
+        ) -> Result<remote::DriverResponseEnvelope, String> {
+            if self.transport_error {
+                return Err("carrier lost the action response".into());
+            }
+            Ok(remote::DriverResponseEnvelope {
+                envelope_version: remote::DRIVER_ENVELOPE_VERSION,
+                request_id: request.request_id,
+                ok: true,
+                result: Some(serde_json::json!({
+                    "content": [{"type": "text", "text": "untrusted success"}],
+                    "isError": false,
+                })),
+                error: None,
+                error_code: None,
+                completion_known: false,
+            })
+        }
+
+        async fn bind_session(
+            &self,
+            _options: TrustedSessionOptions,
+        ) -> Result<Arc<dyn remote::DriverEnvelopeChannel>, String> {
+            Err("not used".into())
+        }
+
+        async fn close(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn authenticated_principal(&self) -> &str {
+            "test-principal"
+        }
+
+        fn connection_generation(&self) -> &str {
+            "test-generation"
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_action_transport_failures_never_look_safe_to_retry() {
+        for transport_error in [true, false] {
+            let driver =
+                CuaDriver::connect_remote(Arc::new(UncertainRemoteChannel { transport_error }))
+                    .unwrap();
+            assert!(matches!(
+                driver
+                    .call_tool("click".into(), serde_json::json!({}).to_string())
+                    .await,
+                Err(DriverError::ActionInterrupted {
+                    completion: ActionCompletion::Unknown,
+                    ..
+                })
+            ));
+        }
     }
 }

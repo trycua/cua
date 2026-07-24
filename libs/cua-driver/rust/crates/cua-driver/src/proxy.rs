@@ -36,6 +36,10 @@ use crate::serve::{is_daemon_listening, send_request, DaemonRequest, ToolObserva
 /// session, drains admitted work through `shutdown`, and releases process
 /// ownership before returning.
 pub async fn run_direct(driver: Arc<cua_driver_sdk::CuaDriver>) -> anyhow::Result<()> {
+    // Direct stdio is an action endpoint just like `serve`; enforce the same
+    // admin lock, bounded-manifest approval/expiry, and legacy-approval
+    // consistency before the first request can be read.
+    cua_driver_core::authorization::validate_startup_authorization()?;
     validate_configured_policy()?;
     let sdk = crate::sdk_adapter::SdkAdapter::load(driver.clone()).await?;
     let stdin = tokio::io::stdin();

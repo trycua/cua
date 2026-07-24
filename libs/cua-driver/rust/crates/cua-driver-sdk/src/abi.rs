@@ -268,6 +268,36 @@ fn validate_explicit_authorization_sources(
     Ok(())
 }
 
+fn runtime_options_from_abi(options: AbiDriverOptions) -> Result<RuntimeOptions, AbiFailure> {
+    match options.authorization {
+        Some(authorization) => {
+            validate_explicit_authorization_sources(&authorization)?;
+            let ceiling = SessionModeCeiling::for_trusted_sessions(
+                authorization.allowed_modes.clone(),
+                authorization.unrestricted_acknowledged,
+                Duration::from_secs(authorization.max_session_ttl_seconds),
+                Duration::from_secs(authorization.max_idle_ttl_seconds),
+            )
+            .map_err(|error| AbiFailure::new(CuaDriverStatus::InvalidArgument, error))?;
+            let manifest = authorization
+                .compatibility_bounded_manifest_path
+                .as_deref()
+                .map(std::path::Path::new)
+                .map(load_manifest)
+                .transpose()
+                .map_err(|error| AbiFailure::new(CuaDriverStatus::InvalidArgument, error))?
+                .map(Arc::new);
+            Ok(RuntimeOptions::embedded_with_ceiling(
+                options.claude_code_compatibility,
+                ceiling,
+                authorization.compatibility_mode,
+                manifest,
+            ))
+        }
+        None => Ok(RuntimeOptions::embedded(options.claude_code_compatibility)),
+    }
+}
+
 fn environment_flag(name: &str) -> bool {
     std::env::var(name).is_ok_and(|value| {
         matches!(
@@ -516,33 +546,7 @@ pub unsafe extern "C" fn cua_driver_create_v1(
                 )
             })?
         };
-        let runtime_options = match options.authorization {
-            Some(authorization) => {
-                validate_explicit_authorization_sources(&authorization)?;
-                let ceiling = SessionModeCeiling::for_trusted_sessions(
-                    authorization.allowed_modes.clone(),
-                    authorization.unrestricted_acknowledged,
-                    Duration::from_secs(authorization.max_session_ttl_seconds),
-                    Duration::from_secs(authorization.max_idle_ttl_seconds),
-                )
-                .map_err(|error| AbiFailure::new(CuaDriverStatus::InvalidArgument, error))?;
-                let manifest = authorization
-                    .compatibility_bounded_manifest_path
-                    .as_deref()
-                    .map(std::path::Path::new)
-                    .map(load_manifest)
-                    .transpose()
-                    .map_err(|error| AbiFailure::new(CuaDriverStatus::InvalidArgument, error))?
-                    .map(Arc::new);
-                RuntimeOptions::embedded_with_ceiling(
-                    options.claude_code_compatibility,
-                    ceiling,
-                    authorization.compatibility_mode,
-                    manifest,
-                )
-            }
-            None => RuntimeOptions::embedded(options.claude_code_compatibility),
-        };
+        let runtime_options = runtime_options_from_abi(options)?;
         let runtime = DriverRuntime::create(runtime_options).map_err(runtime_create_failure)?;
         *out_handle = Box::into_raw(Box::new(CuaDriverHandle { runtime }));
         Ok(())
@@ -1141,6 +1145,26 @@ impl NativeAbiDriver {
         })
     }
 
+    pub(crate) fn create_configured_for_host(
+        options: Value,
+        cursor: cursor_overlay::CursorConfig,
+        prepare_desktop_environment: bool,
+        register_host_tools: Option<fn(&mut cua_driver_core::tool::ToolRegistry)>,
+    ) -> Result<Self, DriverError> {
+        let options: AbiDriverOptions =
+            serde_json::from_value(options).map_err(|error| DriverError::Configuration {
+                reason: format!("invalid configured host options: {error}"),
+            })?;
+        let mut runtime_options =
+            runtime_options_from_abi(options).map_err(|error| DriverError::Configuration {
+                reason: error.message,
+            })?;
+        runtime_options.cursor = cursor;
+        runtime_options.prepare_desktop_environment = prepare_desktop_environment;
+        runtime_options.register_host_tools = register_host_tools;
+        Self::create_for_host(runtime_options)
+    }
+
     fn raw_handle(&self) -> *mut ffi::Handle {
         *self.handle.lock().unwrap()
     }
@@ -1311,30 +1335,32 @@ unsafe impl Send for NativeAbiSession {}
 unsafe impl Sync for NativeAbiSession {}
 
 impl NativeAbiSession {
-    fn raw_handle(&self) -> *mut ffi::Session {
-        *self.handle.lock().unwrap()
-    }
-
     pub(crate) fn close(&self) {
         let mut handle = self.handle.lock().unwrap();
         unsafe { ffi::session_destroy(&mut *handle) };
     }
 
     pub(crate) async fn invoke(&self, name: &str, arguments: Value) -> Result<Value, DriverError> {
-        if self.raw_handle().is_null() {
-            return Err(DriverError::Shutdown);
-        }
         let arguments = serde_json::to_vec(&arguments).map_err(|error| DriverError::Protocol {
             reason: format!("serialize {name} session ABI arguments: {error}"),
         })?;
         let (receiver, guard) = {
+            // Keep the session-handle lock through the synchronous FFI call.
+            // `close()` is exported on the generated-language object and may
+            // run concurrently from another thread/finalizer; reading the
+            // pointer and then dropping the lock would let close free it
+            // before `session_invoke` has retained the underlying session.
+            let handle = self.handle.lock().unwrap();
+            if handle.is_null() {
+                return Err(DriverError::Shutdown);
+            }
             let (sender, receiver) = oneshot::channel();
             let context = Box::into_raw(Box::new(CallbackContext { sender })).cast::<c_void>();
             let mut operation = ptr::null_mut();
             let mut error = CuaDriverBuffer::empty();
             let status = unsafe {
                 ffi::session_invoke(
-                    self.raw_handle(),
+                    *handle,
                     name.as_ptr(),
                     name.len(),
                     arguments.as_ptr(),

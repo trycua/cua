@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use cua_driver_core::server::ToolProvider;
-use cua_driver_sdk::CuaDriver;
+use cua_driver_sdk::{CuaDriver, CuaDriverSession, TrustedSessionOptions};
 use serde_json::{json, Value};
 
 pub struct SdkAdapter {
@@ -86,6 +86,15 @@ impl SdkAdapter {
         self.invoke_raw("end_session", json!({"session": session}))
             .await
             .map(|_| ())
+    }
+
+    pub fn create_trusted_session(
+        &self,
+        options: TrustedSessionOptions,
+    ) -> Result<Arc<CuaDriverSession>, String> {
+        self.driver
+            .create_trusted_session(options)
+            .map_err(|error| error.to_string())
     }
 
     pub async fn shutdown(&self) -> Result<(), String> {

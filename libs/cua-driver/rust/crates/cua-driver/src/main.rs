@@ -24,6 +24,7 @@ mod check_update_tool;
 mod cli;
 mod doctor;
 mod mcp_http;
+mod private_worker;
 mod proxy;
 mod responsibility;
 mod sdk_adapter;
@@ -252,12 +253,13 @@ fn build_driver(
     cursor: cursor_overlay::CursorConfig,
     compatibility_mode: bool,
 ) -> Arc<cua_driver_sdk::CuaDriver> {
-    cua_driver_sdk::CuaDriver::create_for_host(cua_driver_sdk::DriverHostOptions {
+    cua_driver_sdk::CuaDriver::try_create_service_for_host(cua_driver_sdk::DriverHostOptions {
         cursor,
         claude_code_compatibility: compatibility_mode,
         prepare_desktop_environment: true,
         register_host_tools: Some(check_update_tool::register_into),
     })
+    .expect("CLI host attempted to create a second Cua Driver runtime in one process")
 }
 
 fn build_driver_without_cursor() -> Arc<cua_driver_sdk::CuaDriver> {
@@ -287,6 +289,30 @@ fn run_mcp_direct(compatibility_mode: bool) -> anyhow::Result<()> {
     runtime.block_on(proxy::run_direct(driver))
 }
 
+fn mcp_uses_direct_runtime(socket: Option<&str>) -> anyhow::Result<bool> {
+    mcp_uses_direct_runtime_for(
+        cua_driver_core::embedded_mode(),
+        socket,
+        cfg!(target_os = "macos"),
+    )
+}
+
+fn mcp_uses_direct_runtime_for(
+    embedded: bool,
+    socket: Option<&str>,
+    macos: bool,
+) -> anyhow::Result<bool> {
+    if embedded && socket.is_none() {
+        anyhow::bail!("embedded hosts must provide their private service endpoint with --socket");
+    }
+    if macos {
+        // Preserve LaunchServices/TCC attribution for normal macOS clients.
+        Ok(false)
+    } else {
+        Ok(socket.is_none())
+    }
+}
+
 fn sdk_tool_inventory(driver: Arc<cua_driver_sdk::CuaDriver>) -> serde_json::Value {
     match sdk_adapter::SdkAdapter::load_blocking(driver) {
         Ok(sdk) => sdk.tools_list(),
@@ -297,11 +323,56 @@ fn sdk_tool_inventory(driver: Arc<cua_driver_sdk::CuaDriver>) -> serde_json::Val
     }
 }
 
+#[cfg(test)]
+mod mcp_runtime_selection_tests {
+    use super::mcp_uses_direct_runtime_for;
+
+    #[test]
+    fn embedded_host_without_private_endpoint_fails_closed() {
+        let error = mcp_uses_direct_runtime_for(true, None, false).unwrap_err();
+        assert!(error.to_string().contains("--socket"));
+        let error = mcp_uses_direct_runtime_for(true, None, true).unwrap_err();
+        assert!(error.to_string().contains("--socket"));
+    }
+
+    #[test]
+    fn normal_linux_and_windows_stdio_own_the_runtime() {
+        assert!(mcp_uses_direct_runtime_for(false, None, false).unwrap());
+        assert!(!mcp_uses_direct_runtime_for(false, Some("service"), false).unwrap());
+    }
+
+    #[test]
+    fn normal_macos_stdio_preserves_the_service_boundary() {
+        assert!(!mcp_uses_direct_runtime_for(false, None, true).unwrap());
+        assert!(!mcp_uses_direct_runtime_for(false, Some("service"), true).unwrap());
+    }
+}
+
 // ── macOS entry-point ─────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
 fn main() {
     init_logging();
+    if let Some(generation) = private_worker::requested_generation() {
+        let (initialized_tx, initialized_rx) = std::sync::mpsc::sync_channel(1);
+        std::thread::spawn(move || {
+            let code = match private_worker::run(generation, Some(initialized_tx)) {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!("cua-driver private worker: {error}");
+                    1
+                }
+            };
+            // AppKit's event loop is process-long. This directly supervised
+            // child has no reusable endpoint, so protocol completion owns the
+            // worker process lifetime.
+            std::process::exit(code);
+        });
+        if initialized_rx.recv().unwrap_or(false) {
+            platform_macos::cursor::overlay::run_on_main_thread();
+        }
+        return;
+    }
     if telemetry::run_cli_completion_worker_if_requested() {
         return;
     }
@@ -610,24 +681,27 @@ fn main() {
             // Long-running MCP proxy — kick off the background update check
             // before connecting to or launching the daemon.
             version_check::maybe_announce_update();
-            let direct = cua_driver_core::embedded_mode() && socket.is_none();
-            let result = if direct {
-                telemetry::capture_mcp_startup_completed(
-                    "sdk_owned_runtime",
-                    "not_applicable",
-                    true,
-                    startup_started.elapsed(),
-                );
-                run_mcp_direct(claude_code_compat)
-            } else {
-                cli::run_mcp_via_daemon_proxy(socket, claude_code_compat, |daemon, success| {
+            let result = match mcp_uses_direct_runtime(socket.as_deref()) {
+                Ok(true) => {
                     telemetry::capture_mcp_startup_completed(
-                        "daemon_proxy",
-                        daemon.telemetry_value(),
-                        success,
+                        "sdk_owned_runtime",
+                        "not_applicable",
+                        true,
                         startup_started.elapsed(),
-                    )
-                })
+                    );
+                    run_mcp_direct(claude_code_compat)
+                }
+                Err(error) => Err(error),
+                Ok(false) => {
+                    cli::run_mcp_via_daemon_proxy(socket, claude_code_compat, |daemon, success| {
+                        telemetry::capture_mcp_startup_completed(
+                            "daemon_proxy",
+                            daemon.telemetry_value(),
+                            success,
+                            startup_started.elapsed(),
+                        )
+                    })
+                }
             };
             if let Err(e) = result {
                 eprintln!("cua-driver-rs: {e}");
@@ -644,6 +718,9 @@ fn main() {
 #[cfg(not(target_os = "macos"))]
 fn main() -> anyhow::Result<()> {
     init_logging();
+    if let Some(generation) = private_worker::requested_generation() {
+        return private_worker::run(generation, None);
+    }
     if telemetry::run_cli_completion_worker_if_requested() {
         return Ok(());
     }
@@ -848,24 +925,27 @@ fn main() -> anyhow::Result<()> {
             // Long-running MCP proxy — kick off the background update check
             // before connecting to the daemon.
             version_check::maybe_announce_update();
-            let direct = socket.is_none();
-            let result = if direct {
-                telemetry::capture_mcp_startup_completed(
-                    "sdk_owned_runtime",
-                    "not_applicable",
-                    true,
-                    startup_started.elapsed(),
-                );
-                run_mcp_direct(claude_code_compat)
-            } else {
-                cli::run_mcp_via_daemon_proxy(socket, claude_code_compat, |daemon, success| {
+            let result = match mcp_uses_direct_runtime(socket.as_deref()) {
+                Ok(true) => {
                     telemetry::capture_mcp_startup_completed(
-                        "daemon_proxy",
-                        daemon.telemetry_value(),
-                        success,
+                        "sdk_owned_runtime",
+                        "not_applicable",
+                        true,
                         startup_started.elapsed(),
-                    )
-                })
+                    );
+                    run_mcp_direct(claude_code_compat)
+                }
+                Err(error) => Err(error),
+                Ok(false) => {
+                    cli::run_mcp_via_daemon_proxy(socket, claude_code_compat, |daemon, success| {
+                        telemetry::capture_mcp_startup_completed(
+                            "daemon_proxy",
+                            daemon.telemetry_value(),
+                            success,
+                            startup_started.elapsed(),
+                        )
+                    })
+                }
             };
             if let Err(e) = result {
                 eprintln!("cua-driver-rs: {e}");

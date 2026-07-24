@@ -19,6 +19,7 @@ asynchronous. Python uses `snake_case`; TypeScript uses `camelCase`.
 | ------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------ |
 | `CuaDriver.create(options=None)`      | `CuaDriver.create(options?)`     | Creates the primary same-process runtime. No daemon, executable, or IPC is required.       |
 | `CuaDriver.create_configured(options)` | `CuaDriver.createConfigured(options)` | Trusted-host constructor with an immutable runtime ceiling and compatibility mode. |
+| `CuaDriver.create_private_worker(options)` | `CuaDriver.createPrivateWorker(options)` | Spawns one supervised process-isolated runtime over inherited pipes; no reusable endpoint is created. |
 | `CuaDriver.connect(socket_path=None)` | `CuaDriver.connect(socketPath?)` | Connects the same typed surface to a daemon. This is a compatibility and app-hosting path. |
 
 `DriverOptions` currently contains
@@ -32,7 +33,8 @@ authorization coordinator used by daemon-backed calls. An invalid
 configuration returns `DriverError.Configuration`; a denied generic call
 returns a tool error with stable code `permission_denied`.
 
-`create_configured()` accepts `RuntimeAuthorizationOptions`: an allowed-mode
+`create_configured()` accepts `ConfiguredDriverOptions`, whose
+`authorization` field is `RuntimeAuthorizationOptions`: an allowed-mode
 set, the compatibility mode inherited by ordinary `CuaDriver` calls, bounded
 manifest path when that compatibility mode is bounded, maximum absolute and
 idle session TTLs, and the separate unrestricted-risk acknowledgement. A
@@ -46,13 +48,23 @@ already bound to one immutable authorization context. Its public session
 string remains only a lifecycle label: a tool argument cannot select, replay,
 or widen the context. Call `close()` at the host lifecycle boundary; dropping
 the object, ending the session, or shutting down the runtime also revokes it.
-Daemon `connect()` clients retain the daemon compatibility mode; service
-mixed-mode delegation remains unavailable until the accepted connection
-provides a certified host binding.
+`PrivateWorkerOptions` adds the absolute Cua Driver binary path, host identity,
+startup and shutdown timeouts, configured runtime options, a safe environment
+allowlist, and optional stderr inheritance. Worker configuration is sent after
+spawn on the inherited channel rather than in argv. Caller-provided
+environment entries cannot set authorization controls; process-admin managed
+policy and disablement variables are inherited by both private workers and
+embedded services so a child topology cannot relax its parent's ceiling.
+Closing the host channel terminates the worker; a worker cannot be discovered
+or reattached.
+
+Daemon `connect()` clients retain the daemon compatibility mode. An embedded
+host may create a trusted session only over its original authenticated service
+connection; an ordinary or standalone daemon client cannot.
 
 `execution_mode()` / `executionMode()` reports the generated
-`DriverExecutionMode` value. The current enum variants are `Embedded` for the
-same-process runtime and `Daemon` for a socket-backed connection.
+`DriverExecutionMode` value. The enum variants are `Embedded`, `PrivateWorker`,
+`Daemon`, and the Rust-only carrier-backed `Remote`.
 
 ## Lifecycle and metadata
 
@@ -129,9 +141,15 @@ The generated `DriverError` variants are:
 - `Tool`
 - `Shutdown`
 - `RuntimeAlreadyExists`
+- `Worker`
+- `Remote`
+- `ActionInterrupted`
 
 Tool-level failures may also arrive as `ToolResult.is_error` / `isError`.
 Inspect the result before consuming images or structured fields.
+`ActionInterrupted` includes an `ActionCompletion` value: `NotStarted`,
+`Completed`, or `Unknown`. Do not automatically retry a non-idempotent action
+when completion is unknown.
 
 See [MCP tools](/reference/cua-driver/mcp-tools) for the agent-facing tool
 catalog and [SDK, MCP, and process hosting](/concepts/sdk-mcp-and-hosting) for

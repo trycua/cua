@@ -188,13 +188,14 @@ lifecycle label. Substituting that label, replaying reserved arguments, using
 an expired or revoked object, or retaining it after runtime shutdown fails
 before platform dispatch.
 
-This mixed-mode capability is currently certified only for a trusted direct
-SDK host. A shared daemon remains on one compatibility mode because a
-same-user socket by itself does not prove that a particular caller is the
-trusted gateway. Use one service or private runtime owner per mode until an
-authenticated service connection binds actions to the host-created context.
-The ordinary socket, MCP metadata, environment, and tool schemas expose no way
-to create or select that authority.
+This mixed-mode capability is available to a trusted direct SDK host and a
+directly supervised private worker. An embedded service can create a
+session-bound action surface only on the original authenticated host
+connection; the authority never becomes a bearer token or reconnect label. A
+standalone shared daemon remains on one compatibility mode because a same-user
+socket by itself does not prove that a particular caller is the trusted
+gateway. The ordinary socket, MCP metadata, environment, and tool schemas
+expose no way to create or select trusted-session authority.
 
 ## Managed controls
 
@@ -214,10 +215,12 @@ the complete content-free adapter inventory, protected-provider availability,
 the service authorization ceiling, and whether that service supports trusted
 session delegation. Direct SDK hosts inspect the outcome of runtime and
 session construction instead; their opaque session bindings are deliberately
-not serialized into global status. Until authenticated service action binding
-ships, service status reports `session_mode_delegation_ready: false` with
-blocker `authenticated_action_connection_required`. Status does not print
-policy contents, session labels, connection authority, or browser data.
+not serialized into global status. An embedded service with its authenticated
+original-host connection reports `session_mode_delegation_ready: true` and
+`session_mode_binding: authenticated_embedded_host_connection`. A standalone
+service reports `session_mode_delegation_ready: false` with blocker
+`authenticated_action_connection_required`. Status does not print policy
+contents, session labels, connection authority, or browser data.
 
 End one session and every grant it owns:
 

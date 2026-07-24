@@ -1013,6 +1013,7 @@ dependencies = [
 name = "cua-driver-sdk"
 version = "0.12.6"
 dependencies = [
+ "async-trait",
  "core-foundation",
  "cua-driver-contract",
  "cua-driver-core",

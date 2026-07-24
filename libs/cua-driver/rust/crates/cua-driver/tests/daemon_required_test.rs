@@ -100,6 +100,45 @@ fn default_mcp_owns_a_runtime_without_a_daemon() {
     assert_eq!(response["result"]["serverInfo"]["name"], "cua-driver");
 }
 
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn direct_mcp_rejects_admin_disabled_unrestricted_mode_before_requests() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+        .arg("mcp")
+        .env("CUA_DRIVER_PERMISSION_MODE", "unrestricted")
+        .env("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1")
+        .env("CUA_DRIVER_DISABLE_UNRESTRICTED", "1")
+        .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("run direct MCP with managed lock");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unrestricted mode is disabled"),
+        "unexpected stderr: {stderr}"
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "authorization rejection must precede protocol output"
+    );
+}
+
+#[test]
+fn embedded_mcp_without_private_endpoint_fails_closed() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+        .args(["mcp", "--embedded"])
+        .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
+        .output()
+        .expect("run embedded MCP without endpoint");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("must provide their private service endpoint"),
+        "unexpected stderr: {stderr}"
+    );
+}
+
 #[test]
 fn cli_call_succeeds_through_test_owned_daemon() {
     let mut driver = CliDriver::new();

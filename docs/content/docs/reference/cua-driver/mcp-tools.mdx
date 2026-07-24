@@ -23,7 +23,7 @@ For the cross-cutting parameter contract (shared parameters, required-parameter 
 </Callout>
 
 <Callout type="info">
-  **Daemon delegation.** `cua-driver mcp` is always a stdio proxy to a `cua-driver serve` daemon. On macOS it can auto-launch the daemon via `open -n -g -a CuaDriver --args serve` so AX and Screen Recording grants attach to the app bundle. On Windows and Linux the daemon must already be running. See the [process model](/reference/cua-driver/process-model) for the full lifecycle and wrapper-author guidance.
+  **Runtime ownership.** On Windows and Linux, bare `cua-driver mcp` owns its SDK runtime directly and shuts it down on stdin EOF. On macOS it proxies to the installed `CuaDriver.app` daemon so AX and Screen Recording grants retain the app-bundle identity. Passing `--socket` selects an explicit daemon/service endpoint on every platform. See the [process model](/reference/cua-driver/process-model) for the full lifecycle and wrapper-author guidance.
 </Callout>
 
 ## Inspection tools

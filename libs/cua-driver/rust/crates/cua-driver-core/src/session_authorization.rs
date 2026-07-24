@@ -535,6 +535,13 @@ impl SessionAuthorizationRegistry {
             _ => {}
         }
         let mut state = self.state.lock().unwrap();
+        state.by_connection.retain(|_, context| {
+            let retain = !context.is_expired();
+            if !retain {
+                context.revoked.store(true, Ordering::Release);
+            }
+            retain
+        });
         if state.by_connection.contains_key(&connection.id) {
             return Err(SessionAuthorizationError::ConnectionAlreadyBound);
         }
@@ -918,6 +925,37 @@ mod tests {
                 .bind_delegated_session(&host, &connection_c, duplicate_transport)
                 .unwrap_err(),
             SessionAuthorizationError::SessionAlreadyBound
+        );
+    }
+
+    #[test]
+    fn expired_session_labels_can_be_rebound_on_a_new_connection() {
+        let registry = SessionAuthorizationRegistry::delegated_for_test(
+            SessionModeCeiling::delegated([PermissionMode::Standard], false),
+        );
+        let (host, expired_connection) = registry.trusted_pair_for_test(None);
+        let mut short = request(PermissionMode::Standard);
+        short.ttl = Duration::from_millis(1);
+        short.idle_ttl = Duration::from_millis(1);
+        registry
+            .bind_delegated_session(&host, &expired_connection, short)
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(3));
+
+        let (_, replacement_connection) = registry.trusted_pair_for_test(Some(&host));
+        registry
+            .bind_delegated_session(
+                &host,
+                &replacement_connection,
+                request(PermissionMode::Standard),
+            )
+            .expect("expired labels must not remain reserved");
+        assert_eq!(
+            registry
+                .resolve_delegated(&replacement_connection, "public-a", "transport-a")
+                .unwrap()
+                .mode(),
+            PermissionMode::Standard
         );
     }
 

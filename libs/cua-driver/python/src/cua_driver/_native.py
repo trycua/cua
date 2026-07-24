@@ -498,6 +498,10 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_client_kind() != 23819:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_private_worker() != 8571:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_private_worker_with_client_kind() != 31571:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_with_client_kind() != 3630:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_call_tool() != 24493:
@@ -928,6 +932,17 @@ _UniffiLib.uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with_client_kind.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_private_worker.argtypes = (
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_private_worker.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_private_worker_with_client_kind.argtypes = (
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_private_worker_with_client_kind.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_with_client_kind.argtypes = (
     _UniffiRustBuffer,
     _UniffiRustBuffer,
@@ -1186,6 +1201,12 @@ _UniffiLib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configure
 _UniffiLib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_client_kind.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_client_kind.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_private_worker.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_private_worker.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_private_worker_with_client_kind.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_private_worker_with_client_kind.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_with_client_kind.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_with_client_kind.restype = ctypes.c_uint16
@@ -2320,6 +2341,78 @@ class _UniffiFfiConverterTypeMacOsPermissionStatus(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.write(value.accessibility, buf)
         _UniffiFfiConverterBoolean.write(value.screen_recording, buf)
 
+@dataclass
+class PrivateWorkerOptions:
+    """
+    Options for a directly supervised process-isolated runtime.
+
+    The child receives configuration and actions only over inherited stdio. It
+    exposes no socket and cannot be reconnected after the host channel closes.
+"""
+    def __init__(self, *, binary_path:str, host_bundle_id:str, startup_timeout_ms:typing.Optional[int], shutdown_timeout_ms:typing.Optional[int], configured_driver:ConfiguredDriverOptions, environment:typing.List[EmbeddedEnvironmentVariable], inherit_stderr:bool):
+        self.binary_path = binary_path
+        self.host_bundle_id = host_bundle_id
+        self.startup_timeout_ms = startup_timeout_ms
+        self.shutdown_timeout_ms = shutdown_timeout_ms
+        self.configured_driver = configured_driver
+        self.environment = environment
+        self.inherit_stderr = inherit_stderr
+
+
+
+
+    def __str__(self):
+        return "PrivateWorkerOptions(binary_path={}, host_bundle_id={}, startup_timeout_ms={}, shutdown_timeout_ms={}, configured_driver={}, environment={}, inherit_stderr={})".format(self.binary_path, self.host_bundle_id, self.startup_timeout_ms, self.shutdown_timeout_ms, self.configured_driver, self.environment, self.inherit_stderr)
+    def __eq__(self, other):
+        if self.binary_path != other.binary_path:
+            return False
+        if self.host_bundle_id != other.host_bundle_id:
+            return False
+        if self.startup_timeout_ms != other.startup_timeout_ms:
+            return False
+        if self.shutdown_timeout_ms != other.shutdown_timeout_ms:
+            return False
+        if self.configured_driver != other.configured_driver:
+            return False
+        if self.environment != other.environment:
+            return False
+        if self.inherit_stderr != other.inherit_stderr:
+            return False
+        return True
+
+class _UniffiFfiConverterTypePrivateWorkerOptions(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return PrivateWorkerOptions(
+            binary_path=_UniffiFfiConverterString.read(buf),
+            host_bundle_id=_UniffiFfiConverterString.read(buf),
+            startup_timeout_ms=_UniffiFfiConverterOptionalUInt64.read(buf),
+            shutdown_timeout_ms=_UniffiFfiConverterOptionalUInt64.read(buf),
+            configured_driver=_UniffiFfiConverterTypeConfiguredDriverOptions.read(buf),
+            environment=_UniffiFfiConverterSequenceTypeEmbeddedEnvironmentVariable.read(buf),
+            inherit_stderr=_UniffiFfiConverterBoolean.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.binary_path)
+        _UniffiFfiConverterString.check_lower(value.host_bundle_id)
+        _UniffiFfiConverterOptionalUInt64.check_lower(value.startup_timeout_ms)
+        _UniffiFfiConverterOptionalUInt64.check_lower(value.shutdown_timeout_ms)
+        _UniffiFfiConverterTypeConfiguredDriverOptions.check_lower(value.configured_driver)
+        _UniffiFfiConverterSequenceTypeEmbeddedEnvironmentVariable.check_lower(value.environment)
+        _UniffiFfiConverterBoolean.check_lower(value.inherit_stderr)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.binary_path, buf)
+        _UniffiFfiConverterString.write(value.host_bundle_id, buf)
+        _UniffiFfiConverterOptionalUInt64.write(value.startup_timeout_ms, buf)
+        _UniffiFfiConverterOptionalUInt64.write(value.shutdown_timeout_ms, buf)
+        _UniffiFfiConverterTypeConfiguredDriverOptions.write(value.configured_driver, buf)
+        _UniffiFfiConverterSequenceTypeEmbeddedEnvironmentVariable.write(value.environment, buf)
+        _UniffiFfiConverterBoolean.write(value.inherit_stderr, buf)
+
 class _UniffiFfiConverterSequenceTypeImageContent(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -2503,6 +2596,54 @@ class _UniffiFfiConverterTypeTrustedSessionOptions(_UniffiConverterRustBuffer):
 
 
 
+
+
+
+class ActionCompletion(enum.Enum):
+
+    NOT_STARTED = 0
+
+    COMPLETED = 1
+
+    UNKNOWN = 2
+
+
+
+class _UniffiFfiConverterTypeActionCompletion(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return ActionCompletion.NOT_STARTED
+        if variant == 2:
+            return ActionCompletion.COMPLETED
+        if variant == 3:
+            return ActionCompletion.UNKNOWN
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value == ActionCompletion.NOT_STARTED:
+            return
+        if value == ActionCompletion.COMPLETED:
+            return
+        if value == ActionCompletion.UNKNOWN:
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value == ActionCompletion.NOT_STARTED:
+            buf.write_i32(1)
+        if value == ActionCompletion.COMPLETED:
+            buf.write_i32(2)
+        if value == ActionCompletion.UNKNOWN:
+            buf.write_i32(3)
+
+
+
+
+
 # DriverError
 # We want to define each variant as a nested class that's also a subclass,
 # which is tricky in Python.  To accomplish this we're going to create each
@@ -2595,6 +2736,41 @@ class DriverError:  # type: ignore
         def __repr__(self):
             return "DriverError.RuntimeAlreadyExists({})".format(str(self))
     _UniffiTempDriverError.RuntimeAlreadyExists = RuntimeAlreadyExists # type: ignore
+    class Worker(_UniffiTempDriverError):
+
+        def __init__(self, reason):
+            super().__init__(", ".join([
+                "reason={!r}".format(reason),
+            ]))
+            self.reason = reason
+
+        def __repr__(self):
+            return "DriverError.Worker({})".format(str(self))
+    _UniffiTempDriverError.Worker = Worker # type: ignore
+    class Remote(_UniffiTempDriverError):
+
+        def __init__(self, reason):
+            super().__init__(", ".join([
+                "reason={!r}".format(reason),
+            ]))
+            self.reason = reason
+
+        def __repr__(self):
+            return "DriverError.Remote({})".format(str(self))
+    _UniffiTempDriverError.Remote = Remote # type: ignore
+    class ActionInterrupted(_UniffiTempDriverError):
+
+        def __init__(self, completion, reason):
+            super().__init__(", ".join([
+                "completion={!r}".format(completion),
+                "reason={!r}".format(reason),
+            ]))
+            self.completion = completion
+            self.reason = reason
+
+        def __repr__(self):
+            return "DriverError.ActionInterrupted({})".format(str(self))
+    _UniffiTempDriverError.ActionInterrupted = ActionInterrupted # type: ignore
 
 DriverError = _UniffiTempDriverError # type: ignore
 del _UniffiTempDriverError
@@ -2634,6 +2810,19 @@ class _UniffiFfiConverterTypeDriverError(_UniffiConverterRustBuffer):
         if variant == 7:
             return DriverError.RuntimeAlreadyExists(
             )
+        if variant == 8:
+            return DriverError.Worker(
+                _UniffiFfiConverterString.read(buf),
+            )
+        if variant == 9:
+            return DriverError.Remote(
+                _UniffiFfiConverterString.read(buf),
+            )
+        if variant == 10:
+            return DriverError.ActionInterrupted(
+                _UniffiFfiConverterTypeActionCompletion.read(buf),
+                _UniffiFfiConverterString.read(buf),
+            )
         raise InternalError("Raw enum value doesn't match any cases")
 
     @staticmethod
@@ -2661,6 +2850,16 @@ class _UniffiFfiConverterTypeDriverError(_UniffiConverterRustBuffer):
             return
         if isinstance(value, DriverError.RuntimeAlreadyExists):
             return
+        if isinstance(value, DriverError.Worker):
+            _UniffiFfiConverterString.check_lower(value.reason)
+            return
+        if isinstance(value, DriverError.Remote):
+            _UniffiFfiConverterString.check_lower(value.reason)
+            return
+        if isinstance(value, DriverError.ActionInterrupted):
+            _UniffiFfiConverterTypeActionCompletion.check_lower(value.completion)
+            _UniffiFfiConverterString.check_lower(value.reason)
+            return
 
     @staticmethod
     def write(value, buf):
@@ -2687,6 +2886,16 @@ class _UniffiFfiConverterTypeDriverError(_UniffiConverterRustBuffer):
             buf.write_i32(6)
         if isinstance(value, DriverError.RuntimeAlreadyExists):
             buf.write_i32(7)
+        if isinstance(value, DriverError.Worker):
+            buf.write_i32(8)
+            _UniffiFfiConverterString.write(value.reason, buf)
+        if isinstance(value, DriverError.Remote):
+            buf.write_i32(9)
+            _UniffiFfiConverterString.write(value.reason, buf)
+        if isinstance(value, DriverError.ActionInterrupted):
+            buf.write_i32(10)
+            _UniffiFfiConverterTypeActionCompletion.write(value.completion, buf)
+            _UniffiFfiConverterString.write(value.reason, buf)
 
 
 
@@ -2702,6 +2911,10 @@ class DriverExecutionMode(enum.Enum):
 
     DAEMON = 1
 
+    PRIVATE_WORKER = 2
+
+    REMOTE = 3
+
 
 
 class _UniffiFfiConverterTypeDriverExecutionMode(_UniffiConverterRustBuffer):
@@ -2712,6 +2925,10 @@ class _UniffiFfiConverterTypeDriverExecutionMode(_UniffiConverterRustBuffer):
             return DriverExecutionMode.EMBEDDED
         if variant == 2:
             return DriverExecutionMode.DAEMON
+        if variant == 3:
+            return DriverExecutionMode.PRIVATE_WORKER
+        if variant == 4:
+            return DriverExecutionMode.REMOTE
         raise InternalError("Raw enum value doesn't match any cases")
 
     @staticmethod
@@ -2719,6 +2936,10 @@ class _UniffiFfiConverterTypeDriverExecutionMode(_UniffiConverterRustBuffer):
         if value == DriverExecutionMode.EMBEDDED:
             return
         if value == DriverExecutionMode.DAEMON:
+            return
+        if value == DriverExecutionMode.PRIVATE_WORKER:
+            return
+        if value == DriverExecutionMode.REMOTE:
             return
         raise ValueError(value)
 
@@ -2728,6 +2949,10 @@ class _UniffiFfiConverterTypeDriverExecutionMode(_UniffiConverterRustBuffer):
             buf.write_i32(1)
         if value == DriverExecutionMode.DAEMON:
             buf.write_i32(2)
+        if value == DriverExecutionMode.PRIVATE_WORKER:
+            buf.write_i32(3)
+        if value == DriverExecutionMode.REMOTE:
+            buf.write_i32(4)
 
 
 
@@ -3233,6 +3458,50 @@ class CuaDriver(CuaDriverProtocol):
         _uniffi_ffi_result = _uniffi_rust_call_with_error(
             _uniffi_error_converter,
             _UniffiLib.uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with_client_kind,
+            *_uniffi_lowered_args,
+        )
+        return cls._uniffi_make_instance(_uniffi_ffi_result)
+    @classmethod
+    def create_private_worker(cls, options: PrivateWorkerOptions) -> CuaDriver:
+        """
+        Create a process-isolated runtime owned by this SDK object.
+
+        This constructor directly spawns the supplied Cua Driver binary and
+        communicates only over inherited stdio. No daemon or reusable endpoint
+        is created.
+"""
+
+        _UniffiFfiConverterTypePrivateWorkerOptions.check_lower(options)
+        _uniffi_lowered_args = (
+            _UniffiFfiConverterTypePrivateWorkerOptions.lower(options),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCuaDriver.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeDriverError
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_private_worker,
+            *_uniffi_lowered_args,
+        )
+        return cls._uniffi_make_instance(_uniffi_ffi_result)
+    @classmethod
+    def create_private_worker_with_client_kind(cls, options: PrivateWorkerOptions,client_kind: SdkClientKind) -> CuaDriver:
+        """
+        Language-package entry point that preserves the worker constructor
+        while attaching the importing SDK runtime category.
+"""
+
+        _UniffiFfiConverterTypePrivateWorkerOptions.check_lower(options)
+
+        _UniffiFfiConverterTypeSdkClientKind.check_lower(client_kind)
+        _uniffi_lowered_args = (
+            _UniffiFfiConverterTypePrivateWorkerOptions.lower(options),
+            _UniffiFfiConverterTypeSdkClientKind.lower(client_kind),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCuaDriver.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeDriverError
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_private_worker_with_client_kind,
             *_uniffi_lowered_args,
         )
         return cls._uniffi_make_instance(_uniffi_ffi_result)
@@ -4339,6 +4608,7 @@ __all__ = [
     "InternalError",
     "SessionPermissionMode",
     "EmbeddedPermissionMode",
+    "ActionCompletion",
     "DriverError",
     "DriverExecutionMode",
     "EmbeddedDriverError",
@@ -4355,6 +4625,7 @@ __all__ = [
     "EmbeddedDriverHostOptions",
     "ImageContent",
     "MacOsPermissionStatus",
+    "PrivateWorkerOptions",
     "ToolResult",
     "TrustedSessionOptions",
     "create_trusted_session",

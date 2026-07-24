@@ -776,6 +776,75 @@ const FfiConverterTypeMacOsPermissionStatus = (() => {
 })();
 
 /**
+ * Options for a directly supervised process-isolated runtime.
+ *
+ * The child receives configuration and actions only over inherited stdio. It
+ * exposes no socket and cannot be reconnected after the host channel closes.
+ */
+export type PrivateWorkerOptions = {
+    binaryPath: string,
+    hostBundleId: string,
+    startupTimeoutMs?: bigint,
+    shutdownTimeoutMs?: bigint,
+    configuredDriver: ConfiguredDriverOptions,
+    environment: Array<EmbeddedEnvironmentVariable>,
+    inheritStderr: boolean
+}
+
+/**
+ * Generated factory for {@link PrivateWorkerOptions} record objects.
+ */
+export const PrivateWorkerOptions = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<PrivateWorkerOptions, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<PrivateWorkerOptions>,
+    });
+})();
+
+const FfiConverterTypePrivateWorkerOptions = (() => {
+    type TypeName = PrivateWorkerOptions;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                binaryPath: FfiConverterString.read(from),
+                hostBundleId: FfiConverterString.read(from),
+                startupTimeoutMs: FfiConverterOptionalUInt64.read(from),
+                shutdownTimeoutMs: FfiConverterOptionalUInt64.read(from),
+                configuredDriver: FfiConverterTypeConfiguredDriverOptions.read(from),
+                environment: FfiConverterSequenceTypeEmbeddedEnvironmentVariable.read(from),
+                inheritStderr: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.binaryPath, into);
+            FfiConverterString.write(value.hostBundleId, into);
+            FfiConverterOptionalUInt64.write(value.startupTimeoutMs, into);
+            FfiConverterOptionalUInt64.write(value.shutdownTimeoutMs, into);
+            FfiConverterTypeConfiguredDriverOptions.write(value.configuredDriver, into);
+            FfiConverterSequenceTypeEmbeddedEnvironmentVariable.write(value.environment, into);
+            FfiConverterBool.write(value.inheritStderr, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.binaryPath) +
+             FfiConverterString.allocationSize(value.hostBundleId) +
+             FfiConverterOptionalUInt64.allocationSize(value.startupTimeoutMs) +
+             FfiConverterOptionalUInt64.allocationSize(value.shutdownTimeoutMs) +
+             FfiConverterTypeConfiguredDriverOptions.allocationSize(value.configuredDriver) +
+             FfiConverterSequenceTypeEmbeddedEnvironmentVariable.allocationSize(value.environment) +
+             FfiConverterBool.allocationSize(value.inheritStderr);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
  * Transport-neutral result envelope used for open-ended tool calls and
  * desktop tools whose platform extensions are intentionally preserved as JSON.
  */
@@ -904,6 +973,38 @@ const FfiConverterTypeTrustedSessionOptions = (() => {
     return new FFIConverter();
 })();
 
+export enum ActionCompletion {
+    NotStarted,
+    Completed,
+    Unknown
+}
+
+const FfiConverterTypeActionCompletion = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = ActionCompletion;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return ActionCompletion.NotStarted;
+                case 2: return ActionCompletion.Completed;
+                case 3: return ActionCompletion.Unknown;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case ActionCompletion.NotStarted: return ordinalConverter.write(1, into);
+                case ActionCompletion.Completed: return ordinalConverter.write(2, into);
+                case ActionCompletion.Unknown: return ordinalConverter.write(3, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
 
 // Error type: DriverError
 export enum DriverError_Tags {
@@ -913,7 +1014,10 @@ export enum DriverError_Tags {
     Protocol = "Protocol",
     Tool = "Tool",
     Shutdown = "Shutdown",
-    RuntimeAlreadyExists = "RuntimeAlreadyExists"
+    RuntimeAlreadyExists = "RuntimeAlreadyExists",
+    Worker = "Worker",
+    Remote = "Remote",
+    ActionInterrupted = "ActionInterrupted"
 }
 export const DriverError = (() => {
 
@@ -1166,6 +1270,123 @@ Readonly<{tool: string; message: string; errorCode: string}> {
 
     }
 
+    type Worker__interface = {
+        tag: DriverError_Tags.Worker;
+        inner:
+Readonly<{reason: string}>
+    };
+    class Worker_ extends UniffiError implements Worker__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "DriverError";
+        readonly tag = DriverError_Tags.Worker;
+        readonly inner:
+Readonly<{reason: string}>;
+        constructor(
+inner: {reason: string }) {
+            super("DriverError", "Worker");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {reason: string }): Worker_ {
+            return new Worker_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Worker_ {
+            return obj.tag === DriverError_Tags.Worker;
+        }
+        static hasInner(obj: any): obj is Worker_ {
+            return Worker_.instanceOf(obj);
+        }
+
+        static getInner(obj: Worker_):
+Readonly<{reason: string}> {
+            return obj.inner;
+        }
+
+    }
+
+    type Remote__interface = {
+        tag: DriverError_Tags.Remote;
+        inner:
+Readonly<{reason: string}>
+    };
+    class Remote_ extends UniffiError implements Remote__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "DriverError";
+        readonly tag = DriverError_Tags.Remote;
+        readonly inner:
+Readonly<{reason: string}>;
+        constructor(
+inner: {reason: string }) {
+            super("DriverError", "Remote");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {reason: string }): Remote_ {
+            return new Remote_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Remote_ {
+            return obj.tag === DriverError_Tags.Remote;
+        }
+        static hasInner(obj: any): obj is Remote_ {
+            return Remote_.instanceOf(obj);
+        }
+
+        static getInner(obj: Remote_):
+Readonly<{reason: string}> {
+            return obj.inner;
+        }
+
+    }
+
+    type ActionInterrupted__interface = {
+        tag: DriverError_Tags.ActionInterrupted;
+        inner:
+Readonly<{completion: ActionCompletion; reason: string}>
+    };
+    class ActionInterrupted_ extends UniffiError implements ActionInterrupted__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "DriverError";
+        readonly tag = DriverError_Tags.ActionInterrupted;
+        readonly inner:
+Readonly<{completion: ActionCompletion; reason: string}>;
+        constructor(
+inner: {completion: ActionCompletion; reason: string }) {
+            super("DriverError", "ActionInterrupted");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {completion: ActionCompletion; reason: string }): ActionInterrupted_ {
+            return new ActionInterrupted_(inner);
+        }
+
+        static instanceOf(obj: any): obj is ActionInterrupted_ {
+            return obj.tag === DriverError_Tags.ActionInterrupted;
+        }
+        static hasInner(obj: any): obj is ActionInterrupted_ {
+            return ActionInterrupted_.instanceOf(obj);
+        }
+
+        static getInner(obj: ActionInterrupted_):
+Readonly<{completion: ActionCompletion; reason: string}> {
+            return obj.inner;
+        }
+
+    }
+
     function instanceOf(obj: any): obj is DriverError {
         return obj[uniffiTypeNameSymbol] === "DriverError";
     }
@@ -1178,12 +1399,15 @@ Readonly<{tool: string; message: string; errorCode: string}> {
   Protocol: Protocol_,
   Tool: Tool_,
   Shutdown: Shutdown_,
-  RuntimeAlreadyExists: RuntimeAlreadyExists_
+  RuntimeAlreadyExists: RuntimeAlreadyExists_,
+  Worker: Worker_,
+  Remote: Remote_,
+  ActionInterrupted: ActionInterrupted_
     });
 
 })();
 export type DriverError = InstanceType<
-    typeof DriverError['Configuration' | 'InvalidArguments' | 'Transport' | 'Protocol' | 'Tool' | 'Shutdown' | 'RuntimeAlreadyExists']
+    typeof DriverError['Configuration' | 'InvalidArguments' | 'Transport' | 'Protocol' | 'Tool' | 'Shutdown' | 'RuntimeAlreadyExists' | 'Worker' | 'Remote' | 'ActionInterrupted']
 >;
 
 // FfiConverter for enum DriverError
@@ -1200,6 +1424,9 @@ const FfiConverterTypeDriverError = (() => {
                 case 5: return new DriverError.Tool({tool: FfiConverterString.read(from), message: FfiConverterString.read(from), errorCode: FfiConverterString.read(from) });
                 case 6: return new DriverError.Shutdown();
                 case 7: return new DriverError.RuntimeAlreadyExists();
+                case 8: return new DriverError.Worker({reason: FfiConverterString.read(from) });
+                case 9: return new DriverError.Remote({reason: FfiConverterString.read(from) });
+                case 10: return new DriverError.ActionInterrupted({completion: FfiConverterTypeActionCompletion.read(from), reason: FfiConverterString.read(from) });
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -1245,6 +1472,25 @@ const FfiConverterTypeDriverError = (() => {
                 }
                 case DriverError_Tags.RuntimeAlreadyExists: {
                     ordinalConverter.write(7, into);
+                    return;
+                }
+                case DriverError_Tags.Worker: {
+                    ordinalConverter.write(8, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.reason, into);
+                    return;
+                }
+                case DriverError_Tags.Remote: {
+                    ordinalConverter.write(9, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.reason, into);
+                    return;
+                }
+                case DriverError_Tags.ActionInterrupted: {
+                    ordinalConverter.write(10, into);
+                    const inner = value.inner;
+                    FfiConverterTypeActionCompletion.write(inner.completion, into);
+                    FfiConverterString.write(inner.reason, into);
                     return;
                 }
                 default:
@@ -1294,6 +1540,25 @@ const FfiConverterTypeDriverError = (() => {
                 case DriverError_Tags.RuntimeAlreadyExists: {
                     return ordinalConverter.allocationSize(7);
                 }
+                case DriverError_Tags.Worker: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(8);
+                    size += FfiConverterString.allocationSize(inner.reason);
+                    return size;
+                }
+                case DriverError_Tags.Remote: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(9);
+                    size += FfiConverterString.allocationSize(inner.reason);
+                    return size;
+                }
+                case DriverError_Tags.ActionInterrupted: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(10);
+                    size += FfiConverterTypeActionCompletion.allocationSize(inner.completion);
+                    size += FfiConverterString.allocationSize(inner.reason);
+                    return size;
+                }
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -1306,7 +1571,9 @@ const FfiConverterTypeDriverError = (() => {
  */
 export enum DriverExecutionMode {
     Embedded,
-    Daemon
+    Daemon,
+    PrivateWorker,
+    Remote
 }
 
 const FfiConverterTypeDriverExecutionMode = (() => {
@@ -1317,6 +1584,8 @@ const FfiConverterTypeDriverExecutionMode = (() => {
             switch (ordinalConverter.read(from)) {
                 case 1: return DriverExecutionMode.Embedded;
                 case 2: return DriverExecutionMode.Daemon;
+                case 3: return DriverExecutionMode.PrivateWorker;
+                case 4: return DriverExecutionMode.Remote;
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -1324,6 +1593,8 @@ const FfiConverterTypeDriverExecutionMode = (() => {
             switch (value) {
                 case DriverExecutionMode.Embedded: return ordinalConverter.write(1, into);
                 case DriverExecutionMode.Daemon: return ordinalConverter.write(2, into);
+                case DriverExecutionMode.PrivateWorker: return ordinalConverter.write(3, into);
+                case DriverExecutionMode.Remote: return ordinalConverter.write(4, into);
             }
         }
         allocationSize(value: TypeName): number {
@@ -2000,6 +2271,42 @@ private constructor(pointer: UniffiHandle) {
             /*caller:*/ (callStatus) => {
                 return nativeModule().uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with_client_kind(
         FfiConverterTypeConfiguredDriverOptions.lower(options, nativeModule().rustbuffer_alloc),
+        FfiConverterTypeSdkClientKind.lower(clientKind, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * Create a process-isolated runtime owned by this SDK object.
+ *
+ * This constructor directly spawns the supplied Cua Driver binary and
+ * communicates only over inherited stdio. No daemon or reusable endpoint
+ * is created.
+ */
+    static createPrivateWorker(options: PrivateWorkerOptions): CuaDriverLike /*throws*/ {
+    return FfiConverterTypeCuaDriver.lift(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeDriverError.lift.bind(FfiConverterTypeDriverError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_private_worker(
+        FfiConverterTypePrivateWorkerOptions.lower(options, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * Language-package entry point that preserves the worker constructor
+ * while attaching the importing SDK runtime category.
+ */
+    static createPrivateWorkerWithClientKind(options: PrivateWorkerOptions, clientKind: SdkClientKind): CuaDriverLike /*throws*/ {
+    return FfiConverterTypeCuaDriver.lift(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeDriverError.lift.bind(FfiConverterTypeDriverError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_private_worker_with_client_kind(
+        FfiConverterTypePrivateWorkerOptions.lower(options, nativeModule().rustbuffer_alloc),
         FfiConverterTypeSdkClientKind.lower(clientKind, nativeModule().rustbuffer_alloc),
                 callStatus);
             },
@@ -3727,6 +4034,12 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_client_kind() !== 23819) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_client_kind");
     }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_private_worker() !== 8571) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_private_worker");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_private_worker_with_client_kind() !== 31571) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_private_worker_with_client_kind");
+    }
     if (nativeModule().uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_with_client_kind() !== 3630) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_with_client_kind");
     }
@@ -3871,6 +4184,7 @@ function uniffiEnsureInitialized() {
 export default Object.freeze({
   initialize: uniffiEnsureInitialized,
   converters: {
+    FfiConverterTypeActionCompletion,
     FfiConverterTypeConfiguredDriverOptions,
     FfiConverterTypeCuaDriver,
     FfiConverterTypeCuaDriverSession,
@@ -3889,6 +4203,7 @@ export default Object.freeze({
     FfiConverterTypeEmbeddedPermissionMode,
     FfiConverterTypeImageContent,
     FfiConverterTypeMacOsPermissionStatus,
+    FfiConverterTypePrivateWorkerOptions,
     FfiConverterTypeRuntimeAuthorizationOptions,
     FfiConverterTypeSdkClientKind,
     FfiConverterTypeSessionPermissionMode,

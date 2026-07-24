@@ -7,6 +7,7 @@ through their runtime's MCP client instead of importing a language MCP facade.
 __version__ = "0.12.6"  # x-release-please-version
 
 from ._native import (
+    ActionCompletion,
     ConfiguredDriverOptions,
     CuaDriver as _NativeCuaDriver,
     CuaDriverSession,
@@ -25,6 +26,7 @@ from ._native import (
     EmbeddedPermissionMode,
     ImageContent,
     MacOsPermissionStatus,
+    PrivateWorkerOptions,
     RuntimeAuthorizationOptions,
     SdkClientKind,
     SessionPermissionMode,
@@ -83,12 +85,20 @@ def _create_configured_python_sdk(cls, options):
     return cls.create_configured_with_client_kind(options, SdkClientKind.PYTHON)
 
 
+def _create_private_worker_python_sdk(cls, options):
+    """Create a supervised worker runtime tagged as a Python SDK host."""
+
+    return cls.create_private_worker_with_client_kind(options, SdkClientKind.PYTHON)
+
+
 _NativeCuaDriver.connect = classmethod(_connect_python_sdk)
 _NativeCuaDriver.create = classmethod(_create_python_sdk)
 _NativeCuaDriver.create_configured = classmethod(_create_configured_python_sdk)
+_NativeCuaDriver.create_private_worker = classmethod(_create_private_worker_python_sdk)
 CuaDriver = _NativeCuaDriver
 
 __all__ = [
+    "ActionCompletion",
     "CaptureScope",
     "ClickButton",
     "ClickInput",
@@ -124,6 +134,7 @@ __all__ = [
     "MacOsPermissionStatus",
     "MoveCursorInput",
     "Platform",
+    "PrivateWorkerOptions",
     "PressKeyInput",
     "RuntimeAuthorizationOptions",
     "ScrollBy",

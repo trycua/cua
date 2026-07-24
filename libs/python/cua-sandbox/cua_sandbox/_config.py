@@ -19,6 +19,7 @@ class _Config:
     token_url: str = _DEFAULT_TOKEN_URL
     client_id: Optional[str] = None
     client_secret: Optional[str] = None
+    access_token: Optional[str] = None
 
 
 _global_config = _Config()
@@ -32,11 +33,13 @@ def configure(
     token_url: Optional[str] = None,
     client_id: Optional[str] = None,
     client_secret: Optional[str] = None,
+    access_token: Optional[str] = None,
 ) -> None:
     """Set global configuration for cloud sandboxes.
 
     API-key cloud operations use ``base_url``. Fleet uses ``fleet_base_url`` and
-    OAuth client credentials.
+    OAuth client credentials. ``access_token`` is a temporary caller-supplied
+    device token and is never refreshed automatically.
     """
     if api_key is not None:
         _global_config.api_key = api_key
@@ -50,6 +53,8 @@ def configure(
         _global_config.client_id = client_id
     if client_secret is not None:
         _global_config.client_secret = client_secret
+    if access_token is not None:
+        _global_config.access_token = access_token
 
 
 def get_api_key(override: Optional[str] = None) -> Optional[str]:
@@ -62,6 +67,11 @@ def get_api_key(override: Optional[str] = None) -> Optional[str]:
     if credential:
         return credential
     return os.environ.get("CUA_API_KEY")
+
+
+def get_access_token() -> Optional[str]:
+    """Return the temporary caller-supplied Fleet device token, if configured."""
+    return _global_config.access_token
 
 
 def get_base_url() -> str:

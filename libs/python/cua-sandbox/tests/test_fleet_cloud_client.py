@@ -82,6 +82,7 @@ async def test_list_pools_enumerates_namespaces_with_static_bearer_token():
     client._access_token = "temporary-device-token"
     client._http_client = Http()
     client._client = SDK()
+    assert await client._list_namespaces() == ["one", "two"]
     assert await client.list_pools() == ["one", "two"]
 
 

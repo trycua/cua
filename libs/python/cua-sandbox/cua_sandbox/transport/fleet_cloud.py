@@ -131,7 +131,7 @@ class _FleetClient:
                 return claim
         raise LookupError(f"Fleet claim {expected!r} was not found")
 
-    async def list_pools(self) -> list[Any]:
+    async def _list_namespaces(self) -> list[str]:
         headers = []
         if self._access_token:
             headers = [HttpHeader(name="Authorization", value=f"Bearer {self._access_token}")]
@@ -150,16 +150,22 @@ class _FleetClient:
             raise RuntimeError(f"Fleet namespace listing failed with HTTP {response.status}")
         payload = json.loads(response.body)
         items = payload if isinstance(payload, list) else payload.get("items", [])
-        namespaces = [
-            (
-                item
-                if isinstance(item, str)
-                else item.get("name") or item.get("metadata", {}).get("name")
-            )
+        return [
+            namespace
             for item in items
+            if (
+                namespace := (
+                    item
+                    if isinstance(item, str)
+                    else item.get("name") or item.get("metadata", {}).get("name")
+                )
+            )
         ]
+
+    async def list_pools(self) -> list[Any]:
+        namespaces = await self._list_namespaces()
         pools = await asyncio.gather(
-            *(self._client.list_pools(namespace) for namespace in namespaces if namespace)
+            *(self._client.list_pools(namespace) for namespace in namespaces)
         )
         return [pool for namespace_pools in pools for pool in namespace_pools]
 

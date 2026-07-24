@@ -8,11 +8,10 @@
         Width="900" Height="650"
         WindowStartupLocation="CenterScreen">
     <Window.InputBindings>
-        <!-- F5 (no modifiers) — chosen for automated testing. WPF's
-             Keyboard.Modifiers is sourced from GetKeyState() which is
-             never updated by PostMessage(WM_KEYDOWN, VK_CONTROL); so a
-             modifier-bearing binding ("Ctrl+Shift+H") doesn't fire on
-             the cua-driver PostMessage hotkey path. Use F5 here. -->
+        <!-- F5 (no modifiers) covers the background-refusal case. WPF's
+             Keyboard.Modifiers is sourced from GetKeyState(), so the
+             foreground SendInput harness cases use Ctrl+Shift+H to verify
+             modifier-bearing letter delivery through press_key and hotkey. -->
         <KeyBinding Key="F5" Command="{x:Static local:MainWindow.AccelCmd}"
                     xmlns:local="clr-namespace:CuaTestHarness.Wpf"/>
         <KeyBinding Modifiers="Control+Shift" Key="H" Command="{x:Static local:MainWindow.AccelCmd}"

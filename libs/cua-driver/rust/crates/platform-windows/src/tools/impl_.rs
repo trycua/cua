@@ -4753,7 +4753,7 @@ impl Tool for HotkeyTool {
         // on PostMessage and the no-foreground contract holds.
         // Foreground is an explicit request for system-queue delivery. This is
         // still required after a PX focus click: PostMessage does not update
-        // global modifier state, so Chromium never observes Ctrl+Shift+7 as a
+        // global modifier state, so Chromium never observes Ctrl+Shift+H as a
         // chord even though the renderer control is focused.
         let use_send_input = delivery == DeliveryMode::Foreground;
         let result = tokio::task::spawn_blocking(move || {

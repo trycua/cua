@@ -27,6 +27,10 @@
 
 #define CUA_DRIVER_ABI_PATCH 0
 
+#define DRIVER_ENVELOPE_VERSION 1
+
+#define PRIVATE_WORKER_PROTOCOL_VERSION 1
+
 /**
  * Stable status codes returned across the C ABI.
  */

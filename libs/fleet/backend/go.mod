@@ -7,7 +7,7 @@ toolchain go1.24.7
 require (
 	github.com/MicahParks/keyfunc/v2 v2.1.0
 	github.com/Nerzal/gocloak/v13 v13.9.0
-	github.com/golang-jwt/jwt/v5 v5.2.1
+	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/google/uuid v1.6.0
 	github.com/open-feature/go-sdk v1.17.0
 	github.com/open-policy-agent/opa v0.69.0

@@ -56,6 +56,13 @@ class Sandbox:
     async def destroy(self) -> None:
         """Delete the sandbox. Returns {"status": "deleted"}."""
 
+    async def __aenter__(self) -> "Sandbox":
+        """Connect when entering an async context."""
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        """Disconnect when leaving an async context."""
+
     def _raw_operation(self) -> None:
         """Private raw operation."""
 
@@ -140,6 +147,8 @@ __all__ = ["Tunnel", "TunnelInfo"]
         self.assertIn("class Sandbox", rendered)
         self.assertIn("async def disconnect(self) -> None", rendered)
         self.assertIn("async def destroy(self) -> None", rendered)
+        self.assertIn("async def __aenter__(self) -> Sandbox", rendered)
+        self.assertIn("async def __aexit__(self, *exc: object) -> None", rendered)
         self.assertIn(r'\{"status": "deleted"\}', rendered)
         self.assertIn("tunnel", rendered)
         self.assertIn("service_ports: dict[str, int]", rendered)
@@ -239,6 +248,8 @@ __all__ = ["Tunnel", "TunnelInfo"]
                 "skip_if_unsupported",
             ],
         )
+        self.assertIn("async def __aenter__(self) -> Sandbox", rendered)
+        self.assertIn("async def __aexit__(self, *exc: Any) -> None", rendered)
         self.assertNotIn("FleetTransport", rendered)
         self.assertNotIn("cyclops_sdk", rendered)
         interface_module = generator.load_pdoc_module("cua_sandbox.interfaces")

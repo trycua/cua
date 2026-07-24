@@ -23,18 +23,19 @@ PACKAGE_PARENT = ROOT / "libs/python/cua-sandbox"
 OUTPUT = DOCS / "content/docs/reference/sandbox-sdk/index.mdx"
 PRETTIER = DOCS / "node_modules/.bin/prettier"
 EXCLUDED_MODULE_PARTS = (".transport.fleet", "cyclops_sdk")
+PUBLIC_PROTOCOL_METHODS = frozenset(("__aenter__", "__aexit__"))
+
+# pdoc resolves annotations lazily; rendered signatures come from source declarations below.
+warnings.filterwarnings(
+    "ignore",
+    message=r"Error parsing type annotation .*",
+    category=UserWarning,
+)
 
 
 def load_pdoc_module(name: str) -> Module:
-    """Load a module while retaining source-form annotations pdoc cannot resolve."""
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore",
-            message=r"Error parsing type annotation .*",
-            category=UserWarning,
-            module=r"pdoc\.doc_types",
-        )
-        return Module.from_name(name)
+    """Load a module through pdoc's supported API."""
+    return Module.from_name(name)
 
 
 def install_fleet_import_stub() -> None:
@@ -92,7 +93,7 @@ def public_interface_members(module: Module) -> list[Doc]:
 def is_documentable(member: Doc) -> bool:
     """Keep pdoc's public members while excluding internal transport implementation."""
     return not (
-        member.name.startswith("_")
+        (member.name.startswith("_") and member.name not in PUBLIC_PROTOCOL_METHODS)
         # ``send`` is the low-level action dispatcher on transport implementations.
         or member.name == "send"
         or any(part in member.modulename for part in EXCLUDED_MODULE_PARTS)

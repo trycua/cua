@@ -560,6 +560,18 @@ share: If True, return a public link with embedded credentials
 async def get_dimensions(self) -> tuple[int, int]
 ```
 
+### `cua_sandbox.Sandbox.__aenter__`
+
+```python
+async def __aenter__(self) -> Sandbox
+```
+
+### `cua_sandbox.Sandbox.__aexit__`
+
+```python
+async def __aexit__(self, *exc: Any) -> None
+```
+
 ### `cua_sandbox.Sandbox.create`
 
 ```python

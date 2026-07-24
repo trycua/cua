@@ -64,6 +64,54 @@ pub struct ClickElementResult {
     pub message: String,
 }
 
+/// Provenance for a successful legacy page read. macOS uses this to make its
+/// JavaScript/CDP-to-AX compatibility fallback explicit without changing the
+/// existing textual response.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PageReadSource {
+    Javascript,
+    Cdp,
+    AxFallback,
+}
+
+/// Structured metadata attached to a legacy page read when the backend can
+/// identify its modality.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PageReadMetadata {
+    pub source: PageReadSource,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncated: Option<bool>,
+}
+
+/// Compatibility result for `get_text` and `query_dom`. `content` remains the
+/// exact legacy text payload; metadata is emitted separately as MCP structured
+/// content. Backends without modality metadata can keep implementing the
+/// original string-returning methods.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageReadResult {
+    pub content: String,
+    pub metadata: Option<PageReadMetadata>,
+}
+
+impl PageReadResult {
+    pub fn text(content: String) -> Self {
+        Self {
+            content,
+            metadata: None,
+        }
+    }
+
+    pub fn with_metadata(content: String, metadata: PageReadMetadata) -> Self {
+        Self {
+            content,
+            metadata: Some(metadata),
+        }
+    }
+}
+
 /// Platform-specific backend for the `page` tool.
 ///
 /// All methods take `(pid, window_id)` for consistency across actions.
@@ -75,6 +123,14 @@ pub trait PageBackend: Send + Sync {
     /// `document.body.innerText`).
     async fn get_text(&self, pid: i32, window_id: u64) -> anyhow::Result<String>;
 
+    /// Metadata-aware form used by the shared dispatcher. The default keeps
+    /// existing platform backends source-compatible and returns plain text.
+    async fn get_text_result(&self, pid: i32, window_id: u64) -> anyhow::Result<PageReadResult> {
+        self.get_text(pid, window_id)
+            .await
+            .map(PageReadResult::text)
+    }
+
     /// Find elements matching `css_selector` and return a formatted-text
     /// response (same human-readable shape macOS already emits).
     async fn query_dom(
@@ -84,6 +140,20 @@ pub trait PageBackend: Send + Sync {
         css_selector: &str,
         attributes: &[String],
     ) -> anyhow::Result<String>;
+
+    /// Metadata-aware form used by the shared dispatcher. See
+    /// [`PageBackend::get_text_result`].
+    async fn query_dom_result(
+        &self,
+        pid: i32,
+        window_id: u64,
+        css_selector: &str,
+        attributes: &[String],
+    ) -> anyhow::Result<PageReadResult> {
+        self.query_dom(pid, window_id, css_selector, attributes)
+            .await
+            .map(PageReadResult::text)
+    }
 
     /// Evaluate `javascript` against the page and return the stringified
     /// result. Backends without a JS path should return an actionable error.
@@ -266,8 +336,11 @@ fn def() -> &'static ToolDef {
             --remote-debugging-port is set), and WKWebView/Tauri/AT-SPI fallbacks.\n\n\
             Actions:\n\
             - execute_javascript: Run JS and return the result.\n\
-            - get_text: Extract visible text from the page.\n\
-            - query_dom: Find elements matching a CSS selector.\n\
+            - get_text: Extract visible text from the page. On macOS, structuredContent.source \
+              identifies javascript, cdp, or ax_fallback; a successful AX fallback preserves \
+              the triggering error and truncation state in structuredContent.\n\
+            - query_dom: Find elements matching a CSS selector, with the same macOS fallback \
+              metadata contract as get_text.\n\
             - click_element: Click a CSS-selected element AND animate the agent cursor \
               to its on-screen center first (so the user sees what the agent is doing). \
               Prefer over `execute_javascript('el.click()')` whenever you want visible \
@@ -458,8 +531,8 @@ impl Tool for PageTool {
                 }
             }
 
-            "get_text" => match self.backend.get_text(pid, window_id).await {
-                Ok(text) => ToolResult::text(text),
+            "get_text" => match self.backend.get_text_result(pid, window_id).await {
+                Ok(result) => page_read_tool_result(result),
                 Err(e) => ToolResult::error(format!("Page text extraction failed: {e}")),
             },
 
@@ -547,16 +620,26 @@ impl Tool for PageTool {
                     .unwrap_or_default();
                 match self
                     .backend
-                    .query_dom(pid, window_id, &selector, &attributes)
+                    .query_dom_result(pid, window_id, &selector, &attributes)
                     .await
                 {
-                    Ok(text) => ToolResult::text(text),
+                    Ok(result) => page_read_tool_result(result),
                     Err(e) => ToolResult::error(format!("DOM query failed: {e}")),
                 }
             }
 
             other => ToolResult::error(format!("Unknown action: {other}")),
         }
+    }
+}
+
+fn page_read_tool_result(result: PageReadResult) -> ToolResult {
+    let tool_result = ToolResult::text(result.content);
+    match result.metadata {
+        Some(metadata) => tool_result.with_structured(
+            serde_json::to_value(metadata).expect("page read metadata must serialize"),
+        ),
+        None => tool_result,
     }
 }
 
@@ -628,6 +711,74 @@ mod tests {
             ));
             Ok("targeted".to_owned())
         }
+    }
+
+    struct ProvenanceBackend;
+
+    #[async_trait]
+    impl PageBackend for ProvenanceBackend {
+        async fn get_text(&self, _pid: i32, _window_id: u64) -> anyhow::Result<String> {
+            Ok("legacy payload".to_owned())
+        }
+
+        async fn get_text_result(
+            &self,
+            _pid: i32,
+            _window_id: u64,
+        ) -> anyhow::Result<PageReadResult> {
+            Ok(PageReadResult::with_metadata(
+                "legacy payload".to_owned(),
+                PageReadMetadata {
+                    source: PageReadSource::AxFallback,
+                    fallback_error: Some("JavaScript from Apple Events is disabled".to_owned()),
+                    truncated: Some(true),
+                },
+            ))
+        }
+
+        async fn query_dom(
+            &self,
+            _pid: i32,
+            _window_id: u64,
+            _css_selector: &str,
+            _attributes: &[String],
+        ) -> anyhow::Result<String> {
+            Ok(String::new())
+        }
+
+        async fn execute_javascript(
+            &self,
+            _pid: i32,
+            _window_id: u64,
+            _javascript: &str,
+        ) -> anyhow::Result<String> {
+            anyhow::bail!("unused")
+        }
+    }
+
+    #[tokio::test]
+    async fn read_preserves_text_and_attaches_backend_provenance() {
+        let tool = PageTool::new(Arc::new(ProvenanceBackend));
+        let result = tool
+            .invoke(serde_json::json!({
+                "pid": 42,
+                "window_id": 7,
+                "action": "get_text"
+            }))
+            .await;
+
+        assert!(matches!(
+            &result.content[0],
+            crate::protocol::Content::Text { text, .. } if text == "legacy payload"
+        ));
+        assert_eq!(
+            result.structured_content,
+            Some(serde_json::json!({
+                "source": "ax_fallback",
+                "fallback_error": "JavaScript from Apple Events is disabled",
+                "truncated": true
+            }))
+        );
     }
 
     #[tokio::test]

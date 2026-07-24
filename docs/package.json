@@ -17,7 +17,9 @@
     "docs:generate:versions": "tsx ../scripts/docs-generators/generate-versioned-docs.ts",
     "docs:check-links": "tsx scripts/check-links.ts",
     "docs:check-links:external": "tsx scripts/check-links.ts --external",
-    "docs:check-hygiene": "tsx scripts/check-hygiene.ts"
+    "docs:check-hygiene": "tsx scripts/check-hygiene.ts",
+    "docs:generate:sandbox-sdk": "uv run --no-project --with-requirements ../scripts/docs-generators/requirements.txt python ../scripts/docs-generators/generate_mkdocstrings_sandbox_reference.py",
+    "docs:check:sandbox-sdk": "uv run --no-project --with-requirements ../scripts/docs-generators/requirements.txt python ../scripts/docs-generators/generate_mkdocstrings_sandbox_reference.py --check"
   },
   "dependencies": {
     "fumadocs-core": "16.0.8",

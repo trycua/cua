@@ -14,6 +14,7 @@ pub mod ext_screencopy;
 pub mod ext_toplevel;
 pub mod overlay;
 pub mod persistent_vptr;
+pub(crate) mod portal;
 pub mod portal_screenshot;
 pub mod shell_helper;
 pub mod sway_ipc;

@@ -302,6 +302,11 @@ impl CuaDriver {
     /// `cua-driver` and never opens daemon IPC.
     #[uniffi::constructor]
     pub fn create(options: Option<DriverOptions>) -> Result<Arc<Self>, DriverError> {
+        cua_driver_core::authorization::validate_startup_authorization().map_err(|error| {
+            DriverError::Configuration {
+                reason: format!("authorization configuration is invalid: {error}"),
+            }
+        })?;
         let options = options.unwrap_or_default();
         Ok(Arc::new(Self {
             backend: DriverBackend::Embedded(Arc::new(NativeAbiDriver::create(
@@ -766,6 +771,33 @@ mod tests {
             driver.list_tools_json().await,
             Err(DriverError::Shutdown)
         ));
+    }
+
+    #[tokio::test]
+    async fn embedded_runtime_enforces_authorization_before_platform_dispatch() {
+        let driver = CuaDriver::create(None).unwrap();
+        let result = driver
+            .call_tool(
+                "click".into(),
+                serde_json::json!({
+                    "pid": std::process::id(),
+                    "x": 1,
+                    "y": 1
+                })
+                .to_string(),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.is_error);
+        assert_eq!(result.error_code.as_deref(), Some("permission_denied"));
+        assert!(result.text.contains("authorization process"));
+        let structured: Value =
+            serde_json::from_str(result.structured_json.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            structured.pointer("/refusal/code"),
+            Some(&Value::String("permission_denied".into()))
+        );
     }
 
     #[tokio::test]

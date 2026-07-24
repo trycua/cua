@@ -378,6 +378,7 @@ impl ToolRegistry {
             "tools": list,
             "capability_version": CAPABILITY_VERSION,
             "schema_version": TOOLS_LIST_SCHEMA_VERSION,
+            "enforcement_adapters": crate::authorization::enforcement_adapter_inventory_json(),
         })
     }
 
@@ -416,6 +417,27 @@ impl ToolRegistry {
         let Some(tool) = self.tools.get(resolved_name) else {
             return ToolResult::error(format!("Unknown tool: {name}"));
         };
+
+        // This registry is the canonical native dispatch boundary shared by
+        // the same-process SDK and every transport adapter. Authorization must
+        // live here: transport-only checks leave CuaDriver::create() able to
+        // invoke platform tools without policy, permission-mode, hard-
+        // invariant, or reviewed-risk enforcement.
+        //
+        // Transports may still reject earlier for defense in depth, but those
+        // checks must remain side-effect free. Active consent/grant adapters
+        // run only downstream of this boundary so a call cannot prompt twice.
+        if let Err(error) = crate::authorization::authorize_tool_call(resolved_name, &args) {
+            let message = error.to_string();
+            return ToolResult::error(message.clone()).with_structured(serde_json::json!({
+                "status": "refused",
+                "refusal": {
+                    "code": "permission_denied",
+                    "message": message,
+                }
+            }));
+        }
+
         // Reject modality violations before reserving a recording turn. A
         // rejected action has no before/after evidence and must not leave a
         // pending recorder entry behind.
@@ -1143,5 +1165,16 @@ mod capability_tests {
         assert_eq!(v["schema_version"], "1");
         assert!(v["tools"].is_array(), "tools array must still be present");
         assert_eq!(v["tools"].as_array().unwrap().len(), 0);
+        assert!(
+            v["enforcement_adapters"].is_array(),
+            "permission enforcement inventory must be available before tools register"
+        );
+        assert!(v["enforcement_adapters"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|adapter| {
+                adapter["id"] == "browser_prepare.existing_profile" && adapter["state"] == "active"
+            }));
     }
 }

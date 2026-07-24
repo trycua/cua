@@ -52,6 +52,7 @@ impl RiskClass {
 pub enum RiskEnforcement {
     Active,
     MetadataOnly,
+    NotExposed,
 }
 
 impl RiskEnforcement {
@@ -59,8 +60,242 @@ impl RiskEnforcement {
         match self {
             Self::Active => "active",
             Self::MetadataOnly => "metadata_only",
+            Self::NotExposed => "not_exposed",
         }
     }
+}
+
+/// Stable, content-free description of one permission-mode enforcement
+/// adapter. This inventory is the source for status and tool discovery; it
+/// deliberately distinguishes shipped enforcement from reviewed metadata and
+/// capabilities that are not exposed at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct EnforcementAdapterDescriptor {
+    pub id: &'static str,
+    pub operations: &'static [&'static str],
+    pub state: RiskEnforcement,
+    pub risk_class: RiskClass,
+    pub resource_kind: &'static str,
+    pub scope_keys: &'static [&'static str],
+    pub grant_type: Option<&'static str>,
+    pub idle_ttl_seconds: Option<u64>,
+    pub absolute_ttl_seconds: Option<u64>,
+    pub indicator_requirement: &'static str,
+    pub revocation_triggers: &'static [&'static str],
+    pub refusal_code: Option<&'static str>,
+    pub provider_requirement: &'static str,
+}
+
+const EXISTING_PROFILE_OPERATIONS: &[&str] = &["browser_prepare[strategy.kind=existing_profile]"];
+const EXISTING_PROFILE_SCOPE_KEYS: &[&str] = &[
+    "daemon_generation",
+    "public_session",
+    "transport_session",
+    "pid",
+    "window_id",
+    "process_fingerprint",
+    "browser_product",
+    "endpoint_owner",
+    "permission_mode",
+    "managed_policy_sha256",
+    "user_policy_sha256",
+];
+const EXISTING_PROFILE_REVOCATION: &[&str] = &[
+    "indicator_stop",
+    "session_end",
+    "idle_expiry",
+    "absolute_expiry",
+    "policy_change",
+    "process_identity_change",
+    "endpoint_identity_change",
+    "daemon_restart",
+    "reconnect_budget_exhaustion",
+];
+
+const PRIVATE_OBSERVATION_OPERATIONS: &[&str] = &[
+    "get_desktop_state[without_file_output]",
+    "get_accessibility_tree",
+    "get_window_state[without_file_output]",
+    "page[action=get_text|query_dom]",
+];
+const PRIVATE_OBSERVATION_SCOPE_KEYS: &[&str] =
+    &["public_session", "pid", "window_id", "display_generation"];
+
+const DESKTOP_INPUT_OPERATIONS: &[&str] = &[
+    "click",
+    "double_click",
+    "right_click",
+    "drag",
+    "scroll",
+    "move_cursor",
+    "mouse_button_down",
+    "mouse_button_up",
+    "mouse_drag",
+    "parallel_mouse_drag",
+    "type_text",
+    "type_text_chars",
+    "press_key",
+    "hotkey",
+    "set_value",
+    "bring_to_front",
+];
+const DESKTOP_INPUT_SCOPE_KEYS: &[&str] = &[
+    "public_session",
+    "pid",
+    "window_id",
+    "display_generation",
+    "delivery_mode_ceiling",
+];
+
+const FILE_TRANSFER_OPERATIONS: &[&str] = &[
+    "browser_set_input_files",
+    "browser_download",
+    "get_desktop_state[with_file_output]",
+    "get_window_state[with_file_output]",
+];
+const FILE_TRANSFER_SCOPE_KEYS: &[&str] = &[
+    "public_session",
+    "browser_binding",
+    "tab",
+    "canonical_path",
+    "destination_class",
+];
+
+const CONSEQUENTIAL_OPERATIONS: &[&str] = &[
+    "browser_dialog[action=accept|dismiss]",
+    "page[action!=get_text|query_dom]",
+];
+const CONSEQUENTIAL_SCOPE_KEYS: &[&str] =
+    &["public_session", "browser_binding", "tab", "action_kind"];
+
+const SESSION_REVOCATION: &[&str] = &[
+    "indicator_stop",
+    "session_end",
+    "expiry",
+    "policy_change",
+    "resource_identity_change",
+    "daemon_restart",
+];
+
+pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
+    EnforcementAdapterDescriptor {
+        id: "browser_prepare.existing_profile",
+        operations: EXISTING_PROFILE_OPERATIONS,
+        state: RiskEnforcement::Active,
+        risk_class: RiskClass::R2,
+        resource_kind: "existing_browser_profile",
+        scope_keys: EXISTING_PROFILE_SCOPE_KEYS,
+        grant_type: Some("existing_profile_session_grant"),
+        idle_ttl_seconds: Some(30 * 60),
+        absolute_ttl_seconds: Some(8 * 60 * 60),
+        indicator_requirement: "required_in_standard_and_bounded",
+        revocation_triggers: EXISTING_PROFILE_REVOCATION,
+        refusal_code: Some("browser_consent_required"),
+        provider_requirement:
+            "protected_consent_in_standard; protected_indicator_in_bounded; none_in_unrestricted",
+    },
+    EnforcementAdapterDescriptor {
+        id: "private_observation",
+        operations: PRIVATE_OBSERVATION_OPERATIONS,
+        state: RiskEnforcement::MetadataOnly,
+        risk_class: RiskClass::R2,
+        resource_kind: "user_window_or_display_observation",
+        scope_keys: PRIVATE_OBSERVATION_SCOPE_KEYS,
+        grant_type: None,
+        idle_ttl_seconds: None,
+        absolute_ttl_seconds: None,
+        indicator_requirement: "not_implemented",
+        revocation_triggers: SESSION_REVOCATION,
+        refusal_code: None,
+        provider_requirement: "certified_protected_host_not_implemented",
+    },
+    EnforcementAdapterDescriptor {
+        id: "desktop_input",
+        operations: DESKTOP_INPUT_OPERATIONS,
+        state: RiskEnforcement::MetadataOnly,
+        risk_class: RiskClass::R1,
+        resource_kind: "user_window_or_display_input",
+        scope_keys: DESKTOP_INPUT_SCOPE_KEYS,
+        grant_type: None,
+        idle_ttl_seconds: None,
+        absolute_ttl_seconds: None,
+        indicator_requirement: "not_implemented",
+        revocation_triggers: SESSION_REVOCATION,
+        refusal_code: None,
+        provider_requirement: "certified_protected_host_not_implemented",
+    },
+    EnforcementAdapterDescriptor {
+        id: "file_transfer_and_output",
+        operations: FILE_TRANSFER_OPERATIONS,
+        state: RiskEnforcement::MetadataOnly,
+        risk_class: RiskClass::R3,
+        resource_kind: "canonical_file_path_and_destination",
+        scope_keys: FILE_TRANSFER_SCOPE_KEYS,
+        grant_type: None,
+        idle_ttl_seconds: None,
+        absolute_ttl_seconds: None,
+        indicator_requirement: "not_implemented",
+        revocation_triggers: SESSION_REVOCATION,
+        refusal_code: None,
+        provider_requirement: "certified_protected_host_not_implemented",
+    },
+    EnforcementAdapterDescriptor {
+        id: "browser_consequential_action",
+        operations: CONSEQUENTIAL_OPERATIONS,
+        state: RiskEnforcement::MetadataOnly,
+        risk_class: RiskClass::R3,
+        resource_kind: "typed_browser_consequential_action",
+        scope_keys: CONSEQUENTIAL_SCOPE_KEYS,
+        grant_type: None,
+        idle_ttl_seconds: None,
+        absolute_ttl_seconds: None,
+        indicator_requirement: "not_implemented",
+        revocation_triggers: SESSION_REVOCATION,
+        refusal_code: None,
+        provider_requirement: "certified_protected_host_not_implemented",
+    },
+    EnforcementAdapterDescriptor {
+        id: "devices",
+        operations: &["microphone", "camera"],
+        state: RiskEnforcement::NotExposed,
+        risk_class: RiskClass::Unclassified,
+        resource_kind: "device_capture",
+        scope_keys: &[],
+        grant_type: None,
+        idle_ttl_seconds: None,
+        absolute_ttl_seconds: None,
+        indicator_requirement: "required_before_exposure",
+        revocation_triggers: &[],
+        refusal_code: None,
+        provider_requirement: "capability_not_exposed",
+    },
+    EnforcementAdapterDescriptor {
+        id: "shell_and_network",
+        operations: &["generic_shell", "generic_network"],
+        state: RiskEnforcement::NotExposed,
+        risk_class: RiskClass::Unclassified,
+        resource_kind: "open_ended_external_capability",
+        scope_keys: &[],
+        grant_type: None,
+        idle_ttl_seconds: None,
+        absolute_ttl_seconds: None,
+        indicator_requirement: "required_before_exposure",
+        revocation_triggers: &[],
+        refusal_code: None,
+        provider_requirement: "capability_not_exposed",
+    },
+];
+
+pub fn enforcement_adapter_inventory_json() -> Value {
+    serde_json::to_value(ENFORCEMENT_ADAPTERS).expect("static adapter inventory serializes")
+}
+
+pub fn adapter_ids_with_state(state: RiskEnforcement) -> Vec<&'static str> {
+    ENFORCEMENT_ADAPTERS
+        .iter()
+        .filter(|adapter| adapter.state == state)
+        .map(|adapter| adapter.id)
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,9 +354,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         // Surfaces that can reveal or control sensitive local/authenticated
         // state. Most remain metadata-only until their resource adapters ship.
         "zoom"
-        | "get_desktop_state"
         | "get_accessibility_tree"
-        | "get_window_state"
         | "set_config"
         | "escalate_session"
         | "start_recording"
@@ -133,7 +366,9 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "browser_pointer" => RiskClass::R2,
 
         // External/file side effects or generic compound action surfaces.
-        "install_ffmpeg"
+        "get_desktop_state"
+        | "get_window_state"
+        | "install_ffmpeg"
         | "page"
         | "browser_dialog"
         | "browser_set_input_files"
@@ -144,7 +379,14 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
     RiskAssessment {
         class,
         enforcement: RiskEnforcement::MetadataOnly,
-        operation_sensitive: matches!(tool, "browser_prepare" | "browser_dialog" | "page"),
+        operation_sensitive: matches!(
+            tool,
+            "browser_prepare"
+                | "browser_dialog"
+                | "page"
+                | "get_desktop_state"
+                | "get_window_state"
+        ),
     }
 }
 
@@ -193,6 +435,19 @@ pub fn classify_tool_call(tool: &str, args: &Value) -> RiskAssessment {
                 operation_sensitive: true,
             }
         }
+        "get_desktop_state" | "get_window_state" => RiskAssessment {
+            class: if args
+                .get("screenshot_out_file")
+                .and_then(Value::as_str)
+                .is_some_and(|path| !path.is_empty())
+            {
+                RiskClass::R3
+            } else {
+                RiskClass::R2
+            },
+            enforcement: RiskEnforcement::MetadataOnly,
+            operation_sensitive: true,
+        },
         _ => advertised_risk_for(tool),
     }
 }
@@ -488,7 +743,10 @@ pub fn status_json() -> serde_json::Value {
         "built_in_ceiling": "reviewed_tool_and_risk_map_v1",
         "legacy_existing_profile_approval": legacy_existing_profile_approval_enabled(),
         "risk_metadata_version": RISK_METADATA_VERSION,
-        "active_risk_enforcement": ["browser_prepare.existing_profile"],
+        "active_risk_enforcement": adapter_ids_with_state(RiskEnforcement::Active),
+        "metadata_only_risk_enforcement": adapter_ids_with_state(RiskEnforcement::MetadataOnly),
+        "not_exposed_risk_enforcement": adapter_ids_with_state(RiskEnforcement::NotExposed),
+        "enforcement_adapters": enforcement_adapter_inventory_json(),
         "protected_consent_collector": crate::consent::configured_provider_id(),
         "session_policy_configured": std::env::var_os(crate::session_manifest::SESSION_POLICY_FILE_ENV).is_some(),
         "session_policy_approved_at_startup": env_flag(crate::session_manifest::SESSION_POLICY_APPROVED_ENV),
@@ -596,6 +854,24 @@ mod tests {
     }
 
     #[test]
+    fn screenshot_file_output_is_classified_as_egress() {
+        for tool in ["get_desktop_state", "get_window_state"] {
+            let observation = classify_tool_call(tool, &serde_json::json!({}));
+            assert_eq!(observation.class, RiskClass::R2);
+            assert_eq!(observation.enforcement, RiskEnforcement::MetadataOnly);
+
+            let egress = classify_tool_call(
+                tool,
+                &serde_json::json!({"screenshot_out_file": "/tmp/capture.png"}),
+            );
+            assert_eq!(egress.class, RiskClass::R3);
+            assert_eq!(egress.enforcement, RiskEnforcement::MetadataOnly);
+            assert!(egress.operation_sensitive);
+            assert_eq!(advertised_risk_for(tool).class, RiskClass::R3);
+        }
+    }
+
+    #[test]
     fn process_targeted_tools_cannot_target_the_authorization_daemon() {
         let error = authorize_tool_call(
             "click",
@@ -603,5 +879,70 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("authorization process"));
+    }
+
+    #[test]
+    fn enforcement_inventory_is_unique_and_truthful() {
+        let mut ids = std::collections::BTreeSet::new();
+        for adapter in ENFORCEMENT_ADAPTERS {
+            assert!(
+                ids.insert(adapter.id),
+                "duplicate adapter id {}",
+                adapter.id
+            );
+            assert!(
+                !adapter.operations.is_empty(),
+                "adapter {} needs at least one operation selector",
+                adapter.id
+            );
+        }
+
+        assert_eq!(
+            adapter_ids_with_state(RiskEnforcement::Active),
+            vec!["browser_prepare.existing_profile"]
+        );
+        assert_eq!(
+            adapter_ids_with_state(RiskEnforcement::MetadataOnly),
+            vec![
+                "private_observation",
+                "desktop_input",
+                "file_transfer_and_output",
+                "browser_consequential_action",
+            ]
+        );
+        assert_eq!(
+            adapter_ids_with_state(RiskEnforcement::NotExposed),
+            vec!["devices", "shell_and_network"]
+        );
+
+        let existing = ENFORCEMENT_ADAPTERS
+            .iter()
+            .find(|adapter| adapter.id == "browser_prepare.existing_profile")
+            .unwrap();
+        assert_eq!(existing.idle_ttl_seconds, Some(30 * 60));
+        assert_eq!(existing.absolute_ttl_seconds, Some(8 * 60 * 60));
+        assert_eq!(existing.refusal_code, Some("browser_consent_required"));
+    }
+
+    #[test]
+    fn status_derives_adapter_summaries_from_the_inventory() {
+        let status = status_json();
+        assert_eq!(
+            status["active_risk_enforcement"],
+            serde_json::json!(["browser_prepare.existing_profile"])
+        );
+        assert_eq!(
+            status["metadata_only_risk_enforcement"],
+            serde_json::json!([
+                "private_observation",
+                "desktop_input",
+                "file_transfer_and_output",
+                "browser_consequential_action"
+            ])
+        );
+        assert_eq!(
+            status["enforcement_adapters"],
+            enforcement_adapter_inventory_json()
+        );
     }
 }

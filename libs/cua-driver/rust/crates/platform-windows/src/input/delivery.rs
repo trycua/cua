@@ -95,8 +95,23 @@ impl DeliveryMode {
     }
 
     /// Parse from a tool's JSON args, reading the `delivery_mode` field.
+    ///
+    /// Back-compat: clients built against the 0.5.x tool surface (e.g. apps
+    /// that bundle-and-pin the driver) send the field under its old name
+    /// `dispatch`. Unknown JSON fields are silently ignored by the arg
+    /// parsers, so without this alias such a client's explicit
+    /// `dispatch:"foreground"` degraded to the Background default — and with
+    /// the non-client drag pre-flight the client then received
+    /// `background_unavailable` advising the very escalation it had already
+    /// requested, an escalation loop with no exit. `delivery_mode` wins when
+    /// both are present. The removed legacy value `"auto"` still resolves to
+    /// `Background` via `parse` (never silently fronts).
     pub fn from_args(args: &Value) -> Self {
-        Self::parse(args.get("delivery_mode").and_then(|v| v.as_str()))
+        let arg = args
+            .get("delivery_mode")
+            .or_else(|| args.get("dispatch"))
+            .and_then(|v| v.as_str());
+        Self::parse(arg)
     }
 
     pub fn is_foreground(self) -> bool {
@@ -430,6 +445,40 @@ mod tests {
         // Case-insensitive, matching macOS DeliveryMode::parse.
         assert_eq!(
             DeliveryMode::from_args(&j("Foreground")),
+            DeliveryMode::Foreground
+        );
+    }
+
+    #[test]
+    fn delivery_mode_accepts_legacy_dispatch_alias() {
+        // 0.5.x-era clients (apps bundling a pinned driver) send the field as
+        // `dispatch`. Without the alias their explicit foreground escalation
+        // silently degraded to Background — an escalation loop with no exit
+        // once the NC-drag pre-flight started refusing background window moves.
+        assert_eq!(
+            DeliveryMode::from_args(&serde_json::json!({"dispatch": "foreground"})),
+            DeliveryMode::Foreground
+        );
+        assert_eq!(
+            DeliveryMode::from_args(&serde_json::json!({"dispatch": "background"})),
+            DeliveryMode::Background
+        );
+        // Removed legacy value "auto" must never silently front.
+        assert_eq!(
+            DeliveryMode::from_args(&serde_json::json!({"dispatch": "auto"})),
+            DeliveryMode::Background
+        );
+        // The modern field wins when both are present.
+        assert_eq!(
+            DeliveryMode::from_args(
+                &serde_json::json!({"delivery_mode": "background", "dispatch": "foreground"})
+            ),
+            DeliveryMode::Background
+        );
+        assert_eq!(
+            DeliveryMode::from_args(
+                &serde_json::json!({"delivery_mode": "foreground", "dispatch": "background"})
+            ),
             DeliveryMode::Foreground
         );
     }

@@ -13,3 +13,5 @@ jobs:
     with:
       image_name: cua-xfce
       context_dir: libs/xfce
+      # kicad/kicad:9.0 currently publishes an amd64 image only.
+      skip_arm64: true

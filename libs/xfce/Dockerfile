@@ -80,6 +80,7 @@ RUN pip3 install --break-system-packages uv && \
     uv venv /opt/venv --python 3.13 && \
     ln -sf /opt/venv/bin/python3 /usr/local/bin/python3 && \
     ln -sf /opt/venv/bin/python3 /usr/local/bin/python
+ENV PATH="/opt/venv/bin:${PATH}"
 
 # Remove screensavers and power manager to avoid popups and lock screens
 RUN apt-get remove -y \
@@ -125,6 +126,15 @@ RUN uv pip install --python /opt/venv/bin/python3 \
     "datasets>=3.0.0" \
     "matplotlib>=3.8.0" \
     "anthropic>=0.26.0"
+
+# Install the typed Cua Driver SDK and its bundled executable. The image keeps
+# computer-server as its active remote API until a transport adapter is chosen.
+COPY requirements-cua-driver.txt /tmp/requirements-cua-driver.txt
+RUN uv pip install --python /opt/venv/bin/python3 --no-cache-dir \
+        -r /tmp/requirements-cua-driver.txt && \
+    /opt/venv/bin/python3 -c \
+        "from pathlib import Path; from cua_driver import CuaDriver, get_binary_path; assert Path(get_binary_path()).is_file()" && \
+    /opt/venv/bin/cua-driver --version
 
 # Copy startup scripts
 COPY src/supervisor/ /etc/supervisor/conf.d/

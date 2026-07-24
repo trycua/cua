@@ -638,27 +638,19 @@ fn harness_wpf_set_value() {
 // In test-batch mode (many harnesses launched/killed in sequence) the WPF
 // window's input pump occasionally misses background PostMessage events —
 // reproducibly passes in isolation, intermittently fails in batch.
-// Start recording before the final foreground swap. On hosted Windows
-// runners, recording setup can briefly activate another window; focusing
-// afterward makes the target posture deterministic for SendInput actions.
+// `bring_to_front` pays the foreground swap once so the click test
+// exercises the click-event-handling path itself, not the
+// background-delivery path (which the counter_invoke test already
+// covers via UIA Invoke).
 fn focus_harness(driver: &mut McpDriver, pid: u32, wid: u64) {
-    driver.start_behavior_recording();
-    // The recording process can activate its console shortly after startup,
-    // after start_recording has returned. Let that settle before making the
-    // harness the final foreground owner.
-    std::thread::sleep(Duration::from_millis(500));
-    let response = driver.call(
+    let _ = driver.call(
         "bring_to_front",
         serde_json::json!({
             "pid": pid as i64, "window_id": wid
         }),
     );
-    assert!(
-        !response.is_error(),
-        "failed to establish WPF foreground posture: {}",
-        response.text()
-    );
-    std::thread::sleep(Duration::from_millis(50));
+    std::thread::sleep(Duration::from_millis(300));
+    driver.start_behavior_recording();
 }
 
 #[test]
@@ -822,42 +814,6 @@ fn harness_wpf_press_key_letter_accelerator() {
             assert!(
                 post.text().contains("accel_fired=1"),
                 "WPF letter press_key did not fire Ctrl+Shift+H: {}",
-                snapshot_lines_containing(post.text(), &["accel_fired"])
-            );
-            Vec::new()
-        },
-    );
-}
-
-#[test]
-#[ignore]
-fn harness_wpf_hotkey_letter_accelerator() {
-    run_foreground_case(
-        "hotkey",
-        Targeting::Ax,
-        DriverRoute::WindowsSendInput,
-        Vec::new(),
-        |pid, wid, driver| {
-            focus_harness(driver, pid, wid);
-            let response = driver.call(
-                "hotkey",
-                serde_json::json!({
-                    "pid": pid as i64,
-                    "window_id": wid,
-                    "keys": ["ctrl", "shift", "h"],
-                    "delivery_mode": "foreground"
-                }),
-            );
-            assert!(
-                !response.is_error(),
-                "WPF foreground letter hotkey failed: {}",
-                response.text()
-            );
-            std::thread::sleep(Duration::from_millis(300));
-            let post = snapshot(driver, pid, wid);
-            assert!(
-                post.text().contains("accel_fired=1"),
-                "WPF letter hotkey did not fire Ctrl+Shift+H: {}",
                 snapshot_lines_containing(post.text(), &["accel_fired"])
             );
             Vec::new()

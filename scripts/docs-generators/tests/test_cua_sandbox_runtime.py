@@ -98,7 +98,9 @@ class RuntimeGeneratorTests(unittest.TestCase):
         self.assertEqual(names, ["Sandbox", "configure", "Image", "Tunnel"])
         sandbox = document.items[0]
         self.assertTrue(sandbox.context_manager)
-        self.assertTrue({"create", "delete", "start"}.issubset(member.name for member in sandbox.members))
+        self.assertTrue(
+            {"create", "delete", "start"}.issubset(member.name for member in sandbox.members)
+        )
         self.assertNotIn("raw_request", [member.name for member in sandbox.members])
         self.assertNotIn("_ConnectResult", names)
         image = document.items[2]

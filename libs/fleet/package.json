@@ -33,7 +33,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "swagger-typescript-api": "13.2.7",
     "typescript": "^5.7.2",
-    "vite": "^5.4.11"
+    "vite": "^6.4.3"
   },
   "pnpm": {
     "patchedDependencies": {

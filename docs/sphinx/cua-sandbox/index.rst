@@ -17,15 +17,21 @@ Configuration
 
 .. autofunction:: cua_sandbox.configure
 
-Sandbox lifecycle
------------------
+Sandbox lifecycle and display service
+-------------------------------------
 
 .. autoclass:: cua_sandbox.Sandbox
-   :members: create, delete, disconnect
+   :members: create, connect, ephemeral, list, get_info, suspend, resume, restart, delete, disconnect, snapshot, screenshot, screenshot_base64, get_environment, get_display_url, get_dimensions
 
 .. automethod:: cua_sandbox.Sandbox.__aenter__
 
 .. automethod:: cua_sandbox.Sandbox.__aexit__
+
+.. note::
+
+   ``Sandbox.snapshot`` raises ``NotImplementedError`` unless the sandbox uses
+   the supported cloud transport. It does not invoke cloud operations while
+   Sphinx renders this API reference.
 
 .. autoclass:: cua_sandbox.SandboxInfo
    :members:

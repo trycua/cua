@@ -174,4 +174,4 @@ See [Sandbox interfaces reference](/reference/sandbox-sdk/interfaces) for the fu
 
 ## Generated Sphinx comparison
 
-The <a href="/cua-sandbox-sphinx/index.html">Sphinx autodoc/autosummary comparison artifact</a> is generated as static HTML. Fumadocs serves this artifact but does not process its RST directives.
+The <a href="/cua-sandbox-sphinx/index.html">Sphinx autodoc/autosummary comparison artifact</a> is generated as static HTML. Sphinx imports only the SDK during its bounded generation subprocess, derives the public export list from `cua_sandbox.__all__`, and writes the artifact under `docs/public` for Next.js to serve unchanged. Fumadocs does not process its RST directives. This keeps Sphinx signature and docstring behavior authoritative, at the tradeoff of a small separately generated static asset rather than native MDX navigation or styling.

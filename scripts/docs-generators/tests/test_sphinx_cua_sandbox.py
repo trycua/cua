@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import html
+import re
 import subprocess
 import sys
 from importlib.util import module_from_spec, spec_from_file_location
@@ -35,20 +37,47 @@ def test_sphinx_artifact_is_current_and_public() -> None:
 
     assert result.returncode == 0, result.stderr
     artifact = ARTIFACT.read_text()
+    artifact_text = " ".join(html.unescape(re.sub(r"<[^>]+>", "", artifact)).split())
     for expected in (
         "cua_sandbox.__all__",
         "Sandbox",
         "Sandbox.create",
+        "Sandbox.connect",
+        "Sandbox.ephemeral",
+        "Sandbox.list",
+        "Sandbox.get_info",
+        "Sandbox.suspend",
+        "Sandbox.resume",
+        "Sandbox.restart",
+        "Sandbox.snapshot",
+        "Sandbox.get_display_url",
         "Image",
         "configure",
+        "api_key",
+        "base_url",
+        "share",
         "login",
         "whoami",
+        "Apps",
+        "Clipboard",
+        "FileEntry",
+        "Files",
+        "Keyboard",
+        "Mobile",
+        "Mouse",
+        "Screen",
+        "Shell",
+        "Terminal",
         "Tunnel",
+        "TunnelInfo",
+        "Window",
         "__aenter__",
         "__aexit__",
+        "NotImplementedError",
         "CloudTransport",
     ):
         assert expected in artifact
+    assert "async with" in artifact_text
     for forbidden in (
         "cyclops_sdk",
         "_make_transport",

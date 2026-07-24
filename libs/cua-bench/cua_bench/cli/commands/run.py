@@ -1800,6 +1800,12 @@ async def _cmd_run_dataset_async(args) -> int:
         elif provider_type == "daytona":
             cmd.extend(["--provider-type", "daytona"])
 
+        # Forward --with paths to subprocess (resolve to absolute so CWD changes don't matter)
+        for dev_path in getattr(args, "dev_paths", None) or []:
+            cmd.extend(["--with", str(Path(dev_path).resolve())])
+        if getattr(args, "verbose", False):
+            cmd.append("--verbose")
+
         # Set UTF-8 encoding
         env_vars = os.environ.copy()
         env_vars["PYTHONIOENCODING"] = "utf-8"

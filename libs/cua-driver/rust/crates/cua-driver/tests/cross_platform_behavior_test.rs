@@ -875,7 +875,7 @@ fn run_hotkey_action(fixture: &mut Fixture, addressing: &str, delivery: &str) ->
     hotkey_args
         .as_object_mut()
         .expect("hotkey arguments object")
-        .insert("keys".to_owned(), serde_json::json!(["ctrl", "shift", "7"]));
+        .insert("keys".to_owned(), serde_json::json!(["ctrl", "shift", "h"]));
     let response = fixture.driver.call("hotkey", hotkey_args);
     if let Some(code) = background_refusal_code(&response, delivery) {
         return refused_without_fixture_mutation(fixture, &journal_before, code, &response);

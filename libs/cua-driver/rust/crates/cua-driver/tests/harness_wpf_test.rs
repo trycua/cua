@@ -786,6 +786,43 @@ fn harness_wpf_press_key_accelerator() {
 
 #[test]
 #[ignore]
+fn harness_wpf_press_key_letter_accelerator() {
+    run_foreground_case(
+        "press_key",
+        Targeting::Ax,
+        DriverRoute::WindowsSendInput,
+        Vec::new(),
+        |pid, wid, driver| {
+            focus_harness(driver, pid, wid);
+            let response = driver.call(
+                "press_key",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "key": "h",
+                    "modifiers": ["ctrl", "shift"],
+                    "delivery_mode": "foreground"
+                }),
+            );
+            assert!(
+                !response.is_error(),
+                "WPF foreground letter press_key failed: {}",
+                response.text()
+            );
+            std::thread::sleep(Duration::from_millis(300));
+            let post = snapshot(driver, pid, wid);
+            assert!(
+                post.text().contains("accel_fired=1"),
+                "WPF letter press_key did not fire Ctrl+Shift+H: {}",
+                snapshot_lines_containing(post.text(), &["accel_fired"])
+            );
+            Vec::new()
+        },
+    );
+}
+
+#[test]
+#[ignore]
 fn harness_wpf_scroll() {
     execute_case(
         background_case("scroll", DriverRoute::UiaScroll),

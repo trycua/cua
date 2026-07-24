@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import ast
+import os
 import filecmp
 import shutil
 import subprocess
@@ -10,13 +12,37 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "docs/sphinx/cua-sandbox"
+PACKAGE_INIT = ROOT / "libs/python/cua-sandbox/cua_sandbox/__init__.py"
+PUBLIC_EXPORTS = "public-exports.rst"
 REQUIREMENTS = ROOT / "scripts/docs-generators/requirements-sphinx.txt"
 ARTIFACT = ROOT / "docs/public/reference/cua-sandbox-sphinx"
-MAX_ARTIFACT_BYTES = 1_500_000
-MAX_HTML_LINES = 30_000
+MAX_ARTIFACT_BYTES = 300_000
+MAX_HTML_LINES = 3_000
+
+
+def public_exports() -> tuple[str, ...]:
+    tree = ast.parse(PACKAGE_INIT.read_text(), filename=str(PACKAGE_INIT))
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or not any(
+            isinstance(target, ast.Name) and target.id == "__all__" for target in node.targets
+        ):
+            continue
+        value = ast.literal_eval(node.value)
+        if not isinstance(value, list) or not all(isinstance(name, str) for name in value):
+            break
+        return tuple(value)
+    raise RuntimeError(f"{PACKAGE_INIT} must assign __all__ to a literal list of strings")
+
+
+def render_public_exports(exports: tuple[str, ...]) -> str:
+    names = "\n".join(f"   cua_sandbox.{name}" for name in exports)
+    return f".. autosummary::\n   :nosignatures:\n\n{names}\n"
 
 
 def build(output: Path) -> None:
+    source = output.parent / "source"
+    shutil.copytree(SOURCE, source)
+    (source / PUBLIC_EXPORTS).write_text(render_public_exports(public_exports()))
     doctrees = output / ".doctrees"
     command = [
         "uv",
@@ -33,10 +59,15 @@ def build(output: Path) -> None:
         "singlehtml",
         "-d",
         str(doctrees),
-        str(SOURCE),
+        str(source),
         str(output),
     ]
-    subprocess.run(command, cwd=ROOT, check=True)
+    subprocess.run(
+        command,
+        cwd=ROOT,
+        check=True,
+        env={**os.environ, "CUA_SPHINX_ROOT": str(ROOT)},
+    )
     shutil.rmtree(doctrees)
     normalize_text_files(output)
 
@@ -46,9 +77,7 @@ def normalize_text_files(directory: Path) -> None:
         if path.suffix not in {".css", ".html", ".js"}:
             continue
         lines = [line.rstrip() for line in path.read_text().splitlines()]
-        while lines and not lines[-1]:
-            lines.pop()
-        path.write_text("\n".join(lines) + "\n")
+        path.write_text("\n".join(lines).rstrip() + "\n")
 
 
 def artifact_files(directory: Path) -> list[Path]:

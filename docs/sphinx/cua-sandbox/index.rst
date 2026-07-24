@@ -10,33 +10,7 @@ Public exports
 
 .. autodata:: cua_sandbox.__all__
 
-.. autosummary::
-   :nosignatures:
-
-   cua_sandbox.configure
-   cua_sandbox.Image
-   cua_sandbox.Sandbox
-   cua_sandbox.SandboxInfo
-   cua_sandbox.sandbox
-   cua_sandbox.Localhost
-   cua_sandbox.localhost
-   cua_sandbox.CloudTransport
-   cua_sandbox.RuntimeSupport
-   cua_sandbox.check_local_support
-   cua_sandbox.skip_if_unsupported
-   cua_sandbox.interfaces.Apps
-   cua_sandbox.interfaces.Clipboard
-   cua_sandbox.interfaces.FileEntry
-   cua_sandbox.interfaces.Files
-   cua_sandbox.interfaces.Keyboard
-   cua_sandbox.interfaces.Mobile
-   cua_sandbox.interfaces.Mouse
-   cua_sandbox.interfaces.Screen
-   cua_sandbox.interfaces.Shell
-   cua_sandbox.interfaces.Terminal
-   cua_sandbox.interfaces.Tunnel
-   cua_sandbox.interfaces.TunnelInfo
-   cua_sandbox.interfaces.Window
+.. include:: public-exports.rst
 
 Configuration
 -------------

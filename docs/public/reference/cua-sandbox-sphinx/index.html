@@ -45,7 +45,13 @@ The argument must be an iterable if specified.</p>
 <table class="autosummary longtable docutils align-default">
 <tbody>
 <tr class="row-odd"><td><p><a class="reference internal" href="#cua_sandbox.configure" title="cua_sandbox.configure"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.configure</span></code></a></p></td>
-<td><p>Set global configuration for cloud sandboxes.</p></td>
+<td><p>Configure the SDK API key and cloud endpoint.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.login</span></code></p></td>
+<td><p>Open the CUA login page in a browser and store credentials.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.whoami</span></code></p></td>
+<td><p>Return info about the authenticated user.</p></td>
 </tr>
 <tr class="row-even"><td><p><a class="reference internal" href="#cua_sandbox.Image" title="cua_sandbox.Image"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.Image</span></code></a></p></td>
 <td><p>Immutable, chainable image specification.</p></td>
@@ -77,45 +83,6 @@ The argument must be an iterable if specified.</p>
 <tr class="row-odd"><td><p><a class="reference internal" href="#cua_sandbox.skip_if_unsupported" title="cua_sandbox.skip_if_unsupported"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.skip_if_unsupported</span></code></a></p></td>
 <td><p>Call at the top of a pytest test/fixture to skip when the host can't run <em>image</em>.</p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference internal" href="#cua_sandbox.interfaces.Apps" title="cua_sandbox.interfaces.Apps"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.interfaces.Apps</span></code></a></p></td>
-<td><p>Install and launch cataloged applications inside the sandbox.</p></td>
-</tr>
-<tr class="row-odd"><td><p><a class="reference internal" href="#cua_sandbox.interfaces.Clipboard" title="cua_sandbox.interfaces.Clipboard"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.interfaces.Clipboard</span></code></a></p></td>
-<td><p>Clipboard read/write.</p></td>
-</tr>
-<tr class="row-even"><td><p><a class="reference internal" href="#cua_sandbox.interfaces.FileEntry" title="cua_sandbox.interfaces.FileEntry"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.interfaces.FileEntry</span></code></a></p></td>
-<td><p>FileEntry(name: 'str', path: 'str', is_dir: 'bool', size: 'Optional[int]' = None)</p></td>
-</tr>
-<tr class="row-odd"><td><p><a class="reference internal" href="#cua_sandbox.interfaces.Files" title="cua_sandbox.interfaces.Files"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.interfaces.Files</span></code></a></p></td>
-<td><p>File and directory operations inside the sandbox.</p></td>
-</tr>
-<tr class="row-even"><td><p><a class="reference internal" href="#cua_sandbox.interfaces.Keyboard" title="cua_sandbox.interfaces.Keyboard"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.interfaces.Keyboard</span></code></a></p></td>
-<td><p>Keyboard control.</p></td>
-</tr>
-<tr class="row-odd"><td><p><a class="reference internal" href="#cua_sandbox.interfaces.Mobile" title="cua_sandbox.interfaces.Mobile"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.interfaces.Mobile</span></code></a></p></td>
-<td><p>Mobile (Android) touch and hardware-key control.</p></td>
-</tr>
-<tr class="row-even"><td><p><a class="reference internal" href="#cua_sandbox.interfaces.Mouse" title="cua_sandbox.interfaces.Mouse"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.interfaces.Mouse</span></code></a></p></td>
-<td><p>Mouse control.</p></td>
-</tr>
-<tr class="row-odd"><td><p><a class="reference internal" href="#cua_sandbox.interfaces.Screen" title="cua_sandbox.interfaces.Screen"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.interfaces.Screen</span></code></a></p></td>
-<td><p>Screen capture and info.</p></td>
-</tr>
-<tr class="row-even"><td><p><a class="reference internal" href="#cua_sandbox.interfaces.Shell" title="cua_sandbox.interfaces.Shell"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.interfaces.Shell</span></code></a></p></td>
-<td><p>Shell command execution.</p></td>
-</tr>
-<tr class="row-odd"><td><p><a class="reference internal" href="#cua_sandbox.interfaces.Terminal" title="cua_sandbox.interfaces.Terminal"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.interfaces.Terminal</span></code></a></p></td>
-<td><p>PTY terminal sessions.</p></td>
-</tr>
-<tr class="row-even"><td><p><a class="reference internal" href="#cua_sandbox.interfaces.Tunnel" title="cua_sandbox.interfaces.Tunnel"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.interfaces.Tunnel</span></code></a></p></td>
-<td><p>Port-forwarding interface — exposes sandbox ports on the host.</p></td>
-</tr>
-<tr class="row-odd"><td><p><a class="reference internal" href="#cua_sandbox.interfaces.TunnelInfo" title="cua_sandbox.interfaces.TunnelInfo"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.interfaces.TunnelInfo</span></code></a></p></td>
-<td><p>A single forwarded port.</p></td>
-</tr>
-<tr class="row-even"><td><p><a class="reference internal" href="#cua_sandbox.interfaces.Window" title="cua_sandbox.interfaces.Window"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.interfaces.Window</span></code></a></p></td>
-<td><p>Window management.</p></td>
-</tr>
 </tbody>
 </table>
 </section>
@@ -123,10 +90,8 @@ The argument must be an iterable if specified.</p>
 <h2>Configuration<a class="headerlink" href="#configuration" title="Link to this heading">¶</a></h2>
 <dl class="py function">
 <dt class="sig sig-object py" id="cua_sandbox.configure">
-<span class="sig-prename descclassname"><span class="pre">cua_sandbox.</span></span><span class="sig-name descname"><span class="pre">configure</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">api_key</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">base_url</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">fleet_base_url</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">token_url</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">client_id</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">client_secret</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="headerlink" href="#cua_sandbox.configure" title="Link to this definition">¶</a></dt>
-<dd><p>Set global configuration for cloud sandboxes.</p>
-<p>API-key cloud operations use <code class="docutils literal notranslate"><span class="pre">base_url</span></code>. Fleet uses <code class="docutils literal notranslate"><span class="pre">fleet_base_url</span></code> and
-OAuth client credentials.</p>
+<span class="sig-prename descclassname"><span class="pre">cua_sandbox.</span></span><span class="sig-name descname"><span class="pre">configure</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">api_key</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">base_url</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="headerlink" href="#cua_sandbox.configure" title="Link to this definition">¶</a></dt>
+<dd><p>Configure the SDK API key and cloud endpoint.</p>
 </dd></dl>
 
 </section>
@@ -176,15 +141,11 @@ automatically.</p>
 <dd class="field-odd"><ul class="simple">
 <li><p><strong>image</strong> – Image to run (e.g. <code class="docutils literal notranslate"><span class="pre">Image.desktop(&quot;ubuntu&quot;)</span></code>).</p></li>
 <li><p><strong>name</strong> – Optional name to assign to the sandbox.</p></li>
-<li><p><strong>api_key</strong> – Legacy CUA API key. Providing one uses the legacy VM API;
-Fleet cloud sandboxes use OAuth client credentials instead.</p></li>
+<li><p><strong>api_key</strong> – Legacy CUA API key. Providing one uses the legacy VM API;</p></li>
 <li><p><strong>local</strong> – Use a local runtime instead of cloud.</p></li>
 <li><p><strong>runtime</strong> – Explicit runtime backend (DockerRuntime, QEMURuntime, etc.).</p></li>
 <li><p><strong>cpu</strong> – Number of CPUs for the cloud sandbox.</p></li>
-<li><p><strong>memory_mb</strong> – Memory in MB for the cloud sandbox.</p></li>
-<li><p><strong>disk_gb</strong> – Unsupported by Fleet; API-key legacy cloud only.</p></li>
-<li><p><strong>region</strong> – Fleet currently supports only <code class="docutils literal notranslate"><span class="pre">&quot;us-east-1&quot;</span></code>.</p></li>
-<li><p><strong>time_to_start</strong> – Max seconds to wait for Fleet provisioning and
+<li><p><strong>memory_mb</strong> – Memory in MB for the cloud sandbox.
 service readiness (default 600).</p></li>
 <li><p><strong>request_timeout</strong> – Default HTTP request timeout in seconds for
 commands sent to the computer-server (default 30, cloud only).

@@ -105,6 +105,10 @@ needs them.
 
 - Make direct SDK creation the documented default for Rust, Python, and
   TypeScript applications.
+- Preserve the released CLI commands, defaults, flags, socket behavior, exit
+  codes, and machine-readable output throughout the migration.
+- Preserve the released Rust, Python, and TypeScript SDK constructors, typed
+  methods, package exports, result envelopes, and error contracts.
 - Keep sessions, browser bindings, grants, capture, overlays, and cleanup
   stateful for the lifetime of the runtime.
 - Give each runtime an immutable authorization configuration selected by
@@ -126,6 +130,10 @@ needs them.
 - Make desktop operations stateless.
 - Remove daemon support in this RFC.
 - Deprecate `CuaDriver.connect()` before usage and migration data exist.
+- Change the default CLI or standalone MCP topology as a prerequisite for
+  shipping browser-use improvements.
+- Rename or remove a released SDK method, constructor, option, result field, or
+  package export.
 - Support multiple direct runtimes in one process in the first milestone.
 - Treat two runtime objects in one process as a security boundary against
   arbitrary code in that process.
@@ -647,6 +655,41 @@ The daemon remains a compatibility surface during migration. It may be
 presented as a mixed-trust service only after the authentication acceptance
 tests in this RFC pass.
 
+### 11. Treat compatibility as a release gate
+
+The runtime topology is an implementation choice behind existing public
+contracts. Migrating ownership must not force current CLI, MCP, Python,
+TypeScript, or Rust users to change how they invoke Cua Driver.
+
+The following CLI behavior remains stable until a separate reviewed proposal
+changes it:
+
+- bare `cua-driver` and `cua-driver mcp` invocation behavior;
+- existing subcommand names, flags, environment variables, and socket
+  selection;
+- default standalone macOS ownership through CuaDriver.app;
+- documented exit codes, JSON fields, MCP schemas, and error categories;
+- current session, shutdown, reconnect, and compatibility-daemon behavior.
+
+The following SDK behavior remains stable:
+
+- `CuaDriver.create(options)` and `CuaDriver.connect(socket_path)`;
+- released typed operation names and language-idiomatic projections;
+- package-root exports and generated binding names;
+- result envelopes, structured error categories, lifecycle, and cancellation;
+- compatibility with applications written against the previous supported
+  package release.
+
+New runtime options and worker constructors must be additive. A backend may
+change only after contract and behavior parity tests pass. Removing or
+renaming a released surface, changing a default topology with observable
+effects, or deprecating `connect()` requires a separate compatibility decision
+and the appropriate semantic-versioning release.
+
+Browser-use improvements may ship on the current CLI and daemon topology before
+the later phases of this RFC. The architecture migration cannot become a
+prerequisite for an otherwise compatible browser release.
+
 ## Public API direction
 
 The final generated names require an API review. The conceptual surface is:
@@ -678,6 +721,10 @@ method name.
 Until a later multi-runtime isolation gate passes, `create` permits one direct
 runtime per process. Hosts that need another mode or trust domain use
 `create_worker` or an authenticated service process.
+
+The existing `create` and `connect` constructors remain public with their
+released signatures. The conceptual options above may add fields or helpers;
+they do not authorize replacing those constructors.
 
 ## Alternatives considered
 
@@ -735,6 +782,17 @@ This RFC keeps that decision.
 
 Migration is additive until a separate deprecation decision.
 
+### Compatibility lock
+
+Before changing a default backend or process owner, capture the released CLI,
+MCP, Rust, Python, and TypeScript surfaces as compatibility fixtures. Each
+phase must run those fixtures against both the old and proposed topology.
+
+An internal ownership change is blocked when it changes a command line,
+constructor, package export, tool schema, result envelope, structured error,
+exit code, lifecycle outcome, or default platform identity without a separate
+public decision.
+
 ### Phase 0: Canonical authorization
 
 Land authorization at the runtime dispatch boundary so direct SDK, daemon,
@@ -743,6 +801,11 @@ inventory of active and metadata-only enforcement adapters.
 
 [PR #2542](https://github.com/trycua/cua/pull/2542) is the current candidate for
 this phase.
+
+Phase 0 is the only permission-model work recommended before declaring the
+same-process SDK consistent with daemon-backed callers. It changes the
+authorization enforcement point, not the public CLI or SDK signatures. Phase
+1 and later are not prerequisites for the browser-stability release.
 
 ### Phase 1: Runtime authorization and a single-runtime guard
 
@@ -963,6 +1026,14 @@ The RFC is implemented when all of the following evidence passes.
 - Direct, private-worker, MCP, HTTP, and daemon paths produce compatible
   results and structured errors.
 - Generated contract and symbol checks pass on macOS, Windows, and Linux.
+- CLI help, subcommand, flag, exit-code, JSON, and MCP-schema fixtures remain
+  unchanged unless an independently reviewed compatibility change says
+  otherwise.
+- Python and TypeScript package-export and signature snapshots remain
+  compatible with the previous supported release.
+- Representative applications written against the previous supported Rust,
+  Python, and TypeScript packages run against the new release without source
+  changes.
 
 ### Authorization
 
@@ -1015,6 +1086,10 @@ The RFC is implemented when all of the following evidence passes.
 ### Compatibility
 
 - Existing service clients continue to work through `connect()`.
+- Existing CLI and standalone MCP workflows retain their commands, defaults,
+  platform identity, and observable lifecycle.
+- Existing Rust, Python, and TypeScript callers retain their constructors,
+  typed methods, exports, result envelopes, and structured error categories.
 - Local service endpoints reject peers that fail same-user credential checks.
 - Remote service endpoints reject unauthenticated principals.
 - Service and direct versions negotiate or refuse incompatibility before

@@ -22,6 +22,9 @@ private worker, and a long-lived daemon can expose that runtime when a consumer
 needs a transport or process boundary.
 
 The daemon remains supported, but it stops defining the application contract.
+The migration preserves the released CLI, MCP, Rust, Python, and TypeScript
+interfaces. Runtime ownership may change behind them only after compatibility
+and behavior-parity gates pass.
 
 ```mermaid
 flowchart TB
@@ -125,6 +128,20 @@ The runtime owns:
   capture and recording;
 - platform threads and event loops;
 - cleanup for shutdown, expiry, and host death.
+
+## Compatibility is a hard constraint
+
+The architecture is not permission to disrupt current users. The CLI keeps its
+commands, defaults, flags, socket behavior, platform identity, exit codes, and
+machine-readable output. The SDKs keep `create`, `connect`, typed operation
+names, package exports, result envelopes, structured errors, and lifecycle
+behavior.
+
+Private-worker options and new runtime configuration are additive. Changing a
+released interface or an observably different default requires a separate
+compatibility decision and the appropriate semantic-versioning release.
+Browser-use improvements can continue shipping on the current daemon-backed
+CLI while the SDK-owned refactor proceeds behind these gates.
 
 ## macOS TCC ownership
 
@@ -357,7 +374,9 @@ service.
 10. Browser and CDP bindings do not migrate between runtime generations.
 11. Every service endpoint authenticates its peer; endpoint location is not
     identity.
-12. The daemon remains available only where a service topology earns its
+12. Released CLI, MCP, and SDK interfaces remain compatible across topology
+    changes.
+13. The daemon remains available only where a service topology earns its
     operational cost.
 
 ## Exit criteria
@@ -366,6 +385,12 @@ The SDK-first architecture is ready to become the default when:
 
 - direct Rust, Python, and TypeScript SDK tests exercise the same typed
   operations and error contract;
+- CLI help, subcommand, flag, exit-code, JSON, and MCP-schema fixtures remain
+  compatible;
+- Python and TypeScript export and signature snapshots remain compatible with
+  the previous supported release;
+- representative applications written against the previous supported SDK
+  release run without source changes;
 - a second direct runtime returns a structured conflict;
 - different modes run in separate runtime-owner processes without sharing
   authority;

@@ -1,5 +1,7 @@
 //! Public tool transports must fail closed when no daemon is reachable.
 
+#[cfg(not(target_os = "macos"))]
+use std::io::Write as _;
 use std::process::Command;
 
 use cua_driver_testkit::{CliDriver, Driver};
@@ -58,6 +60,44 @@ fn embedded_mcp_does_not_fall_back_without_daemon() {
         stderr.contains("no Cua Driver daemon listening"),
         "unexpected stderr: {stderr}"
     );
+}
+
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn default_mcp_owns_a_runtime_without_a_daemon() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+        .arg("mcp")
+        .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn direct MCP");
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "clientInfo": {"name": "direct-runtime-test", "version": "0"}
+        }
+    });
+    writeln!(
+        child.stdin.as_mut().expect("direct MCP stdin"),
+        "{}",
+        request
+    )
+    .expect("write initialize");
+    drop(child.stdin.take());
+    let output = child.wait_with_output().expect("wait for direct MCP EOF");
+    assert!(
+        output.status.success(),
+        "direct MCP failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let response: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("initialize response JSON");
+    assert_eq!(response["result"]["serverInfo"]["name"], "cua-driver");
 }
 
 #[test]

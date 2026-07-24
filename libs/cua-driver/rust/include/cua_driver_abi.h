@@ -23,7 +23,7 @@
 
 #define CUA_DRIVER_ABI_MAJOR 1
 
-#define CUA_DRIVER_ABI_MINOR 0
+#define CUA_DRIVER_ABI_MINOR 1
 
 #define CUA_DRIVER_ABI_PATCH 0
 
@@ -43,6 +43,7 @@ enum CuaDriverStatus
   CUA_DRIVER_STATUS_CANCELLED = 5,
   CUA_DRIVER_STATUS_INTERNAL = 6,
   CUA_DRIVER_STATUS_PANIC = 7,
+  CUA_DRIVER_STATUS_RUNTIME_CONFLICT = 8,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -61,6 +62,12 @@ typedef struct CuaDriverHandle CuaDriverHandle;
  * Opaque token for one asynchronous operation.
  */
 typedef struct CuaDriverOperation CuaDriverOperation;
+
+/**
+ * Opaque session handle whose actions are already bound to one immutable
+ * authorization context.
+ */
+typedef struct CuaDriverSessionHandle CuaDriverSessionHandle;
 
 /**
  * Version of the implementation-neutral Cua Driver ABI.
@@ -112,8 +119,9 @@ CUA_DRIVER_API bool cua_driver_abi_is_compatible_v1(uint16_t major, uint16_t min
 CUA_DRIVER_API void cua_driver_buffer_free_v1(CuaDriverBuffer *buffer);
 
 /**
- * Create an in-process driver. `options_json` is empty or a UTF-8 JSON object;
- * the current option is `{"claude_code_compatibility": boolean}`.
+ * Create an in-process driver. `options_json` is empty or a UTF-8 JSON object.
+ * It accepts `claude_code_compatibility` and an optional immutable
+ * `authorization` ceiling. Unknown fields fail closed.
  */
 CUA_DRIVER_API
 CuaDriverStatus cua_driver_create_v1(const uint8_t *options_json,
@@ -164,6 +172,38 @@ CuaDriverStatus cua_driver_invoke_v1(CuaDriverHandle *handle,
                                      void *context,
                                      CuaDriverOperation **out_operation,
                                      CuaDriverBuffer *out_error);
+
+/**
+ * Create a trusted, immutable session binding below this runtime's ceiling.
+ *
+ * This is a host API, not an agent tool. The returned handle carries its
+ * authority in memory and cannot be reconstructed from a public session ID.
+ */
+CUA_DRIVER_API
+CuaDriverStatus cua_driver_session_create_v1(CuaDriverHandle *handle,
+                                             const uint8_t *options_json,
+                                             size_t options_len,
+                                             CuaDriverSessionHandle **out_session,
+                                             CuaDriverBuffer *out_error);
+
+/**
+ * Destroy a trusted session handle and revoke its connection-bound grants.
+ */
+CUA_DRIVER_API void cua_driver_session_destroy_v1(CuaDriverSessionHandle **handle);
+
+/**
+ * Invoke through an already-bound trusted session context.
+ */
+CUA_DRIVER_API
+CuaDriverStatus cua_driver_session_invoke_v1(CuaDriverSessionHandle *handle,
+                                             const uint8_t *name,
+                                             size_t name_len,
+                                             const uint8_t *arguments_json,
+                                             size_t arguments_len,
+                                             CuaDriverCompletionV1 callback,
+                                             void *context,
+                                             CuaDriverOperation **out_operation,
+                                             CuaDriverBuffer *out_error);
 
 /**
  * Stop admission, drain admitted calls, and finalize SDK-owned resources.

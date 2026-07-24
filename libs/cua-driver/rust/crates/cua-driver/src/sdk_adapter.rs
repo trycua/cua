@@ -73,11 +73,9 @@ impl SdkAdapter {
     }
 
     pub async fn invoke_raw(&self, name: &str, arguments: Value) -> Result<Value, String> {
-        let arguments_json =
-            serde_json::to_string(&arguments).map_err(|error| error.to_string())?;
         let result = self
             .driver
-            .call_tool(name.to_owned(), arguments_json)
+            .call_tool_from_trusted_adapter(name, arguments)
             .await
             .map_err(|error| error.to_string())?;
         serde_json::from_str(&result.raw_json)

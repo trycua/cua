@@ -23,7 +23,7 @@ use thiserror::Error;
 mod abi;
 mod embedded;
 mod runtime;
-use abi::NativeAbiDriver;
+use abi::{NativeAbiDriver, NativeAbiSession};
 pub use embedded::*;
 use runtime::RuntimeOptions;
 
@@ -194,6 +194,10 @@ pub enum DriverError {
     },
     #[error("the Cua Driver SDK has been shut down")]
     Shutdown,
+    #[error(
+        "runtime_already_exists: one direct Cua Driver runtime is already active in this process"
+    )]
+    RuntimeAlreadyExists,
 }
 
 #[derive(uniffi::Object)]
@@ -220,6 +224,61 @@ pub struct DriverOptions {
     /// Preserve the temporary reduced screenshot surface used by older Claude
     /// Code integrations. New applications should leave this false.
     pub claude_code_compatibility: bool,
+}
+
+/// Permission mode chosen by trusted host code for a runtime or session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum SessionPermissionMode {
+    Standard,
+    Bounded,
+    Unrestricted,
+}
+
+impl SessionPermissionMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Bounded => "bounded",
+            Self::Unrestricted => "unrestricted",
+        }
+    }
+}
+
+/// Immutable authorization ceiling supplied before a runtime accepts actions.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct RuntimeAuthorizationOptions {
+    pub allowed_modes: Vec<SessionPermissionMode>,
+    /// Mode inherited by calls made through the released `CuaDriver` object
+    /// rather than a trusted session-bound action surface.
+    pub compatibility_mode: SessionPermissionMode,
+    /// Required only when `compatibility_mode` is bounded.
+    pub compatibility_bounded_manifest_path: Option<String>,
+    pub unrestricted_acknowledged: bool,
+    pub max_session_ttl_seconds: u64,
+    pub max_idle_ttl_seconds: u64,
+}
+
+/// Additive configured-runtime constructor options. Existing callers continue
+/// to use [`DriverOptions`] and inherit the compatibility session.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ConfiguredDriverOptions {
+    pub claude_code_compatibility: bool,
+    pub authorization: RuntimeAuthorizationOptions,
+}
+
+/// Trusted host request for one immutable, connection-bound action surface.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TrustedSessionOptions {
+    pub public_session: String,
+    pub mode: SessionPermissionMode,
+    pub ttl_seconds: u64,
+    pub idle_ttl_seconds: u64,
+    pub bounded_manifest_path: Option<String>,
+}
+
+#[derive(uniffi::Object)]
+pub struct CuaDriverSession {
+    backend: Arc<NativeAbiSession>,
 }
 
 /// Rust-only host configuration used by the standalone daemon. Language
@@ -281,6 +340,19 @@ macro_rules! define_desktop_tool_methods {
     };
 }
 
+macro_rules! define_session_desktop_tool_methods {
+    ($($method:ident: $input:ty,)*) => {
+        #[uniffi::export(async_runtime = "tokio")]
+        impl CuaDriverSession {
+            $(
+                pub async fn $method(&self, input: $input) -> Result<ToolResult, DriverError> {
+                    self.invoke_typed(<$input as ToolInput>::TOOL_NAME, input).await
+                }
+            )*
+        }
+    };
+}
+
 macro_rules! define_exported_tool_names {
     ($($method:ident: $input:ty,)*) => {
         #[cfg(test)]
@@ -313,6 +385,52 @@ impl CuaDriver {
                 options.claude_code_compatibility,
             )?)),
             client_kind: DaemonClientKind::Unknown,
+        }))
+    }
+
+    /// Create a same-process runtime with an explicit immutable authorization
+    /// ceiling. This is a trusted host constructor and is not exposed as an
+    /// agent tool. Existing `create()` callers remain unchanged.
+    #[uniffi::constructor]
+    pub fn create_configured(options: ConfiguredDriverOptions) -> Result<Arc<Self>, DriverError> {
+        let allowed_modes = options
+            .authorization
+            .allowed_modes
+            .iter()
+            .map(|mode| mode.as_str())
+            .collect::<Vec<_>>();
+        let native_options = serde_json::json!({
+            "claude_code_compatibility": options.claude_code_compatibility,
+            "authorization": {
+                "allowed_modes": allowed_modes,
+                "compatibility_mode": options.authorization.compatibility_mode.as_str(),
+                "compatibility_bounded_manifest_path": options.authorization.compatibility_bounded_manifest_path,
+                "unrestricted_acknowledged": options.authorization.unrestricted_acknowledged,
+                "max_session_ttl_seconds": options.authorization.max_session_ttl_seconds,
+                "max_idle_ttl_seconds": options.authorization.max_idle_ttl_seconds,
+            }
+        });
+        Ok(Arc::new(Self {
+            backend: DriverBackend::Embedded(Arc::new(NativeAbiDriver::create_configured(
+                native_options,
+            )?)),
+            client_kind: DaemonClientKind::Unknown,
+        }))
+    }
+
+    /// Language-package entry point for an explicitly configured runtime.
+    #[uniffi::constructor]
+    pub fn create_configured_with_client_kind(
+        options: ConfiguredDriverOptions,
+        client_kind: SdkClientKind,
+    ) -> Result<Arc<Self>, DriverError> {
+        let driver = Self::create_configured(options)?;
+        let DriverBackend::Embedded(runtime) = &driver.backend else {
+            unreachable!("create_configured always returns an embedded runtime")
+        };
+        Ok(Arc::new(Self {
+            backend: DriverBackend::Embedded(runtime.clone()),
+            client_kind: client_kind.into(),
         }))
     }
 
@@ -393,22 +511,71 @@ impl CuaDriver {
 }
 
 impl CuaDriver {
+    /// Rust host API for an action surface already bound to one trusted
+    /// immutable authorization context.
+    pub fn create_trusted_session(
+        &self,
+        options: TrustedSessionOptions,
+    ) -> Result<Arc<CuaDriverSession>, DriverError> {
+        let DriverBackend::Embedded(runtime) = &self.backend else {
+            return Err(DriverError::Configuration {
+                reason:
+                    "trusted sessions require a configured SDK-owned runtime; daemon connections must bind sessions after peer authentication"
+                        .to_owned(),
+            });
+        };
+        let native_options = serde_json::json!({
+            "public_session": options.public_session,
+            "mode": options.mode.as_str(),
+            "ttl_seconds": options.ttl_seconds,
+            "idle_ttl_seconds": options.idle_ttl_seconds,
+            "bounded_manifest_path": options.bounded_manifest_path,
+        });
+        Ok(Arc::new(CuaDriverSession {
+            backend: Arc::new(runtime.create_session(native_options)?),
+        }))
+    }
+
     /// Construct the same SDK-owned runtime for the standalone daemon host.
     /// This Rust-only entry point keeps CLI presentation options out of the
     /// generated language contract.
     pub fn create_for_host(options: DriverHostOptions) -> Arc<Self> {
-        Arc::new(Self {
+        Self::try_create_for_host(options).expect(
+            "standalone host attempted to create a second Cua Driver runtime in one process",
+        )
+    }
+
+    /// Fallible host constructor used by adapters that must surface lifecycle
+    /// conflicts instead of panicking. The compatibility wrapper above is
+    /// retained for existing Rust callers.
+    pub fn try_create_for_host(options: DriverHostOptions) -> Result<Arc<Self>, DriverError> {
+        Ok(Arc::new(Self {
             backend: DriverBackend::Embedded(Arc::new(NativeAbiDriver::create_for_host(
                 RuntimeOptions {
                     cursor: options.cursor,
                     compatibility_mode: options.claude_code_compatibility,
                     prepare_desktop_environment: options.prepare_desktop_environment,
                     register_host_tools: options.register_host_tools,
+                    authorization_ceiling: None,
+                    compatibility_authorization: None,
                 },
-            ))),
+            )?)),
             client_kind: DaemonClientKind::Unknown,
-        })
+        }))
     }
+}
+
+/// Generated-language host factory for a session-bound action surface.
+///
+/// This remains a separate top-level capability instead of adding a required
+/// method to the released `CuaDriverProtocol` / `CuaDriverLike` structural
+/// interfaces.
+#[uniffi::export]
+pub fn create_trusted_session(
+    driver: Arc<CuaDriver>,
+    options: TrustedSessionOptions,
+) -> Result<Arc<CuaDriverSession>, DriverError> {
+    driver.create_trusted_session(options)
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -451,7 +618,8 @@ impl CuaDriver {
         name: String,
         arguments_json: String,
     ) -> Result<ToolResult, DriverError> {
-        let arguments = parse_arguments(&name, &arguments_json)?;
+        let mut arguments = parse_arguments(&name, &arguments_json)?;
+        cua_driver_core::tool_args::sanitize_reserved_args(&mut arguments);
         self.invoke(&name, arguments).await
     }
 
@@ -542,8 +710,114 @@ impl CuaDriver {
 }
 
 desktop_tool_methods!(define_desktop_tool_methods);
+desktop_tool_methods!(define_session_desktop_tool_methods);
+
+#[uniffi::export(async_runtime = "tokio")]
+impl CuaDriverSession {
+    pub async fn call_tool(
+        &self,
+        name: String,
+        arguments_json: String,
+    ) -> Result<ToolResult, DriverError> {
+        let arguments = parse_arguments(&name, &arguments_json)?;
+        self.invoke(&name, arguments).await
+    }
+
+    pub async fn start_session(
+        &self,
+        input: StartSessionInput,
+    ) -> Result<StartSessionOutput, DriverError> {
+        self.invoke_typed(StartSessionInput::TOOL_NAME, input)
+            .await?
+            .typed_success(StartSessionInput::TOOL_NAME)
+    }
+
+    pub async fn escalate_session(
+        &self,
+        input: EscalateSessionInput,
+    ) -> Result<SessionStateOutput, DriverError> {
+        self.invoke_typed(EscalateSessionInput::TOOL_NAME, input)
+            .await?
+            .typed_success(EscalateSessionInput::TOOL_NAME)
+    }
+
+    pub async fn get_session_state(
+        &self,
+        input: GetSessionStateInput,
+    ) -> Result<SessionStateOutput, DriverError> {
+        self.invoke_typed(GetSessionStateInput::TOOL_NAME, input)
+            .await?
+            .typed_success(GetSessionStateInput::TOOL_NAME)
+    }
+
+    pub async fn end_session(
+        &self,
+        input: EndSessionInput,
+    ) -> Result<EndSessionOutput, DriverError> {
+        let result = self
+            .invoke_typed(EndSessionInput::TOOL_NAME, input)
+            .await?
+            .typed_success(EndSessionInput::TOOL_NAME);
+        self.backend.close();
+        result
+    }
+}
+
+#[uniffi::export]
+impl CuaDriverSession {
+    /// Revoke the session-bound authority and release its native handle.
+    ///
+    /// This operation is idempotent. Dropping the object performs the same
+    /// cleanup, but trusted hosts should call it at their lifecycle boundary.
+    pub fn close(&self) {
+        self.backend.close();
+    }
+}
+
+impl CuaDriverSession {
+    async fn invoke_typed<T: Serialize>(
+        &self,
+        name: &str,
+        input: T,
+    ) -> Result<ToolResult, DriverError> {
+        let arguments =
+            serde_json::to_value(input).map_err(|error| DriverError::InvalidArguments {
+                tool: name.into(),
+                reason: error.to_string(),
+            })?;
+        self.invoke(name, arguments).await
+    }
+
+    async fn invoke(&self, name: &str, arguments: Value) -> Result<ToolResult, DriverError> {
+        if !arguments.is_object() {
+            return Err(DriverError::InvalidArguments {
+                tool: name.into(),
+                reason: "arguments must be a JSON object".into(),
+            });
+        }
+        normalize_result(self.backend.invoke(name, arguments).await?)
+    }
+}
 
 impl CuaDriver {
+    /// Rust-only ingress for a trusted protocol adapter that already removed
+    /// caller-supplied reserved arguments before adding its own transport
+    /// evidence. Public SDK callers must use [`Self::call_tool`].
+    #[doc(hidden)]
+    pub async fn call_tool_from_trusted_adapter(
+        &self,
+        name: &str,
+        arguments: Value,
+    ) -> Result<ToolResult, DriverError> {
+        if !arguments.is_object() {
+            return Err(DriverError::InvalidArguments {
+                tool: name.into(),
+                reason: "arguments must be a JSON object".into(),
+            });
+        }
+        self.invoke(name, arguments).await
+    }
+
     async fn invoke_typed<T: Serialize>(
         &self,
         name: &str,
@@ -745,6 +1019,7 @@ mod tests {
 
     #[tokio::test]
     async fn embedded_runtime_owns_tools_without_daemon_ipc_and_shuts_down_idempotently() {
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
         let driver = CuaDriver::create(None).unwrap();
         assert_eq!(driver.execution_mode(), DriverExecutionMode::Embedded);
         assert!(driver.socket_path().is_empty());
@@ -775,6 +1050,7 @@ mod tests {
 
     #[tokio::test]
     async fn embedded_runtime_enforces_authorization_before_platform_dispatch() {
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
         let driver = CuaDriver::create(None).unwrap();
         let result = driver
             .call_tool(
@@ -798,6 +1074,118 @@ mod tests {
             structured.pointer("/refusal/code"),
             Some(&Value::String("permission_denied".into()))
         );
+    }
+
+    #[tokio::test]
+    async fn direct_runtime_is_process_exclusive_and_reusable_after_shutdown() {
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let first = CuaDriver::create(None).unwrap();
+        assert!(matches!(
+            CuaDriver::create(None),
+            Err(DriverError::RuntimeAlreadyExists)
+        ));
+        first.shutdown().await.unwrap();
+        let replacement = CuaDriver::create(None).unwrap();
+        drop(replacement);
+        let after_drop = CuaDriver::create(None).unwrap();
+        after_drop.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn trusted_session_is_bound_in_memory_and_rejects_public_id_substitution() {
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let driver = CuaDriver::create_configured(ConfiguredDriverOptions {
+            claude_code_compatibility: false,
+            authorization: RuntimeAuthorizationOptions {
+                allowed_modes: vec![
+                    SessionPermissionMode::Standard,
+                    SessionPermissionMode::Unrestricted,
+                ],
+                compatibility_mode: SessionPermissionMode::Standard,
+                compatibility_bounded_manifest_path: None,
+                unrestricted_acknowledged: true,
+                max_session_ttl_seconds: 60,
+                max_idle_ttl_seconds: 30,
+            },
+        })
+        .unwrap();
+        let session = driver
+            .create_trusted_session(TrustedSessionOptions {
+                public_session: "trusted-a".into(),
+                mode: SessionPermissionMode::Standard,
+                ttl_seconds: 60,
+                idle_ttl_seconds: 30,
+                bounded_manifest_path: None,
+            })
+            .unwrap();
+
+        let result = session
+            .call_tool("health_report".into(), "{}".into())
+            .await
+            .unwrap();
+        assert_ne!(result.error_code.as_deref(), Some("permission_denied"));
+
+        let substituted = session
+            .call_tool(
+                "health_report".into(),
+                serde_json::json!({"session": "other"}).to_string(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(substituted.error_code.as_deref(), Some("permission_denied"));
+        assert!(substituted.text.contains("substitution"));
+
+        let reserved_substitution = session
+            .call_tool(
+                "health_report".into(),
+                serde_json::json!({
+                    "_session_id": "other",
+                    "_transport_session_id": "other"
+                })
+                .to_string(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(
+            reserved_substitution.error_code.as_deref(),
+            Some("permission_denied")
+        );
+
+        assert!(matches!(
+            driver.create_trusted_session(TrustedSessionOptions {
+                public_session: "trusted-a".into(),
+                mode: SessionPermissionMode::Unrestricted,
+                ttl_seconds: 60,
+                idle_ttl_seconds: 30,
+                bounded_manifest_path: None,
+            }),
+            Err(DriverError::Configuration { .. })
+        ));
+        let unrestricted = driver
+            .create_trusted_session(TrustedSessionOptions {
+                public_session: "trusted-b".into(),
+                mode: SessionPermissionMode::Unrestricted,
+                ttl_seconds: 60,
+                idle_ttl_seconds: 30,
+                bounded_manifest_path: None,
+            })
+            .unwrap();
+        let unrestricted_result = unrestricted
+            .call_tool("health_report".into(), "{}".into())
+            .await
+            .unwrap();
+        assert_ne!(
+            unrestricted_result.error_code.as_deref(),
+            Some("permission_denied")
+        );
+        driver.shutdown().await.unwrap();
+        assert!(matches!(
+            session.call_tool("health_report".into(), "{}".into()).await,
+            Err(DriverError::Shutdown)
+        ));
+        session.close();
+        session.close();
+        unrestricted.close();
     }
 
     #[tokio::test]

@@ -4,7 +4,17 @@
 //! objects and the daemon host construct the same runtime here; transport
 //! adapters are downstream consumers of `CuaDriver`.
 
-use cua_driver_core::{protocol::ToolResult as CoreToolResult, tool::ToolRegistry};
+use cua_driver_core::{
+    authorization::PermissionMode,
+    protocol::ToolResult as CoreToolResult,
+    session_authorization::{
+        AuthenticatedActionConnection, DelegatedSessionRequest, EffectiveAuthorizationContext,
+        SessionAuthorizationError, SessionAuthorizationRegistry, SessionModeCeiling,
+        TrustedHostLease,
+    },
+    session_manifest::SessionManifest,
+    tool::ToolRegistry,
+};
 use cursor_overlay::CursorConfig;
 use serde_json::Value;
 use std::sync::{
@@ -14,6 +24,46 @@ use std::sync::{
 
 const RECORDING_IDLE_TTL_SECS_DEFAULT: u64 = 300;
 const SESSION_IDLE_TTL_SECS_DEFAULT: u64 = 300;
+static DIRECT_RUNTIME_ACTIVE: AtomicBool = AtomicBool::new(false);
+#[cfg(test)]
+pub(crate) static TEST_RUNTIME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum RuntimeCreateError {
+    #[error(
+        "runtime_already_exists: one direct Cua Driver runtime is already active in this process"
+    )]
+    AlreadyExists,
+    #[error("invalid runtime authorization configuration: {0}")]
+    Authorization(String),
+}
+
+struct RuntimeOwnershipGuard {
+    released: AtomicBool,
+}
+
+impl RuntimeOwnershipGuard {
+    fn acquire() -> Result<Self, RuntimeCreateError> {
+        DIRECT_RUNTIME_ACTIVE
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| RuntimeCreateError::AlreadyExists)?;
+        Ok(Self {
+            released: AtomicBool::new(false),
+        })
+    }
+
+    fn release(&self) {
+        if !self.released.swap(true, Ordering::AcqRel) {
+            DIRECT_RUNTIME_ACTIVE.store(false, Ordering::Release);
+        }
+    }
+}
+
+impl Drop for RuntimeOwnershipGuard {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct RuntimeOptions {
@@ -22,6 +72,8 @@ pub(crate) struct RuntimeOptions {
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub prepare_desktop_environment: bool,
     pub register_host_tools: Option<fn(&mut ToolRegistry)>,
+    pub authorization_ceiling: Option<SessionModeCeiling>,
+    pub compatibility_authorization: Option<(PermissionMode, Option<Arc<SessionManifest>>)>,
 }
 
 impl RuntimeOptions {
@@ -34,12 +86,93 @@ impl RuntimeOptions {
             compatibility_mode,
             prepare_desktop_environment: true,
             register_host_tools: None,
+            authorization_ceiling: None,
+            compatibility_authorization: None,
         }
+    }
+
+    pub(crate) fn embedded_with_ceiling(
+        compatibility_mode: bool,
+        authorization_ceiling: SessionModeCeiling,
+        compatibility_permission_mode: PermissionMode,
+        compatibility_manifest: Option<Arc<SessionManifest>>,
+    ) -> Self {
+        Self {
+            authorization_ceiling: Some(authorization_ceiling),
+            compatibility_authorization: Some((
+                compatibility_permission_mode,
+                compatibility_manifest,
+            )),
+            ..Self::embedded(compatibility_mode)
+        }
+    }
+}
+
+pub(crate) struct RuntimeSession {
+    runtime: Arc<DriverRuntime>,
+    authorization_registry: Arc<SessionAuthorizationRegistry>,
+    host: TrustedHostLease,
+    connection: AuthenticatedActionConnection,
+    context: Arc<EffectiveAuthorizationContext>,
+    public_session: String,
+    transport_session: String,
+}
+
+impl RuntimeSession {
+    pub(crate) async fn invoke(&self, name: &str, mut args: Value) -> Option<CoreToolResult> {
+        cua_driver_core::tool_args::sanitize_reserved_args(&mut args);
+        let Some(arguments) = args.as_object_mut() else {
+            return Some(permission_denied_result(
+                "session-bound actions require an object argument".to_owned(),
+            ));
+        };
+        if arguments
+            .get("session")
+            .and_then(Value::as_str)
+            .is_some_and(|session| session != self.public_session)
+        {
+            return Some(permission_denied_result(
+                "public session substitution does not match the bound authorization context"
+                    .to_owned(),
+            ));
+        }
+        arguments.insert(
+            "session".to_owned(),
+            Value::String(self.public_session.clone()),
+        );
+        arguments.insert(
+            "_session_id".to_owned(),
+            Value::String(self.public_session.clone()),
+        );
+        arguments.insert(
+            "_transport_session_id".to_owned(),
+            Value::String(self.transport_session.clone()),
+        );
+        let result = self
+            .runtime
+            .invoke_with_context(name, args, self.context.clone())
+            .await;
+        if name == "end_session" && result.is_some() {
+            self.authorization_registry
+                .revoke_connection(&self.connection);
+        }
+        result
+    }
+}
+
+impl Drop for RuntimeSession {
+    fn drop(&mut self) {
+        self.authorization_registry
+            .revoke_connection(&self.connection);
+        self.authorization_registry.revoke_host(&self.host);
     }
 }
 
 pub(crate) struct DriverRuntime {
     registry: Arc<ToolRegistry>,
+    authorization_registry: Arc<SessionAuthorizationRegistry>,
+    compatibility_context: Arc<EffectiveAuthorizationContext>,
+    ownership: RuntimeOwnershipGuard,
     shutdown: AtomicBool,
     last_activity: AtomicU64,
     /// Calls hold a read guard; shutdown takes the write guard after closing
@@ -49,18 +182,35 @@ pub(crate) struct DriverRuntime {
 }
 
 impl DriverRuntime {
-    pub(crate) fn create(options: RuntimeOptions) -> Arc<Self> {
+    pub(crate) fn create(options: RuntimeOptions) -> Result<Arc<Self>, RuntimeCreateError> {
+        let authorization_registry = Arc::new(match options.authorization_ceiling.clone() {
+            Some(ceiling) => SessionAuthorizationRegistry::with_ceiling(ceiling),
+            None => SessionAuthorizationRegistry::process()
+                .map_err(RuntimeCreateError::Authorization)?,
+        });
+        let compatibility_context = match options.compatibility_authorization.clone() {
+            Some((mode, manifest)) => authorization_registry
+                .compatibility_context(mode, manifest)
+                .map_err(RuntimeCreateError::Authorization)?,
+            None => authorization_registry
+                .legacy_context()
+                .map_err(RuntimeCreateError::Authorization)?,
+        };
+        let ownership = RuntimeOwnershipGuard::acquire()?;
         let registry = Arc::new(build_registry(&options));
         registry.init_self_weak();
         register_recording_session_end_hook(&registry);
         let runtime = Arc::new(Self {
             registry,
+            authorization_registry,
+            compatibility_context,
+            ownership,
             shutdown: AtomicBool::new(false),
             last_activity: AtomicU64::new(now_unix_secs()),
             lifecycle: tokio::sync::RwLock::new(()),
         });
         spawn_lifecycle_maintenance(&runtime);
-        runtime
+        Ok(runtime)
     }
 
     pub(crate) fn is_running(&self) -> bool {
@@ -70,8 +220,11 @@ impl DriverRuntime {
     pub(crate) async fn shutdown(&self) {
         self.shutdown.store(true, Ordering::Release);
         let _drained = self.lifecycle.write().await;
+        self.authorization_registry.revoke_all();
+        cua_driver_core::session::revoke_all_sessions();
         let recording = self.registry.recording.clone();
         let _ = tokio::task::spawn_blocking(move || recording.stop_owner(None)).await;
+        self.ownership.release();
     }
 
     pub(crate) fn tools_list(&self) -> Option<Value> {
@@ -79,6 +232,16 @@ impl DriverRuntime {
     }
 
     pub(crate) async fn invoke(&self, name: &str, args: Value) -> Option<CoreToolResult> {
+        self.invoke_with_context(name, args, self.compatibility_context.clone())
+            .await
+    }
+
+    async fn invoke_with_context(
+        &self,
+        name: &str,
+        args: Value,
+        context: Arc<EffectiveAuthorizationContext>,
+    ) -> Option<CoreToolResult> {
         if !self.is_running() {
             return None;
         }
@@ -94,7 +257,7 @@ impl DriverRuntime {
                     .map(str::to_owned)
             })
             .flatten();
-        let result = self.registry.invoke(name, args).await;
+        let result = self.registry.invoke_with_context(name, args, context).await;
         if let Some(session) = ending_session {
             // `end_session` is a lifecycle boundary: do not report completion
             // until any recording owned by the session has finalized.
@@ -103,6 +266,54 @@ impl DriverRuntime {
         }
         Some(result)
     }
+
+    pub(crate) fn create_trusted_session(
+        self: &Arc<Self>,
+        request: DelegatedSessionRequest,
+    ) -> Result<Arc<RuntimeSession>, SessionAuthorizationError> {
+        if !self.is_running() {
+            return Err(SessionAuthorizationError::RuntimeUnavailable);
+        }
+        let public_session = request.public_session.clone();
+        let transport_session = request.transport_session.clone();
+        let (host, connection) = self.authorization_registry.trusted_in_process_binding();
+        self.authorization_registry
+            .bind_delegated_session(&host, &connection, request)?;
+        let context = self.authorization_registry.resolve_delegated(
+            &connection,
+            &public_session,
+            &transport_session,
+        )?;
+        Ok(Arc::new(RuntimeSession {
+            runtime: self.clone(),
+            authorization_registry: self.authorization_registry.clone(),
+            host,
+            connection,
+            context,
+            public_session,
+            transport_session,
+        }))
+    }
+}
+
+impl Drop for DriverRuntime {
+    fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::Release);
+        self.authorization_registry.revoke_all();
+        cua_driver_core::session::revoke_all_sessions();
+        let _ = self.registry.recording.stop_owner(None);
+        self.ownership.release();
+    }
+}
+
+fn permission_denied_result(message: String) -> CoreToolResult {
+    CoreToolResult::error(message.clone()).with_structured(serde_json::json!({
+        "status": "refused",
+        "refusal": {
+            "code": "permission_denied",
+            "message": message,
+        }
+    }))
 }
 
 fn configured_ttl(name: &str, fallback: u64) -> u64 {

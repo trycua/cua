@@ -81,6 +81,43 @@ impl SessionModeCeiling {
         }
     }
 
+    /// Build an immutable ceiling for sessions created by trusted host code.
+    ///
+    /// This constructor is intentionally absent from the agent tool registry.
+    /// A host may call it only before its runtime begins accepting actions.
+    pub fn for_trusted_sessions(
+        allowed_modes: impl IntoIterator<Item = PermissionMode>,
+        unrestricted_acknowledged: bool,
+        max_session_ttl: Duration,
+        max_idle_ttl: Duration,
+    ) -> Result<Self, String> {
+        let allowed_modes = allowed_modes.into_iter().collect::<HashSet<_>>();
+        if allowed_modes.is_empty() {
+            return Err("runtime authorization ceiling must allow at least one mode".to_owned());
+        }
+        if max_session_ttl.is_zero() || max_idle_ttl.is_zero() || max_idle_ttl > max_session_ttl {
+            return Err(
+                "runtime authorization ceiling TTLs must be non-zero and idle TTL cannot exceed session TTL"
+                    .to_owned(),
+            );
+        }
+        if allowed_modes.contains(&PermissionMode::Unrestricted) && !unrestricted_acknowledged {
+            return Err(
+                "unrestricted runtime ceiling requires trusted launch-time acknowledgement"
+                    .to_owned(),
+            );
+        }
+        Ok(Self {
+            allowed_modes,
+            unrestricted_acknowledged,
+            delegation_enabled: true,
+            max_session_ttl: Some(max_session_ttl),
+            max_idle_ttl: Some(max_idle_ttl),
+            user_policy_sha256: crate::policy::user_policy_sha256()?,
+            managed_policy_sha256: crate::policy::managed_policy_sha256()?,
+        })
+    }
+
     pub fn allows(&self, mode: PermissionMode) -> bool {
         self.allowed_modes.contains(&mode)
             && (mode != PermissionMode::Unrestricted || self.unrestricted_acknowledged)
@@ -151,6 +188,7 @@ pub struct EffectiveAuthorizationContext {
     idle_ttl: Option<Duration>,
     last_authorized_dispatch: Option<Arc<Mutex<Instant>>>,
     idle_expired: Option<Arc<AtomicBool>>,
+    revoked: Arc<AtomicBool>,
 }
 
 impl EffectiveAuthorizationContext {
@@ -172,7 +210,14 @@ impl EffectiveAuthorizationContext {
             .map(SessionManifest::sha256)
     }
 
+    pub fn public_session(&self) -> Option<&str> {
+        self.public_session.as_deref()
+    }
+
     pub fn is_expired(&self) -> bool {
+        if self.revoked.load(Ordering::Acquire) {
+            return true;
+        }
         if self
             .expires_at
             .is_some_and(|expires| Instant::now() >= expires)
@@ -197,6 +242,9 @@ impl EffectiveAuthorizationContext {
     }
 
     pub fn authorize_dispatch(&self) -> Result<(), String> {
+        if self.revoked.load(Ordering::Acquire) {
+            return Err("authorization context has been revoked".to_owned());
+        }
         let (Some(idle_ttl), Some(last), Some(expired)) = (
             self.idle_ttl,
             self.last_authorized_dispatch.as_ref(),
@@ -285,6 +333,8 @@ impl std::fmt::Debug for DelegatedSessionRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SessionAuthorizationError {
+    #[error("the owning runtime is not accepting new sessions")]
+    RuntimeUnavailable,
     #[error("trusted per-session mode delegation is not enabled for this daemon")]
     DelegationDisabled,
     #[error("the requested session mode is outside the daemon authorization ceiling")]
@@ -297,6 +347,8 @@ pub enum SessionAuthorizationError {
     HostLeaseMismatch,
     #[error("the action connection already has an authorization context")]
     ConnectionAlreadyBound,
+    #[error("the public or transport session is already bound to a live authorization context")]
+    SessionAlreadyBound,
     #[error("the action connection has no live authorization context")]
     UnknownConnection,
     #[error("the public or transport session does not match the bound authorization context")]
@@ -318,9 +370,9 @@ struct RegistryState {
 
 /// Process-owned registry for immutable, connection-bound authorization.
 ///
-/// The production registry currently exposes only [`Self::legacy_context`].
-/// Delegated binding is structurally present and adversarially tested, but no
-/// public protocol can obtain the opaque host/connection proofs required by
+/// Released callers use [`Self::legacy_context`]. A trusted direct SDK host
+/// may additionally mint opaque in-process bindings; public protocols cannot
+/// obtain or reconstruct the host/connection proofs required by
 /// [`Self::bind_delegated_session`].
 #[derive(Debug)]
 pub struct SessionAuthorizationRegistry {
@@ -330,13 +382,45 @@ pub struct SessionAuthorizationRegistry {
 }
 
 impl SessionAuthorizationRegistry {
-    fn process() -> Result<Self, String> {
+    /// Construct the compatibility authorization registry for one runtime.
+    ///
+    /// The resulting ceiling and default context are frozen from trusted
+    /// startup configuration. Runtime owners should retain this registry
+    /// instead of repeatedly consulting the process-global compatibility
+    /// accessor.
+    pub fn process() -> Result<Self, String> {
         let mode = crate::authorization::configured_permission_mode()?;
         Ok(Self {
             daemon_generation: DaemonGeneration(Uuid::new_v4()),
             ceiling: SessionModeCeiling::process(mode)?,
             state: Mutex::new(RegistryState::default()),
         })
+    }
+
+    pub fn with_ceiling(ceiling: SessionModeCeiling) -> Self {
+        Self {
+            daemon_generation: DaemonGeneration(Uuid::new_v4()),
+            ceiling,
+            state: Mutex::new(RegistryState::default()),
+        }
+    }
+
+    /// Mint process-local authority for a direct SDK host.
+    ///
+    /// The returned values are opaque and non-serializable. Service adapters
+    /// must not use this shortcut; they first authenticate the accepted peer
+    /// and then establish an equivalent connection-bound proof.
+    pub fn trusted_in_process_binding(&self) -> (TrustedHostLease, AuthenticatedActionConnection) {
+        let host = TrustedHostLease {
+            id: HostLeaseId(Uuid::new_v4()),
+            daemon_generation: self.daemon_generation,
+        };
+        let connection = AuthenticatedActionConnection {
+            id: ConnectionAuthorityId(Uuid::new_v4()),
+            daemon_generation: self.daemon_generation,
+            host_lease: host.id,
+        };
+        (host, connection)
     }
 
     #[cfg(test)]
@@ -352,11 +436,8 @@ impl SessionAuthorizationRegistry {
         &self.ceiling
     }
 
-    pub fn legacy_context(&self) -> Result<EffectiveAuthorizationContext, String> {
+    pub fn legacy_context(&self) -> Result<Arc<EffectiveAuthorizationContext>, String> {
         let mode = crate::authorization::configured_permission_mode()?;
-        if !self.ceiling.allows(mode) {
-            return Err("process permission mode is outside the daemon ceiling".to_owned());
-        }
         let bounded_manifest = if mode == PermissionMode::Bounded {
             crate::session_manifest::configured_session_manifest()?
                 .cloned()
@@ -364,7 +445,31 @@ impl SessionAuthorizationRegistry {
         } else {
             None
         };
-        Ok(EffectiveAuthorizationContext {
+        self.compatibility_context(mode, bounded_manifest)
+    }
+
+    /// Construct the compatibility action context from explicit trusted
+    /// runtime options without consulting compatibility environment variables.
+    pub fn compatibility_context(
+        &self,
+        mode: PermissionMode,
+        bounded_manifest: Option<Arc<SessionManifest>>,
+    ) -> Result<Arc<EffectiveAuthorizationContext>, String> {
+        if !self.ceiling.allows(mode) {
+            return Err("compatibility permission mode is outside the runtime ceiling".to_owned());
+        }
+        match (mode, bounded_manifest.as_ref()) {
+            (PermissionMode::Bounded, None) => {
+                return Err("bounded compatibility mode requires a session manifest".to_owned())
+            }
+            (PermissionMode::Standard | PermissionMode::Unrestricted, Some(_)) => {
+                return Err(
+                    "a compatibility session manifest is valid only for bounded mode".to_owned(),
+                )
+            }
+            _ => {}
+        }
+        Ok(Arc::new(EffectiveAuthorizationContext {
             daemon_generation: self.daemon_generation,
             source: AuthorizationContextSource::Process,
             mode,
@@ -379,7 +484,8 @@ impl SessionAuthorizationRegistry {
             idle_ttl: None,
             last_authorized_dispatch: None,
             idle_expired: None,
-        })
+            revoked: Arc::new(AtomicBool::new(false)),
+        }))
     }
 
     pub fn bind_delegated_session(
@@ -428,6 +534,16 @@ impl SessionAuthorizationRegistry {
             }
             _ => {}
         }
+        let mut state = self.state.lock().unwrap();
+        if state.by_connection.contains_key(&connection.id) {
+            return Err(SessionAuthorizationError::ConnectionAlreadyBound);
+        }
+        if state.by_connection.values().any(|context| {
+            context.public_session.as_deref() == Some(request.public_session.as_str())
+                || context.transport_session.as_deref() == Some(request.transport_session.as_str())
+        }) {
+            return Err(SessionAuthorizationError::SessionAlreadyBound);
+        }
         let context = Arc::new(EffectiveAuthorizationContext {
             daemon_generation: self.daemon_generation,
             source: AuthorizationContextSource::TrustedHost,
@@ -443,11 +559,8 @@ impl SessionAuthorizationRegistry {
             idle_ttl: Some(request.idle_ttl),
             last_authorized_dispatch: Some(Arc::new(Mutex::new(Instant::now()))),
             idle_expired: Some(Arc::new(AtomicBool::new(false))),
+            revoked: Arc::new(AtomicBool::new(false)),
         });
-        let mut state = self.state.lock().unwrap();
-        if state.by_connection.contains_key(&connection.id) {
-            return Err(SessionAuthorizationError::ConnectionAlreadyBound);
-        }
         state.by_connection.insert(connection.id, context);
         Ok(())
     }
@@ -491,7 +604,10 @@ impl SessionAuthorizationRegistry {
             .unwrap()
             .by_connection
             .remove(&connection.id)
-            .is_some()
+            .is_some_and(|context| {
+                context.revoked.store(true, Ordering::Release);
+                true
+            })
     }
 
     pub fn revoke_host(&self, host: &TrustedHostLease) -> usize {
@@ -500,10 +616,29 @@ impl SessionAuthorizationRegistry {
         }
         let mut state = self.state.lock().unwrap();
         let before = state.by_connection.len();
-        state
-            .by_connection
-            .retain(|_, context| context.host_lease != Some(host.id));
+        state.by_connection.retain(|_, context| {
+            let retain = context.host_lease != Some(host.id);
+            if !retain {
+                context.revoked.store(true, Ordering::Release);
+            }
+            retain
+        });
         before - state.by_connection.len()
+    }
+
+    /// Revoke every delegated context owned by this runtime generation.
+    ///
+    /// Runtime shutdown calls this before releasing process ownership so any
+    /// outstanding bound action surface fails closed even if a language
+    /// binding retains it after the runtime object is shut down.
+    pub fn revoke_all(&self) -> usize {
+        let mut state = self.state.lock().unwrap();
+        let count = state.by_connection.len();
+        for context in state.by_connection.values() {
+            context.revoked.store(true, Ordering::Release);
+        }
+        state.by_connection.clear();
+        count
     }
 
     pub fn status_json(&self) -> serde_json::Value {
@@ -756,6 +891,37 @@ mod tests {
     }
 
     #[test]
+    fn live_public_and_transport_session_labels_are_unique() {
+        let registry = SessionAuthorizationRegistry::delegated_for_test(
+            SessionModeCeiling::delegated([PermissionMode::Standard], false),
+        );
+        let (host, connection_a) = registry.trusted_pair_for_test(None);
+        let (_, connection_b) = registry.trusted_pair_for_test(Some(&host));
+        registry
+            .bind_delegated_session(&host, &connection_a, request(PermissionMode::Standard))
+            .unwrap();
+
+        let mut duplicate_public = request(PermissionMode::Standard);
+        duplicate_public.transport_session = "transport-b".to_owned();
+        assert_eq!(
+            registry
+                .bind_delegated_session(&host, &connection_b, duplicate_public)
+                .unwrap_err(),
+            SessionAuthorizationError::SessionAlreadyBound
+        );
+
+        let (_, connection_c) = registry.trusted_pair_for_test(Some(&host));
+        let mut duplicate_transport = request(PermissionMode::Standard);
+        duplicate_transport.public_session = "public-b".to_owned();
+        assert_eq!(
+            registry
+                .bind_delegated_session(&host, &connection_c, duplicate_transport)
+                .unwrap_err(),
+            SessionAuthorizationError::SessionAlreadyBound
+        );
+    }
+
+    #[test]
     fn ttl_constraints_fail_closed() {
         let registry = SessionAuthorizationRegistry::delegated_for_test(
             SessionModeCeiling::delegated([PermissionMode::Standard], false),
@@ -946,6 +1112,53 @@ mod tests {
         assert!(registry
             .resolve_delegated(&connection_b, "public-b", "transport-b")
             .is_ok());
+    }
+
+    #[test]
+    fn revocation_invalidates_already_resolved_contexts() {
+        let registry = SessionAuthorizationRegistry::delegated_for_test(
+            SessionModeCeiling::delegated([PermissionMode::Standard], false),
+        );
+        let (host, connection) = registry.trusted_pair_for_test(None);
+        registry
+            .bind_delegated_session(&host, &connection, request(PermissionMode::Standard))
+            .unwrap();
+        let context = registry
+            .resolve_delegated(&connection, "public-a", "transport-a")
+            .unwrap();
+
+        assert!(registry.revoke_connection(&connection));
+        assert!(context.authorize_dispatch().is_err());
+        assert!(context.is_expired());
+    }
+
+    #[test]
+    fn runtime_revocation_invalidates_every_live_context() {
+        let registry = SessionAuthorizationRegistry::delegated_for_test(
+            SessionModeCeiling::delegated([PermissionMode::Standard], false),
+        );
+        let (host, connection_a) = registry.trusted_pair_for_test(None);
+        let (_, connection_b) = registry.trusted_pair_for_test(Some(&host));
+        registry
+            .bind_delegated_session(&host, &connection_a, request(PermissionMode::Standard))
+            .unwrap();
+        let mut second = request(PermissionMode::Standard);
+        second.public_session = "public-b".to_owned();
+        second.transport_session = "transport-b".to_owned();
+        registry
+            .bind_delegated_session(&host, &connection_b, second)
+            .unwrap();
+        let context_a = registry
+            .resolve_delegated(&connection_a, "public-a", "transport-a")
+            .unwrap();
+        let context_b = registry
+            .resolve_delegated(&connection_b, "public-b", "transport-b")
+            .unwrap();
+
+        assert_eq!(registry.revoke_all(), 2);
+        assert!(context_a.authorize_dispatch().is_err());
+        assert!(context_b.authorize_dispatch().is_err());
+        assert_eq!(registry.revoke_all(), 0);
     }
 
     #[test]

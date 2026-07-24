@@ -58,7 +58,10 @@ impl ExistingProfileGrant {
     }
 
     fn authorization_context_matches(&self) -> bool {
-        crate::authorization::configured_permission_mode()
+        crate::tool::current_dispatch_authorization_context()
+            .map(|context| context.mode())
+            .map(Ok)
+            .unwrap_or_else(crate::authorization::configured_permission_mode)
             .is_ok_and(|mode| mode == self.permission_mode)
             && crate::policy::managed_policy_sha256().ok().flatten() == self.managed_policy_sha256
             && crate::policy::user_policy_sha256().ok().flatten() == self.user_policy_sha256
@@ -116,7 +119,10 @@ impl ExistingProfileGrants {
             generation,
             reconnect_attempts_remaining: MAX_RECONNECT_ATTEMPTS,
             protected_consent,
-            permission_mode: crate::authorization::configured_permission_mode()
+            permission_mode: crate::tool::current_dispatch_authorization_context()
+                .map(|context| context.mode())
+                .map(Ok)
+                .unwrap_or_else(crate::authorization::configured_permission_mode)
                 .unwrap_or(crate::authorization::PermissionMode::Standard),
             managed_policy_sha256: crate::policy::managed_policy_sha256().ok().flatten(),
             user_policy_sha256: crate::policy::user_policy_sha256().ok().flatten(),

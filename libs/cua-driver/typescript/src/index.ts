@@ -11,6 +11,8 @@ import { CuaDriver, SdkClientKind } from "./native/cua_driver_sdk.js"
 // compatibility constructor with the importing runtime.
 CuaDriver.create = (options) =>
   CuaDriver.createWithClientKind(options, SdkClientKind.Typescript)
+CuaDriver.createConfigured = (options) =>
+  CuaDriver.createConfiguredWithClientKind(options, SdkClientKind.Typescript)
 CuaDriver.connect = (socketPath: string | undefined) =>
   CuaDriver.connectWithClientKind(socketPath, SdkClientKind.Typescript)
 

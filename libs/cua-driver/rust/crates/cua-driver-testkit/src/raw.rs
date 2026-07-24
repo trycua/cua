@@ -21,7 +21,7 @@ use crate::reaper::{spawn_in_job, ChildReaper};
 /// Killed on drop.
 pub struct RawDriver {
     _reaper: ChildReaper,
-    _daemon: TestDaemon,
+    _daemon: Option<TestDaemon>,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
 }
@@ -52,7 +52,40 @@ impl RawDriver {
         reaper.push(child);
         Some(RawDriver {
             _reaper: reaper,
-            _daemon: daemon,
+            _daemon: Some(daemon),
+            stdin,
+            stdout,
+        })
+    }
+
+    /// Spawn the platform-default direct MCP runtime without a service.
+    ///
+    /// Standalone macOS intentionally retains the signed app/service topology,
+    /// so this helper is available only where bare `mcp` owns its runtime.
+    #[cfg(not(target_os = "macos"))]
+    pub fn spawn_direct() -> Option<Self> {
+        let bin = driver_binary();
+        if !bin.exists() {
+            eprintln!("[testkit] driver binary not built at {bin:?} — skipping");
+            return None;
+        }
+        let mut reaper = ChildReaper::new();
+        let mut command = Command::new(&bin);
+        command
+            .arg("mcp")
+            .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let mut child = spawn_in_job(&mut command)
+            .inspect_err(|e| eprintln!("[testkit] direct driver spawn failed: {e}"))
+            .ok()?;
+        let stdin = child.stdin.take().unwrap();
+        let stdout = BufReader::new(child.stdout.take().unwrap());
+        reaper.push(child);
+        Some(Self {
+            _reaper: reaper,
+            _daemon: None,
             stdin,
             stdout,
         })

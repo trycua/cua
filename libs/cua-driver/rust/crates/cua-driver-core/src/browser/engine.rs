@@ -1363,9 +1363,13 @@ impl BrowserEngine {
         }
 
         let cdp_session = self.attach(&conn, &tab.cdp_target_id).await?;
-        if crate::authorization::configured_permission_mode()
-            .is_ok_and(|mode| mode == crate::authorization::PermissionMode::Bounded)
-        {
+        let dispatch_context = crate::tool::current_dispatch_authorization_context();
+        let dispatch_mode = dispatch_context
+            .as_ref()
+            .map(|context| context.mode())
+            .map(Ok)
+            .unwrap_or_else(crate::authorization::configured_permission_mode);
+        if dispatch_mode.is_ok_and(|mode| mode == crate::authorization::PermissionMode::Bounded) {
             let frame_tree = conn
                 .call(Some(&cdp_session), "Page.getFrameTree", json!({}))
                 .await
@@ -1384,13 +1388,17 @@ impl BrowserEngine {
                         "the live top-level browser origin could not be proven",
                     )
                 })?;
-            let manifest =
-                crate::session_manifest::configured_session_manifest().map_err(|error| {
-                    refuse(
-                        BrowserRefusalCode::BrowserOriginOutsideScope,
-                        format!("the bounded session policy is unavailable: {error}"),
-                    )
-                })?;
+            let manifest = match dispatch_context.as_deref() {
+                Some(context) => context.bounded_manifest(),
+                None => {
+                    crate::session_manifest::configured_session_manifest().map_err(|error| {
+                        refuse(
+                            BrowserRefusalCode::BrowserOriginOutsideScope,
+                            format!("the bounded session policy is unavailable: {error}"),
+                        )
+                    })?
+                }
+            };
             authorize_live_browser_origin(manifest, live_url)?;
         }
         Ok(ValidatedTab {

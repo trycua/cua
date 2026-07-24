@@ -18,6 +18,7 @@ asynchronous. Python uses `snake_case`; TypeScript uses `camelCase`.
 | Python                                | TypeScript                       | Behavior                                                                                   |
 | ------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------ |
 | `CuaDriver.create(options=None)`      | `CuaDriver.create(options?)`     | Creates the primary same-process runtime. No daemon, executable, or IPC is required.       |
+| `CuaDriver.create_configured(options)` | `CuaDriver.createConfigured(options)` | Trusted-host constructor with an immutable runtime ceiling and compatibility mode. |
 | `CuaDriver.connect(socket_path=None)` | `CuaDriver.connect(socketPath?)` | Connects the same typed surface to a daemon. This is a compatibility and app-hosting path. |
 
 `DriverOptions` currently contains
@@ -31,11 +32,23 @@ authorization coordinator used by daemon-backed calls. An invalid
 configuration returns `DriverError.Configuration`; a denied generic call
 returns a tool error with stable code `permission_denied`.
 
-The current SDK does not accept a per-session permission mode. Same-process
-calls inherit the process-owned authorization context, and daemon connections
-inherit the daemon mode. Trusted mixed-mode session creation will require an
-opaque authenticated action connection; public session IDs and ordinary
-socket options cannot select or widen a mode.
+`create_configured()` accepts `RuntimeAuthorizationOptions`: an allowed-mode
+set, the compatibility mode inherited by ordinary `CuaDriver` calls, bounded
+manifest path when that compatibility mode is bounded, maximum absolute and
+idle session TTLs, and the separate unrestricted-risk acknowledgement. A
+second same-process runtime returns `DriverError.RuntimeAlreadyExists`.
+
+Trusted host code may call the top-level `create_trusted_session(driver, …)` /
+`createTrustedSession(driver, …)` factory and receive a `CuaDriverSession`.
+Keeping the factory separate preserves the released structural
+`CuaDriverProtocol` and `CuaDriverLike` interfaces. The returned object is
+already bound to one immutable authorization context. Its public session
+string remains only a lifecycle label: a tool argument cannot select, replay,
+or widen the context. Call `close()` at the host lifecycle boundary; dropping
+the object, ending the session, or shutting down the runtime also revokes it.
+Daemon `connect()` clients retain the daemon compatibility mode; service
+mixed-mode delegation remains unavailable until the accepted connection
+provides a certified host binding.
 
 `execution_mode()` / `executionMode()` reports the generated
 `DriverExecutionMode` value. The current enum variants are `Embedded` for the
@@ -115,6 +128,7 @@ The generated `DriverError` variants are:
 - `Protocol`
 - `Tool`
 - `Shutdown`
+- `RuntimeAlreadyExists`
 
 Tool-level failures may also arrive as `ToolResult.is_error` / `isError`.
 Inspect the result before consuming images or structured fields.

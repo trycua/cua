@@ -473,7 +473,7 @@ pub fn authorize_tool_call(
     let context = crate::session_authorization::configured_registry()
         .and_then(crate::session_authorization::SessionAuthorizationRegistry::legacy_context)
         .map_err(crate::policy::AuthorizationError::Loading)?;
-    authorize_tool_call_with_context(tool, args, &context)
+    authorize_tool_call_with_context(tool, args, context.as_ref())
 }
 
 /// Context-aware authorization entry point. The context must originate from

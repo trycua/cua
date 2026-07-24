@@ -270,6 +270,17 @@ fn build_driver_without_cursor() -> Arc<cua_driver_sdk::CuaDriver> {
     )
 }
 
+fn run_mcp_direct(compatibility_mode: bool) -> anyhow::Result<()> {
+    let driver = build_driver(
+        cursor_overlay::CursorConfig::from_args(),
+        compatibility_mode,
+    );
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(proxy::run_direct(driver))
+}
+
 fn sdk_tool_inventory(driver: Arc<cua_driver_sdk::CuaDriver>) -> serde_json::Value {
     match sdk_adapter::SdkAdapter::load_blocking(driver) {
         Ok(sdk) => sdk.tools_list(),
@@ -593,7 +604,16 @@ fn main() {
             // Long-running MCP proxy — kick off the background update check
             // before connecting to or launching the daemon.
             version_check::maybe_announce_update();
-            if let Err(e) =
+            let direct = cua_driver_core::embedded_mode() && socket.is_none();
+            let result = if direct {
+                telemetry::capture_mcp_startup_completed(
+                    "sdk_owned_runtime",
+                    "not_applicable",
+                    true,
+                    startup_started.elapsed(),
+                );
+                run_mcp_direct(claude_code_compat)
+            } else {
                 cli::run_mcp_via_daemon_proxy(socket, claude_code_compat, |daemon, success| {
                     telemetry::capture_mcp_startup_completed(
                         "daemon_proxy",
@@ -602,7 +622,8 @@ fn main() {
                         startup_started.elapsed(),
                     )
                 })
-            {
+            };
+            if let Err(e) = result {
                 eprintln!("cua-driver-rs: {e}");
                 telemetry::flush_pending(std::time::Duration::from_millis(750));
                 std::process::exit(1);
@@ -821,7 +842,16 @@ fn main() -> anyhow::Result<()> {
             // Long-running MCP proxy — kick off the background update check
             // before connecting to the daemon.
             version_check::maybe_announce_update();
-            if let Err(e) =
+            let direct = socket.is_none();
+            let result = if direct {
+                telemetry::capture_mcp_startup_completed(
+                    "sdk_owned_runtime",
+                    "not_applicable",
+                    true,
+                    startup_started.elapsed(),
+                );
+                run_mcp_direct(claude_code_compat)
+            } else {
                 cli::run_mcp_via_daemon_proxy(socket, claude_code_compat, |daemon, success| {
                     telemetry::capture_mcp_startup_completed(
                         "daemon_proxy",
@@ -830,7 +860,8 @@ fn main() -> anyhow::Result<()> {
                         startup_started.elapsed(),
                     )
                 })
-            {
+            };
+            if let Err(e) = result {
                 eprintln!("cua-driver-rs: {e}");
                 telemetry::flush_pending(std::time::Duration::from_millis(750));
                 std::process::exit(1);

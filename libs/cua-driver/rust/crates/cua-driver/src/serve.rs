@@ -415,6 +415,33 @@ async fn wait_for_parent_stdin_eof() {
     }
 }
 
+#[cfg(unix)]
+fn authenticate_unix_peer(stream: &tokio::net::UnixStream) -> anyhow::Result<()> {
+    let credentials = stream
+        .peer_cred()
+        .map_err(|error| anyhow::anyhow!("read Unix peer credentials: {error}"))?;
+    let expected_uid = unsafe { libc::geteuid() };
+    if credentials.uid() != expected_uid {
+        anyhow::bail!(
+            "reject Unix peer uid {} for runtime owned by uid {expected_uid}",
+            credentials.uid()
+        );
+    }
+    Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod peer_authentication_tests {
+    use super::authenticate_unix_peer;
+
+    #[tokio::test]
+    async fn same_user_unix_peer_is_accepted() {
+        let (left, right) = tokio::net::UnixStream::pair().expect("Unix stream pair");
+        authenticate_unix_peer(&left).expect("left peer must be current user");
+        authenticate_unix_peer(&right).expect("right peer must be current user");
+    }
+}
+
 /// Run the daemon server. Binds `socket_path`, writes `pid_file_path`,
 /// accepts connections, and serves requests until `{"method":"shutdown"}`.
 ///
@@ -469,14 +496,18 @@ pub async fn run_serve(
 
     // Idle-session and recording maintenance is owned by the SDK runtime so
     // direct embedded applications and daemon-backed clients behave alike.
-    if let Some(port) = crate::mcp_http::configured_port() {
-        crate::mcp_http::spawn(sdk.clone(), port);
+    if let Some(port) = crate::mcp_http::configured_port()? {
+        crate::mcp_http::spawn(sdk.clone(), port)?;
     }
 
     loop {
         tokio::select! {
             result = listener.accept() => {
                 let (stream, _) = result?;
+                if let Err(error) = authenticate_unix_peer(&stream) {
+                    tracing::warn!("service connection rejected before request parsing: {error}");
+                    continue;
+                }
                 let reg = sdk.clone();
                 let shutdown_tx2 = shutdown_tx.clone();
 
@@ -930,22 +961,114 @@ unsafe fn current_user_sid_string() -> Option<String> {
     (!sid.is_empty()).then_some(sid)
 }
 
+#[cfg(target_os = "windows")]
+unsafe fn named_pipe_client_sid(pipe: *mut std::ffi::c_void) -> Option<String> {
+    #[repr(C)]
+    struct SidAndAttributes {
+        sid: *mut std::ffi::c_void,
+        attributes: u32,
+    }
+    #[repr(C)]
+    struct TokenUserRaw {
+        user: SidAndAttributes,
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetNamedPipeClientProcessId(
+            pipe: *mut std::ffi::c_void,
+            client_process_id: *mut u32,
+        ) -> i32;
+        fn OpenProcess(
+            desired_access: u32,
+            inherit_handle: i32,
+            process_id: u32,
+        ) -> *mut std::ffi::c_void;
+        fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+        fn LocalFree(memory: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+    }
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn OpenProcessToken(
+            process: *mut std::ffi::c_void,
+            desired_access: u32,
+            token: *mut *mut std::ffi::c_void,
+        ) -> i32;
+        fn GetTokenInformation(
+            token: *mut std::ffi::c_void,
+            information_class: u32,
+            information: *mut std::ffi::c_void,
+            information_length: u32,
+            return_length: *mut u32,
+        ) -> i32;
+        fn ConvertSidToStringSidW(sid: *mut std::ffi::c_void, string_sid: *mut *mut u16) -> i32;
+    }
+
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const TOKEN_QUERY: u32 = 0x0008;
+    const TOKEN_USER_CLASS: u32 = 1;
+    let mut client_process_id = 0_u32;
+    if GetNamedPipeClientProcessId(pipe, &mut client_process_id) == 0 || client_process_id == 0 {
+        return None;
+    }
+    let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, client_process_id);
+    if process.is_null() {
+        return None;
+    }
+    let mut token = std::ptr::null_mut();
+    let opened = OpenProcessToken(process, TOKEN_QUERY, &mut token);
+    let _ = CloseHandle(process);
+    if opened == 0 || token.is_null() {
+        return None;
+    }
+    let mut required = 0_u32;
+    let _ = GetTokenInformation(
+        token,
+        TOKEN_USER_CLASS,
+        std::ptr::null_mut(),
+        0,
+        &mut required,
+    );
+    if required == 0 {
+        let _ = CloseHandle(token);
+        return None;
+    }
+    let mut buffer = vec![0_u8; required as usize];
+    let ok = GetTokenInformation(
+        token,
+        TOKEN_USER_CLASS,
+        buffer.as_mut_ptr().cast(),
+        required,
+        &mut required,
+    );
+    let _ = CloseHandle(token);
+    if ok == 0 {
+        return None;
+    }
+    let token_user = std::ptr::read_unaligned(buffer.as_ptr().cast::<TokenUserRaw>());
+    let mut string_sid = std::ptr::null_mut();
+    if ConvertSidToStringSidW(token_user.user.sid, &mut string_sid) == 0 || string_sid.is_null() {
+        return None;
+    }
+    let length = (0..)
+        .find(|&index| *string_sid.add(index) == 0)
+        .unwrap_or(0);
+    let sid = String::from_utf16_lossy(std::slice::from_raw_parts(string_sid, length));
+    let _ = LocalFree(string_sid.cast());
+    (!sid.is_empty()).then_some(sid)
+}
+
 /// Build the named-pipe ACL for one daemon mode.
 ///
-/// Standalone preserves the existing cross-integrity Everyone descriptor used
-/// by elevated installs. Embedded mode is private to the current user while
-/// retaining the low mandatory label needed when host and daemon integrity
-/// levels differ.
+/// Both service and embedded modes are private to the current user while
+/// retaining the low mandatory label needed when host and runtime integrity
+/// levels differ. Every accepted instance is additionally checked against the
+/// connected client's process token before request parsing.
 #[cfg(target_os = "windows")]
 unsafe fn build_pipe_security_attrs(
-    embedded: bool,
+    _embedded: bool,
 ) -> Option<(SecurityAttributesRaw, *mut std::ffi::c_void)> {
-    if embedded {
-        let sid = current_user_sid_string()?;
-        security_attrs_from_sddl(&format!("D:P(A;;GA;;;{sid})S:(ML;;NW;;;LW)"))
-    } else {
-        security_attrs_from_sddl("D:(A;OICI;GA;;;WD)S:(ML;;NW;;;LW)")
-    }
+    let sid = current_user_sid_string()?;
+    security_attrs_from_sddl(&format!("D:P(A;;GA;;;{sid})S:(ML;;NW;;;LW)"))
 }
 
 #[cfg(target_os = "windows")]
@@ -962,6 +1085,7 @@ pub async fn run_serve(
     socket_path: &str,
     pid_file_path: Option<&str>,
 ) -> anyhow::Result<()> {
+    use std::os::windows::io::AsRawHandle as _;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::windows::named_pipe::ServerOptions;
 
@@ -969,21 +1093,14 @@ pub async fn run_serve(
 
     eprintln!("Cua Driver daemon listening on {socket_path}");
 
-    // Build the mode-specific descriptor once and reuse it for every pipe
-    // instance. Embedded mode fails closed if its current-user-only ACL cannot
-    // be created; a default or Everyone ACL would violate the private-endpoint
-    // contract promised by the host SDK.
+    // Build the current-user descriptor once and reuse it for every pipe
+    // instance. Both service and embedded mode fail closed if the ACL cannot
+    // be created; an Everyone ACL would expose the desktop-action endpoint to
+    // unrelated local principals.
     let embedded = cua_driver_core::embedded_mode();
     let security_attrs = unsafe { build_pipe_security_attrs(embedded) };
     if security_attrs.is_none() {
-        if embedded {
-            anyhow::bail!("failed to build current-user security descriptor for embedded pipe");
-        }
-        eprintln!(
-            "cua-driver: failed to build cross-IL SECURITY_ATTRIBUTES; pipe will be \
-             High-IL exclusive. CLI and MCP clients from Medium-IL processes \
-             will be unable to reach the daemon."
-        );
+        anyhow::bail!("failed to build current-user security descriptor for named pipe");
     }
     // Hold the SD pointer alive for the lifetime of run_serve. We never
     // free it — the daemon process exit reclaims it.
@@ -1016,15 +1133,14 @@ pub async fn run_serve(
     tokio::pin!(parent_liveness);
 
     // Idle-session and recording maintenance is owned by the SDK runtime.
-    if let Some(port) = crate::mcp_http::configured_port() {
-        crate::mcp_http::spawn(sdk.clone(), port);
+    if let Some(port) = crate::mcp_http::configured_port()? {
+        crate::mcp_http::spawn(sdk.clone(), port)?;
     }
 
     let mut first_pipe = true;
     loop {
-        // Standalone daemons use the cross-IL descriptor when available;
-        // embedded daemons use the current-user descriptor and reserve the
-        // pipe name with their first instance.
+        // All daemons use the current-user descriptor. Embedded daemons also
+        // reserve the pipe name with their first instance.
         let first_pipe_instance = embedded && first_pipe;
         let server = if sec_attrs_ptr.is_null() {
             ServerOptions::new()
@@ -1044,6 +1160,17 @@ pub async fn run_serve(
         tokio::select! {
             result = server.connect() => {
                 result.map_err(|e| anyhow::anyhow!("named pipe connect: {e}"))?;
+                let expected_sid = unsafe { current_user_sid_string() };
+                let client_sid = unsafe {
+                    named_pipe_client_sid(server.as_raw_handle().cast())
+                };
+                if expected_sid.is_none() || client_sid != expected_sid {
+                    tracing::warn!(
+                        "service named-pipe connection rejected before request parsing"
+                    );
+                    let _ = server.disconnect();
+                    continue;
+                }
 
                 let reg = sdk.clone();
                 let shutdown_tx2 = shutdown_tx.clone();

@@ -7,7 +7,9 @@ through their runtime's MCP client instead of importing a language MCP facade.
 __version__ = "0.12.6"  # x-release-please-version
 
 from ._native import (
+    ConfiguredDriverOptions,
     CuaDriver as _NativeCuaDriver,
+    CuaDriverSession,
     DriverError,
     DriverExecutionMode,
     DriverMetadata,
@@ -23,8 +25,12 @@ from ._native import (
     EmbeddedPermissionMode,
     ImageContent,
     MacOsPermissionStatus,
+    RuntimeAuthorizationOptions,
     SdkClientKind,
+    SessionPermissionMode,
     ToolResult,
+    TrustedSessionOptions,
+    create_trusted_session,
     current_mac_os_permission_status,
     open_mac_os_screen_recording_settings,
     request_mac_os_permissions,
@@ -71,15 +77,24 @@ def _create_python_sdk(cls, options=None):
     return cls.create_with_client_kind(options, SdkClientKind.PYTHON)
 
 
+def _create_configured_python_sdk(cls, options):
+    """Create a trusted configured runtime tagged as a Python SDK host."""
+
+    return cls.create_configured_with_client_kind(options, SdkClientKind.PYTHON)
+
+
 _NativeCuaDriver.connect = classmethod(_connect_python_sdk)
 _NativeCuaDriver.create = classmethod(_create_python_sdk)
+_NativeCuaDriver.create_configured = classmethod(_create_configured_python_sdk)
 CuaDriver = _NativeCuaDriver
 
 __all__ = [
     "CaptureScope",
     "ClickButton",
     "ClickInput",
+    "ConfiguredDriverOptions",
     "CuaDriver",
+    "CuaDriverSession",
     "DesktopScope",
     "DragInput",
     "DriverError",
@@ -110,15 +125,19 @@ __all__ = [
     "MoveCursorInput",
     "Platform",
     "PressKeyInput",
+    "RuntimeAuthorizationOptions",
     "ScrollBy",
     "ScrollDirection",
     "ScrollInput",
     "SessionStateOutput",
+    "SessionPermissionMode",
     "StartSessionInput",
     "StartSessionOutput",
     "ToolResult",
+    "TrustedSessionOptions",
     "TypeTextInput",
     "__version__",
+    "create_trusted_session",
     "current_mac_os_permission_status",
     "get_binary_path",
     "open_mac_os_screen_recording_settings",

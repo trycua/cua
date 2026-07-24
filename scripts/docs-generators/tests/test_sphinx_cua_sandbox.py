@@ -62,6 +62,8 @@ def test_generator_only_imports_the_sdk_in_the_sphinx_subprocess() -> None:
 
     assert "import cua_sandbox" not in generator
     assert '"cyclops_sdk"' in config
+    assert "socket.socket = _NoNetworkSocket" in config
+    assert "subprocess.Popen = _deny_runtime_operation" in config
     assert '"uv",' in generator
     assert '"-m",' in generator
     assert '"sphinx",' in generator

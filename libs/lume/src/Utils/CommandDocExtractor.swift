@@ -79,6 +79,8 @@ enum CommandDocExtractor {
             pullDoc,
             pushDoc,
             convertDoc,
+            importDoc,
+            exportDoc,
             imagesDoc,
             cloneDoc,
             getDoc,
@@ -223,6 +225,68 @@ enum CommandDocExtractor {
                 FlagDoc(name: "dry-run", shortName: nil, help: "Prepare files without uploading", defaultValue: false),
                 FlagDoc(name: "single-layer", shortName: nil, help: "Push one kubelet-compatible disk layer", defaultValue: false),
             ],
+            subcommands: []
+        )
+    }
+
+    // MARK: - Import
+
+    private static var importDoc: CommandDoc {
+        CommandDoc(
+            name: "import",
+            abstract: "Import a virtual machine from another format",
+            discussion: nil,
+            arguments: [],
+            options: [],
+            flags: [],
+            subcommands: [importUTMDoc]
+        )
+    }
+
+    private static var importUTMDoc: CommandDoc {
+        CommandDoc(
+            name: "utm",
+            abstract: "Import a stopped UTM Apple/macOS VM into Lume",
+            discussion: "Creates an independent Lume VM from a UTM .utm bundle while preserving the raw disk, auxiliary storage, and hardware model. The imported VM receives a fresh machine identifier and MAC address.",
+            arguments: [
+                ArgumentDoc(name: "bundle", help: "Path to the source .utm bundle", type: "Path", isOptional: false),
+                ArgumentDoc(name: "name", help: "Name for the imported Lume VM", type: "String", isOptional: false),
+            ],
+            options: [
+                OptionDoc(name: "storage", shortName: nil, help: "Destination Lume storage location", type: "String", defaultValue: nil, isOptional: true),
+            ],
+            flags: [],
+            subcommands: []
+        )
+    }
+
+    // MARK: - Export
+
+    private static var exportDoc: CommandDoc {
+        CommandDoc(
+            name: "export",
+            abstract: "Export a virtual machine to another format",
+            discussion: nil,
+            arguments: [],
+            options: [],
+            flags: [],
+            subcommands: [exportUTMDoc]
+        )
+    }
+
+    private static var exportUTMDoc: CommandDoc {
+        CommandDoc(
+            name: "utm",
+            abstract: "Export a stopped Lume macOS VM as a UTM bundle",
+            discussion: "Creates an independent UTM Apple/macOS .utm bundle while preserving the raw disk, auxiliary storage, and hardware model. The exported VM receives a fresh machine identifier and MAC address.",
+            arguments: [
+                ArgumentDoc(name: "name", help: "Name of the source Lume VM", type: "String", isOptional: false),
+                ArgumentDoc(name: "output", help: "Destination .utm bundle path", type: "Path", isOptional: false),
+            ],
+            options: [
+                OptionDoc(name: "storage", shortName: nil, help: "Source Lume storage location", type: "String", defaultValue: nil, isOptional: true),
+            ],
+            flags: [],
             subcommands: []
         )
     }

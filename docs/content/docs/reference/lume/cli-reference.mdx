@@ -281,6 +281,28 @@ Convert a legacy Lume image to OCI-compliant format
 | `--dry-run` | false | Prepare files without uploading |
 | `--single-layer` | false | Push one kubelet-compatible disk layer |
 
+### lume import
+
+Import a virtual machine from another format
+
+**Subcommands:**
+
+- `lume import utm` - Import a stopped UTM Apple/macOS VM into Lume
+  - `<bundle>` - Path to the source .utm bundle
+  - `<name>` - Name for the imported Lume VM
+  - `--storage` - Destination Lume storage location
+
+### lume export
+
+Export a virtual machine to another format
+
+**Subcommands:**
+
+- `lume export utm` - Export a stopped Lume macOS VM as a UTM bundle
+  - `<name>` - Name of the source Lume VM
+  - `<output>` - Destination .utm bundle path
+  - `--storage` - Source Lume storage location
+
 ### lume ipsw
 
 Get macOS restore image IPSW URL

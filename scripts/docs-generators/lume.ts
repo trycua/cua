@@ -334,7 +334,7 @@ export function generateCLIReferenceMDX(docs: CLIDocumentation): string {
     { title: 'VM Information and Configuration', commands: ['ls', 'get', 'set'] },
     {
       title: 'Image Management',
-      commands: ['images', 'pull', 'push', 'convert', 'ipsw', 'prune'],
+      commands: ['images', 'pull', 'push', 'convert', 'import', 'export', 'ipsw', 'prune'],
     },
     { title: 'Guest Access and Security', commands: ['ssh', 'setup', 'sip'] },
     {
@@ -354,7 +354,9 @@ export function generateCLIReferenceMDX(docs: CLIDocumentation): string {
 
   if (duplicateAssignments.length > 0 || ungroupedCommands.length > 0) {
     throw new Error(
-      `CLI command grouping mismatch. Ungrouped: ${[...new Set(ungroupedCommands)].sort().join(', ') || 'none'}; duplicated: ${[...new Set(duplicateAssignments)].sort().join(', ') || 'none'}`
+      `CLI command grouping mismatch. Ungrouped: ${
+        [...new Set(ungroupedCommands)].sort().join(', ') || 'none'
+      }; duplicated: ${[...new Set(duplicateAssignments)].sort().join(', ') || 'none'}`
     );
   }
 

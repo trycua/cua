@@ -1,14 +1,17 @@
 //! Windows identity and endpoint evidence for the first-class browser tools.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::process::Stdio;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use cua_driver_core::browser::existing_profile_setup_descriptor;
 use cua_driver_core::browser::platform::{
-    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, ExistingProfileSetupOutcome,
-    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
+    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
+    BrowserVisualActionKind, ExistingProfileSetupOutcome, ExistingProfileSetupRequest,
+    PrepareAction, PrepareOutcome, PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
@@ -23,10 +26,72 @@ use windows::Win32::System::Threading::{
     PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
-use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GetWindowRect, GA_ROOT};
+
+#[derive(Clone)]
+pub struct WindowsBrowserPlatform {
+    cursor_registry: Arc<cursor_overlay::CursorRegistry>,
+    browser_cursors: Arc<Mutex<BrowserCursorTracker>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BrowserCursorBinding {
+    window_id: u64,
+    cdp_target_id: String,
+}
 
 #[derive(Debug, Default)]
-pub struct WindowsBrowserPlatform;
+struct BrowserCursorTracker {
+    bindings: HashMap<String, BrowserCursorBinding>,
+}
+
+impl BrowserCursorTracker {
+    fn update(
+        &mut self,
+        session: &str,
+        window_id: u64,
+        cdp_target_id: &str,
+        tab_is_active: bool,
+    ) -> Vec<(String, bool)> {
+        self.bindings.insert(
+            session.to_owned(),
+            BrowserCursorBinding {
+                window_id,
+                cdp_target_id: cdp_target_id.to_owned(),
+            },
+        );
+
+        if !tab_is_active {
+            return vec![(session.to_owned(), false)];
+        }
+
+        self.bindings
+            .iter()
+            .filter(|(_, binding)| binding.window_id == window_id)
+            .map(|(key, binding)| {
+                (
+                    key.clone(),
+                    key == session && binding.cdp_target_id == cdp_target_id,
+                )
+            })
+            .collect()
+    }
+}
+
+impl WindowsBrowserPlatform {
+    pub fn new(cursor_registry: Arc<cursor_overlay::CursorRegistry>) -> Self {
+        Self {
+            cursor_registry,
+            browser_cursors: Arc::new(Mutex::new(BrowserCursorTracker::default())),
+        }
+    }
+}
+
+impl Default for WindowsBrowserPlatform {
+    fn default() -> Self {
+        Self::new(Arc::new(cursor_overlay::CursorRegistry::new()))
+    }
+}
 
 fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
     BrowserRefusal::new(code, message)
@@ -147,32 +212,73 @@ fn cdp_comparable_window_bounds(window_id: u64) -> Result<Rect, BrowserRefusal> 
     ))
 }
 
-fn parse_netstat_loopback_ports(text: &str, pid: u32) -> Vec<u16> {
-    let mut ports = text
+fn overlay_window_and_scale(window_id: u64) -> Option<(u64, f64)> {
+    let hwnd = HWND(window_id as *mut _);
+    if hwnd.0.is_null() {
+        return None;
+    }
+    let root = unsafe { GetAncestor(hwnd, GA_ROOT) };
+    let overlay_window = if root.0.is_null() {
+        window_id
+    } else {
+        root.0 as u64
+    };
+    let dpi = unsafe { GetDpiForWindow(hwnd) };
+    let scale = if dpi == 0 { 1.0 } else { f64::from(dpi) / 96.0 };
+    Some((overlay_window, scale))
+}
+
+fn parse_netstat_loopback_listeners(text: &str, allowed_pids: &[u32]) -> Vec<(u16, u32)> {
+    let mut listeners = text
         .lines()
         .filter_map(|line| {
             let fields = line.split_whitespace().collect::<Vec<_>>();
             if fields.len() < 5
                 || !fields[0].eq_ignore_ascii_case("TCP")
                 || !fields[3].eq_ignore_ascii_case("LISTENING")
-                || fields[4].parse::<u32>().ok() != Some(pid)
             {
+                return None;
+            }
+            let owner_pid = fields[4].parse::<u32>().ok()?;
+            if !allowed_pids.contains(&owner_pid) {
                 return None;
             }
             let local = fields[1];
             let (host, port) = local.rsplit_once(':')?;
             let host = host.trim_matches(['[', ']']);
             matches!(host, "127.0.0.1" | "::1" | "localhost")
-                .then(|| port.parse::<u16>().ok())
+                .then(|| port.parse::<u16>().ok().map(|port| (port, owner_pid)))
                 .flatten()
         })
+        .collect::<Vec<_>>();
+    listeners.sort_unstable();
+    listeners.dedup();
+    listeners
+}
+
+#[cfg(test)]
+fn parse_netstat_loopback_ports(text: &str, allowed_pids: &[u32]) -> Vec<u16> {
+    let mut ports = parse_netstat_loopback_listeners(text, allowed_pids)
+        .into_iter()
+        .map(|(port, _owner_pid)| port)
         .collect::<Vec<_>>();
     ports.sort_unstable();
     ports.dedup();
     ports
 }
 
-async fn loopback_ports_for_pid(pid: u32) -> Result<Vec<u16>, BrowserRefusal> {
+async fn loopback_listeners_for_process_tree(
+    root_pid: u32,
+) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
+    let allowed_pids =
+        tokio::task::spawn_blocking(move || crate::win32::list_descendants(root_pid))
+            .await
+            .map_err(|error| {
+                refusal(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("could not inspect browser process tree: {error}"),
+                )
+            })?;
     let output = tokio::process::Command::new("netstat.exe")
         .args(["-ano", "-p", "tcp"])
         .stdin(Stdio::null())
@@ -185,10 +291,21 @@ async fn loopback_ports_for_pid(pid: u32) -> Result<Vec<u16>, BrowserRefusal> {
                 format!("could not inspect browser listeners: {error}"),
             )
         })?;
-    Ok(parse_netstat_loopback_ports(
+    Ok(parse_netstat_loopback_listeners(
         &String::from_utf8_lossy(&output.stdout),
-        pid,
+        &allowed_pids,
     ))
+}
+
+async fn loopback_ports_for_process_tree(root_pid: u32) -> Result<Vec<u16>, BrowserRefusal> {
+    let mut ports = loopback_listeners_for_process_tree(root_pid)
+        .await?
+        .into_iter()
+        .map(|(port, _owner_pid)| port)
+        .collect::<Vec<_>>();
+    ports.sort_unstable();
+    ports.dedup();
+    Ok(ports)
 }
 
 async fn browser_websocket_url(port: u16) -> Option<String> {
@@ -238,24 +355,24 @@ async fn browser_websocket_url(port: u16) -> Option<String> {
 const ENDPOINT_DISCOVERY_ATTEMPTS: usize = 4;
 const ENDPOINT_DISCOVERY_RETRY_DELAY: Duration = Duration::from_millis(100);
 
-async fn browser_endpoints_once(pid: u32) -> Result<Vec<(u16, String)>, BrowserRefusal> {
+async fn browser_endpoints_once(pid: u32) -> Result<Vec<(u16, String, u32)>, BrowserRefusal> {
     let mut endpoints = Vec::new();
-    for port in loopback_ports_for_pid(pid).await? {
+    for (port, owner_pid) in loopback_listeners_for_process_tree(pid).await? {
         if let Some(ws_url) = browser_websocket_url(port).await {
-            endpoints.push((port, ws_url));
+            endpoints.push((port, ws_url, owner_pid));
         }
     }
     Ok(endpoints)
 }
 
-async fn retry_empty_endpoint_discovery<F, Fut>(
+async fn retry_empty_endpoint_discovery<T, F, Fut>(
     attempts: usize,
     delay: Duration,
     mut probe: F,
-) -> Result<Vec<(u16, String)>, BrowserRefusal>
+) -> Result<Vec<T>, BrowserRefusal>
 where
     F: FnMut() -> Fut,
-    Fut: Future<Output = Result<Vec<(u16, String)>, BrowserRefusal>>,
+    Fut: Future<Output = Result<Vec<T>, BrowserRefusal>>,
 {
     let attempts = attempts.max(1);
     for attempt in 0..attempts {
@@ -268,7 +385,7 @@ where
     unreachable!("the bounded endpoint-discovery loop always returns")
 }
 
-async fn browser_endpoints_for_pid(pid: u32) -> Result<Vec<(u16, String)>, BrowserRefusal> {
+async fn browser_endpoints_for_pid(pid: u32) -> Result<Vec<(u16, String, u32)>, BrowserRefusal> {
     retry_empty_endpoint_discovery(
         ENDPOINT_DISCOVERY_ATTEMPTS,
         ENDPOINT_DISCOVERY_RETRY_DELAY,
@@ -285,7 +402,7 @@ async fn loopback_port_is_owned_with_retry(
         ENDPOINT_DISCOVERY_ATTEMPTS,
         ENDPOINT_DISCOVERY_RETRY_DELAY,
         expected_port,
-        || loopback_ports_for_pid(pid),
+        || loopback_ports_for_process_tree(pid),
     )
     .await
 }
@@ -314,6 +431,78 @@ where
 
 #[async_trait]
 impl BrowserPlatform for WindowsBrowserPlatform {
+    async fn visualize_browser_action(&self, action: BrowserVisualAction) {
+        if action.session.is_empty()
+            || action.cdp_target_id.is_empty()
+            || cua_driver_core::session::is_session_ended(&action.session)
+        {
+            return;
+        }
+
+        let visibility_updates = self.browser_cursors.lock().unwrap().update(
+            &action.session,
+            action.window_id,
+            &action.cdp_target_id,
+            action.tab_is_active,
+        );
+        let cursor_enabled = self
+            .cursor_registry
+            .get_or_create(&action.session)
+            .config
+            .enabled;
+        for (key, visible) in visibility_updates {
+            let enabled = if key == action.session {
+                visible && cursor_enabled
+            } else {
+                visible
+                    && self
+                        .cursor_registry
+                        .get(&key)
+                        .is_some_and(|state| state.config.enabled)
+            };
+            crate::overlay::send_command(key, cursor_overlay::OverlayCommand::SetEnabled(enabled));
+        }
+        if !action.tab_is_active || !cursor_enabled {
+            return;
+        }
+        let (Some(screen_x), Some(screen_y)) = (action.screen_x, action.screen_y) else {
+            return;
+        };
+        if !screen_x.is_finite() || !screen_y.is_finite() {
+            return;
+        }
+        let Some((overlay_window, scale)) = overlay_window_and_scale(action.window_id) else {
+            return;
+        };
+        let screen_x = screen_x * scale;
+        let screen_y = screen_y * scale;
+
+        crate::overlay::send_command(
+            action.session.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(overlay_window),
+        );
+        crate::overlay::animate_cursor_to(action.session.clone(), screen_x, screen_y).await;
+        self.cursor_registry
+            .update_position(&action.session, screen_x, screen_y);
+
+        if matches!(
+            action.kind,
+            BrowserVisualActionKind::Click
+                | BrowserVisualActionKind::Type
+                | BrowserVisualActionKind::RightClick
+                | BrowserVisualActionKind::DoubleClick
+                | BrowserVisualActionKind::Drag
+        ) {
+            crate::overlay::send_command(
+                action.session,
+                cursor_overlay::OverlayCommand::ClickPulse {
+                    x: screen_x,
+                    y: screen_y,
+                },
+            );
+        }
+    }
+
     async fn classify_browser(&self, pid: i64) -> Result<BrowserClassification, BrowserRefusal> {
         let pid_u32 = u32::try_from(pid).map_err(|_| {
             refusal(
@@ -440,13 +629,15 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             .await?
             .into_iter()
             .next()
-            .map(|(port, ws_url)| OwnedEndpoint {
+            .map(|(port, ws_url, owner_pid)| OwnedEndpoint {
                 ws_url,
                 http_port: Some(port),
                 ownership: EndpointOwnershipProof {
                     method: EndpointOwnershipMethod::ListeningSocketPid,
-                    owner_pid: pid,
-                    detail: Some("netstat listener owner pid".to_owned()),
+                    owner_pid: i64::from(owner_pid),
+                    detail: Some(
+                        "netstat listener owned by the approved browser process tree; the exact listener owner is the stable browser pid".to_owned(),
+                    ),
                 },
             }))
     }
@@ -464,18 +655,20 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         let discovered = browser_endpoints_for_pid(pid_u32).await?;
         match discovered.as_slice() {
             [] => Ok(None),
-            [(port, ws_url)] => Ok(Some(OwnedEndpoint {
+            [(port, ws_url, owner_pid)] => Ok(Some(OwnedEndpoint {
                 ws_url: ws_url.clone(),
                 http_port: Some(*port),
                 ownership: EndpointOwnershipProof {
                     method: EndpointOwnershipMethod::ListeningSocketPid,
-                    owner_pid: pid,
-                    detail: Some("Windows listener owner plus /json/version".to_owned()),
+                    owner_pid: i64::from(*owner_pid),
+                    detail: Some(
+                        "Windows browser process-tree listener plus /json/version".to_owned(),
+                    ),
                 },
             })),
             _ => Err(refusal(
                 BrowserRefusalCode::BrowserBindingAmbiguous,
-                "multiple browser-level DevTools endpoints are owned by the approved process",
+                "multiple browser-level DevTools endpoints are owned by the approved browser process tree",
             )),
         }
     }
@@ -509,7 +702,9 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             ownership: EndpointOwnershipProof {
                 method: EndpointOwnershipMethod::ListeningSocketPid,
                 owner_pid: pid,
-                detail: Some("Windows owner of exact approved endpoint".to_owned()),
+                detail: Some(
+                    "Windows browser process-tree owner of exact approved endpoint".to_owned(),
+                ),
             },
         }))
     }
@@ -534,7 +729,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             )
         })?;
         let hwnd = request.window_id;
-        let listeners_before = loopback_ports_for_pid(pid_u32).await?;
+        let listeners_before = loopback_ports_for_process_tree(pid_u32).await?;
         let handle =
             tokio::task::spawn_blocking(move || crate::browser_setup_ui::enable(hwnd, descriptor))
                 .await
@@ -555,14 +750,18 @@ impl BrowserPlatform for WindowsBrowserPlatform {
 
         let deadline = std::time::Instant::now() + Duration::from_secs(6);
         let endpoint_result = loop {
-            let ports = match loopback_ports_for_pid(pid_u32).await {
+            let ports = match loopback_ports_for_process_tree(pid_u32).await {
                 Ok(ports) => ports,
                 Err(error) => break Err(error),
             };
             let mut endpoints = Vec::new();
             for port in &ports {
                 if let Some(ws_url) = browser_websocket_url(*port).await {
-                    endpoints.push((*port, ws_url, "Windows owner plus /json/version"));
+                    endpoints.push((
+                        *port,
+                        ws_url,
+                        "Windows browser process-tree owner plus /json/version",
+                    ));
                 }
             }
             if endpoints.is_empty() {
@@ -575,13 +774,13 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                     endpoints.push((
                         *port,
                         format!("ws://127.0.0.1:{port}/devtools/browser"),
-                        "new PID-owned listener correlated with exact approved setup",
+                        "new browser process-tree listener correlated with exact approved setup",
                     ));
                 } else if correlated.len() > 1 {
                     break Err(refusal(
                         BrowserRefusalCode::BrowserBindingAmbiguous,
                         format!(
-                            "{} exposed multiple newly correlated PID-owned listeners",
+                            "{} exposed multiple newly correlated browser process-tree listeners",
                             descriptor.product_name
                         ),
                     ));
@@ -606,7 +805,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                     break Err(refusal(
                         BrowserRefusalCode::BrowserRequiresSetup,
                         format!(
-                            "{} did not expose a uniquely PID-owned loopback endpoint after the exact setup action",
+                            "{} did not expose a uniquely process-tree-owned loopback endpoint after the exact setup action",
                             descriptor.product_name
                         ),
                     ))
@@ -615,7 +814,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                     break Err(refusal(
                         BrowserRefusalCode::BrowserBindingAmbiguous,
                         format!(
-                            "{} exposed multiple PID-owned endpoint candidates after the exact setup action",
+                            "{} exposed multiple process-tree-owned endpoint candidates after the exact setup action",
                             descriptor.product_name
                         ),
                     ))
@@ -740,13 +939,62 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn netstat_parser_requires_loopback_listening_and_exact_pid() {
+    fn browser_cursor_tracker_shows_only_the_active_tabs_session_per_window() {
+        let mut tracker = BrowserCursorTracker::default();
+        assert_eq!(
+            tracker.update("tab-a", 101, "target-a", false),
+            vec![("tab-a".to_owned(), false)]
+        );
+        assert_eq!(
+            tracker.update("tab-b", 101, "target-b", false),
+            vec![("tab-b".to_owned(), false)]
+        );
+
+        let mut updates = tracker.update("tab-a", 101, "target-a", true);
+        updates.sort();
+        assert_eq!(
+            updates,
+            vec![("tab-a".to_owned(), true), ("tab-b".to_owned(), false)]
+        );
+
+        let mut updates = tracker.update("tab-b", 101, "target-b", true);
+        updates.sort();
+        assert_eq!(
+            updates,
+            vec![("tab-a".to_owned(), false), ("tab-b".to_owned(), true)]
+        );
+    }
+
+    #[test]
+    fn netstat_parser_requires_loopback_listening_and_browser_process_tree() {
         let input = "\
   TCP    127.0.0.1:9222       0.0.0.0:0       LISTENING       42\n\
-  TCP    0.0.0.0:9333         0.0.0.0:0       LISTENING       42\n\
-  TCP    [::1]:9444           [::]:0          LISTENING       42\n\
+  TCP    0.0.0.0:9333         0.0.0.0:0       LISTENING       43\n\
+  TCP    [::1]:9444           [::]:0          LISTENING       43\n\
   TCP    127.0.0.1:9555       0.0.0.0:0       LISTENING       7\n";
-        assert_eq!(parse_netstat_loopback_ports(input, 42), vec![9222, 9444]);
+        assert_eq!(
+            parse_netstat_loopback_ports(input, &[42, 43]),
+            vec![9222, 9444]
+        );
+    }
+
+    #[test]
+    fn netstat_parser_rejects_unrelated_process_trees() {
+        let input = "\
+  TCP    127.0.0.1:9222       0.0.0.0:0       LISTENING       42\n\
+  TCP    127.0.0.1:9555       0.0.0.0:0       LISTENING       99\n";
+        assert_eq!(parse_netstat_loopback_ports(input, &[42, 43]), vec![9222]);
+    }
+
+    #[test]
+    fn netstat_parser_preserves_the_exact_listener_owner() {
+        let input = "\
+  TCP    127.0.0.1:9222       0.0.0.0:0       LISTENING       43\n\
+  TCP    127.0.0.1:9555       0.0.0.0:0       LISTENING       99\n";
+        assert_eq!(
+            parse_netstat_loopback_listeners(input, &[42, 43]),
+            vec![(9222, 43)]
+        );
     }
 
     #[test]
@@ -833,6 +1081,7 @@ mod tests {
                     Ok(vec![(
                         9222,
                         "ws://127.0.0.1:9222/devtools/browser/proven".to_owned(),
+                        43,
                     )])
                 }
             }
@@ -846,6 +1095,7 @@ mod tests {
             vec![(
                 9222,
                 "ws://127.0.0.1:9222/devtools/browser/proven".to_owned(),
+                43,
             )]
         );
     }

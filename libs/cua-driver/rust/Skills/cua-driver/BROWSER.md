@@ -31,14 +31,15 @@ Use one explicit `session` value throughout. Never substitute a raw CDP
 target id, tab ordinal, URL match, or remembered ref for a capability returned
 by `get_browser_state`.
 
-### macOS recording feedback
+### Browser recording feedback
 
-On macOS, ref- and coordinate-targeted browser mutations now drive the same
-session-scoped agent cursor overlay as native window actions. `browser_click`
-and click-like pointer actions glide to the live page target and pulse;
-`browser_type` glides to and pulses the editable target; hover and scroll glide
-without a click pulse. This feedback is visual-only: it never moves the user's
-physical pointer, changes focus or z-order, or substitutes for CDP delivery.
+On macOS and Windows, ref- and coordinate-targeted browser mutations drive the
+same session-scoped agent cursor overlay as native window actions.
+`browser_click` and click-like pointer actions glide to the live page target
+and pulse; `browser_type` glides to and pulses the editable target; hover and
+scroll glide without a click pulse. This feedback is visual-only: it never
+moves the user's physical pointer, changes focus or z-order, or substitutes for
+CDP delivery.
 
 The driver rechecks the live page visibility over CDP before every visual
 action. An unselected tab remains fully addressable, but its session cursor is

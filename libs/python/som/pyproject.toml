@@ -10,7 +10,7 @@ authors = [
     { name = "TryCua", email = "gh@trycua.com" }
 ]
 dependencies = [
-    "torch>=2.2.1",
+    "torch>=2.13.0",
     "torchvision>=0.17.1",
     "ultralytics>=8.1.28",
     "easyocr>=1.7.1",

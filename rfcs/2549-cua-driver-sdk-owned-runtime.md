@@ -30,15 +30,19 @@ The native runtime and public typed contract remain transport-free. gRPC,
 HTTP, MCP, local sockets, and environment-specific forwarding are adapters
 around a generated Driver connection, not dependencies of the core.
 
-Authorization moves from process-global configuration into each runtime.
-Trusted host code selects an immutable permission mode and policy ceiling when
-it constructs the runtime. Agent-visible requests, session IDs, and transport
-metadata cannot select or widen that authority.
+Authorization moves from process-global configuration into a runtime ceiling
+and immutable session contexts. Trusted host code selects the ceiling when it
+constructs the runtime and selects each session context before actions begin.
+Agent-visible requests, public session IDs, and transport metadata cannot
+select or widen that authority. Calls using released interfaces inherit a
+compatibility session with the runtime's current behavior.
 
 The first milestone supports one direct runtime per process. A second
 `CuaDriver::create` call returns a structured conflict until process-global
-facilities have been isolated. Gateways that need different trust levels use
-separate private workers or service processes rather than co-hosting modes.
+facilities have been isolated. A runtime may host different session modes only
+when a trusted host creates them and every action is bound to the corresponding
+authenticated connection. Otherwise, gateways use separate private workers or
+service processes.
 
 Standalone `cua-driver mcp` on macOS remains owned by the signed
 CuaDriver.app service so it keeps a stable TCC identity. Embedded macOS hosts
@@ -67,7 +71,9 @@ questions:
 
 - runtime ownership defaults to the application SDK rather than a daemon;
 - one direct runtime per process is the initial concurrency contract;
-- mixed permission modes use separate runtime-owner processes;
+- permission modes belong to immutable sessions below a runtime ceiling;
+- mixed modes require trusted creation and authenticated action binding, with
+  separate runtime-owner processes as the safe fallback;
 - MCP ownership depends on platform identity, including the macOS standalone
   exception;
 - private workers and authenticated services are explicit optional
@@ -115,10 +121,11 @@ needs them.
   methods, package exports, result envelopes, and error contracts.
 - Keep sessions, browser bindings, grants, capture, overlays, and cleanup
   stateful for the lifetime of the runtime.
-- Give each runtime an immutable authorization configuration selected by
-  trusted host code.
-- Let a trusted gateway run different permission modes through separate
-  runtime-owner processes without a model-visible mode selector.
+- Give each runtime an immutable authorization ceiling and each session an
+  immutable effective authorization context selected by trusted host code.
+- Let a trusted gateway run different permission modes through authenticated,
+  connection-bound sessions or separate runtime-owner processes without a
+  model-visible mode selector.
 - Let MCP stdio own a runtime directly where platform identity permits it,
   without requiring a second daemon and socket proxy.
 - Provide a private supervised-worker topology for hosts that want process
@@ -145,7 +152,9 @@ needs them.
 - Support multiple direct runtimes in one process in the first milestone.
 - Treat two runtime objects in one process as a security boundary against
   arbitrary code in that process.
-- Let a model create, select, or upgrade a runtime permission mode.
+- Let a model create, select, or upgrade a runtime or session permission mode.
+- Treat a public session ID, tool argument, MCP metadata field, or reconnect
+  token as authority.
 - Replace the versioned C ABI or generated SDK bindings from RFC 2447.
 - Make gRPC, MCP, HTTP, or the current daemon framing the native core or public
   SDK contract.
@@ -190,9 +199,19 @@ SDK.
 through an authenticated asynchronous channel. gRPC may implement that channel,
 but the runtime does not depend on gRPC.
 
-**Runtime authorization**
-: The immutable mode, policy ceiling, optional bounded manifest, consent
-provider, and related authority assigned by trusted host code at construction.
+**Runtime authorization ceiling**
+: The immutable maximum modes, unrestricted acknowledgement, policy bindings,
+and resource constraints a runtime may host.
+
+**Session authorization**
+: The immutable effective mode, optional bounded manifest, policy bindings,
+grants, expiry, runtime generation, and authenticated connection binding for
+one session. It can narrow but never widen the runtime ceiling.
+
+**Compatibility session**
+: The process-owned session context inherited by released CLI, MCP, daemon, and
+SDK calls that do not use a trusted host session API. It preserves current
+behavior while session authorization is introduced.
 
 ## Current state
 
@@ -262,11 +281,12 @@ per-session modes in a shared daemon. The draft implementation in
 [PR #2545](https://github.com/trycua/cua/pull/2545) introduces daemon ceilings,
 connection-bound authorization contexts, leases, expiry, and revocation.
 
-Those mechanisms address genuine shared-daemon threats. This RFC asks whether
-separate runtime ownership can satisfy the same gateway need with fewer
-authority-transfer mechanisms. It narrows rather than replaces #2437: a future
-authenticated service may still need mixed-mode delegation, but no current
-consumer justifies making that the default gateway design.
+The `SessionModeCeiling` and `EffectiveAuthorizationContext` concepts are
+portable beyond the daemon. The current implementation exposes only a
+process-owned compatibility context and keeps delegated mixed modes disabled
+until actions arrive on an authenticated connection. This RFC carries that
+portable model forward while keeping separate runtime-owner processes as the
+fallback when a trusted binding is unavailable.
 
 ## Proposal
 
@@ -404,37 +424,59 @@ Remote protocol generation and exhaustive dispatch remain coordinated with
 They are not prerequisites for the local browser release or the first
 SDK-owned-runtime milestone.
 
-### 4. Move mutable authority into the runtime
+### 4. Move authority into runtime ceilings and session contexts
 
-Each runtime owns an immutable `RuntimeAuthorization` created before it accepts
-actions. The conceptual record contains:
+Each runtime owns an immutable authorization ceiling created before it accepts
+actions. Each admitted session owns an immutable effective authorization
+context:
 
 ```text
-RuntimeAuthorization
-  permission_mode
+RuntimeAuthorizationCeiling
+  allowed_permission_modes
   unrestricted_acknowledged
   managed_policy_view
   user_policy_view
-  optional_bounded_manifest
   protected_consent_provider
-  approval_and_revocation_state
   runtime_generation
+
+SessionAuthorization
+  effective_permission_mode
+  optional_bounded_manifest
+  immutable_policy_bindings
+  approval_and_revocation_state
+  absolute_and_idle_expiry
+  runtime_generation
+  authenticated_principal_and_connection_binding
 ```
 
 The exact public types remain an implementation decision, but the contract is
 fixed:
 
-- trusted host code supplies the configuration at construction;
-- constructor options are authoritative;
+- trusted host code supplies the runtime ceiling at construction;
+- trusted host code creates a session context before exposing its action
+  surface;
+- effective session authority is the intersection of the runtime ceiling,
+  session configuration, managed policy, and user policy;
+- a session can narrow but never widen its runtime ceiling;
+- constructor and trusted session options are authoritative;
 - compatibility environment variables apply only when the corresponding
   constructor option is absent;
 - contradictory constructor and environment configuration fails closed;
 - the runtime validates it before registering tools;
-- the configuration cannot widen after construction;
-- agent-visible calls cannot replace it;
+- runtime and session configurations cannot widen after construction;
+- agent-visible calls cannot create, replace, or select an authorization
+  context;
+- a public session ID remains a lifecycle label rather than an authority
+  bearer;
 - unrestricted requires a separate launch-time acknowledgement;
 - managed and user policy denials still apply;
-- runtime teardown revokes every grant and binding owned by that generation.
+- session teardown revokes its grants and bindings;
+- runtime teardown revokes every session owned by that generation.
+
+Released callers that do not use a trusted host session API receive a
+process-owned compatibility session. Its effective mode and policy match the
+existing daemon or runtime configuration, so introducing this model does not
+change current CLI or SDK behavior.
 
 Process-global read-only data may remain shared. In the first milestone,
 mutable state that carries authority or resource ownership belongs to the one
@@ -450,10 +492,16 @@ flowchart LR
     end
 
     subgraph FirstMilestone["First milestone"]
-        P1["Process A<br/>one runtime and one mode"]
-        P2["Process B<br/>one runtime and one mode"]
+        P1["Process A<br/>one runtime"]
+        C1["Compatibility session<br/>inherits current mode"]
+        P2["Process B<br/>one runtime"]
+        S1["Authenticated session A"]
+        S2["Authenticated session B"]
         F1["Process A facilities"]
         F2["Process B facilities"]
+        P1 --> C1
+        P2 --> S1
+        P2 --> S2
         P1 --> F1
         P2 --> F2
     end
@@ -462,47 +510,57 @@ flowchart LR
     GLOBAL -->|"isolate by process"| P2
 ```
 
-### 5. Assign permission modes per runtime-owner process
+### 5. Bind permission modes to trusted sessions
 
-A trusted gateway creates separate runtime-owner processes for separate
-immutable modes:
+A trusted gateway may create separate immutable session contexts beneath one
+runtime ceiling:
 
 ```mermaid
 flowchart TB
     HOST["Trusted gateway"]
+    CEILING["Runtime authorization ceiling"]
 
-    subgraph StandardRuntime["Worker or service process A"]
-        STANDARD["standard"]
-        SA["own sessions, grants, and policy"]
-        STANDARD --> SA
+    subgraph Runtime["One runtime generation"]
+        STANDARD["Session A<br/>standard"]
+        BOUNDED["Session B<br/>bounded manifest"]
+        UNRESTRICTED["Session C<br/>unrestricted acknowledgement"]
     end
 
-    subgraph BoundedRuntime["Worker or service process B"]
-        BOUNDED["bounded"]
-        BA["own manifest, sessions, and grants"]
-        BOUNDED --> BA
-    end
+    CA["Authenticated action connection A"]
+    CB["Authenticated action connection B"]
+    CC["Authenticated action connection C"]
 
-    subgraph UnrestrictedRuntime["Private worker process C"]
-        UNRESTRICTED["unrestricted<br/>explicit acknowledgement"]
-        UA["own sessions, grants, and cleanup"]
-        UNRESTRICTED --> UA
-    end
-
-    HOST -->|"constructs"| STANDARD
-    HOST -->|"constructs"| BOUNDED
-    HOST -->|"constructs"| UNRESTRICTED
+    HOST -->|"constructs"| CEILING
+    CEILING --> STANDARD
+    CEILING --> BOUNDED
+    CEILING --> UNRESTRICTED
+    STANDARD --> CA
+    BOUNDED --> CB
+    UNRESTRICTED --> CC
 ```
 
-The agent receives typed action methods or MCP tools after construction. The
-agent does not receive a runtime factory, mode setter, or serialized authority
-value.
+The trusted host receives a host-only session factory. The agent receives only
+the typed action surface already bound to one effective context. It does not
+receive the session factory, mode setter, connection proof, or serialized
+authority value.
 
-An unrestricted runtime co-hosted with standard or bounded sessions always
-uses a separate process. Same-process runtime objects are neither the initial
-gateway mechanism nor a security boundary. Multiple runtimes in one process
-may be added later as a performance optimization after global-state isolation
-is complete.
+The binding mechanism depends on topology:
+
+- a direct SDK host creates the context before handing a session object to
+  untrusted automation;
+- a private worker binds the context to its inherited host channel;
+- a daemon or service binds the context to an authenticated accepted
+  connection;
+- a remote Driver adapter binds it to the authenticated remote principal and
+  connection generation.
+
+If a topology cannot provide that binding, it exposes only the compatibility
+session or uses one runtime-owner process per mode. It must not accept a
+model-supplied mode or use a public session ID as proof.
+
+Multiple runtime objects in one process remain a later performance
+optimization. Sessionized authority does not require them and does not turn
+same-process objects into a security boundary.
 
 ### 6. Let MCP own or connect to a runtime according to platform identity
 
@@ -775,21 +833,23 @@ not need them.
 The generated SDK and direct runtime would remain secondary clients. That
 conflicts with RFC 2447's dependency direction.
 
-### Implement mixed permission modes through shared-daemon sessions
+### Keep permission modes daemon-wide
 
-This approach can support many sessions in one process. It requires an
-authenticated host-control channel, connection-bound authority, replay
-protection, session substitution defenses, per-session manifests, reconnect
-rules, and scoped teardown.
+This is the lowest-change option for the current CLI. It cannot give an
+embedding gateway different immutable modes without starting one daemon per
+mode, and it makes permission semantics depend on process topology.
 
-Those mechanisms remain valid for a service that chooses mixed-mode sharing.
-They should not be required for every gateway when separate runtime-owner
-processes satisfy the gateway's isolation and cost requirements.
+This RFC instead adopts a portable runtime-ceiling and session-context model.
+Released callers inherit one compatibility context, preserving daemon-wide
+behavior until a trusted host uses the session API.
 
-The `EffectiveAuthorizationContext` and `SessionModeCeiling` concepts from
-PR #2545 remain useful at the canonical dispatch boundary. Connection leases,
-delegated-session binding, and client-provided connection proofs stay frozen
-until an authenticated shared-service consumer requires them.
+### Trust public session IDs to select permission modes
+
+This would be easy to expose through MCP or the current daemon protocol. It is
+not selected because an agent can copy, substitute, replay, or invent public
+identifiers. A mode becomes effective only through a host-only factory and an
+authenticated action binding. Separate runtime-owner processes remain the safe
+fallback when that binding does not exist.
 
 ### Remove all daemon and worker support
 
@@ -855,24 +915,50 @@ inventory of active and metadata-only enforcement adapters.
 [PR #2542](https://github.com/trycua/cua/pull/2542) is the current candidate for
 this phase.
 
-Phase 0 is the only permission-model work recommended before declaring the
-same-process SDK consistent with daemon-backed callers. It changes the
-authorization enforcement point, not the public CLI or SDK signatures. Phase
-1 and later are not prerequisites for the browser-stability release.
+Phase 0 changes the authorization enforcement point, not the public CLI or SDK
+signatures.
 
-### Phase 1: Runtime authorization and a single-runtime guard
+### Phase 1: Portable session authorization foundation
+
+Land the runtime ceiling, effective session context, expiry, revocation, and
+context-aware dispatch model. Route released calls through a process-owned
+compatibility session with unchanged behavior.
+
+[PR #2545](https://github.com/trycua/cua/pull/2545) is the current foundation
+candidate. Its `SessionModeCeiling` and `EffectiveAuthorizationContext` types
+are retained, while daemon-specific registries become runtime-owned.
+
+Delegated mixed modes remain unavailable in a topology that lacks an
+authenticated action binding. This phase may ship before the larger runtime
+topology refactor and does not change the current CLI or SDK surface.
+
+### Phase 2: Trusted session creation and binding
+
+Add a host-only session factory that returns an action surface already bound to
+one immutable effective context. Direct hosts bind in-process, workers bind to
+their inherited channel, and services bind to an authenticated accepted
+connection.
+
+Released calls continue to inherit the compatibility session. A public session
+ID, MCP argument, environment value supplied by the agent, or reconnect token
+cannot select a context.
+
+**Gate:** mixed-mode support is advertised only for certified topologies whose
+host factory and action binding pass substitution, replay, expiry, revocation,
+and reconnect tests. Other topologies remain compatible and daemon-wide.
+
+### Phase 3: Runtime ownership and a single-runtime guard
 
 Make constructor authorization authoritative, define compatibility
 environment-variable precedence, and return a structured conflict on a second
-direct runtime in the same process. Move the authorization coordinator,
-permission mode, bounded manifest, consent-provider ownership, grants, and
-generation-scoped bindings behind the runtime boundary needed for one direct
-runtime.
+direct runtime in the same process. Move consent-provider ownership, grants,
+session registries, and generation-scoped bindings behind the runtime
+boundary.
 
 Publish the full process-global facility inventory. Do not wait for complete
 same-process multi-runtime isolation before shipping the direct default.
 
-### Phase 2: Direct SDK default
+### Phase 4: Direct SDK default
 
 Make `CuaDriver.create()` the primary path in Rust, Python, and TypeScript
 documentation and examples. Keep `connect()` documented as service mode.
@@ -880,19 +966,19 @@ documentation and examples. Keep `connect()` documented as service mode.
 Package and version the native library with the generated SDKs on every
 supported platform.
 
-### Phase 3: Platform-aware MCP ownership
+### Phase 5: Platform-aware MCP ownership
 
 Make MCP stdio own its runtime on Windows, Linux, and embedded macOS paths.
 Keep standalone installed macOS MCP connected to the signed CuaDriver.app
 service by default. Preserve explicit direct and service connection modes.
 
-### Phase 4: Private worker
+### Phase 6: Private worker
 
 Add the supervised-worker topology with parent-liveness cleanup, private
 channel inheritance, generation binding, no reattachment, and
 platform-specific packaging.
 
-### Phase 5: Service authentication and cleanup
+### Phase 7: Service authentication and cleanup
 
 Authenticate local peers and remote principals, then document the daemon as
 service mode. Measure remaining `connect()` and daemon usage before proposing
@@ -907,13 +993,15 @@ every process-global facility and pass the corresponding contention tests.
 ```mermaid
 flowchart LR
     P0["Canonical authorization"]
-    P1["Runtime authorization<br/>single-runtime guard"]
-    P2["Direct SDK default"]
-    P3["Platform-aware MCP ownership"]
-    P4["Private worker"]
-    P5["Authenticated service mode"]
+    P1["Portable session<br/>authorization"]
+    P2["Trusted session<br/>creation and binding"]
+    P3["Runtime ownership<br/>single-runtime guard"]
+    P4["Direct SDK default"]
+    P5["Platform-aware MCP"]
+    P6["Private worker"]
+    P7["Authenticated service"]
 
-    P0 --> P1 --> P2 --> P3 --> P4 --> P5
+    P0 --> P1 --> P2 --> P3 --> P4 --> P5 --> P6 --> P7
 ```
 
 ### Rollback
@@ -941,22 +1029,31 @@ VM, or another external isolation boundary.
 
 ### Authorization
 
-- Runtime authorization is immutable after construction.
+- The runtime ceiling is immutable after construction.
+- Each session authorization context is immutable after trusted creation.
+- Effective authority is the intersection of runtime ceiling, session context,
+  managed policy, and user policy.
+- A session can narrow but never widen its runtime ceiling.
 - Unrestricted requires explicit acknowledgement outside agent-visible tool
   calls.
 - Managed policy, user policy, hard invariants, OS permissions, and resource
   ownership apply in every mode.
 - Session IDs remain lifecycle labels. They do not carry authority.
-- Serialized bearer values cannot upgrade a runtime.
+- Serialized bearer values cannot select a session context or upgrade a
+  runtime.
+- Actions bind to the session context selected by a trusted in-process host,
+  inherited worker channel, or authenticated service connection.
 - Adapters cannot mint or satisfy protected consent.
-- Grants bind to one runtime generation and revoke on teardown.
+- Grants bind to one session and runtime generation and revoke on either
+  teardown.
 
 ### Process isolation
 
-The first milestone permits one direct runtime per process. Different
-permission modes or trust domains run in separate runtime-owner processes.
-This separation does not protect against a host that can arbitrarily control
-or inspect all of those processes.
+The first milestone permits one direct runtime per process. Authenticated
+session bindings may carry different modes beneath that runtime's ceiling.
+Topologies without such a binding run different modes or trust domains in
+separate runtime-owner processes. This separation does not protect against a
+host that can arbitrarily control or inspect all of those processes.
 
 Private workers and services add process separation. Their channels must use
 OS identity and inherited-handle rules appropriate to the platform. Private
@@ -1001,19 +1098,37 @@ host surface remains outside the agent-visible request channel.
 - Keep direct and service paths on that chokepoint.
 - Test aliases, raw routes, generated SDK calls, and daemon adapters.
 
-### Slice B: Introduce runtime configuration
+### Slice B: Land portable session authorization
 
-- Add immutable runtime authorization types.
+- Add immutable runtime-ceiling and effective-session-context types.
+- Pass an effective session context to the authorization coordinator.
+- Route released callers through one process-owned compatibility context.
+- Bind expiry, revocation, bounded manifests, and grants to that context.
+- Preserve `EffectiveAuthorizationContext` and `SessionModeCeiling` from
+  PR #2545 while keeping them independent of daemon protocol types.
+- Keep mixed-mode delegation disabled until a trusted session factory and
+  authenticated action binding exist.
+
+### Slice C: Add trusted session creation and binding
+
+- Expose a host-only session factory outside the agent tool registry.
+- Return an action surface already bound to one immutable context.
+- Bind direct sessions in-process, worker sessions to inherited channels, and
+  service sessions to authenticated accepted connections.
+- Reject mode escalation, public-ID substitution, replay, duplicate binding,
+  cross-generation use, expiry, and reconnect without reauthorization.
+- Keep released CLI and SDK calls on the compatibility context.
+
+### Slice D: Introduce runtime configuration
+
 - Remove process-global permission mode and bounded manifest lookups.
-- Pass runtime context to the authorization coordinator.
+- Pass runtime ceiling and session context through `DriverRuntime`.
 - Reject contradictory unrestricted acknowledgement.
 - Make constructor options authoritative, use compatibility environment
   variables only for absent options, and fail on contradictory values.
 - Keep compatibility constructors mapped to one process-owned runtime config.
-- Preserve or adapt `EffectiveAuthorizationContext` and
-  `SessionModeCeiling` from PR #2545 at the dispatch boundary.
 
-### Slice C: Make single-runtime ownership explicit
+### Slice E: Make single-runtime ownership explicit
 
 - Inventory mutable singletons and global callbacks.
 - Add a process-wide guard that permits one direct `DriverRuntime`.
@@ -1025,13 +1140,13 @@ host surface remains outside the agent-visible request channel.
 - Defer complete same-process multi-runtime isolation until a consumer requires
   it.
 
-### Slice D: Prove generated SDK parity
+### Slice F: Prove generated SDK parity
 
 - Regenerate Rust, Python, and TypeScript surfaces from one contract.
 - Test create, invoke, cancellation, shutdown, error mapping, and destruction.
 - Verify native library provenance in released packages.
 
-### Slice E: Simplify MCP
+### Slice G: Simplify MCP
 
 - Let MCP stdio create a runtime directly on Windows, Linux, and embedded
   macOS paths.
@@ -1039,7 +1154,7 @@ host surface remains outside the agent-visible request channel.
 - Preserve explicit service connection mode.
 - Verify EOF cleanup and interrupted-action reporting.
 
-### Slice F: Add private workers
+### Slice H: Add private workers
 
 - Define the narrow host-worker protocol.
 - Bind worker generation and authority at spawn.
@@ -1049,17 +1164,18 @@ host surface remains outside the agent-visible request channel.
 - Prove interactive-session placement on Windows.
 - Prove display binding and cleanup on Linux.
 
-### Slice G: Reassess shared-daemon delegation
+### Slice I: Complete service session binding
 
-- Measure whether any service consumer still requires concurrent mixed-mode
-  sessions in one daemon.
-- Keep delegated-session binding, host leases, and connection-proof work from
-  PR #2545 frozen unless that consumer exists.
-- Dissolve its process-global configured-session registry into runtime-owned
-  state if the shared-service work resumes.
-- Keep delegation unavailable until an authenticated action connection exists.
+- Move the configured-session registry from process-global state into the
+  service-owned runtime.
+- Connect the portable context model to an authenticated host-control and
+  action channel.
+- Keep host leases and connection proofs opaque, non-serializable, and bound to
+  one runtime generation.
+- Advertise mixed-mode service support only after the authenticated binding
+  passes the session authorization test matrix.
 
-### Slice H: Authenticate service endpoints
+### Slice J: Authenticate service endpoints
 
 - Verify Unix-domain-socket peers with same-user credentials in addition to
   restrictive filesystem permissions.
@@ -1095,13 +1211,24 @@ The RFC is implemented when all of the following evidence passes.
 - A second direct runtime in one process fails with a structured conflict.
 - Constructor options override absent compatibility defaults, and
   contradictory explicit sources fail closed.
-- Runtime-owner processes with different modes cannot exchange grants,
-  manifests, sessions, browser bindings, or resource handles.
-- An agent-visible request cannot create or widen runtime authority.
+- Released calls inherit a compatibility session with unchanged behavior.
+- A session context cannot exceed its runtime ceiling.
+- Sessions cannot exchange grants, manifests, browser bindings, or resource
+  handles.
+- An agent-visible request cannot create, select, or widen runtime or session
+  authority.
+- Public session IDs, MCP metadata, connection labels, and reconnect tokens
+  cannot select an effective context.
+- Direct, worker, service, and remote actions resolve the context bound by
+  their trusted host or authenticated connection.
+- Substitution, replay, duplicate binding, cross-generation use, expiry, and
+  revoked contexts fail before platform dispatch.
 - Unrestricted cannot start without trusted construction-time
   acknowledgement.
 - Managed and user policy denials remain effective in unrestricted mode.
-- Runtime restart invalidates every prior-generation grant and binding.
+- Session teardown invalidates its grants and bindings.
+- Runtime restart invalidates every prior-generation context, grant, and
+  binding.
 
 ### Lifecycle
 
@@ -1109,6 +1236,8 @@ The RFC is implemented when all of the following evidence passes.
 - Shutdown rejects new work and drains admitted work.
 - Host death terminates a private worker and revokes its resources.
 - A dead or disconnected worker cannot be reattached.
+- Connection loss revokes or expires its session contexts according to the
+  declared lifecycle; reconnect cannot silently recover authority.
 - Interrupted actions report known or unknown completion honestly.
 - Idle sessions and recordings are reclaimed by their owning runtime.
 
@@ -1145,6 +1274,8 @@ The RFC is implemented when all of the following evidence passes.
   platform identity, and observable lifecycle.
 - Existing Rust, Python, and TypeScript callers retain their constructors,
   typed methods, exports, result envelopes, and structured error categories.
+- Existing callers that do not use the host-only session factory inherit the
+  compatibility session without source changes.
 - Local service endpoints reject peers that fail same-user credential checks.
 - Remote service endpoints reject unauthenticated principals.
 - Service and direct versions negotiate or refuse incompatibility before
@@ -1160,8 +1291,8 @@ The RFC is implemented when all of the following evidence passes.
 - Which daemon administrative tools still need typed SDK replacements?
 - What usage threshold and support window should precede a future
   `CuaDriver.connect()` deprecation RFC?
-- Does any current consumer require mixed permission modes inside one shared
-  daemon after separate runtimes and private workers ship?
+- Which authenticated host-control and action connection should first certify
+  mixed permission modes in a shared service?
 
 ## Decision record
 

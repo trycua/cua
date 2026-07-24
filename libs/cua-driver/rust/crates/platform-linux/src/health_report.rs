@@ -569,9 +569,18 @@ fn probe_portal_remote_desktop() -> anyhow::Result<bool> {
             })?;
 
         rt.block_on(async {
-            match RemoteDesktop::new().await {
-                Ok(_) => Ok(true),
-                Err(e) => {
+            let probe = tokio::time::timeout(crate::wayland::portal::PROBE_TIMEOUT, async {
+                let connection = crate::wayland::portal::fresh_session_connection().await?;
+                RemoteDesktop::with_connection(connection)
+                    .await
+                    .map_err(anyhow::Error::from)
+            })
+            .await;
+
+            match probe {
+                Err(_) => Err(anyhow::anyhow!("portal RemoteDesktop probe timed out")),
+                Ok(Ok(_)) => Ok(true),
+                Ok(Err(e)) => {
                     let msg = format!("{e}");
                     if msg.contains("ServiceUnknown")
                         || msg.contains("NameHasNoOwner")

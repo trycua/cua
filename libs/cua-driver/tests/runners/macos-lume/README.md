@@ -292,7 +292,10 @@ separate typed results and MP4 evidence under
 `artifacts/cua-driver/macos-standalone-browser/`. Missing external browsers are
 a hard failure for this option; they never shrink the reported matrix. On a
 repeat run, the entrypoint preserves the previous standalone-browser evidence
-in a temporary archive before creating a fresh artifact directory.
+in a temporary archive before creating a fresh artifact directory. The
+entrypoint temporarily restarts the disposable worker daemon in unrestricted
+mode for the authorized existing-profile success rows, then restores its
+standard autostart daemon even when a browser row fails.
 
 The entrypoint refuses the wrong OS, user session, SIP state, dirty or
 unidentified source, missing dependencies, ad-hoc signature, stale installed

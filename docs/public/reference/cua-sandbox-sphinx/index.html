@@ -1,0 +1,931 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>CUA Sandbox API</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=8e8a900e" />
+    <link rel="stylesheet" type="text/css" href="_static/basic.css?v=29da98fa" />
+    <script src="_static/documentation_options.js?v=d6d90d09"></script>
+    <script src="_static/doctools.js?v=9bcbadda"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+  </head><body>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="nav-item nav-item-0"><a href="#">CUA Sandbox API</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">CUA Sandbox API</a></li>
+      </ul>
+    </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+
+  <section id="cua-sandbox-api">
+<h1>CUA Sandbox API<a class="headerlink" href="#cua-sandbox-api" title="Link to this heading">¶</a></h1>
+<p>This generated comparison artifact is built by Sphinx from the public Python
+SDK. Fumadocs does not process these RST directives; it links to the generated
+HTML artifact.</p>
+<section id="public-exports">
+<h2>Public exports<a class="headerlink" href="#public-exports" title="Link to this heading">¶</a></h2>
+<dl class="py data">
+<dt class="sig sig-object py" id="cua_sandbox.__all__">
+<span class="sig-prename descclassname"><span class="pre">cua_sandbox.</span></span><span class="sig-name descname"><span class="pre">__all__</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">['configure',</span> <span class="pre">'login',</span> <span class="pre">'whoami',</span> <span class="pre">'Image',</span> <span class="pre">'Sandbox',</span> <span class="pre">'SandboxInfo',</span> <span class="pre">'sandbox',</span> <span class="pre">'Localhost',</span> <span class="pre">'localhost',</span> <span class="pre">'CloudTransport',</span> <span class="pre">'RuntimeSupport',</span> <span class="pre">'check_local_support',</span> <span class="pre">'skip_if_unsupported']</span></em><a class="headerlink" href="#cua_sandbox.__all__" title="Link to this definition">¶</a></dt>
+<dd><p>Built-in mutable sequence.</p>
+<p>If no argument is given, the constructor creates a new empty list.
+The argument must be an iterable if specified.</p>
+</dd></dl>
+
+<table class="autosummary longtable docutils align-default">
+<tbody>
+<tr class="row-odd"><td><p><a class="reference internal" href="#cua_sandbox.configure" title="cua_sandbox.configure"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.configure</span></code></a></p></td>
+<td><p>Set global configuration for cloud sandboxes.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#cua_sandbox.Image" title="cua_sandbox.Image"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.Image</span></code></a></p></td>
+<td><p>Immutable, chainable image specification.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#cua_sandbox.Sandbox" title="cua_sandbox.Sandbox"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.Sandbox</span></code></a></p></td>
+<td><p>A sandboxed computer environment.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#cua_sandbox.SandboxInfo" title="cua_sandbox.SandboxInfo"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.SandboxInfo</span></code></a></p></td>
+<td><p>Metadata for a local or cloud sandbox.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#cua_sandbox.sandbox" title="cua_sandbox.sandbox"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.sandbox</span></code></a></p></td>
+<td><p>Async context manager for a sandboxed environment.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#cua_sandbox.Localhost" title="cua_sandbox.Localhost"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.Localhost</span></code></a></p></td>
+<td><p>Direct host control via cua_auto — no sandboxing.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#cua_sandbox.localhost" title="cua_sandbox.localhost"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.localhost</span></code></a></p></td>
+<td><p>Async context manager yielding a Localhost instance.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#cua_sandbox.CloudTransport" title="cua_sandbox.CloudTransport"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.CloudTransport</span></code></a></p></td>
+<td><p>Transport that provisions / connects to a CUA cloud VM.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#cua_sandbox.RuntimeSupport" title="cua_sandbox.RuntimeSupport"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.RuntimeSupport</span></code></a></p></td>
+<td><p>Result of a local runtime compatibility check for a given Image.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#cua_sandbox.check_local_support" title="cua_sandbox.check_local_support"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.check_local_support</span></code></a></p></td>
+<td><p>Return a RuntimeSupport describing whether <em>image</em> can run locally.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#cua_sandbox.skip_if_unsupported" title="cua_sandbox.skip_if_unsupported"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.skip_if_unsupported</span></code></a></p></td>
+<td><p>Call at the top of a pytest test/fixture to skip when the host can't run <em>image</em>.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#cua_sandbox.interfaces.Apps" title="cua_sandbox.interfaces.Apps"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.interfaces.Apps</span></code></a></p></td>
+<td><p>Install and launch cataloged applications inside the sandbox.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#cua_sandbox.interfaces.Clipboard" title="cua_sandbox.interfaces.Clipboard"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.interfaces.Clipboard</span></code></a></p></td>
+<td><p>Clipboard read/write.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#cua_sandbox.interfaces.FileEntry" title="cua_sandbox.interfaces.FileEntry"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.interfaces.FileEntry</span></code></a></p></td>
+<td><p>FileEntry(name: 'str', path: 'str', is_dir: 'bool', size: 'Optional[int]' = None)</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#cua_sandbox.interfaces.Files" title="cua_sandbox.interfaces.Files"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.interfaces.Files</span></code></a></p></td>
+<td><p>File and directory operations inside the sandbox.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#cua_sandbox.interfaces.Keyboard" title="cua_sandbox.interfaces.Keyboard"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.interfaces.Keyboard</span></code></a></p></td>
+<td><p>Keyboard control.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#cua_sandbox.interfaces.Mobile" title="cua_sandbox.interfaces.Mobile"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.interfaces.Mobile</span></code></a></p></td>
+<td><p>Mobile (Android) touch and hardware-key control.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#cua_sandbox.interfaces.Mouse" title="cua_sandbox.interfaces.Mouse"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.interfaces.Mouse</span></code></a></p></td>
+<td><p>Mouse control.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#cua_sandbox.interfaces.Screen" title="cua_sandbox.interfaces.Screen"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.interfaces.Screen</span></code></a></p></td>
+<td><p>Screen capture and info.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#cua_sandbox.interfaces.Shell" title="cua_sandbox.interfaces.Shell"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.interfaces.Shell</span></code></a></p></td>
+<td><p>Shell command execution.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#cua_sandbox.interfaces.Terminal" title="cua_sandbox.interfaces.Terminal"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.interfaces.Terminal</span></code></a></p></td>
+<td><p>PTY terminal sessions.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#cua_sandbox.interfaces.Tunnel" title="cua_sandbox.interfaces.Tunnel"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.interfaces.Tunnel</span></code></a></p></td>
+<td><p>Port-forwarding interface — exposes sandbox ports on the host.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#cua_sandbox.interfaces.TunnelInfo" title="cua_sandbox.interfaces.TunnelInfo"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.interfaces.TunnelInfo</span></code></a></p></td>
+<td><p>A single forwarded port.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#cua_sandbox.interfaces.Window" title="cua_sandbox.interfaces.Window"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cua_sandbox.interfaces.Window</span></code></a></p></td>
+<td><p>Window management.</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="configuration">
+<h2>Configuration<a class="headerlink" href="#configuration" title="Link to this heading">¶</a></h2>
+<dl class="py function">
+<dt class="sig sig-object py" id="cua_sandbox.configure">
+<span class="sig-prename descclassname"><span class="pre">cua_sandbox.</span></span><span class="sig-name descname"><span class="pre">configure</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">api_key</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">base_url</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">fleet_base_url</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">token_url</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">client_id</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">client_secret</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="headerlink" href="#cua_sandbox.configure" title="Link to this definition">¶</a></dt>
+<dd><p>Set global configuration for cloud sandboxes.</p>
+<p>API-key cloud operations use <code class="docutils literal notranslate"><span class="pre">base_url</span></code>. Fleet uses <code class="docutils literal notranslate"><span class="pre">fleet_base_url</span></code> and
+OAuth client credentials.</p>
+</dd></dl>
+
+</section>
+<section id="sandbox-lifecycle">
+<h2>Sandbox lifecycle<a class="headerlink" href="#sandbox-lifecycle" title="Link to this heading">¶</a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="cua_sandbox.Sandbox">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">cua_sandbox.</span></span><span class="sig-name descname"><span class="pre">Sandbox</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">transport</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Transport</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">_runtime</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Runtime</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">_runtime_info</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">RuntimeInfo</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">_ephemeral</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">_telemetry_enabled</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#cua_sandbox.Sandbox" title="Link to this definition">¶</a></dt>
+<dd><p>A sandboxed computer environment.</p>
+<p>Provides programmatic control of a VM or container through a unified
+interface: <code class="docutils literal notranslate"><span class="pre">.mouse</span></code>, <code class="docutils literal notranslate"><span class="pre">.keyboard</span></code>, <code class="docutils literal notranslate"><span class="pre">.screen</span></code>, <code class="docutils literal notranslate"><span class="pre">.clipboard</span></code>,
+<code class="docutils literal notranslate"><span class="pre">.shell</span></code>, <code class="docutils literal notranslate"><span class="pre">.window</span></code>, and <code class="docutils literal notranslate"><span class="pre">.terminal</span></code>.</p>
+<p>Sandboxes are always isolated — they never control the host machine
+directly. For unsandboxed host control, use <a class="reference internal" href="#cua_sandbox.localhost" title="cua_sandbox.localhost"><code class="xref py py-func docutils literal notranslate"><span class="pre">cua_sandbox.localhost()</span></code></a>.</p>
+<p>There are three ways to obtain a Sandbox:</p>
+<ol class="arabic">
+<li><p><strong>Persistent</strong> — provision and keep alive after the script exits:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">sb</span> <span class="o">=</span> <span class="k">await</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">Image</span><span class="o">.</span><span class="n">desktop</span><span class="p">(</span><span class="s2">&quot;ubuntu&quot;</span><span class="p">))</span>
+<span class="k">await</span> <span class="n">sb</span><span class="o">.</span><span class="n">shell</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;whoami&quot;</span><span class="p">)</span>
+<span class="k">await</span> <span class="n">sb</span><span class="o">.</span><span class="n">disconnect</span><span class="p">()</span>
+</pre></div>
+</div>
+</li>
+<li><p><strong>Connect</strong> — attach to an already-running sandbox by name:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">sb</span> <span class="o">=</span> <span class="k">await</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s2">&quot;my-sandbox&quot;</span><span class="p">)</span>
+<span class="k">await</span> <span class="n">sb</span><span class="o">.</span><span class="n">screenshot</span><span class="p">()</span>
+<span class="k">await</span> <span class="n">sb</span><span class="o">.</span><span class="n">disconnect</span><span class="p">()</span>
+</pre></div>
+</div>
+</li>
+<li><p><strong>Ephemeral</strong> — auto-destroyed when the <code class="docutils literal notranslate"><span class="pre">async</span> <span class="pre">with</span></code> block exits:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="k">async</span> <span class="k">with</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">ephemeral</span><span class="p">(</span><span class="n">Image</span><span class="o">.</span><span class="n">desktop</span><span class="p">(</span><span class="s2">&quot;ubuntu&quot;</span><span class="p">))</span> <span class="k">as</span> <span class="n">sb</span><span class="p">:</span>
+    <span class="k">await</span> <span class="n">sb</span><span class="o">.</span><span class="n">shell</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;whoami&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+</li>
+</ol>
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Sandbox.create">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span><span class="k"><span class="pre">classmethod</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">create</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">image</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="#cua_sandbox.Image" title="cua_sandbox.Image"><span class="pre">Image</span></a></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">api_key</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">local</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">runtime</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="s"><span class="pre">'Runtime'</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cpu</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">memory_mb</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">disk_gb</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">region</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'us-east-1'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">time_to_start</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">float</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">request_timeout</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">float</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">telemetry_enabled</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#cua_sandbox.Sandbox" title="cua_sandbox.Sandbox"><span class="pre">Sandbox</span></a></span></span><a class="headerlink" href="#cua_sandbox.Sandbox.create" title="Link to this definition">¶</a></dt>
+<dd><p>Provision a new persistent sandbox and return it connected.</p>
+<p>The sandbox is kept alive after your script exits — call <code class="docutils literal notranslate"><span class="pre">close()</span></code>
+when you are done, or use <code class="xref py py-meth docutils literal notranslate"><span class="pre">ephemeral()</span></code> if you want it destroyed
+automatically.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>image</strong> – Image to run (e.g. <code class="docutils literal notranslate"><span class="pre">Image.desktop(&quot;ubuntu&quot;)</span></code>).</p></li>
+<li><p><strong>name</strong> – Optional name to assign to the sandbox.</p></li>
+<li><p><strong>api_key</strong> – Legacy CUA API key. Providing one uses the legacy VM API;
+Fleet cloud sandboxes use OAuth client credentials instead.</p></li>
+<li><p><strong>local</strong> – Use a local runtime instead of cloud.</p></li>
+<li><p><strong>runtime</strong> – Explicit runtime backend (DockerRuntime, QEMURuntime, etc.).</p></li>
+<li><p><strong>cpu</strong> – Number of CPUs for the cloud sandbox.</p></li>
+<li><p><strong>memory_mb</strong> – Memory in MB for the cloud sandbox.</p></li>
+<li><p><strong>disk_gb</strong> – Unsupported by Fleet; API-key legacy cloud only.</p></li>
+<li><p><strong>region</strong> – Fleet currently supports only <code class="docutils literal notranslate"><span class="pre">&quot;us-east-1&quot;</span></code>.</p></li>
+<li><p><strong>time_to_start</strong> – Max seconds to wait for Fleet provisioning and
+service readiness (default 600).</p></li>
+<li><p><strong>request_timeout</strong> – Default HTTP request timeout in seconds for
+commands sent to the computer-server (default 30, cloud only).
+Individual commands with a server-side timeout automatically
+extend the client timeout to match.</p></li>
+<li><p><strong>telemetry_enabled</strong> – Set to False to disable telemetry for this instance.</p></li>
+</ul>
+</dd>
+</dl>
+<p>Example:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">sb</span> <span class="o">=</span> <span class="k">await</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">Image</span><span class="o">.</span><span class="n">desktop</span><span class="p">(</span><span class="s2">&quot;ubuntu&quot;</span><span class="p">))</span>
+<span class="k">await</span> <span class="n">sb</span><span class="o">.</span><span class="n">shell</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;uname -a&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">sb</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>  <span class="c1"># save to reconnect later</span>
+<span class="k">await</span> <span class="n">sb</span><span class="o">.</span><span class="n">disconnect</span><span class="p">()</span>
+</pre></div>
+</div>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Sandbox.delete">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span><span class="k"><span class="pre">classmethod</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">delete</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">local</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">api_key</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="headerlink" href="#cua_sandbox.Sandbox.delete" title="Link to this definition">¶</a></dt>
+<dd><p>Permanently delete a sandbox.</p>
+<p>For local sandboxes, stops the VM and removes the state file.
+For cloud sandboxes, calls DELETE /v1/vms/{name}.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>name</strong> – Sandbox name.</p></li>
+<li><p><strong>local</strong> – If True, delete a local sandbox.</p></li>
+<li><p><strong>api_key</strong> – CUA API key for cloud.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Sandbox.disconnect">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">disconnect</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="headerlink" href="#cua_sandbox.Sandbox.disconnect" title="Link to this definition">¶</a></dt>
+<dd><p>Drop the transport connection. The sandbox keeps running.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Sandbox.__aenter__">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">Sandbox.</span></span><span class="sig-name descname"><span class="pre">__aenter__</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#cua_sandbox.Sandbox" title="cua_sandbox.sandbox.Sandbox"><span class="pre">Sandbox</span></a></span></span><a class="headerlink" href="#cua_sandbox.Sandbox.__aenter__" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Sandbox.__aexit__">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">Sandbox.</span></span><span class="sig-name descname"><span class="pre">__aexit__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">exc</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Any</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="headerlink" href="#cua_sandbox.Sandbox.__aexit__" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="cua_sandbox.SandboxInfo">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">cua_sandbox.</span></span><span class="sig-name descname"><span class="pre">SandboxInfo</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">status</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">source</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">os_type</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">host</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">vnc_url</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">api_url</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">created_at</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#cua_sandbox.SandboxInfo" title="Link to this definition">¶</a></dt>
+<dd><p>Metadata for a local or cloud sandbox.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="cua_sandbox.sandbox">
+<span class="sig-prename descclassname"><span class="pre">cua_sandbox.</span></span><span class="sig-name descname"><span class="pre">sandbox</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">local</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ws_url</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">http_url</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">api_key</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">container_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">image</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="#cua_sandbox.Image" title="cua_sandbox.Image"><span class="pre">Image</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">runtime</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="s"><span class="pre">'Runtime'</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ephemeral</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cpu</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">memory_mb</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">disk_gb</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">region</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'us-east-1'</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">AsyncIterator</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="#cua_sandbox.Sandbox" title="cua_sandbox.Sandbox"><span class="pre">Sandbox</span></a><span class="p"><span class="pre">]</span></span></span></span><a class="headerlink" href="#cua_sandbox.sandbox" title="Link to this definition">¶</a></dt>
+<dd><p>Async context manager for a sandboxed environment.</p>
+<div class="deprecated">
+<p><span class="versionmodified deprecated">Deprecated since version Prefer: </span><code class="docutils literal notranslate"><span class="pre">Sandbox.create()</span></code>, <code class="docutils literal notranslate"><span class="pre">Sandbox.connect()</span></code>, or
+<code class="docutils literal notranslate"><span class="pre">Sandbox.ephemeral()</span></code> instead.</p>
+</div>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="cua_sandbox.Localhost">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">cua_sandbox.</span></span><span class="sig-name descname"><span class="pre">Localhost</span></span><a class="headerlink" href="#cua_sandbox.Localhost" title="Link to this definition">¶</a></dt>
+<dd><p>Direct host control via cua_auto — no sandboxing.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="cua_sandbox.localhost">
+<span class="sig-prename descclassname"><span class="pre">cua_sandbox.</span></span><span class="sig-name descname"><span class="pre">localhost</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">AsyncIterator</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="#cua_sandbox.Localhost" title="cua_sandbox.localhost.Localhost"><span class="pre">Localhost</span></a><span class="p"><span class="pre">]</span></span></span></span><a class="headerlink" href="#cua_sandbox.localhost" title="Link to this definition">¶</a></dt>
+<dd><p>Async context manager yielding a Localhost instance.</p>
+<div class="deprecated">
+<p><span class="versionmodified deprecated">Deprecated since version Prefer: </span><code class="docutils literal notranslate"><span class="pre">Localhost.connect()</span></code> instead.</p>
+</div>
+</dd></dl>
+
+</section>
+<section id="image-builder">
+<h2>Image builder<a class="headerlink" href="#image-builder" title="Link to this heading">¶</a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="cua_sandbox.Image">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">cua_sandbox.</span></span><span class="sig-name descname"><span class="pre">Image</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">os_type</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">distro</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">version</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">kind</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">_layers</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Tuple</span><span class="p"><span class="pre">[</span></span><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Any</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="p"><span class="pre">...</span></span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">()</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">_env</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Tuple</span><span class="p"><span class="pre">[</span></span><span class="pre">Tuple</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">str</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="p"><span class="pre">...</span></span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">()</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">_ports</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Tuple</span><span class="p"><span class="pre">[</span></span><span class="pre">int</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="p"><span class="pre">...</span></span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">()</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">_files</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Tuple</span><span class="p"><span class="pre">[</span></span><span class="pre">Tuple</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">str</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="p"><span class="pre">...</span></span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">()</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">_registry</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">_disk_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">_agent_type</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">_snapshot_source</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Any</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#cua_sandbox.Image" title="Link to this definition">¶</a></dt>
+<dd><p>Immutable, chainable image specification.</p>
+<p>Each mutation method returns a new Image instance so that builders
+can be forked at any point.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Image.android">
+<em class="property"><span class="k"><span class="pre">classmethod</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">android</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">version</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'14'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">kind</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'vm'</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#cua_sandbox.Image" title="cua_sandbox.image.Image"><span class="pre">Image</span></a></span></span><a class="headerlink" href="#cua_sandbox.Image.android" title="Link to this definition">¶</a></dt>
+<dd><p>Android image. Always a VM (QEMU emulator).</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Image.apk_install">
+<span class="sig-name descname"><span class="pre">apk_install</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">apk_paths</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#cua_sandbox.Image" title="cua_sandbox.image.Image"><span class="pre">Image</span></a></span></span><a class="headerlink" href="#cua_sandbox.Image.apk_install" title="Link to this definition">¶</a></dt>
+<dd><p>Install APK files via adb (Android only).</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Image.app_install">
+<span class="sig-name descname"><span class="pre">app_install</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">app_id</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#cua_sandbox.Image" title="cua_sandbox.image.Image"><span class="pre">Image</span></a></span></span><a class="headerlink" href="#cua_sandbox.Image.app_install" title="Link to this definition">¶</a></dt>
+<dd><p>Install an app from the cua-sandbox-apps catalog.</p>
+<p>Requires <code class="docutils literal notranslate"><span class="pre">cua-sandbox-apps</span></code> to be installed. The app’s install
+script for this image’s OS is executed as a build layer.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Image.apt_install">
+<span class="sig-name descname"><span class="pre">apt_install</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">packages</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#cua_sandbox.Image" title="cua_sandbox.image.Image"><span class="pre">Image</span></a></span></span><a class="headerlink" href="#cua_sandbox.Image.apt_install" title="Link to this definition">¶</a></dt>
+<dd><p>Install packages via apt (Linux only).</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Image.brew_install">
+<span class="sig-name descname"><span class="pre">brew_install</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">packages</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#cua_sandbox.Image" title="cua_sandbox.image.Image"><span class="pre">Image</span></a></span></span><a class="headerlink" href="#cua_sandbox.Image.brew_install" title="Link to this definition">¶</a></dt>
+<dd><p>Install packages via Homebrew (macOS).</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Image.choco_install">
+<span class="sig-name descname"><span class="pre">choco_install</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">packages</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#cua_sandbox.Image" title="cua_sandbox.image.Image"><span class="pre">Image</span></a></span></span><a class="headerlink" href="#cua_sandbox.Image.choco_install" title="Link to this definition">¶</a></dt>
+<dd><p>Install packages via Chocolatey (Windows).</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Image.copy">
+<span class="sig-name descname"><span class="pre">copy</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">src</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dst</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#cua_sandbox.Image" title="cua_sandbox.image.Image"><span class="pre">Image</span></a></span></span><a class="headerlink" href="#cua_sandbox.Image.copy" title="Link to this definition">¶</a></dt>
+<dd><p>Copy a file into the image.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Image.env">
+<span class="sig-name descname"><span class="pre">env</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">variables</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#cua_sandbox.Image" title="cua_sandbox.image.Image"><span class="pre">Image</span></a></span></span><a class="headerlink" href="#cua_sandbox.Image.env" title="Link to this definition">¶</a></dt>
+<dd><p>Set environment variables.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Image.expose">
+<span class="sig-name descname"><span class="pre">expose</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">port</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#cua_sandbox.Image" title="cua_sandbox.image.Image"><span class="pre">Image</span></a></span></span><a class="headerlink" href="#cua_sandbox.Image.expose" title="Link to this definition">¶</a></dt>
+<dd><p>Expose a port.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Image.from_dict">
+<em class="property"><span class="k"><span class="pre">classmethod</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">from_dict</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">data</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Any</span><span class="p"><span class="pre">]</span></span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#cua_sandbox.Image" title="cua_sandbox.image.Image"><span class="pre">Image</span></a></span></span><a class="headerlink" href="#cua_sandbox.Image.from_dict" title="Link to this definition">¶</a></dt>
+<dd><p>Reconstruct an Image from a serialized spec dict.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Image.from_file">
+<em class="property"><span class="k"><span class="pre">classmethod</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">from_file</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">os_type</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'windows'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">kind</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'vm'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">agent_type</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#cua_sandbox.Image" title="cua_sandbox.image.Image"><span class="pre">Image</span></a></span></span><a class="headerlink" href="#cua_sandbox.Image.from_file" title="Link to this definition">¶</a></dt>
+<dd><p>Create an image from a local disk, ISO file, or URL.</p>
+<p>Supported formats: qcow2, vhdx, raw, img, iso.
+URLs (http/https) are downloaded automatically. Zip files are extracted.
+For ISOs, the runtime will create a qcow2 disk and attach the ISO
+as a CD-ROM for installation/boot.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>path</strong> – Local file path or URL (http/https).</p></li>
+<li><p><strong>os_type</strong> – OS type hint (“linux”, “windows”, “macos”, “android”).</p></li>
+<li><p><strong>kind</strong> – “vm” or “container”.</p></li>
+<li><p><strong>agent_type</strong> – Agent type hint (e.g. “osworld” for OSWorld Flask server).</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Image.from_registry">
+<em class="property"><span class="k"><span class="pre">classmethod</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">from_registry</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ref</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#cua_sandbox.Image" title="cua_sandbox.image.Image"><span class="pre">Image</span></a></span></span><a class="headerlink" href="#cua_sandbox.Image.from_registry" title="Link to this definition">¶</a></dt>
+<dd><p>Create an image from a registry reference. kind is resolved after pull.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Image.linux">
+<em class="property"><span class="k"><span class="pre">classmethod</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">linux</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">distro</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'ubuntu'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">version</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'24.04'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">kind</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'vm'</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#cua_sandbox.Image" title="cua_sandbox.image.Image"><span class="pre">Image</span></a></span></span><a class="headerlink" href="#cua_sandbox.Image.linux" title="Link to this definition">¶</a></dt>
+<dd><p>Linux image. Defaults to ‘vm’ (QEMU). Use kind=’container’ for Docker/XFCE.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Image.local_support">
+<span class="sig-name descname"><span class="pre">local_support</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#cua_sandbox.Image.local_support" title="Link to this definition">¶</a></dt>
+<dd><p>Check whether this image can run locally on the current host.</p>
+<p>Returns a <a class="reference internal" href="#cua_sandbox.RuntimeSupport" title="cua_sandbox.runtime.compat.RuntimeSupport"><code class="xref py py-class docutils literal notranslate"><span class="pre">RuntimeSupport</span></code></a> describing:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">supported</span></code>  — runtime is available or auto-installable on this OS</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">hw_accel</span></code>   — hardware acceleration (HVF / KVM / Hyper-V) is available</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">runtime_installed</span></code> — runtime binary found right now (no install needed)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">auto_installable</span></code> — SDK can install the runtime automatically</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">reason</span></code>     — human-readable explanation</p></li>
+</ul>
+<p>In tests, use the bundled helper instead of checking manually:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">cua_sandbox.runtime.compat</span><span class="w"> </span><span class="kn">import</span> <span class="n">skip_if_unsupported</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">test_something</span><span class="p">():</span>
+    <span class="n">skip_if_unsupported</span><span class="p">(</span><span class="n">Image</span><span class="o">.</span><span class="n">macos</span><span class="p">())</span>
+    <span class="k">async</span> <span class="k">with</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">ephemeral</span><span class="p">(</span><span class="n">Image</span><span class="o">.</span><span class="n">macos</span><span class="p">(),</span> <span class="n">local</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="k">as</span> <span class="n">sb</span><span class="p">:</span>
+        <span class="o">...</span>
+</pre></div>
+</div>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Image.macos">
+<em class="property"><span class="k"><span class="pre">classmethod</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">macos</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">version</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'26'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">kind</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'vm'</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#cua_sandbox.Image" title="cua_sandbox.image.Image"><span class="pre">Image</span></a></span></span><a class="headerlink" href="#cua_sandbox.Image.macos" title="Link to this definition">¶</a></dt>
+<dd><p>macOS image. Always a VM (Apple Virtualization / Lume).</p>
+<p>Supported versions: <code class="docutils literal notranslate"><span class="pre">&quot;15&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;sequoia&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;26&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;tahoe&quot;</span></code>.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Image.pip_install">
+<span class="sig-name descname"><span class="pre">pip_install</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">packages</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#cua_sandbox.Image" title="cua_sandbox.image.Image"><span class="pre">Image</span></a></span></span><a class="headerlink" href="#cua_sandbox.Image.pip_install" title="Link to this definition">¶</a></dt>
+<dd><p>Install Python packages via pip.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Image.pwa_install">
+<span class="sig-name descname"><span class="pre">pwa_install</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">manifest_url</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">package_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">keystore</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">keystore_alias</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'android'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">keystore_password</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'android'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">builder</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'pwa2apk'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">push_timeout</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">float</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#cua_sandbox.Image" title="cua_sandbox.image.Image"><span class="pre">Image</span></a></span></span><a class="headerlink" href="#cua_sandbox.Image.pwa_install" title="Link to this definition">¶</a></dt>
+<dd><p>Build an APK from a PWA manifest URL and install it (Android only).</p>
+<p>Two builder backends are supported:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;pwa2apk&quot;</span></code> (default) — generates a lightweight WebView-based APK.
+No Chrome dependency, no “Running in Chrome” banner, no Digital Asset
+Links needed.  ~10 KB APK.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;bubblewrap&quot;</span></code> — generates a Chrome Trusted Web Activity (TWA) APK.
+Requires Chrome on the device and a matching
+<code class="docutils literal notranslate"><span class="pre">/.well-known/assetlinks.json</span></code> on the server.  Shows a mandatory
+“Running in Chrome” privacy disclosure on every launch.</p></li>
+</ul>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>manifest_url</strong> – Full URL to the PWA’s <code class="docutils literal notranslate"><span class="pre">manifest.json</span></code> or
+<code class="docutils literal notranslate"><span class="pre">manifest.webmanifest</span></code>.
+Example: <code class="docutils literal notranslate"><span class="pre">&quot;http://10.0.2.2:3000/manifest.json&quot;</span></code></p></li>
+<li><p><strong>package_name</strong> – Android package ID.  Defaults to a reversed-hostname
+derivation (e.g. <code class="docutils literal notranslate"><span class="pre">&quot;com.example.app&quot;</span></code>).</p></li>
+<li><p><strong>keystore</strong> – Path to a <code class="docutils literal notranslate"><span class="pre">*.keystore</span></code> / <code class="docutils literal notranslate"><span class="pre">*.jks</span></code> file.  When
+omitted a fresh keystore is generated and cached.
+Pass the keystore bundled with your PWA repo so the
+fingerprint is deterministic.</p></li>
+<li><p><strong>keystore_alias</strong> – Key alias inside the keystore (default <code class="docutils literal notranslate"><span class="pre">&quot;android&quot;</span></code>).</p></li>
+<li><p><strong>keystore_password</strong> – Password for both the store and the key
+(default <code class="docutils literal notranslate"><span class="pre">&quot;android&quot;</span></code>).</p></li>
+<li><p><strong>builder</strong> – <code class="docutils literal notranslate"><span class="pre">&quot;pwa2apk&quot;</span></code> (default) or <code class="docutils literal notranslate"><span class="pre">&quot;bubblewrap&quot;</span></code>.</p></li>
+<li><p><strong>push_timeout</strong> – Optional seconds for the <code class="docutils literal notranslate"><span class="pre">write_bytes</span></code> <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">push</span></code>
+of the built APK.  When <code class="docutils literal notranslate"><span class="pre">None</span></code> the server default
+applies.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Image.run">
+<span class="sig-name descname"><span class="pre">run</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">command</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#cua_sandbox.Image" title="cua_sandbox.image.Image"><span class="pre">Image</span></a></span></span><a class="headerlink" href="#cua_sandbox.Image.run" title="Link to this definition">¶</a></dt>
+<dd><p>Run a shell command during image build.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Image.to_cloud_init">
+<span class="sig-name descname"><span class="pre">to_cloud_init</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="headerlink" href="#cua_sandbox.Image.to_cloud_init" title="Link to this definition">¶</a></dt>
+<dd><p>Generate a cloud-init user-data script from the image layers.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Image.to_dict">
+<span class="sig-name descname"><span class="pre">to_dict</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Any</span><span class="p"><span class="pre">]</span></span></span></span><a class="headerlink" href="#cua_sandbox.Image.to_dict" title="Link to this definition">¶</a></dt>
+<dd><p>Serialize to a plain dict suitable for JSON or cloud API.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Image.uv_install">
+<span class="sig-name descname"><span class="pre">uv_install</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">packages</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#cua_sandbox.Image" title="cua_sandbox.image.Image"><span class="pre">Image</span></a></span></span><a class="headerlink" href="#cua_sandbox.Image.uv_install" title="Link to this definition">¶</a></dt>
+<dd><p>Install Python packages via uv add into the cua-server project.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Image.windows">
+<em class="property"><span class="k"><span class="pre">classmethod</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">windows</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">version</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'11'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">kind</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'vm'</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#cua_sandbox.Image" title="cua_sandbox.image.Image"><span class="pre">Image</span></a></span></span><a class="headerlink" href="#cua_sandbox.Image.windows" title="Link to this definition">¶</a></dt>
+<dd><p>Windows image. Always a VM (QEMU or Hyper-V).</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.Image.winget_install">
+<span class="sig-name descname"><span class="pre">winget_install</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">packages</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#cua_sandbox.Image" title="cua_sandbox.image.Image"><span class="pre">Image</span></a></span></span><a class="headerlink" href="#cua_sandbox.Image.winget_install" title="Link to this definition">¶</a></dt>
+<dd><p>Install packages via winget (Windows).</p>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+<section id="runtime-support">
+<h2>Runtime support<a class="headerlink" href="#runtime-support" title="Link to this heading">¶</a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="cua_sandbox.RuntimeSupport">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">cua_sandbox.</span></span><span class="sig-name descname"><span class="pre">RuntimeSupport</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">supported</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">hw_accel</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">runtime_installed</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">auto_installable</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">runtime_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">host_os</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">host_arch</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">guest_os</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">reason</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#cua_sandbox.RuntimeSupport" title="Link to this definition">¶</a></dt>
+<dd><p>Result of a local runtime compatibility check for a given Image.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="cua_sandbox.RuntimeSupport.supported">
+<span class="sig-name descname"><span class="pre">supported</span></span><a class="headerlink" href="#cua_sandbox.RuntimeSupport.supported" title="Link to this definition">¶</a></dt>
+<dd><p>Image can run locally at all (runtime available or
+auto-installable, and host/guest OS is compatible).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="cua_sandbox.RuntimeSupport.hw_accel">
+<span class="sig-name descname"><span class="pre">hw_accel</span></span><a class="headerlink" href="#cua_sandbox.RuntimeSupport.hw_accel" title="Link to this definition">¶</a></dt>
+<dd><p>Hardware acceleration is available for the guest on
+this host (HVF on Apple Silicon, KVM on Linux, etc.).
+Always True for containers — they run natively.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="cua_sandbox.RuntimeSupport.runtime_installed">
+<span class="sig-name descname"><span class="pre">runtime_installed</span></span><a class="headerlink" href="#cua_sandbox.RuntimeSupport.runtime_installed" title="Link to this definition">¶</a></dt>
+<dd><p>Required runtime binary/daemon is found right now
+without any installation step.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="cua_sandbox.RuntimeSupport.auto_installable">
+<span class="sig-name descname"><span class="pre">auto_installable</span></span><a class="headerlink" href="#cua_sandbox.RuntimeSupport.auto_installable" title="Link to this definition">¶</a></dt>
+<dd><p>Runtime can be downloaded and installed automatically
+by the SDK without user intervention (e.g. Android SDK).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="cua_sandbox.RuntimeSupport.runtime_name">
+<span class="sig-name descname"><span class="pre">runtime_name</span></span><a class="headerlink" href="#cua_sandbox.RuntimeSupport.runtime_name" title="Link to this definition">¶</a></dt>
+<dd><p>Name of the runtime that would be used
+(“docker”, “lume”, “qemu”, “android_emulator”, “hyperv”).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="cua_sandbox.RuntimeSupport.host_os">
+<span class="sig-name descname"><span class="pre">host_os</span></span><a class="headerlink" href="#cua_sandbox.RuntimeSupport.host_os" title="Link to this definition">¶</a></dt>
+<dd><p>Detected host OS (“darwin”, “linux”, “windows”).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="cua_sandbox.RuntimeSupport.host_arch">
+<span class="sig-name descname"><span class="pre">host_arch</span></span><a class="headerlink" href="#cua_sandbox.RuntimeSupport.host_arch" title="Link to this definition">¶</a></dt>
+<dd><p>Detected host CPU architecture (“arm64”, “x86_64”).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="cua_sandbox.RuntimeSupport.guest_os">
+<span class="sig-name descname"><span class="pre">guest_os</span></span><a class="headerlink" href="#cua_sandbox.RuntimeSupport.guest_os" title="Link to this definition">¶</a></dt>
+<dd><p>Guest OS from the image (“linux”, “macos”, “windows”, “android”).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="cua_sandbox.RuntimeSupport.reason">
+<span class="sig-name descname"><span class="pre">reason</span></span><a class="headerlink" href="#cua_sandbox.RuntimeSupport.reason" title="Link to this definition">¶</a></dt>
+<dd><p>Human-readable explanation — always set, describes
+the limiting factor when supported=False or hw_accel=False.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="cua_sandbox.check_local_support">
+<span class="sig-prename descclassname"><span class="pre">cua_sandbox.</span></span><span class="sig-name descname"><span class="pre">check_local_support</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">image</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="#cua_sandbox.Image" title="cua_sandbox.Image"><span class="pre">Image</span></a></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#cua_sandbox.RuntimeSupport" title="cua_sandbox.RuntimeSupport"><span class="pre">RuntimeSupport</span></a></span></span><a class="headerlink" href="#cua_sandbox.check_local_support" title="Link to this definition">¶</a></dt>
+<dd><p>Return a RuntimeSupport describing whether <em>image</em> can run locally.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>image</strong> – The Image to check. Use Image.linux(), Image.macos(), etc.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>RuntimeSupport with .supported, .hw_accel, .reason, and more.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="cua_sandbox.skip_if_unsupported">
+<span class="sig-prename descclassname"><span class="pre">cua_sandbox.</span></span><span class="sig-name descname"><span class="pre">skip_if_unsupported</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">image</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="#cua_sandbox.Image" title="cua_sandbox.Image"><span class="pre">Image</span></a></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">require_hw_accel</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="headerlink" href="#cua_sandbox.skip_if_unsupported" title="Link to this definition">¶</a></dt>
+<dd><p>Call at the top of a pytest test/fixture to skip when the host can’t run <em>image</em>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>image</strong> – The Image the test intends to boot with local=True.</p></li>
+<li><p><strong>require_hw_accel</strong> – If True, also skip when hardware acceleration is unavailable
+(e.g. skip Android tests that would run in software emulation).</p></li>
+</ul>
+</dd>
+</dl>
+<p>Example:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">test_macos_brew_install</span><span class="p">():</span>
+    <span class="n">skip_if_unsupported</span><span class="p">(</span><span class="n">Image</span><span class="o">.</span><span class="n">macos</span><span class="p">())</span>
+    <span class="k">async</span> <span class="k">with</span> <span class="n">Sandbox</span><span class="o">.</span><span class="n">ephemeral</span><span class="p">(</span><span class="n">Image</span><span class="o">.</span><span class="n">macos</span><span class="p">()</span><span class="o">.</span><span class="n">brew_install</span><span class="p">(</span><span class="s2">&quot;wget&quot;</span><span class="p">),</span> <span class="n">local</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="k">as</span> <span class="n">sb</span><span class="p">:</span>
+        <span class="k">assert</span> <span class="p">(</span><span class="k">await</span> <span class="n">sb</span><span class="o">.</span><span class="n">shell</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;wget --version&quot;</span><span class="p">))</span><span class="o">.</span><span class="n">success</span>
+</pre></div>
+</div>
+</dd></dl>
+
+</section>
+<section id="exported-transport">
+<h2>Exported transport<a class="headerlink" href="#exported-transport" title="Link to this heading">¶</a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="cua_sandbox.CloudTransport">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">cua_sandbox.</span></span><span class="sig-name descname"><span class="pre">CloudTransport</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">api_key</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">base_url</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">image</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Any</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cpu</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">memory_mb</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">disk_gb</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">region</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'us-east-1'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">time_to_start</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">float</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">request_timeout</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">float</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#cua_sandbox.CloudTransport" title="Link to this definition">¶</a></dt>
+<dd><p>Transport that provisions / connects to a CUA cloud VM.</p>
+</dd></dl>
+
+</section>
+<section id="public-interfaces">
+<h2>Public interfaces<a class="headerlink" href="#public-interfaces" title="Link to this heading">¶</a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Apps">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">cua_sandbox.interfaces.</span></span><span class="sig-name descname"><span class="pre">Apps</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">transport</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Transport</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">os_type</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#cua_sandbox.interfaces.Apps" title="Link to this definition">¶</a></dt>
+<dd><p>Install and launch cataloged applications inside the sandbox.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Apps.install">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">install</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">app_id</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">CommandResult</span></span></span><a class="headerlink" href="#cua_sandbox.interfaces.Apps.install" title="Link to this definition">¶</a></dt>
+<dd><p>Install an app by its catalog ID (e.g. <code class="docutils literal notranslate"><span class="pre">&quot;unity&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;godot-engine&quot;</span></code>).</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Apps.launch">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">launch</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">app_id</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">CommandResult</span></span></span><a class="headerlink" href="#cua_sandbox.interfaces.Apps.launch" title="Link to this definition">¶</a></dt>
+<dd><p>Launch a previously-installed app by its catalog ID.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Clipboard">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">cua_sandbox.interfaces.</span></span><span class="sig-name descname"><span class="pre">Clipboard</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">transport</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Transport</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#cua_sandbox.interfaces.Clipboard" title="Link to this definition">¶</a></dt>
+<dd><p>Clipboard read/write.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Clipboard.get">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">get</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="headerlink" href="#cua_sandbox.interfaces.Clipboard.get" title="Link to this definition">¶</a></dt>
+<dd><p>Return the current clipboard text.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Clipboard.set">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">set</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">text</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="headerlink" href="#cua_sandbox.interfaces.Clipboard.set" title="Link to this definition">¶</a></dt>
+<dd><p>Set the clipboard text.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.FileEntry">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">cua_sandbox.interfaces.</span></span><span class="sig-name descname"><span class="pre">FileEntry</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="s"><span class="pre">'str'</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="s"><span class="pre">'str'</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">is_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="s"><span class="pre">'bool'</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="s"><span class="pre">'Optional[int]'</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#cua_sandbox.interfaces.FileEntry" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Files">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">cua_sandbox.interfaces.</span></span><span class="sig-name descname"><span class="pre">Files</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">transport</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Transport</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#cua_sandbox.interfaces.Files" title="Link to this definition">¶</a></dt>
+<dd><p>File and directory operations inside the sandbox.</p>
+<p>All paths are inside the sandbox unless otherwise noted.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Files.download">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">download</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">remote_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">local_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">Path</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="headerlink" href="#cua_sandbox.interfaces.Files.download" title="Link to this definition">¶</a></dt>
+<dd><p>Pull a file from the sandbox down to the host.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Files.upload">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">upload</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">local_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">Path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">remote_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="headerlink" href="#cua_sandbox.interfaces.Files.upload" title="Link to this definition">¶</a></dt>
+<dd><p>Push a file from the host into the sandbox.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Keyboard">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">cua_sandbox.interfaces.</span></span><span class="sig-name descname"><span class="pre">Keyboard</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">transport</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Transport</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#cua_sandbox.interfaces.Keyboard" title="Link to this definition">¶</a></dt>
+<dd><p>Keyboard control.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Keyboard.keypress">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">keypress</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">keys</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="headerlink" href="#cua_sandbox.interfaces.Keyboard.keypress" title="Link to this definition">¶</a></dt>
+<dd><p>Press a key combination (e.g. [“ctrl”, “c”] or “enter”).</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Keyboard.type">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">type</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">text</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="headerlink" href="#cua_sandbox.interfaces.Keyboard.type" title="Link to this definition">¶</a></dt>
+<dd><p>Type a string of text.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Mobile">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">cua_sandbox.interfaces.</span></span><span class="sig-name descname"><span class="pre">Mobile</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">transport</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Transport</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#cua_sandbox.interfaces.Mobile" title="Link to this definition">¶</a></dt>
+<dd><p>Mobile (Android) touch and hardware-key control.</p>
+<p>All touch coordinates are in screen pixels.  Single-touch methods use
+<code class="docutils literal notranslate"><span class="pre">input</span> <span class="pre">tap/swipe</span></code> via <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">shell</span></code>.  Multi-touch gestures delegate to
+the <code class="docutils literal notranslate"><span class="pre">multitouch_gesture</span></code> transport action, which uses <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">root</span></code> +
+MT Protocol B <code class="docutils literal notranslate"><span class="pre">sendevent</span></code> for reliable injection on both local and cloud
+transports.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Mobile.gesture">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">gesture</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">finger_paths</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">tuple</span><span class="p"><span class="pre">[</span></span><span class="pre">int</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">int</span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">duration_ms</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">400</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">steps</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">0</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="headerlink" href="#cua_sandbox.interfaces.Mobile.gesture" title="Link to this definition">¶</a></dt>
+<dd><p>Inject an arbitrary N-finger gesture via MT Protocol B <code class="docutils literal notranslate"><span class="pre">sendevent</span></code>.</p>
+<p>Each positional argument is a sequence of <code class="docutils literal notranslate"><span class="pre">(x,</span> <span class="pre">y)</span></code> waypoints for one
+finger.  Pass an even number of <code class="docutils literal notranslate"><span class="pre">(x,</span> <span class="pre">y)</span></code> tuples and they are paired
+into start/end positions per finger:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="c1"># two-finger pinch-out</span>
+<span class="k">await</span> <span class="n">mobile</span><span class="o">.</span><span class="n">gesture</span><span class="p">(</span>
+    <span class="p">(</span><span class="n">cx</span> <span class="o">-</span> <span class="mi">20</span><span class="p">,</span> <span class="n">cy</span><span class="p">),</span> <span class="p">(</span><span class="n">cx</span> <span class="o">-</span> <span class="mi">200</span><span class="p">,</span> <span class="n">cy</span><span class="p">),</span>   <span class="c1"># finger 0</span>
+    <span class="p">(</span><span class="n">cx</span> <span class="o">+</span> <span class="mi">20</span><span class="p">,</span> <span class="n">cy</span><span class="p">),</span> <span class="p">(</span><span class="n">cx</span> <span class="o">+</span> <span class="mi">200</span><span class="p">,</span> <span class="n">cy</span><span class="p">),</span>   <span class="c1"># finger 1</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>Delegates to the <code class="docutils literal notranslate"><span class="pre">multitouch_gesture</span></code> transport action, which uses
+<code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">root</span></code> + MT Protocol B <code class="docutils literal notranslate"><span class="pre">sendevent</span></code> for reliable injection on
+both local ADB and cloud HTTP transports.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>*finger_paths</strong> – Alternating start/end <code class="docutils literal notranslate"><span class="pre">(x,</span> <span class="pre">y)</span></code> tuples, two per finger.
+Must have an even length &gt;= 4 (at least 2 fingers × 2 points).</p></li>
+<li><p><strong>duration_ms</strong> – Total gesture duration in milliseconds.</p></li>
+<li><p><strong>steps</strong> – Interpolation steps (0 = auto: duration_ms // 20, min 5).</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Mobile.pinch_in">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">pinch_in</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">cx</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cy</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">spread</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">300</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">duration_ms</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">400</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="headerlink" href="#cua_sandbox.interfaces.Mobile.pinch_in" title="Link to this definition">¶</a></dt>
+<dd><p>Pinch-in (zoom out) with two real simultaneous fingers.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Mobile.pinch_out">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">pinch_out</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">cx</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cy</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">spread</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">300</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">duration_ms</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">400</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="headerlink" href="#cua_sandbox.interfaces.Mobile.pinch_out" title="Link to this definition">¶</a></dt>
+<dd><p>Pinch-out (zoom in) with two real simultaneous fingers.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Mouse">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">cua_sandbox.interfaces.</span></span><span class="sig-name descname"><span class="pre">Mouse</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">transport</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Transport</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#cua_sandbox.interfaces.Mouse" title="Link to this definition">¶</a></dt>
+<dd><p>Mouse control.</p>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Screen">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">cua_sandbox.interfaces.</span></span><span class="sig-name descname"><span class="pre">Screen</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">transport</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Transport</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#cua_sandbox.interfaces.Screen" title="Link to this definition">¶</a></dt>
+<dd><p>Screen capture and info.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Screen.screenshot">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">screenshot</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">format</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'png'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">quality</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">95</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">bytes</span></span></span><a class="headerlink" href="#cua_sandbox.interfaces.Screen.screenshot" title="Link to this definition">¶</a></dt>
+<dd><p>Capture a screenshot and return raw image bytes.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>format</strong> – “png” (lossless, default) or “jpeg” (lossy, ~5-10x smaller).</p></li>
+<li><p><strong>quality</strong> – JPEG quality 1-95, ignored for PNG.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Screen.screenshot_base64">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">screenshot_base64</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">format</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'png'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">quality</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">95</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="headerlink" href="#cua_sandbox.interfaces.Screen.screenshot_base64" title="Link to this definition">¶</a></dt>
+<dd><p>Capture a screenshot and return as a base64-encoded string.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Screen.size">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">size</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Tuple</span><span class="p"><span class="pre">[</span></span><span class="pre">int</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">int</span><span class="p"><span class="pre">]</span></span></span></span><a class="headerlink" href="#cua_sandbox.interfaces.Screen.size" title="Link to this definition">¶</a></dt>
+<dd><p>Return (width, height) of the screen.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Shell">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">cua_sandbox.interfaces.</span></span><span class="sig-name descname"><span class="pre">Shell</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">transport</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Transport</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#cua_sandbox.interfaces.Shell" title="Link to this definition">¶</a></dt>
+<dd><p>Shell command execution.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Shell.run">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">run</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">command</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">timeout</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">30</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">background</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">CommandResult</span></span></span><a class="headerlink" href="#cua_sandbox.interfaces.Shell.run" title="Link to this definition">¶</a></dt>
+<dd><p>Run a shell command and return the result.</p>
+<p>When <code class="docutils literal notranslate"><span class="pre">background=True</span></code>, returns immediately with <code class="docutils literal notranslate"><span class="pre">stdout=str(pid)</span></code>
+and <code class="docutils literal notranslate"><span class="pre">returncode=0</span></code>; poll for completion via a sentinel file or by
+inspecting the process list.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Terminal">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">cua_sandbox.interfaces.</span></span><span class="sig-name descname"><span class="pre">Terminal</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">transport</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Transport</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#cua_sandbox.interfaces.Terminal" title="Link to this definition">¶</a></dt>
+<dd><p>PTY terminal sessions.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Terminal.close">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">close</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">pid</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">bool</span></span></span><a class="headerlink" href="#cua_sandbox.interfaces.Terminal.close" title="Link to this definition">¶</a></dt>
+<dd><p>Kill a PTY session.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Terminal.create">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">create</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">command</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cols</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">80</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rows</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">24</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">dict</span></span></span><a class="headerlink" href="#cua_sandbox.interfaces.Terminal.create" title="Link to this definition">¶</a></dt>
+<dd><p>Create a new PTY session. Returns {“pid”: int, “cols”: int, “rows”: int}.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Terminal.info">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">info</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">pid</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">dict</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span></span><a class="headerlink" href="#cua_sandbox.interfaces.Terminal.info" title="Link to this definition">¶</a></dt>
+<dd><p>Return session info or None if gone.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Terminal.send_input">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">send_input</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">pid</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">data</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="headerlink" href="#cua_sandbox.interfaces.Terminal.send_input" title="Link to this definition">¶</a></dt>
+<dd><p>Send input to a PTY session.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Tunnel">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">cua_sandbox.interfaces.</span></span><span class="sig-name descname"><span class="pre">Tunnel</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">transport</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Transport</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#cua_sandbox.interfaces.Tunnel" title="Link to this definition">¶</a></dt>
+<dd><p>Port-forwarding interface — exposes sandbox ports on the host.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Tunnel.forward">
+<span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">ports</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">_TunnelContext</span></span></span><a class="headerlink" href="#cua_sandbox.interfaces.Tunnel.forward" title="Link to this definition">¶</a></dt>
+<dd><p>Forward one or more sandbox ports (or abstract sockets) to the host.</p>
+<p><em>ports</em> may be:
+- <code class="docutils literal notranslate"><span class="pre">int</span></code> — TCP port inside the sandbox (e.g. <code class="docutils literal notranslate"><span class="pre">8080</span></code>)
+- <code class="docutils literal notranslate"><span class="pre">str</span></code> — Android abstract socket name (e.g. <code class="docutils literal notranslate"><span class="pre">&quot;chrome_devtools_remote&quot;</span></code>)</p>
+<p>Returns a context manager (or awaitable) that yields:
+- a single <a class="reference internal" href="#cua_sandbox.interfaces.TunnelInfo" title="cua_sandbox.interfaces.TunnelInfo"><code class="xref py py-class docutils literal notranslate"><span class="pre">TunnelInfo</span></code></a> when one target is given
+- a <code class="docutils literal notranslate"><span class="pre">dict[sandbox_port,</span> <span class="pre">TunnelInfo]</span></code> when multiple targets are given</p>
+<p>Example — Chrome DevTools over ADB:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="k">async</span> <span class="k">with</span> <span class="n">sb</span><span class="o">.</span><span class="n">tunnel</span><span class="o">.</span><span class="n">forward</span><span class="p">(</span><span class="s2">&quot;chrome_devtools_remote&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">t</span><span class="p">:</span>
+    <span class="c1"># http://localhost:&lt;random&gt;/json lists CDP targets</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">url</span><span class="p">)</span>
+</pre></div>
+</div>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.TunnelInfo">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">cua_sandbox.interfaces.</span></span><span class="sig-name descname"><span class="pre">TunnelInfo</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">host</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">port</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sandbox_port</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">url</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#cua_sandbox.interfaces.TunnelInfo" title="Link to this definition">¶</a></dt>
+<dd><p>A single forwarded port.</p>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Window">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">cua_sandbox.interfaces.</span></span><span class="sig-name descname"><span class="pre">Window</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">transport</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Transport</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#cua_sandbox.interfaces.Window" title="Link to this definition">¶</a></dt>
+<dd><p>Window management.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="cua_sandbox.interfaces.Window.get_active_title">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">get_active_title</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="headerlink" href="#cua_sandbox.interfaces.Window.get_active_title" title="Link to this definition">¶</a></dt>
+<dd><p>Return the title of the currently focused window.</p>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="nav-item nav-item-0"><a href="#">CUA Sandbox API</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">CUA Sandbox API</a></li>
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright .
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    </div>
+  </body>
+</html>

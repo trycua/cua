@@ -6224,7 +6224,10 @@ impl Tool for DragTool {
             name: "drag".into(),
             description: "Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels. \
                           duration_ms (default 500) is the wall-clock budget; steps (default 20) interpolates intermediate \
-                          WM_MOUSEMOVE events along the path. No focus steal. After a zoom call, pass from_zoom=true.".into(),
+                          WM_MOUSEMOVE events along the path. No focus steal. After a zoom call, pass from_zoom=true. \
+                          Drags that start on a window caption / title bar or resize border (i.e. moving or resizing the \
+                          window itself) cannot be delivered in the background — the OS move/resize loop needs real pointer \
+                          input — so they return background_unavailable; re-issue those with delivery_mode:\"foreground\".".into(),
             input_schema: json!({"type":"object","required":["from_x","from_y","to_x","to_y"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
                 "scope":{"type":"string","enum":["window","desktop"],"description":"Use desktop with no pid/window_id for screen-absolute coordinates."},
@@ -6484,6 +6487,33 @@ impl Tool for DragTool {
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
+        }
+
+        // Background posted-message drags cannot move or resize a top-level
+        // window: a caption/border drag is handled by the OS's interactive
+        // move/resize modal loop, which only real pointer input can drive —
+        // the posted WM_MOUSEMOVE stream is discarded and the "success" is a
+        // verified no-op. Hit-test the start point and refuse with the
+        // structured background_unavailable error so callers escalate to
+        // delivery_mode:"foreground" per the documented ladder instead of
+        // trusting a drag that did nothing.
+        let nc_hit = tokio::task::spawn_blocking(move || {
+            crate::input::mouse::non_client_move_resize_hit(hwnd, sx_from, sy_from)
+        })
+        .await
+        .ok()
+        .flatten();
+        if let Some(region) = nc_hit {
+            return crate::input::delivery::background_unavailable_error_with_cause(
+                hwnd,
+                EventKind::MouseMove,
+                format!(
+                    "the drag starts on the window's {region} (WM_NCHITTEST), and moving \
+                     or resizing a top-level window requires the OS interactive \
+                     move/resize loop, which posted mouse messages cannot drive. \
+                     Re-issue the same drag with delivery_mode:\"foreground\"."
+                ),
+            );
         }
 
         // Pin the agent-cursor overlay above the drag target so the synthetic

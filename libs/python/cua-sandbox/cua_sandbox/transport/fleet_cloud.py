@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from urllib.parse import urlparse
 
 from cua_sandbox._config import (
+    get_access_token,
     get_client_id,
     get_client_secret,
     get_fleet_base_url,
@@ -23,6 +24,8 @@ from cyclops_sdk import (
     CyclopsClient,
     CyclopsConfiguration,
     CyclopsCredentials,
+    CyclopsTokenProviderConfiguration,
+    HttpHeader,
     HttpRequest,
     PoolSpec,
     PoolTemplate,
@@ -41,15 +44,30 @@ class _FleetClient:
     """Thin async facade over the generated Cyclops SDK."""
 
     def __init__(self) -> None:
+        self._access_token = get_access_token()
+        self._base_url = get_fleet_base_url().rstrip("/")
+        self._http_client = CyclopsHttpClient()
+        if self._access_token:
+            configuration = CyclopsTokenProviderConfiguration(
+                base_url=self._base_url,
+                pool_poll_interval_ms=2000,
+                pool_poll_limit=300,
+                claim_poll_interval_ms=2000,
+                claim_poll_limit=300,
+            )
+            self._client = CyclopsClient.connect_with_access_token(
+                configuration, self._access_token, self._http_client
+            )
+            return
+
         client_id = get_client_id()
         client_secret = get_client_secret()
         if not client_id or not client_secret:
             raise ValueError(
-                "Fleet cloud sandboxes require CUA_CLIENT_ID and CUA_CLIENT_SECRET, "
-                "or cua.configure(client_id=..., client_secret=...)."
+                "Fleet cloud sandboxes require a temporary access token or CUA_CLIENT_ID and "
+                "CUA_CLIENT_SECRET. Configure cua.configure(access_token=...) or "
+                "cua.configure(client_id=..., client_secret=...)."
             )
-        self._base_url = get_fleet_base_url().rstrip("/")
-        self._http_client = CyclopsHttpClient()
         configuration = CyclopsConfiguration(
             base_url=self._base_url,
             token_url=get_token_url(),
@@ -113,24 +131,41 @@ class _FleetClient:
                 return claim
         raise LookupError(f"Fleet claim {expected!r} was not found")
 
-    async def list_pools(self) -> list[Any]:
+    async def _list_namespaces(self) -> list[str]:
+        headers = []
+        if self._access_token:
+            headers = [HttpHeader(name="Authorization", value=f"Bearer {self._access_token}")]
         response = await self._http_client.execute(
-            HttpRequest(method="GET", url=f"{self._base_url}/api/namespaces", headers=[], body=None)
+            HttpRequest(
+                method="GET", url=f"{self._base_url}/api/namespaces", headers=headers, body=None
+            )
         )
+        if response.status == 401 and self._access_token:
+            raise RuntimeError(
+                "Fleet device access token is expired or unauthorized. Please authenticate again through "
+                "the supported device-login flow, then call cua.configure(access_token=...) with "
+                "a new temporary token."
+            )
         if not 200 <= response.status < 300:
             raise RuntimeError(f"Fleet namespace listing failed with HTTP {response.status}")
         payload = json.loads(response.body)
         items = payload if isinstance(payload, list) else payload.get("items", [])
-        namespaces = [
-            (
-                item
-                if isinstance(item, str)
-                else item.get("name") or item.get("metadata", {}).get("name")
-            )
+        return [
+            namespace
             for item in items
+            if (
+                namespace := (
+                    item
+                    if isinstance(item, str)
+                    else item.get("name") or item.get("metadata", {}).get("name")
+                )
+            )
         ]
+
+    async def list_pools(self) -> list[Any]:
+        namespaces = await self._list_namespaces()
         pools = await asyncio.gather(
-            *(self._client.list_pools(namespace) for namespace in namespaces if namespace)
+            *(self._client.list_pools(namespace) for namespace in namespaces)
         )
         return [pool for namespace_pools in pools for pool in namespace_pools]
 

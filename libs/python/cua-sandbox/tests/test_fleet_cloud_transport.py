@@ -1,5 +1,7 @@
 import pytest
 from cua_sandbox import Image
+from cua_sandbox._config import _global_config, configure
+from cua_sandbox.sandbox import Sandbox as PublicSandbox
 from cua_sandbox.transport import fleet_cloud
 from cua_sandbox.transport.fleet_cloud import FleetCloudTransport
 from cyclops_sdk import Sandbox
@@ -20,6 +22,16 @@ def test_registry_image_becomes_typed_pool_request():
         ("server", 8000),
         ("port-3000", 3000),
     ]
+
+
+def test_fleet_routing_requires_configured_fleet_auth(monkeypatch):
+    _global_config.access_token = _global_config.client_id = _global_config.client_secret = None
+    monkeypatch.delenv("CUA_CLIENT_ID", raising=False)
+    monkeypatch.delenv("CUA_CLIENT_SECRET", raising=False)
+    assert not PublicSandbox._uses_fleet(None)
+    configure(access_token="temporary-device-token")
+    assert PublicSandbox._uses_fleet(None)
+    assert not PublicSandbox._uses_fleet("sk-explicit-legacy-key")
 
 
 @pytest.mark.parametrize(
@@ -59,6 +71,26 @@ async def test_connect_uses_generated_pool_template_claim_default(monkeypatch):
 
     assert len(requests) == 1
     assert requests[0].spec is None
+
+
+@pytest.mark.asyncio
+async def test_cleanup_deletes_claim_before_pool():
+    transport = FleetCloudTransport(image=Image.from_registry("example:latest"), name="demo")
+    calls = []
+
+    class Client:
+        async def delete_claim(self, claim):
+            calls.append(("claim", claim))
+
+        async def delete_pool(self, pool):
+            calls.append(("pool", pool))
+
+    transport._sdk = Client()
+    transport._claim = "claim"
+    transport._pool = "pool"
+    await transport._cleanup_resources()
+    assert calls == [("claim", "claim"), ("pool", "pool")]
+    assert transport._claim is None and transport._pool is None
 
 
 @pytest.mark.asyncio

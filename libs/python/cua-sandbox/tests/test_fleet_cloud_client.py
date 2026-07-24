@@ -1,6 +1,5 @@
-import pytest
-
 import cua_sandbox.transport.fleet_cloud as fleet_cloud
+import pytest
 from cua_sandbox._config import _global_config, configure
 from cua_sandbox.transport.fleet_cloud import _FleetClient
 

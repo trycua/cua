@@ -270,6 +270,12 @@ fn build_driver_without_cursor() -> Arc<cua_driver_sdk::CuaDriver> {
     )
 }
 
+#[cfg(test)]
+fn test_runtime_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
 fn run_mcp_direct(compatibility_mode: bool) -> anyhow::Result<()> {
     let driver = build_driver(
         cursor_overlay::CursorConfig::from_args(),

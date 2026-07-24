@@ -1707,6 +1707,7 @@ mod gate_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn ended_session_call_is_gated_live_and_anon_pass() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
         PROBE_INVOCATIONS.store(0, Ordering::SeqCst);
 
         let driver =

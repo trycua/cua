@@ -437,6 +437,7 @@ mod tests {
 
     #[tokio::test]
     async fn http_tools_list_is_the_sdk_inventory() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
         let sdk = crate::sdk_adapter::SdkAdapter::load(crate::build_driver_without_cursor())
             .await
             .expect("SDK adapter");

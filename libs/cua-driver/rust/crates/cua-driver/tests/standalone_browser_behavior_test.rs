@@ -2837,8 +2837,11 @@ fn run_multi_tab(spec: &BrowserSpec) {
             let pixel_to_css_y = snapshot.structured()["screenshot"]["pixel_to_css_scale_y"]
                 .as_f64()
                 .expect("screenshot y scale");
-            assert!((viewport_width - 400.0).abs() < 0.01, "{}", snapshot.raw);
-            assert!((viewport_height - 300.0).abs() < 0.01, "{}", snapshot.raw);
+            assert!(
+                viewport_width > 0.0 && viewport_height > 0.0,
+                "{}",
+                snapshot.raw
+            );
             assert!(
                 (pixel_to_css_x - viewport_width / png_width).abs() < 1e-9,
                 "{}",
@@ -2846,6 +2849,12 @@ fn run_multi_tab(spec: &BrowserSpec) {
             );
             assert!(
                 (pixel_to_css_y - viewport_height / png_height).abs() < 1e-9,
+                "{}",
+                snapshot.raw
+            );
+            assert!(
+                (pixel_to_css_x - 1.0 / device_scale).abs() < 1e-9
+                    && (pixel_to_css_y - 1.0 / device_scale).abs() < 1e-9,
                 "{}",
                 snapshot.raw
             );

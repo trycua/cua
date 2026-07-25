@@ -1,6 +1,7 @@
-//! Unix-socket daemon server and client for `cua-driver serve`/`stop`/`status`.
+//! Local daemon server and client for `cua-driver serve`/`stop`/`status`.
 //!
-//! Protocol: line-delimited JSON over a Unix domain socket.
+//! Protocol: line-delimited JSON over a Unix domain socket or Windows named
+//! pipe.
 //!
 //! Request shapes:
 //!   {"method":"call","name":"<tool>","args":{...}}
@@ -15,7 +16,10 @@
 //! The socket file is at:
 //!   macOS  — ~/Library/Caches/cua-driver/cua-driver.sock
 //!   Linux  — ~/.cache/cua-driver/cua-driver.sock
-//!   Windows — \\.\pipe\cua-driver  (TODO: use named pipe; stubs only for now)
+//!   Windows — \\.\pipe\cua-driver
+//!
+//! Source-installed local builds use the corresponding `cua-driver-local`
+//! namespace on every platform.
 
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};

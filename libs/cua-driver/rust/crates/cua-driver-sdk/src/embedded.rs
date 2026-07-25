@@ -1113,7 +1113,11 @@ mod tests {
 
     fn options(mode: EmbeddedPermissionMode) -> EmbeddedDriverHostOptions {
         EmbeddedDriverHostOptions {
-            binary_path: "/example/cua-driver".into(),
+            binary_path: std::env::current_dir()
+                .expect("test working directory")
+                .join("cua-driver")
+                .to_string_lossy()
+                .into_owned(),
             host_bundle_id: "com.example.host".into(),
             socket_path: None,
             startup_timeout_ms: None,

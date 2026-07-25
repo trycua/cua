@@ -529,6 +529,46 @@ fn is_chrome_blue(pixel: image::Rgba<u8>) -> bool {
     blue > 140 && blue > red.saturating_add(35) && blue > green
 }
 
+fn has_checkbox_border_coverage(
+    component: &[(u32, u32)],
+    bounds: (u32, u32, u32, u32),
+    scale: f64,
+) -> bool {
+    let (min_x, min_y, max_x, max_y) = bounds;
+    let width = max_x - min_x + 1;
+    let height = max_y - min_y + 1;
+    let corner_inset = (2.0 * scale).round().max(2.0) as u32;
+    let doubled_inset = corner_inset.saturating_mul(2);
+    if width <= doubled_inset || height <= doubled_inset {
+        return false;
+    }
+    let horizontal_span = width - doubled_inset;
+    let vertical_span = height - doubled_inset;
+    let horizontal_edges = [min_y, max_y].into_iter().all(|sample_y| {
+        let edge_pixels = component
+            .iter()
+            .filter(|(sample_x, component_y)| {
+                *component_y == sample_y
+                    && *sample_x >= min_x + corner_inset
+                    && *sample_x <= max_x - corner_inset
+            })
+            .count() as u32;
+        edge_pixels * 3 >= horizontal_span * 2
+    });
+    let vertical_edges = [min_x, max_x].into_iter().all(|sample_x| {
+        let edge_pixels = component
+            .iter()
+            .filter(|(component_x, sample_y)| {
+                *component_x == sample_x
+                    && *sample_y >= min_y + corner_inset
+                    && *sample_y <= max_y - corner_inset
+            })
+            .count() as u32;
+        edge_pixels * 3 >= vertical_span * 2
+    });
+    horizontal_edges && vertical_edges
+}
+
 fn detect_checkbox_pixels(
     image: &image::RgbaImage,
     search: (u32, u32, u32, u32),
@@ -603,6 +643,13 @@ fn detect_checkbox_pixels(
             }
             let perimeter = 2 * (component_width + component_height);
             if component.len() < (perimeter / 3) as usize {
+                continue;
+            }
+            if !has_checkbox_border_coverage(
+                component.as_slice(),
+                (min_x, min_y, max_x, max_y),
+                scale,
+            ) {
                 continue;
             }
             let center_x = (min_x + max_x) / 2;
@@ -1858,6 +1905,126 @@ mod tests {
             image.put_pixel(x, 90, image::Rgba([120, 120, 120, 255]));
         }
         assert!(detect_checkbox_pixels(&image, (50, 50, 200, 150), 1.0).is_empty());
+    }
+
+    #[test]
+    fn pixel_checkbox_detector_rejects_square_text_glyphs() {
+        let mut image = image::RgbaImage::from_pixel(400, 250, image::Rgba([255, 255, 255, 255]));
+        for x in 100..=112 {
+            image.put_pixel(x, 80, image::Rgba([120, 120, 120, 255]));
+            image.put_pixel(x, 92, image::Rgba([120, 120, 120, 255]));
+            image.put_pixel(100, x - 20, image::Rgba([120, 120, 120, 255]));
+            image.put_pixel(112, x - 20, image::Rgba([120, 120, 120, 255]));
+        }
+
+        // One connected square-ish text glyph has an empty center and enough
+        // perimeter to pass the detector's pre-existing size, density, and
+        // state filters, but it does not have four substantially occupied
+        // straight edges.
+        for (x, y) in [
+            (144, 80),
+            (145, 80),
+            (146, 80),
+            (142, 81),
+            (143, 81),
+            (141, 82),
+            (140, 83),
+            (140, 84),
+            (140, 85),
+            (140, 86),
+            (140, 87),
+            (141, 88),
+            (142, 89),
+            (143, 89),
+            (144, 90),
+            (145, 90),
+            (146, 90),
+            (147, 89),
+            (148, 89),
+            (149, 88),
+            (150, 87),
+            (150, 86),
+            (150, 85),
+            (150, 84),
+            (150, 83),
+            (149, 82),
+            (148, 81),
+            (147, 81),
+        ] {
+            image.put_pixel(x, y, image::Rgba([120, 120, 120, 255]));
+        }
+
+        assert!(detect_checkbox_pixels(&image, (130, 70, 170, 110), 1.0).is_empty());
+        assert_eq!(
+            detect_checkbox_pixels(&image, (50, 50, 200, 150), 1.0),
+            vec![(106, 86, CheckboxState::Off)]
+        );
+    }
+
+    #[test]
+    fn pixel_checkbox_detector_accepts_rounded_antialiased_outlines() {
+        fn rounded_outline(
+            image: &mut image::RgbaImage,
+            left: u32,
+            top: u32,
+            side: u32,
+            radius: u32,
+            border: image::Rgba<u8>,
+            antialias: image::Rgba<u8>,
+        ) {
+            let right = left + side - 1;
+            let bottom = top + side - 1;
+            for offset in radius..side - radius {
+                image.put_pixel(left + offset, top, border);
+                image.put_pixel(left + offset, bottom, border);
+                image.put_pixel(left, top + offset, border);
+                image.put_pixel(right, top + offset, border);
+            }
+            for offset in 1..radius {
+                image.put_pixel(left + radius - offset, top + offset, border);
+                image.put_pixel(right - radius + offset, top + offset, border);
+                image.put_pixel(left + radius - offset, bottom - offset, border);
+                image.put_pixel(right - radius + offset, bottom - offset, border);
+            }
+            for (x, y) in [
+                (left + radius - 1, top),
+                (right - radius + 1, top),
+                (left + radius - 1, bottom),
+                (right - radius + 1, bottom),
+            ] {
+                image.put_pixel(x, y, antialias);
+            }
+        }
+
+        let mut light = image::RgbaImage::from_pixel(400, 250, image::Rgba([255, 255, 255, 255]));
+        rounded_outline(
+            &mut light,
+            100,
+            80,
+            13,
+            2,
+            image::Rgba([120, 120, 120, 255]),
+            image::Rgba([238, 238, 238, 255]),
+        );
+        assert_eq!(
+            detect_checkbox_pixels(&light, (50, 50, 200, 150), 1.0),
+            vec![(106, 86, CheckboxState::Off)]
+        );
+
+        let mut retina = image::RgbaImage::from_pixel(600, 400, image::Rgba([32, 33, 36, 255]));
+        rounded_outline(
+            &mut retina,
+            100,
+            120,
+            26,
+            4,
+            image::Rgba([154, 160, 166, 255]),
+            image::Rgba([55, 56, 59, 255]),
+        );
+        assert_eq!(
+            detect_checkbox_pixels(&retina, (50, 80, 250, 220), 2.0),
+            vec![(112, 132, CheckboxState::Off)]
+        );
     }
 
     #[test]

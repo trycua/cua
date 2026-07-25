@@ -538,13 +538,24 @@ provides-extras = ["otel", "telemetry"]
 dev = [{ name = "pytest", specifier = ">=8.3.5" }]
 
 [[package]]
+name = "cua-fleet"
+version = "0.0.3"
+source = { editable = "../cua-fleet" }
+dependencies = [
+    { name = "cua-train" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "cua-train", specifier = "==0.1.1" }]
+
+[[package]]
 name = "cua-sandbox"
 version = "0.1.17"
 source = { editable = "." }
 dependencies = [
     { name = "cua-auto" },
     { name = "cua-core" },
-    { name = "cua-train" },
+    { name = "cua-fleet" },
     { name = "grpcio" },
     { name = "httpx" },
     { name = "oras" },
@@ -576,7 +587,7 @@ dev = [
 requires-dist = [
     { name = "cua-auto", specifier = ">=0.1.2" },
     { name = "cua-core", specifier = ">=0.3.0,<0.4.0" },
-    { name = "cua-train", specifier = "==0.1.1", index = "https://wheels.cua.ai/simple" },
+    { name = "cua-fleet", editable = "../cua-fleet" },
     { name = "grpcio", specifier = "==1.78.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "oras", specifier = ">=0.2.40" },

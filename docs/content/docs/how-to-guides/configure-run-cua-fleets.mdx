@@ -1,0 +1,237 @@
+---
+title: Configure run.cua.ai fleets with Terraform
+description: Create Linux and Windows run.cua.ai fleets through the Cyclops Terraform provider.
+---
+
+Use this guide to create a run.cua.ai fleet backed by Cyclops-CS. In the
+control plane, a fleet is a pool of reusable sandboxes. Terraform represents
+that fleet as one `cyclops_pool` resource. Creating the resource creates a
+tenant-scoped `OSGymWorkspacePool` and a namespace with the same name;
+destroying it removes both.
+
+Cyclops-CS is the run.cua.ai control plane. It authenticates the user key,
+proxies the request to Kubernetes with the user's tenant identity, and the pool
+operator reconciles the pool into its sandbox template and warm-pool resources.
+Use a separate pool for each operating system or image configuration.
+
+## Prerequisites
+
+- Terraform and Go.
+- A checkout of [`trycua/cloud`](https://github.com/trycua/cloud). The provider
+  source lives in `cyclops-cs/terraform-provider-cyclops`.
+- A run.cua.ai **user API key**. Create it in run.cua.ai and save the returned
+  `client_id`, `client_secret`, and `token_url`. The client ID begins with
+  `ukey-`. Pool keys do not have the Kubernetes identity needed to create
+  namespaces or pools.
+- Permission to use the selected container image and image-pull secret. The
+  service rejects images or pull secrets that its admission policy does not
+  allow.
+
+The provider source is `trycua/cyclops`. The repository includes a local
+filesystem-mirror path until the provider is published. Build that provider
+before initializing either example:
+
+```bash
+git clone https://github.com/trycua/cloud.git
+cd cloud
+
+mirror="$PWD/.provider-mirror/registry.terraform.io/trycua/cyclops/0.1.0/linux_amd64"
+mkdir -p "$mirror"
+(cd cyclops-cs/terraform-provider-cyclops && \
+  go build -o "$mirror/terraform-provider-cyclops_v0.1.0" .)
+
+cat > terraform.rc <<EOF_MIRROR
+provider_installation {
+  filesystem_mirror {
+    path    = "$PWD/.provider-mirror"
+    include = ["trycua/cyclops"]
+  }
+  direct {
+    exclude = ["trycua/cyclops"]
+  }
+}
+EOF_MIRROR
+
+export TF_CLI_CONFIG_FILE="$PWD/terraform.rc"
+```
+
+Keep the credentials out of `.tf` files, `.tfvars` files, and version control.
+Configure the provider from environment variables instead:
+
+```bash
+export CYCLOPS_CLIENT_ID='ukey-...'
+export CYCLOPS_CLIENT_SECRET='...'
+export CYCLOPS_TOKEN_URL='https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token'
+```
+
+For a short-lived workflow, `CYCLOPS_ACCESS_TOKEN` can replace all three
+user-key variables. The provider also supports `CYCLOPS_ENDPOINT`, but the
+examples set the production endpoint explicitly.
+
+## Create a Linux fleet
+
+Create an empty directory outside the `cloud` checkout, then add the following
+`main.tf`. This Linux image uses BIOS firmware and exposes the CUA Driver MCP
+server on port `3000`. The readiness probe waits for the workspace agent on
+port `5000`.
+
+```hcl title="main.tf"
+terraform {
+  required_providers {
+    cyclops = {
+      source  = "trycua/cyclops"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "cyclops" {
+  endpoint = "https://run.cua.ai"
+}
+
+resource "cyclops_pool" "linux" {
+  name                 = "linux-fleet"
+  replicas             = 0
+  cpu_cores            = 4
+  memory               = "4Gi"
+  container_disk_image = "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace:latest"
+  runtime              = "kubevirt"
+  firmware             = "bios"
+
+  readiness_probe_json = jsonencode({
+    tcpSocket           = { port = 5000 }
+    initialDelaySeconds = 15
+    periodSeconds       = 5
+    failureThreshold    = 60
+  })
+
+  service {
+    name        = "mcp"
+    target_port = 3000
+    protocol    = "TCP"
+  }
+
+  autoscaling {
+    min_pool_size     = 0
+    initial_pool_size = 1
+    max_pool_size     = 10
+  }
+}
+
+output "linux_fleet" {
+  value = {
+    name      = cyclops_pool.linux.name
+    namespace = cyclops_pool.linux.namespace
+    phase     = cyclops_pool.linux.phase
+  }
+}
+```
+
+`replicas = 0` avoids idle warm capacity. `initial_pool_size` provides a
+one-time warm start, and `max_pool_size` limits claim-driven growth. Set the
+limits for your expected demand and cost boundary.
+
+## Create a Windows fleet
+
+Use a different pool name for Windows. The Windows computer-server image is a
+GPT/UEFI image, so this example sets `firmware = "efi"`. It waits for the
+computer server on port `8000` and exposes that port as a service.
+
+```hcl title="main.tf"
+terraform {
+  required_providers {
+    cyclops = {
+      source  = "trycua/cyclops"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "cyclops" {
+  endpoint = "https://run.cua.ai"
+}
+
+resource "cyclops_pool" "windows" {
+  name                 = "windows-fleet"
+  replicas             = 0
+  cpu_cores            = 4
+  memory               = "4Gi"
+  container_disk_image = "296062593712.dkr.ecr.us-west-2.amazonaws.com/cua-server-windows:latest"
+  runtime              = "kubevirt"
+  firmware             = "efi"
+
+  readiness_probe_json = jsonencode({
+    tcpSocket           = { port = 8000 }
+    initialDelaySeconds = 60
+    periodSeconds       = 5
+    timeoutSeconds      = 3
+    failureThreshold    = 120
+  })
+
+  service {
+    name        = "computer-server"
+    target_port = 8000
+    protocol    = "TCP"
+  }
+
+  autoscaling {
+    min_pool_size     = 0
+    initial_pool_size = 1
+    max_pool_size     = 5
+  }
+}
+
+output "windows_fleet" {
+  value = {
+    name      = cyclops_pool.windows.name
+    namespace = cyclops_pool.windows.namespace
+    phase     = cyclops_pool.windows.phase
+  }
+}
+```
+
+Windows cold starts include an image pull, a Windows boot, and startup of the
+computer-server task. Keep the longer readiness window unless you have measured
+a safe lower value for your image and fleet.
+
+## Apply, verify, and destroy
+
+From the directory that contains one example, run:
+
+```bash
+terraform init
+terraform fmt -check
+terraform validate
+terraform plan
+terraform apply
+terraform output
+```
+
+The provider returns `namespace`, `phase`, `total_count`, `available_count`,
+and `claimed_count` for each pool. A ready fleet has available sandboxes when
+the warm pool has finished provisioning. Inspect the pool in run.cua.ai if the
+phase does not progress or no sandboxes become available.
+
+Remove the pool and its same-named namespace when the fleet is no longer
+needed:
+
+```bash
+terraform destroy
+```
+
+## Troubleshooting and security
+
+- Use a lowercase DNS label of at most 63 characters for `name`. Changing it
+  replaces the pool because the name also owns its namespace.
+- Check the image reference and image-pull-secret policy if creation returns
+  `403`. `image_pull_secret` defaults to `ecr-credentials`; specify another
+  allowed secret only when your deployment requires it.
+- Use `bios` for the Linux workspace image and `efi` for the Windows
+  computer-server image. A firmware mismatch prevents the guest from booting.
+- Do not use a per-pool key. Use a `ukey-` user key so Cyclops-CS can apply
+  tenant-scoped Kubernetes authorization.
+- Protect Terraform state and shell history as operational secrets. Prefer
+  exported credential variables or your secret manager over literal provider
+  credentials.
+- `terraform destroy` deletes the pool and its same-named namespace. Release
+  or back up any data that must outlive the fleet before destroying it.

@@ -264,42 +264,8 @@ fn current_user_pipe_sddl(sid: &str) -> String {
 }
 
 #[cfg(target_os = "windows")]
-fn authorized_parent_pid_from<I>(args: I) -> anyhow::Result<u32>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    while let Some(arg) = args.next() {
-        if arg == "--authorized-parent-pid" {
-            let value = args
-                .next()
-                .ok_or_else(|| anyhow::anyhow!("--authorized-parent-pid requires a value"))?;
-            let pid = value.parse::<u32>().map_err(|_| {
-                anyhow::anyhow!("--authorized-parent-pid must be a positive process id")
-            })?;
-            if pid == 0 {
-                anyhow::bail!("--authorized-parent-pid must be a positive process id");
-            }
-            return Ok(pid);
-        }
-    }
-    anyhow::bail!(
-        "missing --authorized-parent-pid; the UIAccess worker may only be launched by cua-driver serve"
-    )
-}
-
-#[cfg(target_os = "windows")]
 fn authorized_parent_pid_from_args() -> anyhow::Result<u32> {
-    authorized_parent_pid_from(std::env::args().skip(1))
-}
-
-#[cfg(target_os = "windows")]
-fn client_identity_is_authorized(
-    client_identity: Option<(u32, &str)>,
-    authorized_parent_pid: u32,
-    owner_sid: &str,
-) -> bool {
-    client_identity == Some((authorized_parent_pid, owner_sid))
+    cua_driver_uia::authorized_parent_pid_from(std::env::args().skip(1))
 }
 
 #[cfg(target_os = "windows")]
@@ -386,7 +352,7 @@ async fn async_main(authorized_parent_pid: u32) -> anyhow::Result<()> {
         let client_identity = unsafe {
             named_pipe_client_identity(server.as_raw_handle().cast::<std::ffi::c_void>())
         };
-        if !client_identity_is_authorized(
+        if !cua_driver_uia::client_identity_is_authorized(
             client_identity
                 .as_ref()
                 .map(|(pid, sid)| (*pid, sid.as_str())),
@@ -431,44 +397,6 @@ async fn async_main(authorized_parent_pid: u32) -> anyhow::Result<()> {
                     .await;
             }
         });
-    }
-}
-
-#[cfg(all(test, target_os = "windows"))]
-mod authorization_tests {
-    use super::*;
-
-    #[test]
-    fn launch_requires_explicit_parent_pid() {
-        assert!(authorized_parent_pid_from(Vec::<String>::new()).is_err());
-        assert!(
-            authorized_parent_pid_from(vec!["--authorized-parent-pid".into(), "0".into()]).is_err()
-        );
-        assert_eq!(
-            authorized_parent_pid_from(vec!["--authorized-parent-pid".into(), "4242".into()])
-                .unwrap(),
-            4242
-        );
-    }
-
-    #[test]
-    fn client_must_match_both_exact_parent_and_owner_sid() {
-        assert!(client_identity_is_authorized(
-            Some((4242, "S-1-5-21-123")),
-            4242,
-            "S-1-5-21-123"
-        ));
-        assert!(!client_identity_is_authorized(
-            Some((4243, "S-1-5-21-123")),
-            4242,
-            "S-1-5-21-123"
-        ));
-        assert!(!client_identity_is_authorized(
-            Some((4242, "S-1-5-21-999")),
-            4242,
-            "S-1-5-21-123"
-        ));
-        assert!(!client_identity_is_authorized(None, 4242, "S-1-5-21-123"));
     }
 }
 

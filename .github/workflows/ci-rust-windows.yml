@@ -75,7 +75,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "remote SDK tests failed with exit $LASTEXITCODE" }
           cargo test -p cua-driver --bin cua-driver named_pipe_authentication_tests:: --locked
           if ($LASTEXITCODE -ne 0) { throw "named-pipe authentication tests failed with exit $LASTEXITCODE" }
-          cargo test -p cua-driver-uia authorization_tests:: --locked
+          # The production binary embeds uiAccess=true and Windows correctly
+          # refuses to launch it unelevated. Run the same pure security policy
+          # from the manifest-free library test target.
+          cargo test -p cua-driver-uia --lib authorization_tests:: --locked
           if ($LASTEXITCODE -ne 0) { throw "UIAccess authorization tests failed with exit $LASTEXITCODE" }
           cargo test -p platform-windows diagnostics::tests:: --lib --locked
           if ($LASTEXITCODE -ne 0) { throw "Windows desktop classification tests failed with exit $LASTEXITCODE" }

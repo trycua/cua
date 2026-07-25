@@ -83,8 +83,9 @@ scale, zoom, window-size, or browser-toolbar geometry—including layouts shifte
 by a bookmarks bar—is refused without a click. It is not available for ordinary
 web content.
 
-On refusal, `restored_remote_debugging: true` means the exact checkbox was
-proven off during cleanup. A false value means cleanup could not prove the
+On refusal, `restored_remote_debugging: true` means the exact semantic checkbox,
+or the setup page's sole bounded pixel checkbox when web AX became unavailable,
+was proven off during cleanup. A false value means cleanup could not prove the
 state; callers must not infer that remote debugging is disabled.
 
 ## Grant lifetime

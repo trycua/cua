@@ -146,9 +146,19 @@ fn native_setup_page_committed(
 }
 
 fn exact_setup_checkbox(
-    nodes: &[AXNode],
+    tree: &TreeWalkResult,
     descriptor: &BrowserSetupDescriptor,
 ) -> Result<Option<usize>, BrowserRefusal> {
+    if tree.truncated {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            format!(
+                "{}'s setup accessibility proof was truncated",
+                descriptor.product_name
+            ),
+        ));
+    }
+    let nodes = &tree.nodes;
     if !setup_page_proven(nodes, descriptor) {
         return Ok(None);
     }
@@ -387,6 +397,7 @@ impl PixelCheckbox {
     fn same_control_as(self, other: Self, tolerance: f64) -> bool {
         (self.window_local_x - other.window_local_x).abs() <= tolerance
             && (self.window_local_y - other.window_local_y).abs() <= tolerance
+            && frames_agree(self.window_frame, other.window_frame, tolerance)
     }
 }
 
@@ -395,6 +406,12 @@ struct SetupGeometry {
     search: (u32, u32, u32, u32),
     scale_x: f64,
     scale_y: f64,
+}
+
+fn frames_agree(left: [f64; 4], right: [f64; 4], tolerance: f64) -> bool {
+    left.into_iter()
+        .zip(right)
+        .all(|(left, right)| (left - right).abs() <= tolerance)
 }
 
 fn setup_geometry(
@@ -690,11 +707,7 @@ fn exact_pixel_setup_checkbox(
         capture_bounds.width,
         capture_bounds.height,
     ];
-    if window_frame
-        .iter()
-        .zip(capture_frame)
-        .any(|(ax, captured)| (*ax - captured).abs() > 1.0)
-    {
+    if !frames_agree(*window_frame, capture_frame, 1.0) {
         return Err(refusal(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             format!(
@@ -860,7 +873,7 @@ impl SetupUiHandle {
         let mut trusted_fallback_attempted = false;
         loop {
             let tree = walk_tree(pid, Some(window_id), None);
-            let checkbox = exact_setup_checkbox(&tree.nodes, self.descriptor);
+            let checkbox = exact_setup_checkbox(&tree, self.descriptor);
             let result = match checkbox {
                 Ok(Some(element)) => {
                     let value = unsafe { copy_number_attr(element as AXUIElementRef, "AXValue") };
@@ -1114,7 +1127,7 @@ pub fn enable(
     descriptor: &'static BrowserSetupDescriptor,
 ) -> Result<SetupUiHandle, BrowserRefusal> {
     let initial = walk_tree(pid, Some(window_id), None);
-    let initial_checkbox = exact_setup_checkbox(&initial.nodes, descriptor);
+    let initial_checkbox = exact_setup_checkbox(&initial, descriptor);
     let mut handle = match initial_checkbox {
         Ok(Some(_)) => SetupUiHandle {
             descriptor,
@@ -1429,7 +1442,7 @@ pub fn enable(
     let deadline = Instant::now() + EXISTING_PROFILE_SETUP_READY_TIMEOUT;
     loop {
         let tree = walk_tree(pid, Some(window_id), None);
-        let checkbox = exact_setup_checkbox(&tree.nodes, descriptor);
+        let checkbox = exact_setup_checkbox(&tree, descriptor);
         match checkbox {
             Ok(Some(element)) => {
                 let value = unsafe { copy_number_attr(element as AXUIElementRef, "AXValue") };
@@ -1658,6 +1671,14 @@ mod tests {
         node
     }
 
+    fn tree(nodes: Vec<AXNode>) -> TreeWalkResult {
+        TreeWalkResult {
+            tree_markdown: String::new(),
+            nodes,
+            truncated: false,
+        }
+    }
+
     #[test]
     fn checkbox_requires_exact_internal_page_proof() {
         let nodes = vec![
@@ -1676,11 +1697,17 @@ mod tests {
                 &["AXPress"],
             ),
         ];
-        assert_eq!(exact_setup_checkbox(&nodes, chrome()).unwrap(), Some(7));
+        assert_eq!(
+            exact_setup_checkbox(&tree(nodes.clone()), chrome()).unwrap(),
+            Some(7)
+        );
 
         let mut wrong_url = nodes.clone();
         wrong_url[2].value = Some("https://example.test/".to_owned());
-        assert_eq!(exact_setup_checkbox(&wrong_url, chrome()).unwrap(), None);
+        assert_eq!(
+            exact_setup_checkbox(&tree(wrong_url), chrome()).unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -1708,7 +1735,9 @@ mod tests {
             ),
         ];
         assert_eq!(
-            exact_setup_checkbox(&nodes, chrome()).unwrap_err().code,
+            exact_setup_checkbox(&tree(nodes), chrome())
+                .unwrap_err()
+                .code,
             BrowserRefusalCode::BrowserWrongTargetRefused
         );
     }
@@ -1784,6 +1813,10 @@ mod tests {
             exact_pixel_setup_checkbox(0, &truncated, 0, chrome(), true)
                 .unwrap_err()
                 .code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+        assert_eq!(
+            exact_setup_checkbox(&truncated, chrome()).unwrap_err().code,
             BrowserRefusalCode::BrowserWrongTargetRefused
         );
     }
@@ -1986,8 +2019,23 @@ mod tests {
             window_local_x: 130.0,
             ..original
         };
+        let resized = PixelCheckbox {
+            window_frame: [0.0, 50.0, 430.0, 250.0],
+            ..original
+        };
         assert!(original.same_control_as(near, 3.0));
         assert!(!original.same_control_as(far, 3.0));
+        assert!(!original.same_control_as(resized, 3.0));
+        assert!(frames_agree(
+            [0.0, 50.0, 400.0, 250.0],
+            [0.5, 49.5, 400.5, 250.5],
+            1.0
+        ));
+        assert!(!frames_agree(
+            [0.0, 50.0, 400.0, 250.0],
+            [0.0, 50.0, 405.0, 250.0],
+            1.0
+        ));
         assert!(remote_debugging_cleanup_required(false, true));
         assert!(!remote_debugging_cleanup_required(false, false));
     }

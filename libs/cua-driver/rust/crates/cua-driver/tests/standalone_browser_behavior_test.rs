@@ -2351,6 +2351,18 @@ fn run_existing_profile_setup(spec: &BrowserSpec) {
                 "{}",
                 prepared.raw
             );
+            assert!(
+                prepared.structured()["side_effects"]["used_bounded_pixel_fallback"].is_boolean(),
+                "{}",
+                prepared.raw
+            );
+            #[cfg(target_os = "macos")]
+            assert_eq!(
+                prepared.structured()["side_effects"]["used_bounded_pixel_fallback"],
+                true,
+                "{}",
+                prepared.raw
+            );
             assert_eq!(
                 prepared.structured()["side_effects"]["launched_browser"],
                 false

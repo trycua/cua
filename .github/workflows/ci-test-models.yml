@@ -35,6 +35,7 @@ jobs:
           python3 -m pip install --quiet 'huggingface_hub>=0.34,<2'
           python3 <<'PY'
           from pathlib import Path
+          import os
           import shutil
 
           from huggingface_hub import HfApi, snapshot_download
@@ -43,8 +44,9 @@ jobs:
           revision = "v2026.06.24"
           expected_count = 108
           manifest_path = "manifests/task_hashes.json"
+          token = os.environ["HF_TOKEN"]
 
-          api = HfApi()
+          api = HfApi(token=token)
           files = api.list_repo_files(
               repo_id=repo_id,
               repo_type="dataset",
@@ -68,6 +70,7 @@ jobs:
                   repo_type="dataset",
                   revision=revision,
                   allow_patterns=[*tasks, manifest_path],
+                  token=token,
               )
           )
           task_target = Path("bundle/evaluation_examples/task_class")

@@ -1194,6 +1194,37 @@ mod tests {
     }
 
     #[test]
+    fn interactive_linux_session_environment_is_inherited() {
+        let values = merge_safe_environment(
+            [
+                ("WAYLAND_DISPLAY".into(), "wayland-7".into()),
+                ("XDG_RUNTIME_DIR".into(), "/run/user/1000".into()),
+                ("XDG_SESSION_TYPE".into(), "wayland".into()),
+                (
+                    "DBUS_SESSION_BUS_ADDRESS".into(),
+                    "unix:path=/run/user/1000/bus".into(),
+                ),
+                ("AT_SPI_BUS_ADDRESS".into(), "must-not-leak".into()),
+            ],
+            &[],
+        );
+
+        for (name, value) in [
+            ("WAYLAND_DISPLAY", "wayland-7"),
+            ("XDG_RUNTIME_DIR", "/run/user/1000"),
+            ("XDG_SESSION_TYPE", "wayland"),
+            ("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus"),
+        ] {
+            assert!(values
+                .iter()
+                .any(|variable| variable.name == name && variable.value == value));
+        }
+        assert!(!values
+            .iter()
+            .any(|variable| variable.name == "AT_SPI_BUS_ADDRESS"));
+    }
+
+    #[test]
     fn metadata_validation_requires_same_process_and_contract() {
         let metadata = DaemonMetadata {
             driver_version: env!("CARGO_PKG_VERSION").into(),

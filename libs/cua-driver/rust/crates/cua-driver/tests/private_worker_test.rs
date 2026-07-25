@@ -113,16 +113,35 @@ async fn private_worker_inherits_the_interactive_linux_display_scope() {
     if std::env::var("CUA_REQUIRE_GUI").as_deref() != Ok("1") {
         return;
     }
-    let driver = cua_driver_sdk::CuaDriver::create_private_worker(worker_options()).unwrap();
-    let desktop = driver
-        .call_tool("get_desktop_state".into(), "{}".into())
-        .await
-        .unwrap();
+    let has_x11 = std::env::var("DISPLAY").is_ok_and(|display| !display.is_empty());
+    let has_wayland = std::env::var("WAYLAND_DISPLAY").is_ok_and(|display| !display.is_empty());
     assert!(
-        !desktop.images.is_empty(),
-        "worker inherited no usable DISPLAY/WAYLAND_DISPLAY capture scope: {}",
-        desktop.text
+        has_x11 || has_wayland,
+        "canonical GUI E2E requires DISPLAY or WAYLAND_DISPLAY"
     );
+
+    let driver = cua_driver_sdk::CuaDriver::create_private_worker(worker_options()).unwrap();
+    if has_x11 {
+        let desktop = driver
+            .call_tool("get_desktop_state".into(), "{}".into())
+            .await
+            .unwrap();
+        assert!(
+            !desktop.images.is_empty(),
+            "worker inherited no usable X11 capture scope: {}",
+            desktop.text
+        );
+    } else {
+        let windows = driver
+            .call_tool("list_windows".into(), "{}".into())
+            .await
+            .unwrap();
+        assert!(
+            windows.error_code.is_none(),
+            "worker inherited no usable native Wayland session scope: {}",
+            windows.text
+        );
+    }
     driver.shutdown().await.unwrap();
 }
 

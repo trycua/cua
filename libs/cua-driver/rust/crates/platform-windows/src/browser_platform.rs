@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -21,6 +22,7 @@ use cua_driver_core::browser::types::{
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use windows::Win32::Foundation::{CloseHandle, FILETIME, HWND, RECT};
+use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
 use windows::Win32::System::Threading::{
     GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
     PROCESS_QUERY_LIMITED_INFORMATION,
@@ -131,6 +133,51 @@ fn browser_product(name: &str) -> BrowserProduct {
         "firefox" => BrowserProduct::Firefox,
         _ => BrowserProduct::Other,
     }
+}
+
+fn listener_process_belongs_to_root_lifetime(root_started: u64, listener_started: u64) -> bool {
+    listener_started >= root_started
+}
+
+#[derive(Debug)]
+struct LifetimeScopedProcessTree {
+    pids: Vec<u32>,
+    started_at: HashMap<u32, u64>,
+}
+
+fn lifetime_scoped_descendants_from_processes(
+    root_pid: u32,
+    processes: &[crate::win32::ProcessInfo],
+    mut started_at: impl FnMut(u32) -> Option<u64>,
+) -> Option<LifetimeScopedProcessTree> {
+    let root_started = started_at(root_pid)?;
+    let mut pids = vec![root_pid];
+    let mut starts = HashMap::from([(root_pid, root_started)]);
+    let mut frontier = vec![root_pid];
+    while let Some(parent_pid) = frontier.pop() {
+        let parent_started = starts[&parent_pid];
+        for process in processes {
+            if process.parent_pid != parent_pid || starts.contains_key(&process.pid) {
+                continue;
+            }
+            let Some(child_started) = started_at(process.pid) else {
+                continue;
+            };
+            // Toolhelp parent ids are not lifetime-scoped. Validate every
+            // parent -> child edge so pid reuse anywhere in the transitive
+            // tree cannot graft an older unrelated process onto this root.
+            if !listener_process_belongs_to_root_lifetime(parent_started, child_started) {
+                continue;
+            }
+            pids.push(process.pid);
+            starts.insert(process.pid, child_started);
+            frontier.push(process.pid);
+        }
+    }
+    Some(LifetimeScopedProcessTree {
+        pids,
+        started_at: starts,
+    })
 }
 
 fn websocket_port_and_suffix<'a>(url: &'a str, prefix: &str) -> Option<(u16, &'a str)> {
@@ -267,19 +314,23 @@ fn parse_netstat_loopback_ports(text: &str, allowed_pids: &[u32]) -> Vec<u16> {
     ports
 }
 
-async fn loopback_listeners_for_process_tree(
-    root_pid: u32,
+fn system_netstat_path() -> Result<PathBuf, BrowserRefusal> {
+    let mut buffer = [0u16; 32768];
+    let length = unsafe { GetSystemDirectoryW(Some(&mut buffer)) } as usize;
+    if length == 0 || length >= buffer.len() {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            "could not resolve the trusted Windows system directory",
+        ));
+    }
+    Ok(PathBuf::from(String::from_utf16_lossy(&buffer[..length])).join("netstat.exe"))
+}
+
+async fn netstat_loopback_listeners(
+    allowed_pids: &[u32],
 ) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
-    let allowed_pids =
-        tokio::task::spawn_blocking(move || crate::win32::list_descendants(root_pid))
-            .await
-            .map_err(|error| {
-                refusal(
-                    BrowserRefusalCode::BrowserRouteUnavailable,
-                    format!("could not inspect browser process tree: {error}"),
-                )
-            })?;
-    let output = tokio::process::Command::new("netstat.exe")
+    let netstat = system_netstat_path()?;
+    let output = tokio::process::Command::new(netstat)
         .args(["-ano", "-p", "tcp"])
         .stdin(Stdio::null())
         .stderr(Stdio::null())
@@ -293,12 +344,85 @@ async fn loopback_listeners_for_process_tree(
         })?;
     Ok(parse_netstat_loopback_listeners(
         &String::from_utf8_lossy(&output.stdout),
-        &allowed_pids,
+        allowed_pids,
     ))
+}
+
+async fn raw_loopback_listeners_for_process_tree(
+    root_pid: u32,
+) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
+    let allowed_pids =
+        tokio::task::spawn_blocking(move || crate::win32::list_descendants(root_pid))
+            .await
+            .map_err(|error| {
+                refusal(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("could not inspect browser process tree: {error}"),
+                )
+            })?;
+    netstat_loopback_listeners(&allowed_pids).await
+}
+
+async fn loopback_listeners_for_process_tree(
+    root_pid: u32,
+) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
+    let tree = tokio::task::spawn_blocking(move || {
+        let processes = crate::win32::list_processes();
+        lifetime_scoped_descendants_from_processes(root_pid, &processes, |pid| {
+            process_identity(pid).ok().map(|identity| identity.0)
+        })
+    })
+    .await
+    .map_err(|error| {
+        refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("could not inspect browser process lifetimes: {error}"),
+        )
+    })?
+    .ok_or_else(|| {
+        refusal(
+            BrowserRefusalCode::BrowserBindingStale,
+            format!("browser process {root_pid} is no longer available"),
+        )
+    })?;
+
+    let observed = netstat_loopback_listeners(&tree.pids).await?;
+    let expected_starts = tree.started_at;
+    tokio::task::spawn_blocking(move || {
+        observed
+            .into_iter()
+            .filter(|(_port, owner_pid)| {
+                let Some(expected) = expected_starts.get(owner_pid) else {
+                    return false;
+                };
+                process_identity(*owner_pid)
+                    .ok()
+                    .is_some_and(|identity| identity.0 == *expected)
+            })
+            .collect::<Vec<_>>()
+    })
+    .await
+    .map_err(|error| {
+        refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("could not reprove browser listener identities: {error}"),
+        )
+    })
 }
 
 async fn loopback_ports_for_process_tree(root_pid: u32) -> Result<Vec<u16>, BrowserRefusal> {
     let mut ports = loopback_listeners_for_process_tree(root_pid)
+        .await?
+        .into_iter()
+        .map(|(port, _owner_pid)| port)
+        .collect::<Vec<_>>();
+    ports.sort_unstable();
+    ports.dedup();
+    Ok(ports)
+}
+
+async fn raw_loopback_ports_for_process_tree(root_pid: u32) -> Result<Vec<u16>, BrowserRefusal> {
+    let mut ports = raw_loopback_listeners_for_process_tree(root_pid)
         .await?
         .into_iter()
         .map(|(port, _owner_pid)| port)
@@ -359,7 +483,20 @@ async fn browser_endpoints_once(pid: u32) -> Result<Vec<(u16, String, u32)>, Bro
     let mut endpoints = Vec::new();
     for (port, owner_pid) in loopback_listeners_for_process_tree(pid).await? {
         if let Some(ws_url) = browser_websocket_url(port).await {
-            endpoints.push((port, ws_url, owner_pid));
+            // Re-read both the socket owner and lifetime-scoped tree after
+            // the HTTP probe so a listener pid recycled during discovery
+            // cannot become exact ownership evidence.
+            let reproved = loopback_listeners_for_process_tree(pid).await?;
+            if reproved.contains(&(port, owner_pid)) {
+                endpoints.push((port, ws_url, owner_pid));
+            } else {
+                tracing::debug!(
+                    browser_pid = pid,
+                    listener_pid = owner_pid,
+                    port,
+                    "discarding browser endpoint whose listener ownership changed during discovery"
+                );
+            }
         }
     }
     Ok(endpoints)
@@ -416,6 +553,36 @@ fn process_tree_owned_endpoint(
                 "{context}; exact loopback listener pid {listener_pid}"
             )),
         },
+    }
+}
+
+fn select_unique_owned_endpoint(
+    root_pid: i64,
+    discovered: Vec<(u16, String, u32)>,
+    context: &str,
+) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+    match discovered.as_slice() {
+        [] => Ok(None),
+        [(port, ws_url, listener_pid)] => Ok(Some(process_tree_owned_endpoint(
+            root_pid,
+            *port,
+            ws_url.clone(),
+            *listener_pid,
+            context,
+        ))),
+        _ => Err(refusal(
+            BrowserRefusalCode::BrowserBindingAmbiguous,
+            "multiple browser-level DevTools endpoints are owned by the approved browser process tree",
+        )
+        .with_detail(serde_json::json!({
+            "candidates": discovered
+                .iter()
+                .map(|(port, _ws_url, listener_pid)| serde_json::json!({
+                    "port": port,
+                    "listener_pid": listener_pid,
+                }))
+                .collect::<Vec<_>>(),
+        }))),
     }
 }
 
@@ -650,19 +817,11 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 format!("pid {pid} is outside the Windows process-id range"),
             )
         })?;
-        Ok(browser_endpoints_for_pid(pid_u32)
-            .await?
-            .into_iter()
-            .next()
-            .map(|(port, ws_url, listener_pid)| {
-                process_tree_owned_endpoint(
-                    pid,
-                    port,
-                    ws_url,
-                    listener_pid,
-                    "netstat listener owned by the approved browser process tree",
-                )
-            }))
+        select_unique_owned_endpoint(
+            pid,
+            browser_endpoints_for_pid(pid_u32).await?,
+            "netstat listener owned by the approved browser process tree",
+        )
     }
 
     async fn discover_existing_profile_endpoint(
@@ -675,21 +834,11 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 format!("pid {pid} is outside the Windows process-id range"),
             )
         })?;
-        let discovered = browser_endpoints_for_pid(pid_u32).await?;
-        match discovered.as_slice() {
-            [] => Ok(None),
-            [(port, ws_url, listener_pid)] => Ok(Some(process_tree_owned_endpoint(
-                pid,
-                *port,
-                ws_url.clone(),
-                *listener_pid,
-                "Windows browser process-tree listener plus /json/version",
-            ))),
-            _ => Err(refusal(
-                BrowserRefusalCode::BrowserBindingAmbiguous,
-                "multiple browser-level DevTools endpoints are owned by the approved browser process tree",
-            )),
-        }
+        select_unique_owned_endpoint(
+            pid,
+            browser_endpoints_for_pid(pid_u32).await?,
+            "Windows browser process-tree listener plus /json/version",
+        )
     }
 
     async fn reprove_existing_profile_endpoint(
@@ -749,7 +898,10 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             )
         })?;
         let hwnd = request.window_id;
-        let listeners_before = loopback_ports_for_process_tree(pid_u32).await?;
+        // Keep the pre-setup subtraction baseline deliberately unfiltered.
+        // A transient identity lookup failure must not make an old listener
+        // look newly created after the user enables remote debugging.
+        let listeners_before = raw_loopback_ports_for_process_tree(pid_u32).await?;
         let handle =
             tokio::task::spawn_blocking(move || crate::browser_setup_ui::enable(hwnd, descriptor))
                 .await
@@ -1040,12 +1192,142 @@ mod tests {
     }
 
     #[test]
+    fn owned_endpoint_selection_requires_exactly_one_lifetime_matched_listener() {
+        assert!(
+            select_unique_owned_endpoint(42, Vec::new(), "verified process tree")
+                .expect("empty discovery is not an error")
+                .is_none()
+        );
+
+        let selected = select_unique_owned_endpoint(
+            42,
+            vec![(
+                9222,
+                "ws://127.0.0.1:9222/devtools/browser/edge".to_owned(),
+                43,
+            )],
+            "verified process tree",
+        )
+        .expect("one lifetime-matched listener")
+        .expect("selected endpoint");
+        assert_eq!(selected.http_port, Some(9222));
+        assert_eq!(selected.ownership.listener_pid, Some(43));
+
+        let ambiguous = select_unique_owned_endpoint(
+            42,
+            vec![
+                (
+                    9222,
+                    "ws://127.0.0.1:9222/devtools/browser/a".to_owned(),
+                    43,
+                ),
+                (
+                    9333,
+                    "ws://127.0.0.1:9333/devtools/browser/b".to_owned(),
+                    44,
+                ),
+            ],
+            "verified process tree",
+        )
+        .expect_err("multiple lifetime-matched listeners must be refused");
+        assert_eq!(ambiguous.code, BrowserRefusalCode::BrowserBindingAmbiguous);
+        let candidates = ambiguous
+            .detail
+            .as_ref()
+            .and_then(|detail| detail.get("candidates"))
+            .and_then(serde_json::Value::as_array)
+            .expect("candidate detail");
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0]["port"], 9222);
+        assert_eq!(candidates[0]["listener_pid"], 43);
+        assert_eq!(candidates[1]["port"], 9333);
+        assert_eq!(candidates[1]["listener_pid"], 44);
+    }
+
+    #[test]
     fn classifier_covers_embedded_and_standalone_chromium() {
         assert!(is_chromium("CuaTestHarness.Electron.exe"));
         assert!(is_chromium("msedge.exe"));
         assert!(!is_chromium("firefox.exe"));
         assert!(!is_chromium("Operator.exe"));
         assert!(!is_chromium("Knowledge.exe"));
+    }
+
+    #[test]
+    fn endpoint_listener_cannot_predate_the_authorized_browser_root() {
+        assert!(listener_process_belongs_to_root_lifetime(100, 100));
+        assert!(listener_process_belongs_to_root_lifetime(100, 101));
+        assert!(!listener_process_belongs_to_root_lifetime(100, 99));
+    }
+
+    #[test]
+    fn lifetime_scoped_tree_validates_every_parent_child_edge() {
+        let processes = vec![
+            crate::win32::ProcessInfo {
+                pid: 42,
+                parent_pid: 1,
+                name: "msedge.exe".to_owned(),
+            },
+            crate::win32::ProcessInfo {
+                pid: 43,
+                parent_pid: 42,
+                name: "msedge.exe".to_owned(),
+            },
+            crate::win32::ProcessInfo {
+                pid: 44,
+                parent_pid: 43,
+                name: "CuaTestHarness.Electron.exe".to_owned(),
+            },
+            crate::win32::ProcessInfo {
+                pid: 45,
+                parent_pid: 42,
+                name: "msedge.exe".to_owned(),
+            },
+        ];
+        let starts = HashMap::from([
+            (42, 100),
+            // This pid was reused by a real child of the new browser root.
+            (43, 300),
+            // This unrelated process names pid 43 as its parent but predates
+            // that incarnation, so validating only against root 42 is unsafe.
+            (44, 200),
+            (45, 400),
+        ]);
+
+        let tree = lifetime_scoped_descendants_from_processes(42, &processes, |pid| {
+            starts.get(&pid).copied()
+        })
+        .expect("live root");
+        assert_eq!(tree.pids, vec![42, 43, 45]);
+        assert!(!tree.pids.contains(&44));
+    }
+
+    #[test]
+    fn lifetime_scoped_tree_drops_unidentifiable_processes_and_their_children() {
+        let processes = vec![
+            crate::win32::ProcessInfo {
+                pid: 42,
+                parent_pid: 1,
+                name: "chrome.exe".to_owned(),
+            },
+            crate::win32::ProcessInfo {
+                pid: 43,
+                parent_pid: 42,
+                name: "chrome.exe".to_owned(),
+            },
+            crate::win32::ProcessInfo {
+                pid: 44,
+                parent_pid: 43,
+                name: "chrome.exe".to_owned(),
+            },
+        ];
+        let starts = HashMap::from([(42, 100), (44, 300)]);
+
+        let tree = lifetime_scoped_descendants_from_processes(42, &processes, |pid| {
+            starts.get(&pid).copied()
+        })
+        .expect("live root");
+        assert_eq!(tree.pids, vec![42]);
     }
 
     #[test]

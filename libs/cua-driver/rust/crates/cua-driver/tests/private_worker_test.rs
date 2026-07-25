@@ -73,6 +73,78 @@ async fn private_worker_owns_one_runtime_without_a_reconnect_endpoint() {
     assert!(!driver.is_available());
 }
 
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn private_worker_owns_the_macos_cursor_overlay_facility() {
+    let driver = cua_driver_sdk::CuaDriver::create_private_worker(worker_options()).unwrap();
+    let result = driver
+        .call_tool(
+            "get_agent_cursor_state".into(),
+            serde_json::json!({"session": "worker-overlay"}).to_string(),
+        )
+        .await
+        .unwrap();
+    assert_ne!(
+        result.error_code.as_deref(),
+        Some("facility_unavailable"),
+        "private worker did not install its AppKit main-thread adapter"
+    );
+    let permissions = driver
+        .call_tool(
+            "check_permissions".into(),
+            serde_json::json!({"prompt": true}).to_string(),
+        )
+        .await
+        .unwrap();
+    let structured: serde_json::Value =
+        serde_json::from_str(permissions.structured_json.as_deref().unwrap()).unwrap();
+    assert_eq!(structured["direct_capture_status"], "not_checked");
+    assert_eq!(structured["source"]["attribution"], "host");
+    assert_eq!(
+        structured["source"]["host_bundle_id"],
+        "com.trycua.private-worker-test"
+    );
+    driver.shutdown().await.unwrap();
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn private_worker_inherits_the_interactive_linux_display_scope() {
+    if std::env::var("CUA_REQUIRE_GUI").as_deref() != Ok("1") {
+        return;
+    }
+    let has_x11 = std::env::var("DISPLAY").is_ok_and(|display| !display.is_empty());
+    let has_wayland = std::env::var("WAYLAND_DISPLAY").is_ok_and(|display| !display.is_empty());
+    assert!(
+        has_x11 || has_wayland,
+        "canonical GUI E2E requires DISPLAY or WAYLAND_DISPLAY"
+    );
+
+    let driver = cua_driver_sdk::CuaDriver::create_private_worker(worker_options()).unwrap();
+    if has_x11 {
+        let desktop = driver
+            .call_tool("get_desktop_state".into(), "{}".into())
+            .await
+            .unwrap();
+        assert!(
+            !desktop.images.is_empty(),
+            "worker inherited no usable X11 capture scope: {}",
+            desktop.text
+        );
+    } else {
+        let windows = driver
+            .call_tool("list_windows".into(), "{}".into())
+            .await
+            .unwrap();
+        assert!(
+            windows.error_code.is_none(),
+            "worker inherited no usable native Wayland session scope: {}",
+            windows.text
+        );
+    }
+    driver.shutdown().await.unwrap();
+}
+
 #[tokio::test]
 async fn dropping_the_host_closes_and_terminates_the_private_worker() {
     let driver = cua_driver_sdk::CuaDriver::create_private_worker(worker_options()).unwrap();

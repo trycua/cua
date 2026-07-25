@@ -4,13 +4,23 @@ use cua_driver_core::{
     tool::{Tool, ToolDef},
 };
 use serde_json::Value;
+use std::sync::Arc;
 
+use super::ToolState;
 use crate::permissions::status::{
     accessibility_granted, request_accessibility, request_screen_recording,
     screen_recording_granted,
 };
 
-pub struct CheckPermissionsTool;
+pub struct CheckPermissionsTool {
+    state: Arc<ToolState>,
+}
+
+impl CheckPermissionsTool {
+    pub fn new(state: Arc<ToolState>) -> Self {
+        Self { state }
+    }
+}
 
 fn driver_bundle_id_for_executable(executable: &str) -> Option<&'static str> {
     if executable.contains("/CuaDriverLocal.app/Contents/MacOS/") {
@@ -46,6 +56,10 @@ fn should_probe_direct_capture(
     should_prompt && screen_recording && probe_direct_capture
 }
 
+fn should_prompt_permissions(requested: bool, host_owns_permission_ux: bool) -> bool {
+    requested && !cua_driver_core::embedded_mode() && !host_owns_permission_ux
+}
+
 /// (B) Which TCC identity the booleans in this response reflect.
 ///
 /// macOS attributes Accessibility / Screen-Recording to the *responsible
@@ -55,7 +69,10 @@ fn should_probe_direct_capture(
 ///     its own responsible process — the real driver status.
 ///   - the **embedding host** otherwise. That is intentional only when the
 ///     host directly spawned `cua-driver serve --embedded`.
-fn permission_source() -> serde_json::Value {
+fn permission_source(
+    host_owns_permission_ux: bool,
+    configured_host_bundle_id: Option<&str>,
+) -> serde_json::Value {
     let pid = unsafe { libc::getpid() };
     let ppid = unsafe { libc::getppid() };
     let exe = std::env::current_exe()
@@ -69,12 +86,16 @@ fn permission_source() -> serde_json::Value {
     // This branch only ever downgrades attribution (host, never
     // driver-daemon), so the caller-controlled env var can't spoof an
     // elevated identity. `host_bundle_id` is advisory, not a trust signal.
-    if cua_driver_core::embedded_mode() {
-        let host_bundle_id = std::env::var(cua_driver_core::HOST_BUNDLE_ID_ENV).unwrap_or_default();
+    if host_owns_permission_ux || cua_driver_core::embedded_mode() {
+        let host_bundle_id = configured_host_bundle_id
+            .map(str::to_owned)
+            .or_else(|| std::env::var(cua_driver_core::HOST_BUNDLE_ID_ENV).ok())
+            .unwrap_or_default();
         return serde_json::json!({
             "attribution": "host",
             "host_bundle_id": host_bundle_id,
-            "embedded": true,
+            "embedded": cua_driver_core::embedded_mode(),
+            "direct_runtime": host_owns_permission_ux && !cua_driver_core::embedded_mode(),
             "pid": pid,
             "responsible_ppid": ppid,
             "executable": exe,
@@ -189,7 +210,10 @@ impl Tool for CheckPermissionsTool {
         // host owns the grant flow). This and the startup gate are the only
         // `request_*` call sites, so both being gated makes prompts
         // unreachable when embedded.
-        let should_prompt = args.bool_or("prompt", true) && !cua_driver_core::embedded_mode();
+        let should_prompt = should_prompt_permissions(
+            args.bool_or("prompt", true),
+            self.state.host_owns_permission_ux,
+        );
         let probe_direct_capture = args.bool_or("probe_direct_capture", true);
         if should_prompt {
             let _ = request_accessibility();
@@ -217,7 +241,10 @@ impl Tool for CheckPermissionsTool {
             (None, "not_checked")
         };
         // (B) Which identity the booleans above belong to.
-        let source = permission_source();
+        let source = permission_source(
+            self.state.host_owns_permission_ux,
+            self.state.host_bundle_id.as_deref(),
+        );
         let is_caller = source.get("attribution").and_then(|v| v.as_str()) == Some("caller");
 
         // Text format mirrors Swift 1:1:
@@ -332,6 +359,51 @@ mod tests {
     }
 
     #[test]
+    fn direct_host_runtime_cannot_raise_permission_prompts() {
+        let _guard = env_lock();
+        let original = swap_env(cua_driver_core::EMBEDDED_ENV, None);
+        assert!(
+            should_prompt_permissions(true, false),
+            "standalone Cua-owned runtime retains its explicit prompt path"
+        );
+        assert!(
+            !should_prompt_permissions(true, true),
+            "direct host-owned runtime must force read-only permission checks"
+        );
+        restore_env(cua_driver_core::EMBEDDED_ENV, original);
+    }
+
+    #[test]
+    fn direct_runtime_reports_host_attribution() {
+        let _guard = env_lock();
+        let original = swap_env(cua_driver_core::EMBEDDED_ENV, None);
+        let source = permission_source(true, None);
+        assert_eq!(
+            source.get("attribution").and_then(|value| value.as_str()),
+            Some("host")
+        );
+        assert_eq!(
+            source
+                .get("direct_runtime")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        restore_env(cua_driver_core::EMBEDDED_ENV, original);
+    }
+
+    #[test]
+    fn immutable_runtime_host_label_wins_over_process_environment() {
+        let _guard = env_lock();
+        let original_host = swap_env(
+            cua_driver_core::HOST_BUNDLE_ID_ENV,
+            Some("com.example.stale"),
+        );
+        let source = permission_source(true, Some("com.example.runtime"));
+        assert_eq!(source["host_bundle_id"], "com.example.runtime");
+        restore_env(cua_driver_core::HOST_BUNDLE_ID_ENV, original_host);
+    }
+
+    #[test]
     fn staged_prompt_never_runs_the_direct_capture_probe() {
         assert!(!should_probe_direct_capture(true, false, false));
         assert!(!should_probe_direct_capture(true, true, false));
@@ -349,7 +421,7 @@ mod tests {
         let original = swap_env(name, Some("1"));
         let embedded = swap_env(cua_driver_core::EMBEDDED_ENV, None);
 
-        let source = permission_source();
+        let source = permission_source(false, None);
         assert_eq!(
             source.get("attribution").and_then(|v| v.as_str()),
             Some("caller"),
@@ -369,7 +441,7 @@ mod tests {
             Some("com.example.host"),
         );
 
-        let source = permission_source();
+        let source = permission_source(false, None);
         assert_eq!(
             source.get("attribution").and_then(|v| v.as_str()),
             Some("host"),
@@ -392,7 +464,7 @@ mod tests {
         let embedded = swap_env(cua_driver_core::EMBEDDED_ENV, Some("1"));
         let disclaim = swap_env(cua_driver_core::RESPONSIBILITY_DISCLAIMED_ENV, Some("1"));
 
-        let source = permission_source();
+        let source = permission_source(false, None);
         assert_eq!(
             source.get("attribution").and_then(|v| v.as_str()),
             Some("host"),
@@ -406,7 +478,7 @@ mod tests {
     fn embedded_env_requires_exact_value_one() {
         let _guard = env_lock();
         let embedded = swap_env(cua_driver_core::EMBEDDED_ENV, Some("true"));
-        let source = permission_source();
+        let source = permission_source(false, None);
         assert_ne!(
             source.get("attribution").and_then(|v| v.as_str()),
             Some("host"),

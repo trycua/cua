@@ -149,6 +149,11 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
              with `open -n -g -a CuaDriver --args serve` and retry."
         );
     }
+    // A selected service may outlive the CLI package that launched this
+    // proxy. Refuse an incompatible contract before creating the control
+    // binding or forwarding any action.
+    let compatibility_client = cua_driver_sdk::CuaDriver::connect(Some(socket_path.clone()))?;
+    compatibility_client.metadata().await?;
 
     // Mint this MCP session's identity once at proxy startup. One proxy process
     // == one MCP session; the daemon outlives it. We stamp this id on every

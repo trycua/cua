@@ -44,6 +44,15 @@ pub struct DriverResponseEnvelope {
     pub completion_known: bool,
 }
 
+/// Version and lifecycle features negotiated with an authenticated remote
+/// carrier before any Driver envelope is dispatched.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DriverChannelCapabilities {
+    pub minimum_envelope_version: u32,
+    pub maximum_envelope_version: u32,
+    pub supports_cancellation: bool,
+}
+
 /// Authenticated asynchronous carrier for generated Driver envelopes.
 ///
 /// `bind_session` returns a new opaque channel already bound to the effective
@@ -51,6 +60,20 @@ pub struct DriverResponseEnvelope {
 /// authority for the caller to replay on another connection.
 #[async_trait]
 pub trait DriverEnvelopeChannel: Send + Sync {
+    /// Report the carrier's compatible envelope range and lifecycle support.
+    ///
+    /// The default preserves source compatibility for carriers compiled
+    /// against the first public trait revision, but deliberately reports no
+    /// cancellation support so new action dispatch fails closed until that
+    /// carrier implements the lifecycle contract.
+    async fn negotiate(&self) -> Result<DriverChannelCapabilities, String> {
+        Ok(DriverChannelCapabilities {
+            minimum_envelope_version: DRIVER_ENVELOPE_VERSION,
+            maximum_envelope_version: DRIVER_ENVELOPE_VERSION,
+            supports_cancellation: false,
+        })
+    }
+
     async fn exchange(
         &self,
         request: DriverRequestEnvelope,
@@ -62,6 +85,13 @@ pub trait DriverEnvelopeChannel: Send + Sync {
     ) -> Result<Arc<dyn DriverEnvelopeChannel>, String>;
 
     async fn close(&self) -> Result<(), String>;
+
+    /// Cancel one in-flight request by its opaque request identity. Carriers
+    /// must make this idempotent because local future destruction can race a
+    /// response already in transit.
+    async fn cancel(&self, _request_id: &str) -> Result<(), String> {
+        Err("remote Driver carrier does not implement request cancellation".into())
+    }
 
     fn authenticated_principal(&self) -> &str;
     fn connection_generation(&self) -> &str;
@@ -120,6 +150,7 @@ impl RemoteDriverClient {
         &self,
         options: TrustedSessionOptions,
     ) -> Result<Arc<RemoteBoundSession>, DriverError> {
+        negotiate(&self.channel).await?;
         let channel = self
             .channel
             .bind_session(options)
@@ -132,6 +163,7 @@ impl RemoteDriverClient {
                 reason: "remote bound session changed principal or connection generation".into(),
             });
         }
+        negotiate(&channel).await?;
         Ok(Arc::new(RemoteBoundSession {
             channel,
             closed: AtomicBool::new(false),
@@ -196,7 +228,9 @@ async fn exchange(
     name: Option<String>,
     arguments: Option<Value>,
 ) -> Result<Value, DriverError> {
+    negotiate(channel).await?;
     let request_id = Uuid::new_v4().to_string();
+    let mut cancellation = RemoteCancellationGuard::new(channel.clone(), request_id.clone());
     let response = channel
         .exchange(DriverRequestEnvelope {
             envelope_version: DRIVER_ENVELOPE_VERSION,
@@ -217,6 +251,7 @@ async fn exchange(
                 DriverError::Remote { reason }
             }
         })?;
+    cancellation.disarm();
     if response.envelope_version != DRIVER_ENVELOPE_VERSION || response.request_id != request_id {
         return Err(DriverError::Protocol {
             reason: "remote Driver response identity mismatch".into(),
@@ -240,6 +275,72 @@ async fn exchange(
         });
     }
     Ok(response.result.unwrap_or(Value::Null))
+}
+
+async fn negotiate(channel: &Arc<dyn DriverEnvelopeChannel>) -> Result<(), DriverError> {
+    let capabilities = channel
+        .negotiate()
+        .await
+        .map_err(|reason| DriverError::Remote { reason })?;
+    if capabilities.minimum_envelope_version > DRIVER_ENVELOPE_VERSION
+        || capabilities.maximum_envelope_version < DRIVER_ENVELOPE_VERSION
+    {
+        return Err(DriverError::Protocol {
+            reason: format!(
+                "remote Driver envelope version {} is outside carrier range {}..={}",
+                DRIVER_ENVELOPE_VERSION,
+                capabilities.minimum_envelope_version,
+                capabilities.maximum_envelope_version
+            ),
+        });
+    }
+    if !capabilities.supports_cancellation {
+        return Err(DriverError::Protocol {
+            reason: "remote Driver carrier does not support request cancellation".into(),
+        });
+    }
+    Ok(())
+}
+
+struct RemoteCancellationGuard {
+    channel: Arc<dyn DriverEnvelopeChannel>,
+    request_id: Option<String>,
+}
+
+impl RemoteCancellationGuard {
+    fn new(channel: Arc<dyn DriverEnvelopeChannel>, request_id: String) -> Self {
+        Self {
+            channel,
+            request_id: Some(request_id),
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.request_id = None;
+    }
+}
+
+impl Drop for RemoteCancellationGuard {
+    fn drop(&mut self) {
+        let Some(request_id) = self.request_id.take() else {
+            return;
+        };
+        let channel = self.channel.clone();
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                let _ = channel.cancel(&request_id).await;
+            });
+        } else {
+            std::thread::spawn(move || {
+                if let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    let _ = runtime.block_on(channel.cancel(&request_id));
+                }
+            });
+        }
+    }
 }
 
 fn now_unix_ms() -> u128 {

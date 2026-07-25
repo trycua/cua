@@ -114,6 +114,11 @@ else
   fi
   tests+=(
     standalone_browser_download
+  )
+  if [[ "${HOST_OS}" != Darwin ]]; then
+    tests+=(standalone_browser_existing_profile_standard_refusal)
+  fi
+  tests+=(
     standalone_browser_existing_profile
     standalone_browser_existing_profile_setup
     standalone_browser_frames

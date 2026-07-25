@@ -36,6 +36,9 @@ pub(crate) enum RuntimeCreateError {
     AlreadyExists,
     #[error("invalid runtime authorization configuration: {0}")]
     Authorization(String),
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    #[error("runtime_unavailable: {0}")]
+    Unavailable(String),
 }
 
 struct RuntimeOwnershipGuard {
@@ -68,6 +71,10 @@ impl Drop for RuntimeOwnershipGuard {
 #[derive(Debug, Clone)]
 pub(crate) struct RuntimeOptions {
     pub cursor: CursorConfig,
+    /// Whether the importing/embedding host owns macOS permission UX. Such a
+    /// runtime may inspect TCC state but must never raise Cua-owned prompts.
+    pub host_owns_permission_ux: bool,
+    pub host_bundle_id: Option<String>,
     pub compatibility_mode: bool,
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub prepare_desktop_environment: bool,
@@ -83,6 +90,8 @@ impl RuntimeOptions {
                 enabled: false,
                 ..CursorConfig::default()
             },
+            host_owns_permission_ux: true,
+            host_bundle_id: None,
             compatibility_mode,
             prepare_desktop_environment: true,
             register_host_tools: None,
@@ -183,6 +192,12 @@ pub(crate) struct DriverRuntime {
 
 impl DriverRuntime {
     pub(crate) fn create(options: RuntimeOptions) -> Result<Arc<Self>, RuntimeCreateError> {
+        #[cfg(target_os = "windows")]
+        if let Err(reason) = platform_windows::diagnostics::interactive_desktop_check() {
+            return Err(RuntimeCreateError::Unavailable(format!(
+                "Cua Driver requires an interactive Windows user session: {reason}"
+            )));
+        }
         let authorization_registry = Arc::new(match options.authorization_ceiling.clone() {
             Some(ceiling) => SessionAuthorizationRegistry::with_ceiling(ceiling),
             None => SessionAuthorizationRegistry::process()
@@ -384,6 +399,16 @@ fn register_recording_session_end_hook(registry: &Arc<ToolRegistry>) {
     });
 }
 
+/// Build the canonical SDK tool inventory without acquiring runtime ownership.
+///
+/// This metadata-only path cannot dispatch actions and therefore remains
+/// available when the host has no interactive desktop (for example Windows
+/// Session 0). Finite CLI inspection commands use it to preserve their
+/// desktop-free compatibility contract without weakening runtime admission.
+pub(crate) fn tool_inventory(options: RuntimeOptions) -> Value {
+    build_registry(&options).tools_list()
+}
+
 fn build_registry(options: &RuntimeOptions) -> ToolRegistry {
     #[cfg(target_os = "macos")]
     let mut registry = {
@@ -391,6 +416,8 @@ fn build_registry(options: &RuntimeOptions) -> ToolRegistry {
         platform_macos::register_tools_with_cursor(
             options.cursor.clone(),
             options.compatibility_mode,
+            options.host_owns_permission_ux,
+            options.host_bundle_id.clone(),
         )
     };
 

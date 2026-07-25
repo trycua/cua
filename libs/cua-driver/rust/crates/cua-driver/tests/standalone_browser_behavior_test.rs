@@ -28,10 +28,6 @@ use cua_driver_testkit::{spawn_in_job, BrowserFixtureServer, Driver, McpDriver, 
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
 
-use cua_driver_core::browser::approval::{
-    mint_existing_profile_approval, ExistingProfileApprovalScope,
-};
-
 const FIXTURE_HTML: &str = include_str!("../../../../tests/fixtures/shared/web/index.html");
 static STANDALONE_BROWSER_TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -708,13 +704,38 @@ fn spawn_driver(label: &str) -> McpDriver {
     let driver = if std::env::var("CUA_E2E_WAYLAND_SESSION").as_deref() == Ok("generic") {
         // Keep Sway IPC available to the out-of-band test oracle while the
         // product under test sees only standard/generic Wayland capabilities.
-        McpDriver::spawn_named_with_env(label, &[("SWAYSOCK", "/dev/null/cua-e2e-withheld")])
+        McpDriver::spawn_named_with_env(
+            label,
+            &[
+                ("SWAYSOCK", "/dev/null/cua-e2e-withheld"),
+                ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
+                ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
+            ],
+        )
     } else {
-        McpDriver::spawn_named(label)
+        McpDriver::spawn_named_with_env(
+            label,
+            &[
+                ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
+                ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
+            ],
+        )
     };
     #[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
-    let driver = McpDriver::spawn_named(label);
+    let driver = McpDriver::spawn_named_with_env(
+        label,
+        &[
+            ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
+            ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
+        ],
+    );
     driver.expect("cua-driver binary/daemon is required for standalone browser E2E")
+}
+
+#[cfg(not(target_os = "macos"))]
+fn spawn_standard_driver(label: &str) -> McpDriver {
+    McpDriver::spawn_named(label)
+        .expect("cua-driver binary/daemon is required for standalone browser E2E")
 }
 
 #[cfg(target_os = "linux")]
@@ -736,6 +757,8 @@ fn configure_test_browser_sandbox(command: &mut Command) {
 
 #[cfg(target_os = "windows")]
 const TEST_BROWSER_WINDOW_SIZE: &str = "900,640";
+#[cfg(target_os = "windows")]
+const TEST_BROWSER_HIGH_DPI_WINDOW_SIZE: &str = "440,300";
 #[cfg(not(target_os = "windows"))]
 const TEST_BROWSER_WINDOW_SIZE: &str = "980,760";
 
@@ -750,9 +773,34 @@ fn command_for_browser(
     cdp_port: u16,
     url: &str,
     position: (i32, i32),
+    _force_high_device_scale: bool,
 ) -> Command {
     let mut command = Command::new(&spec.executable);
     let output = browser_stderr();
+    #[cfg(target_os = "windows")]
+    let window_size = if _force_high_device_scale {
+        // Chromium applies the forced scale to the native window as well as
+        // the page and enforces a scaled minimum outer width. Keep the
+        // resulting physical bounds inside the 1024x768 interactive runner so
+        // the full-desktop sentinel can occlude every sampled point during the
+        // strict background-action proof.
+        TEST_BROWSER_HIGH_DPI_WINDOW_SIZE
+    } else {
+        TEST_BROWSER_WINDOW_SIZE
+    };
+    #[cfg(target_os = "windows")]
+    let window_position = if _force_high_device_scale {
+        // A scaled (40,40) origin plus Chromium's minimum high-DPI outer width
+        // can extend past the runner even when --window-size is smaller.
+        // Anchor this test-owned window at the display origin instead.
+        (0, 0)
+    } else {
+        position
+    };
+    #[cfg(not(target_os = "windows"))]
+    let window_position = position;
+    #[cfg(not(target_os = "windows"))]
+    let window_size = TEST_BROWSER_WINDOW_SIZE;
     command
         .arg(format!("--remote-debugging-port={cdp_port}"))
         .arg(format!("--user-data-dir={}", profile.display()))
@@ -764,9 +812,14 @@ fn command_for_browser(
         .arg("--disable-default-apps")
         .arg("--site-per-process")
         .arg("--new-window")
-        .arg(format!("--window-position={},{}", position.0, position.1))
-        .arg(format!("--window-size={TEST_BROWSER_WINDOW_SIZE}"));
+        .arg(format!(
+            "--window-position={},{}",
+            window_position.0, window_position.1
+        ))
+        .arg(format!("--window-size={window_size}"));
     configure_test_browser_sandbox(&mut command);
+    #[cfg(target_os = "macos")]
+    configure_macos_test_browser_command(&mut command);
     #[cfg(target_os = "linux")]
     configure_linux_browser_command(&mut command);
     command.arg(url).stdout(Stdio::null()).stderr(output);
@@ -792,6 +845,8 @@ fn command_for_unprepared_browser(
         .arg(format!("--window-position={},{}", position.0, position.1))
         .arg(format!("--window-size={TEST_BROWSER_WINDOW_SIZE}"));
     configure_test_browser_sandbox(&mut command);
+    #[cfg(target_os = "macos")]
+    configure_macos_test_browser_command(&mut command);
     #[cfg(target_os = "linux")]
     {
         configure_linux_browser_command(&mut command);
@@ -808,11 +863,56 @@ fn command_for_unprepared_browser(
     command
 }
 
+#[cfg(target_os = "macos")]
+fn configure_macos_test_browser_command(command: &mut Command) {
+    // Chromium's own macOS build guidance disables MediaRouter for tests to
+    // prevent its unrelated local-network system prompt from covering the
+    // browser UI under test. Cua Driver must still fail closed around an
+    // unexpected native prompt; this keeps the setup-success row focused on
+    // the exact remote-debugging page instead of pre-answering OS consent.
+    command.arg("--disable-features=MediaRouter");
+}
+
 fn browser_stderr() -> Stdio {
     if std::env::var_os("CUA_E2E_BROWSER_STDERR").is_some() {
         Stdio::inherit()
     } else {
         Stdio::null()
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_browser_commands_disable_unrelated_media_router_prompt() {
+    let spec = BrowserSpec {
+        name: "chrome".to_owned(),
+        executable: PathBuf::from("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+    };
+    let profile = Path::new("/tmp/cua-browser-command-test");
+    let prepared = command_for_browser(
+        &spec,
+        profile,
+        9222,
+        "about:blank",
+        TEST_BROWSER_INITIAL_POSITION,
+        false,
+    );
+    let unprepared = command_for_unprepared_browser(
+        &spec,
+        profile,
+        "about:blank",
+        TEST_BROWSER_INITIAL_POSITION,
+    );
+    for command in [&prepared, &unprepared] {
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy())
+            .collect::<Vec<_>>();
+        assert!(
+            args.iter()
+                .any(|arg| arg == "--disable-features=MediaRouter"),
+            "{args:?}"
+        );
     }
 }
 
@@ -989,8 +1089,19 @@ fn spawn_browser_command(
     cdp_port: u16,
     url: &str,
     position: (i32, i32),
+    force_high_device_scale: bool,
 ) {
-    let mut command = command_for_browser(spec, profile, cdp_port, url, position);
+    let mut command = command_for_browser(
+        spec,
+        profile,
+        cdp_port,
+        url,
+        position,
+        force_high_device_scale,
+    );
+    if force_high_device_scale {
+        command.arg("--force-device-scale-factor=2");
+    }
     let child = spawn_in_job(&mut command).expect("launch standalone browser");
     eprintln!(
         "[standalone-browser] spawned {} pid={} profile={} cdp_port={cdp_port}",
@@ -1006,7 +1117,25 @@ fn launch_browser(spec: &BrowserSpec, label: &str) -> BrowserFixture {
 }
 
 fn launch_browser_with_html(spec: &BrowserSpec, label: &str, html: String) -> BrowserFixture {
-    let mut driver = spawn_driver(label);
+    launch_browser_with_driver(spec, label, html, spawn_driver(label))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn launch_browser_in_standard_mode(spec: &BrowserSpec, label: &str) -> BrowserFixture {
+    launch_browser_with_driver(
+        spec,
+        label,
+        standalone_fixture_html(),
+        spawn_standard_driver(label),
+    )
+}
+
+fn launch_browser_with_driver(
+    spec: &BrowserSpec,
+    label: &str,
+    html: String,
+    mut driver: McpDriver,
+) -> BrowserFixture {
     let server = BrowserFixtureServer::start(&html);
     let profile = tempfile::Builder::new()
         .prefix("cua-e2e-browser-")
@@ -1021,6 +1150,7 @@ fn launch_browser_with_html(spec: &BrowserSpec, label: &str, html: String) -> Br
         cdp_port,
         "about:blank",
         TEST_BROWSER_INITIAL_POSITION,
+        label.contains("multi-tab"),
     );
     navigate_initial_page(cdp_port, &server);
     record_browser_provenance(spec, cdp_port);
@@ -2014,6 +2144,63 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
     );
 }
 
+#[cfg(not(target_os = "macos"))]
+fn run_existing_profile_standard_refusal(spec: &BrowserSpec) {
+    let scenario = format!(
+        "{}-{}-standalone-existing-profile-standard-refusal",
+        std::env::consts::OS,
+        spec.name
+    );
+    execute_case(
+        refusal_case(
+            &spec.name,
+            "browser_prepare_existing_profile_standard_refusal",
+            RefusalCode::BrowserConsentRequired,
+        ),
+        |evidence| {
+            let mut fixture = launch_browser_in_standard_mode(spec, &scenario);
+            *evidence = recording_evidence(fixture.driver.recording_dir());
+            run_with_background_oracles(&mut fixture, |fixture| {
+                let session = format!("standalone-standard-refusal-{}", fixture.pid);
+                let started = fixture
+                    .driver
+                    .call("start_session", serde_json::json!({ "session": session }));
+                assert!(!started.is_error(), "start_session failed: {}", started.raw);
+
+                fixture.driver.start_behavior_recording();
+                let refused = fixture.driver.call(
+                    "browser_prepare",
+                    serde_json::json!({
+                        "pid": fixture.pid as i64,
+                        "window_id": fixture.window_id,
+                        "session": session,
+                        "strategy": {"kind": "existing_profile"},
+                    }),
+                );
+                assert_eq!(
+                    refused.structured()["refusal"]["code"],
+                    "browser_consent_required",
+                    "{}",
+                    refused.raw
+                );
+                assert_eq!(
+                    refused.structured()["refusal"]["detail"]["permission_mode"],
+                    "standard",
+                    "{}",
+                    refused.raw
+                );
+                wait_for_text(&fixture.server, "lbl-counter", "counter=0");
+                Observation::refused(
+                    RefusalCode::BrowserConsentRequired,
+                    vec![OracleKind::FixtureState],
+                    refused.text(),
+                    Evidence::default(),
+                )
+            })
+        },
+    );
+}
+
 fn run_existing_profile_attach(spec: &BrowserSpec) {
     let scenario = format!(
         "{}-{}-standalone-existing-profile",
@@ -2032,30 +2219,6 @@ fn run_existing_profile_attach(spec: &BrowserSpec) {
                     .call("start_session", serde_json::json!({ "session": session }));
                 assert!(!started.is_error(), "start_session failed: {}", started.raw);
 
-                // A live MCP proxy proves transport provenance, not a person's
-                // approval to attach an authenticated profile.
-                let unapproved = fixture.driver.call(
-                    "browser_prepare",
-                    serde_json::json!({
-                        "pid": fixture.pid as i64,
-                        "window_id": fixture.window_id,
-                        "session": session,
-                        "strategy": {"kind": "existing_profile"},
-                    }),
-                );
-                assert_eq!(
-                    unapproved.structured()["refusal"]["code"],
-                    "browser_consent_required",
-                    "{}",
-                    unapproved.raw
-                );
-
-                let approval_token = mint_existing_profile_approval(ExistingProfileApprovalScope {
-                    pid: fixture.pid as i64,
-                    window_id: fixture.window_id,
-                    session: session.clone(),
-                })
-                .expect("mint exact existing-profile approval");
                 fixture.driver.start_behavior_recording();
                 let prepared = fixture.driver.call(
                     "browser_prepare",
@@ -2064,7 +2227,6 @@ fn run_existing_profile_attach(spec: &BrowserSpec) {
                         "window_id": fixture.window_id,
                         "session": session,
                         "strategy": {"kind": "existing_profile"},
-                        "approval_token": approval_token,
                     }),
                 );
                 assert_eq!(prepared.structured()["status"], "ok", "{}", prepared.raw);
@@ -2106,7 +2268,11 @@ fn run_existing_profile_attach(spec: &BrowserSpec) {
                     "{}",
                     prepared.raw
                 );
-                assert!(!public_result.contains(&approval_token), "{}", prepared.raw);
+                assert!(
+                    !public_result.contains("approval_token"),
+                    "{}",
+                    prepared.raw
+                );
                 assert!(
                     !public_result.contains(&fixture._profile.path().display().to_string()),
                     "{}",
@@ -2199,12 +2365,6 @@ fn run_existing_profile_setup(spec: &BrowserSpec) {
                 .call("start_session", serde_json::json!({ "session": session }));
             assert!(!started.is_error(), "start_session failed: {}", started.raw);
 
-            let approval_token = mint_existing_profile_approval(ExistingProfileApprovalScope {
-                pid: fixture.pid as i64,
-                window_id: fixture.window_id,
-                session: session.clone(),
-            })
-            .expect("mint exact existing-profile setup approval");
             fixture.driver.start_behavior_recording();
             let prepared = fixture.driver.call(
                 "browser_prepare",
@@ -2213,7 +2373,6 @@ fn run_existing_profile_setup(spec: &BrowserSpec) {
                     "window_id": fixture.window_id,
                     "session": session,
                     "strategy": {"kind": "existing_profile"},
-                    "approval_token": approval_token,
                 }),
             );
             assert_eq!(prepared.structured()["status"], "ok", "{}", prepared.raw);
@@ -2241,6 +2400,11 @@ fn run_existing_profile_setup(spec: &BrowserSpec) {
                 "{}",
                 prepared.raw
             );
+            assert!(
+                prepared.structured()["side_effects"]["used_bounded_pixel_fallback"].is_boolean(),
+                "{}",
+                prepared.raw
+            );
             assert_eq!(
                 prepared.structured()["side_effects"]["launched_browser"],
                 false
@@ -2252,7 +2416,11 @@ fn run_existing_profile_setup(spec: &BrowserSpec) {
 
             let public_result = prepared.raw.to_string();
             assert!(!public_result.contains("ws://"), "{}", prepared.raw);
-            assert!(!public_result.contains(&approval_token), "{}", prepared.raw);
+            assert!(
+                !public_result.contains("approval_token"),
+                "{}",
+                prepared.raw
+            );
             assert!(
                 !public_result.contains(&fixture._profile.path().display().to_string()),
                 "{}",
@@ -2409,13 +2577,6 @@ fn run_generic_wayland_existing_profile_refusal(spec: &BrowserSpec) {
                     let started =
                         driver.call("start_session", serde_json::json!({ "session": session }));
                     assert!(!started.is_error(), "start_session failed: {}", started.raw);
-                    let approval_token =
-                        mint_existing_profile_approval(ExistingProfileApprovalScope {
-                            pid: pid as i64,
-                            window_id: opaque_unattested_window_id,
-                            session: session.clone(),
-                        })
-                        .expect("mint generic-Wayland adversarial approval");
                     let refused = driver.call(
                         "browser_prepare",
                         serde_json::json!({
@@ -2423,7 +2584,6 @@ fn run_generic_wayland_existing_profile_refusal(spec: &BrowserSpec) {
                             "window_id": opaque_unattested_window_id,
                             "session": session,
                             "strategy": {"kind": "existing_profile"},
-                            "approval_token": approval_token,
                         }),
                     );
                     assert_eq!(
@@ -2613,21 +2773,11 @@ fn run_multi_tab(spec: &BrowserSpec) {
         assert!(created["targetId"].is_string(), "{created}");
         wait_for_observed(&second_server, "WEB_HARNESS_MARKER_v1");
 
-        // Exercise screenshot/coordinate parity under a non-1 device scale.
-        // This is setup instrumentation and runs before the background sentinel;
-        // the driver action below must still leave the tab selected state and
-        // native foreground unchanged.
+        // The multi-tab fixture launches Chromium with a non-1 device scale so
+        // screenshot/coordinate parity is exercised consistently in headful
+        // Chrome and Edge. Verify the launch flag reached this exact tab before
+        // starting the background sentinel.
         let background_ws = cdp_page_websocket_for_url(fixture.cdp_port, second_server.page_url());
-        harness_cdp_call_at_url(
-            &background_ws,
-            "Emulation.setDeviceMetricsOverride",
-            serde_json::json!({
-                "width": 400,
-                "height": 300,
-                "deviceScaleFactor": 2,
-                "mobile": false,
-            }),
-        );
         let device_scale = harness_cdp_call_at_url(
             &background_ws,
             "Runtime.evaluate",
@@ -2778,8 +2928,11 @@ fn run_multi_tab(spec: &BrowserSpec) {
             let pixel_to_css_y = snapshot.structured()["screenshot"]["pixel_to_css_scale_y"]
                 .as_f64()
                 .expect("screenshot y scale");
-            assert!((viewport_width - 400.0).abs() < 0.01, "{}", snapshot.raw);
-            assert!((viewport_height - 300.0).abs() < 0.01, "{}", snapshot.raw);
+            assert!(
+                viewport_width > 0.0 && viewport_height > 0.0,
+                "{}",
+                snapshot.raw
+            );
             assert!(
                 (pixel_to_css_x - viewport_width / png_width).abs() < 1e-9,
                 "{}",
@@ -2787,6 +2940,12 @@ fn run_multi_tab(spec: &BrowserSpec) {
             );
             assert!(
                 (pixel_to_css_y - viewport_height / png_height).abs() < 1e-9,
+                "{}",
+                snapshot.raw
+            );
+            assert!(
+                (pixel_to_css_x - 1.0 / device_scale).abs() < 1e-9
+                    && (pixel_to_css_y - 1.0 / device_scale).abs() < 1e-9,
                 "{}",
                 snapshot.raw
             );
@@ -3612,6 +3771,11 @@ standalone_browser_test!(standalone_browser_trusted_click, run_trusted_click);
 standalone_browser_test!(
     standalone_browser_prepare_isolated,
     run_prepare_isolated_launch
+);
+#[cfg(not(target_os = "macos"))]
+standalone_browser_test!(
+    standalone_browser_existing_profile_standard_refusal,
+    run_existing_profile_standard_refusal
 );
 standalone_browser_test!(
     standalone_browser_existing_profile,

@@ -1,6 +1,7 @@
-//! Unix-socket daemon server and client for `cua-driver serve`/`stop`/`status`.
+//! Local daemon server and client for `cua-driver serve`/`stop`/`status`.
 //!
-//! Protocol: line-delimited JSON over a Unix domain socket.
+//! Protocol: line-delimited JSON over a Unix domain socket or Windows named
+//! pipe.
 //!
 //! Request shapes:
 //!   {"method":"call","name":"<tool>","args":{...}}
@@ -15,7 +16,10 @@
 //! The socket file is at:
 //!   macOS  — ~/Library/Caches/cua-driver/cua-driver.sock
 //!   Linux  — ~/.cache/cua-driver/cua-driver.sock
-//!   Windows — \\.\pipe\cua-driver  (TODO: use named pipe; stubs only for now)
+//!   Windows — \\.\pipe\cua-driver
+//!
+//! Source-installed local builds use the corresponding `cua-driver-local`
+//! namespace on every platform.
 
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
@@ -113,14 +117,12 @@ pub fn default_socket_path() -> String {
     socket_path_for_namespace(crate::bundle::state_namespace())
 }
 
-/// On Windows, returns the named-pipe path of the uiAccess-elevated worker
-/// (`cua-driver-uia.exe`). The main CLI/MCP binary can prefer this pipe over the
-/// regular daemon pipe for the one path that genuinely needs UIAccess integrity:
-/// **synthetic input (SendInput / pixel clicks) into AppContainer (UWP) windows**,
-/// which UIPI blocks from a Medium-IL process. The element-action path (UIA
-/// Invoke / ValuePattern driven by `element_index`) does NOT need the worker — it
-/// drives real UWP apps (verified: Calculator num5Button 0→5) as-is from the
-/// Medium-IL daemon. See #1602 / the `cua-driver-uia` crate for the worker side.
+/// On Windows, returns the reserved named-pipe path of the uiAccess-elevated
+/// worker (`cua-driver-uia.exe`). Public CLI, MCP, and SDK clients never connect
+/// to this endpoint. It remains available only for a future daemon-internal
+/// forwarding path that authenticates the exact parent process. Until that path
+/// exists, elevated/AppContainer pixel input uses an interactively launched
+/// High-IL daemon. See #1602 / the `cua-driver-uia` crate for the worker side.
 #[cfg(target_os = "windows")]
 pub fn default_uia_pipe_path() -> String {
     if crate::bundle::is_local_installation() {
@@ -369,14 +371,11 @@ fn remove_owned_socket(socket_path: &str, identity: SocketIdentity) {
 }
 
 #[cfg(unix)]
-fn secure_embedded_socket(socket_path: &str, embedded: bool) -> anyhow::Result<()> {
-    if !embedded {
-        return Ok(());
-    }
+fn secure_local_socket(socket_path: &str) -> anyhow::Result<()> {
     use std::os::unix::fs::PermissionsExt as _;
     let permissions = std::fs::Permissions::from_mode(0o600);
     std::fs::set_permissions(socket_path, permissions)
-        .map_err(|e| anyhow::anyhow!("secure embedded daemon socket {socket_path}: {e}"))
+        .map_err(|e| anyhow::anyhow!("secure local daemon socket {socket_path}: {e}"))
 }
 
 #[cfg(unix)]
@@ -522,7 +521,7 @@ pub async fn run_serve(
 
     let listener =
         UnixListener::bind(socket_path).map_err(|e| anyhow::anyhow!("bind {socket_path}: {e}"))?;
-    secure_embedded_socket(socket_path, embedded)?;
+    secure_local_socket(socket_path)?;
     let bound_socket = socket_identity(socket_path)?;
 
     eprintln!("Cua Driver daemon listening on {socket_path}");
@@ -861,123 +860,6 @@ pub async fn run_serve(
     Ok(())
 }
 
-/// On Windows, optionally spawn the sibling uiAccess'd worker
-/// (`cua-driver-uia.exe`) via ShellExecute if it lives next to the main binary
-/// AND we're at Medium IL AND the binary is opt-in via env var.
-///
-/// History: the uia worker was the original answer to "send synthetic input
-/// (SendInput / pixel clicks) into UWP / AppContainer windows from a Medium-IL
-/// daemon" — UIPI blocks that cross-integrity input, so the worker carries
-/// `uiAccess="true"` in its manifest and was meant to be Authenticode-signed
-/// (EV cert per #1602) so Windows AIS would elevate it to UIAccess integrity at
-/// launch.
-///
-/// IMPORTANT (verified): the worker is NOT required to automate real UWP apps in
-/// general. The element-action path — UIA Invoke / ValuePattern driven by
-/// `element_index` — drives AppContainer apps as-is from the Medium-IL daemon
-/// (Calculator num5Button 0→5, no worker). Only the pixel / SendInput path needs
-/// the worker, and only against AppContainer (UWP) targets.
-///
-/// With #1630 the canonical answer for that input path became "register the
-/// autostart task at RunLevel=Highest so the main daemon is already at High IL",
-/// which obviates the worker entirely for the vast majority of users.
-///
-/// Current behavior:
-///
-/// 1. If the main daemon is already at High IL (the RunLevel=Highest path),
-///    skip the worker — it's redundant and, more importantly, attempting to
-///    ShellExecute an unsigned uiAccess'd PE pops a Windows error dialog
-///    ("A referral was returned from the server" = AIS refusing to elevate
-///    an unsigned uiAccess binary). That dialog blocks the daemon's startup
-///    and confuses users.
-///
-/// 2. If the main daemon is at Medium IL (older installs without the
-///    Highest task), AND `CUA_DRIVER_RS_SPAWN_UIA_WORKER=1` is set (opt-in),
-///    AND a uiAccess'd worker is installed, spawn it. This path is kept for
-///    the future EV-cert flow where the worker IS properly signed.
-///
-/// 3. Otherwise: skip silently. The main daemon still serves requests, and
-///    element_index UWP automation (UIA Invoke / ValuePattern) works without the
-///    worker. Only pixel / SendInput into AppContainer (UWP) windows needs the
-///    elevated path — re-run with the Highest autostart task or (when shipped)
-///    the signed uia worker. See #1602.
-#[cfg(target_os = "windows")]
-fn maybe_spawn_uia_worker() {
-    // Skip when at High IL — main daemon already has the privileges the
-    // worker was supposed to provide.
-    if is_self_at_high_il() {
-        tracing::debug!("uia spawn skipped: main daemon already at High IL");
-        return;
-    }
-
-    // Opt-in for the future EV-cert flow. Default-off until the worker is
-    // actually signed and tested.
-    if !crate::bundle::is_env_truthy("CUA_DRIVER_RS_SPAWN_UIA_WORKER") {
-        tracing::debug!(
-            "uia spawn skipped: CUA_DRIVER_RS_SPAWN_UIA_WORKER not set (opt-in only \
-             until the worker is EV-signed; see #1602)"
-        );
-        return;
-    }
-
-    let current = match std::env::current_exe() {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::debug!("uia spawn skipped: current_exe failed: {e}");
-            return;
-        }
-    };
-    let uia = match current.parent() {
-        Some(dir) => dir.join(crate::bundle::uia_executable_name()),
-        None => return,
-    };
-    if !uia.exists() {
-        tracing::debug!("uia spawn skipped: {} not present", uia.display());
-        return;
-    }
-    let uia_str = uia.display().to_string();
-    let cmd =
-        format!("(New-Object -ComObject Shell.Application).ShellExecute('{uia_str}','','','',0)");
-    match std::process::Command::new("powershell.exe")
-        .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &cmd])
-        .spawn()
-    {
-        Ok(_child) => {
-            eprintln!("cua-driver: spawned uiAccess worker via {}", uia.display());
-        }
-        Err(e) => {
-            tracing::warn!("uia spawn failed: {e}");
-        }
-    }
-}
-
-/// Returns true when the current process is at High IL (admin token). Checked
-/// via a one-shot PowerShell call to `WindowsPrincipal.IsInRole(Administrator)`
-/// — the standard managed equivalent of OpenProcessToken + GetTokenInformation.
-///
-/// Done via PowerShell instead of the windows-crate Win32 API because cua-driver
-/// doesn't depend on the `windows` crate directly (only platform-windows does),
-/// and `serve.rs` runs only once at daemon start so the ~50ms PowerShell-spawn
-/// cost is acceptable.
-#[cfg(target_os = "windows")]
-fn is_self_at_high_il() -> bool {
-    let out = std::process::Command::new("powershell.exe")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "([System.Security.Principal.WindowsPrincipal][System.Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)",
-        ])
-        .output();
-    match out {
-        Ok(o) => {
-            let s = String::from_utf8_lossy(&o.stdout);
-            s.trim().eq_ignore_ascii_case("True")
-        }
-        Err(_) => false,
-    }
-}
-
 #[cfg(target_os = "windows")]
 unsafe fn security_attrs_from_sddl(
     sddl: &str,
@@ -1258,10 +1140,6 @@ pub async fn run_serve(
         Some((attrs, _sd_ptr)) => attrs as *const _ as *mut _,
         None => std::ptr::null_mut(),
     };
-
-    // Spawn the sibling uiAccess'd worker if it's installed. Best-effort —
-    // the main daemon still serves requests even if the worker fails to start.
-    maybe_spawn_uia_worker();
 
     // Write PID file.
     if let Some(pid_path) = pid_file_path {
@@ -1867,23 +1745,17 @@ pub fn run_revoke_cmd(socket_path: &str, session: Option<&str>, all: bool) {
 
 #[cfg(all(test, unix))]
 mod socket_tests {
-    use super::{remove_owned_socket, secure_embedded_socket, socket_identity};
+    use super::{remove_owned_socket, secure_local_socket, socket_identity};
     use std::os::unix::fs::PermissionsExt as _;
 
     #[test]
-    fn only_embedded_sockets_are_forced_private() {
+    fn every_local_service_socket_is_forced_private() {
         let directory = tempfile::tempdir().unwrap();
         let socket = directory.path().join("driver.sock");
         let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
         std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o770)).unwrap();
 
-        secure_embedded_socket(socket.to_str().unwrap(), false).unwrap();
-        assert_eq!(
-            std::fs::metadata(&socket).unwrap().permissions().mode() & 0o777,
-            0o770
-        );
-
-        secure_embedded_socket(socket.to_str().unwrap(), true).unwrap();
+        secure_local_socket(socket.to_str().unwrap()).unwrap();
         assert_eq!(
             std::fs::metadata(&socket).unwrap().permissions().mode() & 0o777,
             0o600
@@ -1985,6 +1857,8 @@ mod gate_tests {
                     enabled: false,
                     ..cursor_overlay::CursorConfig::default()
                 },
+                host_owns_permission_ux: false,
+                host_bundle_id: None,
                 claude_code_compatibility: false,
                 prepare_desktop_environment: false,
                 register_host_tools: Some(register_probe),

@@ -19,7 +19,7 @@ These dimensions form a grid:
 
 | Topology | Typed SDK | MCP / CLI |
 | --- | --- | --- |
-| Same process | **Primary for client applications** | Default stdio MCP owner on Windows and Linux |
+| Same process | **Primary for applications embedding Cua Driver** | Default stdio MCP owner on Windows and Linux; explicit `--direct` on macOS |
 | Private worker | `create_private_worker()` / `createPrivateWorker()` for per-host process isolation | Not reconnectable and not advertised as an MCP endpoint |
 | Daemon | Compatibility or app-shared runtime | Standalone macOS default and explicit `--socket` service mode |
 
@@ -88,6 +88,12 @@ running default service on Windows or Linux. Use `cua-driver mcp --socket
 <endpoint>` when an agent must share that service's sessions and resources.
 The explicit connection path preserves the released daemon protocol.
 
+Standalone macOS keeps the opposite default because `CuaDriver.app` owns its
+stable TCC identity. `cua-driver mcp --direct` is the explicit opt-in for a
+host that wants the MCP process itself to own the runtime and accepts the
+spawning application's TCC attribution. It cannot be combined with
+`--socket`.
+
 Private workers use the same generated SDK contract but exchange versioned
 request/response envelopes over child stdin/stdout. The host supplies the
 authorization ceiling before readiness, owns the only channel, and terminates
@@ -98,7 +104,9 @@ daemon socket.
 
 Remote carriers use the same transport-free Rust envelope seam. The carrier
 must authenticate a principal, bind a connection generation, preserve request
-IDs and deadlines, and return a separately bound channel for trusted sessions.
+IDs and deadlines, negotiate a compatible envelope version and cancellation
+support before dispatch, forward cancellation when an action future is
+dropped, and return a separately bound channel for trusted sessions.
 The Cua Driver core does not depend on gRPC, HTTP/2, or another carrier, and no
 generated Python/TypeScript remote constructor is shipped yet.
 
@@ -134,6 +142,14 @@ A second direct `CuaDriver.create()` returns the structured
 `runtime_already_exists` conflict. Separate trust domains use separate
 runtime-owner processes. Complete same-process multi-runtime support remains a
 later isolation gate; it cannot be enabled merely by removing the guard.
+
+On macOS, the cursor overlay additionally requires an AppKit main-thread UI
+owner. A direct runtime without a certified host adapter returns structured
+`facility_unavailable` results for cursor-overlay operations; it does not
+report success or start hidden AppKit work on an unsafe thread. A private
+worker or service owns the required event loop. A headless service or worker
+without Window Server graphic-session access returns the same refusal instead
+of claiming an overlay that cannot render.
 
 ## Service transport hardening
 

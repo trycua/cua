@@ -202,6 +202,28 @@ fi
 
 if [[ "${RUN_STANDALONE_BROWSER}" == 1 ]]; then
   echo "[E2E] Running the optional standalone browser matrix"
+  LOCAL_PLIST="${HOME}/Library/LaunchAgents/com.trycua.cua-driver-local.plist"
+  echo "[AUTHORIZATION] Restarting the disposable worker daemon in unrestricted mode"
+  launchctl unload "${LOCAL_PLIST}" 2>/dev/null || true
+  "${INSTALLED_BIN}" stop --socket "${CUA_E2E_MACOS_DAEMON_SOCKET}" >/dev/null 2>&1 || true
+  open -n -g /Applications/CuaDriverLocal.app --args \
+    serve \
+    --permission-mode unrestricted \
+    --dangerously-bypass-approvals
+  UNRESTRICTED_READY=0
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if "${INSTALLED_BIN}" status --socket "${CUA_E2E_MACOS_DAEMON_SOCKET}" \
+        | grep -Fq "permission mode: unrestricted"; then
+      UNRESTRICTED_READY=1
+      break
+    fi
+    sleep 1
+  done
+  if [[ "${UNRESTRICTED_READY}" != 1 ]]; then
+    echo "The standalone-browser lane could not start its unrestricted worker daemon" >&2
+    exit 1
+  fi
+
   BROWSER_ARTIFACT_DIR="${REPO_ROOT}/artifacts/cua-driver/macos-standalone-browser"
   if [[ -d "${BROWSER_ARTIFACT_DIR}" ]] \
       && [[ -n "$(find "${BROWSER_ARTIFACT_DIR}" -mindepth 1 -print -quit)" ]]; then
@@ -209,6 +231,16 @@ if [[ "${RUN_STANDALONE_BROWSER}" == 1 ]]; then
     mv "${BROWSER_ARTIFACT_DIR}" "${BROWSER_ARTIFACT_ARCHIVE}/macos-standalone-browser"
     echo "Previous standalone-browser evidence preserved at ${BROWSER_ARTIFACT_ARCHIVE}/macos-standalone-browser"
   fi
+  set +e
   CUA_E2E_ARTIFACT_DIR="${BROWSER_ARTIFACT_DIR}" \
     "${REPO_ROOT}/scripts/ci/run-rust-standalone-browser-e2e.sh"
+  BROWSER_STATUS=$?
+  set -e
+
+  echo "[AUTHORIZATION] Restoring the worker's standard autostart daemon"
+  "${INSTALLED_BIN}" stop --socket "${CUA_E2E_MACOS_DAEMON_SOCKET}" >/dev/null 2>&1 || true
+  launchctl load "${LOCAL_PLIST}"
+  if [[ "${BROWSER_STATUS}" != 0 ]]; then
+    exit "${BROWSER_STATUS}"
+  fi
 fi

@@ -57,6 +57,9 @@ export CUA_TEST_APPS_ROOT="${RUST_ROOT}/test-apps"
 export CUA_TEST_REQUIRE_FIXTURES=1
 export CUA_TEST_DRIVER_STDERR=1
 export CUA_E2E_FORBID_SKIPS=1
+# This runner contract requires a real or virtual desktop. Make GUI-dependent
+# lifecycle proofs fail instead of silently returning without evidence.
+export CUA_REQUIRE_GUI=1
 unset CUA_E2E_EXPECTED_MIN_CELLS
 if [[ ("${SUITE}" == shared || "${SUITE}" == all) \
   && -z "${CUA_E2E_CELL_FILTER:-}" \
@@ -169,6 +172,12 @@ run_test() {
 }
 
 if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
+  run_test sdk-runtime-contract \
+    cargo test -p cua-driver-sdk --lib -- --test-threads=1
+  run_test sdk-runtime-configuration \
+    cargo test -p cua-driver-sdk --test runtime_configuration -- --test-threads=1
+  run_test private-worker-lifecycle \
+    cargo test -p cua-driver --test private_worker_test -- --test-threads=1
   run_test shared-behavior-matrix \
     cargo test -p cua-driver --test cross_platform_behavior_test -- \
       --ignored --exact shared_web_action_matrix_is_state_verified \

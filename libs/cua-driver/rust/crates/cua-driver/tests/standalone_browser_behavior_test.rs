@@ -757,6 +757,8 @@ fn configure_test_browser_sandbox(command: &mut Command) {
 
 #[cfg(target_os = "windows")]
 const TEST_BROWSER_WINDOW_SIZE: &str = "900,640";
+#[cfg(target_os = "windows")]
+const TEST_BROWSER_HIGH_DPI_WINDOW_SIZE: &str = "440,300";
 #[cfg(not(target_os = "windows"))]
 const TEST_BROWSER_WINDOW_SIZE: &str = "980,760";
 
@@ -771,9 +773,22 @@ fn command_for_browser(
     cdp_port: u16,
     url: &str,
     position: (i32, i32),
+    _force_high_device_scale: bool,
 ) -> Command {
     let mut command = Command::new(&spec.executable);
     let output = browser_stderr();
+    #[cfg(target_os = "windows")]
+    let window_size = if _force_high_device_scale {
+        // Chromium applies the forced scale to the native window as well as
+        // the page. Keep the resulting physical bounds inside the 1024x768
+        // interactive runner so the full-desktop sentinel can occlude every
+        // sampled point during the strict background-action proof.
+        TEST_BROWSER_HIGH_DPI_WINDOW_SIZE
+    } else {
+        TEST_BROWSER_WINDOW_SIZE
+    };
+    #[cfg(not(target_os = "windows"))]
+    let window_size = TEST_BROWSER_WINDOW_SIZE;
     command
         .arg(format!("--remote-debugging-port={cdp_port}"))
         .arg(format!("--user-data-dir={}", profile.display()))
@@ -786,7 +801,7 @@ fn command_for_browser(
         .arg("--site-per-process")
         .arg("--new-window")
         .arg(format!("--window-position={},{}", position.0, position.1))
-        .arg(format!("--window-size={TEST_BROWSER_WINDOW_SIZE}"));
+        .arg(format!("--window-size={window_size}"));
     configure_test_browser_sandbox(&mut command);
     #[cfg(target_os = "linux")]
     configure_linux_browser_command(&mut command);
@@ -1012,7 +1027,14 @@ fn spawn_browser_command(
     position: (i32, i32),
     force_high_device_scale: bool,
 ) {
-    let mut command = command_for_browser(spec, profile, cdp_port, url, position);
+    let mut command = command_for_browser(
+        spec,
+        profile,
+        cdp_port,
+        url,
+        position,
+        force_high_device_scale,
+    );
     if force_high_device_scale {
         command.arg("--force-device-scale-factor=2");
     }

@@ -411,6 +411,7 @@ fn process_tree_owned_endpoint(
             // Core authorizes and fingerprints the stable tree root; retain
             // the exact socket owner in detail for audit evidence.
             owner_pid: root_pid,
+            listener_pid: Some(i64::from(listener_pid)),
             detail: Some(format!(
                 "{context}; exact loopback listener pid {listener_pid}"
             )),
@@ -720,6 +721,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             ownership: EndpointOwnershipProof {
                 method: EndpointOwnershipMethod::ListeningSocketPid,
                 owner_pid: pid,
+                listener_pid: None,
                 detail: Some(
                     "Windows browser process-tree owner of exact approved endpoint".to_owned(),
                 ),
@@ -812,6 +814,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                         ownership: EndpointOwnershipProof {
                             method: EndpointOwnershipMethod::ListeningSocketPid,
                             owner_pid: request.pid,
+                            listener_pid: None,
                             detail: Some((*detail).to_owned()),
                         },
                     })
@@ -1026,6 +1029,7 @@ mod tests {
         );
 
         assert_eq!(endpoint.ownership.owner_pid, 42);
+        assert_eq!(endpoint.ownership.listener_pid, Some(43));
         assert_eq!(endpoint.http_port, Some(9222));
         assert!(endpoint
             .ownership

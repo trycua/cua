@@ -150,10 +150,16 @@ pub struct EndpointOwnershipProof {
     pub method: EndpointOwnershipMethod,
     /// Stable process identity the platform attributed the endpoint to. For a
     /// platform-proven browser process tree this is the authorized tree root;
-    /// `detail` may retain the exact child socket owner. Core refuses with
-    /// `browser_endpoint_owner_mismatch` when this does not equal the target
-    /// pid.
+    /// `listener_pid` may retain the exact child socket owner. Core refuses
+    /// with `browser_endpoint_owner_mismatch` when this does not equal the
+    /// target pid.
     pub owner_pid: i64,
+    /// Exact process that owned the listening socket when the platform can
+    /// prove it separately from the stable authorization root. Isolated
+    /// browser launch uses this to follow a promoted runtime process without
+    /// weakening later endpoint authorization to exact-listener equality.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listener_pid: Option<i64>,
     pub detail: Option<String>,
 }
 
@@ -275,5 +281,31 @@ mod tests {
         };
         let b = a.clone();
         assert!(a.matches(&b));
+    }
+
+    #[test]
+    fn endpoint_listener_pid_is_wire_compatible_and_optional() {
+        let legacy = serde_json::json!({
+            "method": "listening_socket_pid",
+            "owner_pid": 42,
+            "detail": "legacy proof"
+        });
+        let proof: EndpointOwnershipProof =
+            serde_json::from_value(legacy).expect("deserialize legacy endpoint proof");
+        assert_eq!(proof.owner_pid, 42);
+        assert_eq!(proof.listener_pid, None);
+        assert!(serde_json::to_value(&proof)
+            .expect("serialize endpoint proof")
+            .get("listener_pid")
+            .is_none());
+
+        let with_listener = EndpointOwnershipProof {
+            listener_pid: Some(43),
+            ..proof
+        };
+        assert_eq!(
+            serde_json::to_value(with_listener).expect("serialize listener proof")["listener_pid"],
+            43
+        );
     }
 }

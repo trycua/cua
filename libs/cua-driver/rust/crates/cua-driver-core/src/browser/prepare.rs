@@ -517,6 +517,7 @@ async fn wait_for_spawned_endpoint(
                             ownership: EndpointOwnershipProof {
                                 method: EndpointOwnershipMethod::SpawnedByDriver,
                                 owner_pid: i64::from(child.id()),
+                                listener_pid: None,
                                 detail: Some(
                                     "driver-spawned process and private profile port file"
                                         .to_owned(),
@@ -552,13 +553,21 @@ async fn attest_spawned_endpoint(
             if live.http_port == profile_endpoint.http_port
                 && live.ws_url == profile_endpoint.ws_url
             {
+                let runtime_pid = spawned_runtime_pid(&live.ownership);
                 return Ok(OwnedEndpoint {
                     ws_url: live.ws_url,
                     http_port: live.http_port,
                     ownership: EndpointOwnershipProof {
                         method: EndpointOwnershipMethod::SpawnedByDriver,
-                        owner_pid: live.ownership.owner_pid,
-                        detail: Some(if live.ownership.owner_pid == child_pid {
+                        // The platform already proved the exact listener is in
+                        // child_pid's process tree. Promote that live process
+                        // to the prepared-browser identity so ARM64 launcher
+                        // handoffs remain bindable and reapable. Later Windows
+                        // reproof normalizes ownership to this stable pid while
+                        // retaining any new exact listener separately.
+                        owner_pid: runtime_pid,
+                        listener_pid: live.ownership.listener_pid,
+                        detail: Some(if runtime_pid == child_pid {
                             "driver-owned profile port file plus live loopback socket owner"
                                 .to_owned()
                         } else {
@@ -577,6 +586,10 @@ async fn attest_spawned_endpoint(
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+fn spawned_runtime_pid(ownership: &EndpointOwnershipProof) -> i64 {
+    ownership.listener_pid.unwrap_or(ownership.owner_pid)
 }
 
 impl BrowserEngine {
@@ -1274,6 +1287,24 @@ mod tests {
             clean_spawn_exit_can_be_launcher_handoff(&status),
             cfg!(target_os = "windows")
         );
+    }
+
+    #[test]
+    fn spawned_runtime_promotes_a_proven_listener_without_losing_the_root() {
+        let proof = EndpointOwnershipProof {
+            method: EndpointOwnershipMethod::ListeningSocketPid,
+            owner_pid: 42,
+            listener_pid: Some(43),
+            detail: Some("listener 43 proven inside process tree 42".to_owned()),
+        };
+        assert_eq!(spawned_runtime_pid(&proof), 43);
+        assert_eq!(proof.owner_pid, 42);
+
+        let root_owned = EndpointOwnershipProof {
+            listener_pid: None,
+            ..proof
+        };
+        assert_eq!(spawned_runtime_pid(&root_owned), 42);
     }
 
     #[cfg(target_os = "linux")]

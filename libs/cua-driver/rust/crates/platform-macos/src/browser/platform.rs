@@ -341,6 +341,7 @@ async fn active_port_endpoint(
         ownership: EndpointOwnershipProof {
             method: EndpointOwnershipMethod::DevtoolsActivePortsFile,
             owner_pid: pid,
+            listener_pid: None,
             detail: Some(
                 "exact default-profile DevToolsActivePort path plus lsof loopback listener owner"
                     .to_owned(),
@@ -592,6 +593,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                     ownership: EndpointOwnershipProof {
                         method: EndpointOwnershipMethod::ListeningSocketPid,
                         owner_pid: pid,
+                        listener_pid: None,
                         detail: Some("lsof loopback listener owner".to_owned()),
                     },
                 }));
@@ -623,6 +625,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                 ownership: EndpointOwnershipProof {
                     method: EndpointOwnershipMethod::ListeningSocketPid,
                     owner_pid: pid,
+                    listener_pid: None,
                     detail: Some("lsof loopback listener owner plus /json/version".to_owned()),
                 },
             }));
@@ -670,6 +673,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
             ownership: EndpointOwnershipProof {
                 method: EndpointOwnershipMethod::ListeningSocketPid,
                 owner_pid: pid,
+                listener_pid: None,
                 detail: Some("lsof owner of exact approved endpoint".to_owned()),
             },
         }))
@@ -774,6 +778,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                         ownership: EndpointOwnershipProof {
                             method: EndpointOwnershipMethod::ListeningSocketPid,
                             owner_pid: request.pid,
+                            listener_pid: None,
                             detail: Some((*detail).to_owned()),
                         },
                     })

@@ -733,6 +733,7 @@ impl BrowserPlatform for FixturePlatform {
             ownership: EndpointOwnershipProof {
                 method: EndpointOwnershipMethod::ListeningSocketPid,
                 owner_pid: pid,
+                listener_pid: None,
                 detail: None,
             },
         }))
@@ -752,6 +753,7 @@ impl BrowserPlatform for FixturePlatform {
             ownership: EndpointOwnershipProof {
                 method: EndpointOwnershipMethod::ListeningSocketPid,
                 owner_pid: pid,
+                listener_pid: None,
                 detail: Some("fixture exact approved endpoint".to_owned()),
             },
         }))
@@ -775,6 +777,7 @@ impl BrowserPlatform for FixturePlatform {
                 ownership: EndpointOwnershipProof {
                     method: EndpointOwnershipMethod::ListeningSocketPid,
                     owner_pid: 1,
+                    listener_pid: None,
                     detail: Some("fixture exact setup transition".to_owned()),
                 },
             }),

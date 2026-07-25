@@ -292,6 +292,7 @@ mod tests {
                 "desktop_unlocked",
                 "escalation_reason",
                 "escalation_detail",
+                "workspace_id",
                 "active",
                 "revived",
             ]

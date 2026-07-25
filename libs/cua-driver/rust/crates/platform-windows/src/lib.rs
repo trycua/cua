@@ -35,6 +35,11 @@ pub mod virtualdesk;
 #[cfg(any(target_os = "windows", test))]
 mod keycodes;
 
+// The documented Windows virtual-desktop API supports querying and moving
+// windows by desktop GUID, but not enumerating or creating desktops. Keep the
+// GUID/capability model cross-platform so its contract can be tested on CI.
+pub mod workspace;
+
 // Cross-platform: pure math for packing `(x, y)` into the `LPARAM` payload
 // every `WM_MOUSE*` / `WM_*BUTTON*` message carries. Lives outside the
 // Windows-only `input` module for the same reason as `virtualdesk` — the

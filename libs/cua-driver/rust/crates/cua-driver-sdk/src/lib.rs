@@ -2383,6 +2383,7 @@ mod tests {
                     "desktop_unlocked": false,
                     "escalation_reason": null,
                     "escalation_detail": null,
+                    "workspace_id": null,
                     "active": true,
                     "revived": false
                 },
@@ -2396,6 +2397,7 @@ mod tests {
                 session: "run-2".into(),
                 capture_scope: Some(cua_driver_contract::CaptureScope::Auto),
                 cursor_theme: None,
+                workspace_id: None,
             })
             .await
             .unwrap();

@@ -484,6 +484,7 @@ pub fn is_computer_action(tool_name: &str, operation: ToolOperation) -> bool {
                     "app.launch"
                         | "app.kill"
                         | "window.activate"
+                        | "workspace.window.move"
                         | "browser.navigate"
                         | "browser.input.click"
                         | "browser.input.type"

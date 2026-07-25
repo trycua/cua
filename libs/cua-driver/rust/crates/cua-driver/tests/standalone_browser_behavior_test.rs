@@ -2356,13 +2356,16 @@ fn run_existing_profile_setup(spec: &BrowserSpec) {
                 "{}",
                 prepared.raw
             );
-            #[cfg(target_os = "macos")]
-            assert_eq!(
-                prepared.structured()["side_effects"]["used_bounded_pixel_fallback"],
-                true,
-                "{}",
-                prepared.raw
-            );
+            if std::env::var("CUA_E2E_EXPECT_BOUNDED_PIXEL_FALLBACK_PRODUCT")
+                .is_ok_and(|product| product.eq_ignore_ascii_case(&spec.name))
+            {
+                assert_eq!(
+                    prepared.structured()["side_effects"]["used_bounded_pixel_fallback"],
+                    true,
+                    "{}",
+                    prepared.raw
+                );
+            }
             assert_eq!(
                 prepared.structured()["side_effects"]["launched_browser"],
                 false

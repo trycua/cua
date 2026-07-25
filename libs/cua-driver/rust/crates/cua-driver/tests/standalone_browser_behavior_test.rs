@@ -780,13 +780,25 @@ fn command_for_browser(
     #[cfg(target_os = "windows")]
     let window_size = if _force_high_device_scale {
         // Chromium applies the forced scale to the native window as well as
-        // the page. Keep the resulting physical bounds inside the 1024x768
-        // interactive runner so the full-desktop sentinel can occlude every
-        // sampled point during the strict background-action proof.
+        // the page and enforces a scaled minimum outer width. Keep the
+        // resulting physical bounds inside the 1024x768 interactive runner so
+        // the full-desktop sentinel can occlude every sampled point during the
+        // strict background-action proof.
         TEST_BROWSER_HIGH_DPI_WINDOW_SIZE
     } else {
         TEST_BROWSER_WINDOW_SIZE
     };
+    #[cfg(target_os = "windows")]
+    let window_position = if _force_high_device_scale {
+        // A scaled (40,40) origin plus Chromium's minimum high-DPI outer width
+        // can extend past the runner even when --window-size is smaller.
+        // Anchor this test-owned window at the display origin instead.
+        (0, 0)
+    } else {
+        position
+    };
+    #[cfg(not(target_os = "windows"))]
+    let window_position = position;
     #[cfg(not(target_os = "windows"))]
     let window_size = TEST_BROWSER_WINDOW_SIZE;
     command
@@ -800,7 +812,10 @@ fn command_for_browser(
         .arg("--disable-default-apps")
         .arg("--site-per-process")
         .arg("--new-window")
-        .arg(format!("--window-position={},{}", position.0, position.1))
+        .arg(format!(
+            "--window-position={},{}",
+            window_position.0, window_position.1
+        ))
         .arg(format!("--window-size={window_size}"));
     configure_test_browser_sandbox(&mut command);
     #[cfg(target_os = "linux")]

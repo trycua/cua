@@ -394,6 +394,30 @@ async fn browser_endpoints_for_pid(pid: u32) -> Result<Vec<(u16, String, u32)>, 
     .await
 }
 
+fn process_tree_owned_endpoint(
+    root_pid: i64,
+    port: u16,
+    ws_url: String,
+    listener_pid: u32,
+    context: &str,
+) -> OwnedEndpoint {
+    OwnedEndpoint {
+        ws_url,
+        http_port: Some(port),
+        ownership: EndpointOwnershipProof {
+            method: EndpointOwnershipMethod::ListeningSocketPid,
+            // loopback_listeners_for_process_tree admitted listener_pid only
+            // after proving it belongs to root_pid's transitive process tree.
+            // Core authorizes and fingerprints the stable tree root; retain
+            // the exact socket owner in detail for audit evidence.
+            owner_pid: root_pid,
+            detail: Some(format!(
+                "{context}; exact loopback listener pid {listener_pid}"
+            )),
+        },
+    }
+}
+
 async fn loopback_port_is_owned_with_retry(
     pid: u32,
     expected_port: u16,
@@ -629,16 +653,14 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             .await?
             .into_iter()
             .next()
-            .map(|(port, ws_url, owner_pid)| OwnedEndpoint {
-                ws_url,
-                http_port: Some(port),
-                ownership: EndpointOwnershipProof {
-                    method: EndpointOwnershipMethod::ListeningSocketPid,
-                    owner_pid: i64::from(owner_pid),
-                    detail: Some(
-                        "netstat listener owned by the approved browser process tree; the exact listener owner is the stable browser pid".to_owned(),
-                    ),
-                },
+            .map(|(port, ws_url, listener_pid)| {
+                process_tree_owned_endpoint(
+                    pid,
+                    port,
+                    ws_url,
+                    listener_pid,
+                    "netstat listener owned by the approved browser process tree",
+                )
             }))
     }
 
@@ -655,17 +677,13 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         let discovered = browser_endpoints_for_pid(pid_u32).await?;
         match discovered.as_slice() {
             [] => Ok(None),
-            [(port, ws_url, owner_pid)] => Ok(Some(OwnedEndpoint {
-                ws_url: ws_url.clone(),
-                http_port: Some(*port),
-                ownership: EndpointOwnershipProof {
-                    method: EndpointOwnershipMethod::ListeningSocketPid,
-                    owner_pid: i64::from(*owner_pid),
-                    detail: Some(
-                        "Windows browser process-tree listener plus /json/version".to_owned(),
-                    ),
-                },
-            })),
+            [(port, ws_url, listener_pid)] => Ok(Some(process_tree_owned_endpoint(
+                pid,
+                *port,
+                ws_url.clone(),
+                *listener_pid,
+                "Windows browser process-tree listener plus /json/version",
+            ))),
             _ => Err(refusal(
                 BrowserRefusalCode::BrowserBindingAmbiguous,
                 "multiple browser-level DevTools endpoints are owned by the approved browser process tree",
@@ -995,6 +1013,25 @@ mod tests {
             parse_netstat_loopback_listeners(input, &[42, 43]),
             vec![(9222, 43)]
         );
+    }
+
+    #[test]
+    fn process_tree_endpoint_uses_the_authorized_root_and_retains_listener_evidence() {
+        let endpoint = process_tree_owned_endpoint(
+            42,
+            9222,
+            "ws://127.0.0.1:9222/devtools/browser/id".to_owned(),
+            43,
+            "verified process tree",
+        );
+
+        assert_eq!(endpoint.ownership.owner_pid, 42);
+        assert_eq!(endpoint.http_port, Some(9222));
+        assert!(endpoint
+            .ownership
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("exact loopback listener pid 43")));
     }
 
     #[test]

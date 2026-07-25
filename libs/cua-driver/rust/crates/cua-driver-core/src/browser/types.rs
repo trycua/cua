@@ -148,9 +148,11 @@ pub enum EndpointOwnershipMethod {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EndpointOwnershipProof {
     pub method: EndpointOwnershipMethod,
-    /// Pid the endpoint was attributed to. Core refuses with
-    /// `browser_endpoint_owner_mismatch` when this does not equal the
-    /// target pid.
+    /// Stable process identity the platform attributed the endpoint to. For a
+    /// platform-proven browser process tree this is the authorized tree root;
+    /// `detail` may retain the exact child socket owner. Core refuses with
+    /// `browser_endpoint_owner_mismatch` when this does not equal the target
+    /// pid.
     pub owner_pid: i64,
     pub detail: Option<String>,
 }

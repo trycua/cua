@@ -65,7 +65,7 @@ jobs:
           TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         run: |
           case "$ACTOR:$TRIGGERING_ACTOR" in
-            "f-trycua:f-trycua"|"cua-release-bot[bot]:cua-release-bot[bot]")
+            "f-trycua:f-trycua"|"r33drichards:r33drichards"|"cua-release-bot[bot]:cua-release-bot[bot]")
               echo "Version bump authorized for $ACTOR."
               ;;
             *)

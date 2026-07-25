@@ -10,12 +10,42 @@
 //! approach is simpler to implement correctly and is reliable across OS versions.
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static WINDOW_CAPTURE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+fn window_capture_temp_path(window_id: u32) -> PathBuf {
+    let sequence = WINDOW_CAPTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "cua-driver-rs-capture-{}-{window_id}-{sequence}.png",
+        std::process::id()
+    ))
+}
+
+struct WindowCaptureTempFile {
+    path: PathBuf,
+}
+
+impl WindowCaptureTempFile {
+    fn new(window_id: u32) -> Self {
+        Self {
+            path: window_capture_temp_path(window_id),
+        }
+    }
+}
+
+impl Drop for WindowCaptureTempFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
 
 /// Capture a window by its `window_id` (CGWindowID).
 /// Returns raw PNG bytes or an error.
 pub fn screenshot_window_bytes(window_id: u32) -> anyhow::Result<Vec<u8>> {
-    let tmp_path = format!("/tmp/cua-driver-rs-capture-{}.png", window_id);
+    let tmp_file = WindowCaptureTempFile::new(window_id);
 
     let output = Command::new("screencapture")
         .args([
@@ -23,7 +53,7 @@ pub fn screenshot_window_bytes(window_id: u32) -> anyhow::Result<Vec<u8>> {
             &window_id.to_string(),
             "-x", // no sound
             "-o", // no shadow
-            &tmp_path,
+            tmp_file.path.to_string_lossy().as_ref(),
         ])
         .output()?;
 
@@ -41,8 +71,7 @@ pub fn screenshot_window_bytes(window_id: u32) -> anyhow::Result<Vec<u8>> {
         );
     }
 
-    let bytes = std::fs::read(&tmp_path)?;
-    let _ = std::fs::remove_file(&tmp_path);
+    let bytes = std::fs::read(&tmp_file.path)?;
 
     if bytes.is_empty() {
         anyhow::bail!("screencapture produced empty output for window {window_id}");
@@ -136,4 +165,31 @@ pub fn crosshair_png_bytes(png_bytes: &[u8], cx: f64, cy: f64) -> anyhow::Result
 /// Parse width and height from a PNG file's IHDR chunk.
 pub fn png_dimensions(data: &[u8]) -> anyhow::Result<(u32, u32)> {
     cua_driver_core::image_utils::png_dimensions(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{window_capture_temp_path, WindowCaptureTempFile};
+
+    #[test]
+    fn window_capture_temp_path_is_unique_per_call() {
+        let first = window_capture_temp_path(129913);
+        let second = window_capture_temp_path(129913);
+
+        assert_ne!(first, second);
+        let first_name = first.file_name().unwrap().to_string_lossy();
+        assert!(first_name.contains("129913"));
+        assert!(first_name.starts_with("cua-driver-rs-capture-"));
+    }
+
+    #[test]
+    fn window_capture_temp_file_is_removed_on_drop() {
+        let temp_file = WindowCaptureTempFile::new(129913);
+        let path = temp_file.path.clone();
+        std::fs::write(&path, b"partial capture").unwrap();
+
+        drop(temp_file);
+
+        assert!(!path.exists());
+    }
 }

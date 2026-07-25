@@ -508,7 +508,11 @@ Use `BROWSER.md` for the typed browser capability workflow. Chrome and Edge
 support exact native-window binding, page refs, navigation, typing, and an
 explicit synthetic DOM click. Existing-profile preparation is separately
 approved and may automate the exact product-specific remote-debugging control;
-it does not depend on System Events or direct profile-file edits.
+it does not depend on System Events or direct profile-file edits. When Chrome
+withholds the setup page's web AX subtree, the adapter uses only a temporary
+tab it created and navigated, proves the committed native URL and expected
+selected internal-tab title with no omnibox edit in progress, revalidates the
+window, and PID-routes its bounded, state-verified checkbox-pixel fallback.
 
 Standalone Chromium activates its window when CDP's trusted pointer route is
 used on macOS. The driver therefore returns

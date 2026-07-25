@@ -12,10 +12,39 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use std::process::Command;
 
+struct SecureCapturePath {
+    directory: std::path::PathBuf,
+    file: std::path::PathBuf,
+}
+
+impl SecureCapturePath {
+    fn new(file_name: &str) -> anyhow::Result<Self> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = std::env::temp_dir().join(format!(
+            "cua-driver-rs-capture-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir(&directory)?;
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
+        let file = directory.join(file_name);
+        Ok(Self { directory, file })
+    }
+}
+
+impl Drop for SecureCapturePath {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.file);
+        let _ = std::fs::remove_dir(&self.directory);
+    }
+}
+
 /// Capture a window by its `window_id` (CGWindowID).
 /// Returns raw PNG bytes or an error.
 pub fn screenshot_window_bytes(window_id: u32) -> anyhow::Result<Vec<u8>> {
-    let tmp_path = format!("/tmp/cua-driver-rs-capture-{}.png", window_id);
+    let capture = SecureCapturePath::new("window.png")?;
+    let tmp_path = capture.file.to_string_lossy().into_owned();
 
     let output = Command::new("screencapture")
         .args([
@@ -41,8 +70,7 @@ pub fn screenshot_window_bytes(window_id: u32) -> anyhow::Result<Vec<u8>> {
         );
     }
 
-    let bytes = std::fs::read(&tmp_path)?;
-    let _ = std::fs::remove_file(&tmp_path);
+    let bytes = std::fs::read(&capture.file)?;
 
     if bytes.is_empty() {
         anyhow::bail!("screencapture produced empty output for window {window_id}");

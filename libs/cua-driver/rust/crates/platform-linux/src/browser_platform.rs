@@ -910,6 +910,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
             opened_setup_page,
             closed_setup_page: false,
             enabled_remote_debugging,
+            used_bounded_pixel_fallback: false,
             focused_setup_address_field,
             foregrounded_window,
             injected_global_input,

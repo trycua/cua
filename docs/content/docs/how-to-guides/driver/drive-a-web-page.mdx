@@ -130,6 +130,16 @@ the structured refusal reports `detail.setup_side_effects`; a checkbox changed
 by that failed attempt is restored when its exact state can still be proven.
 Any ambiguous control or changed process/window identity is refused.
 
+On macOS, semantic AX matching remains the first route. If Chrome withholds the
+internal page's web AX subtree, Cua Driver opens and navigates its own temporary
+tab, waits for the fixed address to be committed with the expected selected-tab
+title and no omnibox edit in progress, then requires one unique
+checkbox-shaped control in a bounded setup-page region. It revalidates the
+unchanged target window, routes the click only to that browser PID, and verifies
+the resulting state. Unsupported appearance or zoom geometry is refused
+without a click. This fallback never applies to ordinary web pages or generic
+security dialogs.
+
 On Linux, launch the browser with `--force-renderer-accessibility` unless a
 screen reader already enables its complete AT-SPI tree. Native Wayland also
 requires a validated compositor route that can prove the exact process,

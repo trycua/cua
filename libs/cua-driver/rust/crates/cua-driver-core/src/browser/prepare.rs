@@ -56,6 +56,7 @@ fn with_setup_side_effects(
     if !setup.opened_setup_page
         && !setup.closed_setup_page
         && !setup.enabled_remote_debugging
+        && !setup.used_bounded_pixel_fallback
         && !setup.focused_setup_address_field
         && !setup.foregrounded_window
         && !setup.injected_global_input
@@ -69,6 +70,7 @@ fn with_setup_side_effects(
             "closed_setup_page": setup.closed_setup_page,
             "focused_setup_address_field": setup.focused_setup_address_field,
             "enabled_remote_debugging": setup.enabled_remote_debugging,
+            "used_bounded_pixel_fallback": setup.used_bounded_pixel_fallback,
             "foregrounded_window": setup.foregrounded_window,
             "injected_global_input": setup.injected_global_input,
         },
@@ -1128,6 +1130,7 @@ impl BrowserEngine {
                 opened_setup_page: setup.opened_setup_page,
                 closed_setup_page: setup.closed_setup_page,
                 enabled_remote_debugging: setup.enabled_remote_debugging,
+                used_bounded_pixel_fallback: setup.used_bounded_pixel_fallback,
                 focused_setup_address_field: setup.focused_setup_address_field,
                 foregrounded_window: setup.foregrounded_window,
                 injected_global_input: setup.injected_global_input,
@@ -1193,6 +1196,7 @@ mod tests {
                 opened_setup_page: true,
                 closed_setup_page: true,
                 enabled_remote_debugging: true,
+                used_bounded_pixel_fallback: true,
                 focused_setup_address_field: true,
                 foregrounded_window: true,
                 injected_global_input: true,
@@ -1203,6 +1207,10 @@ mod tests {
         assert_eq!(detail["setup_side_effects"]["opened_setup_page"], true);
         assert_eq!(
             detail["setup_side_effects"]["enabled_remote_debugging"],
+            true
+        );
+        assert_eq!(
+            detail["setup_side_effects"]["used_bounded_pixel_fallback"],
             true
         );
         assert_eq!(detail["cause"]["original"], true);

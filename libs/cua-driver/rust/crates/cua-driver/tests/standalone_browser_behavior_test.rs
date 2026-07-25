@@ -818,6 +818,8 @@ fn command_for_browser(
         ))
         .arg(format!("--window-size={window_size}"));
     configure_test_browser_sandbox(&mut command);
+    #[cfg(target_os = "macos")]
+    configure_macos_test_browser_command(&mut command);
     #[cfg(target_os = "linux")]
     configure_linux_browser_command(&mut command);
     command.arg(url).stdout(Stdio::null()).stderr(output);
@@ -843,6 +845,8 @@ fn command_for_unprepared_browser(
         .arg(format!("--window-position={},{}", position.0, position.1))
         .arg(format!("--window-size={TEST_BROWSER_WINDOW_SIZE}"));
     configure_test_browser_sandbox(&mut command);
+    #[cfg(target_os = "macos")]
+    configure_macos_test_browser_command(&mut command);
     #[cfg(target_os = "linux")]
     {
         configure_linux_browser_command(&mut command);
@@ -859,11 +863,56 @@ fn command_for_unprepared_browser(
     command
 }
 
+#[cfg(target_os = "macos")]
+fn configure_macos_test_browser_command(command: &mut Command) {
+    // Chromium's own macOS build guidance disables MediaRouter for tests to
+    // prevent its unrelated local-network system prompt from covering the
+    // browser UI under test. Cua Driver must still fail closed around an
+    // unexpected native prompt; this keeps the setup-success row focused on
+    // the exact remote-debugging page instead of pre-answering OS consent.
+    command.arg("--disable-features=MediaRouter");
+}
+
 fn browser_stderr() -> Stdio {
     if std::env::var_os("CUA_E2E_BROWSER_STDERR").is_some() {
         Stdio::inherit()
     } else {
         Stdio::null()
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_browser_commands_disable_unrelated_media_router_prompt() {
+    let spec = BrowserSpec {
+        name: "chrome".to_owned(),
+        executable: PathBuf::from("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+    };
+    let profile = Path::new("/tmp/cua-browser-command-test");
+    let prepared = command_for_browser(
+        &spec,
+        profile,
+        9222,
+        "about:blank",
+        TEST_BROWSER_INITIAL_POSITION,
+        false,
+    );
+    let unprepared = command_for_unprepared_browser(
+        &spec,
+        profile,
+        "about:blank",
+        TEST_BROWSER_INITIAL_POSITION,
+    );
+    for command in [&prepared, &unprepared] {
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy())
+            .collect::<Vec<_>>();
+        assert!(
+            args.iter()
+                .any(|arg| arg == "--disable-features=MediaRouter"),
+            "{args:?}"
+        );
     }
 }
 

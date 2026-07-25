@@ -65,7 +65,8 @@ fn enabled_def() -> &'static ToolDef {
             "required": ["enabled"],
             "properties": {
                 "enabled": { "type": "boolean", "description": "true = show, false = hide." },
-                "cursor_id": { "type": "string", "description": "Cursor instance. Default: 'default'." }
+                "session": { "type": "string", "description": "Session id whose cursor to show or hide (the same id you start_session / drive actions with)." },
+                "cursor_id": { "type": "string", "description": "Legacy alias for `session`." }
             },
             "additionalProperties": false
         }),

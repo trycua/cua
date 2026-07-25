@@ -528,8 +528,9 @@ Show or hide the agent cursor for a session. A cursor exists only for a DECLARED
 
 **Arguments:**
 
-- `cursor_id` (string, optional): Cursor instance. Default: 'default'.
+- `cursor_id` (string, optional): Legacy alias for `session`.
 - `enabled` (boolean, required): true = show, false = hide.
+- `session` (string, optional): Session id whose cursor to show or hide (the same id you start_session / drive actions with).
 
 ```json
 {"enabled":false}

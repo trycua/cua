@@ -1,23 +1,23 @@
 ---
-page_title: "Provider: Cyclops"
+page_title: "Provider: Fleets"
 description: |-
-  Manage Cyclops computer-use pools with Terraform.
+  Manage Cua Fleet computer-use pools with Terraform.
 ---
 
-# Cyclops Provider
+# Fleets Provider
 
-The Cyclops provider creates and manages tenant-scoped computer-use pools through the Cyclops API.
+The Fleets provider creates and manages tenant-scoped computer-use pools through the Fleet API.
 
 ```terraform
 terraform {
   required_providers {
-    cyclops = {
-      source = "trycua/cyclops"
+    fleets = {
+      source = "trycua/fleets"
     }
   }
 }
 
-provider "cyclops" {
+provider "fleets" {
   endpoint      = "https://cyclops.example.com"
   client_id     = var.cyclops_client_id
   client_secret = var.cyclops_client_secret

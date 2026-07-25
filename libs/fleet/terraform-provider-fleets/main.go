@@ -6,7 +6,7 @@ import (
 	"log"
 
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
-	"github.com/trycua/terraform-provider-cyclops/internal/provider"
+	"github.com/trycua/terraform-provider-fleets/internal/provider"
 )
 
 var version = "dev"
@@ -17,7 +17,7 @@ func main() {
 	flag.Parse()
 
 	opts := providerserver.ServeOpts{
-		Address: "registry.terraform.io/trycua/cyclops",
+		Address: "registry.terraform.io/trycua/fleets",
 		Debug:   debug,
 	}
 	if err := providerserver.Serve(context.Background(), provider.New(version), opts); err != nil {

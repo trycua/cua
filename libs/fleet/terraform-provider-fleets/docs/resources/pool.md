@@ -1,15 +1,15 @@
 ---
-page_title: "cyclops_pool Resource - Cyclops"
+page_title: "fleets_pool Resource - Cyclops"
 description: |-
-  Creates a Cyclops computer-use pool.
+  Creates a Cua Fleet computer-use pool.
 ---
 
-# cyclops_pool
+# fleets_pool
 
 Creates an `OSGymWorkspacePool` and its same-named namespace. Destroy removes both. Import IDs are pool names.
 
 ```terraform
-resource "cyclops_pool" "linux" {
+resource "fleets_pool" "linux" {
   name                 = "training-linux"
   replicas             = 3
   cpu_cores            = 4
@@ -46,10 +46,10 @@ resource "cyclops_pool" "linux" {
 
 ## Read-only Attributes
 
-`namespace`, `phase`, `total_count`, `available_count`, and `claimed_count` are populated from Cyclops.
+`namespace`, `phase`, `total_count`, `available_count`, and `claimed_count` are populated from Fleet.
 
 ## Import
 
 ```shell
-terraform import cyclops_pool.linux training-linux
+terraform import fleets_pool.linux training-linux
 ```

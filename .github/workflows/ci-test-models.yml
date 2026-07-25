@@ -158,7 +158,7 @@ jobs:
 
   build-cua-driver:
     if: ${{ inputs.mode == 'build-cua-driver' }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 60
 
     steps:

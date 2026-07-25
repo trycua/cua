@@ -32,9 +32,11 @@ cua-driver call list_windows
 
 Run a `cua-driver serve` daemon in your **interactive session**, Session 1 or
 higher, through an autostart Scheduled Task. The SSH-side CLI or MCP adapter
-must select that daemon explicitly with `--socket \\.\pipe\cua-driver`. The SSH
-process only moves protocol messages; the daemon performs the actual GUI work
-from a session with a desktop attached.
+must use that daemon. MCP selects it explicitly with
+`--socket \\.\pipe\cua-driver`; `cua-driver call` already resolves that default
+pipe and accepts `--socket` when you want to make the endpoint explicit. The
+SSH process only moves protocol messages; the daemon performs the actual GUI
+work from a session with a desktop attached.
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
@@ -91,6 +93,8 @@ cua-driver status
 **3. Call tools from SSH:**
 
 ```powershell
+cua-driver call list_apps
+# Equivalent explicit form:
 cua-driver call list_apps --socket \\.\pipe\cua-driver
 ```
 

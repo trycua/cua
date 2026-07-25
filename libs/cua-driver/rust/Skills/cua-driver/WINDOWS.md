@@ -300,9 +300,8 @@ Windows-relevant notes:
   portable fallback. See the AUMID section below.
 
 **Chromium pixel-click foreground polling restore.** `click({pid, x, y})`
-on a Chromium target falls through to `send_click_synthesized` (SendInput
-
-- brief foreground swap) because Chromium's input thread filters by
+on a Chromium target falls through to `send_click_synthesized`
+(SendInput + brief foreground swap) because Chromium's input thread filters by
   queue-origin and PostMessage-delivered clicks don't fire DOM events. The
   synchronous restore inside `send_click_synthesized` covers the
   immediate swap; an additional polling guard (same shape as `launch_app`'s

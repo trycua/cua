@@ -497,9 +497,10 @@ pub fn parse_command() -> Command {
         println!("  --direct                Own the runtime in this MCP process. On macOS this");
         println!("                          deliberately attributes TCC to the invoking host.");
         println!("                          Mutually exclusive with --socket.");
-        println!("  --embedded              Connect to a daemon spawned by the host app (also:");
-        println!("                          CUA_DRIVER_EMBEDDED=1). Embedded hosts must start");
-        println!("                          `cua-driver serve --embedded` before the MCP proxy.");
+        println!("  --embedded              Declare embedding-host mode (also:");
+        println!("                          CUA_DRIVER_EMBEDDED=1). Without --direct, the host");
+        println!("                          must start `cua-driver serve --embedded` and pass");
+        println!("                          its private endpoint with --socket.");
         println!("                          See Skills/cua-driver/EMBEDDING.md.");
         println!(
             "  --host-bundle-id <id>   Advisory host bundle id label for check_permissions output."
@@ -1395,7 +1396,7 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--socket", "type": "string", "description": "Select an explicit daemon socket or named-pipe endpoint." },
                   { "name": "--direct", "type": "flag", "description": "Own the runtime in the MCP process; on macOS this explicitly accepts host TCC attribution. Mutually exclusive with --socket." },
                   { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Select the Claude Code computer-use compat tool surface." },
-                  { "name": "--embedded", "type": "flag", "description": "Require a daemon spawned by the embedding host instead of auto-launching the standalone app." },
+                  { "name": "--embedded", "type": "flag", "description": "Declare embedding-host mode. Without --direct, requires the host's private service through --socket instead of auto-launching the standalone app." },
                   { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." }
               ] },
             { "name": "serve",
@@ -2781,7 +2782,7 @@ fn cli_docs_json() -> serde_json::Value {
                 "flags": [
                     {"name":"direct","short_name":null,"help":"Own the runtime in this MCP process; mutually exclusive with --socket.","default_value":false},
                     {"name":"claude-code-computer-use-compat","short_name":null,"help":"Expose the Claude Code computer-use compatibility screenshot surface.","default_value":false},
-                    {"name":"embedded","short_name":null,"help":"Require a daemon spawned by the embedding host instead of auto-launching the standalone app.","default_value":false}
+                    {"name":"embedded","short_name":null,"help":"Declare embedding-host mode. Without --direct, require the host's private service through --socket instead of auto-launching the standalone app.","default_value":false}
                 ],
                 "subcommands": no_subcommands
             },

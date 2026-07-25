@@ -79,7 +79,7 @@ On Windows and Linux, bare cua-driver mcp owns its runtime directly and shuts it
 | ---- | ----------- |
 | `--direct` | Own the runtime in this MCP process; mutually exclusive with --socket. |
 | `--claude-code-computer-use-compat` | Expose the Claude Code computer-use compatibility screenshot surface. |
-| `--embedded` | Require a daemon spawned by the embedding host instead of auto-launching the standalone app. |
+| `--embedded` | Declare embedding-host mode. Without --direct, require the host's private service through --socket instead of auto-launching the standalone app. |
 
 ### `cua-driver serve`
 

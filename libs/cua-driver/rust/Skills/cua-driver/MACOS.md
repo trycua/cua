@@ -374,9 +374,8 @@ Electron the shim _echoes the value straight back through `AXValue`_,
 so a naive read-back "confirms" a value that isn't really there.
 
 The driver **detects Electron and refuses to trust that echo**: an
-AX-path `type_text` on an Electron app returns `effect:"unverifiable"`
-
-- `escalation:{recommended:"px"}`, **never** a false `verified:true`.
+AX-path `type_text` on an Electron app returns `effect:"unverifiable"` +
+`escalation:{recommended:"px"}`, **never** a false `verified:true`.
   (On Catalyst the AX value reads back unreadable, so it reports
   unverified too.) Bottom line: on these surfaces **do not trust the AX
   confirm — the screenshot in the same response is the only truth.**
@@ -420,8 +419,8 @@ functional and one perceptual:
 
 - **Functional:** menu items that touch document/playback/editor
   state go `DISABLED` when their owning app isn't the key window
-  (Preview rotate, IINA speed change, most editor commands). AXPick
-  - AXPress will dispatch successfully from the driver's side but
+  (Preview rotate, IINA speed change, most editor commands).
+  AXPick + AXPress will dispatch successfully from the driver's side but
     no-op at the target — you get a silent false-pass.
 - **Perceptual (matters for demos, screen recordings, and anything
   the user watches live):** macOS's screen-rendered menu bar

@@ -59,6 +59,8 @@ A successful call returns `action: "attached_existing_profile"` and an
 | `focused_setup_address_field` | The temporary tab's address field received in-app focus for exact navigation. |
 | `enabled_remote_debugging` | The exact per-instance Chrome checkbox was toggled from off to on and the same control's resulting state was verified. |
 | `used_bounded_pixel_fallback` | macOS used its setup-page-only pixel route to read or change the checkbox after the web AX subtree was unavailable. |
+| `foregrounded_window` | Setup temporarily foregrounded the exact approved browser window for a bounded local action. |
+| `injected_global_input` | Setup delivered global mouse or keyboard input only after revalidating the approved browser process and window. |
 | `changed_preferences` | Mirrors `enabled_remote_debugging` for the generic prepare contract. |
 | `displayed_consent_prompt` | Chrome displayed its browser-owned connection-consent prompt. |
 
@@ -78,10 +80,12 @@ in the temporary tab Cua Driver created and navigated, after the fixed internal
 URL is committed, the expected title is selected, and no omnibox edit is in
 progress. It requires one unique checkbox-shaped control in the setup-page
 region, revalidates the unchanged window, sends the click only to the approved
-browser PID, and verifies the visual state change. Unsupported appearance,
-scale, zoom, window-size, or browser-toolbar geometry—including layouts shifted
-by a bookmarks bar—is refused without a click. It is not available for ordinary
-web content.
+browser PID, and verifies the visual state change. That bounded global-input
+route may briefly foreground the exact approved window and then restores the
+previous frontmost app; `foregrounded_window` and `injected_global_input` report
+what occurred. Unsupported appearance, scale, zoom, window-size, or
+browser-toolbar geometry—including layouts shifted by a bookmarks bar—is
+refused without a click. It is not available for ordinary web content.
 
 On refusal, `restored_remote_debugging: true` means the exact semantic checkbox,
 or the setup page's sole bounded pixel checkbox when web AX became unavailable,

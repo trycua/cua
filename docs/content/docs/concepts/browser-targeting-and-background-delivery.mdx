@@ -107,9 +107,12 @@ internal URL, requires the committed address value and expected selected-tab
 title with no active omnibox edit, then requires one unique checkbox-shaped
 control inside a bounded setup-page region. The click is PID-routed to the
 revalidated unchanged browser window and the same control's state transition is
-verified. Unsupported appearance, scale, zoom, window-size, or toolbar geometry
-is refused without a click. It does not generalize that fallback to web pages
-or arbitrary dialogs.
+verified. Because macOS delivers that bounded pixel action through global input,
+the driver may briefly foreground the exact approved window, then restore the
+previous frontmost app. The result reports both the foreground and global-input
+effects. Unsupported appearance, scale, zoom, window-size, or toolbar geometry
+is refused without a click. It does not generalize that fallback to web pages or
+arbitrary dialogs.
 
 The setup transition and protocol attachment are separate proofs. A listener
 must be loopback-only, attributed to the approved pid, and either discoverable

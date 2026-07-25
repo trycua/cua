@@ -551,7 +551,11 @@ async fn attest_spawned_endpoint(
 ) -> Result<OwnedEndpoint, BrowserRefusal> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        if let Some(live) = engine.platform.discover_owned_endpoint(child_pid).await? {
+        if let Some(live) = engine
+            .platform
+            .discover_spawned_endpoint(child_pid, &profile_endpoint.ws_url)
+            .await?
+        {
             if live.http_port == profile_endpoint.http_port
                 && live.ws_url == profile_endpoint.ws_url
             {

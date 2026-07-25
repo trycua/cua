@@ -2780,6 +2780,51 @@ pub struct PressKeyTool {
 }
 static PRESS_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+/// Turn a modified `press_key` request into the chord an underlying keyboard
+/// path expects when it takes a single key and no separate modifier list.
+///
+/// Returns `None` when there is nothing to promote, so the caller keeps the
+/// plain single-key route. Dropping the modifiers instead is not a silent
+/// no-op: the bare key still reaches the app and is typed as a character.
+fn press_key_chord(mods: &[String], key: &str) -> Option<Vec<String>> {
+    if mods.is_empty() {
+        return None;
+    }
+    let mut chord = mods.to_vec();
+    chord.push(key.to_owned());
+    Some(chord)
+}
+
+#[cfg(test)]
+mod press_key_tests {
+    use super::press_key_chord;
+
+    #[test]
+    fn unmodified_press_stays_on_the_single_key_route() {
+        assert_eq!(press_key_chord(&[], "return"), None);
+    }
+
+    #[test]
+    fn modifiers_are_promoted_to_a_chord_in_order() {
+        assert_eq!(
+            press_key_chord(&["ctrl".to_owned()], "s"),
+            Some(vec!["ctrl".to_owned(), "s".to_owned()])
+        );
+        assert_eq!(
+            press_key_chord(&["ctrl".to_owned(), "shift".to_owned()], "t"),
+            Some(vec!["ctrl".to_owned(), "shift".to_owned(), "t".to_owned()])
+        );
+    }
+
+    #[test]
+    fn the_requested_key_is_last_so_partition_modifiers_can_find_it() {
+        // `wayland::hotkey` splits the array with `partition_modifiers`, which
+        // takes the last non-modifier as the key. Appending keeps that true.
+        let chord = press_key_chord(&["ctrl".to_owned()], "s").expect("chord");
+        assert_eq!(chord.last().map(String::as_str), Some("s"));
+    }
+}
+
 #[async_trait]
 impl Tool for PressKeyTool {
     fn def(&self) -> &ToolDef {
@@ -2925,17 +2970,20 @@ impl Tool for PressKeyTool {
             {
                 return error;
             }
-            let result = if mods.is_empty() {
-                let key_w = key.clone();
-                tokio::task::spawn_blocking(move || {
-                    crate::wayland::inject_press_key(pid, xid, &key_w)
-                })
-                .await
-            } else {
-                let mut chord = mods.clone();
-                chord.push(key.clone());
-                tokio::task::spawn_blocking(move || crate::wayland::inject_hotkey(pid, xid, &chord))
+            let result = match press_key_chord(&mods, &key) {
+                None => {
+                    let key_w = key.clone();
+                    tokio::task::spawn_blocking(move || {
+                        crate::wayland::inject_press_key(pid, xid, &key_w)
+                    })
                     .await
+                }
+                Some(chord) => {
+                    tokio::task::spawn_blocking(move || {
+                        crate::wayland::inject_hotkey(pid, xid, &chord)
+                    })
+                    .await
+                }
             };
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
@@ -2992,10 +3040,20 @@ impl Tool for PressKeyTool {
         };
 
         // Native Wayland: send the key to the focused surface via virtual-keyboard.
+        // `wayland::press_key` carries no modifier list, so a modified request has
+        // to become a chord here — otherwise the modifiers are dropped and the
+        // bare key is typed as a character (Ctrl+S inserts a literal "s").
         if crate::wayland::wayland_input_enabled() {
-            let key_w = key.clone();
-            let result =
-                tokio::task::spawn_blocking(move || crate::wayland::press_key(xid, &key_w)).await;
+            let result = match press_key_chord(&mods, &key) {
+                None => {
+                    let key_w = key.clone();
+                    tokio::task::spawn_blocking(move || crate::wayland::press_key(xid, &key_w))
+                        .await
+                }
+                Some(chord) => {
+                    tokio::task::spawn_blocking(move || crate::wayland::hotkey(xid, &chord)).await
+                }
+            };
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Pressed key '{key}' (via Wayland virtual-keyboard)."

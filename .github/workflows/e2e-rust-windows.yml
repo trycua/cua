@@ -178,6 +178,9 @@ jobs:
         with:
           ref: ${{ needs.source.outputs.sha }}
       - uses: dtolnay/rust-toolchain@stable
+      - name: Verify installer runner is interactive
+        shell: pwsh
+        run: .\scripts\ci\windows\verify-user-session.ps1
       - name: Install into an isolated local namespace
         shell: pwsh
         env:

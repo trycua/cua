@@ -115,11 +115,12 @@ async fn run_async(
         )?;
         return Ok(());
     }
-
     let driver = match CuaDriver::try_create_configured_for_host(
         initialization.configured_driver,
         DriverHostOptions {
             cursor: cursor_overlay::CursorConfig::default(),
+            host_owns_permission_ux: true,
+            host_bundle_id: Some(initialization.host_bundle_id.clone()),
             claude_code_compatibility: false,
             prepare_desktop_environment: true,
             register_host_tools: Some(crate::check_update_tool::register_into),

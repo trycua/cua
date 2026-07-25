@@ -1380,6 +1380,13 @@ pub fn scroll_element(pid: u32, idx: usize, direction: &str, amount: usize) -> R
 
 /// Give an indexed element keyboard focus through AT-SPI Component.GrabFocus
 /// without activating or raising its toplevel window.
+///
+/// `GrabFocus` acknowledges the request before Chromium/Electron necessarily
+/// updates its renderer-owned focused control. Sending key events immediately
+/// after the acknowledgement can therefore split one string between the old
+/// and new controls. Wait for the target's Focused state to become observable;
+/// if a toolkit does not publish that state, retain the historical successful
+/// result after a bounded settling interval.
 pub fn focus_element(pid: u32, idx: usize) -> Result<bool> {
     bounded(
         async {
@@ -1401,11 +1408,33 @@ pub fn focus_element(pid: u32, idx: usize) -> Result<bool> {
                 .component()
                 .await
                 .map_err(|e| anyhow!("Component interface unavailable: {e}"))?;
-            match call(component.grab_focus()).await {
-                Some(Ok(focused)) => Ok(focused),
-                Some(Err(e)) => Err(anyhow!("Component.GrabFocus failed for element {idx}: {e}")),
-                None => Err(anyhow!("Component.GrabFocus timed out for element {idx}")),
+            let accepted = match call(component.grab_focus()).await {
+                Some(Ok(focused)) => focused,
+                Some(Err(e)) => {
+                    return Err(anyhow!("Component.GrabFocus failed for element {idx}: {e}"))
+                }
+                None => return Err(anyhow!("Component.GrabFocus timed out for element {idx}")),
+            };
+            if !accepted {
+                return Ok(false);
             }
+
+            let settle_deadline =
+                tokio::time::Instant::now() + std::time::Duration::from_millis(500);
+            while tokio::time::Instant::now() < settle_deadline {
+                match tokio::time::timeout(
+                    std::time::Duration::from_millis(100),
+                    target.acc.get_state(),
+                )
+                .await
+                {
+                    Ok(Ok(state)) if state.contains(State::Focused) => return Ok(true),
+                    _ => {
+                        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                    }
+                }
+            }
+            Ok(true)
         },
         || Err(anyhow!("focus_element timed out for pid {pid}")),
     )

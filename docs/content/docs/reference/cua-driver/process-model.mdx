@@ -24,11 +24,23 @@ parallel desktop implementation. See
 The MCP stdio process is *client-owned*. The parent starts `cua-driver mcp`,
 keeps stdin and stdout connected, and sends MCP tool calls over that transport.
 On Windows and Linux it owns the runtime directly unless `--socket` is
-specified. On macOS it proxies to the permission-owning app daemon.
+specified. On macOS it proxies to the permission-owning app daemon unless the
+caller explicitly passes `--direct` and accepts the spawning host's TCC
+attribution. `--direct` and `--socket` are mutually exclusive.
 
-The daemon shape is *machine-owned*. A single `cua-driver serve` process listens on a local IPC endpoint, such as a Unix socket or named pipe, and keeps driver state in memory while it lives.
+The daemon shape is *machine-owned*. A single `cua-driver serve` process
+listens on a local IPC endpoint, such as a mode-`0600` Unix socket or
+same-user-authenticated named pipe, and keeps driver state in memory while it
+lives.
 
 The one-shot CLI adapter is *call-owned*. `cua-driver call <tool>` connects to the daemon, prints one result, and exits. If the daemon is unavailable, the command fails instead of executing the tool in the CLI process.
+
+Finite inspection commands—`list-tools`, `describe`, and `dump-docs`—read the
+canonical SDK tool inventory without creating an action-capable runtime. They
+therefore remain available in non-interactive environments such as Windows
+Session 0. Desktop-owning entry points (`serve`, direct MCP, and
+`CuaDriver.create()`) still refuse before accepting actions when no interactive
+desktop is attached.
 
 These are transport roles around the same typed runtime that applications can
 create in process or in a directly supervised private worker.
@@ -73,6 +85,11 @@ The daemon belongs in the interactive user session instead. It may be kept there
 
 A daemon drives one physical machine. Multiple MCP clients can connect at the same time, but they still share the same screen, keyboard, pointer, accessibility tree, and recording machinery. Session identity does not make concurrent control independent. Two agents clicking at once still contend for the same desktop.
 
+On Windows and Linux, bare MCP processes each own a separate runtime. To
+deliberately share one daemon across several MCP clients, start the daemon and
+give every client the same explicit `cua-driver mcp --socket <endpoint>`
+command. Do not rely on ambient daemon discovery.
+
 Session identity solves a narrower state problem. When a proxy starts, it mints a session identity and stamps forwarded calls with it. The daemon uses that identity to scope mutable state to one client lifetime. Recording ownership, per-session config overrides, and the agent-cursor overlay are all keyed by session.
 
 <VideoDemo
@@ -98,3 +115,9 @@ construct a fresh tool registry or continue with partial state.
 For a same-process SDK runtime, the importing application owns the equivalent
 lifetime. End every session, await `shutdown()`, and release the generated
 binding handle during orderly teardown.
+
+Before each daemon-backed SDK action, the client reads the daemon metadata and
+verifies contract, tool-schema, capability, and MCP
+protocol versions. Incompatible processes refuse before platform dispatch.
+Remote Driver carriers perform the equivalent capability-range negotiation
+and must support request cancellation.

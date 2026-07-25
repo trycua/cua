@@ -30,7 +30,11 @@ cua-driver call list_windows
 
 ## The solution
 
-Run a `cua-driver serve` daemon in your **interactive session**, Session 1 or higher, through an autostart Scheduled Task. The CLI running over SSH detects that daemon and proxies tool calls through its named pipe. The SSH process only moves protocol messages; the daemon performs the actual GUI work from a session with a desktop attached.
+Run a `cua-driver serve` daemon in your **interactive session**, Session 1 or
+higher, through an autostart Scheduled Task. The SSH-side CLI or MCP adapter
+must select that daemon explicitly with `--socket \\.\pipe\cua-driver`. The SSH
+process only moves protocol messages; the daemon performs the actual GUI work
+from a session with a desktop attached.
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
@@ -87,7 +91,7 @@ cua-driver status
 **3. Call tools from SSH:**
 
 ```powershell
-cua-driver call list_apps    # sees real GUI apps
+cua-driver call list_apps --socket \\.\pipe\cua-driver
 ```
 
 ## Connect Claude Code over SSH
@@ -96,11 +100,14 @@ After the daemon is running in the interactive session, register Claude Code the
 
 ```powershell
 # From inside your SSH session:
-claude mcp add --transport stdio cua-driver -- cua-driver.exe mcp
+claude mcp add --transport stdio cua-driver -- cua-driver.exe mcp --socket \\.\pipe\cua-driver
 claude
 ```
 
-Each MCP tool call starts `cua-driver mcp` on the SSH side. That process detects the daemon and proxies through it. Claude Code sees a normal stdio MCP server, while the daemon receives tool calls from the Session 1+ desktop context.
+Claude Code starts `cua-driver mcp` on the SSH side. The explicit socket keeps
+that process as a protocol proxy to the interactive daemon. Bare `cua-driver
+mcp` owns a direct runtime on Windows and therefore fails closed in Session 0;
+it never silently falls back to another session.
 
 ## Diagnose empty results
 
@@ -110,6 +117,8 @@ Check these items before opening an issue:
 2. Run `cua-driver status` from SSH and confirm it reports a running daemon. If it does not, use `cua-driver autostart status` to see whether the Scheduled Task is registered.
 3. Run `query session` and confirm your user has a row in `Active` or `Disc` state.
 4. Run `cua-driver doctor` from RDP and confirm it reports `[ok] interactive session: session N has an attached interactive desktop`.
-5. Confirm that the MCP configuration points to the same daemon socket reported by `cua-driver status`.
+5. Confirm that the MCP command includes `--socket \\.\pipe\cua-driver`, or the
+   exact endpoint reported by `cua-driver status`.
 
-There is no in-process opt-out. If the interactive-session daemon is unavailable, MCP startup fails instead of attempting GUI work from the SSH session.
+If the explicitly selected interactive-session daemon is unavailable, MCP
+startup fails instead of attempting GUI work from the SSH session.

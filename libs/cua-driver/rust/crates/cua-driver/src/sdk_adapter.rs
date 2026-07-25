@@ -28,13 +28,6 @@ impl SdkAdapter {
         Ok(Arc::new(Self { driver, tools_list }))
     }
 
-    pub fn load_blocking(driver: Arc<CuaDriver>) -> anyhow::Result<Arc<Self>> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-        runtime.block_on(Self::load(driver))
-    }
-
     pub fn tools_list(&self) -> Value {
         self.tools_list.clone()
     }

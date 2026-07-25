@@ -18,7 +18,16 @@ frozen to `0.12.6`, because a compatible later release must change them.
 - `cli.json` locks the CLI help header/catalog and selected manifest fields.
 - `mcp.json` locks initialize, tools-list envelope/tool fields, and the
   method-not-found error category.
+- `apps/` contains unchanged Rust, Python, and TypeScript applications written
+  against that baseline. CI compiles or executes them against candidate
+  packages.
 
 Additive manifest fields, tools, and package metadata are permitted. Removing
 or changing an item recorded here requires an explicit compatibility decision
 and an intentional fixture update.
+
+RFC 2549 independently accepts one additive CLI change: `cua-driver mcp
+--direct`. Bare MCP behavior remains platform-defined (direct on Windows and
+Linux, signed app service on macOS), while `--socket` continues to select an
+explicit service. The semantic compatibility test permits that additive flag
+without rewriting the frozen `cli.json` baseline.

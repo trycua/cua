@@ -458,10 +458,30 @@ pub struct ToolState {
     /// see `CdpSessionCache` for why (Chrome's "allow remote debugging"
     /// popup fires on every new connection, not once per session).
     pub cdp_sessions: Arc<crate::browser::CdpSessionCache>,
+    /// Whether the runtime owner installed the AppKit main-thread cursor
+    /// overlay facility. Imported SDK runtimes deliberately leave this false;
+    /// explicit cursor-overlay methods must refuse instead of reporting a
+    /// successful no-op.
+    pub cursor_overlay_available: bool,
+    /// Direct and embedded hosts own TCC request UX. Their runtime may inspect
+    /// permission state but must not raise Cua-owned prompts.
+    pub host_owns_permission_ux: bool,
+    /// Advisory host identity for permission diagnostics only.
+    pub host_bundle_id: Option<String>,
 }
 
 impl Default for ToolState {
     fn default() -> Self {
+        Self::new(false, false, None)
+    }
+}
+
+impl ToolState {
+    fn new(
+        cursor_overlay_available: bool,
+        host_owns_permission_ux: bool,
+        host_bundle_id: Option<String>,
+    ) -> Self {
         Self {
             element_cache: Arc::new(ElementCache::new()),
             cursor_registry: Arc::new(CursorRegistry::new()),
@@ -472,16 +492,43 @@ impl Default for ToolState {
             config: Arc::new(std::sync::RwLock::new(load_driver_config())),
             session_config: Arc::new(SessionConfigRegistry::new()),
             cdp_sessions: Arc::new(crate::browser::CdpSessionCache::new()),
+            cursor_overlay_available,
+            host_owns_permission_ux,
+            host_bundle_id,
         }
     }
+}
+
+pub(crate) fn cursor_overlay_unavailable() -> cua_driver_core::protocol::ToolResult {
+    let message = "macOS agent cursor overlay is unavailable: this runtime owner has no certified \
+                   AppKit main-thread host adapter or no Window Server graphic-session access; \
+                   use a GUI private worker or standalone service for cursor-overlay controls";
+    cua_driver_core::protocol::ToolResult::error(message).with_structured(serde_json::json!({
+        "status": "refused",
+        "refusal": {
+            "code": "facility_unavailable",
+            "facility": "macos_cursor_overlay",
+            "message": message,
+        }
+    }))
 }
 
 /// Register all macOS tools into the registry. `compat=true` swaps the
 /// regular `screenshot` tool for the Claude Code computer-use compat
 /// variant — same name, stricter args, window-scoped JPEG @ 85% + a text
 /// note telling the caller to use pixel-addressed tools.
-pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
-    let state = Arc::new(ToolState::default());
+pub fn register_all(
+    registry: &mut ToolRegistry,
+    compat: bool,
+    cursor_overlay_available: bool,
+    host_owns_permission_ux: bool,
+    host_bundle_id: Option<String>,
+) {
+    let state = Arc::new(ToolState::new(
+        cursor_overlay_available,
+        host_owns_permission_ux,
+        host_bundle_id,
+    ));
     {
         let cursor_registry = state.cursor_registry.clone();
         let _ = cua_driver_core::session::set_cursor_outcome_reader(std::sync::Arc::new(
@@ -584,7 +631,9 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
     registry.register(Box::new(cursor_tools::GetAgentCursorStateTool::new(
         state.clone(),
     )));
-    registry.register(Box::new(check_permissions::CheckPermissionsTool));
+    registry.register(Box::new(check_permissions::CheckPermissionsTool::new(
+        state.clone(),
+    )));
     // `health_report` — single-call end-to-end diagnostics. Stable
     // schema_version="1" contract aimed at downstream consumers who must
     // not have to know cua-driver internals. Provider is platform-specific; tool plumbing is in
@@ -664,6 +713,40 @@ mod session_config_guard_tests {
         reg.set(sid, overrides(800));
         let dim = reg.effective_max_image_dimension(Some(sid), &global);
         assert_eq!(dim, 800, "live session override must apply");
+    }
+}
+
+#[cfg(test)]
+mod cursor_overlay_facility_tests {
+    use super::*;
+    use cua_driver_core::tool::Tool;
+
+    fn assert_facility_unavailable(result: cua_driver_core::protocol::ToolResult) {
+        assert_eq!(result.is_error, Some(true));
+        let refusal = result
+            .structured_content
+            .and_then(|value| value.get("refusal").cloned())
+            .expect("structured refusal");
+        assert_eq!(refusal["code"], "facility_unavailable");
+        assert_eq!(refusal["facility"], "macos_cursor_overlay");
+    }
+
+    #[tokio::test]
+    async fn cursor_control_refuses_without_main_thread_host_facility() {
+        let state = Arc::new(ToolState::new(false, true, None));
+        let result = cursor_tools::SetAgentCursorEnabledTool::new(state)
+            .invoke(serde_json::json!({"enabled": true, "session": "test"}))
+            .await;
+        assert_facility_unavailable(result);
+    }
+
+    #[tokio::test]
+    async fn window_cursor_move_refuses_without_main_thread_host_facility() {
+        let state = Arc::new(ToolState::new(false, true, None));
+        let result = move_cursor::MoveCursorTool::new(state)
+            .invoke(serde_json::json!({"x": 10, "y": 20, "session": "test"}))
+            .await;
+        assert_facility_unavailable(result);
     }
 }
 

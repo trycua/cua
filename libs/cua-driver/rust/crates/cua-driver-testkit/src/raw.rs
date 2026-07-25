@@ -64,6 +64,18 @@ impl RawDriver {
     /// so this helper is available only where bare `mcp` owns its runtime.
     #[cfg(not(target_os = "macos"))]
     pub fn spawn_direct() -> Option<Self> {
+        Self::spawn_direct_with_args(&["mcp"])
+    }
+
+    /// Spawn the explicitly selected direct MCP runtime without a service.
+    ///
+    /// Unlike [`Self::spawn_direct`], this is available on macOS because the
+    /// caller has deliberately opted out of the signed app/service default.
+    pub fn spawn_explicit_direct() -> Option<Self> {
+        Self::spawn_direct_with_args(&["mcp", "--direct"])
+    }
+
+    fn spawn_direct_with_args(args: &[&str]) -> Option<Self> {
         let bin = driver_binary();
         if !bin.exists() {
             eprintln!("[testkit] driver binary not built at {bin:?} — skipping");
@@ -72,7 +84,7 @@ impl RawDriver {
         let mut reaper = ChildReaper::new();
         let mut command = Command::new(&bin);
         command
-            .arg("mcp")
+            .args(args)
             .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

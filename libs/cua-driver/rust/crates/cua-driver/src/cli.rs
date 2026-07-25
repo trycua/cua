@@ -21,6 +21,9 @@ pub enum Command {
         /// and Linux own a direct runtime while macOS uses the default app
         /// daemon to preserve TCC attribution.
         socket: Option<String>,
+        /// Own the runtime in this MCP process. On macOS this is an explicit
+        /// TCC-attribution choice; it is mutually exclusive with `--socket`.
+        direct: bool,
         /// `--claude-code-computer-use-compat`: register the compat
         /// `screenshot` tool (window-scoped, JPEG @ 85%, pid + window_id
         /// both required) instead of the full-featured one. Used when
@@ -491,6 +494,9 @@ pub fn parse_command() -> Command {
         println!("                                      Revocation is deny-only and never needs a token.");
         println!();
         println!("mcp options:");
+        println!("  --direct                Own the runtime in this MCP process. On macOS this");
+        println!("                          deliberately attributes TCC to the invoking host.");
+        println!("                          Mutually exclusive with --socket.");
         println!("  --embedded              Connect to a daemon spawned by the host app (also:");
         println!("                          CUA_DRIVER_EMBEDDED=1). Embedded hosts must start");
         println!("                          `cua-driver serve --embedded` before the MCP proxy.");
@@ -645,11 +651,13 @@ pub fn parse_command() -> Command {
             }
             Command::Mcp {
                 socket: socket.clone(),
+                direct: args.iter().any(|a| a == "--direct"),
                 claude_code_compat,
             }
         }
         Some("mcp") => Command::Mcp {
             socket: socket.clone(),
+            direct: args.iter().any(|a| a == "--direct"),
             claude_code_compat,
         },
         Some("list-tools") => Command::ListTools,
@@ -1252,27 +1260,10 @@ where
     F: FnOnce(McpDaemonStartup, bool),
 {
     let mut on_startup = Some(on_startup);
-    // Windows: prefer the uiAccess'd worker pipe over the regular daemon pipe
-    // when both are running, so MCP tool calls land in a process that can
-    // bypass UIPI for UWP apps. The protocol on both pipes is identical so
-    // the proxy doesn't need to know which one it's talking to. See #1602.
-    let socket_path = if let Some(s) = socket {
-        s
-    } else {
-        #[cfg(target_os = "windows")]
-        {
-            let uia = crate::serve::default_uia_pipe_path();
-            if crate::serve::is_daemon_listening(&uia) {
-                uia
-            } else {
-                crate::serve::default_socket_path()
-            }
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            crate::serve::default_socket_path()
-        }
-    };
+    // The UIAccess helper is a daemon-internal privilege boundary. Public MCP
+    // clients always enter through the canonical service authorization path;
+    // they must never select the helper merely because its pipe exists.
+    let socket_path = socket.unwrap_or_else(crate::serve::default_socket_path);
 
     let already_running = crate::serve::is_daemon_listening(&socket_path);
     let mut daemon = McpDaemonStartup::AlreadyRunning;
@@ -1402,6 +1393,7 @@ pub fn build_manifest() -> serde_json::Value {
               "description": "Run the MCP stdio server: direct runtime on Windows/Linux, app-daemon proxy on macOS, or explicit service with --socket.",
               "args": [
                   { "name": "--socket", "type": "string", "description": "Select an explicit daemon socket or named-pipe endpoint." },
+                  { "name": "--direct", "type": "flag", "description": "Own the runtime in the MCP process; on macOS this explicitly accepts host TCC attribution. Mutually exclusive with --socket." },
                   { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Select the Claude Code computer-use compat tool surface." },
                   { "name": "--embedded", "type": "flag", "description": "Require a daemon spawned by the embedding host instead of auto-launching the standalone app." },
                   { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." }
@@ -1745,41 +1737,78 @@ pub fn run_mcp_config(client: Option<&str>) {
 /// instead of emitted as base64 on stdout.
 ///
 /// `socket` — override the daemon socket path (from --socket flag).
+fn ensure_compatible_daemon(socket_path: &str) -> Result<(), String> {
+    let driver = cua_driver_sdk::CuaDriver::connect(Some(socket_path.to_owned()))
+        .map_err(|error| error.to_string())?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("create compatibility runtime: {error}"))?;
+    runtime
+        .block_on(driver.metadata())
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+fn require_compatible_daemon(socket_path: &str) {
+    if let Err(error) = ensure_compatible_daemon(socket_path) {
+        eprintln!("Cua Driver daemon on {socket_path} is incompatible: {error}");
+        process::exit(1);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod daemon_compatibility_tests {
+    use super::ensure_compatible_daemon;
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixListener;
+
+    #[test]
+    fn incompatible_daemon_is_refused_before_a_cli_action_can_dispatch() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("driver.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut request_line = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut request_line)
+                .unwrap();
+            let request: serde_json::Value = serde_json::from_str(&request_line).unwrap();
+            assert_eq!(request["method"], "metadata");
+
+            let mut metadata = cua_driver_core::daemon::current_daemon_metadata();
+            metadata.contract_version = "incompatible-test-contract".into();
+            let mut writer = stream;
+            writeln!(
+                writer,
+                "{}",
+                serde_json::json!({"ok": true, "result": metadata})
+            )
+            .unwrap();
+        });
+
+        let error = ensure_compatible_daemon(socket.to_str().unwrap()).unwrap_err();
+        assert!(error.contains("incompatible daemon"), "{error}");
+        server.join().unwrap();
+    }
+}
+
 pub fn run_call(
     tool: &str,
     json_args: Option<serde_json::Value>,
     screenshot_out_file: Option<String>,
     socket_override: Option<String>,
 ) {
-    // All public tool execution is daemon-backed so policy, session state,
+    // One-shot public calls remain service-backed so policy, session state,
     // AppStateEngine caches, and platform identity have one enforcement point.
-    //
-    // On Windows, prefer the uiAccess-elevated worker (cua-driver-uia.exe) when
-    // present — it runs at UIAccess integrity and bypasses UIPI for UWP apps
-    // like Calculator / modern Notepad / Settings. The regular daemon at
-    // `\\.\pipe\cua-driver` is Medium integrity and gets ERROR_ACCESS_DENIED on
-    // SendInput into AppContainer'd processes. See #1602.
+    // The Windows UIAccess helper is daemon-internal: routing an untrusted CLI
+    // directly to it would bypass this authorization path.
     //
     // When `socket_override` is Some (i.e. caller passed `--socket <path>`),
-    // route directly to that path and skip the platform default + uia worker
-    // search. Used by integration tests to drive a tempfile-socketed daemon.
-    let socket_path = if let Some(s) = socket_override {
-        s
-    } else {
-        #[cfg(target_os = "windows")]
-        {
-            let uia = crate::serve::default_uia_pipe_path();
-            if crate::serve::is_daemon_listening(&uia) {
-                uia
-            } else {
-                crate::serve::default_socket_path()
-            }
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            crate::serve::default_socket_path()
-        }
-    };
+    // route directly to that path and skip the platform default. Used by
+    // integration tests to drive a tempfile-socketed daemon.
+    let socket_path = socket_override.unwrap_or_else(crate::serve::default_socket_path);
     if !crate::serve::is_daemon_listening(&socket_path) {
         eprintln!(
             "Cua Driver daemon is not running on {socket_path}.\n\
@@ -1787,6 +1816,7 @@ pub fn run_call(
         );
         process::exit(1);
     }
+    require_compatible_daemon(&socket_path);
 
     {
         let mut args_for_daemon = json_args
@@ -1928,6 +1958,7 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
         );
         process::exit(1);
     }
+    require_compatible_daemon(&socket_path);
 
     match subcommand {
         "start" => {
@@ -2741,13 +2772,14 @@ fn cli_docs_json() -> serde_json::Value {
             {
                 "name": "mcp",
                 "abstract": "Run the stdio MCP server.",
-                "discussion": "On Windows and Linux, bare cua-driver mcp owns its runtime directly and shuts it down on stdin EOF. On macOS it proxies to CuaDriver.app so desktop permissions retain the app identity. Pass --socket to select an explicit daemon endpoint.",
+                "discussion": "On Windows and Linux, bare cua-driver mcp owns its runtime directly and shuts it down on stdin EOF. On macOS it proxies to CuaDriver.app so desktop permissions retain the app identity. Pass --direct to make the macOS MCP process own the runtime and TCC attribution, or --socket to select an explicit daemon endpoint.",
                 "arguments": no_args,
                 "options": [
                     {"name":"socket","short_name":null,"help":"Select an explicit daemon socket or named-pipe endpoint.","type":"String","default_value":null,"is_optional":true},
                     {"name":"host-bundle-id","short_name":null,"help":"Advisory host bundle id label echoed in check_permissions output (embedded mode).","type":"String","default_value":null,"is_optional":true}
                 ],
                 "flags": [
+                    {"name":"direct","short_name":null,"help":"Own the runtime in this MCP process; mutually exclusive with --socket.","default_value":false},
                     {"name":"claude-code-computer-use-compat","short_name":null,"help":"Expose the Claude Code computer-use compatibility screenshot surface.","default_value":false},
                     {"name":"embedded","short_name":null,"help":"Require a daemon spawned by the embedding host instead of auto-launching the standalone app.","default_value":false}
                 ],
@@ -3329,6 +3361,7 @@ pub fn run_config_cmd(
         );
         process::exit(1);
     }
+    require_compatible_daemon(&socket_path);
 
     let call = |tool: &str, args: serde_json::Value| -> serde_json::Value {
         let req = crate::serve::DaemonRequest {

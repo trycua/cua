@@ -255,6 +255,17 @@ function Test-E2eRecordings {
 $script:FailureCount = 0
 
 if ($suite -in @("shared", "all")) {
+    Invoke-CargoTest "SDK runtime contract" @(
+        "test", "-p", "cua-driver-sdk", "--lib", "--", "--test-threads=1"
+    )
+    Invoke-CargoTest "SDK runtime configuration" @(
+        "test", "-p", "cua-driver-sdk", "--test", "runtime_configuration", "--",
+        "--test-threads=1"
+    )
+    Invoke-CargoTest "private worker lifecycle" @(
+        "test", "-p", "cua-driver", "--test", "private_worker_test", "--",
+        "--test-threads=1"
+    )
     Invoke-CargoTest "shared behavior matrix" @(
         "test", "-p", "cua-driver", "--test", "cross_platform_behavior_test", "--",
         "--ignored", "--exact", "shared_web_action_matrix_is_state_verified",

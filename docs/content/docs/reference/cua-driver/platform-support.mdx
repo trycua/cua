@@ -30,6 +30,12 @@ scope, see [Capture and delivery modalities](/concepts/capture-and-delivery-moda
 | Linux X11     | X11/EWMH, XTest, AT-SPI, and toolkit accessibility bridges                       | Supported with toolkit-specific limits. Foreground input and semantic background actions are broadly covered. Toolkits that reject synthetic background events receive an explicit refusal instead of a silent success. |
 | Linux Wayland | AT-SPI plus compositor-specific discovery, capture, activation, and portal input | Supported with compositor-specific limits. Semantic background actions work where the application exposes them. Raw input cannot generally be sent to an arbitrary occluded surface.                                    |
 
+Wayland portal grants belong to the compositor/runtime scope that issued
+them. A direct runtime or private worker reports its resolved display and
+portal scope, and a replacement runtime may prompt again. Do not treat a
+successful portal grant as a durable credential that migrates to a later
+process generation.
+
 ## Browser-tool routes
 
 Browser mutation always starts from an exact native `(pid, window_id)` binding.

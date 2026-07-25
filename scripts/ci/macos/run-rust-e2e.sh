@@ -174,6 +174,11 @@ run_test() {
 }
 
 if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
+  run_test sdk-runtime-contract cargo test -p cua-driver-sdk --lib -- --test-threads=1
+  run_test sdk-runtime-configuration cargo test -p cua-driver-sdk \
+    --test runtime_configuration -- --test-threads=1
+  run_test private-worker-lifecycle cargo test -p cua-driver \
+    --test private_worker_test -- --test-threads=1
   run_test shared-app-matrix cargo test -p cua-driver --test cross_platform_behavior_test -- \
     --ignored --exact shared_web_action_matrix_is_state_verified \
     --nocapture --test-threads=1

@@ -5,13 +5,16 @@ description: "The contracts behind the CLI and MCP surfaces: transport state, co
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-The CLI (`cua-driver call …`) and the MCP server (`cua-driver serve` / `mcp`) run the same tool code, but they differ in **what state survives between calls**, **where configuration lands**, and **which parameters a call must carry**. This page is the contract map. For the *why* behind the process shapes, see [Process model](/reference/cua-driver/process-model); for the modality axes, see [Capture and delivery modalities](/concepts/capture-and-delivery-modalities).
+The CLI (`cua-driver call …`) and MCP (`cua-driver mcp`) run the same
+runtime contract, but they differ in **what state survives between calls**,
+**where configuration lands**, and **which parameters a call must carry**.
+MCP may own that runtime directly or select `cua-driver serve` explicitly.
 
 ---
 
 ## CLI versus MCP at a glance
 
-| Dimension | CLI (`call`) | MCP (`serve` / `mcp`) |
+| Dimension | CLI (`call`) | MCP (`mcp`) |
 |---|---|---|
 | Lifetime | one process per action | one process, many actions |
 | `element_index` cache | only when proxied to a running daemon | per connection, lives across calls |
@@ -22,6 +25,11 @@ The CLI (`cua-driver call …`) and the MCP server (`cua-driver serve` / `mcp`) 
 <Callout type="warn">
 When a daemon is already listening, `cua-driver call` **proxies to it**. A freshly built binary's behavior appears through the CLI after that daemon restarts, because the call runs in the daemon process. Integration tests avoid this by spawning their own MCP server.
 </Callout>
+
+Bare MCP owns its runtime on Windows/Linux and uses the signed app service on
+macOS. `mcp --socket <endpoint>` explicitly selects a service on every
+platform; `mcp --direct` explicitly selects process ownership and is mutually
+exclusive with `--socket`.
 
 ---
 

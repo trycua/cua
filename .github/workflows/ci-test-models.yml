@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      HF_TOKEN: ${{ secrets.OSWORLD_HF_TOKEN || secrets.HF_TOKEN }}
       HF_HUB_DISABLE_TELEMETRY: "1"
 
     steps:
@@ -98,27 +98,27 @@ jobs:
           set -euo pipefail
           cat > recipient.pem <<'CERTIFICATE'
           -----BEGIN CERTIFICATE-----
-          MIIDxjCCAi4CCQDNRm20Q4L6lDANBgkqhkiG9w0BAQsFADAlMSMwIQYDVQQDDBpv
-          c3dvcmxkMi1vbmUtdGltZS10cmFuc2ZlcjAeFw0yNjA3MjUxNzAwMTVaFw0yNjA3
-          MjcxNzAwMTVaMCUxIzAhBgNVBAMMGm9zd29ybGQyLW9uZS10aW1lLXRyYW5zZmVy
-          MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAtooYkUJ06RE7WZss7r9p
-          aG1L3YGJm4K04FT6KC73comMtzGgvz8MeNu5A6u23Ax1Wt8vfEWJsCmoUOXBni/d
-          rot6bMsBzSbQQMV7zoHvguOqD2eZKE1lOU3ncXmA+LXP9wZBVq08M1lZ3XnGD/Ne
-          O0rASOXrFU5NjpRRwNhGA7VWlqBZX73PNvw54lpvEzOdZr1pULks9G7fywZuil1O
-          j+owVG6VZtsYWdOnwCbicnejMBCDQWVoUfeSYCRZ1KiusqAxlEkYYUehher7vcCo
-          FCLWkUzwv+oXoFCi3F1JyuYFNmo7+cL/TuuqkdAobqqNd06oz8FpknrAAR8suFD3
-          9uqJZ7ZCCRrjOrKoFImGLOWw7l7+JvzxV+4PsYC6qVCjH7TLUbfJwifR5rwbjESg
-          cabhxThi5kY9UsBJK+oVhYUNsk4wOLBsETMYjJnsD/wRnhiq8GT24kX1cjNQV3qS
-          O2b0L2HcgQWJjNPjplW0jmFFzWllCzvY+3smz6kMPEwbAgMBAAEwDQYJKoZIhvcN
-          AQELBQADggGBAH/oHP5pmw1KkTsp6jC5FD/vFgvn5i9dTgHuC7tFYR6UMXiRpLdU
-          vJ9zhWE233MyCSbBb3hd0ACwd4jwtLxQpFDtA+8vrU88oV8sOK5jAmgOxfR0HKQK
-          g2OD1mjripWU6QjfKbiGYXOZGj4TdSEpdblackDUEFNvARmqdTGEyBT3AVexzGJ2
-          zgTr7EnKN0HZYSu2idaciw8ocjNCVVP8cQKGjOzEZtQxK4STg3BnVF+4Ayh7W3T9
-          50gQHvukgwmBpkkDzvWhKdB/9sGaC5Vip24mYKawNWKknyAUPgjhus5hUH7mw1h1
-          DW2xEjZrupG7G1LH/2r5WBWoAbyYLy9HEW0OrinjL1wZah8Sc9oYxFhDOjDTYAjN
-          MXuioiutBmPSylrnWVU4jH46Fl/FVOIsZh/sUm3UVa4dB9aRQ4lLiHs3A+p5olW/
-          XmWbxAGAUM/onJ5rAB+kS0zBQRRR9MhPZovgjnTYLmgIDqdhj05vBpHwjqrRd3/x
-          iGlYCydcRIS5tQ==
+          MIIDxjCCAi4CCQC19DJE2K8wzTANBgkqhkiG9w0BAQsFADAlMSMwIQYDVQQDDBpv
+          c3dvcmxkMi1vbmUtdGltZS10cmFuc2ZlcjAeFw0yNjA3MjUxNzA0MTRaFw0yNjA4
+          MDgxNzA0MTRaMCUxIzAhBgNVBAMMGm9zd29ybGQyLW9uZS10aW1lLXRyYW5zZmVy
+          MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAtzU0lk4tEEIIBJ1xV7Y0
+          q4khr/lSCE/I5oE/GE07hGObYWOE1GkKv3zzH3NM3Cnzu2GM8qvX2CFSVWr1xK9j
+          y6pCVAzrNIUWF5TonBcYcwZK9QN9UKUHBk8896OSL7QdJXzflvMLqv4xiUZw6nDQ
+          pDXvFDg3KSAmIJNdWk0287MCLJ7WvmCwycD+o6cbnf7O3YdPI2I3xXylGjYfC2E+
+          8dDpSCkrPkMuKSlGgWrSbeqmGAA3l9b6oDRi7O5jNdo2znk68YLbnD1fdioQO8e4
+          5dPMCqjdDOMcCiJxpqkswwtH9WRNG/483eG29Zh4nMjCma+Ko2zdXiCtvPxoE/MG
+          MliQOZqXmcTFI49Mjw91NzMgQCYhNZsUL7FAffaGk7xbo1xKxlQ/j/i4MQzM6MuT
+          oLUxl4VhYTU/BClNNiroq5dkdvQTTO+ulrfv36Qk5Kt76vgRpSNfUdzrsDKMtOTD
+          DEd5Ro2ohStFLIJHvK9gpEvDGwBWTQaTvQsjEfshOV8rAgMBAAEwDQYJKoZIhvcN
+          AQELBQADggGBAIuT4iidriV4xiU5IHPoN7k+DXpqgBrQM2f1ss3z0aO4xX008c+w
+          TUZBLsjaNatc3gNAC5Vv+S5lO4OwAdJL4IGmccKouqzDU+6Y0fQ3L890h/oyGUwM
+          +MQ2eOdGdGVKpenpaO8Nmq4MfyCP9XJs27bs3YOw9qdAWSJU3+Y9JgYP5ujm+1+J
+          h2CXKgNc8JoD4KR92voQe8fGtQEX1eKuSYbbGvCa0bTS6H9ln4jfZCnQWfs+ziPW
+          K/5/ZzvPAHBAGDWlOzuJLHQYudHImWL89YrDQFAaLQ3J2zgrVVZK+zmOb0H2rkBe
+          8iujCU4ZFoKsExfh0uNTtFjwsHi3QSIjXtSqiZdc5GBlJ4CaXrpAt6q8olH13mDj
+          5yzniZGtiURX/Ppltzqk6NAGbTx4lKG1in/v1IAPqtic7+6OOOPO7QPRg1p7RpTH
+          ZfSKP2+RL+4dUGjFwqERLXalR/q07gJ9DmzkIx4fD+qTQfMTOY9OEPSRtrK4F9yM
+          Uj/n8bWBGSJrjA==
           -----END CERTIFICATE-----
           CERTIFICATE
           openssl cms -encrypt \

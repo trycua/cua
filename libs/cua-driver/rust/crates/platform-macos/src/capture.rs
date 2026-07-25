@@ -19,15 +19,14 @@ struct SecureCapturePath {
 
 impl SecureCapturePath {
     fn new(file_name: &str) -> anyhow::Result<Self> {
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::DirBuilderExt;
 
         let directory = std::env::temp_dir().join(format!(
             "cua-driver-rs-capture-{}-{}",
             std::process::id(),
             uuid::Uuid::new_v4()
         ));
-        std::fs::create_dir(&directory)?;
-        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
+        std::fs::DirBuilder::new().mode(0o700).create(&directory)?;
         let file = directory.join(file_name);
         Ok(Self { directory, file })
     }

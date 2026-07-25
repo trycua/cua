@@ -136,7 +136,9 @@ driver's bounded fallback is limited to a temporary tab it created and
 navigated. It requires the committed fixed URL, expected selected-tab title,
 no active omnibox edit, one unique checkbox-shaped control in the setup-page
 region, an unchanged target window, PID-routed input, and a verified state
-transition; it does not authorize generic pixel interaction.
+transition on that same control. Unsupported appearance, scale, zoom,
+window-size, or toolbar geometry refuses without a click; the fallback does not
+authorize generic pixel interaction.
 
 The grant lives only in the daemon, is scoped and expiring, and is discarded
 when the daemon restarts. A bounded reconnect can reuse it only while the same

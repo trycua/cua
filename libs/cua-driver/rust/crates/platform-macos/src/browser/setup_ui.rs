@@ -126,6 +126,7 @@ fn native_setup_page_committed(
     }
     let exact_omnibox = nodes.iter().find(|node| {
         node.role == "AXTextField"
+            && node.element_index.is_some()
             && field_equals(node, "Address and search bar")
             && node
                 .value
@@ -410,6 +411,14 @@ fn setup_geometry(
     {
         return Err("invalid native or screenshot geometry");
     }
+    let tolerance = 1.0;
+    if omnibox_frame[0] < window_frame[0] - tolerance
+        || omnibox_frame[1] < window_frame[1] - tolerance
+        || omnibox_frame[0] + omnibox_frame[2] > window_frame[0] + window_frame[2] + tolerance
+        || omnibox_frame[1] + omnibox_frame[3] > window_frame[1] + window_frame[3] + tolerance
+    {
+        return Err("address-field frame is outside the captured window");
+    }
     let scale_x = f64::from(screenshot_size.0) / window_frame[2];
     let scale_y = f64::from(screenshot_size.1) / window_frame[3];
     if !scale_x.is_finite()
@@ -421,10 +430,13 @@ fn setup_geometry(
         return Err("screenshot and native window scales disagree");
     }
     let local_omnibox_bottom = omnibox_frame[1] + omnibox_frame[3] - window_frame[1];
+    if local_omnibox_bottom < -tolerance || local_omnibox_bottom > window_frame[3] + tolerance {
+        return Err("address-field frame has invalid window-local geometry");
+    }
     let left = (window_frame[2] * 0.15 * scale_x).round().max(0.0) as u32;
     let top = ((local_omnibox_bottom + 30.0) * scale_y)
         .round()
-        .clamp(0.0, f64::from(screenshot_size.1)) as u32;
+        .min(f64::from(screenshot_size.1)) as u32;
     let right = (window_frame[2] * 0.40 * scale_x)
         .round()
         .clamp(0.0, f64::from(screenshot_size.0)) as u32;
@@ -454,6 +466,36 @@ fn pixel_to_screen(
         local_x,
         local_y,
     )
+}
+
+fn unique_pixel_checkbox(
+    matches: &[(u32, u32, CheckboxState)],
+    window_frame: [f64; 4],
+    geometry: SetupGeometry,
+    descriptor: &BrowserSetupDescriptor,
+) -> Result<Option<PixelCheckbox>, BrowserRefusal> {
+    let [(center_x, center_y, state)] = matches else {
+        return match matches.len() {
+            0 => Ok(None),
+            _ => Err(refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                format!(
+                    "{}'s exact setup page exposed multiple checkbox-shaped controls in the bounded trusted region",
+                    descriptor.product_name
+                ),
+            )),
+        };
+    };
+    let (screen_x, screen_y, window_local_x, window_local_y) =
+        pixel_to_screen(window_frame, (*center_x, *center_y), geometry);
+    Ok(Some(PixelCheckbox {
+        screen_x,
+        screen_y,
+        window_local_x,
+        window_local_y,
+        window_frame,
+        state: *state,
+    }))
 }
 
 fn is_checkbox_edge_pixel(pixel: image::Rgba<u8>) -> bool {
@@ -615,6 +657,7 @@ fn exact_pixel_setup_checkbox(
         .iter()
         .filter(|node| {
             node.role == "AXTextField"
+                && node.element_index.is_some()
                 && field_equals(node, "Address and search bar")
                 && node
                     .value
@@ -632,6 +675,34 @@ fn exact_pixel_setup_checkbox(
             ),
         ));
     };
+    let capture_bounds = crate::windows::window_bounds_by_id(window_id).ok_or_else(|| {
+        refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            format!(
+                "{}'s exact setup window disappeared before capture",
+                descriptor.product_name
+            ),
+        )
+    })?;
+    let capture_frame = [
+        capture_bounds.x,
+        capture_bounds.y,
+        capture_bounds.width,
+        capture_bounds.height,
+    ];
+    if window_frame
+        .iter()
+        .zip(capture_frame)
+        .any(|(ax, captured)| (*ax - captured).abs() > 1.0)
+    {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            format!(
+                "{}'s native and captured setup-window bounds disagree",
+                descriptor.product_name
+            ),
+        ));
+    }
     let png = crate::capture::screenshot_window_bytes(window_id).map_err(|error| {
         refusal(
             BrowserRefusalCode::BrowserRouteUnavailable,
@@ -653,7 +724,7 @@ fn exact_pixel_setup_checkbox(
         })?
         .to_rgba8();
     let geometry = setup_geometry(
-        *window_frame,
+        capture_frame,
         *omnibox_frame,
         (screenshot.width(), screenshot.height()),
     )
@@ -671,28 +742,7 @@ fn exact_pixel_setup_checkbox(
         geometry.search,
         (geometry.scale_x + geometry.scale_y) / 2.0,
     );
-    let [(center_x, center_y, state)] = matches.as_slice() else {
-        return match matches.len() {
-            0 => Ok(None),
-            _ => Err(refusal(
-                BrowserRefusalCode::BrowserWrongTargetRefused,
-                format!(
-                    "{}'s exact setup page exposed multiple checkbox-shaped controls in the bounded trusted region",
-                    descriptor.product_name
-                ),
-            )),
-        };
-    };
-    let (screen_x, screen_y, window_local_x, window_local_y) =
-        pixel_to_screen(*window_frame, (*center_x, *center_y), geometry);
-    Ok(Some(PixelCheckbox {
-        screen_x,
-        screen_y,
-        window_local_x,
-        window_local_y,
-        window_frame: *window_frame,
-        state: *state,
-    }))
+    unique_pixel_checkbox(matches.as_slice(), capture_frame, geometry, descriptor)
 }
 
 fn press_pixel_checkbox(
@@ -738,16 +788,24 @@ fn press_pixel_checkbox(
             {
                 anyhow::bail!("the setup click point left the exact window");
             }
-            Ok(())
+            let refreshed = exact_pixel_setup_checkbox(pid, &current, window_id, descriptor, true)
+                .map_err(|error| anyhow::anyhow!(error.message))?
+                .ok_or_else(|| {
+                    anyhow::anyhow!("the exact setup checkbox disappeared before the click")
+                })?;
+            if !checkbox.same_control_as(refreshed, 3.0) || checkbox.state != refreshed.state {
+                anyhow::bail!("the exact setup checkbox changed before the click");
+            }
+            Ok(refreshed)
         })();
         release_actionable_nodes(&current.nodes);
-        validation?;
+        let refreshed = validation?;
         crate::input::mouse::click_at_xy_with_window_local(
             pid,
-            checkbox.screen_x,
-            checkbox.screen_y,
-            checkbox.window_local_x,
-            checkbox.window_local_y,
+            refreshed.screen_x,
+            refreshed.screen_y,
+            refreshed.window_local_x,
+            refreshed.window_local_y,
             window_id,
             1,
             &[],
@@ -861,13 +919,17 @@ impl SetupUiHandle {
                     }
                 }
                 Ok(None) => {
-                    match exact_pixel_setup_checkbox(
+                    let pixel_checkbox = exact_pixel_setup_checkbox(
                         pid,
                         &tree,
                         window_id,
                         self.descriptor,
                         self.setup_navigation_committed,
-                    ) {
+                    );
+                    if matches!(pixel_checkbox, Ok(Some(_))) {
+                        self.used_bounded_pixel_fallback = true;
+                    }
+                    match pixel_checkbox {
                         Ok(Some(
                             checkbox @ PixelCheckbox {
                                 state: CheckboxState::Off,
@@ -925,8 +987,8 @@ impl SetupUiHandle {
     pub fn abort(mut self, pid: i32, window_id: u32, error: BrowserRefusal) -> BrowserRefusal {
         let enabled_remote_debugging =
             self.enabled_remote_debugging || self.remote_debugging_mutation_possible;
-        let used_bounded_pixel_fallback = self.used_bounded_pixel_fallback;
         let restored_remote_debugging = self.rollback_remote_debugging(pid, window_id);
+        let used_bounded_pixel_fallback = self.used_bounded_pixel_fallback;
         let opened_setup_page = self.opened_setup_page;
         let focused_setup_address_field = self.focused_setup_address_field;
         let foregrounded_window = self.foregrounded_window;
@@ -1468,10 +1530,30 @@ pub fn enable(
                 descriptor,
                 handle.setup_navigation_committed,
             ) {
-                Ok(Some(PixelCheckbox {
-                    state: CheckboxState::On,
-                    ..
-                })) => {
+                Ok(Some(
+                    checkbox @ PixelCheckbox {
+                        state: CheckboxState::On,
+                        ..
+                    },
+                )) => {
+                    handle.used_bounded_pixel_fallback = true;
+                    if handle
+                        .pixel_checkbox
+                        .is_some_and(|original| !original.same_control_as(checkbox, 3.0))
+                    {
+                        release_actionable_nodes(&tree.nodes);
+                        return Err(handle.abort(
+                            pid,
+                            window_id,
+                            refusal(
+                                BrowserRefusalCode::BrowserWrongTargetRefused,
+                                format!(
+                                    "the exact {} remote-debugging checkbox changed identity after the setup click",
+                                    descriptor.product_name
+                                ),
+                            ),
+                        ));
+                    }
                     if handle.remote_debugging_mutation_possible {
                         handle.enabled_remote_debugging = true;
                     }
@@ -1687,6 +1769,26 @@ mod tests {
     }
 
     #[test]
+    fn pixel_fallback_requires_committed_navigation_and_complete_ax_proof() {
+        let truncated = TreeWalkResult {
+            tree_markdown: String::new(),
+            nodes: Vec::new(),
+            truncated: true,
+        };
+        assert!(
+            exact_pixel_setup_checkbox(0, &truncated, 0, chrome(), false)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            exact_pixel_setup_checkbox(0, &truncated, 0, chrome(), true)
+                .unwrap_err()
+                .code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+    }
+
+    #[test]
     fn pixel_checkbox_detector_distinguishes_off_and_on() {
         let mut unchecked =
             image::RgbaImage::from_pixel(400, 250, image::Rgba([255, 255, 255, 255]));
@@ -1774,6 +1876,36 @@ mod tests {
     }
 
     #[test]
+    fn pixel_checkbox_detector_enforces_bounded_zoom_geometry() {
+        fn outlined_box(side: u32) -> image::RgbaImage {
+            let mut image =
+                image::RgbaImage::from_pixel(100, 100, image::Rgba([255, 255, 255, 255]));
+            for coordinate in 0..side {
+                image.put_pixel(20 + coordinate, 20, image::Rgba([120, 120, 120, 255]));
+                image.put_pixel(
+                    20 + coordinate,
+                    20 + side - 1,
+                    image::Rgba([120, 120, 120, 255]),
+                );
+                image.put_pixel(20, 20 + coordinate, image::Rgba([120, 120, 120, 255]));
+                image.put_pixel(
+                    20 + side - 1,
+                    20 + coordinate,
+                    image::Rgba([120, 120, 120, 255]),
+                );
+            }
+            image
+        }
+
+        assert_eq!(
+            detect_checkbox_pixels(&outlined_box(20), (0, 0, 100, 100), 1.0).len(),
+            1
+        );
+        assert!(detect_checkbox_pixels(&outlined_box(6), (0, 0, 100, 100), 1.0).is_empty());
+        assert!(detect_checkbox_pixels(&outlined_box(40), (0, 0, 100, 100), 1.0).is_empty());
+    }
+
+    #[test]
     fn setup_geometry_validates_scale_and_round_trips_retina_coordinates() {
         let frame = [-100.0, 50.0, 400.0, 250.0];
         let omnibox = [-90.0, 60.0, 380.0, 30.0];
@@ -1789,6 +1921,50 @@ mod tests {
         assert!(setup_geometry(frame, omnibox, (800, 400)).is_err());
         assert!(setup_geometry([0.0, 0.0, 0.0, 250.0], omnibox, (800, 500)).is_err());
         assert!(setup_geometry(frame, omnibox, (200, 125)).is_ok());
+        assert!(setup_geometry(frame, [-110.0, 60.0, 380.0, 30.0], (800, 500)).is_err());
+        assert!(setup_geometry(frame, [-90.0, 290.0, 380.0, 30.0], (800, 500)).is_err());
+    }
+
+    #[test]
+    fn unique_pixel_checkbox_preserves_ambiguity_and_control_identity() {
+        let geometry = SetupGeometry {
+            search: (0, 0, 400, 250),
+            scale_x: 1.0,
+            scale_y: 1.0,
+        };
+        assert!(
+            unique_pixel_checkbox(&[], [0.0, 0.0, 400.0, 250.0], geometry, chrome())
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            unique_pixel_checkbox(
+                &[(106, 86, CheckboxState::Off), (166, 86, CheckboxState::On)],
+                [0.0, 0.0, 400.0, 250.0],
+                geometry,
+                chrome(),
+            )
+            .unwrap_err()
+            .code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+        let original = unique_pixel_checkbox(
+            &[(106, 86, CheckboxState::Off)],
+            [0.0, 0.0, 400.0, 250.0],
+            geometry,
+            chrome(),
+        )
+        .unwrap()
+        .unwrap();
+        let wrong_on = unique_pixel_checkbox(
+            &[(130, 86, CheckboxState::On)],
+            [0.0, 0.0, 400.0, 250.0],
+            geometry,
+            chrome(),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(!original.same_control_as(wrong_on, 3.0));
     }
 
     #[test]

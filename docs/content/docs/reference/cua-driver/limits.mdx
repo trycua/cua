@@ -68,8 +68,10 @@ address and expected selected-tab title with no active omnibox edit, and
 requires one unique checkbox-shaped control in a bounded setup-page region. It
 revalidates the unchanged target window, PID-routes the click, and verifies the
 visual state transition. Unsupported appearance, scale, or zoom geometry is
-refused without a click. It never copies profile data, edits profile files,
-restarts, or terminates the selected process.
+refused without a click. Unsupported window sizes or toolbar layouts, including
+a bookmarks bar that moves the control outside the bounded region, are refused
+the same way. It never copies profile data, edits profile files, restarts, or
+terminates the selected process.
 Endpoint ownership must resolve to the approved browser PID; wrapper processes,
 ambiguous process trees, unsupported products, unrecognized UI locales, and
 generic Wayland identities are refused.

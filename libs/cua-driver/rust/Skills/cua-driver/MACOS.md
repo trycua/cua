@@ -512,7 +512,9 @@ it does not depend on System Events or direct profile-file edits. When Chrome
 withholds the setup page's web AX subtree, the adapter uses only a temporary
 tab it created and navigated, proves the committed native URL and expected
 selected internal-tab title with no omnibox edit in progress, revalidates the
-window, and PID-routes its bounded, state-verified checkbox-pixel fallback.
+window, and PID-routes its bounded checkbox-pixel fallback. The same control's
+state must verify after mutation; unsupported appearance, scale, zoom,
+window-size, or toolbar geometry refuses without a click.
 
 Standalone Chromium activates its window when CDP's trusted pointer route is
 used on macOS. The driver therefore returns

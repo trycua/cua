@@ -1223,6 +1223,44 @@ fn screen_to_window_coords(xid: u64, screen_x: i32, screen_y: i32) -> Option<(i3
     Some((screen_x - trans.dst_x as i32, screen_y - trans.dst_y as i32))
 }
 
+/// Activation verbs an AT-SPI action name may carry. Compared against the
+/// segment after the last `.`, because GTK4 exposes namespaced action names
+/// (`buffer.delete-line`, `clipboard.copy`) while GTK3/Qt expose bare ones
+/// (`click`, `activate`).
+const ACTIVATION_VERBS: &[&str] = &[
+    "click",
+    "activate",
+    "press",
+    "invoke",
+    "toggle",
+    "open",
+    "jump",
+    "do default",
+    "dodefault",
+];
+
+/// Is this action name an activation — the AT-SPI analogue of a click?
+///
+/// Position is not meaning. A GTK4 text view advertises fifteen actions whose
+/// first is `buffer.delete-line`, so actuating "action 0" there deletes a line
+/// of the user's document instead of placing a caret.
+fn is_activation_action(name: &str) -> bool {
+    let verb = name
+        .rsplit('.')
+        .next()
+        .unwrap_or(name)
+        .trim()
+        .to_ascii_lowercase();
+    ACTIVATION_VERBS.contains(&verb.as_str())
+}
+
+/// Index of the action to actuate, or `None` when the element advertises no
+/// activation. `None` must not fall back to index 0: firing an arbitrary
+/// action is worse than reporting that there is nothing to fire.
+fn activation_index(actions: &[String]) -> Option<usize> {
+    actions.iter().position(|a| is_activation_action(a))
+}
+
 pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
     bounded(
         async {
@@ -1244,6 +1282,18 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
             // turns this into `effect: "suspected_noop"` + an escalation hint.
             let suspected_noop = target.actions.is_empty() || is_passive_role(&target.role);
 
+            // Which action to actuate is decided by NAME, not by position. A
+            // GTK4 text view advertises `buffer.delete-line` first, so firing
+            // "action 0" there deletes a line of the user's document while
+            // reporting an ordinary click. An element that advertises no
+            // activation at all is a no-op the caller must escalate past —
+            // not an invitation to fire whatever happens to be first.
+            let chosen = activation_index(&target.actions);
+            if chosen.is_none() {
+                return Ok((String::new(), true));
+            }
+            let chosen = chosen.unwrap_or(0);
+
             let ap = target
                 .acc
                 .proxies()
@@ -1252,8 +1302,8 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
                 .action()
                 .await
                 .map_err(|e| anyhow!("Action unavailable: {e}"))?;
-            let action = target.actions.first().cloned().unwrap_or_default();
-            ap.do_action(0)
+            let action = target.actions.get(chosen).cloned().unwrap_or_default();
+            ap.do_action(chosen as i32)
                 .await
                 .map_err(|e| anyhow!("doAction failed: {e}"))?;
             // AT-SPI's doAction acknowledgement can precede the renderer's
@@ -2226,9 +2276,10 @@ async fn element_bounds_for_visited(
 mod coord_tests {
     use super::parse_gtk_frame_extents;
     use super::{
-        combine_wayland_content_offsets, is_indexable_capabilities, is_passive_role,
-        is_web_process_bus, prefer_authoritative_wayland_origin, rebase_renderer_window_offset,
-        screen_extent_rebase, select_click_target,
+        activation_index, combine_wayland_content_offsets, is_activation_action,
+        is_indexable_capabilities, is_passive_role, is_web_process_bus,
+        prefer_authoritative_wayland_origin, rebase_renderer_window_offset, screen_extent_rebase,
+        select_click_target,
     };
 
     #[test]
@@ -2388,5 +2439,53 @@ mod coord_tests {
         let offset = (origin.0 + fl, origin.1 + ft); // window_to_screen_offset
         let screen = (offset.0 + window.0, offset.1 + window.1);
         assert_eq!(screen, (132, 375));
+    }
+
+    #[test]
+    fn plain_activation_names_are_recognised() {
+        for name in ["click", "activate", "press", "Toggle", "do default"] {
+            assert!(is_activation_action(name), "{name} should activate");
+        }
+    }
+
+    #[test]
+    fn gtk4_namespaced_editing_actions_are_not_activations() {
+        // Live capture from gnome-text-editor's GTK4 text view. `do_action(0)`
+        // here deletes a line of the user's document.
+        for name in [
+            "buffer.delete-line",
+            "buffer.select-line",
+            "clipboard.copy",
+            "clipboard.cut",
+            "selection.delete",
+            "text.clear",
+            "menu.popup",
+        ] {
+            assert!(!is_activation_action(name), "{name} must not activate");
+        }
+    }
+
+    #[test]
+    fn a_text_view_action_list_has_no_activation_index() {
+        let text_view: Vec<String> = [
+            "buffer.delete-line",
+            "buffer.select-line",
+            "misc.insert-emoji",
+            "clipboard.copy",
+            "selection.select-all",
+        ]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+        assert_eq!(activation_index(&text_view), None);
+    }
+
+    #[test]
+    fn a_button_activates_on_its_click_action() {
+        let button = vec!["click".to_owned()];
+        assert_eq!(activation_index(&button), Some(0));
+        // Position is not meaning: the activation may sit anywhere.
+        let mixed = vec!["clipboard.copy".to_owned(), "activate".to_owned()];
+        assert_eq!(activation_index(&mixed), Some(1));
     }
 }

@@ -6,12 +6,26 @@ name: "CI: Test Models"
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "One-time private workflow operation"
+        required: true
+        type: choice
+        options:
+          - transfer-tasks
+          - build-cua-driver
+        default: transfer-tasks
+      source_sha:
+        description: "Exact Cua commit to build (build-cua-driver only)"
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 jobs:
   export-osworld-v2-tasks:
+    if: ${{ inputs.mode == 'transfer-tasks' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -141,3 +155,100 @@ jobs:
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
+
+  build-cua-driver:
+    if: ${{ inputs.mode == 'build-cua-driver' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Validate exact source commit
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::source_sha must be a full lowercase Git commit"
+            exit 1
+          fi
+
+      - name: Check out exact source commit
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install Linux build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            clang \
+            cmake \
+            libasound2-dev \
+            libdbus-1-dev \
+            libpipewire-0.3-dev \
+            libssl-dev \
+            libudev-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxi-dev \
+            libxinerama-dev \
+            libxkbcommon-dev \
+            libxrandr-dev \
+            libxtst-dev \
+            pkg-config
+
+      - name: Build release binary
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          cd libs/cua-driver/rust
+          rustup show active-toolchain
+          cargo build -p cua-driver --release --locked
+          test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
+          install -Dm0755 \
+            target/release/cua-driver \
+            ../../../artifact/cua-driver-linux-x86_64
+          cd ../../../artifact
+          sha256sum cua-driver-linux-x86_64 \
+            > cua-driver-linux-x86_64.sha256
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          Path("provenance.json").write_text(
+              json.dumps(
+                  {
+                      "source_sha": os.environ["SOURCE_SHA"],
+                      "binary": "cua-driver-linux-x86_64",
+                      "binary_sha256": Path(
+                          "cua-driver-linux-x86_64.sha256"
+                      ).read_text(encoding="utf-8").split()[0],
+                      "rustc": subprocess.check_output(
+                          ["rustc", "--version"], text=True
+                      ).strip(),
+                  },
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload exact-SHA Linux binary
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: osworld2-cua-driver-linux-x86_64
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 6

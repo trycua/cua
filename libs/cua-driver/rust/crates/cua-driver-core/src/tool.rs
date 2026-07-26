@@ -634,7 +634,16 @@ impl ToolRegistry {
             );
         let private_consent_turn = is_existing_profile_prepare(resolved_name, &args);
         let _desktop_action = if is_physical_desktop_action(resolved_name) {
-            Some(desktop_action_coordinator().lock().await)
+            let coordinator = desktop_action_coordinator();
+            // Avoid yielding the dispatch task when the process-wide input
+            // lane is uncontended. On Windows, that yield creates a window in
+            // which the foreground target can lose keyboard eligibility
+            // between the fixture's focus proof and SendInput. Contended
+            // runtimes still wait and serialize through the same mutex.
+            Some(match coordinator.try_lock() {
+                Ok(guard) => guard,
+                Err(_) => coordinator.lock().await,
+            })
         } else {
             None
         };

@@ -30,6 +30,9 @@ jobs:
           PR_URL: ${{ github.event.pull_request.html_url }}
           REPO: ${{ github.repository }}
         run: |
+          # Release authorization comes only from audited label events. Never
+          # read PR bodies, comments, task lists, or checkbox state here.
+
           # Skip everything if no-release
           if echo "$LABELS" | grep -q '"no-release"'; then
             echo "no-release label found, skipping."

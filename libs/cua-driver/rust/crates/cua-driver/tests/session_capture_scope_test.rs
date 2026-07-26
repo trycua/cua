@@ -21,7 +21,14 @@ fn code(response: &Value) -> Option<&str> {
 
 #[test]
 fn policies_are_isolated_immutable_and_enforced_over_mcp() {
-    let mut driver = RawDriver::spawn().expect("spawn source-built driver");
+    // This test isolates capture-scope behavior. The trusted fixture opts
+    // into unrestricted mode at daemon launch so protected observation
+    // consent does not mask the scope policy being exercised.
+    let mut driver = RawDriver::spawn_with_env(&[
+        ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
+        ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
+    ])
+    .expect("spawn source-built driver");
     driver.send(&json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     driver.recv();
 

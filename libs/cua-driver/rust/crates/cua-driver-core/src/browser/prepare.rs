@@ -183,7 +183,6 @@ struct PreparedProfile {
 
 pub(crate) struct ManagedBrowser {
     child: Child,
-    #[cfg(target_os = "windows")]
     owned_pid: i64,
     profile: PathBuf,
     delete_profile: bool,
@@ -599,6 +598,12 @@ fn spawned_runtime_pid(ownership: &EndpointOwnershipProof) -> i64 {
 }
 
 impl BrowserEngine {
+    pub(crate) fn is_driver_owned_pid_for_session(&self, session: &str, pid: i64) -> bool {
+        self.managed_browsers.lock().unwrap().iter().any(|browser| {
+            browser.owned_pid == pid && browser.owner_sessions.iter().any(|owner| owner == session)
+        })
+    }
+
     pub(crate) fn cleanup_prepared_session(&self, session: &str) {
         self.managed_browsers
             .lock()
@@ -713,7 +718,6 @@ impl BrowserEngine {
         }
         self.managed_browsers.lock().unwrap().push(ManagedBrowser {
             child,
-            #[cfg(target_os = "windows")]
             owned_pid: prepared_pid,
             profile: prepared_profile.path,
             delete_profile: prepared_profile.delete_on_cleanup,

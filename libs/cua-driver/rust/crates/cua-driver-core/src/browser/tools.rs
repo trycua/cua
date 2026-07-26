@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use crate::protocol::{Content, ToolResult};
-use crate::tool::{Tool, ToolDef, ToolRegistry};
+use crate::tool::{ProtectedResourceOwnership, Tool, ToolDef, ToolRegistry};
 use crate::tool_args::ArgsExt;
 
 use super::approval::MCP_HOST_APPROVAL_ARG;
@@ -91,6 +91,27 @@ fn schema_session() -> Value {
         "type": "string",
         "description": "Stable caller-declared session id. Browser targets, tabs, and refs are scoped to this session."
     })
+}
+
+fn browser_resource_ownership(engine: &BrowserEngine, args: &Value) -> ProtectedResourceOwnership {
+    let Some(session) = args
+        .get("session")
+        .and_then(Value::as_str)
+        .filter(|session| !session.is_empty())
+    else {
+        return ProtectedResourceOwnership::UserOwned;
+    };
+    let pid = args.get("pid").and_then(Value::as_i64).or_else(|| {
+        args.get("target_id")
+            .and_then(Value::as_str)
+            .and_then(|target_id| engine.store.get_target(session, target_id).ok())
+            .map(|target| target.pid)
+    });
+    if pid.is_some_and(|pid| engine.is_driver_owned_pid_for_session(session, pid)) {
+        ProtectedResourceOwnership::DriverOwned
+    } else {
+        ProtectedResourceOwnership::UserOwned
+    }
 }
 
 fn semantic_ref_value(listed: &super::engine::SemanticListedRef) -> Value {
@@ -201,6 +222,18 @@ impl GetBrowserStateTool {
 impl Tool for GetBrowserStateTool {
     fn def(&self) -> &ToolDef {
         &self.def
+    }
+
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if adapter_id == "private_observation" {
+            browser_resource_ownership(&self.engine, args)
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
@@ -1601,6 +1634,18 @@ impl BrowserDialogTool {
 impl Tool for BrowserDialogTool {
     fn def(&self) -> &ToolDef {
         &self.def
+    }
+
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if adapter_id == "private_observation" {
+            browser_resource_ownership(&self.engine, args)
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {

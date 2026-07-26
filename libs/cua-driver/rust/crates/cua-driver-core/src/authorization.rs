@@ -301,18 +301,19 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
     EnforcementAdapterDescriptor {
         id: "private_observation",
         operations: PRIVATE_OBSERVATION_OPERATIONS,
-        state: RiskEnforcement::MetadataOnly,
+        state: RiskEnforcement::Active,
         risk_class: RiskClass::R2,
         resource_kind: "user_window_or_display_observation",
         scope_keys: PRIVATE_OBSERVATION_SCOPE_KEYS,
-        grant_type: None,
-        idle_ttl_seconds: None,
-        absolute_ttl_seconds: None,
-        indicator_requirement: "not_implemented",
+        grant_type: Some("protected_resource_grant"),
+        idle_ttl_seconds: Some(30 * 60),
+        absolute_ttl_seconds: Some(8 * 60 * 60),
+        indicator_requirement: "required_in_standard_and_bounded",
         revocation_triggers: SESSION_REVOCATION,
-        refusal_code: None,
-        provider_requirement: "certified_protected_host_not_implemented",
-        enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::MetadataOnly),
+        refusal_code: Some("protected_consent_required"),
+        provider_requirement:
+            "protected_consent_in_standard; protected_indicator_in_bounded; none_in_unrestricted",
+        enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
     },
     EnforcementAdapterDescriptor {
         id: "desktop_input",
@@ -759,7 +760,14 @@ pub fn classify_tool_call(tool: &str, args: &Value) -> RiskAssessment {
             };
             RiskAssessment {
                 class,
-                enforcement: RiskEnforcement::MetadataOnly,
+                enforcement: if matches!(
+                    args.get("action").and_then(Value::as_str),
+                    Some("get_text" | "query_dom")
+                ) {
+                    RiskEnforcement::Active
+                } else {
+                    RiskEnforcement::MetadataOnly
+                },
                 operation_sensitive: true,
             }
         }
@@ -773,7 +781,30 @@ pub fn classify_tool_call(tool: &str, args: &Value) -> RiskAssessment {
             } else {
                 RiskClass::R2
             },
-            enforcement: RiskEnforcement::MetadataOnly,
+            // Screenshot-to-file is a compound observation + file-egress
+            // operation. It remains metadata-only as a whole until the file
+            // adapter ships, while the observation half is still enforced by
+            // the canonical adapter conjunction.
+            enforcement: if args
+                .get("screenshot_out_file")
+                .and_then(Value::as_str)
+                .is_some_and(|path| !path.is_empty())
+            {
+                RiskEnforcement::MetadataOnly
+            } else {
+                RiskEnforcement::Active
+            },
+            operation_sensitive: true,
+        },
+        "get_accessibility_tree"
+        | "list_apps"
+        | "list_windows"
+        | "debug_window_info"
+        | "get_browser_state"
+        | "escalate_session"
+        | "zoom" => RiskAssessment {
+            class: RiskClass::R2,
+            enforcement: RiskEnforcement::Active,
             operation_sensitive: true,
         },
         "check_permissions" => RiskAssessment {
@@ -1247,7 +1278,7 @@ mod tests {
         for tool in ["get_desktop_state", "get_window_state"] {
             let observation = classify_tool_call(tool, &serde_json::json!({}));
             assert_eq!(observation.class, RiskClass::R2);
-            assert_eq!(observation.enforcement, RiskEnforcement::MetadataOnly);
+            assert_eq!(observation.enforcement, RiskEnforcement::Active);
 
             let egress = classify_tool_call(
                 tool,
@@ -1311,12 +1342,11 @@ mod tests {
 
         assert_eq!(
             adapter_ids_with_state(RiskEnforcement::Active),
-            vec!["browser_prepare.existing_profile"]
+            vec!["browser_prepare.existing_profile", "private_observation"]
         );
         assert_eq!(
             adapter_ids_with_state(RiskEnforcement::MetadataOnly),
             vec![
-                "private_observation",
                 "desktop_input",
                 "file_transfer_and_output",
                 "browser_consequential_action",
@@ -1333,7 +1363,7 @@ mod tests {
         );
         assert_eq!(
             adapter_ids_with_state_for_mode(PermissionMode::Standard, RiskEnforcement::Active),
-            vec!["browser_prepare.existing_profile"]
+            vec!["browser_prepare.existing_profile", "private_observation"]
         );
 
         let existing = ENFORCEMENT_ADAPTERS
@@ -1416,12 +1446,11 @@ mod tests {
         let status = status_json();
         assert_eq!(
             status["active_risk_enforcement"],
-            serde_json::json!(["browser_prepare.existing_profile"])
+            serde_json::json!(["browser_prepare.existing_profile", "private_observation"])
         );
         assert_eq!(
             status["metadata_only_risk_enforcement"],
             serde_json::json!([
-                "private_observation",
                 "desktop_input",
                 "file_transfer_and_output",
                 "browser_consequential_action",
@@ -1438,7 +1467,7 @@ mod tests {
         );
         assert_eq!(
             status["effective_active_risk_enforcement"],
-            serde_json::json!(["browser_prepare.existing_profile"])
+            serde_json::json!(["browser_prepare.existing_profile", "private_observation"])
         );
         assert_eq!(
             status["effective_metadata_only_risk_enforcement"],

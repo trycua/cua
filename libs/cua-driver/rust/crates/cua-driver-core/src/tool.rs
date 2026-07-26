@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -346,10 +347,30 @@ pub fn advertised_capabilities_for(tool_name: &str, input_schema: &Value) -> Vec
     capabilities
 }
 
+/// Runtime-owned provenance for protected-resource admission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProtectedResourceOwnership {
+    UserOwned,
+    DriverOwned,
+}
+
 /// A callable tool handler. Object-safe — uses `Box<dyn Tool>`.
 #[async_trait]
 pub trait Tool: Send + Sync {
     fn def(&self) -> &ToolDef;
+
+    /// Trusted implementation-side provenance for prompt-light disposable
+    /// resources. The default is deliberately conservative: caller arguments
+    /// never establish ownership, and an adapter may skip protected consent
+    /// only when the concrete tool can prove it from runtime-owned state.
+    async fn protected_resource_ownership(
+        &self,
+        _adapter_id: &str,
+        _args: &Value,
+    ) -> ProtectedResourceOwnership {
+        ProtectedResourceOwnership::UserOwned
+    }
+
     async fn invoke(&self, args: Value) -> ToolResult;
 }
 
@@ -678,6 +699,33 @@ impl ToolRegistry {
             return result;
         }
 
+        // Resource adapters run at the same canonical boundary as policy and
+        // manifest admission, after session capture-scope validation but
+        // before recording or the platform tool can observe user state. This
+        // avoids prompting for a call the session policy will refuse, while
+        // preserving the public arguments in the grant scope and the private
+        // runtime session key in its revocation lifecycle.
+        if crate::authorization::enforcement_adapters_for_call(resolved_name, &public_args)
+            .iter()
+            .any(|adapter| adapter.id == "private_observation")
+            && tool
+                .protected_resource_ownership("private_observation", &public_args)
+                .await
+                != ProtectedResourceOwnership::DriverOwned
+        {
+            if let Err(error) = self
+                .authorize_private_observation(
+                    resolved_name,
+                    &public_args,
+                    context,
+                    runtime_session.as_deref(),
+                )
+                .await
+            {
+                return protected_consent_refusal(error);
+            }
+        }
+
         // Capture start time for recording timestamps only after validation.
         let start_ms = now_ms();
 
@@ -795,6 +843,127 @@ impl ToolRegistry {
         }
 
         result
+    }
+
+    async fn authorize_private_observation(
+        &self,
+        tool_name: &str,
+        args: &Value,
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+        lifecycle_session: Option<&str>,
+    ) -> Result<(), crate::consent::ConsentError> {
+        let browser_target = args.get("target_id").and_then(Value::as_str);
+        let browser_tab = args.get("tab_id").and_then(Value::as_str);
+        let (resource, summary) = if let Some(target_id) = browser_target {
+            (
+                serde_json::json!({
+                    "kind": "browser_target",
+                    "target_id": target_id,
+                    "tab_id": browser_tab,
+                }),
+                match browser_tab {
+                    Some(tab_id) => {
+                        format!("Allow Cua to observe browser target {target_id}, tab {tab_id}")
+                    }
+                    None => format!("Allow Cua to observe browser target {target_id}"),
+                },
+            )
+        } else if let Some(window_id) = args.get("window_id").and_then(Value::as_u64) {
+            let pid = args.get("pid").and_then(Value::as_i64);
+            (
+                serde_json::json!({
+                    "kind": "window",
+                    "pid": pid,
+                    "window_id": window_id,
+                }),
+                match pid {
+                    Some(pid) => {
+                        format!("Allow Cua to observe window {window_id} of process {pid}")
+                    }
+                    None => format!("Allow Cua to observe window {window_id}"),
+                },
+            )
+        } else if let Some(pid) = args.get("pid").and_then(Value::as_i64) {
+            (
+                serde_json::json!({
+                    "kind": "application",
+                    "pid": pid,
+                }),
+                format!("Allow Cua to observe process {pid}"),
+            )
+        } else if tool_name == "escalate_session" {
+            (
+                serde_json::json!({
+                    "kind": "session_capture_scope",
+                    "capture_scope": args.get("capture_scope"),
+                }),
+                "Allow Cua to expand this session's observation scope".to_owned(),
+            )
+        } else if tool_name == "start_recording"
+            && args.get("record_video").and_then(Value::as_bool) != Some(true)
+        {
+            // A trajectory-only recording does not capture the display when it
+            // starts. Each later action still passes its own observation/input
+            // adapters, and the grant key is bound to this runtime-private
+            // lifecycle session. Requiring display discovery here would make
+            // this safe, headless-capable mode unusable on Linux CI.
+            (
+                serde_json::json!({
+                    "kind": "session_trajectory_recording",
+                    "record_video": false,
+                }),
+                "Allow Cua to record separately authorized actions in this session".to_owned(),
+            )
+        } else {
+            // Whole-desktop and unfiltered listing calls are scoped to the
+            // current display geometry. Reading get_screen_size is R0 and
+            // content-free; calling its platform implementation directly
+            // avoids recursive authorization while making a display topology
+            // change produce a different grant digest.
+            let display = self
+                .tools
+                .get("get_screen_size")
+                .ok_or_else(|| {
+                    crate::consent::ConsentError::Provider(
+                        "display identity is unavailable".to_owned(),
+                    )
+                })?
+                .invoke(serde_json::json!({}))
+                .await;
+            if display.is_error == Some(true) {
+                return Err(crate::consent::ConsentError::Provider(
+                    "display identity could not be read".to_owned(),
+                ));
+            }
+            let display = display.structured_content.ok_or_else(|| {
+                crate::consent::ConsentError::Provider(
+                    "display identity was not returned".to_owned(),
+                )
+            })?;
+            (
+                serde_json::json!({
+                    "kind": "display",
+                    "width": display.get("width").and_then(Value::as_u64),
+                    "height": display.get("height").and_then(Value::as_u64),
+                    "scale_factor": display.get("scale_factor").and_then(Value::as_f64),
+                }),
+                "Allow Cua to observe the current desktop".to_owned(),
+            )
+        };
+
+        self.protected_resource_grants
+            .authorize(
+                context,
+                "private_observation",
+                crate::authorization::RiskClass::R2,
+                lifecycle_session,
+                resource,
+                &format!("{summary} using {tool_name}"),
+                Duration::from_secs(30 * 60),
+                Duration::from_secs(8 * 60 * 60),
+            )
+            .await?;
+        Ok(())
     }
 }
 
@@ -914,11 +1083,15 @@ mod runtime_isolation_tests {
     };
     use crate::{
         authorization::PermissionMode,
+        consent::{
+            ConsentAction, ConsentRequest, IndicatorLease, ProtectedConsentProvider,
+            ProviderDecision,
+        },
         protocol::ToolResult,
         session_authorization::{SessionAuthorizationRegistry, SessionModeCeiling},
     };
     use std::sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     };
     use std::time::Duration;
@@ -939,6 +1112,78 @@ mod runtime_isolation_tests {
     struct ReplayProbe {
         hits: Arc<AtomicUsize>,
         def: super::ToolDef,
+    }
+
+    struct ObservationProbe {
+        hits: Arc<AtomicUsize>,
+        def: super::ToolDef,
+    }
+
+    #[async_trait::async_trait]
+    impl super::Tool for ObservationProbe {
+        fn def(&self) -> &super::ToolDef {
+            &self.def
+        }
+
+        async fn invoke(&self, _args: serde_json::Value) -> crate::protocol::ToolResult {
+            self.hits.fetch_add(1, Ordering::SeqCst);
+            crate::protocol::ToolResult::text("private state")
+                .with_structured(serde_json::json!({"snapshot_id": 1}))
+        }
+    }
+
+    struct AcceptingProvider {
+        requests: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl ProtectedConsentProvider for AcceptingProvider {
+        fn provider_id(&self) -> &'static str {
+            "test.observation-provider"
+        }
+
+        async fn request_consent(
+            &self,
+            request: &ConsentRequest,
+        ) -> Result<ProviderDecision, String> {
+            self.requests.fetch_add(1, Ordering::SeqCst);
+            Ok(ProviderDecision {
+                action: ConsentAction::Accept,
+                request_digest: request.request_digest.clone(),
+            })
+        }
+
+        async fn activate_indicator(
+            &self,
+            request: &ConsentRequest,
+        ) -> Result<IndicatorLease, String> {
+            Ok(IndicatorLease::new(
+                format!("indicator-{}", request.generation),
+                Arc::new(AtomicBool::new(false)),
+            ))
+        }
+
+        async fn deactivate_indicator(&self, _indicator_id: &str) {}
+    }
+
+    fn observation_registry(
+        provider: Option<Arc<dyn ProtectedConsentProvider>>,
+        hits: Arc<AtomicUsize>,
+    ) -> Arc<super::ToolRegistry> {
+        let mut registry = super::ToolRegistry::new_with_protected_consent_provider(provider);
+        registry.register(Box::new(ObservationProbe {
+            hits,
+            def: super::ToolDef {
+                name: "get_window_state".into(),
+                description: "test observation".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: true,
+                destructive: false,
+                idempotent: true,
+                open_world: false,
+            },
+        }));
+        Arc::new(registry)
     }
 
     #[async_trait::async_trait]
@@ -1006,6 +1251,95 @@ mod runtime_isolation_tests {
 
         drop(registry_a);
         drop(registry_b);
+    }
+
+    #[tokio::test]
+    async fn observation_refuses_before_platform_dispatch_without_a_protected_host() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let registry = observation_registry(None, hits.clone());
+        let result = registry
+            .invoke_with_context(
+                "get_window_state",
+                serde_json::json!({"pid": 42, "window_id": 7, "session": "review"}),
+                standard_context(),
+            )
+            .await;
+
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            result
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(serde_json::Value::as_str),
+            Some("protected_consent_required")
+        );
+    }
+
+    #[tokio::test]
+    async fn observation_reuses_only_the_exact_window_grant() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let provider = Arc::new(AcceptingProvider {
+            requests: AtomicUsize::new(0),
+        });
+        let registry = observation_registry(Some(provider.clone()), hits.clone());
+        let context = standard_context();
+        for window_id in [7, 7, 8] {
+            let result = registry
+                .invoke_with_context(
+                    "get_window_state",
+                    serde_json::json!({
+                        "pid": 42,
+                        "window_id": window_id,
+                        "session": "review"
+                    }),
+                    context.clone(),
+                )
+                .await;
+            assert_ne!(result.is_error, Some(true));
+        }
+
+        assert_eq!(hits.load(Ordering::SeqCst), 3);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn trajectory_only_recording_does_not_require_live_display_discovery() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let provider = Arc::new(AcceptingProvider {
+            requests: AtomicUsize::new(0),
+        });
+        let mut registry =
+            super::ToolRegistry::new_with_protected_consent_provider(Some(provider.clone()));
+        registry.register(Box::new(ObservationProbe {
+            hits: hits.clone(),
+            def: super::ToolDef {
+                name: "start_recording".into(),
+                description: "test trajectory-only recording".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: false,
+                destructive: false,
+                idempotent: true,
+                open_world: false,
+            },
+        }));
+
+        let result = registry
+            .invoke_with_context(
+                "start_recording",
+                serde_json::json!({
+                    "output_dir": "/synthetic/recording",
+                    "record_video": false,
+                    "session": "recording"
+                }),
+                standard_context(),
+            )
+            .await;
+
+        assert_ne!(result.is_error, Some(true));
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
@@ -1156,6 +1490,26 @@ fn permission_denied_result(message: String) -> ToolResult {
         "status": "refused",
         "refusal": {
             "code": "permission_denied",
+            "message": message,
+        }
+    }))
+}
+
+fn protected_consent_refusal(error: crate::consent::ConsentError) -> ToolResult {
+    let code = match &error {
+        crate::consent::ConsentError::Unavailable => "protected_consent_required",
+        crate::consent::ConsentError::Declined => "protected_consent_declined",
+        crate::consent::ConsentError::Canceled => "protected_consent_canceled",
+        crate::consent::ConsentError::DigestMismatch => "protected_consent_scope_mismatch",
+        crate::consent::ConsentError::Expired => "protected_consent_expired",
+        crate::consent::ConsentError::Indicator(_) => "protected_indicator_unavailable",
+        crate::consent::ConsentError::Provider(_) => "protected_consent_provider_failed",
+    };
+    let message = error.to_string();
+    ToolResult::error(message.clone()).with_structured(serde_json::json!({
+        "status": "refused",
+        "refusal": {
+            "code": code,
             "message": message,
         }
     }))

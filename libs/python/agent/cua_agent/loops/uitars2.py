@@ -1,6 +1,6 @@
 """
 UITARS-2 agent loop implementation using LiteLLM.
-- Prepends a system prompt modeled after the training prompts in examples/seed_16_gui.ipynb
+- Prepends a system prompt modeled after the UI-TARS training prompts
 - Converts Responses items -> completion messages
 - Calls litellm.acompletion
 - Parses <seed:tool_call> ... </seed:tool_call> outputs back into Responses items (computer actions)

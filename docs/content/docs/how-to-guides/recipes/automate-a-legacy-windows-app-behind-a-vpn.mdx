@@ -8,6 +8,23 @@ import { Steps, Step } from 'fumadocs-ui/components/steps';
 
 When a desktop app has **no API** and only runs **behind the corporate VPN**, drive it where it already runs, on the Windows box inside the network. **Cua Driver** runs on that machine and exposes the app through MCP stdio tools, so the desktop session, app traffic, and staged files stay inside the VPN boundary. **No data leaves the VPN boundary.**
 
+<VideoDemo
+  src="https://trycua.github.io/assets/videos/cua-driver/windows-legacy-postal-app.mp4"
+  poster="https://trycua.github.io/assets/posters/cua-driver/windows-legacy-postal-app.jpg"
+  title="Drive a legacy postal app while the terminal stays in front"
+  sourceUrl="https://x.com/trycua/status/2059693301276565841"
+>
+  Claude Code fills shipment details and prints receipts in a Windows desktop app with no API. The
+  [original launch thread](https://x.com/trycua/status/2059688960838828391) explains the use case.
+</VideoDemo>
+
+<Callout type="info">
+  Before you start: [install Cua Driver](/how-to-guides/driver/install), [connect your
+  agent](/how-to-guides/driver/connect-your-agent), and configure [Keep Cua Driver
+  running](/how-to-guides/driver/keep-running). If you connect over SSH, also read [Drive a Windows
+  app over SSH](/how-to-guides/driver/windows-ssh).
+</Callout>
+
 <Steps>
   <Step>
     ### Start from the Windows machine inside the VPN
@@ -21,47 +38,7 @@ When a desktop app has **no API** and only runs **behind the corporate VPN**, dr
     ```
 
     Confirm the app is installed or reachable from that desktop session before you install anything. For this recipe, assume the payroll client opens normally when you launch it by hand.
-  </Step>
 
-  <Step>
-    ### Install Cua Driver
-
-    Run the Windows installer in PowerShell on that same machine:
-
-    ```powershell
-    irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
-    ```
-
-    Open a new PowerShell window after the installer updates your user `Path`, then verify the CLI resolves:
-
-    ```powershell
-    cua-driver --version
-    ```
-  </Step>
-
-  <Step>
-    ### Keep the daemon in the interactive session
-
-    Windows OpenSSH and services run in Session 0, which has no desktop. Register Cua Driver as an interactive-session daemon so window tools can see the RDP or console desktop:
-
-    ```powershell
-    cua-driver autostart enable
-    cua-driver autostart kick
-    ```
-
-    Verify that the daemon is running and reports a real session number:
-
-    ```powershell
-    cua-driver status
-    # Cua Driver daemon is running
-    #   socket: \\.\pipe\cua-driver
-    #   pid: 12345
-    #   session: 2
-    ```
-
-    <Callout type="info">
-      For the full daemon setup, see [Keep Cua Driver running](/how-to-guides/driver/keep-running). If you connect to this box over SSH, also read [Drive a Windows app over SSH](/how-to-guides/driver/windows-ssh).
-    </Callout>
   </Step>
 
   <Step>
@@ -81,26 +58,7 @@ When a desktop app has **no API** and only runs **behind the corporate VPN**, dr
     ```
 
     Empty output usually means the command is running outside the interactive desktop. Recheck `cua-driver status`, `query session`, and the autostart task.
-  </Step>
 
-  <Step>
-    ### Register Cua Driver with your agent
-
-    Add Cua Driver as an MCP stdio server. For Claude Code on Windows:
-
-    ```powershell
-    claude mcp add --transport stdio cua-driver -- cua-driver.exe mcp
-    ```
-
-    Then verify the server entry:
-
-    ```powershell
-    claude mcp list
-    ```
-
-    <Callout type="info">
-      For other MCP clients, see [Connect Cua Driver to an MCP client](/how-to-guides/driver/connect-your-agent).
-    </Callout>
   </Step>
 
   <Step>
@@ -115,11 +73,12 @@ When a desktop app has **no API** and only runs **behind the corporate VPN**, dr
     ```
 
     The agent should use `launch_app` to open the client, `list_apps` and `list_windows` to find the running process and target window, `get_window_state` to inspect the UI (it returns the accessibility tree and a screenshot), then `click` and `type_text` to complete the workflow.
+
   </Step>
 </Steps>
 
 ## Scale this out
 
-When the same workflow must run across many employees, regions, or tenants at once, move it onto **Cua Sandbox** cloud Windows desktops and fan out the jobs. Start with [Run sandboxes in parallel](/how-to-guides/sandbox/scale-out) and [Drive a sandbox with the SDK](/tutorials/run-an-agent-in-a-sandbox).
+When the same workflow must run concurrently, use local Cua Sandbox Windows VMs and cap concurrency to the resources available on the host. Start with [Run sandboxes in parallel](/how-to-guides/sandbox/scale-out) and [Your first local sandbox](/tutorials/your-first-local-sandbox).
 
-The driving logic stays the same. The host changes from your VPN-connected Windows box to a fleet of cloud desktops with the VPN configuration baked into the image. See [Choose and build a sandbox image](/how-to-guides/sandbox/images).
+The driving logic stays the same. Each local Windows VM needs the VPN configuration and application included in its starting image. See [Choose and build a sandbox image](/how-to-guides/sandbox/images).

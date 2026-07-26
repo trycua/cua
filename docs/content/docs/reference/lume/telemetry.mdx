@@ -1,0 +1,74 @@
+---
+title: Telemetry and privacy
+description: Exact Lume telemetry controls, schema, and privacy boundaries.
+---
+
+Lume sends content-free, pseudonymous product telemetry to the PostHog EU ingest endpoint. Telemetry is enabled by default. The first-run notice appears before the first event, and the preference persists across upgrades.
+
+Installation and release delivery is serialized across Lume processes. A success marker is written only after PostHog accepts the event. Failed lifecycle delivery is retried after a 15-minute backoff.
+
+## Control telemetry
+
+```bash
+lume config telemetry status
+lume config telemetry disable
+lume config telemetry enable
+lume config telemetry reset-id
+```
+
+`LUME_TELEMETRY_ENABLED` overrides the saved preference for the current process. Disabling telemetry stops every telemetry request but retains the installation ID. `reset-id` deletes the local pseudonymous ID and lifecycle markers while preserving the enabled or disabled preference.
+
+## Separate update check
+
+The telemetry setting does not control the read-only request to GitHub Releases made by `lume check-update`, `lume update`, or the MCP `check_for_update` tool. The update response is cached for up to 20 hours and does not include the telemetry installation ID.
+
+Disable that request separately:
+
+```bash
+LUME_UPDATE_CHECK=false lume check-update
+```
+
+## Schema-v3 envelope
+
+Every schema-v3 event has these fixed fields:
+
+| Property | Meaning |
+| --- | --- |
+| `telemetry_schema_version` | Fixed integer `3` |
+| `product_version` | Installed Lume version |
+| `os_family` | Host family, currently `macos` |
+| `os_major` | Host major operating-system version only |
+| `arch` | Bounded host CPU architecture |
+| `is_ci` | Whether a recognized CI environment is present |
+| `is_synthetic` | Explicit Cua-owned test marker; `false` by default |
+| `transport` | `cli`, `http`, or `mcp_stdio` |
+| `process_session_id` | Random ID created once per process and never persisted |
+| `id_persisted` | Whether the installation ID is durable |
+
+Lume sets `$process_person_profile` to `false` and `$geoip_disable` to `true`. The installation UUID is used only as PostHog's `distinct_id`. Lume does not retain location derived from the request IP.
+
+## Fixed events
+
+| Event | Additional bounded properties |
+| --- | --- |
+| `lume_install` | install channel and product version |
+| `lume_release_installed` | install channel and product version |
+| `lume_operation_completed` | allowlisted operation, success, fixed error class, duration bucket, `accepted` or `completed` phase, and optional guest OS |
+| `lume_vm_started` | guest OS and successful start signal |
+| `lume_mcp_session_started` | fixed MCP protocol and stdio transport |
+| `lume_mcp_tool_completed` | allowlisted tool and operation, success, fixed error class, and duration bucket |
+| `lume_provisioning_started` | guest OS and whether provisioning is asynchronous |
+| `lume_provisioning_completed` | guest OS, asynchronous flag, success, fixed error class, and coarse provisioning-duration bucket |
+| `lume_update_checked` | fixed source and outcome, strict public target version, and cache-hit flag |
+| `lume_update_apply_started` | strict public target version and fixed daemon-not-applicable state |
+| `lume_update_apply_completed` | strict public target version, fixed outcome and failure class, and duration bucket |
+
+Legacy per-command and `lume_api_*` attempt events remain during the schema migration. Analytics should use schema-v3 completion and lifecycle events for success, reliability, and active-installation metrics.
+
+Routine telemetry is capped at 1,000 events per process per hour. One successful VM-start value event remains eligible after the cap so a noisy process cannot erase the active-installation signal.
+
+## Data that is never collected
+
+Telemetry builders accept only fixed event names and bounded properties. They do not accept VM or image names, registry or organization names, file paths, URLs, command arguments, MCP arguments or results, SSH commands or output, request or response bodies, unattended configuration, VNC credentials, VM contents, screenshots, or raw error messages.
+
+`LUME_TELEMETRY_SYNTHETIC=true` marks Cua-owned certification traffic so production dashboards can exclude it. It does not enable telemetry when the saved preference or `LUME_TELEMETRY_ENABLED` disables telemetry.

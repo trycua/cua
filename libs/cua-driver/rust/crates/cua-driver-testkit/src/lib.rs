@@ -8,12 +8,12 @@
 //!
 //! ## Two transports, one shape
 //! cua-driver is driven two ways, and a test should be able to target either:
-//!   - **MCP** ([`McpDriver`]) — one long-lived `cua-driver` server over stdio
-//!     JSON-RPC. State (e.g. `set_config`) persists for the connection.
+//!   - **MCP** ([`McpDriver`]) — one long-lived `cua-driver` stdio proxy backed
+//!     by a test-owned daemon. State persists in the daemon.
 //!     Returns the `{"result":{"content",…,"structuredContent"}}` envelope.
-//!   - **CLI** ([`CliDriver`]) — a stateless `cua-driver call <tool> <json>`
-//!     process per action. Prints `structuredContent` (or text) directly, NOT
-//!     the JSON-RPC envelope.
+//!   - **CLI** ([`CliDriver`]) — a fresh `cua-driver call <tool> <json>` process
+//!     per action, backed by the same test-owned daemon. Prints
+//!     `structuredContent` (or text) directly, NOT the JSON-RPC envelope.
 //!
 //! Both implement [`Driver`] and normalize their differing payloads into one
 //! [`ToolResponse`], so a scenario reads `resp.text()` / `resp.structured()` /
@@ -24,21 +24,38 @@
 //! [`ChildReaper`] kills every spawned child on drop. On Windows it also assigns
 //! them to a `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` job, so the OS reaps the whole
 //! tree even on panic / SIGKILL / Ctrl-C — no orphaned windows or held ports.
+//!
+//! ## Relocated runners
+//!
+//! The testkit normally discovers the driver and staged apps under the Cargo
+//! workspace. CI runners that build those artifacts in an immutable or remote
+//! workspace can override the paths with `CUA_TEST_DRIVER_BIN`,
+//! `CUA_TEST_APPS_ROOT`, and `CUA_TEST_WORKSPACE_ROOT`. These variables affect
+//! tests only; they are never read by the shipped driver.
 
 pub mod ax;
-mod driver;
-mod mcp;
+mod browser_fixture;
 mod cli;
+mod daemon;
+mod driver;
+pub mod e2e;
+mod journal;
+mod mcp;
+pub mod observer;
 mod paths;
 mod raw;
 mod reaper;
 mod response;
+pub mod sentinel;
+mod windows_setup;
 
-pub use driver::Driver;
-pub use mcp::McpDriver;
-pub use raw::RawDriver;
+pub use browser_fixture::BrowserFixtureServer;
 pub use cli::CliDriver;
+pub use driver::{BehaviorRecording, Driver};
+pub use journal::FixtureJournal;
+pub use mcp::McpDriver;
 pub use paths::{driver_binary, harness_app, workspace_root};
+pub use raw::RawDriver;
 pub use reaper::{spawn_in_job, ChildReaper};
 pub use response::ToolResponse;
 

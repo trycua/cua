@@ -228,6 +228,75 @@ enum ResticError: Error {
     case genericError(String)
 }
 
+/// Errors surfaced by the recovery-preserving macOS disk expansion engine.
+///
+/// Every message is fail-closed: it states which check failed with concrete
+/// values, whether the disk was modified or rolled back, and one next step.
+enum DiskResizeError: Error, LocalizedError {
+    case vmRunning(String)
+    case resizeInProgress(String)
+    case invalidResizeMarker(String)
+    case rollbackFailed(original: String, restore: String)
+    case shrinkNotSupported(current: UInt64, requested: UInt64)
+    case growthTooSmall(minimumBytes: UInt64)
+    case unsupportedLayout(String)
+    case unsupportedSectorSize
+    case fileVaultEnabled
+    case imageAttached
+    case backupFailed(String)
+    case insufficientHostSpace(needed: UInt64, available: UInt64)
+    case apfsCheckFailed(String)
+    case containerGrowFailed(String)
+    case verificationFailed(String)
+    case commandFailed(command: String, output: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .vmRunning(let name):
+            return "Cannot resize the disk of \(name): the VM is running. Stop it first."
+        case .resizeInProgress(let name):
+            return
+                "A previous disk resize of \(name) did not finish. Re-run the same command to roll it back and restore the disk from its backup."
+        case .invalidResizeMarker(let reason):
+            return "The disk-resize marker is invalid (\(reason)). The VM remains blocked to protect its disk."
+        case .rollbackFailed(let original, let restore):
+            return "Disk resize failed (\(original)), and rollback also failed (\(restore)). The resize marker was kept; do not run the VM."
+        case .shrinkNotSupported(let current, let requested):
+            return
+                "Cannot shrink the disk (current \(current) bytes, requested \(requested) bytes). Only growing is supported; the disk was not modified."
+        case .growthTooSmall(let minimumBytes):
+            return
+                "Requested growth is too small. The new size must add at least \(minimumBytes) bytes so the recovery partition can be relocated; the disk was not modified."
+        case .unsupportedLayout(let reason):
+            return
+                "The disk layout is not the expected macOS 3-partition layout (\(reason)); the disk was not modified."
+        case .unsupportedSectorSize:
+            return "Only 512-byte-sector disk images are supported; the disk was not modified."
+        case .fileVaultEnabled:
+            return
+                "The main volume is encrypted (FileVault). Encrypted containers are not supported yet; the disk was not modified."
+        case .imageAttached:
+            return
+                "disk.img is already attached to the host. Detach it (hdiutil detach) and retry; the disk was not modified."
+        case .backupFailed(let reason):
+            return
+                "Could not create the pre-resize backup (\(reason)). Free space or use a different storage location, or pass --no-backup to proceed without one; the disk was not modified."
+        case .insufficientHostSpace(let needed, let available):
+            return
+                "Not enough host free space for the resize (need ~\(needed) bytes, have \(available) bytes); the disk was not modified."
+        case .apfsCheckFailed(let output):
+            return
+                "The APFS container is not clean. Boot the VM, shut it down cleanly, and retry. Details: \(output)"
+        case .containerGrowFailed(let output):
+            return "Growing the APFS container failed: \(output). The disk was restored from backup."
+        case .verificationFailed(let reason):
+            return "Post-resize verification failed: \(reason). The disk was restored from backup."
+        case .commandFailed(let command, let output):
+            return "\(command) failed: \(output)"
+        }
+    }
+}
+
 enum VmrunError: Error, LocalizedError {
     case commandNotFound
     case operationFailed(command: String, output: String?)

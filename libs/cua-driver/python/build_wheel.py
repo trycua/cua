@@ -24,6 +24,16 @@ import zipfile
 from pathlib import Path
 
 
+def get_default_version() -> str:
+    """Read the wrapper package version from pyproject.toml."""
+    pyproject = Path(__file__).parent / "pyproject.toml"
+    for line in pyproject.read_text().splitlines():
+        line = line.strip()
+        if line.startswith("version = "):
+            return line.split('"', 2)[1]
+    raise RuntimeError(f"Could not read project version from {pyproject}")
+
+
 def get_platform_info(arch_override: str = None):
     """Determine platform and architecture for binary selection.
 
@@ -65,6 +75,26 @@ def get_platform_info(arch_override: str = None):
         raise ValueError(f"Unsupported platform: {system}")
 
 
+def get_wheel_tag(platform_name: str, arch: str) -> str:
+    """Return the Python wheel tag for the bundled binary target."""
+    if platform_name == "darwin":
+        # Keep this aligned with the SDK dylib's LC_BUILD_VERSION minimum.
+        return "py3-none-macosx_13_0_universal2"
+    if platform_name == "linux":
+        # Rust Linux release binaries are built in debian:11, whose glibc floor is 2.31.
+        if arch == "x86_64":
+            return "py3-none-manylinux_2_31_x86_64"
+        if arch == "arm64":
+            return "py3-none-manylinux_2_31_aarch64"
+    if platform_name == "windows":
+        if arch == "x86_64":
+            return "py3-none-win_amd64"
+        if arch == "arm64":
+            return "py3-none-win_arm64"
+
+    raise ValueError(f"Unsupported wheel target: {platform_name}-{arch}")
+
+
 def get_release_url(version: str, platform_name: str, arch: str) -> tuple[str, list[str]]:
     """Get the GitHub release URL and binary names for the platform.
 
@@ -76,14 +106,14 @@ def get_release_url(version: str, platform_name: str, arch: str) -> tuple[str, l
     if platform_name == "darwin":
         # Universal binary tarball
         filename = f"cua-driver-rs-{version}-darwin-universal-binary.tar.gz"
-        binary_names = ["cua-driver"]
+        binary_names = ["cua-driver", "libcua_driver_sdk.dylib"]
     elif platform_name == "linux":
         filename = f"cua-driver-rs-{version}-linux-{arch}-binary.tar.gz"
-        binary_names = ["cua-driver"]
+        binary_names = ["cua-driver", "libcua_driver_sdk.so"]
     elif platform_name == "windows":
         filename = f"cua-driver-rs-{version}-windows-{arch}-binary.zip"
         # Windows includes both main executable and UIAccess worker
-        binary_names = ["cua-driver.exe", "cua-driver-uia.exe"]
+        binary_names = ["cua-driver.exe", "cua-driver-uia.exe", "cua_driver_sdk.dll"]
     else:
         raise ValueError(f"Unknown platform: {platform_name}")
 
@@ -210,16 +240,18 @@ def extract_binaries(archive_path: Path, binary_names: list[str], dest_dir: Path
     return extracted_paths
 
 
-def build_wheel(package_dir: Path, target_arch: str = None) -> None:
+def build_wheel(package_dir: Path, wheel_tag: str, target_arch: str = None) -> None:
     """Build the wheel using hatchling.
 
     Args:
         package_dir: Directory containing pyproject.toml
+        wheel_tag: Platform-specific wheel tag to write.
         target_arch: Target architecture for cross-compilation (x86_64, arm64)
     """
     print("\nBuilding wheel...")
 
     env = os.environ.copy()
+    env["CUA_DRIVER_WHEEL_TAG"] = wheel_tag
 
     # Set platform tag override for cross-compilation
     if target_arch:
@@ -246,8 +278,7 @@ def main():
     parser = argparse.ArgumentParser(description="Build cua-driver Python wheel with bundled binary")
     parser.add_argument(
         "--version",
-        default="0.7.0",
-        help="cua-driver-rs version to download (default: 0.7.0)",
+        help="cua-driver-rs version to download (default: pyproject.toml version)",
     )
     parser.add_argument(
         "--arch",
@@ -259,23 +290,26 @@ def main():
         help="Skip download and use existing binary in bin/ (for local testing)",
     )
     args = parser.parse_args()
+    version = args.version or get_default_version()
 
     # Determine paths
     script_dir = Path(__file__).parent
     bin_dir = script_dir / "src" / "cua_driver" / "bin"
     download_dir = script_dir / "downloads"
+    platform_name, arch = get_platform_info(args.arch)
+    wheel_tag = get_wheel_tag(platform_name, arch)
+    print(f"Wheel tag: {wheel_tag}")
 
     if not args.skip_download:
         # Get platform info and download URL
-        platform_name, arch = get_platform_info(args.arch)
         print(f"Building for {platform_name}-{arch}")
 
-        url, binary_names = get_release_url(args.version, platform_name, arch)
+        url, binary_names = get_release_url(version, platform_name, arch)
         archive_name = url.split("/")[-1]
         archive_path = download_dir / archive_name
 
         # Get expected SHA256 from checksums.txt
-        expected_sha256 = get_expected_sha256(args.version, archive_name)
+        expected_sha256 = get_expected_sha256(version, archive_name)
 
         # Download the release archive (or verify cached)
         if not archive_path.exists():
@@ -288,7 +322,11 @@ def main():
             print("[OK] Cached archive checksum verified")
 
         # Extract binaries
-        extract_binaries(archive_path, binary_names, bin_dir)
+        extracted = extract_binaries(archive_path, binary_names, bin_dir)
+        native_library = next(
+            path for path in extracted if path.suffix in {".dylib", ".so", ".dll"}
+        )
+        shutil.move(native_library, script_dir / "src" / "cua_driver" / native_library.name)
     else:
         print("Skipping download (using existing binary)")
 
@@ -301,6 +339,18 @@ def main():
             f"Run without --skip-download or place binary manually."
         )
 
+    native_library_name = {
+        "darwin": "libcua_driver_sdk.dylib",
+        "linux": "libcua_driver_sdk.so",
+        "windows": "cua_driver_sdk.dll",
+    }[platform_name]
+    native_library_path = script_dir / "src" / "cua_driver" / native_library_name
+    if not native_library_path.exists():
+        raise FileNotFoundError(
+            f"UniFFI library not found at {native_library_path}. "
+            "Use a current release asset or stage a local release build."
+        )
+
     print(f"\nBinary ready at: {binary_path}")
     print(f"Binary size: {binary_path.stat().st_size / 1024 / 1024:.2f} MB")
 
@@ -311,7 +361,7 @@ def main():
             print(f"  - {binary.name} ({binary.stat().st_size / 1024 / 1024:.2f} MB)")
 
     # Build the wheel (pass target arch for cross-compilation)
-    build_wheel(script_dir, target_arch=arch if not args.skip_download else None)
+    build_wheel(script_dir, wheel_tag, target_arch=arch)
 
 
 if __name__ == "__main__":

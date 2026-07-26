@@ -43,8 +43,8 @@ use windows::Win32::System::Com::{
 };
 use windows::Win32::UI::Shell::PropertiesSystem::PROPERTYKEY;
 use windows::Win32::UI::Shell::{
-    ApplicationActivationManager, IApplicationActivationManager, IEnumShellItems, IShellItem,
-    IShellItem2, SHCreateItemFromParsingName, AO_NONE, BHID_EnumItems, SIGDN_NORMALDISPLAY,
+    ApplicationActivationManager, BHID_EnumItems, IApplicationActivationManager, IEnumShellItems,
+    IShellItem, IShellItem2, SHCreateItemFromParsingName, AO_NONE, SIGDN_NORMALDISPLAY,
 };
 use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
@@ -108,9 +108,8 @@ pub fn launch_uwp(aumid: &str, args: &str) -> windows::core::Result<u32> {
     // CoCreateInstance call will surface a clear error.
     let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
 
-    let manager: IApplicationActivationManager = unsafe {
-        CoCreateInstance(&ApplicationActivationManager, None, CLSCTX_LOCAL_SERVER)?
-    };
+    let manager: IApplicationActivationManager =
+        unsafe { CoCreateInstance(&ApplicationActivationManager, None, CLSCTX_LOCAL_SERVER)? };
 
     let aumid_h = HSTRING::from(aumid);
     let args_h = HSTRING::from(args);
@@ -120,11 +119,7 @@ pub fn launch_uwp(aumid: &str, args: &str) -> windows::core::Result<u32> {
     let prior_foreground = unsafe { GetForegroundWindow() };
 
     let pid = unsafe {
-        manager.ActivateApplication(
-            PCWSTR(aumid_h.as_ptr()),
-            PCWSTR(args_h.as_ptr()),
-            AO_NONE,
-        )?
+        manager.ActivateApplication(PCWSTR(aumid_h.as_ptr()), PCWSTR(args_h.as_ptr()), AO_NONE)?
     };
 
     // Restore the prior foreground window. AppX activation has already
@@ -343,14 +338,12 @@ fn enumerate_apps_folder() -> windows::core::Result<Vec<AppsFolderEntry>> {
     // folder that backs the Start Menu's "all apps" list. It enumerates
     // every activatable app on the system, packaged or not.
     let folder_path = HSTRING::from("shell:AppsFolder");
-    let apps_folder: IShellItem = unsafe {
-        SHCreateItemFromParsingName(PCWSTR(folder_path.as_ptr()), None::<&IBindCtx>)?
-    };
+    let apps_folder: IShellItem =
+        unsafe { SHCreateItemFromParsingName(PCWSTR(folder_path.as_ptr()), None::<&IBindCtx>)? };
 
     // Bind to the `BHID_EnumItems` handler to iterate children.
-    let enumerator: IEnumShellItems = unsafe {
-        apps_folder.BindToHandler(None::<&IBindCtx>, &BHID_EnumItems)?
-    };
+    let enumerator: IEnumShellItems =
+        unsafe { apps_folder.BindToHandler(None::<&IBindCtx>, &BHID_EnumItems)? };
 
     let mut entries = Vec::with_capacity(256);
     loop {
@@ -360,13 +353,13 @@ fn enumerate_apps_folder() -> windows::core::Result<Vec<AppsFolderEntry>> {
         // — the documented sentinel for "iterator exhausted".
         let mut slot: [Option<IShellItem>; 1] = [None];
         let mut fetched: u32 = 0;
-        let _ = unsafe {
-            enumerator.Next(&mut slot, Some(&mut fetched as *mut u32))
-        };
+        let _ = unsafe { enumerator.Next(&mut slot, Some(&mut fetched as *mut u32)) };
         if fetched == 0 {
             break;
         }
-        let Some(item) = slot[0].take() else { break; };
+        let Some(item) = slot[0].take() else {
+            break;
+        };
 
         // Cast to IShellItem2 to access PKEY_AppUserModel_ID; if the
         // entry doesn't expose AAM (rare; pure-Win32 shortcut), skip.
@@ -392,7 +385,11 @@ fn enumerate_apps_folder() -> windows::core::Result<Vec<AppsFolderEntry>> {
         }
 
         let lowercase_display_name = display_name.to_lowercase();
-        entries.push(AppsFolderEntry { display_name, lowercase_display_name, aumid });
+        entries.push(AppsFolderEntry {
+            display_name,
+            lowercase_display_name,
+            aumid,
+        });
     }
 
     Ok(entries)

@@ -54,6 +54,9 @@ windows = [
 vnc = [
     "vncdotool>=1.2.0"
 ]
+driver = [
+    "cua-driver>=0.12.2,<0.13.0"
+]
 
 [project.urls]
 homepage = "https://github.com/trycua/cua"

@@ -3,7 +3,7 @@
 # Downloads the latest release from GitHub Releases and wires it into the user's PATH.
 #
 # Usage (from README + release body):
-#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
+#   /bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
 #
 # Flags:
 #   --bin-dir <path>     install the cua-driver wrapper to <path> instead of
@@ -22,7 +22,7 @@
 #   CUA_DRIVER_NO_MODIFY_PATH=1    same as --no-modify-path
 #
 # Uninstall:
-#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.sh)"
+#   /bin/bash -c "$(curl -fsSL https://cua.ai/driver/uninstall.sh)"
 set -euo pipefail
 
 BIN_DIR="${CUA_DRIVER_BIN_DIR:-$HOME/.local/bin}"
@@ -33,7 +33,7 @@ NO_MODIFY_PATH="${CUA_DRIVER_NO_MODIFY_PATH:-0}"
 # this directory holds the single user-facing install.sh per platform.
 # The Rust path below either execs the on-disk helper (dev /
 # checked-out-tree case) or curls this URL and pipes it to bash.
-RUST_INSTALLER_URL="https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/_install-rust.sh"
+RUST_INSTALLER_URL="https://cua.ai/driver/_install-rust.sh"
 
 # Lightweight flag parsing (avoid getopt; macOS getopt is GNU-incompatible).
 #

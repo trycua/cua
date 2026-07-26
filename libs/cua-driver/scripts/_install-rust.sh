@@ -15,7 +15,7 @@
 # helper is hard-pinned to `cua-driver-rs-v*` and will never pick it up.
 #
 # Canonical user-facing invocation (forwards here by default):
-#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
+#   /bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
 #
 # Flags:
 #   --bin-dir <path>     install the visible binary/symlink to <path>
@@ -82,7 +82,7 @@ set -euo pipefail
 # Failure here is non-fatal: the daemon-stop is a best-effort upgrade
 # nicety, not load-bearing. If we can't load the helpers, define
 # no-op stubs so the rest of the script can call them unconditionally.
-_CUA_INSTALL_COMMON_URL="https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/_install-common.sh"
+_CUA_INSTALL_COMMON_URL="https://cua.ai/driver/_install-common.sh"
 _cua_install_common_loaded=0
 if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != "-" && -f "${BASH_SOURCE[0]}" ]]; then
     _CUA_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -485,7 +485,7 @@ case "$OS-$ARCH_RAW" in
     *)
         err "unsupported platform: $OS / $ARCH_RAW"
         err "  cua-driver-rs ships prebuilts for: darwin-arm64, darwin-x86_64, linux-x86_64, linux-arm64."
-        err "  Windows users: install via install.ps1 (irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex)."
+        err "  Windows users: install via install.ps1 (irm https://cua.ai/driver/install.ps1 | iex)."
         exit 1
         ;;
 esac
@@ -501,8 +501,7 @@ done
 #
 # Version is resolved in priority order:
 #   1. CUA_DRIVER_RS_VERSION env var (explicit pin)
-#   2. CUA_DRIVER_RS_BAKED_VERSION below (set automatically by CD after
-#      each release — no API call needed)
+#   2. CUA_DRIVER_RS_BAKED_VERSION below (updated in the release PR)
 #   3. GitHub Releases API (fallback for dev / un-baked checkouts;
 #      unauthenticated = 60 req/hr per IP)
 #
@@ -512,8 +511,8 @@ done
 # API fallback only fires when this script is run from a branch where
 # the baked line hasn't been updated yet (dev / pre-release checkouts).
 #
-# ~~~ BAKED_VERSION: auto-updated by CD workflow after each release — do not edit ~~~
-CUA_DRIVER_RS_BAKED_VERSION="0.7.0"
+# ~~~ BAKED_VERSION: auto-updated in the release PR — do not edit ~~~
+CUA_DRIVER_RS_BAKED_VERSION="0.12.6" # x-release-please-version
 # ~~~ END_BAKED_VERSION ~~~
 
 if [[ -n "${CUA_DRIVER_RS_VERSION:-}" ]]; then
@@ -579,8 +578,9 @@ tar -xzf "$TMP_DIR/$TARBALL" -C "$TMP_DIR"
 #       ├── CuaDriver.app/     (minimal bundle; copy of the same binary
 #       │                         lives at Contents/MacOS/cua-driver)
 #       └── LICENSE
-#   Linux bare-binary tarball expands to:
-#     cua-driver               (single file at the archive root)
+#   Linux bare-runtime tarball expands to:
+#     cua-driver and libcua_driver_sdk.so at the archive root. The installer
+#     consumes the CLI; SDK packaging consumes the colocated library.
 case "$LABEL" in
     darwin-*)
         STAGE="cua-driver-rs-${VERSION}-darwin-universal"
@@ -606,6 +606,52 @@ fi
 cleanup_prior_local_install
 
 mkdir -p "$BIN_DIR"
+
+# Persist the bounded installer channel before the new binary becomes visible.
+# If the user invokes Cua Driver before the detached install-event hook wins
+# the lifecycle lock, the ordinary first-run path will still use the installer
+# attribution. The runtime removes this hint after lifecycle delivery succeeds.
+INSTALL_CHANNEL="${CUA_DRIVER_INSTALL_CHANNEL:-install_script}"
+case "$INSTALL_CHANNEL" in
+    install_script|update_apply|python_package|first_run) ;;
+    *) INSTALL_CHANNEL="install_script" ;;
+esac
+
+# Mirror the runtime's consent precedence before writing the attribution hint:
+# environment override, compatibility override, persisted preference, default-on.
+# This keeps an opted-out install free of telemetry state even when the detached
+# install-event hook returns before reading the hint.
+TELEMETRY_HINT_ENABLED=1
+TELEMETRY_HINT_FROM_ENV=0
+for telemetry_env_name in CUA_DRIVER_RS_TELEMETRY_ENABLED CUA_TELEMETRY_ENABLED; do
+    telemetry_env_value="${!telemetry_env_name:-}"
+    telemetry_env_value="$(printf '%s' "$telemetry_env_value" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    case "$telemetry_env_value" in
+        1|true|yes|on)
+            TELEMETRY_HINT_ENABLED=1
+            TELEMETRY_HINT_FROM_ENV=1
+            break
+            ;;
+        0|false|no|off)
+            TELEMETRY_HINT_ENABLED=0
+            TELEMETRY_HINT_FROM_ENV=1
+            break
+            ;;
+    esac
+done
+if [[ "$TELEMETRY_HINT_FROM_ENV" == "0" && -f "$HOME_DIR/config.json" ]]; then
+    TELEMETRY_CONFIG_VALUE="$(sed -nE 's/.*"telemetry_enabled"[[:space:]]*:[[:space:]]*(true|false).*/\1/p' "$HOME_DIR/config.json" | tail -n 1)"
+    case "$TELEMETRY_CONFIG_VALUE" in
+        true) TELEMETRY_HINT_ENABLED=1 ;;
+        false) TELEMETRY_HINT_ENABLED=0 ;;
+    esac
+fi
+if [[ "$TELEMETRY_HINT_ENABLED" == "1" ]]; then
+    mkdir -p "$HOME_DIR"
+    printf '%s\n' "$INSTALL_CHANNEL" > "$HOME_DIR/.telemetry_install_channel"
+else
+    rm -f "$HOME_DIR/.telemetry_install_channel"
+fi
 
 # macOS: install the .app to /Applications first, then symlink the
 # bin into the bundle so `~/.local/bin/cua-driver` resolves into
@@ -752,6 +798,14 @@ fi
 # skipped when the user pinned CUA_DRIVER_RS_HOME to the legacy path on
 # purpose. Best-effort + idempotent.
 if [[ -d "$LEGACY_HOME_DIR" && "$HOME_DIR" != "$LEGACY_HOME_DIR" ]]; then
+    mkdir -p "$HOME_DIR"
+    for telemetry_file in .telemetry_id .installation_recorded; do
+        if [[ -f "$LEGACY_HOME_DIR/$telemetry_file" && ! -e "$HOME_DIR/$telemetry_file" ]]; then
+            cp -p "$LEGACY_HOME_DIR/$telemetry_file" "$HOME_DIR/$telemetry_file" 2>/dev/null \
+                && log "preserved legacy telemetry state $telemetry_file" \
+                || log "note: could not preserve legacy telemetry state $telemetry_file"
+        fi
+    done
     rm -rf "$LEGACY_HOME_DIR" 2>/dev/null \
         && log "swept legacy package home $LEGACY_HOME_DIR (reconciled onto $HOME_DIR)" \
         || log "note: could not fully remove legacy package home $LEGACY_HOME_DIR (best-effort)"
@@ -776,21 +830,24 @@ show_cua_driver_daemon_survivors
 # matching GitHub release. The post-install hint below points at the
 # verb.
 
-# --- Fire the one-shot install telemetry ping ---------------------------
+# --- Record consent-aware install telemetry -----------------------------
 #
-# Anonymous adoption signal — sends `cua_driver_install` to PostHog
-# exactly once per install (guarded by ~/.cua-driver/.installation_recorded
-# on the binary side). The Rust port keeps its install signal independent
-# of the Swift `cua-driver` install (separate marker dir + separate env var)
-# so users can opt out of one without affecting the other.
-#
-# Bypasses the CUA_DRIVER_RS_TELEMETRY_ENABLED check by design — see
-# `telemetry::capture_install()` for the rationale (count adoption even
-# when users opt out immediately after install). Every subsequent event
-# from the binary respects the opt-out normally.
+# Telemetry is default-on, but the binary applies the same effective consent
+# policy to installation events as every other event: environment override,
+# then the persisted preference, then the default. It records the pseudonymous
+# installation once and the installed release once per version. The channel
+# is a fixed enum so an inherited/user-controlled value cannot fragment the
+# dashboard.
 #
 # Background + redirect so a slow / failed POST never blocks the install.
-"$BIN_LINK" telemetry install-event >/dev/null 2>&1 &
+echo "Telemetry defaults to enabled for new installations; saved preferences and environment overrides are honored."
+echo "When enabled, Cua collects a pseudonymous installation ID and bounded, content-free usage metadata."
+echo "  No prompts, tool arguments, screen contents, or file paths are collected."
+echo "  Disable persistently at any time: $BIN_LINK telemetry disable"
+
+CUA_DRIVER_INSTALL_CHANNEL="$INSTALL_CHANNEL" \
+CUA_DRIVER_RELEASE_VERSION="$VERSION" \
+    "$BIN_LINK" telemetry install-event >/dev/null 2>&1 &
 disown 2>/dev/null || true
 
 # Auto-extend PATH for users whose shell doesn't already include BIN_DIR.
@@ -831,7 +888,7 @@ fi
 # (Try-it / skill pack / MCP setup / docs link) with {{BINARY}}
 # placeholders; OS-specific bits (autostart / TCC) stay inline below
 # in each installer where they're per-shell natural.
-HINTS_URL="https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/post-install-hints.txt"
+HINTS_URL="https://cua.ai/driver/post-install-hints.txt"
 HINTS_TXT="$TMP_DIR/post-install-hints.txt"
 if curl -fsSL "$HINTS_URL" -o "$HINTS_TXT" 2>/dev/null && [ -s "$HINTS_TXT" ]; then
     sed "s|{{BINARY}}|$BIN_LINK|g" "$HINTS_TXT"

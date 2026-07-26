@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{
+    protocol::ToolResult,
+    tool::{Tool, ToolDef},
+};
 use serde_json::Value;
 use std::path::PathBuf;
 
@@ -16,9 +19,8 @@ fn def() -> &'static ToolDef {
              or `name` (e.g. \"Calculator\"). If both are given, bundle_id wins.\n\n\
              Optional `urls` are handed to the app as open targets — for Finder, pass a folder \
              path to open a backgrounded Finder window there.\n\n\
-             Optional `cdp_debugging_port`: opens a Chrome DevTools Protocol (CDP) server \
-             on the specified port (appends --remote-debugging-port=N to the app's argv). \
-             Use this to automate Electron/VS Code/Cursor, or Chrome/Brave/Edge, via CDP.\n\n\
+             Browser DevTools setup belongs to `browser_prepare`, which can prove that a \
+             separate isolated profile is driver-owned before enabling CDP.\n\n\
              Optional `webkit_inspector_port`: opens a WebKit inspector server on the specified \
              port (sets WEBKIT_INSPECTOR_SERVER=127.0.0.1:N + TAURI_WEBVIEW_AUTOMATION=1). \
              Use this for Tauri/WebKit-based apps.\n\n\
@@ -52,10 +54,6 @@ fn def() -> &'static ToolDef {
                     "items": { "type": "string" },
                     "description": "Optional file paths or URLs to open with the app (e.g. a folder path for Finder)."
                 },
-                "cdp_debugging_port": {
-                    "type": "integer",
-                    "description": "Open a Chrome DevTools Protocol server on this port (appends --remote-debugging-port=N)."
-                },
                 "webkit_inspector_port": {
                     "type": "integer",
                     "description": "Open a WebKit inspector server on this port (sets WEBKIT_INSPECTOR_SERVER env var)."
@@ -81,22 +79,45 @@ fn def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for LaunchAppTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
         let bundle_id = args.opt_str("bundle_id");
-        let name      = args.opt_str("name");
+        let name = args.opt_str("name");
         let urls: Vec<String> = args.str_array("urls");
-        let cdp_debugging_port = args.opt_u64("cdp_debugging_port").map(|v| v as u16);
+        if args.get("cdp_debugging_port").is_some() {
+            return ToolResult::error(
+                "cdp_debugging_port moved to browser_prepare so DevTools is never enabled on an unproven user profile",
+            );
+        }
         let webkit_inspector_port = args.opt_u64("webkit_inspector_port").map(|v| v as u16);
         let creates_new_instance = args.bool_or("creates_new_application_instance", false);
-        let mut additional_arguments: Vec<String> = args.str_array("additional_arguments");
+        let additional_arguments: Vec<String> = args.str_array("additional_arguments");
+        if additional_arguments
+            .iter()
+            .any(|argument| argument == super::check_permissions::PERMISSIONS_HOST_REQUEST_ARG)
+        {
+            return protected_host_launch_refusal();
+        }
+        if additional_arguments
+            .iter()
+            .any(|argument| contains_remote_debugging_flag(argument))
+        {
+            return ToolResult::error(
+                "Chromium remote-debugging flags moved to browser_prepare so DevTools is never enabled on an unproven user profile",
+            );
+        }
 
         if bundle_id.is_none() && name.is_none() {
             return ToolResult::error(
-                "Provide either bundle_id or name to identify the app to launch."
+                "Provide either bundle_id or name to identify the app to launch.",
             );
+        }
+        if bundle_id.as_deref().is_some_and(is_cua_driver_bundle_id) {
+            return protected_host_launch_refusal();
         }
         if let Some(ref bid) = bundle_id {
             if crate::apps::resolve_bundle_id_to_locator(bid).is_none() {
@@ -107,35 +128,37 @@ impl Tool for LaunchAppTool {
                 );
             }
         } else if let Some(ref n) = name {
-            if crate::apps::locate_by_name(n).is_none() {
+            let Some(locator) = crate::apps::locate_by_name(n) else {
                 return structured_launch_error(
                     "APP_NOT_INSTALLED",
                     format!("No installed macOS app found for name '{n}'."),
                     serde_json::json!({ "name": n }),
                 );
+            };
+            let (_, resolved_bundle_id) = locator.app_ref_and_bundle_id();
+            if resolved_bundle_id
+                .as_deref()
+                .is_some_and(is_cua_driver_bundle_id)
+            {
+                return protected_host_launch_refusal();
             }
         }
         if let Some(err) = preflight_file_urls(&urls) {
             return err;
         }
 
-        // Build additional arguments (e.g., CDP port).
-        if let Some(port) = cdp_debugging_port {
-            additional_arguments.push(format!("--remote-debugging-port={port}"));
-        }
-
         // Build env dict for webkit inspector.
         let mut env: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         if let Some(port) = webkit_inspector_port {
-            env.insert("WEBKIT_INSPECTOR_SERVER".to_string(), format!("127.0.0.1:{port}"));
+            env.insert(
+                "WEBKIT_INSPECTOR_SERVER".to_string(),
+                format!("127.0.0.1:{port}"),
+            );
             env.insert("TAURI_WEBVIEW_AUTOMATION".to_string(), "1".to_string());
         }
 
         let port_summary = {
             let mut s = String::new();
-            if let Some(port) = cdp_debugging_port {
-                s.push_str(&format!("\nCDP renderer available on port {port}."));
-            }
             if let Some(port) = webkit_inspector_port {
                 s.push_str(&format!("\nWebKit inspector available on port {port}."));
             }
@@ -229,7 +252,8 @@ impl Tool for LaunchAppTool {
             };
 
             Ok::<_, anyhow::Error>((pid, app_info, windows))
-        }).await;
+        })
+        .await;
 
         // Upgrade to targeted suppression now that we know the real pid.
         // Keep the wildcard lease alive until immediately AFTER we've
@@ -247,12 +271,11 @@ impl Tool for LaunchAppTool {
         if let Ok(Ok((pid, _, _))) = &launch_result {
             if let Some(prior) = prior_frontmost {
                 if *pid != prior {
-                    let targeted_lease =
-                        crate::focus_steal::FocusStealPreventer::begin_suppression(
-                            Some(*pid),
-                            prior,
-                            "LaunchAppTool.post",
-                        );
+                    let targeted_lease = crate::focus_steal::FocusStealPreventer::begin_suppression(
+                        Some(*pid),
+                        prior,
+                        "LaunchAppTool.post",
+                    );
                     // Now safe to drop the wildcard — targeted is armed.
                     drop(wildcard_lease);
                     // Hold the targeted lease long enough to cover the
@@ -298,8 +321,7 @@ impl Tool for LaunchAppTool {
                             continue;
                         }
                         let activated = crate::apps::activate_pid(prior);
-                        let still_frontmost =
-                            crate::apps::frontmost_pid() == Some(*pid);
+                        let still_frontmost = crate::apps::frontmost_pid() == Some(*pid);
                         if still_frontmost {
                             tracing::warn!(
                                 target: "platform_macos::tools::launch_app",
@@ -314,15 +336,12 @@ impl Tool for LaunchAppTool {
                         } else {
                             demotion_succeeded = true;
                         }
-                        tokio::time::sleep(
-                            std::time::Duration::from_millis(200)
-                        ).await;
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                     }
                     // Final in-call state determines the structured response.
                     let final_frontmost = crate::apps::frontmost_pid();
-                    self_activation_suppressed = Some(
-                        final_frontmost != Some(*pid) && demotion_succeeded
-                    );
+                    self_activation_suppressed =
+                        Some(final_frontmost != Some(*pid) && demotion_succeeded);
 
                     // Detached late-activation watchdog (slow path only).
                     //
@@ -374,10 +393,9 @@ impl Tool for LaunchAppTool {
                                 "LaunchAppTool.watchdog",
                             );
                             let mut late_activations = 0u32;
-                            for _ in 0..32 {  // 32 × 250ms = 8s
-                                tokio::time::sleep(
-                                    std::time::Duration::from_millis(250)
-                                ).await;
+                            for _ in 0..32 {
+                                // 32 × 250ms = 8s
+                                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                                 if crate::apps::frontmost_pid() == Some(launched_pid) {
                                     late_activations += 1;
                                     let _ = crate::apps::activate_pid(prior_pid);
@@ -409,9 +427,13 @@ impl Tool for LaunchAppTool {
         match launch_result {
             Ok(Ok((pid, app_info, windows))) => {
                 let app_name = app_info.as_ref().map(|a| a.name.as_str()).unwrap_or("?");
-                let bid = app_info.as_ref().and_then(|a| a.bundle_id.as_deref()).unwrap_or("?");
+                let bid = app_info
+                    .as_ref()
+                    .and_then(|a| a.bundle_id.as_deref())
+                    .unwrap_or("?");
 
-                let mut summary = format!("Launched {app_name} (pid {pid}) in background.{port_summary}");
+                let mut summary =
+                    format!("Launched {app_name} (pid {pid}) in background.{port_summary}");
 
                 if !windows.is_empty() {
                     summary.push_str("\n\nWindows:");
@@ -428,17 +450,22 @@ impl Tool for LaunchAppTool {
                     ));
                 }
 
-                let windows_json: Vec<Value> = windows.iter().map(|w| serde_json::json!({
-                    "window_id": w.window_id,
-                    "pid": w.pid,
-                    "app_name": w.app_name,
-                    "title": w.title,
-                    "bounds": {
-                        "x": w.bounds.x, "y": w.bounds.y,
-                        "width": w.bounds.width, "height": w.bounds.height
-                    },
-                    "is_on_screen": w.is_on_screen,
-                })).collect();
+                let windows_json: Vec<Value> = windows
+                    .iter()
+                    .map(|w| {
+                        serde_json::json!({
+                            "window_id": w.window_id,
+                            "pid": w.pid,
+                            "app_name": w.app_name,
+                            "title": w.title,
+                            "bounds": {
+                                "x": w.bounds.x, "y": w.bounds.y,
+                                "width": w.bounds.width, "height": w.bounds.height
+                            },
+                            "is_on_screen": w.is_on_screen,
+                        })
+                    })
+                    .collect();
 
                 let mut structured = serde_json::json!({
                     "pid": pid,
@@ -452,15 +479,31 @@ impl Tool for LaunchAppTool {
                 // (no prior frontmost, or pid == prior) — surfacing
                 // a stale `false` would be misleading.
                 if let Some(suppressed) = self_activation_suppressed {
-                    structured["self_activation_suppressed"] =
-                        serde_json::Value::Bool(suppressed);
+                    structured["self_activation_suppressed"] = serde_json::Value::Bool(suppressed);
                 }
                 ToolResult::text(summary).with_structured(structured)
             }
             Ok(Err(e)) => ToolResult::error(format!("Launch failed: {e}")),
-            Err(e)     => ToolResult::error(format!("Task error: {e}")),
+            Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
+}
+
+fn contains_remote_debugging_flag(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    lower.contains("--remote-debugging-port") || lower.contains("--remote-debugging-pipe")
+}
+
+fn is_cua_driver_bundle_id(bundle_id: &str) -> bool {
+    matches!(bundle_id, "com.trycua.driver" | "com.trycua.driver.local")
+}
+
+fn protected_host_launch_refusal() -> ToolResult {
+    structured_launch_error(
+        "PROTECTED_HOST_ENTRYPOINT",
+        "launch_app cannot launch Cua Driver's protected host; operating-system permission UI must originate outside the agent tool stream".to_owned(),
+        serde_json::json!({}),
+    )
 }
 
 // ── Blocking helpers ──────────────────────────────────────────────────────────
@@ -484,11 +527,7 @@ fn resolve_windows_for_pid(pid: i32) -> Vec<crate::windows::WindowInfo> {
     vec![]
 }
 
-fn structured_launch_error(
-    code: &str,
-    message: String,
-    details: serde_json::Value,
-) -> ToolResult {
+fn structured_launch_error(code: &str, message: String, details: serde_json::Value) -> ToolResult {
     let mut payload = serde_json::json!({
         "error": code,
     });
@@ -592,7 +631,12 @@ fn hex_value(byte: u8) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{local_file_target, preflight_file_urls};
+    use super::{
+        contains_remote_debugging_flag, is_cua_driver_bundle_id, local_file_target,
+        preflight_file_urls, LaunchAppTool,
+    };
+    use cua_driver_core::tool::Tool;
+    use serde_json::json;
     use std::path::PathBuf;
 
     #[test]
@@ -621,7 +665,10 @@ mod tests {
         assert_eq!(result.is_error, Some(true));
         let structured = result.structured_content.expect("structured error");
         assert_eq!(structured["error"], "FILE_NOT_FOUND");
-        assert_eq!(structured["path"], "/tmp/cua-driver-definitely-missing-file-for-test.md");
+        assert_eq!(
+            structured["path"],
+            "/tmp/cua-driver-definitely-missing-file-for-test.md"
+        );
         assert!(structured.get("details").is_none());
     }
 
@@ -634,6 +681,50 @@ mod tests {
         assert_eq!(
             local_file_target("file://localhost/tmp/%E2%9C%93.txt"),
             Some(PathBuf::from("/tmp/✓.txt"))
+        );
+    }
+
+    #[test]
+    fn rejects_all_chromium_remote_debugging_spellings() {
+        assert!(contains_remote_debugging_flag("--remote-debugging-port=0"));
+        assert!(contains_remote_debugging_flag("--REMOTE-DEBUGGING-PIPE"));
+        assert!(!contains_remote_debugging_flag(
+            "--user-data-dir=/tmp/profile"
+        ));
+    }
+
+    #[test]
+    fn recognizes_release_and_local_protected_host_bundle_ids() {
+        assert!(is_cua_driver_bundle_id("com.trycua.driver"));
+        assert!(is_cua_driver_bundle_id("com.trycua.driver.local"));
+        assert!(!is_cua_driver_bundle_id("com.trycua.harness.tauri"));
+    }
+
+    #[tokio::test]
+    async fn launch_app_cannot_reach_private_permission_host_entrypoint() {
+        let result = LaunchAppTool
+            .invoke(json!({
+                "bundle_id": "com.example.not-installed",
+                "additional_arguments": [
+                    "__permissions-host-request",
+                    "--result-file",
+                    "/tmp/cua-driver-permissions-forged.json"
+                ]
+            }))
+            .await;
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            result.structured_content.unwrap()["error"],
+            "PROTECTED_HOST_ENTRYPOINT"
+        );
+
+        let result = LaunchAppTool
+            .invoke(json!({ "bundle_id": "com.trycua.driver" }))
+            .await;
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            result.structured_content.unwrap()["error"],
+            "PROTECTED_HOST_ENTRYPOINT"
         );
     }
 }

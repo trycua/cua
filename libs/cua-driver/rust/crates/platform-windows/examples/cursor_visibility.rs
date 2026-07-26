@@ -18,7 +18,8 @@ fn main() {
     let target_y = 500i32;
 
     let mut pipe = std::fs::OpenOptions::new()
-        .read(true).write(true)
+        .read(true)
+        .write(true)
         .open(r"\\.\pipe\cua-driver")
         .expect("open pipe — start daemon first");
     println!("[1] connected");
@@ -30,24 +31,37 @@ fn main() {
         let mut buf = [0u8; 8192];
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
-            if Instant::now() > deadline { break; }
+            if Instant::now() > deadline {
+                break;
+            }
             let n = p.read(&mut buf).unwrap_or(0);
-            if n == 0 { break; }
+            if n == 0 {
+                break;
+            }
             out.extend_from_slice(&buf[..n]);
-            if out.contains(&b'\n') { break; }
+            if out.contains(&b'\n') {
+                break;
+            }
         }
         String::from_utf8_lossy(&out).into_owned()
     }
 
-    let r2 = req(&mut pipe, r#"{"method":"call","name":"set_agent_cursor_enabled","args":{"enabled":true}}"#);
+    let r2 = req(
+        &mut pipe,
+        r#"{"method":"call","name":"set_agent_cursor_enabled","args":{"enabled":true}}"#,
+    );
     println!("    enabled resp: {}", r2.trim());
     // Set bright pure-magenta gradient — easy to find, won't match any normal screen content.
-    let r3 = req(&mut pipe, r##"{"method":"call","name":"set_agent_cursor_style","args":{"gradient_colors":["#FF00FF","#FF00FF","#FF00FF"],"bloom_color":"#FF00FF"}}"##);
+    let r3 = req(
+        &mut pipe,
+        r##"{"method":"call","name":"set_agent_cursor_style","args":{"gradient_colors":["#FF00FF","#FF00FF","#FF00FF"],"bloom_color":"#FF00FF"}}"##,
+    );
     println!("    style resp: {}", r3.trim());
 
     let cmd = format!(
         r#"{{"method":"call","name":"move_cursor","args":{{"x":{},"y":{}}}}}"#,
-        target_x, target_y);
+        target_x, target_y
+    );
     let r4 = req(&mut pipe, &cmd);
     println!("    move resp: {}", r4.trim());
 
@@ -60,27 +74,44 @@ fn main() {
     let mut png;
     loop {
         std::thread::sleep(Duration::from_millis(150));
-        png = platform_windows::capture::screenshot_display_bytes()
-            .expect("screenshot");
+        png = platform_windows::capture::screenshot_display_bytes().expect("screenshot");
         let img = image::load_from_memory(&png).expect("decode");
         let rgba = img.to_rgba8();
         let (iw, ih) = img.dimensions();
-        let mut count = 0u64; let mut sx = 0i64; let mut sy = 0i64;
-        for py in 0..ih { for px in 0..iw {
-            let p = rgba.get_pixel(px, py).0;
-            if p[0] > 180 && p[1] < 100 && p[2] > 180 {
-                count += 1; sx += px as i64; sy += py as i64;
+        let mut count = 0u64;
+        let mut sx = 0i64;
+        let mut sy = 0i64;
+        for py in 0..ih {
+            for px in 0..iw {
+                let p = rgba.get_pixel(px, py).0;
+                if p[0] > 180 && p[1] < 100 && p[2] > 180 {
+                    count += 1;
+                    sx += px as i64;
+                    sy += py as i64;
+                }
             }
-        }}
+        }
         if count > 50 {
             let c = (sx / count as i64, sy / count as i64);
             let dist = ((c.0 - last_centroid.0).pow(2) + (c.1 - last_centroid.1).pow(2)) as f64;
-            if dist.sqrt() < 3.0 { stable_ticks += 1; } else { stable_ticks = 0; }
-            println!("    polling: centroid=({},{}) count={} stable={}", c.0, c.1, count, stable_ticks);
+            if dist.sqrt() < 3.0 {
+                stable_ticks += 1;
+            } else {
+                stable_ticks = 0;
+            }
+            println!(
+                "    polling: centroid=({},{}) count={} stable={}",
+                c.0, c.1, count, stable_ticks
+            );
             last_centroid = c;
-            if stable_ticks >= 3 { break; }
+            if stable_ticks >= 3 {
+                break;
+            }
         }
-        if Instant::now() > deadline { println!("    polling: deadline reached"); break; }
+        if Instant::now() > deadline {
+            println!("    polling: deadline reached");
+            break;
+        }
     }
     let _ = std::fs::write("O:/tmp_cursor_screen.png", &png);
     let img = image::load_from_memory(&png).expect("decode");
@@ -89,18 +120,24 @@ fn main() {
 
     // Search whole screen for magenta-ish pixels (R high, G low, B high).
     let mut magenta_count = 0u64;
-    let mut sx = 0i64; let mut sy = 0i64;
-    let mut min_x = w as i32; let mut max_x = 0i32;
-    let mut min_y = h as i32; let mut max_y = 0i32;
+    let mut sx = 0i64;
+    let mut sy = 0i64;
+    let mut min_x = w as i32;
+    let mut max_x = 0i32;
+    let mut min_y = h as i32;
+    let mut max_y = 0i32;
     for py in 0..h {
         for px in 0..w {
             let p = rgba.get_pixel(px, py).0;
             // Tolerate antialiasing: R > 180, G < 100, B > 180
             if p[0] > 180 && p[1] < 100 && p[2] > 180 {
                 magenta_count += 1;
-                sx += px as i64; sy += py as i64;
-                min_x = min_x.min(px as i32); max_x = max_x.max(px as i32);
-                min_y = min_y.min(py as i32); max_y = max_y.max(py as i32);
+                sx += px as i64;
+                sy += py as i64;
+                min_x = min_x.min(px as i32);
+                max_x = max_x.max(px as i32);
+                min_y = min_y.min(py as i32);
+                max_y = max_y.max(py as i32);
             }
         }
     }

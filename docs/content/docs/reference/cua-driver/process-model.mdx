@@ -1,0 +1,144 @@
+---
+title: "Process model"
+description: "How Cua Driver maps one typed surface onto same-process SDK and daemon-backed execution."
+---
+
+Cua Driver has three local execution families around one typed driver surface: list
+windows, read accessibility, capture the screen, click, type, record,
+configure, and report state.
+
+- `CuaDriver.create()` runs the Rust driver in the importing Python,
+  TypeScript, or Rust process. It requires no daemon, executable, or IPC.
+- `CuaDriver.create_private_worker()` /
+  `CuaDriver.createPrivateWorker()` directly supervises one child runtime over
+  inherited pipes. The child has no listener, discovery, or reconnect path.
+- `cua-driver serve` runs the same SDK contract in a long-lived daemon. MCP
+  stdio, one-shot CLI calls, and `CuaDriver.connect()` send requests to it.
+
+The MCP server is a downstream consumer of the public typed SDK contract, not a
+parallel desktop implementation. See
+[SDK, MCP, and process hosting](/concepts/sdk-mcp-and-hosting).
+
+## Daemon-backed process roles
+
+The MCP stdio process is *client-owned*. The parent starts `cua-driver mcp`,
+keeps stdin and stdout connected, and sends MCP tool calls over that transport.
+On Windows and Linux it owns the runtime directly unless `--socket` is
+specified. On macOS it proxies to the permission-owning app daemon unless the
+caller explicitly passes `--direct` and accepts the spawning host's TCC
+attribution. `--direct` and `--socket` are mutually exclusive.
+
+The daemon shape is *machine-owned*. A single `cua-driver serve` process
+listens on a local IPC endpoint, such as a mode-`0600` Unix socket or
+same-user-authenticated named pipe, and keeps driver state in memory while it
+lives.
+
+The one-shot CLI adapter is *call-owned*. `cua-driver call <tool>` connects to the daemon, prints one result, and exits. If the daemon is unavailable, the command fails instead of executing the tool in the CLI process.
+
+Finite inspection commands—`list-tools`, `describe`, and `dump-docs`—read the
+canonical SDK tool inventory without creating an action-capable runtime. They
+therefore remain available in non-interactive environments such as Windows
+Session 0. Desktop-owning entry points (`serve`, direct MCP, and
+`CuaDriver.create()`) still refuse before accepting actions when no interactive
+desktop is attached.
+
+These are transport roles around the same typed runtime that applications can
+create in process or in a directly supervised private worker.
+
+## Why a daemon proxy exists
+
+The **daemon-proxy pattern** separates the process that speaks to the caller from the process that has the right desktop authority. The proxy handles the client protocol. The daemon performs the GUI work. That matters when the caller can start a shell process but cannot correctly operate the user's desktop.
+
+On macOS, the root issue is **TCC**, Transparency Consent and Control. Accessibility and Screen Recording grants are attached to a specific app identity, represented by a bundle ID. Grants to `CuaDriver.app` do not automatically cover every subprocess named `cua-driver`.
+
+## Supported macOS identities
+
+macOS supports three intentional identities:
+
+- **Same-process SDK:** import `CuaDriver.create()` in the signed app that owns
+  the grants. Desktop operations inherit that host process's identity.
+- **Standalone daemon:** grant permissions to the installed `CuaDriver.app` and
+  launch its daemon through LaunchServices. See
+  [macOS permissions](/reference/cua-driver/macos-permissions).
+- **App-hosted daemon:** have the macOS app that owns the grants spawn
+  `cua-driver serve --embedded` directly, then connect an MCP proxy to its
+  socket. See [Embedding](/reference/cua-driver/embedding).
+
+A raw daemon launched outside `CuaDriver.app` without embedded mode has no stable TCC identity and is unsupported. Do not grant permissions to arbitrary binary paths or use that configuration in production.
+
+If an IDE terminal starts `cua-driver` directly, macOS attributes that subprocess to the terminal app's bundle, not to `CuaDriver.app`. The binary is right, but the privacy identity is wrong.
+
+The standalone daemon path fixes attribution for external callers. It launches
+through LaunchServices with `open -n -g -a CuaDriver`, so macOS treats it as
+part of `CuaDriver.app`. The MCP stdio process remains where the assistant
+spawned it, but becomes a thin proxy: it forwards tool calls to the daemon over
+a Unix socket and returns the daemon's responses. There are two processes, but
+one tool surface.
+
+## Windows has the same shape for a different reason
+
+On Windows, the daemon solves a session problem rather than a bundle-identity problem. When `cua-driver` is reached through SSH, the SSH-side process typically lands in Session 0, the non-interactive service session. Session 0 is not the logged-in user's GUI desktop, so it cannot see or operate those windows.
+
+The daemon belongs in the interactive user session instead. It may be kept there by platform autostart machinery such as a Scheduled Task. An SSH-side client can then proxy requests to it. The shape is the same as on macOS: a caller-side process speaks the protocol, while a daemon-side process owns desktop access. The root cause is different.
+
+## Session identity and shared state
+
+A daemon drives one physical machine. Multiple MCP clients can connect at the
+same time, and a trusted SDK host may create multiple direct runtimes, but they
+still share the same screen, keyboard, pointer, accessibility tree, and OS
+focus. Session or runtime identity does not create an independent desktop.
+Native pointer, keyboard, value-setting, and focus calls are admitted one at a
+time inside a process so their input delivery does not overlap. Post-action
+recording and PiP capture happen after that admission is released and may
+observe later desktop activity. Application lifecycle operations and
+browser/CDP mutations are not covered by the input gate. Higher-level sequences
+can still interleave unless the host schedules them; in particular, do not
+split a button-down/drag/up gesture across independently scheduled runtime
+calls.
+
+On Windows and Linux, bare MCP processes each own a separate runtime. To
+deliberately share one daemon across several MCP clients, start the daemon and
+give every client the same explicit `cua-driver mcp --socket <endpoint>`
+command. Do not rely on ambient daemon discovery.
+
+Session identity solves a narrower state problem. When a proxy starts, it mints a session identity and stamps forwarded calls with it. The daemon uses that identity to scope mutable state to one client lifetime. Recording ownership, per-session config overrides, and the agent-cursor overlay are all keyed by session.
+
+For same-process SDK runtimes, Cua adds a private runtime generation behind the
+public session label. Two runtimes may therefore both use `research-1` without
+sharing capture scope, tombstones, cursor ownership, recording teardown,
+browser refs, or element tokens. The private generation is never serialized
+and is not a credential or same-process security boundary.
+
+`default` is the reserved anonymous fallback, not an isolated session label.
+Concurrent hosts should always declare an explicit session.
+
+<VideoDemo
+  className="my-8"
+  src="https://trycua.github.io/assets/videos/cua-driver/windows-hermes-four-agent-windows.mp4"
+  poster="https://trycua.github.io/assets/posters/cua-driver/windows-hermes-four-agent-windows.jpg"
+  title="Four agent sessions share one Windows desktop"
+  sourceUrl="https://x.com/francedot/status/2061706670208897279"
+>
+  Four Hermes agents operate four app windows. Each session has its own cursor overlay, while all
+  four sessions still share the same desktop.
+</VideoDemo>
+
+Cleanup follows the proxy connection, not a final message. The proxy keeps a long-lived control connection open to the daemon. When the proxy exits, even from an ungraceful kill, the kernel closes that connection. The daemon sees EOF and removes state owned by that session. This prevents stale recordings, cursors, and temporary config overrides.
+
+## Lifetimes and memory
+
+The proxy and one-shot CLI processes may come and go, but the daemon owns element-index caches, active recordings, configuration, policy, and cursor state. This makes the execution identity and permission-policy boundary stable across client reconnects.
+
+If the daemon disappears, daemon-backed clients fail closed. They do not
+construct a fresh tool registry or continue with partial state.
+
+For a same-process SDK runtime, the importing application owns the equivalent
+lifetime. End every session, await `shutdown()`, and release the generated
+binding handle during orderly teardown. Shutting down one direct runtime does
+not stop or revoke another direct runtime in the same process.
+
+Before each daemon-backed SDK action, the client reads the daemon metadata and
+verifies contract, tool-schema, capability, and MCP
+protocol versions. Incompatible processes refuse before platform dispatch.
+Remote Driver carriers perform the equivalent capability-range negotiation
+and must support request cancellation.

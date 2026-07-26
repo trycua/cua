@@ -34,6 +34,7 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use windows::Win32::Foundation::{HANDLE, HWND, POINT, RECT};
+use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::Controls::{
     CreateSyntheticPointerDevice, DestroySyntheticPointerDevice, HSYNTHETICPOINTERDEVICE,
     POINTER_FEEDBACK_DEFAULT, POINTER_TYPE_INFO, POINTER_TYPE_INFO_0,
@@ -42,12 +43,67 @@ use windows::Win32::UI::Input::Pointer::{
     InjectSyntheticPointerInput, POINTER_FLAG_DOWN, POINTER_FLAG_INCONTACT, POINTER_FLAG_INRANGE,
     POINTER_FLAG_UP, POINTER_FLAG_UPDATE, POINTER_INFO, POINTER_PEN_INFO, POINTER_TOUCH_INFO,
 };
-use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetAncestor, GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, GetWindowThreadProcessId,
-    IsWindow, SetCursorPos, SetForegroundWindow, SetWindowLongPtrW, WindowFromPoint, GA_ROOT,
-    GWL_EXSTYLE, PT_PEN, PT_TOUCH, WS_EX_NOACTIVATE,
+    IsWindow, LockSetForegroundWindow, SetCursorPos, SetForegroundWindow, SetWindowLongPtrW,
+    WindowFromPoint, GA_ROOT, GWL_EXSTYLE, LSFW_LOCK, LSFW_UNLOCK, PT_PEN, PT_TOUCH,
+    WS_EX_NOACTIVATE,
 };
+
+#[derive(Default)]
+struct ForegroundLockState {
+    holders: usize,
+    locked: bool,
+}
+
+static FOREGROUND_LOCK_STATE: Mutex<ForegroundLockState> = Mutex::new(ForegroundLockState {
+    holders: 0,
+    locked: false,
+});
+
+/// Prevent other processes from taking the foreground during a background
+/// launch. Windows automatically clears this lock on genuine user input; Drop
+/// still balances the documented unlock call and overlapping driver launches.
+pub struct ForegroundLockGuard {
+    held: bool,
+}
+
+impl ForegroundLockGuard {
+    pub fn acquire() -> Self {
+        let mut state = FOREGROUND_LOCK_STATE.lock().unwrap();
+        if state.holders == 0 {
+            state.locked = unsafe { LockSetForegroundWindow(LSFW_LOCK) }.is_ok();
+            if state.locked {
+                tracing::debug!(target: "launch_app.focus_lock", "locked foreground changes during background launch");
+            } else {
+                tracing::warn!(target: "launch_app.focus_lock", "could not lock foreground changes during background launch");
+            }
+        }
+        if state.locked {
+            state.holders += 1;
+        }
+        Self { held: state.locked }
+    }
+
+    pub fn acquired(&self) -> bool {
+        self.held
+    }
+}
+
+impl Drop for ForegroundLockGuard {
+    fn drop(&mut self) {
+        if !self.held {
+            return;
+        }
+        let mut state = FOREGROUND_LOCK_STATE.lock().unwrap();
+        state.holders = state.holders.saturating_sub(1);
+        if state.holders == 0 {
+            let _ = unsafe { LockSetForegroundWindow(LSFW_UNLOCK) };
+            state.locked = false;
+            tracing::debug!(target: "launch_app.focus_lock", "unlocked foreground changes after background launch");
+        }
+    }
+}
 
 /// Bring `target` to the foreground using the AttachThreadInput trick, which
 /// inherits the current foreground thread's FG-lock token so the swap is
@@ -89,7 +145,6 @@ pub struct NoActivateGuard {
     // Store the handle as an integer so the guard is `Send` and can be held
     // across `.await` in the async tools.
     root_addr: isize,
-    prev_exstyle: isize,
     applied: bool,
 }
 
@@ -99,7 +154,11 @@ impl NoActivateGuard {
         unsafe {
             let root = {
                 let r = GetAncestor(hwnd, GA_ROOT);
-                if r.0.is_null() { hwnd } else { r }
+                if r.0.is_null() {
+                    hwnd
+                } else {
+                    r
+                }
             };
             let prev = GetWindowLongPtrW(root, GWL_EXSTYLE);
             let want = WS_EX_NOACTIVATE.0 as isize;
@@ -111,7 +170,10 @@ impl NoActivateGuard {
                 // by UIPI on higher-integrity targets).
                 (GetWindowLongPtrW(root, GWL_EXSTYLE) & want) != 0
             };
-            Self { root_addr: root.0 as isize, prev_exstyle: prev, applied }
+            Self {
+                root_addr: root.0 as isize,
+                applied,
+            }
         }
     }
 }
@@ -120,7 +182,13 @@ impl Drop for NoActivateGuard {
     fn drop(&mut self) {
         if self.applied {
             unsafe {
-                let _ = SetWindowLongPtrW(HWND(self.root_addr as *mut _), GWL_EXSTYLE, self.prev_exstyle);
+                let root = HWND(self.root_addr as *mut _);
+                let current = GetWindowLongPtrW(root, GWL_EXSTYLE);
+                let noactivate = WS_EX_NOACTIVATE.0 as isize;
+                // Clear only the bit this guard added. Restoring the full
+                // captured value can clobber unrelated style changes the app
+                // made while the background action was in flight.
+                SetWindowLongPtrW(root, GWL_EXSTYLE, current & !noactivate);
             }
         }
     }
@@ -211,7 +279,13 @@ fn pen_taps(sx: i32, sy: i32, barrel: bool, count: usize) -> Result<()> {
 /// path for both buttons — `InjectTouchInput` proved unreliable for left-clicks
 /// on Chromium content (returned errors), whereas synthetic-pen injection lands
 /// reliably and routes by coordinate with no foreground dependency.
-pub fn inject_click_screen(target: u64, sx: i32, sy: i32, count: usize, button: &str) -> Result<()> {
+pub fn inject_click_screen(
+    target: u64,
+    sx: i32,
+    sy: i32,
+    count: usize,
+    button: &str,
+) -> Result<()> {
     if target == 0 {
         bail!("inject_click_screen: null target window");
     }
@@ -341,7 +415,11 @@ fn pen_drag(sx0: i32, sy0: i32, sx1: i32, sy1: i32, steps: usize, barrel: bool) 
             },
         };
         // Press at the start.
-        let down = mk(POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT, sx0, sy0);
+        let down = mk(
+            POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT,
+            sx0,
+            sy0,
+        );
         let mut res = InjectSyntheticPointerInput(dev, &[down]);
         // Interpolated in-contact moves so frameworks that gate drag-tracking on
         // motion (rather than a single down→up) see a continuous stroke.
@@ -351,7 +429,11 @@ fn pen_drag(sx0: i32, sy0: i32, sx1: i32, sy1: i32, steps: usize, barrel: bool) 
             let t = i as f64 / steps as f64;
             let x = sx0 + ((sx1 - sx0) as f64 * t).round() as i32;
             let y = sy0 + ((sy1 - sy0) as f64 * t).round() as i32;
-            let mv = mk(POINTER_FLAG_UPDATE | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT, x, y);
+            let mv = mk(
+                POINTER_FLAG_UPDATE | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT,
+                x,
+                y,
+            );
             res = res.and(InjectSyntheticPointerInput(dev, &[mv]));
         }
         // Release at the end.
@@ -417,8 +499,18 @@ fn touch_drag(sx0: i32, sy0: i32, sx1: i32, sy1: i32, steps: usize) -> Result<()
                     },
                     touchFlags: 0,
                     touchMask: 0,
-                    rcContact: RECT { left: x - 2, top: y - 2, right: x + 2, bottom: y + 2 },
-                    rcContactRaw: RECT { left: x - 2, top: y - 2, right: x + 2, bottom: y + 2 },
+                    rcContact: RECT {
+                        left: x - 2,
+                        top: y - 2,
+                        right: x + 2,
+                        bottom: y + 2,
+                    },
+                    rcContactRaw: RECT {
+                        left: x - 2,
+                        top: y - 2,
+                        right: x + 2,
+                        bottom: y + 2,
+                    },
                     orientation: 0,
                     pressure: 512,
                 },
@@ -428,7 +520,11 @@ fn touch_drag(sx0: i32, sy0: i32, sx1: i32, sy1: i32, steps: usize) -> Result<()
         // straight line between them), so a few in-contact frames with a tiny
         // dwell is plenty — and the shorter the stroke, the briefer the cursor
         // excursion before we snap it back.
-        let down = mk(POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT, sx0, sy0);
+        let down = mk(
+            POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT,
+            sx0,
+            sy0,
+        );
         let mut res = InjectSyntheticPointerInput(dev, &[down]);
         let steps = steps.clamp(1, 3);
         for i in 1..=steps {
@@ -436,7 +532,11 @@ fn touch_drag(sx0: i32, sy0: i32, sx1: i32, sy1: i32, steps: usize) -> Result<()
             let t = i as f64 / steps as f64;
             let x = sx0 + ((sx1 - sx0) as f64 * t).round() as i32;
             let y = sy0 + ((sy1 - sy0) as f64 * t).round() as i32;
-            let mv = mk(POINTER_FLAG_UPDATE | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT, x, y);
+            let mv = mk(
+                POINTER_FLAG_UPDATE | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT,
+                x,
+                y,
+            );
             res = res.and(InjectSyntheticPointerInput(dev, &[mv]));
         }
         sleep(Duration::from_millis(2));
@@ -515,7 +615,13 @@ pub fn inject_drag_screen(
     let prev_fg = unsafe { GetForegroundWindow() };
     // Left drag → touch contact (coordinate-routed). Right/barrel drag has no
     // touch equivalent, so fall back to a pen (rare).
-    let stroke = |()| if barrel { pen_drag(sx0, sy0, sx1, sy1, steps, true) } else { touch_drag(sx0, sy0, sx1, sy1, steps) };
+    let stroke = |()| {
+        if barrel {
+            pen_drag(sx0, sy0, sx1, sy1, steps, true)
+        } else {
+            touch_drag(sx0, sy0, sx1, sy1, steps)
+        }
+    };
     // Chromium/GTK: pointer-aware, process injection in the background — hold
     // non-activatable (no raise), inject, then re-assert the user's foreground.
     let r = {
@@ -537,4 +643,3 @@ pub fn inject_drag_screen(
 // WPF/terminal text) is now reported as `background_unavailable`; the agent
 // escalates to `delivery_mode:"foreground"`, which uses the explicit
 // SetForegroundWindow path (send_key_synthesized / send_text_synthesized).
-

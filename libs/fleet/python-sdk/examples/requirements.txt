@@ -1,0 +1,6 @@
+# Extra deps for the examples (the SDK itself only needs httpx + attrs).
+#   pip install cua-train --extra-index-url https://wheels.cua.ai/simple/
+#   pip install -r requirements.txt
+pillow
+boto3
+pyyaml

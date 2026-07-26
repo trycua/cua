@@ -51,9 +51,9 @@
 //! it won't in practice — u32 wraps after 4 billion calls).
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU32, Ordering};
 
 /// LRU cap of valid snapshots retained per pid. Past this point the
 /// oldest entry for the pid is evicted and its tokens go stale.
@@ -93,12 +93,14 @@ struct SnapshotEntry {
 /// pid's vec is the LRU (newest at the back). Vec instead of VecDeque
 /// because the cap is tiny (8) and walks are linear either way.
 pub struct TokenRegistry {
-    by_pid: Mutex<HashMap<i32, Vec<SnapshotEntry>>>,
+    by_runtime_and_pid: Mutex<HashMap<(String, i32), Vec<SnapshotEntry>>>,
 }
 
 impl TokenRegistry {
     fn new() -> Self {
-        Self { by_pid: Mutex::new(HashMap::new()) }
+        Self {
+            by_runtime_and_pid: Mutex::new(HashMap::new()),
+        }
     }
 
     /// Record a fresh snapshot for `pid` / `window_id`. Returns the
@@ -113,20 +115,16 @@ impl TokenRegistry {
     /// Side effect: if this pid already has [`LRU_CAP_PER_PID`] snapshots
     /// in its lane, the oldest is evicted and any token that referenced
     /// it becomes stale — that's the contract.
-    pub fn register_snapshot(
-        &self,
-        pid: i32,
-        window_id: u32,
-        element_count: usize,
-    ) -> u32 {
+    pub fn register_snapshot(&self, pid: i32, window_id: u32, element_count: usize) -> u32 {
         // Truncate to the 16-bit space the token format actually
         // surfaces. The full u32 still increments monotonically — we
         // just don't widen the on-the-wire token namespace beyond what
         // the 4-hex-char prefix can carry. Round-trip property:
         // `resolve(format_token(id, idx))` always finds the entry.
         let id = mint_snapshot_id() & 0xffff;
-        let mut by_pid = self.by_pid.lock().unwrap();
-        let lane = by_pid.entry(pid).or_default();
+        let runtime_scope = current_runtime_scope();
+        let mut entries = self.by_runtime_and_pid.lock().unwrap();
+        let lane = entries.entry((runtime_scope, pid)).or_default();
         lane.push(SnapshotEntry {
             snapshot_id: id,
             window_id,
@@ -153,15 +151,31 @@ impl TokenRegistry {
     /// - `"element_token element_index out of range"` — the index in
     ///   the token is past the max recorded for the snapshot.
     pub fn resolve(&self, pid: i32, token: &str) -> Result<(u32, usize), String> {
-        let (sid, idx) = parse_token(token)
-            .ok_or_else(|| "element_token has invalid format".to_string())?;
-        let by_pid = self.by_pid.lock().unwrap();
-        let lane = by_pid.get(&pid)
-            .ok_or_else(|| STALE_TOKEN_ERROR.to_string())?;
-        let entry = lane
-            .iter()
-            .find(|e| e.snapshot_id == sid)
-            .ok_or_else(|| STALE_TOKEN_ERROR.to_string())?;
+        let (sid, idx) =
+            parse_token(token).ok_or_else(|| "element_token has invalid format".to_string())?;
+        let runtime_scope = current_runtime_scope();
+        let entries = self.by_runtime_and_pid.lock().unwrap();
+        let belongs_to_another_runtime = || {
+            entries.iter().any(|((scope, entry_pid), snapshots)| {
+                scope != &runtime_scope
+                    && *entry_pid == pid
+                    && snapshots.iter().any(|entry| entry.snapshot_id == sid)
+            })
+        };
+        let lane = entries.get(&(runtime_scope.clone(), pid)).ok_or_else(|| {
+            if belongs_to_another_runtime() {
+                "element_token belongs to another runtime generation".to_owned()
+            } else {
+                STALE_TOKEN_ERROR.to_owned()
+            }
+        })?;
+        let entry = lane.iter().find(|e| e.snapshot_id == sid).ok_or_else(|| {
+            if belongs_to_another_runtime() {
+                "element_token belongs to another runtime generation".to_owned()
+            } else {
+                STALE_TOKEN_ERROR.to_owned()
+            }
+        })?;
         if idx > entry.max_element_index {
             return Err(format!(
                 "element_token element_index {idx} out of range (snapshot had {} elements)",
@@ -169,6 +183,13 @@ impl TokenRegistry {
             ));
         }
         Ok((entry.window_id, idx))
+    }
+
+    pub fn clear_runtime_scope(&self, runtime_scope: &str) -> usize {
+        let mut entries = self.by_runtime_and_pid.lock().unwrap();
+        let before = entries.len();
+        entries.retain(|(scope, _), _| scope != runtime_scope);
+        before - entries.len()
     }
 
     /// Build the canonical token string for `snapshot_id` / `element_index`.
@@ -183,15 +204,25 @@ impl TokenRegistry {
     /// unit test to assert the cap was honoured.
     #[cfg(test)]
     fn snapshot_count(&self, pid: i32) -> usize {
-        self.by_pid.lock().unwrap().get(&pid).map(|v| v.len()).unwrap_or(0)
+        self.by_runtime_and_pid
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|((_, entry_pid), _)| *entry_pid == pid)
+            .map(|(_, entries)| entries.len())
+            .sum()
     }
 
     /// Test-only: clear all state. Lets parallel unit tests start clean
     /// without relying on the global counter being at a specific value.
     #[cfg(test)]
     fn clear(&self) {
-        self.by_pid.lock().unwrap().clear();
+        self.by_runtime_and_pid.lock().unwrap().clear();
     }
+}
+
+fn current_runtime_scope() -> String {
+    crate::tool::current_dispatch_runtime_scope().unwrap_or_else(|| "legacy".to_owned())
 }
 
 impl Default for TokenRegistry {
@@ -331,9 +362,24 @@ pub fn resolve_element_args(
         (idx_opt, Some(tok)) => {
             // Token wins. Resolve through the registry; bail on stale
             // or malformed without falling back to the integer.
-            let (wid, idx) = global()
-                .resolve(pid, tok)
-                .map_err(crate::protocol::ToolResult::error)?;
+            let (wid, idx) = global().resolve(pid, tok).map_err(|message| {
+                let code = if message.contains("another runtime generation") {
+                    "generation_mismatch"
+                } else if message == STALE_TOKEN_ERROR {
+                    "stale_element_token"
+                } else {
+                    "invalid_element_token"
+                };
+                crate::protocol::ToolResult::error(message.clone()).with_structured(
+                    serde_json::json!({
+                        "status": "refused",
+                        "refusal": {
+                            "code": code,
+                            "message": message,
+                        }
+                    }),
+                )
+            })?;
             if let Some(int_idx) = idx_opt {
                 if int_idx != idx {
                     // Disagreement is non-fatal — token wins, but we
@@ -454,7 +500,9 @@ mod tests {
         let s1 = reg.register_snapshot(pid, 1, 5);
         let s2 = reg.register_snapshot(pid, 1, 5);
         // Both should still resolve.
-        let _ = reg.resolve(pid, &format_token(s1, 0)).expect("s1 still in LRU");
+        let _ = reg
+            .resolve(pid, &format_token(s1, 0))
+            .expect("s1 still in LRU");
         let _ = reg.resolve(pid, &format_token(s2, 0)).expect("s2 fresh");
     }
 
@@ -552,10 +600,17 @@ mod tests {
         )
         .expect("element_index-only must succeed");
         match resolved {
-            ResolvedElement::Element { window_id, element_index, via_token } => {
+            ResolvedElement::Element {
+                window_id,
+                element_index,
+                via_token,
+            } => {
                 assert_eq!(window_id, Some(99));
                 assert_eq!(element_index, 7);
-                assert!(!via_token, "element_index-only path must NOT report via_token");
+                assert!(
+                    !via_token,
+                    "element_index-only path must NOT report via_token"
+                );
             }
             _ => panic!("expected Element, got {resolved:?}"),
         }
@@ -581,7 +636,11 @@ mod tests {
         )
         .expect("token-only must succeed");
         match resolved {
-            ResolvedElement::Element { window_id, element_index, via_token } => {
+            ResolvedElement::Element {
+                window_id,
+                element_index,
+                via_token,
+            } => {
                 assert_eq!(window_id, Some(555), "window_id comes from the snapshot");
                 assert_eq!(element_index, 2);
                 assert!(via_token, "token path must report via_token=true");
@@ -609,7 +668,11 @@ mod tests {
         )
         .expect("disagreement still resolves; token wins");
         match resolved {
-            ResolvedElement::Element { window_id, element_index, via_token } => {
+            ResolvedElement::Element {
+                window_id,
+                element_index,
+                via_token,
+            } => {
                 assert_eq!(window_id, Some(777));
                 assert_eq!(element_index, 3, "token's idx wins over the integer arg");
                 assert!(via_token);
@@ -625,14 +688,7 @@ mod tests {
         let pid = 0x7fff_0003_i32;
         // Token references a snapshot that was never registered → stale.
         let token = format_token(0xdead, 0);
-        let err = resolve_element_args(
-            pid,
-            Some(0),
-            Some(&token),
-            Some(1),
-            "click",
-        )
-        .unwrap_err();
+        let err = resolve_element_args(pid, Some(0), Some(&token), Some(1), "click").unwrap_err();
         // ToolResult::error wraps the message in a Content::Text — the
         // assertion uses the protocol-level error_text accessor.
         assert!(

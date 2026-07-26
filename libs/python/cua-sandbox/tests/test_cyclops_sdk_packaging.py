@@ -13,17 +13,14 @@ FLEET_IMPORTS = (
 
 
 class CyclopsSdkPackagingTests(unittest.TestCase):
-    def test_declares_fleet_without_a_direct_train_dependency(self):
+    def test_declares_published_fleet_without_a_direct_train_dependency(self):
         with PYPROJECT_PATH.open("rb") as pyproject_file:
             project = tomllib.load(pyproject_file)
 
         dependencies = project["project"]["dependencies"]
-        self.assertIn("cua-fleet==0.0.3", dependencies)
+        self.assertIn("cua-fleet==0.0.4", dependencies)
         self.assertFalse(any(dependency.startswith("cua-train") for dependency in dependencies))
-        self.assertEqual(
-            project["tool"]["uv"]["sources"]["cua-fleet"],
-            {"path": "../cua-fleet", "editable": True},
-        )
+        self.assertNotIn("cua-fleet", project["tool"]["uv"]["sources"])
         self.assertNotIn("cua-train", project["tool"]["uv"]["sources"])
         self.assertEqual(
             project["tool"]["uv"]["index"][0],
@@ -48,18 +45,14 @@ class CyclopsSdkPackagingTests(unittest.TestCase):
         fleet_dependencies = {
             dependency["name"] for dependency in packages["cua-fleet"]["dependencies"]
         }
-        fleet_requires_dist = {
-            requirement["name"]
-            for requirement in packages["cua-fleet"]["metadata"]["requires-dist"]
-        }
-
         self.assertIn("cua-fleet", sandbox_dependencies)
         self.assertNotIn("cua-train", sandbox_dependencies)
         self.assertIn("cua-fleet", sandbox_requires_dist)
         self.assertNotIn("cua-train", sandbox_requires_dist)
-        self.assertEqual(packages["cua-fleet"]["source"], {"editable": "../cua-fleet"})
+        self.assertEqual(packages["cua-fleet"]["version"], "0.0.4")
+        self.assertEqual(packages["cua-fleet"]["source"], {"registry": "https://pypi.org/simple"})
         self.assertIn("cua-train", fleet_dependencies)
-        self.assertEqual(fleet_requires_dist, {"cua-train"})
+        self.assertEqual(fleet_dependencies, {"cua-train"})
         self.assertEqual(packages["cua-train"]["version"], "0.1.1")
         self.assertEqual(
             packages["cua-train"]["source"],

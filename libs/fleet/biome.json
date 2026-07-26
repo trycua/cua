@@ -1,0 +1,46 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.4.15/schema.json",
+  "vcs": { "enabled": false, "clientKind": "git", "useIgnoreFile": false },
+  "files": {
+    "includes": ["src/**", "!**/dist", "!**/node_modules", "!src/api/generated/**"]
+  },
+  "overrides": [
+    {
+      "includes": ["src/api/generated/**"],
+      "linter": { "enabled": false }
+    }
+  ],
+  "formatter": { "enabled": false },
+  "assist": { "actions": { "source": { "organizeImports": "off" } } },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "style": {
+        "useSelfClosingElements": "warn",
+        "noUnusedTemplateLiteral": "warn",
+        "noNonNullAssertion": "off",
+        "useImportType": "warn"
+      },
+      "a11y": {
+        "useKeyWithClickEvents": "warn",
+        "useKeyWithMouseEvents": "warn",
+        "useButtonType": "warn"
+      },
+      "suspicious": {
+        "noArrayIndexKey": "off",
+        "noGlobalIsFinite": "warn",
+        "noGlobalIsNan": "warn"
+      },
+      "security": {
+        "noDangerouslySetInnerHtml": "warn"
+      },
+      "correctness": {
+        "noUnusedVariables": "error",
+        "noUnusedFunctionParameters": "warn",
+        "noUnusedImports": "warn",
+        "useExhaustiveDependencies": "warn"
+      }
+    }
+  }
+}

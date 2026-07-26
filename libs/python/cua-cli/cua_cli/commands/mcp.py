@@ -205,10 +205,10 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
         @server.tool()
         async def sandbox_list(ctx: Context) -> str:
             """List all cloud sandboxes."""
-            from cua_cli.auth.store import get_api_key
+            from cua_cli.auth.oidc import get_access_token
             from cua_sandbox import Sandbox
 
-            sandboxes = await Sandbox.list(api_key=get_api_key())
+            sandboxes = await Sandbox.list(api_key=await get_access_token())
             return json.dumps(
                 [
                     {
@@ -238,7 +238,7 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
                 size: VM size (small, medium, large, xlarge)
                 region: Region (north-america, europe, asia)
             """
-            from cua_cli.auth.store import get_api_key
+            from cua_cli.auth.oidc import get_access_token
             from cua_sandbox import Image, Sandbox
 
             if os_type == "macos":
@@ -247,7 +247,7 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
                 image = Image.windows("11")
             else:
                 image = Image.linux("ubuntu", "24.04")
-            sb = await Sandbox.create(image, api_key=get_api_key(), region=region)
+            sb = await Sandbox.create(image, api_key=await get_access_token(), region=region)
             name = sb.name
             await sb.disconnect()
             return json.dumps(
@@ -269,11 +269,11 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
             Args:
                 name: Sandbox name
             """
-            from cua_cli.auth.store import get_api_key
+            from cua_cli.auth.oidc import get_access_token
             from cua_sandbox import Sandbox
 
             try:
-                info = await Sandbox.get_info(name, api_key=get_api_key())
+                info = await Sandbox.get_info(name, api_key=await get_access_token())
                 return json.dumps(
                     {
                         "name": info.name,
@@ -295,10 +295,10 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
             Args:
                 name: Sandbox name
             """
-            from cua_cli.auth.store import get_api_key
+            from cua_cli.auth.oidc import get_access_token
             from cua_sandbox import Sandbox
 
-            await Sandbox.resume(name, api_key=get_api_key())
+            await Sandbox.resume(name, api_key=await get_access_token())
             return json.dumps({"success": True, "message": f"Started sandbox: {name}"})
 
     if Permission.SANDBOX_STOP in permissions:
@@ -310,10 +310,10 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
             Args:
                 name: Sandbox name
             """
-            from cua_cli.auth.store import get_api_key
+            from cua_cli.auth.oidc import get_access_token
             from cua_sandbox import Sandbox
 
-            await Sandbox.suspend(name, api_key=get_api_key())
+            await Sandbox.suspend(name, api_key=await get_access_token())
             return json.dumps({"success": True, "message": f"Stopped sandbox: {name}"})
 
     if Permission.SANDBOX_RESTART in permissions:
@@ -325,10 +325,10 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
             Args:
                 name: Sandbox name
             """
-            from cua_cli.auth.store import get_api_key
+            from cua_cli.auth.oidc import get_access_token
             from cua_sandbox import Sandbox
 
-            await Sandbox.restart(name, api_key=get_api_key())
+            await Sandbox.restart(name, api_key=await get_access_token())
             return json.dumps({"success": True, "message": f"Restarted sandbox: {name}"})
 
     if Permission.SANDBOX_SUSPEND in permissions:
@@ -340,10 +340,10 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
             Args:
                 name: Sandbox name
             """
-            from cua_cli.auth.store import get_api_key
+            from cua_cli.auth.oidc import get_access_token
             from cua_sandbox import Sandbox
 
-            await Sandbox.suspend(name, api_key=get_api_key())
+            await Sandbox.suspend(name, api_key=await get_access_token())
             return json.dumps({"success": True, "message": f"Suspended sandbox: {name}"})
 
     if Permission.SANDBOX_DELETE in permissions:
@@ -355,10 +355,10 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
             Args:
                 name: Sandbox name
             """
-            from cua_cli.auth.store import get_api_key
+            from cua_cli.auth.oidc import get_access_token
             from cua_sandbox import Sandbox
 
-            await Sandbox.delete(name, api_key=get_api_key())
+            await Sandbox.delete(name, api_key=await get_access_token())
             return json.dumps({"success": True, "message": f"Deleted sandbox: {name}"})
 
     if Permission.SANDBOX_VNC in permissions:
@@ -370,11 +370,11 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
             Args:
                 name: Sandbox name
             """
-            from cua_cli.auth.store import get_api_key
+            from cua_cli.auth.oidc import get_access_token
             from cua_sandbox import Sandbox
 
             try:
-                sb = await Sandbox.connect(name, api_key=get_api_key())
+                sb = await Sandbox.connect(name, api_key=await get_access_token())
                 vnc_url = await sb.get_display_url(share=True)
                 await sb.disconnect()
                 return json.dumps({"vnc_url": vnc_url})
@@ -389,7 +389,7 @@ async def _register_computer_tools(
 ) -> None:
     """Register computer control tools that proxy to computer-server."""
     import aiohttp
-    from cua_cli.auth.store import get_api_key
+    from cua_cli.auth.oidc import get_access_token
     from mcp.server.fastmcp import Context
     from mcp.server.fastmcp.utilities.types import Image
 
@@ -398,7 +398,7 @@ async def _register_computer_tools(
         name = sandbox_name or default_sandbox
         if not name:
             raise ValueError("No sandbox specified. Use --sandbox or set CUA_SANDBOX env var")
-        api_key = get_api_key()
+        api_key = await get_access_token()
         if not api_key:
             raise ValueError("Not authenticated. Run 'cua auth login' first")
         from cua_sandbox.transport.cloud import CloudTransport, cloud_get_vm
@@ -411,13 +411,13 @@ async def _register_computer_tools(
     async def _send_command(sandbox_name: str, command: str, params: dict) -> dict:
         """Send a command to the computer-server."""
         server_url = await _get_server_url(sandbox_name)
-        api_key = get_api_key()
+        access_token = await get_access_token()
 
         from cua_core.http import cua_version_headers
 
         headers = {
             "Content-Type": "application/json",
-            "X-API-Key": api_key,
+            "Authorization": f"Bearer {access_token}",
             "X-Container-Name": sandbox_name or default_sandbox,
             **cua_version_headers(),
         }

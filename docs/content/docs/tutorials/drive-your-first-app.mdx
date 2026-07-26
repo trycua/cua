@@ -1,14 +1,28 @@
 ---
-title: Drive your first app
+title: Drive your first app with Cua Driver
 description: Install Cua Driver, connect your agent, and ask it in plain English to drive a desktop app in the background on macOS, Windows, or Linux.
 ---
 
 import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
 import { Callout } from 'fumadocs-ui/components/callout';
 
-# Drive your first app
+By the end of this tutorial, your agent will open Calculator, compute 6 × 7,
+and report 42 through **Cua Driver**. You will install the driver, connect
+Claude Code, Codex, or Hermes, and run the same prompt on macOS, Windows, or
+Linux.
 
-You do not type **Cua Driver** CLI commands by hand. Cua Driver is a backend that an agent harness (Claude Code, Codex, Hermes, and others) drives for you. In this tutorial you install Cua Driver, connect your agent, and ask it in plain English to open a calculator and read a result back. Works the same on macOS, Windows, and Linux.
+New to agents that operate applications? Start with [What is computer use?](/concepts/what-is-computer-use) for the model behind the workflow, then return here to build one.
+
+<VideoDemo
+  src="https://trycua.github.io/assets/videos/cua-driver/windows-msbuild-piano.mp4"
+  poster="https://trycua.github.io/assets/posters/cua-driver/windows-msbuild-piano.jpg"
+  title="Preview: agents play a Windows piano app"
+  sourceUrl="https://x.com/francedot/status/2062231318294131130"
+  className="my-8"
+>
+  Cua Driver coordinates several agent cursors to play a Windows piano app at Microsoft Build. You
+  will start with a smaller Calculator task below.
+</VideoDemo>
 
 ## 1. Install Cua Driver
 
@@ -19,10 +33,10 @@ Use the same one-line installer on every platform; it picks the right path for t
     Requires macOS 14 (Sonoma) or later.
 
     ```bash
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
+    /bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
     ```
 
-    Start the daemon through the app bundle so macOS attributes permission prompts to CuaDriver.app — this is what makes the TCC grant stick to the driver:
+    Start the daemon through the app bundle so macOS attributes permission prompts to CuaDriver.app. This is what makes the TCC grant stick to the driver:
 
     ```bash
     open -n -g -a CuaDriver --args serve
@@ -38,7 +52,7 @@ Use the same one-line installer on every platform; it picks the right path for t
     Requires Windows 10/11 with an interactive desktop session and PowerShell.
 
     ```powershell
-    irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
+    irm https://cua.ai/driver/install.ps1 | iex
     ```
 
   </Tab>
@@ -46,7 +60,7 @@ Use the same one-line installer on every platform; it picks the right path for t
     Requires an x86_64 Linux desktop session with X11 or XWayland, plus AT-SPI 2.
 
     ```bash
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
+    /bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
     ```
 
   </Tab>
@@ -103,11 +117,13 @@ Register Cua Driver with your agent harness once.
     cua-driver mcp-config --client codex
     ```
 
-    It prints a command you run to register the server:
+    It prints a command you run to register the server. The emitted command uses the absolute installed binary path:
 
     ```bash
-    codex mcp add cua-driver -- cua-driver mcp
+    codex mcp add cua-driver -- /Users/you/.local/bin/cua-driver mcp
     ```
+
+    Restart Codex or open a fresh Codex session after registration so the new tools appear.
   </Tab>
   <Tab value="Hermes">
     Print the Hermes snippet:
@@ -172,11 +188,11 @@ You can now prompt your agent in plain English, and it will drive Cua Driver for
 
 Everything runs in the background, and the agent picks the right calculator for your OS (Calculator on macOS and Windows, the system calculator on Linux), so the same prompt works on all three platforms.
 
-To explore capture and dispatch modes, see [Choose an action rung and dispatch mode](/how-to-guides/driver/choose-a-modality).
+To understand capture and delivery modes, see [Capture and delivery modalities](/concepts/capture-and-delivery-modalities).
 
 ## 5. Confirm what happened
 
-The agent reports 42. Cua Driver kept the calculator in the background the whole time. It never stole your keyboard focus and never moved your cursor. That is the *no-foreground contract*: the agent drives the app while you keep working. See [The no-foreground contract](/explanation/the-no-foreground-contract).
+The agent reports 42. Cua Driver kept the calculator in the background the whole time. It never stole your keyboard focus and never moved your cursor. That is best-effort background: the agent drives the app while you keep working. See [Best-effort background](/concepts/the-no-foreground-contract).
 
 ## What you did
 
@@ -185,5 +201,7 @@ You installed Cua Driver, verified it could see your desktop, connected your age
 ## Next steps
 
 - [Connect your agent](/how-to-guides/driver/connect-your-agent): register Cua Driver with Cursor, Antigravity, OpenCode, OpenClaw, Pi, and more.
-- [The no-foreground contract](/explanation/the-no-foreground-contract): why the agent never steals focus or moves your cursor.
+- [Use Cua Driver in process](/how-to-guides/driver/use-sdk-in-process): embed the typed SDK in a Python or TypeScript application.
+- [Verify a desktop action](/how-to-guides/driver/verify-a-desktop-action): check an action against an independent postcondition.
+- [Best-effort background](/concepts/the-no-foreground-contract): how Cua Driver avoids focus and cursor disruption when the target app supports it.
 - [How-to guides](/how-to-guides): keep the driver running, update it, and more.

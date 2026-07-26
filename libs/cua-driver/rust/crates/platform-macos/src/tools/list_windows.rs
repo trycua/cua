@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{
+    protocol::ToolResult,
+    tool::{Tool, ToolDef},
+};
 use serde_json::Value;
 
 pub struct ListWindowsTool;
@@ -38,7 +41,9 @@ fn def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for ListWindowsTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
@@ -55,28 +60,34 @@ impl Tool for ListWindowsTool {
             windows.retain(|w| w.pid == pid);
         }
 
-        let windows_json: Vec<Value> = windows.iter().map(|w| serde_json::json!({
-            "window_id": w.window_id,
-            "pid": w.pid,
-            "app_name": w.app_name,
-            "title": w.title,
-            "bounds": {
-                "x": w.bounds.x,
-                "y": w.bounds.y,
-                "width": w.bounds.width,
-                "height": w.bounds.height
-            },
-            "layer": w.layer,
-            "z_index": w.z_index,
-            "is_on_screen": w.is_on_screen,
-            "on_current_space": w.on_current_space,
-            "space_ids": w.space_ids,
-        })).collect();
+        let windows_json: Vec<Value> = windows
+            .iter()
+            .map(|w| {
+                serde_json::json!({
+                    "window_id": w.window_id,
+                    "pid": w.pid,
+                    "app_name": w.app_name,
+                    "title": w.title,
+                    "bounds": {
+                        "x": w.bounds.x,
+                        "y": w.bounds.y,
+                        "width": w.bounds.width,
+                        "height": w.bounds.height
+                    },
+                    "layer": w.layer,
+                    "z_index": w.z_index,
+                    "is_on_screen": w.is_on_screen,
+                    "on_current_space": w.on_current_space,
+                    "space_ids": w.space_ids,
+                })
+            })
+            .collect();
 
-        ToolResult::text(format!("Found {} window(s).", windows_json.len()))
-            .with_structured(serde_json::json!({
+        ToolResult::text(format!("Found {} window(s).", windows_json.len())).with_structured(
+            serde_json::json!({
                 "windows": windows_json,
                 "current_space_id": null
-            }))
+            }),
+        )
     }
 }

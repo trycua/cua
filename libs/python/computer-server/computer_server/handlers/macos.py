@@ -72,7 +72,10 @@ try:
     me = CGEventCreateMouseEvent(None, kCGEventMouseMoved, p, 0)
     if me:
         CGEventPost(kCGHIDEventTap, me)
-        CFRelease(me)
+        # PyObjC owns the returned CoreGraphics proxy and releases it when the
+        # proxy is collected. Calling CFRelease here causes a second release
+        # during Python finalization and can terminate an otherwise-successful
+        # computer-server process with SIGSEGV.
 except Exception as e:
     logger.debug(f"Failed to trigger accessibility permissions prompt: {e}")
 

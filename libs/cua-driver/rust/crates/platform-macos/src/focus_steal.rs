@@ -60,8 +60,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use objc2_app_kit::{
-    NSApplicationActivationOptions, NSRunningApplication, NSWorkspace,
-    NSWorkspaceDidActivateApplicationNotification, NSWorkspaceApplicationKey,
+    NSApplicationActivationOptions, NSRunningApplication, NSWorkspace, NSWorkspaceApplicationKey,
+    NSWorkspaceDidActivateApplicationNotification,
 };
 use objc2_foundation::NSOperationQueue;
 use uuid::Uuid;
@@ -134,9 +134,7 @@ impl FocusStealPreventer {
         origin: &'static str,
     ) -> SuppressionLease {
         let shared = Self::shared();
-        let handle = shared
-            .dispatcher
-            .add(target_pid, restore_to, origin);
+        let handle = shared.dispatcher.add(target_pid, restore_to, origin);
         SuppressionLease {
             handle,
             dispatcher: Arc::clone(&shared.dispatcher),
@@ -159,12 +157,6 @@ impl FocusStealPreventer {
     {
         let _lease = Self::begin_suppression(target_pid, restore_to, origin);
         f().await
-    }
-
-    /// For tests. Returns the singleton's dispatcher arc.
-    #[cfg(test)]
-    fn dispatcher(&self) -> &Arc<Dispatcher> {
-        &self.dispatcher
     }
 }
 
@@ -442,10 +434,7 @@ fn install_observer(dispatcher: &Arc<Dispatcher>) {
 ///
 /// Runs on the observer queue's background thread — safe to call
 /// blocking system APIs.
-fn handle_activation(
-    dispatcher: &Arc<Dispatcher>,
-    note: &objc2_foundation::NSNotification,
-) {
+fn handle_activation(dispatcher: &Arc<Dispatcher>, note: &objc2_foundation::NSNotification) {
     use objc2::msg_send;
     use objc2::runtime::AnyObject;
 
@@ -457,8 +446,7 @@ fn handle_activation(
         // userInfo[NSWorkspaceApplicationKey] -> NSRunningApplication*.
         // We go through a raw msg_send to avoid Retained generic
         // bookkeeping for the cross-cast.
-        let app_ptr: *mut AnyObject =
-            msg_send![&*info, objectForKey: NSWorkspaceApplicationKey];
+        let app_ptr: *mut AnyObject = msg_send![&*info, objectForKey: NSWorkspaceApplicationKey];
         if app_ptr.is_null() {
             return;
         }
@@ -476,9 +464,7 @@ fn handle_activation(
 /// thread — Apple documents `activateWithOptions:` as thread-safe.
 fn restore_focus(pid: i32) {
     unsafe {
-        if let Some(app) =
-            NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
-        {
+        if let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {
             let _ = app.activateWithOptions(NSApplicationActivationOptions(0));
         }
     }

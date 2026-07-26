@@ -1,1 +1,11 @@
-{ "title": "Tutorials", "icon": "GraduationCap", "pages": ["index", "drive-your-first-app", "your-first-cloud-sandbox", "run-an-agent-in-a-sandbox"] }
+{
+  "title": "Tutorials",
+  "icon": "GraduationCap",
+  "pages": [
+    "index",
+    "drive-your-first-app",
+    "your-first-local-sandbox",
+    "create-your-first-lume-vm",
+    "your-first-cua-bench-task"
+  ]
+}

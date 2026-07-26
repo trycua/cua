@@ -1,0 +1,54 @@
+apiVersion: cua.ai/v1alpha1
+kind: AgentWindowsDoubleMCPRun
+metadata:
+  name: windows-mini-swe
+
+spec:
+  pool:
+    image: 296062593712.dkr.ecr.us-west-2.amazonaws.com/cua-server-windows:latest
+    cpu: 4
+    ram: 4Gi
+    firmware: efi   # GPT/UEFI-only Windows image; operator also enables Hyper-V enlightenments for efi
+    replicas: 2
+    minAvailable: 1
+    readinessPort: 8000
+    services:
+      - type: mcp
+        label: computer-server
+        service: server
+        port: 8000
+        mcpPath: /mcp
+        health: /status
+      - type: mcp
+        label: cua-driver
+        service: mcp
+        port: 3000
+        mcpPath: /mcp
+        health: /healthz
+      - type: auxiliary
+        label: novnc
+        service: novnc
+        port: 6080
+  claim:
+    bindDeadline: 600
+  agent:
+    model: us.anthropic.claude-sonnet-4-6
+    task: >-
+      Launch Microsoft Edge in this Windows environment, open
+      https://news.yahoo.com/, inspect the Yahoo News front page, and then
+      report the visible page contents in a concise final message. Do all work
+      inside this remote Windows sandbox, not on the local machine.
+    maxSteps: 60
+    keepImages: 2
+  rollout:
+    templateTimeout: 120
+    warmTimeout: 0
+    bindTimeout: 0
+    readyTimeout: 0
+    pollInterval: 10
+  teardown:
+    # keepPool:false so `--delete-pool` actually tears down (the script's
+    # if-keep/elif-delete precedence ignores --delete-pool when keepPool is
+    # true). With no teardown flags the pool is still left live for reuse.
+    keepPool: false
+    deletePool: false

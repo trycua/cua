@@ -13,7 +13,9 @@ use cua_driver_testkit::RawDriver;
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn initialize_handshake() {
-    let Some(mut d) = RawDriver::spawn() else { return; };
+    let Some(mut d) = RawDriver::spawn() else {
+        return;
+    };
 
     // 1. Send initialize request.
     d.send(&serde_json::json!({
@@ -47,13 +49,20 @@ fn initialize_handshake() {
     assert!(!tools.is_empty(), "Should have at least one tool");
 
     // Verify tool names match reference implementation.
-    let tool_names: Vec<&str> = tools.iter()
-        .filter_map(|t| t["name"].as_str())
-        .collect();
-    for expected in &["list_apps", "list_windows", "get_window_state", "click", "type_text", "press_key"] {
+    let tool_names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
+    for expected in &[
+        "list_apps",
+        "list_windows",
+        "get_window_state",
+        "click",
+        "type_text",
+        "press_key",
+    ] {
         assert!(
             tool_names.contains(expected),
-            "Missing tool: {} (have: {:?})", expected, tool_names
+            "Missing tool: {} (have: {:?})",
+            expected,
+            tool_names
         );
     }
 
@@ -69,7 +78,9 @@ fn initialize_handshake() {
 fn all_expected_tools_registered() {
     //! Verify that all tools from the reference implementation are registered.
     //! Adding a new tool to the reference requires adding it to this list.
-    let Some(mut d) = RawDriver::spawn() else { return; };
+    let Some(mut d) = RawDriver::spawn() else {
+        return;
+    };
 
     d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     d.recv();
@@ -77,26 +88,47 @@ fn all_expected_tools_registered() {
     d.send(&serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}));
     let resp = d.recv();
     let tools = resp["result"]["tools"].as_array().expect("tools array");
-    let names: std::collections::HashSet<&str> = tools.iter()
-        .filter_map(|t| t["name"].as_str())
-        .collect();
+    let names: std::collections::HashSet<&str> =
+        tools.iter().filter_map(|t| t["name"].as_str()).collect();
 
     // Baseline roster that must be registered on every platform. (The old
     // Windows mirror additionally listed type_text_chars + screenshot, which
     // the Windows build does NOT register — a stale, never-run assertion.)
     let expected: &[&str] = &[
-        "list_apps", "list_windows", "get_window_state", "launch_app",
-        "click", "double_click", "right_click", "type_text",
-        "press_key", "hotkey", "set_value", "scroll", "zoom",
-        "get_screen_size", "get_cursor_position",
-        "move_cursor", "set_agent_cursor_enabled", "set_agent_cursor_motion",
-        "get_agent_cursor_state", "check_permissions", "get_config", "set_config",
+        "list_apps",
+        "list_windows",
+        "get_window_state",
+        "launch_app",
+        "click",
+        "double_click",
+        "right_click",
+        "type_text",
+        "press_key",
+        "hotkey",
+        "set_value",
+        "scroll",
+        "zoom",
+        "get_screen_size",
+        "get_cursor_position",
+        "move_cursor",
+        "set_agent_cursor_enabled",
+        "set_agent_cursor_motion",
+        "get_agent_cursor_state",
+        "check_permissions",
+        "get_config",
+        "set_config",
         "get_accessibility_tree",
-        "start_recording", "stop_recording", "get_recording_state", "replay_trajectory",
+        "start_recording",
+        "stop_recording",
+        "get_recording_state",
+        "replay_trajectory",
         "page",
     ];
     for name in expected {
-        assert!(names.contains(name), "Missing tool: {name}  (registered: {names:?})");
+        assert!(
+            names.contains(name),
+            "Missing tool: {name}  (registered: {names:?})"
+        );
     }
 }
 
@@ -109,7 +141,9 @@ fn tools_list_includes_per_tool_capabilities() {
     //! by capability instead of hardcoding tool names, so this is the
     //! wire contract. Additive-only — existing keys must still be
     //! present.
-    let Some(mut d) = RawDriver::spawn() else { return; };
+    let Some(mut d) = RawDriver::spawn() else {
+        return;
+    };
 
     d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     d.recv();
@@ -125,37 +159,66 @@ fn tools_list_includes_per_tool_capabilities() {
     // without a mapping in `default_capabilities_for`).
     for tool in tools {
         let name = tool["name"].as_str().unwrap_or("<no name>");
-        assert!(tool["capabilities"].is_array(),
-            "tool {name:?} missing capabilities array: {tool:?}");
+        assert!(
+            tool["capabilities"].is_array(),
+            "tool {name:?} missing capabilities array: {tool:?}"
+        );
     }
 
     // Specifically: `click` claims input.pointer.click + .left, and
     // `type_text` claims input.keyboard.type — these are the contracts
     // Hermes' cua_backend.py is expected to route by.
-    let click = tools.iter().find(|t| t["name"] == "click")
+    let click = tools
+        .iter()
+        .find(|t| t["name"] == "click")
         .expect("click tool must be registered");
-    let click_caps: Vec<&str> = click["capabilities"].as_array().unwrap()
-        .iter().filter_map(|v| v.as_str()).collect();
-    assert!(click_caps.contains(&"input.pointer.click"),
-        "click missing input.pointer.click: {click_caps:?}");
-    assert!(click_caps.contains(&"input.pointer.click.left"),
-        "click missing input.pointer.click.left: {click_caps:?}");
+    let click_caps: Vec<&str> = click["capabilities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(
+        click_caps.contains(&"input.pointer.click"),
+        "click missing input.pointer.click: {click_caps:?}"
+    );
+    assert!(
+        click_caps.contains(&"input.pointer.click.left"),
+        "click missing input.pointer.click.left: {click_caps:?}"
+    );
 
-    let type_text = tools.iter().find(|t| t["name"] == "type_text")
+    let type_text = tools
+        .iter()
+        .find(|t| t["name"] == "type_text")
         .expect("type_text tool must be registered");
-    let tt_caps: Vec<&str> = type_text["capabilities"].as_array().unwrap()
-        .iter().filter_map(|v| v.as_str()).collect();
-    assert!(tt_caps.contains(&"input.keyboard.type"),
-        "type_text missing input.keyboard.type: {tt_caps:?}");
+    let tt_caps: Vec<&str> = type_text["capabilities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(
+        tt_caps.contains(&"input.keyboard.type"),
+        "type_text missing input.keyboard.type: {tt_caps:?}"
+    );
 
     // Regression guard for additive-only contract: every pre-existing
     // top-level field on a tool entry must still be present.
     for tool in tools {
         let name = tool["name"].as_str().unwrap_or("<no name>");
         assert!(tool["name"].is_string(), "{name}: name missing");
-        assert!(tool["description"].is_string(), "{name}: description missing");
-        assert!(tool["inputSchema"].is_object(), "{name}: inputSchema missing");
-        assert!(tool["annotations"].is_object(), "{name}: annotations missing");
+        assert!(
+            tool["description"].is_string(),
+            "{name}: description missing"
+        );
+        assert!(
+            tool["inputSchema"].is_object(),
+            "{name}: inputSchema missing"
+        );
+        assert!(
+            tool["annotations"].is_object(),
+            "{name}: annotations missing"
+        );
     }
 }
 
@@ -167,7 +230,9 @@ fn tools_list_includes_capability_and_schema_versions() {
     //! downstream consumers (Hermes' cua_backend.py, Codex) can gate
     //! strict-vs-tolerant capability matching by version. Both pinned
     //! at "1" on first ship.
-    let Some(mut d) = RawDriver::spawn() else { return; };
+    let Some(mut d) = RawDriver::spawn() else {
+        return;
+    };
 
     d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     d.recv();
@@ -178,24 +243,34 @@ fn tools_list_includes_capability_and_schema_versions() {
 
     // Both version fields default to "1" on first ship — the surface
     // is brand new, so there's no pre-existing contract to bump.
-    assert_eq!(result["capability_version"], "1",
-        "capability_version must default to \"1\" on first ship");
-    assert_eq!(result["schema_version"], "1",
-        "schema_version must default to \"1\" on first ship");
+    assert_eq!(
+        result["capability_version"], "1",
+        "capability_version must default to \"1\" on first ship"
+    );
+    assert_eq!(
+        result["schema_version"], "1",
+        "schema_version must default to \"1\" on first ship"
+    );
 
     // Additive guard: tools array must still be there alongside the
     // new envelope keys — old consumers that only read `tools` keep
     // working.
-    assert!(result["tools"].is_array(),
-        "tools array must still be present alongside version envelope");
-    assert!(!result["tools"].as_array().unwrap().is_empty(),
-        "tools array must be non-empty");
+    assert!(
+        result["tools"].is_array(),
+        "tools array must still be present alongside version envelope"
+    );
+    assert!(
+        !result["tools"].as_array().unwrap().is_empty(),
+        "tools array must be non-empty"
+    );
 }
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn tools_call_unknown_tool() {
-    let Some(mut d) = RawDriver::spawn() else { return; };
+    let Some(mut d) = RawDriver::spawn() else {
+        return;
+    };
 
     d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     d.recv();
@@ -217,7 +292,9 @@ fn tools_call_unknown_tool() {
 fn page_unknown_action_error() {
     //! Verify the cross-platform `page` tool is registered and rejects an
     //! unknown action with a meaningful error.
-    let Some(mut d) = RawDriver::spawn() else { return; };
+    let Some(mut d) = RawDriver::spawn() else {
+        return;
+    };
 
     d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     d.recv();

@@ -7,7 +7,7 @@
     </picture>
   </a>
 
-  <p align="center">Build, benchmark, and deploy agents that use computers</p>
+  <p align="center">Scale computer-use 2.0 with open-source drivers, cross-OS fleets, and benchmarks for training, evaluation, and data generation.</p>
 
   <p align="center">
     <a href="https://cua.ai" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/cua.ai-0ea5e9" alt="cua.ai"></a>
@@ -59,29 +59,27 @@
 
 ---
 
-## Cua Drivers - Background computer-use on macOS and Windows, with Linux pre-release
+## Cua Drivers - Background computer-use on macOS, Windows, and Linux
 
-Drive native desktop apps **in the background**. Agents click, type, and verify without stealing the cursor or focus. Use the same CLI and MCP server on macOS and Windows from Claude Code, Cursor, Codex, OpenClaw, and custom clients. Linux support is available as a pre-release backend while platform testing is still in progress.
+Drive native desktop apps **in the background**. Agents click, type, and verify without stealing the cursor or focus. Use the same CLI and MCP server on macOS, Windows, and Linux from Claude Code, Cursor, Codex, OpenClaw, and custom clients. Linux supports X11 and compositor-specific Wayland routes with explicit limits for raw background input.
 
 **macOS / Linux**
 
 ```sh
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
+/bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
 ```
 
 **Windows (PowerShell)**
 
 ```powershell
-irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
+irm https://cua.ai/driver/install.ps1 | iex
 ```
 
-Then wire it into Claude Code as an MCP server and your agent can drive the desktop in the background:
+Then follow the post-install instructions.
 
-```bash
-claude mcp add --transport stdio cua-driver -- cua-driver mcp
-```
+**[Drive your first app](https://cua.ai/docs/tutorials/drive-your-first-app)** | **[Installation](https://cua.ai/docs/how-to-guides/driver/install)** | **[CLI Reference](https://cua.ai/docs/reference/cua-driver/cli-reference)**
 
-Full tool reference, architecture notes, and the optional agent skill pack live here: [`libs/cua-driver/README.md`](libs/cua-driver/README.md).
+Source documentation, architecture notes, and the optional agent skill pack live in [`libs/cua-driver/README.md`](libs/cua-driver/README.md).
 
 ---
 
@@ -92,7 +90,6 @@ Build agents that see screens, click buttons, and complete tasks autonomously. O
 ```sh
 pip install cua
 ```
-
 
 ```python
 # Requires Python 3.11 or later
@@ -120,7 +117,6 @@ async with Sandbox.ephemeral(Image.linux()) as sb:   # or .macos() .windows() .a
 
 Evaluate computer-use agents on OSWorld, ScreenSpot, Windows Arena, and custom tasks. Export trajectories for training.
 
-
 ```bash
 # Clone, install, and create base image
 git clone https://github.com/trycua/cua && cd cua/cua-bench
@@ -138,14 +134,23 @@ cb run dataset datasets/cua-bench-basic --agent cua-agent --max-parallel 4
 
 Create and manage macOS/Linux VMs with near-native performance on Apple Silicon using Apple's Virtualization.Framework.
 
-
 ```bash
 # Install Lume
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
+/bin/bash -c "$(curl -fsSL https://cua.ai/lume/install.sh)"
 
-# Pull & start a macOS VM
-lume run macos-sequoia-vanilla:latest
+# Create and start a vanilla macOS VM from an Apple restore image
+curl -L "$(lume ipsw | tail -n 1)" -o ~/Downloads/macos-tahoe.ipsw
+lume create macos-tahoe --ipsw ~/Downloads/macos-tahoe.ipsw --unattended tahoe
+lume run macos-tahoe
 ```
+
+The `--unattended` option prepares the installed guest offline. The built-in
+`sequoia` and `tahoe` presets create the `lume` user, enable SSH, configure
+autologin, and disable sleep and screen locking. The default credentials are
+`lume` / `lume`.
+
+The Tahoe flow is E2E verified. Sequoia may still open the Accessibility step
+of Setup Assistant on its first display boot; see [issue #2155](https://github.com/trycua/cua/issues/2155).
 
 **[Get Started](https://cua.ai/docs/lume)** | **[FAQ](https://cua.ai/docs/lume/guide/getting-started/faq)** | **[CLI Reference](https://cua.ai/docs/lume/reference/cli-reference)**
 
@@ -153,15 +158,15 @@ lume run macos-sequoia-vanilla:latest
 
 ## Packages
 
-| Package                                                                     | Description                                                |
-| --------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| [cua-driver](libs/cua-driver/README.md)                                     | Background computer-use agent for macOS, Windows, and Linux |
-| [cua-agent](https://cua.ai/docs/cua/reference/agent-sdk)                    | AI agent framework for computer-use tasks                  |
-| [cua-sandbox](https://cua.ai/docs/cua/reference/sandbox-sdk)                | SDK for creating and controlling sandboxes                 |
-| [cua-computer-server](https://cua.ai/docs/cua/reference/sandbox-sdk)        | Driver for UI interactions and code execution in sandboxes |
-| [cua-bench](https://cua.ai/docs/cuabench)                                   | Benchmarks and RL environments for computer-use            |
-| [lume](https://cua.ai/docs/lume)                                            | macOS/Linux VM management on Apple Silicon                 |
-| [lumier](https://cua.ai/docs/lume/guide/advanced/lumier)                    | Docker-compatible interface for Lume VMs                   |
+| Package                                                              | Description                                                 |
+| -------------------------------------------------------------------- | ----------------------------------------------------------- |
+| [cua-driver](libs/cua-driver/README.md)                              | Background computer-use agent for macOS, Windows, and Linux |
+| [cua-agent](https://cua.ai/docs/cua/reference/agent-sdk)             | AI agent framework for computer-use tasks                   |
+| [cua-sandbox](https://cua.ai/docs/cua/reference/sandbox-sdk)         | SDK for creating and controlling sandboxes                  |
+| [cua-computer-server](https://cua.ai/docs/cua/reference/sandbox-sdk) | Driver for UI interactions and code execution in sandboxes  |
+| [cua-bench](https://cua.ai/docs/cuabench)                            | Benchmarks and RL environments for computer-use             |
+| [lume](https://cua.ai/docs/lume)                                     | macOS/Linux VM management on Apple Silicon                  |
+| [lumier](https://cua.ai/docs/lume/guide/advanced/lumier)             | Docker-compatible interface for Lume VMs                    |
 
 ## Resources
 
@@ -169,6 +174,22 @@ lume run macos-sequoia-vanilla:latest
 - [Blog](https://cua.ai/blog) — Tutorials, updates, and research
 - [Discord](https://discord.com/invite/mVnXXpdE85) — Community support and discussions
 - [GitHub Issues](https://github.com/trycua/cua/issues) — Bug reports and feature requests
+
+## Citation
+
+If Cua supports your research, please cite the software:
+
+```bibtex
+@software{cua2025,
+  author  = {{Cua AI, Inc.}},
+  title   = {Cua},
+  year    = {2025},
+  url     = {https://github.com/trycua/cua},
+  license = {MIT}
+}
+```
+
+For reproducibility, include the Cua release or commit used in your experiments. Citation metadata is also available in [`CITATION.cff`](CITATION.cff).
 
 ## Contributing
 
@@ -191,8 +212,6 @@ Apple, macOS, Ubuntu, Canonical, and Microsoft are trademarks of their respectiv
 ---
 
 <div align="center">
-
-[![Stargazers over time](https://starchart.cc/trycua/cua.svg?variant=adaptive)](https://starchart.cc/trycua/cua)
 
 Thank you to all our [GitHub Sponsors](https://github.com/sponsors/trycua)!
 

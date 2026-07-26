@@ -1,0 +1,108 @@
+---
+title: Platform Roadmap
+description: Remaining Cua Driver platform work, evidence gaps, and operating-system boundaries without implied delivery dates.
+---
+
+This roadmap records capability and validation work for Cua Driver. It does not
+promise dates. A capability moves to [Platform Support](/reference/cua-driver/platform-support)
+only after a canonical Rust harness observes the required application and
+desktop state.
+
+## Status vocabulary
+
+| Status            | Meaning                                                                                           |
+| ----------------- | ------------------------------------------------------------------------------------------------- |
+| Proven            | Canonical harness evidence supports the current public claim.                                     |
+| Evidence gap      | Code or platform APIs may support the behavior, but representative harness evidence is missing.   |
+| Engineering work  | A concrete driver, fixture, observer, or runner change is required.                                |
+| Experimental      | An opt-in backend or environment has evidence but is not part of the general support contract.     |
+| Platform boundary | The ordinary OS security or windowing model does not expose a safe general route for the behavior. |
+
+An evidence gap does not mean a behavior is impossible. A platform boundary
+does not prevent narrower semantic routes, foreground delivery, or operation
+inside an environment that owns the compositor.
+
+## Cross-platform priorities
+
+| Area                         | Current state                                                                                       | Next acceptance condition                                                                                           |
+| ---------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Shared application catalog   | Electron and Tauri use one typed Rust behavior catalog across operating systems.                    | Keep the same action, AX/PX, foreground/background, scope, and oracle dimensions on every representative host.     |
+| Native application catalogs  | Windows, macOS, and Linux have toolkit-specific source-built harnesses.                             | Expand native rows toward the shared action cross-product where the toolkit exposes an equivalent behavior.        |
+| Background safety            | Background cells attach focus, z-order, cursor, and leaked-input oracles.                           | Add the same side-effect owners to every new background delivery or refusal row.                                    |
+| Release evidence             | Hosted GUI lanes retain typed results, trajectories, screenshots, logs, and per-cell video.        | Require accepted exact-source-SHA runs for affected platforms before changing release support claims.              |
+| Representative environments | Hosted lanes cover Windows, Linux X11, Sway, and the nested compositor; macOS uses a logged-in host. | Close named GNOME, KDE, real-Xorg, and renderer evidence gaps without weakening fixtures or oracles.                |
+
+## Windows
+
+| Work item                                  | Status           | Acceptance condition                                                                                                           |
+| ------------------------------------------ | ---------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Broader WPF PX gestures and keyboard paths | Evidence gap     | Typed foreground/background rows observe native control state and all required desktop side effects.                          |
+| WinUI 3 pointer and background coverage    | Evidence gap     | Right click, double click, drag, scroll, and keyboard contracts are declared and empirically observed or refused.              |
+| WebView2 native-input coverage             | Evidence gap     | Native pointer and keyboard cells complement the existing page/CDP and background-left-click evidence.                        |
+| Elevated-integrity boundary                | Engineering work | A controlled fixture proves the `background_uipi_blocked` contract across process integrity levels.                           |
+
+Windows integrity isolation is a platform boundary: a lower-integrity process
+cannot generally inject input into a higher-integrity target. The roadmap item
+is to detect and prove that refusal, not bypass the operating-system boundary.
+
+## macOS
+
+| Work item                                | Status           | Acceptance condition                                                                                       |
+| ---------------------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------- |
+| Native AppKit action cross-product       | Evidence gap     | Press key, hotkey, AX-addressed pointer gestures, and additional controls have application-owned evidence. |
+| SwiftUI transient-window discovery       | Engineering work | The opened popover or panel is independently visible through targeted window and AX enumeration.           |
+| Installed-app confidence checks          | Proven           | Keep the typed Calculator and TextEdit rows as supporting evidence; repo-local fixtures remain the primary behavioral contract. |
+
+Accessibility and Screen Recording consent remain platform prerequisites.
+Off-Space SwiftUI tree stripping, minimized keyboard commits, and applications
+that accept only HID-tap input are platform or target boundaries; their safe
+alternatives remain documented in [Known Limits](/reference/cua-driver/limits).
+
+## Linux X11
+
+| Work item                         | Status       | Acceptance condition                                                                                  |
+| --------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------- |
+| Hosted Openbox/Xvfb catalog       | Proven       | Preserve the complete shared and GTK catalog with exact delivery or refusal outcomes.                 |
+| Real-Xorg MPX and uinput behavior | Evidence gap | A maintainer lane proves routes that Xvfb cannot represent, including multi-pointer desktop behavior. |
+| Additional toolkit confidence     | Evidence gap | Add a surface only when it represents a materially different input or accessibility contract.         |
+
+X11 permits more synthetic-input routes than Wayland, but an X server accepting
+an event does not prove the target toolkit handled it. Application-owned state
+remains required.
+
+## Linux Wayland
+
+| Environment             | Work item                                     | Status           | Acceptance condition                                                                                                      |
+| ----------------------- | --------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Sway/wlroots            | Preserve the accepted shared and native catalog | Proven         | Keep every declared Electron, Tauri, and GTK cell delivering or returning its exact refusal through unchanged oracles.    |
+| GNOME/Mutter            | Shared renderer catalog and portal video      | Evidence gap     | Electron and representative WebKitGTK rows pass with reporter-owned per-cell recordings.                                  |
+| KDE/KWin                | Target-addressable activation and full matrix | Engineering work | A supported KWin adapter activates the selected target and an independent observer verifies it before portal input.      |
+| Nested `cua-compositor` | Complete shared catalog and protocol coverage | Experimental     | One accepted full catalog proves renderer behavior, Unicode text, and canonical parallel drag.                            |
+| Other wlroots           | Representative compatibility                 | Evidence gap     | Add a lane only after a user report demonstrates behavior that the Sway lane does not represent.                          |
+
+### Standard Wayland boundary
+
+An ordinary client on a standard Wayland compositor cannot generally send raw
+pointer or keyboard input to an arbitrary occluded, unfocused surface.
+Reconstructed coordinates solve target geometry, but they do not change which
+surface receives compositor-seat input. Semantic AT-SPI actions and PX-addressed
+hit-testing can still operate in the background when a coordinate resolves to
+an actionable accessible element.
+
+The optional nested `cua-compositor` has a different capability because it owns
+the compositor and can route input directly to a selected client surface. Work
+in that lane can improve controlled nested sessions, but cannot establish a
+general Sway, GNOME, KDE, or stock-Wayland claim.
+
+## Promotion rules
+
+A roadmap item becomes supported only when all of the following are true:
+
+- the behavior is a typed Rust case rather than a second OS-specific matrix;
+- delivery changes fixture-owned state, or refusal returns the exact declared code;
+- every required focus, z-order, cursor, leaked-input, capture, and scope oracle passes;
+- the result identifies the operating system, window system, surface, delivery route, and source commit;
+- representative evidence is retained and the public support reference is updated.
+
+For the reasoning behind these requirements, see
+[How Cua Driver is validated](/concepts/how-cua-driver-is-validated).

@@ -12,10 +12,10 @@
 
 use cua_driver_core::tool::ToolRegistry;
 
-pub mod tools;
+pub mod health_report;
 pub mod overlay;
 pub mod pip;
-pub mod health_report;
+pub mod tools;
 
 #[cfg(target_os = "linux")]
 pub mod x11;
@@ -30,6 +30,15 @@ pub mod tty;
 pub mod proc_fs;
 
 #[cfg(target_os = "linux")]
+pub mod browser_platform;
+
+#[cfg(target_os = "linux")]
+mod browser_setup_ui;
+
+#[cfg(target_os = "linux")]
+mod browser_consent_ui;
+
+#[cfg(target_os = "linux")]
 pub mod installed_apps;
 
 #[cfg(target_os = "linux")]
@@ -40,6 +49,12 @@ pub mod atspi;
 
 #[cfg(target_os = "linux")]
 pub mod a11y;
+
+#[cfg(target_os = "linux")]
+pub mod recording_hooks;
+
+#[cfg(target_os = "linux")]
+pub mod video_wayland;
 
 #[cfg(target_os = "linux")]
 pub mod wayland;
@@ -118,13 +133,21 @@ pub fn register_tools() -> ToolRegistry {
 /// (pid + window_id required, JPEG @ 85%, text note pointing at pixel
 /// tools). See `tools::impl_::ScreenshotCompatTool`.
 pub fn register_tools_with_cursor(cfg: cursor_overlay::CursorConfig, compat: bool) -> ToolRegistry {
+    register_tools_with_cursor_and_provider(None, cfg, compat)
+}
+
+pub fn register_tools_with_cursor_and_provider(
+    provider: Option<std::sync::Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
+    cfg: cursor_overlay::CursorConfig,
+    compat: bool,
+) -> ToolRegistry {
     #[cfg(target_os = "linux")]
     wayland::ensure_nested_session();
     if cfg.enabled {
         overlay::init(cfg.clone());
         overlay::run_on_thread();
     }
-    tools::build_registry(compat)
+    tools::build_registry_with_provider(compat, provider)
 }
 
 #[cfg(test)]

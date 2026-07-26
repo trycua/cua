@@ -44,19 +44,16 @@
 //! - Claude Code: `~/.claude/skills/`
 //! - Codex:       `~/.agents/skills/`
 //! - OpenClaw:    `~/.openclaw/skills/`
-//! - OpenCode:    `~/.config/opencode/skills/` (macOS / Linux),
-//!                `%APPDATA%\opencode\skills\` (Windows)
+//! - OpenCode: `~/.config/opencode/skills/` (macOS / Linux),
+//!   `%APPDATA%\opencode\skills\` (Windows)
 //! - Antigravity: `~/.gemini/skills/` — shared between Antigravity CLI
-//!                (`agy`) and Antigravity IDE; same dir Google Gemini CLI
-//!                used before the May-2026 transition, so existing
-//!                installs migrate forward unchanged.
-//! - Hermes:      `~/.hermes/skills/` — NousResearch/hermes-agent.
-//!                The user-level skill space Hermes resolves at agent
-//!                load time (separate from the repo-bundled
-//!                `hermes-agent/skills/` tree, which is read-only and
-//!                version-controlled). Hermes' own `computer-use`
-//!                skill teaches its wrapper vocabulary; the
-//!                cua-driver pack provides the platform deep dives.
+//!   (`agy`) and Antigravity IDE; same dir Google Gemini CLI used before the
+//!   May-2026 transition, so existing installs migrate forward unchanged.
+//! - Hermes: `~/.hermes/skills/` — NousResearch/hermes-agent. The user-level
+//!   skill space Hermes resolves at agent load time (separate from the
+//!   repo-bundled `hermes-agent/skills/` tree, which is read-only and
+//!   version-controlled). Hermes' own `computer-use` skill teaches its wrapper
+//!   vocabulary; the cua-driver pack provides the platform deep dives.
 //!
 //! Only acts on a given agent when its parent skills dir already
 //! exists (i.e. the agent itself is installed). Never clobbers an
@@ -80,9 +77,9 @@ const SKILL_FILES: &[&str] = &[
     "WINDOWS.md",
     "MACOS.md",
     "LINUX.md",
-    "WEB_APPS.md",
+    "BROWSER.md",
     "RECORDING.md",
-    "TESTS.md",
+    "EMBEDDING.md",
 ];
 
 /// Per-host filter: returns the platform-specific docs that should NOT
@@ -100,13 +97,21 @@ fn excluded_platform_docs(all_platforms: bool) -> &'static [&'static str] {
         return &[];
     }
     #[cfg(target_os = "windows")]
-    { &["LINUX.md", "MACOS.md"] }
+    {
+        &["LINUX.md", "MACOS.md"]
+    }
     #[cfg(target_os = "linux")]
-    { &["WINDOWS.md", "MACOS.md"] }
+    {
+        &["WINDOWS.md", "MACOS.md"]
+    }
     #[cfg(target_os = "macos")]
-    { &["WINDOWS.md", "LINUX.md"] }
+    {
+        &["WINDOWS.md", "LINUX.md"]
+    }
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
-    { &[] }
+    {
+        &[]
+    }
 }
 
 /// True when the basename matches one of the excluded platform docs.
@@ -114,12 +119,6 @@ fn is_excluded_platform_doc(basename: &str, all_platforms: bool) -> bool {
     let excluded = excluded_platform_docs(all_platforms);
     excluded.iter().any(|f| basename.eq_ignore_ascii_case(f))
 }
-
-/// Package-home subdir name (matches `telemetry::HOME_SUBDIRECTORY`).
-/// Pre-v0.2.16 this was `.cua-driver-rs`; the rename to `.cua-driver/` is
-/// the same rename the binary install path went through, kept in lock-
-/// step so all on-disk state lives under one dot-folder.
-const HOME_SUBDIRECTORY: &str = ".cua-driver";
 
 /// Legacy subdir name. `sweep_legacy_skill_pack` removes any skill-pack
 /// artifacts that landed here before the rename.
@@ -139,15 +138,14 @@ fn home_dir() -> Result<PathBuf> {
     }
     #[cfg(windows)]
     {
-        let userprofile = std::env::var("USERPROFILE")
-            .map_err(|_| anyhow!("USERPROFILE not set"))?;
-        return Ok(PathBuf::from(userprofile).join(HOME_SUBDIRECTORY));
+        let userprofile =
+            std::env::var("USERPROFILE").map_err(|_| anyhow!("USERPROFILE not set"))?;
+        return Ok(PathBuf::from(userprofile).join(crate::bundle::user_home_subdirectory()));
     }
     #[cfg(not(windows))]
     {
-        let home = std::env::var("HOME")
-            .map_err(|_| anyhow!("HOME not set"))?;
-        return Ok(PathBuf::from(home).join(HOME_SUBDIRECTORY));
+        let home = std::env::var("HOME").map_err(|_| anyhow!("HOME not set"))?;
+        Ok(PathBuf::from(home).join(crate::bundle::user_home_subdirectory()))
     }
 }
 
@@ -155,7 +153,7 @@ fn home_dir() -> Result<PathBuf> {
 /// `None` when CUA_DRIVER_RS_HOME is set (the env var overrides both
 /// the new and legacy defaults — caller is on their own).
 fn legacy_home_dir() -> Option<PathBuf> {
-    if std::env::var("CUA_DRIVER_RS_HOME").is_ok() {
+    if std::env::var("CUA_DRIVER_RS_HOME").is_ok() || crate::bundle::is_local_installation() {
         return None;
     }
     #[cfg(windows)]
@@ -194,17 +192,35 @@ enum AgentParent {
 }
 
 const AGENTS: &[Agent] = &[
-    Agent { label: "Claude Code", parent: AgentParent::Home(".claude/skills") },
-    Agent { label: "Codex",       parent: AgentParent::Home(".agents/skills") },
-    Agent { label: "OpenClaw",    parent: AgentParent::Home(".openclaw/skills") },
+    Agent {
+        label: "Claude Code",
+        parent: AgentParent::Home(".claude/skills"),
+    },
+    Agent {
+        label: "Codex",
+        parent: AgentParent::Home(".agents/skills"),
+    },
+    Agent {
+        label: "OpenClaw",
+        parent: AgentParent::Home(".openclaw/skills"),
+    },
     #[cfg(windows)]
-    Agent { label: "OpenCode",    parent: AgentParent::AppData("opencode/skills") },
+    Agent {
+        label: "OpenCode",
+        parent: AgentParent::AppData("opencode/skills"),
+    },
     #[cfg(not(windows))]
-    Agent { label: "OpenCode",    parent: AgentParent::Home(".config/opencode/skills") },
+    Agent {
+        label: "OpenCode",
+        parent: AgentParent::Home(".config/opencode/skills"),
+    },
     // Antigravity CLI + Antigravity IDE share the `.gemini/skills/` dir
     // (the same path Gemini CLI used pre-May-2026). Registering the
     // single shared path means both surfaces pick up the same symlink.
-    Agent { label: "Antigravity", parent: AgentParent::Home(".gemini/skills") },
+    Agent {
+        label: "Antigravity",
+        parent: AgentParent::Home(".gemini/skills"),
+    },
     // Hermes (NousResearch/hermes-agent) resolves user skills from
     // `~/.hermes/skills/` at agent load time — the same directory its
     // `/skills install …` slash command and `hermes skills install`
@@ -212,8 +228,11 @@ const AGENTS: &[Agent] = &[
     // teaches the Hermes `computer_use` action vocabulary; the
     // cua-driver pack symlinked here adds the platform-specific deep
     // dives (MACOS.md / WINDOWS.md / LINUX.md / RECORDING.md /
-    // WEB_APPS.md / TESTS.md) that Hermes deliberately doesn't clone.
-    Agent { label: "Hermes",      parent: AgentParent::Home(".hermes/skills") },
+    // BROWSER.md) that Hermes deliberately doesn't clone.
+    Agent {
+        label: "Hermes",
+        parent: AgentParent::Home(".hermes/skills"),
+    },
 ];
 
 impl Agent {
@@ -221,20 +240,17 @@ impl Agent {
         match self.parent {
             AgentParent::Home(seg) => {
                 #[cfg(windows)]
-                let base = std::env::var("USERPROFILE")
-                    .map_err(|_| anyhow!("USERPROFILE not set"))?;
+                let base =
+                    std::env::var("USERPROFILE").map_err(|_| anyhow!("USERPROFILE not set"))?;
                 #[cfg(not(windows))]
-                let base = std::env::var("HOME")
-                    .map_err(|_| anyhow!("HOME not set"))?;
+                let base = std::env::var("HOME").map_err(|_| anyhow!("HOME not set"))?;
                 Ok(PathBuf::from(base).join(seg.replace('/', std::path::MAIN_SEPARATOR_STR)))
             }
             AgentParent::AppData(seg) => {
                 #[cfg(windows)]
-                let base = std::env::var("APPDATA")
-                    .map_err(|_| anyhow!("APPDATA not set"))?;
+                let base = std::env::var("APPDATA").map_err(|_| anyhow!("APPDATA not set"))?;
                 #[cfg(not(windows))]
-                let base = std::env::var("HOME")
-                    .map_err(|_| anyhow!("HOME not set"))?;
+                let base = std::env::var("HOME").map_err(|_| anyhow!("HOME not set"))?;
                 Ok(PathBuf::from(base).join(seg.replace('/', std::path::MAIN_SEPARATOR_STR)))
             }
         }
@@ -249,10 +265,10 @@ impl Agent {
 pub fn run(subcommand: &str, flags: &[String]) {
     let result = match subcommand {
         "install" => install(flags, false),
-        "update"  => install(flags, true),
+        "update" => install(flags, true),
         "uninstall" => uninstall(flags),
-        "status"  => status(),
-        "path"    => print_path(),
+        "status" => status(),
+        "path" => print_path(),
         other => {
             eprintln!("Unknown skills subcommand: {other:?}");
             eprintln!("Usage: cua-driver skills {{install|update|uninstall|status|path}}");
@@ -262,7 +278,10 @@ pub fn run(subcommand: &str, flags: &[String]) {
     match result {
         Ok(()) => {}
         Err(e) => {
-            eprintln!("cua-driver skills {subcommand}: {e}");
+            // `anyhow::Error`'s default Display only prints the outermost
+            // context. Use alternate Display so failures include the source
+            // URL and the underlying HTTP, extraction, or filesystem error.
+            eprintln!("cua-driver skills {subcommand}: {e:#}");
             std::process::exit(1);
         }
     }
@@ -273,7 +292,10 @@ pub fn run(subcommand: &str, flags: &[String]) {
 fn install(flags: &[String], force: bool) -> Result<()> {
     let from_main = flags.iter().any(|f| f == "--from=main")
         || (flags.iter().any(|f| f == "--from")
-            && flags.iter().zip(flags.iter().skip(1)).any(|(a, b)| a == "--from" && b == "main"));
+            && flags
+                .iter()
+                .zip(flags.iter().skip(1))
+                .any(|(a, b)| a == "--from" && b == "main"));
     let force = force || flags.iter().any(|f| f == "--force");
     // `--all-platforms` opts INTO keeping LINUX.md / MACOS.md / WINDOWS.md
     // for every host. Default is host-only — only the matching platform's
@@ -294,7 +316,10 @@ fn install(flags: &[String], force: bool) -> Result<()> {
             .with_context(|| format!("failed to fetch skill pack to {}", local.display()))?;
         println!("✅ Skill pack at {}", local.display());
     } else {
-        println!("✅ Skill pack already at {} (use `cua-driver skills update` to refresh)", local.display());
+        println!(
+            "✅ Skill pack already at {} (use `cua-driver skills update` to refresh)",
+            local.display()
+        );
     }
 
     let mut linked_any = false;
@@ -313,9 +338,10 @@ fn install(flags: &[String], force: bool) -> Result<()> {
 
 /// Best-effort removal of any pre-rename skill pack. Three legacy
 /// locations are swept:
-///   1. `<HomeDir>/skills/cua-driver-rs/`       — old pack NAME under new home dir
-///   2. `<LegacyHomeDir>/skills/cua-driver/`    — new pack NAME under old home dir
-///   3. `<LegacyHomeDir>/skills/cua-driver-rs/` — old pack NAME under old home dir
+/// 1. `<HomeDir>/skills/cua-driver-rs/`       — old pack NAME under new home dir
+/// 2. `<LegacyHomeDir>/skills/cua-driver/`    — new pack NAME under old home dir
+/// 3. `<LegacyHomeDir>/skills/cua-driver-rs/` — old pack NAME under old home dir
+///
 /// Plus every `<agent_skills>/cua-driver-rs` symlink/junction.
 ///
 /// Then attempts to remove the empty `<LegacyHomeDir>/skills/` and
@@ -335,10 +361,15 @@ fn sweep_legacy_skill_pack() {
         let legacy_local = home.join("skills").join(LEGACY_SKILL_PACK_NAME);
         if legacy_local.exists() {
             if let Err(e) = fs::remove_dir_all(&legacy_local) {
-                eprintln!("  warning: could not remove legacy local pack at {}: {e}",
-                    legacy_local.display());
+                eprintln!(
+                    "  warning: could not remove legacy local pack at {}: {e}",
+                    legacy_local.display()
+                );
             } else {
-                println!("  cleaned up legacy local pack at {}", legacy_local.display());
+                println!(
+                    "  cleaned up legacy local pack at {}",
+                    legacy_local.display()
+                );
             }
         }
     }
@@ -350,8 +381,10 @@ fn sweep_legacy_skill_pack() {
             let dir = legacy_skills_dir.join(name);
             if dir.exists() {
                 if let Err(e) = fs::remove_dir_all(&dir) {
-                    eprintln!("  warning: could not remove legacy pack at {}: {e}",
-                        dir.display());
+                    eprintln!(
+                        "  warning: could not remove legacy pack at {}: {e}",
+                        dir.display()
+                    );
                 } else {
                     println!("  cleaned up legacy local pack at {}", dir.display());
                 }
@@ -371,7 +404,7 @@ fn sweep_legacy_skill_pack() {
             Err(_) => continue,
         };
         let legacy_link = parent.join(LEGACY_SKILL_PACK_NAME);
-        if !parent.exists() || !legacy_link.symlink_metadata().is_ok() {
+        if !parent.exists() || legacy_link.symlink_metadata().is_err() {
             continue;
         }
         if !is_symlink_or_junction(&legacy_link) {
@@ -379,10 +412,17 @@ fn sweep_legacy_skill_pack() {
             continue;
         }
         if let Err(e) = remove_link(&legacy_link) {
-            eprintln!("  warning: could not remove legacy {} link at {}: {e}",
-                agent.label, legacy_link.display());
+            eprintln!(
+                "  warning: could not remove legacy {} link at {}: {e}",
+                agent.label,
+                legacy_link.display()
+            );
         } else {
-            println!("  cleaned up legacy {} link at {}", agent.label, legacy_link.display());
+            println!(
+                "  cleaned up legacy {} link at {}",
+                agent.label,
+                legacy_link.display()
+            );
         }
     }
 }
@@ -406,9 +446,13 @@ fn link_agent(agent: Agent, local_skill_dir: &Path) -> Result<bool> {
     // the signature of case 3. We then check `is_symlink_or_junction`
     // before deleting, so we never touch a real user directory.
     let has_metadata = link.symlink_metadata().is_ok();
-    let resolves    = link.exists();
+    let resolves = link.exists();
     if has_metadata && resolves {
-        println!("  {} skill link already exists at {} (skipping)", agent.label, link.display());
+        println!(
+            "  {} skill link already exists at {} (skipping)",
+            agent.label,
+            link.display()
+        );
         return Ok(false);
     }
     if has_metadata && !resolves && is_symlink_or_junction(&link) {
@@ -416,14 +460,26 @@ fn link_agent(agent: Agent, local_skill_dir: &Path) -> Result<bool> {
         // sweep_legacy_skill_pack cleaned a pre-rename pack out from
         // under it). Remove + recreate pointing at the new target.
         if let Err(e) = remove_link(&link) {
-            eprintln!("  warning: could not remove stale {} link at {}: {e}",
-                agent.label, link.display());
+            eprintln!(
+                "  warning: could not remove stale {} link at {}: {e}",
+                agent.label,
+                link.display()
+            );
             return Ok(false);
         }
-        println!("  cleaned up stale {} link at {}", agent.label, link.display());
+        println!(
+            "  cleaned up stale {} link at {}",
+            agent.label,
+            link.display()
+        );
     }
-    make_dir_symlink(local_skill_dir, &link)
-        .with_context(|| format!("symlink {} -> {}", link.display(), local_skill_dir.display()))?;
+    make_dir_symlink(local_skill_dir, &link).with_context(|| {
+        format!(
+            "symlink {} -> {}",
+            link.display(),
+            local_skill_dir.display()
+        )
+    })?;
     println!("  ✅ linked {} skill at {}", agent.label, link.display());
     Ok(true)
 }
@@ -472,8 +528,7 @@ fn fetch_into(dest: &Path, from_main: bool, all_platforms: bool) -> Result<()> {
                 continue;
             }
             let url = format!("{base}/{f}");
-            let body = http_get_text(&url)
-                .with_context(|| format!("GET {url}"))?;
+            let body = http_get_text(&url).with_context(|| format!("GET {url}"))?;
             fs::write(dest.join(f), body)?;
         }
         return Ok(());
@@ -484,14 +539,14 @@ fn fetch_into(dest: &Path, from_main: bool, all_platforms: bool) -> Result<()> {
     let url = format!(
         "https://github.com/trycua/cua/releases/download/cua-driver-rs-v{version}/cua-driver-rs-v{version}-skills.tar.gz"
     );
-    let bytes = http_get_bytes(&url)
-        .with_context(|| format!("GET {url}"))?;
+    let bytes = http_get_bytes(&url).with_context(|| format!("GET {url}"))?;
     extract_tar_gz(&bytes, dest, all_platforms)?;
     Ok(())
 }
 
 fn http_get_text(url: &str) -> Result<String> {
-    let resp = ureq::get(url).call()
+    let resp = ureq::get(url)
+        .call()
         .map_err(|e| anyhow!("HTTP error fetching {url}: {e}"))?;
     if resp.status() != 200 {
         bail!("HTTP {} fetching {url}", resp.status());
@@ -500,7 +555,8 @@ fn http_get_text(url: &str) -> Result<String> {
 }
 
 fn http_get_bytes(url: &str) -> Result<Vec<u8>> {
-    let resp = ureq::get(url).call()
+    let resp = ureq::get(url)
+        .call()
         .map_err(|e| anyhow!("HTTP error fetching {url}: {e}"))?;
     if resp.status() != 200 {
         bail!("HTTP {} fetching {url}", resp.status());
@@ -584,7 +640,11 @@ fn uninstall(flags: &[String]) -> Result<()> {
                     println!("  ✅ removed {} link at {}", agent.label, link.display());
                     removed_any = true;
                 } else {
-                    println!("  {} link at {} is not a symlink/junction; leaving alone", agent.label, link.display());
+                    println!(
+                        "  {} link at {} is not a symlink/junction; leaving alone",
+                        agent.label,
+                        link.display()
+                    );
                 }
             }
         }
@@ -611,7 +671,10 @@ fn uninstall(flags: &[String]) -> Result<()> {
                 let local = legacy_skills_dir.join(name);
                 if local.exists() {
                     fs::remove_dir_all(&local)?;
-                    println!("  ✅ removed legacy local skill pack at {}", local.display());
+                    println!(
+                        "  ✅ removed legacy local skill pack at {}",
+                        local.display()
+                    );
                 }
             }
             let _ = fs::remove_dir(&legacy_skills_dir);
@@ -637,7 +700,9 @@ fn is_symlink_or_junction(p: &Path) -> bool {
 
 #[cfg(not(windows))]
 fn is_symlink_or_junction(p: &Path) -> bool {
-    p.symlink_metadata().map(|md| md.file_type().is_symlink()).unwrap_or(false)
+    p.symlink_metadata()
+        .map(|md| md.file_type().is_symlink())
+        .unwrap_or(false)
 }
 
 #[cfg(windows)]
@@ -672,7 +737,11 @@ fn status() -> Result<()> {
         let link = parent.join(SKILL_PACK_NAME);
         let parent_exists = parent.exists();
         if !parent_exists {
-            println!("  {} — agent dir not present ({})", agent.label, parent.display());
+            println!(
+                "  {} — agent dir not present ({})",
+                agent.label,
+                parent.display()
+            );
             continue;
         }
         if !link.exists() && link.symlink_metadata().is_err() {
@@ -680,11 +749,20 @@ fn status() -> Result<()> {
         } else if is_symlink_or_junction(&link) {
             let target = fs::read_link(&link).ok();
             match target {
-                Some(t) => println!("  {} — ✅ linked: {} → {}", agent.label, link.display(), t.display()),
-                None    => println!("  {} — ✅ linked: {}", agent.label, link.display()),
+                Some(t) => println!(
+                    "  {} — ✅ linked: {} → {}",
+                    agent.label,
+                    link.display(),
+                    t.display()
+                ),
+                None => println!("  {} — ✅ linked: {}", agent.label, link.display()),
             }
         } else {
-            println!("  {} — non-symlink path at {} (left alone)", agent.label, link.display());
+            println!(
+                "  {} — non-symlink path at {} (left alone)",
+                agent.label,
+                link.display()
+            );
         }
     }
     Ok(())
@@ -698,7 +776,8 @@ fn print_path() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::extract_tar_gz;
+    use super::{extract_tar_gz, SKILL_FILES};
+    use std::path::PathBuf;
     use tempfile::tempdir;
 
     /// Build a gzipped tarball with the entries given as
@@ -721,12 +800,54 @@ mod tests {
     }
 
     #[test]
+    fn from_main_manifest_matches_canonical_markdown_files() {
+        let skill_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../Skills/cua-driver");
+        let mut canonical = std::fs::read_dir(&skill_dir)
+            .unwrap_or_else(|error| panic!("failed to read {}: {error}", skill_dir.display()))
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().and_then(|extension| extension.to_str()) == Some("md"))
+            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        canonical.sort();
+
+        let mut manifest = SKILL_FILES
+            .iter()
+            .map(|file| (*file).to_owned())
+            .collect::<Vec<_>>();
+        manifest.sort();
+
+        assert_eq!(
+            manifest, canonical,
+            "SKILL_FILES must include every canonical Markdown file"
+        );
+    }
+
+    #[test]
+    fn macos_skill_keeps_ax_only_and_non_prompting_permission_guidance() {
+        let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let macos = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/MACOS.md"))
+            .expect("canonical macOS skill must be readable");
+
+        for required in [
+            "screen_recording_capturable` is `null",
+            "direct_capture_status` is `\"not_checked\"",
+            "include_screenshot:false",
+            "element-indexed AX actions",
+        ] {
+            assert!(
+                macos.contains(required),
+                "macOS skill lost required permission guidance: {required}"
+            );
+        }
+    }
+
+    #[test]
     fn extract_flat_tarball_v_0_2_20_plus() {
         // Post-fix shape: one wrapper dir, files directly under it.
         //   cua-driver-rs-v0.2.20-skills/SKILL.md
         //   cua-driver-rs-v0.2.20-skills/WINDOWS.md
         let bytes = build_tarball(&[
-            ("cua-driver-rs-v0.2.20-skills/SKILL.md",   b"flat-skill"),
+            ("cua-driver-rs-v0.2.20-skills/SKILL.md", b"flat-skill"),
             ("cua-driver-rs-v0.2.20-skills/WINDOWS.md", b"flat-win"),
         ]);
         let dest = tempdir().unwrap();
@@ -748,8 +869,14 @@ mod tests {
         // Both wrappers must be stripped or the user ends up with a
         // nested cua-driver-rs/ dir (the bug this fixes).
         let bytes = build_tarball(&[
-            ("cua-driver-rs-v0.2.18-skills/cua-driver-rs/SKILL.md",   b"legacy-skill"),
-            ("cua-driver-rs-v0.2.18-skills/cua-driver-rs/WINDOWS.md", b"legacy-win"),
+            (
+                "cua-driver-rs-v0.2.18-skills/cua-driver-rs/SKILL.md",
+                b"legacy-skill",
+            ),
+            (
+                "cua-driver-rs-v0.2.18-skills/cua-driver-rs/WINDOWS.md",
+                b"legacy-win",
+            ),
         ]);
         let dest = tempdir().unwrap();
         extract_tar_gz(&bytes, dest.path(), true).unwrap();
@@ -758,16 +885,19 @@ mod tests {
         assert_eq!(s, "legacy-skill");
         let w = std::fs::read_to_string(dest.path().join("WINDOWS.md")).unwrap();
         assert_eq!(w, "legacy-win");
-        assert!(!dest.path().join("cua-driver-rs").exists(),
-            "nested cua-driver-rs/ dir should have been stripped");
+        assert!(
+            !dest.path().join("cua-driver-rs").exists(),
+            "nested cua-driver-rs/ dir should have been stripped"
+        );
     }
 
     #[test]
     fn extract_double_wrap_new_name_also_strips() {
         // Interim shape (v0.2.19, briefly): inner dir is `cua-driver/`.
-        let bytes = build_tarball(&[
-            ("cua-driver-rs-v0.2.19-skills/cua-driver/SKILL.md", b"interim-skill"),
-        ]);
+        let bytes = build_tarball(&[(
+            "cua-driver-rs-v0.2.19-skills/cua-driver/SKILL.md",
+            b"interim-skill",
+        )]);
         let dest = tempdir().unwrap();
         extract_tar_gz(&bytes, dest.path(), true).unwrap();
         let s = std::fs::read_to_string(dest.path().join("SKILL.md")).unwrap();
@@ -780,9 +910,7 @@ mod tests {
         // If a future skill pack adds a real subdir (e.g. `examples/`),
         // it must NOT be stripped — only the unambiguous pack-name
         // wrappers are.
-        let bytes = build_tarball(&[
-            ("cua-driver-rs-v0.2.20-skills/examples/click.md", b"sample"),
-        ]);
+        let bytes = build_tarball(&[("cua-driver-rs-v0.2.20-skills/examples/click.md", b"sample")]);
         let dest = tempdir().unwrap();
         extract_tar_gz(&bytes, dest.path(), true).unwrap();
         let s = std::fs::read_to_string(dest.path().join("examples/click.md")).unwrap();
@@ -796,21 +924,29 @@ mod tests {
         // platform docs get skipped during extraction. README + SKILL +
         // platform-agnostic docs are always kept.
         let bytes = build_tarball(&[
-            ("cua-driver-rs-v0.2.20-skills/README.md",   b"r"),
-            ("cua-driver-rs-v0.2.20-skills/SKILL.md",    b"s"),
-            ("cua-driver-rs-v0.2.20-skills/WINDOWS.md",  b"w"),
-            ("cua-driver-rs-v0.2.20-skills/MACOS.md",    b"m"),
-            ("cua-driver-rs-v0.2.20-skills/LINUX.md",    b"l"),
-            ("cua-driver-rs-v0.2.20-skills/RECORDING.md",b"R"),
-            ("cua-driver-rs-v0.2.20-skills/WEB_APPS.md", b"W"),
-            ("cua-driver-rs-v0.2.20-skills/TESTS.md",    b"T"),
+            ("cua-driver-rs-v0.2.20-skills/README.md", b"r"),
+            ("cua-driver-rs-v0.2.20-skills/SKILL.md", b"s"),
+            ("cua-driver-rs-v0.2.20-skills/WINDOWS.md", b"w"),
+            ("cua-driver-rs-v0.2.20-skills/MACOS.md", b"m"),
+            ("cua-driver-rs-v0.2.20-skills/LINUX.md", b"l"),
+            ("cua-driver-rs-v0.2.20-skills/RECORDING.md", b"R"),
+            ("cua-driver-rs-v0.2.20-skills/BROWSER.md", b"B"),
+            ("cua-driver-rs-v0.2.20-skills/EMBEDDING.md", b"E"),
         ]);
         let dest = tempdir().unwrap();
         extract_tar_gz(&bytes, dest.path(), /*all_platforms=*/ false).unwrap();
         // README + SKILL + cross-platform docs ALWAYS present.
-        for f in ["README.md", "SKILL.md", "RECORDING.md", "WEB_APPS.md", "TESTS.md"] {
-            assert!(dest.path().join(f).exists(),
-                "{f} should be present after per-host extraction");
+        for f in [
+            "README.md",
+            "SKILL.md",
+            "RECORDING.md",
+            "BROWSER.md",
+            "EMBEDDING.md",
+        ] {
+            assert!(
+                dest.path().join(f).exists(),
+                "{f} should be present after per-host extraction"
+            );
         }
         // Exactly one platform doc should land — whichever matches this
         // test's compile target. The other two must be absent.
@@ -836,14 +972,16 @@ mod tests {
     fn extract_all_platforms_flag_keeps_every_platform_doc() {
         let bytes = build_tarball(&[
             ("cua-driver-rs-v0.2.20-skills/WINDOWS.md", b"w"),
-            ("cua-driver-rs-v0.2.20-skills/MACOS.md",   b"m"),
-            ("cua-driver-rs-v0.2.20-skills/LINUX.md",   b"l"),
+            ("cua-driver-rs-v0.2.20-skills/MACOS.md", b"m"),
+            ("cua-driver-rs-v0.2.20-skills/LINUX.md", b"l"),
         ]);
         let dest = tempdir().unwrap();
         extract_tar_gz(&bytes, dest.path(), /*all_platforms=*/ true).unwrap();
         for f in ["WINDOWS.md", "MACOS.md", "LINUX.md"] {
-            assert!(dest.path().join(f).exists(),
-                "--all-platforms should keep {f}");
+            assert!(
+                dest.path().join(f).exists(),
+                "--all-platforms should keep {f}"
+            );
         }
     }
 }

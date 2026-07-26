@@ -1,11 +1,13 @@
 use async_trait::async_trait;
-use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{
+    protocol::ToolResult,
+    tool::{Tool, ToolDef},
+};
 use serde_json::Value;
 use std::sync::Arc;
 
 use crate::ax::bindings::{
-    copy_action_names, element_screen_center, perform_action, kAXErrorSuccess,
-    AXUIElementRef,
+    copy_action_names, element_screen_center, kAXErrorSuccess, perform_action, AXUIElementRef,
 };
 
 use super::ToolState;
@@ -15,7 +17,9 @@ pub struct DoubleClickTool {
 }
 
 impl DoubleClickTool {
-    pub fn new(state: Arc<ToolState>) -> Self { Self { state } }
+    pub fn new(state: Arc<ToolState>) -> Self {
+        Self { state }
+    }
 }
 
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -54,11 +58,16 @@ fn def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for DoubleClickTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
+        let pid = match args.require_i32("pid") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
         // delivery_mode: foreground briefly fronts the window before the pixel
         // double-click (the explicit last resort for surfaces that drop
         // background CGEvents), via the same skylight assist click uses.
@@ -67,7 +76,7 @@ impl Tool for DoubleClickTool {
         // Surface 6: token / index precedence — see click.rs for the
         // canonical comment.
         let element_token_arg = args.opt_str("element_token");
-        let window_id_arg     = args.opt_u64("window_id").map(|v| v as u32);
+        let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
         let resolved = match cua_driver_core::element_token::resolve_element_args(
             pid,
@@ -82,7 +91,9 @@ impl Tool for DoubleClickTool {
         let (element_index, window_id) = match resolved {
             cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg),
             cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: wid, element_index: idx, via_token: _,
+                window_id: wid,
+                element_index: idx,
+                via_token: _,
             } => (Some(idx), wid),
         };
 
@@ -92,9 +103,11 @@ impl Tool for DoubleClickTool {
             // free the element mid-action (use-after-free → daemon crash).
             let element_guard = match self.state.element_cache.get_element_retained(pid, wid, idx) {
                 Some(e) => e,
-                None    => return ToolResult::error(format!(
-                    "Element index {idx} not found. Call get_window_state first."
-                )),
+                None => {
+                    return ToolResult::error(format!(
+                        "Element index {idx} not found. Call get_window_state first."
+                    ))
+                }
             };
             let element_ptr = element_guard.as_ptr();
 
@@ -103,21 +116,24 @@ impl Tool for DoubleClickTool {
             let ck = cursor_key.clone();
             let result = tokio::task::spawn_blocking(move || {
                 ax_double_click(pid, wid, element_ptr, idx, &ck)
-            }).await;
+            })
+            .await;
 
             return match result {
-                Ok(Ok(msg))  => ToolResult::text(msg),
-                Ok(Err(e))   => ToolResult::error(format!("double_click failed: {e}")),
-                Err(e)       => ToolResult::error(format!("Task error: {e}")),
+                Ok(Ok(msg)) => ToolResult::text(msg),
+                Ok(Err(e)) => ToolResult::error(format!("double_click failed: {e}")),
+                Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
 
         // ── Pixel path ───────────────────────────────────────────────────────
         let mut cx = match args.get("x").and_then(|v| v.as_f64()) {
             Some(v) => v,
-            None => return ToolResult::error(
-                "Either element_index + window_id or x + y must be provided."
-            ),
+            None => {
+                return ToolResult::error(
+                    "Either element_index + window_id or x + y must be provided.",
+                )
+            }
         };
         let mut cy = match args.get("y").and_then(|v| v.as_f64()) {
             Some(v) => v,
@@ -138,14 +154,27 @@ impl Tool for DoubleClickTool {
                 let scale: f64 = if let Some(ref b) = bounds {
                     if let Ok(png) = crate::capture::screenshot_window_bytes(wid) {
                         if png.len() >= 24 {
-                            let pw = u32::from_be_bytes([png[16], png[17], png[18], png[19]]) as f64;
+                            let pw =
+                                u32::from_be_bytes([png[16], png[17], png[18], png[19]]) as f64;
                             let lw = b.width;
-                            if lw > 0.0 && pw > lw { pw / lw } else { 1.0 }
-                        } else { 1.0 }
-                    } else { 1.0 }
-                } else { 1.0 };
+                            if lw > 0.0 && pw > lw {
+                                pw / lw
+                            } else {
+                                1.0
+                            }
+                        } else {
+                            1.0
+                        }
+                    } else {
+                        1.0
+                    }
+                } else {
+                    1.0
+                };
                 (bounds, scale)
-            }).await.unwrap_or((None, 1.0));
+            })
+            .await
+            .unwrap_or((None, 1.0));
             if let (Some(b), scale) = result {
                 let wx = cx / scale;
                 let wy = cy / scale;
@@ -168,7 +197,10 @@ impl Tool for DoubleClickTool {
         crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y).await;
         crate::cursor::overlay::send_command(
             cursor_key.clone(),
-            cursor_overlay::OverlayCommand::ClickPulse { x: screen_x, y: screen_y },
+            cursor_overlay::OverlayCommand::ClickPulse {
+                x: screen_x,
+                y: screen_y,
+            },
         );
 
         let fg = delivery_mode.is_foreground() && window_id.is_some();
@@ -176,7 +208,14 @@ impl Tool for DoubleClickTool {
             let do_click = move || -> anyhow::Result<()> {
                 if let Some(wid) = window_id {
                     crate::input::mouse::click_at_xy_with_window_local(
-                        pid, screen_x, screen_y, win_local_x, win_local_y, wid, 2, &[],
+                        pid,
+                        screen_x,
+                        screen_y,
+                        win_local_x,
+                        win_local_y,
+                        wid,
+                        2,
+                        &[],
                     )
                 } else {
                     crate::input::mouse::click_at_xy(pid, screen_x, screen_y, 2, &[])
@@ -185,14 +224,23 @@ impl Tool for DoubleClickTool {
             // Foreground rung: brief front → double-click → restore prior frontmost.
             match (fg, window_id) {
                 (true, Some(wid)) => {
-                    crate::input::skylight::with_foreground_assist(pid as libc::pid_t, wid, do_click)?;
+                    crate::input::skylight::with_foreground_assist(
+                        pid as libc::pid_t,
+                        wid,
+                        do_click,
+                    )?;
                     Ok(())
                 }
                 _ => do_click(),
             }
-        }).await;
+        })
+        .await;
 
-        let mode_label = if fg { " (delivery_mode:foreground)" } else { "" };
+        let mode_label = if fg {
+            " (delivery_mode:foreground)"
+        } else {
+            ""
+        };
         match result {
             Ok(Ok(())) => ToolResult::text(format!("✅ Double-clicked at ({screen_x:.1}, {screen_y:.1}){mode_label}."))
                 .with_structured(serde_json::json!({
@@ -206,7 +254,13 @@ impl Tool for DoubleClickTool {
 
 // ── Blocking AX path ─────────────────────────────────────────────────────────
 
-fn ax_double_click(pid: i32, wid: u32, element_ptr: usize, idx: usize, cursor_key: &str) -> anyhow::Result<String> {
+fn ax_double_click(
+    pid: i32,
+    wid: u32,
+    element_ptr: usize,
+    idx: usize,
+    cursor_key: &str,
+) -> anyhow::Result<String> {
     let element = element_ptr as AXUIElementRef;
 
     // Try AXOpen first (Finder items, openable list rows, document cells).
@@ -216,7 +270,9 @@ fn ax_double_click(pid: i32, wid: u32, element_ptr: usize, idx: usize, cursor_ke
         if err == kAXErrorSuccess {
             return Ok(format!("AXOpen performed on element [{idx}]."));
         }
-        tracing::debug!("AXOpen returned {err} for element [{idx}], falling back to pixel double-click");
+        tracing::debug!(
+            "AXOpen returned {err} for element [{idx}], falling back to pixel double-click"
+        );
     }
 
     // Resolve screen center and fall back to pixel double-click.
@@ -239,10 +295,14 @@ fn ax_double_click(pid: i32, wid: u32, element_ptr: usize, idx: usize, cursor_ke
     // the wrong location while still routing to `wid`.
     let (wx, wy) = crate::windows::window_bounds_by_id(wid)
         .map(|b| (cx - b.x, cy - b.y))
-        .ok_or_else(|| anyhow::anyhow!(
-            "Cannot resolve window bounds for window_id {wid}; refusing to stamp \
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Cannot resolve window bounds for window_id {wid}; refusing to stamp \
              screen coordinates as window-local for element [{idx}]."
-        ))?;
+            )
+        })?;
     crate::input::mouse::click_at_xy_with_window_local(pid, cx, cy, wx, wy, wid, 2, &[])?;
-    Ok(format!("✅ Double-clicked element [{idx}] at ({cx:.1}, {cy:.1})."))
+    Ok(format!(
+        "✅ Double-clicked element [{idx}] at ({cx:.1}, {cy:.1})."
+    ))
 }

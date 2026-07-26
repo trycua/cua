@@ -44,6 +44,7 @@ class VM {
     // MARK: - Properties
 
     var vmDirContext: VMDirContext
+    var telemetryTransport: TelemetryTransport?
 
     @MainActor
     private var virtualizationService: VMVirtualizationService?
@@ -144,8 +145,16 @@ class VM {
     func run(
         noDisplay: Bool, sharedDirectories: [SharedDirectory], mount: Path?, vncPort: Int = 0,
         vncPassword: String? = nil, recoveryMode: Bool = false, usbMassStoragePaths: [Path]? = nil,
+        additionalDiskPaths: [Path]? = nil,
         networkMode: NetworkMode? = nil, clipboard: Bool = false
     ) async throws {
+        guard let resizeGuard = try vmDirContext.dir.tryAcquireResizeGuard(exclusive: false) else {
+            throw DiskResizeError.resizeInProgress(vmDirContext.name)
+        }
+        defer {
+            flock(resizeGuard.fileDescriptor, LOCK_UN)
+            try? resizeGuard.close()
+        }
         Logger.info(
             "VM.run method called",
             metadata: [
@@ -164,6 +173,15 @@ class VM {
         else {
             Logger.error("VM missing cpuCount or memorySize", metadata: ["name": vmDirContext.name])
             throw VMError.notInitialized(vmDirContext.name)
+        }
+
+        // Refuse to boot while a disk-resize transaction is armed. The marker is
+        // authoritative because run()'s emergency lock cleanup can defeat flock.
+        if vmDirContext.dir.hasResizeMarker() {
+            Logger.error(
+                "Refusing to run VM: a disk resize is in progress",
+                metadata: ["name": vmDirContext.name])
+            throw DiskResizeError.resizeInProgress(vmDirContext.name)
         }
 
         // Try to acquire lock on config file
@@ -248,6 +266,7 @@ class VM {
                 mount: mount,
                 recoveryMode: recoveryMode,
                 usbMassStoragePaths: usbMassStoragePaths,
+                additionalDiskPaths: additionalDiskPaths,
                 networkMode: networkMode
             )
             Logger.info(
@@ -298,6 +317,12 @@ class VM {
                 "Starting VM via virtualization service", metadata: ["name": vmDirContext.name])
             try await service.start()
             Logger.info("VM started successfully", metadata: ["name": vmDirContext.name])
+            if let telemetryTransport {
+                TelemetryClient.shared.recordVMStarted(
+                    transport: telemetryTransport,
+                    guestOS: vmDirContext.config.os
+                )
+            }
 
             // Open the VNC client only after VM start to avoid connecting to an empty framebuffer.
             if !noDisplay {
@@ -635,16 +660,6 @@ class VM {
         return DiskSize(allocated: UInt64(allocated), total: UInt64(total))
     }
 
-    func resizeDisk(_ newSize: UInt64) throws {
-        let currentSize = try getDiskSize()
-
-        guard newSize >= currentSize.total else {
-            throw VMError.resizeTooSmall(current: currentSize.total, requested: newSize)
-        }
-
-        try setDiskSize(newSize)
-    }
-
     func setCpuCount(_ newCpuCount: Int) throws {
         guard !isRunning else {
             throw VMError.alreadyRunning(vmDirContext.name)
@@ -661,10 +676,39 @@ class VM {
         try vmDirContext.saveConfig()
     }
 
+    /// Grow-only truncate of the raw image plus a config update. Used for
+    /// initial provisioning and for the Linux plain-grow path. macOS user
+    /// resizes go through `resizeDiskSafely` instead.
     func setDiskSize(_ newDiskSize: UInt64) throws {
-        try vmDirContext.setDisk(newDiskSize)
+        guard !isRunning else {
+            throw VMError.alreadyRunning(vmDirContext.name)
+        }
+        try vmDirContext.setDisk(newDiskSize)  // throws on shrink / IO failure
         vmDirContext.config.setDiskSize(newDiskSize)
         try vmDirContext.saveConfig()
+    }
+
+    /// User-initiated disk resize entry point. For macOS guests this runs the
+    /// recovery-preserving offline transaction (relocate recovery, rewrite GPT,
+    /// grow the APFS container). For other guests it grows the image only;
+    /// in-guest `growpart`/`resize2fs` is still required.
+    func resizeDiskSafely(to newSize: UInt64, options: DiskResizeOptions) throws {
+        guard !isRunning else {
+            throw DiskResizeError.vmRunning(vmDirContext.name)
+        }
+        if vmDirContext.config.os.lowercased() == "macos" {
+            let resizer = MacDiskResizer(
+                vmDir: vmDirContext.dir,
+                diskPath: vmDirContext.diskPath.url,
+                vmName: vmDirContext.name)
+            try resizer.resize(to: newSize, options: options)
+            if !options.dryRun {
+                vmDirContext.config.setDiskSize(newSize)  // keep in-memory config fresh
+            }
+        } else {
+            if options.dryRun { return }
+            try setDiskSize(newSize)
+        }
     }
 
     func setDisplay(_ newDisplay: String) throws {
@@ -870,6 +914,7 @@ class VM {
         mount: Path? = nil,
         recoveryMode: Bool = false,
         usbMassStoragePaths: [Path]? = nil,
+        additionalDiskPaths: [Path]? = nil,
         networkMode: NetworkMode? = nil
     ) throws -> VMVirtualizationServiceContext {
         // This is a diagnostic log to track actual file paths on disk for debugging
@@ -891,6 +936,7 @@ class VM {
             nvramPath: vmDirContext.nvramPath,
             recoveryMode: recoveryMode,
             usbMassStoragePaths: usbMassStoragePaths,
+            additionalDiskPaths: additionalDiskPaths,
             networkMode: effectiveNetworkMode
         )
     }

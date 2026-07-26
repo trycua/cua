@@ -23,23 +23,23 @@
 ///
 /// Add new terminals here. Keep alphabetical so diffs stay sane.
 pub const TERMINAL_BUNDLE_IDS: &[&str] = &[
-    "co.zeit.hyper",            // Hyper
-    "com.apple.Terminal",       // Apple Terminal.app
-    "com.github.wez.wezterm",   // WezTerm
-    "com.googlecode.iterm2",    // iTerm2
-    "com.mitchellh.ghostty",    // Ghostty
-    "dev.warp.Warp-Stable",     // Warp
-    "dev.zed.Zed.Helper",       // Zed's embedded terminal helper
-    "io.alacritty",             // Alacritty (newer bundle id)
-    "net.kovidgoyal.kitty",     // kitty
-    "org.alacritty",            // Alacritty (older bundle id)
+    "co.zeit.hyper",          // Hyper
+    "com.apple.Terminal",     // Apple Terminal.app
+    "com.github.wez.wezterm", // WezTerm
+    "com.googlecode.iterm2",  // iTerm2
+    "com.mitchellh.ghostty",  // Ghostty
+    "dev.warp.Warp-Stable",   // Warp
+    "dev.zed.Zed.Helper",     // Zed's embedded terminal helper
+    "io.alacritty",           // Alacritty (newer bundle id)
+    "net.kovidgoyal.kitty",   // kitty
+    "org.alacritty",          // Alacritty (older bundle id)
 ];
 
 /// Returns `true` when `bundle_id` matches a known terminal emulator
 /// from [`TERMINAL_BUNDLE_IDS`]. Case-sensitive, exact match — bundle
 /// ids are reverse-DNS and case-significant per Apple's convention.
 pub fn is_terminal_bundle_id(bundle_id: &str) -> bool {
-    TERMINAL_BUNDLE_IDS.iter().any(|b| *b == bundle_id)
+    TERMINAL_BUNDLE_IDS.contains(&bundle_id)
 }
 
 /// Returns `true` when `pid` belongs to a known terminal emulator.

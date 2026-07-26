@@ -5,31 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@ai-sdk/google-vertex': 4.0.148
-  '@hono/node-server': 1.19.13
-  '@modelcontextprotocol/sdk': 1.26.0
-  ajv: 8.18.0
-  diff: 5.2.2
-  dompurify: 3.4.11
-  fast-uri: 3.1.2
-  fast-xml-builder: 1.1.7
-  fast-xml-parser: 5.7.0
-  form-data: 4.0.6
-  hono: 4.12.25
-  js-yaml: 4.2.0
-  js-yaml@>=4.0.0 <4.1.1: '>=4.1.1'
-  langsmith: 0.7.10
-  lodash-es: 4.18.0
-  mdast-util-to-hast: 13.2.1
-  path-to-regexp: 8.4.0
-  picomatch: 4.0.4
   postcss: 8.5.10
-  preact: 10.27.3
-  prismjs: 1.30.0
-  qs: 6.15.2
-  tar: 7.5.16
-  ts-deepmerge: 8.0.0
-  uuid: 11.1.1
 
 importers:
 
@@ -1405,7 +1381,7 @@ packages:
     resolution: {integrity: sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==}
     engines: {node: '>=12.0.0'}
     peerDependencies:
-      picomatch: 4.0.4
+      picomatch: ^3 || ^4
     peerDependenciesMeta:
       picomatch:
         optional: true
@@ -1904,6 +1880,10 @@ packages:
 
   picocolors@1.1.1:
     resolution: {integrity: sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==}
+
+  picomatch@2.3.2:
+    resolution: {integrity: sha512-V7+vQEJ06Z+c5tSye8S+nHUfI51xoXIXjHQ99cQtKUkQqqO1kO/KCJUfZXuB47h/YBlDhah2H3hdUGXn8ie0oA==}
+    engines: {node: '>=8.6'}
 
   picomatch@4.0.4:
     resolution: {integrity: sha512-QP88BAKvMam/3NxH6vj2o21R6MjxZUAd6nlwAS/pnGvN9IVLocLHxGYIzFhg6fUQ+5th6P4dv4eW9jX3DSIj7A==}
@@ -4020,7 +4000,7 @@ snapshots:
   micromatch@4.0.8:
     dependencies:
       braces: 3.0.3
-      picomatch: 4.0.4
+      picomatch: 2.3.2
 
   minipass@7.1.2: {}
 
@@ -4102,6 +4082,8 @@ snapshots:
   path-to-regexp@8.4.0: {}
 
   picocolors@1.1.1: {}
+
+  picomatch@2.3.2: {}
 
   picomatch@4.0.4: {}
 

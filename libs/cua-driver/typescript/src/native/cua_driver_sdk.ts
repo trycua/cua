@@ -4,11 +4,11 @@
 /* eslint-disable */
 // @ts-nocheck
 import nativeModule from "./cua_driver_sdk-ffi.js";
-import { type UniffiRustFutureContinuationCallback, type UniffiForeignFutureDroppedCallback, type UniffiForeignFutureDroppedCallbackStruct,
+import { type UniffiRustFutureContinuationCallback, type UniffiForeignFutureDroppedCallback, type UniffiForeignFutureDroppedCallbackStruct, type UniffiForeignFutureResultRustBuffer, type UniffiForeignFutureCompleterustBuffer, type UniffiForeignFutureResultVoid, type UniffiForeignFutureCompletevoid, type UniffiVTableCallbackInterfaceCuaDriverSdkProtectedConsentHost,
 } from "./cua_driver_sdk-ffi.js";
 import { type ClickInput, type DragInput, type EndSessionInput, type EndSessionOutput, type EscalateSessionInput, type GetCursorPositionInput, type GetDesktopStateInput, type GetScreenSizeInput, type GetSessionStateInput, type HotkeyInput, type MoveCursorInput, type PressKeyInput, type ScrollInput, type SessionStateOutput, type StartSessionInput, type StartSessionOutput, type TypeTextInput,
 } from "./cua_driver_contract.js";
-import { type FfiConverter, type UniffiByteArray, type UniffiGcObject, type UniffiHandle, type UniffiObjectFactory, AbstractFfiConverterByteArray, FfiConverterArray, FfiConverterBool, FfiConverterInt32, FfiConverterObject, FfiConverterOptional, FfiConverterUInt32, FfiConverterUInt64, FfiConverterUInt8, RustBuffer, UniffiAbstractObject, UniffiEnum, UniffiError, UniffiInternalError, UniffiRustCaller, destructorGuardSymbol, pointerLiteralSymbol, uniffiCreateFfiConverterString, uniffiCreateRecord, uniffiRustCallAsync, uniffiTypeNameSymbol, variantOrdinalSymbol,
+import { type FfiConverter, type UniffiByteArray, type UniffiGcObject, type UniffiHandle, type UniffiObjectFactory, type UniffiReferenceHolder, type UniffiRustCallStatus, AbstractFfiConverterByteArray, FfiConverterArray, FfiConverterBool, FfiConverterInt32, FfiConverterObject, FfiConverterObjectWithCallbacks, FfiConverterOptional, FfiConverterUInt32, FfiConverterUInt64, FfiConverterUInt8, RustBuffer, UniffiAbstractObject, UniffiEnum, UniffiError, UniffiInternalError, UniffiResult, UniffiRustCaller, destructorGuardSymbol, pointerLiteralSymbol, uniffiCreateFfiConverterString, uniffiCreateRecord, uniffiRustCallAsync, uniffiTraitInterfaceCallAsyncWithError, uniffiTypeNameSymbol, variantOrdinalSymbol,
 } from "@ubjs/core";
 import uniffiCuaDriverContractModule from "./cua_driver_contract.js";
 const { FfiConverterTypeClickInput, FfiConverterTypeDragInput, FfiConverterTypeEndSessionInput, FfiConverterTypeEndSessionOutput, FfiConverterTypeEscalateSessionInput, FfiConverterTypeGetCursorPositionInput, FfiConverterTypeGetDesktopStateInput, FfiConverterTypeGetScreenSizeInput, FfiConverterTypeGetSessionStateInput, FfiConverterTypeHotkeyInput, FfiConverterTypeMoveCursorInput, FfiConverterTypePressKeyInput, FfiConverterTypeScrollInput, FfiConverterTypeSessionStateOutput, FfiConverterTypeStartSessionInput, FfiConverterTypeStartSessionOutput, FfiConverterTypeTypeTextInput } = uniffiCuaDriverContractModule.converters;
@@ -838,6 +838,182 @@ const FfiConverterTypePrivateWorkerOptions = (() => {
              FfiConverterTypeConfiguredDriverOptions.allocationSize(value.configuredDriver) +
              FfiConverterSequenceTypeEmbeddedEnvironmentVariable.allocationSize(value.environment) +
              FfiConverterBool.allocationSize(value.inheritStderr);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export enum ProtectedConsentAction {
+    Accept,
+    Decline,
+    Cancel
+}
+
+const FfiConverterTypeProtectedConsentAction = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = ProtectedConsentAction;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return ProtectedConsentAction.Accept;
+                case 2: return ProtectedConsentAction.Decline;
+                case 3: return ProtectedConsentAction.Cancel;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case ProtectedConsentAction.Accept: return ordinalConverter.write(1, into);
+                case ProtectedConsentAction.Decline: return ordinalConverter.write(2, into);
+                case ProtectedConsentAction.Cancel: return ordinalConverter.write(3, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export type ProtectedConsentDecision = {
+    action: ProtectedConsentAction,
+    requestDigest: string
+}
+
+/**
+ * Generated factory for {@link ProtectedConsentDecision} record objects.
+ */
+export const ProtectedConsentDecision = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ProtectedConsentDecision, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ProtectedConsentDecision>,
+    });
+})();
+
+const FfiConverterTypeProtectedConsentDecision = (() => {
+    type TypeName = ProtectedConsentDecision;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                action: FfiConverterTypeProtectedConsentAction.read(from),
+                requestDigest: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeProtectedConsentAction.write(value.action, into);
+            FfiConverterString.write(value.requestDigest, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeProtectedConsentAction.allocationSize(value.action) +
+             FfiConverterString.allocationSize(value.requestDigest);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * Content-bounded request delivered only to trusted host code.
+ *
+ * `resource_json` contains the canonical typed resource identity needed to
+ * render the decision. Hosts must not log it or forward it to a model.
+ */
+export type ProtectedConsentRequest = {
+    schema: string,
+    nonce: string,
+    generation: bigint,
+    daemonInstance: string,
+    permissionMode: string,
+    managedPolicySha256?: string,
+    userPolicySha256?: string,
+    operation: string,
+    riskClass: string,
+    publicSession: string,
+    transportSession: string,
+    resourceJson: string,
+    humanSummary: string,
+    expiresUnixMs: bigint,
+    requestDigest: string
+}
+
+/**
+ * Generated factory for {@link ProtectedConsentRequest} record objects.
+ */
+export const ProtectedConsentRequest = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ProtectedConsentRequest, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ProtectedConsentRequest>,
+    });
+})();
+
+const FfiConverterTypeProtectedConsentRequest = (() => {
+    type TypeName = ProtectedConsentRequest;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                schema: FfiConverterString.read(from),
+                nonce: FfiConverterString.read(from),
+                generation: FfiConverterUInt64.read(from),
+                daemonInstance: FfiConverterString.read(from),
+                permissionMode: FfiConverterString.read(from),
+                managedPolicySha256: FfiConverterOptionalString.read(from),
+                userPolicySha256: FfiConverterOptionalString.read(from),
+                operation: FfiConverterString.read(from),
+                riskClass: FfiConverterString.read(from),
+                publicSession: FfiConverterString.read(from),
+                transportSession: FfiConverterString.read(from),
+                resourceJson: FfiConverterString.read(from),
+                humanSummary: FfiConverterString.read(from),
+                expiresUnixMs: FfiConverterUInt64.read(from),
+                requestDigest: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.schema, into);
+            FfiConverterString.write(value.nonce, into);
+            FfiConverterUInt64.write(value.generation, into);
+            FfiConverterString.write(value.daemonInstance, into);
+            FfiConverterString.write(value.permissionMode, into);
+            FfiConverterOptionalString.write(value.managedPolicySha256, into);
+            FfiConverterOptionalString.write(value.userPolicySha256, into);
+            FfiConverterString.write(value.operation, into);
+            FfiConverterString.write(value.riskClass, into);
+            FfiConverterString.write(value.publicSession, into);
+            FfiConverterString.write(value.transportSession, into);
+            FfiConverterString.write(value.resourceJson, into);
+            FfiConverterString.write(value.humanSummary, into);
+            FfiConverterUInt64.write(value.expiresUnixMs, into);
+            FfiConverterString.write(value.requestDigest, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.schema) +
+             FfiConverterString.allocationSize(value.nonce) +
+             FfiConverterUInt64.allocationSize(value.generation) +
+             FfiConverterString.allocationSize(value.daemonInstance) +
+             FfiConverterString.allocationSize(value.permissionMode) +
+             FfiConverterOptionalString.allocationSize(value.managedPolicySha256) +
+             FfiConverterOptionalString.allocationSize(value.userPolicySha256) +
+             FfiConverterString.allocationSize(value.operation) +
+             FfiConverterString.allocationSize(value.riskClass) +
+             FfiConverterString.allocationSize(value.publicSession) +
+             FfiConverterString.allocationSize(value.transportSession) +
+             FfiConverterString.allocationSize(value.resourceJson) +
+             FfiConverterString.allocationSize(value.humanSummary) +
+             FfiConverterUInt64.allocationSize(value.expiresUnixMs) +
+             FfiConverterString.allocationSize(value.requestDigest);
 
         }
     };
@@ -2103,6 +2279,105 @@ const FfiConverterTypeEmbeddedDriverHostState = (() => {
     return new FFIConverter();
 })();
 
+
+// Error type: ProtectedConsentHostError
+export enum ProtectedConsentHostError_Tags {
+    Failed = "Failed"
+}
+export const ProtectedConsentHostError = (() => {
+
+    type Failed__interface = {
+        tag: ProtectedConsentHostError_Tags.Failed;
+        inner:
+Readonly<{reason: string}>
+    };
+    class Failed_ extends UniffiError implements Failed__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "ProtectedConsentHostError";
+        readonly tag = ProtectedConsentHostError_Tags.Failed;
+        readonly inner:
+Readonly<{reason: string}>;
+        constructor(
+inner: {reason: string }) {
+            super("ProtectedConsentHostError", "Failed");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {reason: string }): Failed_ {
+            return new Failed_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Failed_ {
+            return obj.tag === ProtectedConsentHostError_Tags.Failed;
+        }
+        static hasInner(obj: any): obj is Failed_ {
+            return Failed_.instanceOf(obj);
+        }
+
+        static getInner(obj: Failed_):
+Readonly<{reason: string}> {
+            return obj.inner;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is ProtectedConsentHostError {
+        return obj[uniffiTypeNameSymbol] === "ProtectedConsentHostError";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  Failed: Failed_
+    });
+
+})();
+export type ProtectedConsentHostError = InstanceType<
+    typeof ProtectedConsentHostError['Failed']
+>;
+
+// FfiConverter for enum ProtectedConsentHostError
+const FfiConverterTypeProtectedConsentHostError = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = ProtectedConsentHostError;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return new ProtectedConsentHostError.Failed({reason: FfiConverterString.read(from) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value.tag) {
+                case ProtectedConsentHostError_Tags.Failed: {
+                    ordinalConverter.write(1, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.reason, into);
+                    return;
+                }
+                default:
+                    // Throwing from here means that ProtectedConsentHostError_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case ProtectedConsentHostError_Tags.Failed: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(1);
+                    size += FfiConverterString.allocationSize(inner.reason);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+    }
+    return new FFIConverter();
+})();
+
 /**
  * Runtime that imported the shared UniFFI SDK library. The language package
  * selects this automatically at its root entry point; callers do not need to
@@ -2272,6 +2547,44 @@ private constructor(pointer: UniffiHandle) {
             /*caller:*/ (callStatus) => {
                 return nativeModule().uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with_client_kind(
         FfiConverterTypeConfiguredDriverOptions.lower(options, nativeModule().rustbuffer_alloc),
+        FfiConverterTypeSdkClientKind.lower(clientKind, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * Create a configured same-process runtime with protected approval and
+ * persistent Stop UI supplied by trusted embedding-host code.
+ *
+ * The callback object is immutable runtime configuration. Applications
+ * must not expose it to an agent or implement it using ordinary MCP
+ * elicitation, model-visible stdio, or an auto-accepting callback.
+ */
+    static createConfiguredWithProtectedHost(options: ConfiguredDriverOptions, host: ProtectedConsentHost): CuaDriverLike /*throws*/ {
+    return FfiConverterTypeCuaDriver.lift(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeDriverError.lift.bind(FfiConverterTypeDriverError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with_protected_host(
+        FfiConverterTypeConfiguredDriverOptions.lower(options, nativeModule().rustbuffer_alloc),
+        FfiConverterTypeProtectedConsentHost.lower(host, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * Language-package entry point for a configured protected-host runtime.
+ */
+    static createConfiguredWithProtectedHostAndClientKind(options: ConfiguredDriverOptions, host: ProtectedConsentHost, clientKind: SdkClientKind): CuaDriverLike /*throws*/ {
+    return FfiConverterTypeCuaDriver.lift(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeDriverError.lift.bind(FfiConverterTypeDriverError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with_protected_host_and_client_kind(
+        FfiConverterTypeConfiguredDriverOptions.lower(options, nativeModule().rustbuffer_alloc),
+        FfiConverterTypeProtectedConsentHost.lower(host, nativeModule().rustbuffer_alloc),
         FfiConverterTypeSdkClientKind.lower(clientKind, nativeModule().rustbuffer_alloc),
                 callStatus);
             },
@@ -3973,6 +4286,439 @@ const uniffiTypeEmbeddedCuaDriverHostObjectFactory: UniffiObjectFactory<Embedded
 }})();
 const FfiConverterTypeEmbeddedCuaDriverHost = new FfiConverterObject(uniffiTypeEmbeddedCuaDriverHostObjectFactory);
 
+/**
+ * Callback contract implemented by a trusted embedding application.
+ *
+ * The host must render approval and persistent Stop state outside the
+ * model/tool channel. Returning from `wait_for_indicator_stop` means Stop was
+ * activated; returning an error also fails closed and revokes the grant.
+ */
+export interface ProtectedConsentHost {
+
+    requestConsent(request: ProtectedConsentRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ProtectedConsentDecision>;
+    activateIndicator(request: ProtectedConsentRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
+    waitForIndicatorStop(indicatorId: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
+    deactivateIndicator(indicatorId: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
+}
+
+
+/**
+ * Callback contract implemented by a trusted embedding application.
+ *
+ * The host must render approval and persistent Stop state outside the
+ * model/tool channel. Returning from `wait_for_indicator_stop` means Stop was
+ * activated; returning an error also fails closed and revokes the grant.
+ */
+export class ProtectedConsentHostImpl extends UniffiAbstractObject implements ProtectedConsentHost {
+
+    readonly [uniffiTypeNameSymbol] = "ProtectedConsentHostImpl";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    // No primary constructor declared for this class.
+private constructor(pointer: UniffiHandle) {
+    super();
+    this[pointerLiteralSymbol] = pointer;
+    this[destructorGuardSymbol] = uniffiTypeProtectedConsentHostImplObjectFactory.bless(pointer);
+}
+
+
+
+
+    async requestConsent(request: ProtectedConsentRequest, asyncOpts_?: { signal: AbortSignal }): Promise<ProtectedConsentDecision> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_method_protectedconsenthost_request_consent(
+                    uniffiTypeProtectedConsentHostImplObjectFactory.clonePointer(this),FfiConverterTypeProtectedConsentRequest.lower(request, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeProtectedConsentDecision.lift.bind(FfiConverterTypeProtectedConsentDecision),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeProtectedConsentHostError.lift.bind(FfiConverterTypeProtectedConsentHostError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+    async activateIndicator(request: ProtectedConsentRequest, asyncOpts_?: { signal: AbortSignal }): Promise<string> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_method_protectedconsenthost_activate_indicator(
+                    uniffiTypeProtectedConsentHostImplObjectFactory.clonePointer(this),FfiConverterTypeProtectedConsentRequest.lower(request, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeProtectedConsentHostError.lift.bind(FfiConverterTypeProtectedConsentHostError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+    async waitForIndicatorStop(indicatorId: string, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_method_protectedconsenthost_wait_for_indicator_stop(
+                    uniffiTypeProtectedConsentHostImplObjectFactory.clonePointer(this),FfiConverterString.lower(indicatorId, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_poll_void,
+            /*cancelFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_cancel_void,
+            /*completeFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_complete_void,
+            /*freeFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_free_void,
+            /*liftFunc:*/ (_v) => {},
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeProtectedConsentHostError.lift.bind(FfiConverterTypeProtectedConsentHostError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+    async deactivateIndicator(indicatorId: string, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_method_protectedconsenthost_deactivate_indicator(
+                    uniffiTypeProtectedConsentHostImplObjectFactory.clonePointer(this),FfiConverterString.lower(indicatorId, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_poll_void,
+            /*cancelFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_cancel_void,
+            /*completeFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_complete_void,
+            /*freeFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_free_void,
+            /*liftFunc:*/ (_v) => {},
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeProtectedConsentHostError.lift.bind(FfiConverterTypeProtectedConsentHostError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeProtectedConsentHostImplObjectFactory.pointer(this);
+            uniffiTypeProtectedConsentHostImplObjectFactory.freePointer(pointer);
+            uniffiTypeProtectedConsentHostImplObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is ProtectedConsentHostImpl {
+        return uniffiTypeProtectedConsentHostImplObjectFactory.isConcreteType(obj_);
+    }
+
+
+}
+
+const uniffiTypeProtectedConsentHostImplObjectFactory: UniffiObjectFactory<ProtectedConsentHost> = (() => {
+
+    /// <reference lib="es2021" />
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeProtectedConsentHostImplObjectFactory.freePointer(heldValue);
+    }) : null;
+
+    return {
+    create(pointer: UniffiHandle): ProtectedConsentHost {
+        const instance = Object.create(ProtectedConsentHostImpl.prototype);
+        instance[pointerLiteralSymbol] = pointer;
+        instance[destructorGuardSymbol] = this.bless(pointer);
+        instance[uniffiTypeNameSymbol] = "ProtectedConsentHostImpl";
+        return instance;
+    },
+
+
+    bless(p: UniffiHandle): UniffiGcObject {
+        const ptr = {
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
+        };
+        if (registry) {
+            registry.register(ptr, p, ptr);
+        }
+        return ptr;
+    },
+
+    unbless(ptr_: UniffiGcObject) {
+        if (registry) {
+            registry.unregister(ptr_);
+        }
+    },
+
+    pointer(obj_: ProtectedConsentHost): UniffiHandle {
+        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
+            throw new UniffiInternalError.UnexpectedNullPointer();
+        }
+        return (obj_ as any)[pointerLiteralSymbol];
+    },
+
+    clonePointer(obj_: ProtectedConsentHost): UniffiHandle {
+        const pointer = this.pointer(obj_);
+        return uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_driver_sdk_fn_clone_protectedconsenthost(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    freePointer(pointer: UniffiHandle): void {
+        uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_driver_sdk_fn_free_protectedconsenthost(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    isConcreteType(obj_: any): obj_ is ProtectedConsentHost {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "ProtectedConsentHostImpl";
+    },
+}})();
+const FfiConverterTypeProtectedConsentHost = new FfiConverterObjectWithCallbacks(uniffiTypeProtectedConsentHostImplObjectFactory);
+
+// Add a vtable for the callbacks that go in ProtectedConsentHost.
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+const uniffiCallbackInterfaceProtectedConsentHost: { vtable: any; register: () => void; } = {
+    // Create the VTable using a series of closures.
+    // ts automatically converts these into C callback functions.
+    vtable: {
+        request_consent: (
+            uniffiHandle: bigint,
+            request: Uint8Array,
+            uniffiFutureCallback: UniffiForeignFutureCompleterustBuffer,
+            uniffiCallbackData: bigint) => {
+            const uniffiMakeCall =
+            async (signal: AbortSignal)
+            : Promise<ProtectedConsentDecision> => {
+                const jsCallback = FfiConverterTypeProtectedConsentHost.lift(uniffiHandle);
+                return await jsCallback.requestConsent(
+                    FfiConverterTypeProtectedConsentRequest.lift(request), { signal }
+                )
+            };
+            const uniffiHandleSuccess = (returnValue: ProtectedConsentDecision) => {
+                uniffiFutureCallback.call(
+                    uniffiFutureCallback,
+                    uniffiCallbackData,
+                    /* UniffiForeignFutureResultRustBuffer */{
+                        return_value: FfiConverterTypeProtectedConsentDecision.lower(returnValue, nativeModule().rustbuffer_alloc),
+                        call_status: uniffiCaller.createCallStatus()
+                    }
+                );
+            };
+            const uniffiHandleError = (code: number, errorBuf: UniffiByteArray) => {
+                uniffiFutureCallback.call(
+                    uniffiFutureCallback,
+                    uniffiCallbackData,
+                    /* UniffiForeignFutureResultRustBuffer */{
+                        return_value: /*empty*/ new Uint8Array(0),
+                        // TODO create callstatus with error.
+                        call_status: uniffiCaller.createErrorStatus(code, errorBuf),
+                    }
+                );
+            };
+            const uniffiForeignFuture = uniffiTraitInterfaceCallAsyncWithError(
+                /*makeCall:*/ uniffiMakeCall,
+                /*handleSuccess:*/ uniffiHandleSuccess,
+                /*handleError:*/ uniffiHandleError,
+                /*isErrorType:*/ ProtectedConsentHostError.instanceOf,
+                /*lowerError:*/ FfiConverterTypeProtectedConsentHostError.lower.bind(FfiConverterTypeProtectedConsentHostError),
+                /*lowerString:*/ FfiConverterString.lower.bind(FfiConverterString),
+                /*alloc:*/ nativeModule().rustbuffer_alloc,
+            );
+            return uniffiForeignFuture;
+        },
+        activate_indicator: (
+            uniffiHandle: bigint,
+            request: Uint8Array,
+            uniffiFutureCallback: UniffiForeignFutureCompleterustBuffer,
+            uniffiCallbackData: bigint) => {
+            const uniffiMakeCall =
+            async (signal: AbortSignal)
+            : Promise<string> => {
+                const jsCallback = FfiConverterTypeProtectedConsentHost.lift(uniffiHandle);
+                return await jsCallback.activateIndicator(
+                    FfiConverterTypeProtectedConsentRequest.lift(request), { signal }
+                )
+            };
+            const uniffiHandleSuccess = (returnValue: string) => {
+                uniffiFutureCallback.call(
+                    uniffiFutureCallback,
+                    uniffiCallbackData,
+                    /* UniffiForeignFutureResultRustBuffer */{
+                        return_value: FfiConverterString.lower(returnValue, nativeModule().rustbuffer_alloc),
+                        call_status: uniffiCaller.createCallStatus()
+                    }
+                );
+            };
+            const uniffiHandleError = (code: number, errorBuf: UniffiByteArray) => {
+                uniffiFutureCallback.call(
+                    uniffiFutureCallback,
+                    uniffiCallbackData,
+                    /* UniffiForeignFutureResultRustBuffer */{
+                        return_value: /*empty*/ new Uint8Array(0),
+                        // TODO create callstatus with error.
+                        call_status: uniffiCaller.createErrorStatus(code, errorBuf),
+                    }
+                );
+            };
+            const uniffiForeignFuture = uniffiTraitInterfaceCallAsyncWithError(
+                /*makeCall:*/ uniffiMakeCall,
+                /*handleSuccess:*/ uniffiHandleSuccess,
+                /*handleError:*/ uniffiHandleError,
+                /*isErrorType:*/ ProtectedConsentHostError.instanceOf,
+                /*lowerError:*/ FfiConverterTypeProtectedConsentHostError.lower.bind(FfiConverterTypeProtectedConsentHostError),
+                /*lowerString:*/ FfiConverterString.lower.bind(FfiConverterString),
+                /*alloc:*/ nativeModule().rustbuffer_alloc,
+            );
+            return uniffiForeignFuture;
+        },
+        wait_for_indicator_stop: (
+            uniffiHandle: bigint,
+            indicatorId: Uint8Array,
+            uniffiFutureCallback: UniffiForeignFutureCompletevoid,
+            uniffiCallbackData: bigint) => {
+            const uniffiMakeCall =
+            async (signal: AbortSignal)
+            : Promise<void> => {
+                const jsCallback = FfiConverterTypeProtectedConsentHost.lift(uniffiHandle);
+                return await jsCallback.waitForIndicatorStop(
+                    FfiConverterString.lift(indicatorId), { signal }
+                )
+            };
+            const uniffiHandleSuccess = (returnValue: void) => {
+                uniffiFutureCallback.call(
+                    uniffiFutureCallback,
+                    uniffiCallbackData,
+                    /* UniffiForeignFutureResultVoid */{
+                        call_status: uniffiCaller.createCallStatus()
+                    }
+                );
+            };
+            const uniffiHandleError = (code: number, errorBuf: UniffiByteArray) => {
+                uniffiFutureCallback.call(
+                    uniffiFutureCallback,
+                    uniffiCallbackData,
+                    /* UniffiForeignFutureResultVoid */{
+                        // TODO create callstatus with error.
+                        call_status: uniffiCaller.createErrorStatus(code, errorBuf),
+                    }
+                );
+            };
+            const uniffiForeignFuture = uniffiTraitInterfaceCallAsyncWithError(
+                /*makeCall:*/ uniffiMakeCall,
+                /*handleSuccess:*/ uniffiHandleSuccess,
+                /*handleError:*/ uniffiHandleError,
+                /*isErrorType:*/ ProtectedConsentHostError.instanceOf,
+                /*lowerError:*/ FfiConverterTypeProtectedConsentHostError.lower.bind(FfiConverterTypeProtectedConsentHostError),
+                /*lowerString:*/ FfiConverterString.lower.bind(FfiConverterString),
+                /*alloc:*/ nativeModule().rustbuffer_alloc,
+            );
+            return uniffiForeignFuture;
+        },
+        deactivate_indicator: (
+            uniffiHandle: bigint,
+            indicatorId: Uint8Array,
+            uniffiFutureCallback: UniffiForeignFutureCompletevoid,
+            uniffiCallbackData: bigint) => {
+            const uniffiMakeCall =
+            async (signal: AbortSignal)
+            : Promise<void> => {
+                const jsCallback = FfiConverterTypeProtectedConsentHost.lift(uniffiHandle);
+                return await jsCallback.deactivateIndicator(
+                    FfiConverterString.lift(indicatorId), { signal }
+                )
+            };
+            const uniffiHandleSuccess = (returnValue: void) => {
+                uniffiFutureCallback.call(
+                    uniffiFutureCallback,
+                    uniffiCallbackData,
+                    /* UniffiForeignFutureResultVoid */{
+                        call_status: uniffiCaller.createCallStatus()
+                    }
+                );
+            };
+            const uniffiHandleError = (code: number, errorBuf: UniffiByteArray) => {
+                uniffiFutureCallback.call(
+                    uniffiFutureCallback,
+                    uniffiCallbackData,
+                    /* UniffiForeignFutureResultVoid */{
+                        // TODO create callstatus with error.
+                        call_status: uniffiCaller.createErrorStatus(code, errorBuf),
+                    }
+                );
+            };
+            const uniffiForeignFuture = uniffiTraitInterfaceCallAsyncWithError(
+                /*makeCall:*/ uniffiMakeCall,
+                /*handleSuccess:*/ uniffiHandleSuccess,
+                /*handleError:*/ uniffiHandleError,
+                /*isErrorType:*/ ProtectedConsentHostError.instanceOf,
+                /*lowerError:*/ FfiConverterTypeProtectedConsentHostError.lower.bind(FfiConverterTypeProtectedConsentHostError),
+                /*lowerString:*/ FfiConverterString.lower.bind(FfiConverterString),
+                /*alloc:*/ nativeModule().rustbuffer_alloc,
+            );
+            return uniffiForeignFuture;
+        },
+        uniffi_free: (uniffiHandle: UniffiHandle): void => {
+            // this will throw a stale handle error if the handle isn't found.
+            FfiConverterTypeProtectedConsentHost.drop(uniffiHandle);
+        },
+        uniffi_clone: (uniffiHandle: UniffiHandle): UniffiHandle => {
+            return FfiConverterTypeProtectedConsentHost.clone(uniffiHandle);
+        }
+    },
+    register: () => {nativeModule().uniffi_cua_driver_sdk_fn_init_callback_vtable_protectedconsenthost(
+            uniffiCallbackInterfaceProtectedConsentHost.vtable
+        );
+    },
+};
+
 // FfiConverter for Array<SessionPermissionMode>
 const FfiConverterSequenceTypeSessionPermissionMode = new FfiConverterArray(FfiConverterTypeSessionPermissionMode);
 
@@ -4051,6 +4797,12 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_client_kind() !== 23819) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_client_kind");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_protected_host() !== 2194) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_protected_host");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_protected_host_and_client_kind() !== 59012) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_protected_host_and_client_kind");
     }
     if (nativeModule().uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_private_worker() !== 8571) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_private_worker");
@@ -4199,7 +4951,20 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_wait_for_exit() !== 21124) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_wait_for_exit");
     }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_request_consent() !== 10400) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_request_consent");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_activate_indicator() !== 36476) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_activate_indicator");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_wait_for_indicator_stop() !== 15179) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_wait_for_indicator_stop");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_deactivate_indicator() !== 23864) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_deactivate_indicator");
+    }
 
+    uniffiCallbackInterfaceProtectedConsentHost.register();
     }
 
 export default Object.freeze({
@@ -4225,6 +4990,11 @@ export default Object.freeze({
     FfiConverterTypeImageContent,
     FfiConverterTypeMacOsPermissionStatus,
     FfiConverterTypePrivateWorkerOptions,
+    FfiConverterTypeProtectedConsentAction,
+    FfiConverterTypeProtectedConsentDecision,
+    FfiConverterTypeProtectedConsentHost,
+    FfiConverterTypeProtectedConsentHostError,
+    FfiConverterTypeProtectedConsentRequest,
     FfiConverterTypeRuntimeAuthorizationOptions,
     FfiConverterTypeSdkClientKind,
     FfiConverterTypeSessionPermissionMode,

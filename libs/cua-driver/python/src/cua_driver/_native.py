@@ -498,6 +498,10 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_client_kind() != 23819:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_protected_host() != 2194:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_protected_host_and_client_kind() != 59012:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_private_worker() != 8571:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_private_worker_with_client_kind() != 31571:
@@ -595,6 +599,14 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_stop() != 28521:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_wait_for_exit() != 21124:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_request_consent() != 10400:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_activate_indicator() != 36476:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_wait_for_indicator_stop() != 15179:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_deactivate_indicator() != 23864:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
 
 # A ctypes library to expose the extern-C FFI definitions.
@@ -889,6 +901,54 @@ _UniffiLib.uniffi_cua_driver_sdk_fn_free_embeddedcuadriverhost.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_free_embeddedcuadriverhost.restype = None
+_UniffiLib.uniffi_cua_driver_sdk_fn_clone_protectedconsenthost.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_clone_protectedconsenthost.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_free_protectedconsenthost.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_free_protectedconsenthost.restype = None
+class _UniffiForeignFutureResultRustBuffer(ctypes.Structure):
+    _fields_ = [
+        ("return_value", _UniffiRustBuffer),
+        ("call_status", _UniffiRustCallStatus),
+    ]
+_UNIFFI_FOREIGN_FUTURE_COMPLETERUST_BUFFER = ctypes.CFUNCTYPE(None,ctypes.c_uint64,_UniffiForeignFutureResultRustBuffer,
+)
+_UNIFFI_CALLBACK_INTERFACE_CUA_DRIVER_SDK_PROTECTED_CONSENT_HOST_METHOD0 = ctypes.CFUNCTYPE(None,ctypes.c_uint64,_UniffiRustBuffer,_UNIFFI_FOREIGN_FUTURE_COMPLETERUST_BUFFER,ctypes.c_uint64,ctypes.POINTER(_UniffiForeignFutureDroppedCallbackStruct),
+)
+_UNIFFI_CALLBACK_INTERFACE_CUA_DRIVER_SDK_PROTECTED_CONSENT_HOST_METHOD1 = ctypes.CFUNCTYPE(None,ctypes.c_uint64,_UniffiRustBuffer,_UNIFFI_FOREIGN_FUTURE_COMPLETERUST_BUFFER,ctypes.c_uint64,ctypes.POINTER(_UniffiForeignFutureDroppedCallbackStruct),
+)
+class _UniffiForeignFutureResultVoid(ctypes.Structure):
+    _fields_ = [
+        ("call_status", _UniffiRustCallStatus),
+    ]
+_UNIFFI_FOREIGN_FUTURE_COMPLETEVOID = ctypes.CFUNCTYPE(None,ctypes.c_uint64,_UniffiForeignFutureResultVoid,
+)
+_UNIFFI_CALLBACK_INTERFACE_CUA_DRIVER_SDK_PROTECTED_CONSENT_HOST_METHOD2 = ctypes.CFUNCTYPE(None,ctypes.c_uint64,_UniffiRustBuffer,_UNIFFI_FOREIGN_FUTURE_COMPLETEVOID,ctypes.c_uint64,ctypes.POINTER(_UniffiForeignFutureDroppedCallbackStruct),
+)
+_UNIFFI_CALLBACK_INTERFACE_CUA_DRIVER_SDK_PROTECTED_CONSENT_HOST_METHOD3 = ctypes.CFUNCTYPE(None,ctypes.c_uint64,_UniffiRustBuffer,_UNIFFI_FOREIGN_FUTURE_COMPLETEVOID,ctypes.c_uint64,ctypes.POINTER(_UniffiForeignFutureDroppedCallbackStruct),
+)
+_UNIFFI_CALLBACK_INTERFACE_CLONE_CUA_DRIVER_SDK_PROTECTED_CONSENT_HOST = ctypes.CFUNCTYPE(ctypes.c_uint64,ctypes.c_uint64,
+)
+_UNIFFI_CALLBACK_INTERFACE_FREE_CUA_DRIVER_SDK_PROTECTED_CONSENT_HOST = ctypes.CFUNCTYPE(None,ctypes.c_uint64,
+)
+class _UniffiVTableCallbackInterfaceCuaDriverSdkProtectedConsentHost(ctypes.Structure):
+    _fields_ = [
+        ("uniffi_free", _UNIFFI_CALLBACK_INTERFACE_FREE_CUA_DRIVER_SDK_PROTECTED_CONSENT_HOST),
+        ("uniffi_clone", _UNIFFI_CALLBACK_INTERFACE_CLONE_CUA_DRIVER_SDK_PROTECTED_CONSENT_HOST),
+        ("request_consent", _UNIFFI_CALLBACK_INTERFACE_CUA_DRIVER_SDK_PROTECTED_CONSENT_HOST_METHOD0),
+        ("activate_indicator", _UNIFFI_CALLBACK_INTERFACE_CUA_DRIVER_SDK_PROTECTED_CONSENT_HOST_METHOD1),
+        ("wait_for_indicator_stop", _UNIFFI_CALLBACK_INTERFACE_CUA_DRIVER_SDK_PROTECTED_CONSENT_HOST_METHOD2),
+        ("deactivate_indicator", _UNIFFI_CALLBACK_INTERFACE_CUA_DRIVER_SDK_PROTECTED_CONSENT_HOST_METHOD3),
+    ]
+_UniffiLib.uniffi_cua_driver_sdk_fn_init_callback_vtable_protectedconsenthost.argtypes = (
+    ctypes.POINTER(_UniffiVTableCallbackInterfaceCuaDriverSdkProtectedConsentHost),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_init_callback_vtable_protectedconsenthost.restype = None
 _UniffiLib.uniffi_cua_driver_sdk_fn_func_create_trusted_session.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -934,6 +994,19 @@ _UniffiLib.uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with_client_kind.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with_protected_host.argtypes = (
+    _UniffiRustBuffer,
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with_protected_host.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with_protected_host_and_client_kind.argtypes = (
+    _UniffiRustBuffer,
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with_protected_host_and_client_kind.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_private_worker.argtypes = (
     _UniffiRustBuffer,
     ctypes.POINTER(_UniffiRustCallStatus),
@@ -1178,6 +1251,26 @@ _UniffiLib.uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_wait_for_exit.a
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_wait_for_exit.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_protectedconsenthost_request_consent.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_protectedconsenthost_request_consent.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_protectedconsenthost_activate_indicator.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_protectedconsenthost_activate_indicator.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_protectedconsenthost_wait_for_indicator_stop.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_protectedconsenthost_wait_for_indicator_stop.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_protectedconsenthost_deactivate_indicator.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_protectedconsenthost_deactivate_indicator.restype = ctypes.c_uint64
 _UniffiLib.ffi_cua_driver_sdk_uniffi_contract_version.argtypes = (
 )
 _UniffiLib.ffi_cua_driver_sdk_uniffi_contract_version.restype = ctypes.c_uint32
@@ -1208,6 +1301,12 @@ _UniffiLib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configure
 _UniffiLib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_client_kind.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_client_kind.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_protected_host.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_protected_host.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_protected_host_and_client_kind.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_protected_host_and_client_kind.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_private_worker.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_private_worker.restype = ctypes.c_uint16
@@ -1355,6 +1454,18 @@ _UniffiLib.uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_stop.rest
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_wait_for_exit.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_wait_for_exit.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_request_consent.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_request_consent.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_activate_indicator.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_activate_indicator.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_wait_for_indicator_stop.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_wait_for_indicator_stop.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_deactivate_indicator.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_deactivate_indicator.restype = ctypes.c_uint16
 
 _uniffi_check_contract_api_version(_UniffiLib)
 # _uniffi_check_api_checksums(_UniffiLib)
@@ -1422,6 +1533,68 @@ async def _uniffi_rust_call_async(rust_future, ffi_poll, ffi_complete, ffi_free,
         )
     finally:
         ffi_free(rust_future)
+def _uniffi_trait_interface_call_async(make_call, uniffi_out_dropped_callback, handle_success, handle_error):
+    async def make_call_and_call_callback():
+        # Note: it's important we call either `handle_success` or `handle_error` exactly once.  Each
+        # call consumes an Arc reference, which means there should be no possibility of a double
+        # call.  The following code is structured so that will will never call both `handle_success`
+        # and `handle_error`, even in the face of weird exceptions.
+        #
+        # In extreme circumstances we may not call either, for example if we fail to make the ctypes
+        # call to `handle_success`.  This means we will leak the Arc reference, which is better than
+        # double-freeing it.
+        try:
+            call_result = await make_call()
+        except Exception as e:
+            print("UniFFI: Unhandled exception in trait interface call", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
+            handle_error(
+                _UniffiRustCallStatus.CALL_UNEXPECTED_ERROR,
+                _UniffiFfiConverterString.lower(repr(e)),
+            )
+        else:
+            handle_success(call_result)
+    eventloop = _uniffi_get_event_loop()
+    task = asyncio.run_coroutine_threadsafe(make_call_and_call_callback(), eventloop)
+    handle = _UNIFFI_FOREIGN_FUTURE_HANDLE_MAP.insert((eventloop, task))
+    uniffi_out_dropped_callback[0] = _UniffiForeignFutureDroppedCallbackStruct(handle, _uniffi_future_dropped_callback)
+
+def _uniffi_trait_interface_call_async_with_error(make_call, uniffi_out_dropped_callback, handle_success, handle_error, error_type, lower_error):
+    async def make_call_and_call_callback():
+        # See the note in _uniffi_trait_interface_call_async for details on `handle_success` and
+        # `handle_error`.
+        try:
+            try:
+                call_result = await make_call()
+            except error_type as e:
+                handle_error(
+                    _UniffiRustCallStatus.CALL_ERROR,
+                    lower_error(e),
+                )
+            else:
+                handle_success(call_result)
+        except Exception as e:
+            print("UniFFI: Unhandled exception in trait interface call", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
+            handle_error(
+                _UniffiRustCallStatus.CALL_UNEXPECTED_ERROR,
+                _UniffiFfiConverterString.lower(repr(e)),
+            )
+    eventloop = _uniffi_get_event_loop()
+    task = asyncio.run_coroutine_threadsafe(make_call_and_call_callback(), eventloop)
+    handle = _UNIFFI_FOREIGN_FUTURE_HANDLE_MAP.insert((eventloop, task))
+    uniffi_out_dropped_callback[0] = _UniffiForeignFutureDroppedCallbackStruct(handle, _uniffi_future_dropped_callback)
+
+_UNIFFI_FOREIGN_FUTURE_HANDLE_MAP = _UniffiHandleMap()
+
+@_UNIFFI_FOREIGN_FUTURE_DROPPED_CALLBACK
+def _uniffi_future_dropped_callback(handle):
+    (eventloop, task) = _UNIFFI_FOREIGN_FUTURE_HANDLE_MAP.remove(handle)
+    eventloop.call_soon(_uniffi_cancel_task, task)
+
+def _uniffi_cancel_task(task):
+    if not task.done():
+        task.cancel()
 
 # Public interface members begin here.
 
@@ -2423,6 +2596,210 @@ class _UniffiFfiConverterTypePrivateWorkerOptions(_UniffiConverterRustBuffer):
         _UniffiFfiConverterSequenceTypeEmbeddedEnvironmentVariable.write(value.environment, buf)
         _UniffiFfiConverterBoolean.write(value.inherit_stderr, buf)
 
+
+
+
+
+
+class ProtectedConsentAction(enum.Enum):
+
+    ACCEPT = 0
+
+    DECLINE = 1
+
+    CANCEL = 2
+
+
+
+class _UniffiFfiConverterTypeProtectedConsentAction(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return ProtectedConsentAction.ACCEPT
+        if variant == 2:
+            return ProtectedConsentAction.DECLINE
+        if variant == 3:
+            return ProtectedConsentAction.CANCEL
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value == ProtectedConsentAction.ACCEPT:
+            return
+        if value == ProtectedConsentAction.DECLINE:
+            return
+        if value == ProtectedConsentAction.CANCEL:
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value == ProtectedConsentAction.ACCEPT:
+            buf.write_i32(1)
+        if value == ProtectedConsentAction.DECLINE:
+            buf.write_i32(2)
+        if value == ProtectedConsentAction.CANCEL:
+            buf.write_i32(3)
+
+
+
+@dataclass
+class ProtectedConsentDecision:
+    def __init__(self, *, action:ProtectedConsentAction, request_digest:str):
+        self.action = action
+        self.request_digest = request_digest
+
+
+
+
+    def __str__(self):
+        return "ProtectedConsentDecision(action={}, request_digest={})".format(self.action, self.request_digest)
+    def __eq__(self, other):
+        if self.action != other.action:
+            return False
+        if self.request_digest != other.request_digest:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeProtectedConsentDecision(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return ProtectedConsentDecision(
+            action=_UniffiFfiConverterTypeProtectedConsentAction.read(buf),
+            request_digest=_UniffiFfiConverterString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterTypeProtectedConsentAction.check_lower(value.action)
+        _UniffiFfiConverterString.check_lower(value.request_digest)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterTypeProtectedConsentAction.write(value.action, buf)
+        _UniffiFfiConverterString.write(value.request_digest, buf)
+
+@dataclass
+class ProtectedConsentRequest:
+    """
+    Content-bounded request delivered only to trusted host code.
+
+    `resource_json` contains the canonical typed resource identity needed to
+    render the decision. Hosts must not log it or forward it to a model.
+"""
+    def __init__(self, *, schema:str, nonce:str, generation:int, daemon_instance:str, permission_mode:str, managed_policy_sha256:typing.Optional[str], user_policy_sha256:typing.Optional[str], operation:str, risk_class:str, public_session:str, transport_session:str, resource_json:str, human_summary:str, expires_unix_ms:int, request_digest:str):
+        self.schema = schema
+        self.nonce = nonce
+        self.generation = generation
+        self.daemon_instance = daemon_instance
+        self.permission_mode = permission_mode
+        self.managed_policy_sha256 = managed_policy_sha256
+        self.user_policy_sha256 = user_policy_sha256
+        self.operation = operation
+        self.risk_class = risk_class
+        self.public_session = public_session
+        self.transport_session = transport_session
+        self.resource_json = resource_json
+        self.human_summary = human_summary
+        self.expires_unix_ms = expires_unix_ms
+        self.request_digest = request_digest
+
+
+
+
+    def __str__(self):
+        return "ProtectedConsentRequest(schema={}, nonce={}, generation={}, daemon_instance={}, permission_mode={}, managed_policy_sha256={}, user_policy_sha256={}, operation={}, risk_class={}, public_session={}, transport_session={}, resource_json={}, human_summary={}, expires_unix_ms={}, request_digest={})".format(self.schema, self.nonce, self.generation, self.daemon_instance, self.permission_mode, self.managed_policy_sha256, self.user_policy_sha256, self.operation, self.risk_class, self.public_session, self.transport_session, self.resource_json, self.human_summary, self.expires_unix_ms, self.request_digest)
+    def __eq__(self, other):
+        if self.schema != other.schema:
+            return False
+        if self.nonce != other.nonce:
+            return False
+        if self.generation != other.generation:
+            return False
+        if self.daemon_instance != other.daemon_instance:
+            return False
+        if self.permission_mode != other.permission_mode:
+            return False
+        if self.managed_policy_sha256 != other.managed_policy_sha256:
+            return False
+        if self.user_policy_sha256 != other.user_policy_sha256:
+            return False
+        if self.operation != other.operation:
+            return False
+        if self.risk_class != other.risk_class:
+            return False
+        if self.public_session != other.public_session:
+            return False
+        if self.transport_session != other.transport_session:
+            return False
+        if self.resource_json != other.resource_json:
+            return False
+        if self.human_summary != other.human_summary:
+            return False
+        if self.expires_unix_ms != other.expires_unix_ms:
+            return False
+        if self.request_digest != other.request_digest:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeProtectedConsentRequest(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return ProtectedConsentRequest(
+            schema=_UniffiFfiConverterString.read(buf),
+            nonce=_UniffiFfiConverterString.read(buf),
+            generation=_UniffiFfiConverterUInt64.read(buf),
+            daemon_instance=_UniffiFfiConverterString.read(buf),
+            permission_mode=_UniffiFfiConverterString.read(buf),
+            managed_policy_sha256=_UniffiFfiConverterOptionalString.read(buf),
+            user_policy_sha256=_UniffiFfiConverterOptionalString.read(buf),
+            operation=_UniffiFfiConverterString.read(buf),
+            risk_class=_UniffiFfiConverterString.read(buf),
+            public_session=_UniffiFfiConverterString.read(buf),
+            transport_session=_UniffiFfiConverterString.read(buf),
+            resource_json=_UniffiFfiConverterString.read(buf),
+            human_summary=_UniffiFfiConverterString.read(buf),
+            expires_unix_ms=_UniffiFfiConverterUInt64.read(buf),
+            request_digest=_UniffiFfiConverterString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.schema)
+        _UniffiFfiConverterString.check_lower(value.nonce)
+        _UniffiFfiConverterUInt64.check_lower(value.generation)
+        _UniffiFfiConverterString.check_lower(value.daemon_instance)
+        _UniffiFfiConverterString.check_lower(value.permission_mode)
+        _UniffiFfiConverterOptionalString.check_lower(value.managed_policy_sha256)
+        _UniffiFfiConverterOptionalString.check_lower(value.user_policy_sha256)
+        _UniffiFfiConverterString.check_lower(value.operation)
+        _UniffiFfiConverterString.check_lower(value.risk_class)
+        _UniffiFfiConverterString.check_lower(value.public_session)
+        _UniffiFfiConverterString.check_lower(value.transport_session)
+        _UniffiFfiConverterString.check_lower(value.resource_json)
+        _UniffiFfiConverterString.check_lower(value.human_summary)
+        _UniffiFfiConverterUInt64.check_lower(value.expires_unix_ms)
+        _UniffiFfiConverterString.check_lower(value.request_digest)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.schema, buf)
+        _UniffiFfiConverterString.write(value.nonce, buf)
+        _UniffiFfiConverterUInt64.write(value.generation, buf)
+        _UniffiFfiConverterString.write(value.daemon_instance, buf)
+        _UniffiFfiConverterString.write(value.permission_mode, buf)
+        _UniffiFfiConverterOptionalString.write(value.managed_policy_sha256, buf)
+        _UniffiFfiConverterOptionalString.write(value.user_policy_sha256, buf)
+        _UniffiFfiConverterString.write(value.operation, buf)
+        _UniffiFfiConverterString.write(value.risk_class, buf)
+        _UniffiFfiConverterString.write(value.public_session, buf)
+        _UniffiFfiConverterString.write(value.transport_session, buf)
+        _UniffiFfiConverterString.write(value.resource_json, buf)
+        _UniffiFfiConverterString.write(value.human_summary, buf)
+        _UniffiFfiConverterUInt64.write(value.expires_unix_ms, buf)
+        _UniffiFfiConverterString.write(value.request_digest, buf)
+
 class _UniffiFfiConverterSequenceTypeImageContent(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -3228,6 +3605,59 @@ class _UniffiFfiConverterTypeEmbeddedDriverHostState(_UniffiConverterRustBuffer)
 
 
 
+# ProtectedConsentHostError
+# We want to define each variant as a nested class that's also a subclass,
+# which is tricky in Python.  To accomplish this we're going to create each
+# class separately, then manually add the child classes to the base class's
+# __dict__.  All of this happens in dummy class to avoid polluting the module
+# namespace.
+class ProtectedConsentHostError(Exception):
+    pass
+
+_UniffiTempProtectedConsentHostError = ProtectedConsentHostError
+
+class ProtectedConsentHostError:  # type: ignore
+
+    class Failed(_UniffiTempProtectedConsentHostError):
+
+        def __init__(self, reason):
+            super().__init__(", ".join([
+                "reason={!r}".format(reason),
+            ]))
+            self.reason = reason
+
+        def __repr__(self):
+            return "ProtectedConsentHostError.Failed({})".format(str(self))
+    _UniffiTempProtectedConsentHostError.Failed = Failed # type: ignore
+
+ProtectedConsentHostError = _UniffiTempProtectedConsentHostError # type: ignore
+del _UniffiTempProtectedConsentHostError
+
+
+class _UniffiFfiConverterTypeProtectedConsentHostError(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return ProtectedConsentHostError.Failed(
+                _UniffiFfiConverterString.read(buf),
+            )
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if isinstance(value, ProtectedConsentHostError.Failed):
+            _UniffiFfiConverterString.check_lower(value.reason)
+            return
+
+    @staticmethod
+    def write(value, buf):
+        if isinstance(value, ProtectedConsentHostError.Failed):
+            buf.write_i32(1)
+            _UniffiFfiConverterString.write(value.reason, buf)
+
+
+
 
 
 
@@ -3470,6 +3900,56 @@ class CuaDriver(CuaDriverProtocol):
         _uniffi_ffi_result = _uniffi_rust_call_with_error(
             _uniffi_error_converter,
             _UniffiLib.uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with_client_kind,
+            *_uniffi_lowered_args,
+        )
+        return cls._uniffi_make_instance(_uniffi_ffi_result)
+    @classmethod
+    def create_configured_with_protected_host(cls, options: ConfiguredDriverOptions,host: ProtectedConsentHost) -> CuaDriver:
+        """
+        Create a configured same-process runtime with protected approval and
+        persistent Stop UI supplied by trusted embedding-host code.
+
+        The callback object is immutable runtime configuration. Applications
+        must not expose it to an agent or implement it using ordinary MCP
+        elicitation, model-visible stdio, or an auto-accepting callback.
+"""
+
+        _UniffiFfiConverterTypeConfiguredDriverOptions.check_lower(options)
+
+        _UniffiFfiConverterTypeProtectedConsentHost.check_lower(host)
+        _uniffi_lowered_args = (
+            _UniffiFfiConverterTypeConfiguredDriverOptions.lower(options),
+            _UniffiFfiConverterTypeProtectedConsentHost.lower(host),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCuaDriver.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeDriverError
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with_protected_host,
+            *_uniffi_lowered_args,
+        )
+        return cls._uniffi_make_instance(_uniffi_ffi_result)
+    @classmethod
+    def create_configured_with_protected_host_and_client_kind(cls, options: ConfiguredDriverOptions,host: ProtectedConsentHost,client_kind: SdkClientKind) -> CuaDriver:
+        """
+        Language-package entry point for a configured protected-host runtime.
+"""
+
+        _UniffiFfiConverterTypeConfiguredDriverOptions.check_lower(options)
+
+        _UniffiFfiConverterTypeProtectedConsentHost.check_lower(host)
+
+        _UniffiFfiConverterTypeSdkClientKind.check_lower(client_kind)
+        _uniffi_lowered_args = (
+            _UniffiFfiConverterTypeConfiguredDriverOptions.lower(options),
+            _UniffiFfiConverterTypeProtectedConsentHost.lower(host),
+            _UniffiFfiConverterTypeSdkClientKind.lower(client_kind),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCuaDriver.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeDriverError
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with_protected_host_and_client_kind,
             *_uniffi_lowered_args,
         )
         return cls._uniffi_make_instance(_uniffi_ffi_result)
@@ -4533,6 +5013,343 @@ class _UniffiFfiConverterTypeEmbeddedCuaDriverHost:
     def write(cls, value: EmbeddedCuaDriverHost, buf: _UniffiRustBuffer):
         buf.write_u64(cls.lower(value))
 
+
+class ProtectedConsentHost():
+    """
+    Callback contract implemented by a trusted embedding application.
+
+    The host must render approval and persistent Stop state outside the
+    model/tool channel. Returning from `wait_for_indicator_stop` means Stop was
+    activated; returning an error also fails closed and revokes the grant.
+"""
+
+    async def request_consent(self, request: ProtectedConsentRequest) -> ProtectedConsentDecision:
+        raise NotImplementedError
+    async def activate_indicator(self, request: ProtectedConsentRequest) -> str:
+        raise NotImplementedError
+    async def wait_for_indicator_stop(self, indicator_id: str) -> None:
+        raise NotImplementedError
+    async def deactivate_indicator(self, indicator_id: str) -> None:
+        raise NotImplementedError
+
+class ProtectedConsentHostImpl(ProtectedConsentHost):
+    """
+    Callback contract implemented by a trusted embedding application.
+
+    The host must render approval and persistent Stop state outside the
+    model/tool channel. Returning from `wait_for_indicator_stop` means Stop was
+    activated; returning an error also fails closed and revokes the grant.
+"""
+
+    _handle: ctypes.c_uint64
+
+    def __init__(self, *args, **kwargs):
+        raise ValueError("This class has no default constructor")
+
+    def __del__(self):
+        # In case of partial initialization of instances.
+        handle = getattr(self, "_handle", None)
+        if handle is not None:
+            _uniffi_rust_call(_UniffiLib.uniffi_cua_driver_sdk_fn_free_protectedconsenthost, handle)
+
+    def _uniffi_clone_handle(self):
+        return _uniffi_rust_call(_UniffiLib.uniffi_cua_driver_sdk_fn_clone_protectedconsenthost, self._handle)
+
+    # Used by alternative constructors or any methods which return this type.
+    @classmethod
+    def _uniffi_make_instance(cls, handle):
+        # Lightly yucky way to bypass the usual __init__ logic
+        # and just create a new instance with the required handle.
+        inst = cls.__new__(cls)
+        inst._handle = handle
+        return inst
+    async def request_consent(self, request: ProtectedConsentRequest) -> ProtectedConsentDecision:
+
+        _UniffiFfiConverterTypeProtectedConsentRequest.check_lower(request)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeProtectedConsentRequest.lower(request),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeProtectedConsentDecision.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeProtectedConsentHostError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_protectedconsenthost_request_consent(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def activate_indicator(self, request: ProtectedConsentRequest) -> str:
+
+        _UniffiFfiConverterTypeProtectedConsentRequest.check_lower(request)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeProtectedConsentRequest.lower(request),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterString.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeProtectedConsentHostError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_protectedconsenthost_activate_indicator(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def wait_for_indicator_stop(self, indicator_id: str) -> None:
+
+        _UniffiFfiConverterString.check_lower(indicator_id)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(indicator_id),
+        )
+        _uniffi_lift_return = lambda val: None
+        _uniffi_error_converter = _UniffiFfiConverterTypeProtectedConsentHostError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_protectedconsenthost_wait_for_indicator_stop(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_poll_void,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_complete_void,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_free_void,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def deactivate_indicator(self, indicator_id: str) -> None:
+
+        _UniffiFfiConverterString.check_lower(indicator_id)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(indicator_id),
+        )
+        _uniffi_lift_return = lambda val: None
+        _uniffi_error_converter = _UniffiFfiConverterTypeProtectedConsentHostError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_protectedconsenthost_deactivate_indicator(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_poll_void,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_complete_void,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_free_void,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+
+
+
+
+# Put all the bits inside a class to keep the top-level namespace clean
+class _UniffiTraitImplProtectedConsentHostImpl:
+    # For each method, generate a callback function to pass to Rust
+
+    @_UNIFFI_CALLBACK_INTERFACE_CUA_DRIVER_SDK_PROTECTED_CONSENT_HOST_METHOD0
+    def request_consent(
+            uniffi_handle,
+            request,
+            uniffi_future_callback,
+            uniffi_callback_data,
+            uniffi_out_dropped_callback,
+        ):
+        uniffi_obj = _UniffiFfiConverterTypeProtectedConsentHost._handle_map.get(uniffi_handle)
+        def make_call():
+            uniffi_args = (_UniffiFfiConverterTypeProtectedConsentRequest.lift(request), )
+            uniffi_method = uniffi_obj.request_consent
+            return uniffi_method(*uniffi_args)
+        def handle_success(return_value):
+            uniffi_future_callback(
+                uniffi_callback_data,
+                _UniffiForeignFutureResultRustBuffer(
+                    _UniffiFfiConverterTypeProtectedConsentDecision.lower(return_value),
+                    _UniffiRustCallStatus.default()
+                )
+            )
+
+        def handle_error(status_code, rust_buffer):
+            uniffi_future_callback(
+                uniffi_callback_data,
+                _UniffiForeignFutureResultRustBuffer(
+                    _UniffiRustBuffer.default(),
+                    _UniffiRustCallStatus(status_code, rust_buffer),
+                )
+            )
+        _uniffi_trait_interface_call_async_with_error(
+            make_call,
+            uniffi_out_dropped_callback,
+            handle_success,
+            handle_error,
+            ProtectedConsentHostError,
+            _UniffiFfiConverterTypeProtectedConsentHostError.lower,
+        )
+
+    @_UNIFFI_CALLBACK_INTERFACE_CUA_DRIVER_SDK_PROTECTED_CONSENT_HOST_METHOD1
+    def activate_indicator(
+            uniffi_handle,
+            request,
+            uniffi_future_callback,
+            uniffi_callback_data,
+            uniffi_out_dropped_callback,
+        ):
+        uniffi_obj = _UniffiFfiConverterTypeProtectedConsentHost._handle_map.get(uniffi_handle)
+        def make_call():
+            uniffi_args = (_UniffiFfiConverterTypeProtectedConsentRequest.lift(request), )
+            uniffi_method = uniffi_obj.activate_indicator
+            return uniffi_method(*uniffi_args)
+        def handle_success(return_value):
+            uniffi_future_callback(
+                uniffi_callback_data,
+                _UniffiForeignFutureResultRustBuffer(
+                    _UniffiFfiConverterString.lower(return_value),
+                    _UniffiRustCallStatus.default()
+                )
+            )
+
+        def handle_error(status_code, rust_buffer):
+            uniffi_future_callback(
+                uniffi_callback_data,
+                _UniffiForeignFutureResultRustBuffer(
+                    _UniffiRustBuffer.default(),
+                    _UniffiRustCallStatus(status_code, rust_buffer),
+                )
+            )
+        _uniffi_trait_interface_call_async_with_error(
+            make_call,
+            uniffi_out_dropped_callback,
+            handle_success,
+            handle_error,
+            ProtectedConsentHostError,
+            _UniffiFfiConverterTypeProtectedConsentHostError.lower,
+        )
+
+    @_UNIFFI_CALLBACK_INTERFACE_CUA_DRIVER_SDK_PROTECTED_CONSENT_HOST_METHOD2
+    def wait_for_indicator_stop(
+            uniffi_handle,
+            indicator_id,
+            uniffi_future_callback,
+            uniffi_callback_data,
+            uniffi_out_dropped_callback,
+        ):
+        uniffi_obj = _UniffiFfiConverterTypeProtectedConsentHost._handle_map.get(uniffi_handle)
+        def make_call():
+            uniffi_args = (_UniffiFfiConverterString.lift(indicator_id), )
+            uniffi_method = uniffi_obj.wait_for_indicator_stop
+            return uniffi_method(*uniffi_args)
+        def handle_success(return_value):
+            uniffi_future_callback(
+                uniffi_callback_data,
+                _UniffiForeignFutureResultVoid(
+                    _UniffiRustCallStatus.default()
+                )
+            )
+
+        def handle_error(status_code, rust_buffer):
+            uniffi_future_callback(
+                uniffi_callback_data,
+                _UniffiForeignFutureResultVoid(
+                    _UniffiRustCallStatus(status_code, rust_buffer),
+                )
+            )
+        _uniffi_trait_interface_call_async_with_error(
+            make_call,
+            uniffi_out_dropped_callback,
+            handle_success,
+            handle_error,
+            ProtectedConsentHostError,
+            _UniffiFfiConverterTypeProtectedConsentHostError.lower,
+        )
+
+    @_UNIFFI_CALLBACK_INTERFACE_CUA_DRIVER_SDK_PROTECTED_CONSENT_HOST_METHOD3
+    def deactivate_indicator(
+            uniffi_handle,
+            indicator_id,
+            uniffi_future_callback,
+            uniffi_callback_data,
+            uniffi_out_dropped_callback,
+        ):
+        uniffi_obj = _UniffiFfiConverterTypeProtectedConsentHost._handle_map.get(uniffi_handle)
+        def make_call():
+            uniffi_args = (_UniffiFfiConverterString.lift(indicator_id), )
+            uniffi_method = uniffi_obj.deactivate_indicator
+            return uniffi_method(*uniffi_args)
+        def handle_success(return_value):
+            uniffi_future_callback(
+                uniffi_callback_data,
+                _UniffiForeignFutureResultVoid(
+                    _UniffiRustCallStatus.default()
+                )
+            )
+
+        def handle_error(status_code, rust_buffer):
+            uniffi_future_callback(
+                uniffi_callback_data,
+                _UniffiForeignFutureResultVoid(
+                    _UniffiRustCallStatus(status_code, rust_buffer),
+                )
+            )
+        _uniffi_trait_interface_call_async_with_error(
+            make_call,
+            uniffi_out_dropped_callback,
+            handle_success,
+            handle_error,
+            ProtectedConsentHostError,
+            _UniffiFfiConverterTypeProtectedConsentHostError.lower,
+        )
+
+    @_UNIFFI_CALLBACK_INTERFACE_FREE_CUA_DRIVER_SDK_PROTECTED_CONSENT_HOST
+    def _uniffi_free(uniffi_handle):
+        _UniffiFfiConverterTypeProtectedConsentHost._handle_map.remove(uniffi_handle)
+
+    @_UNIFFI_CALLBACK_INTERFACE_CLONE_CUA_DRIVER_SDK_PROTECTED_CONSENT_HOST
+    def _uniffi_clone(uniffi_handle):
+        return _UniffiFfiConverterTypeProtectedConsentHost._handle_map.clone(uniffi_handle)
+
+    # Generate the FFI VTable.  This has a field for each callback interface method.
+    _uniffi_vtable = _UniffiVTableCallbackInterfaceCuaDriverSdkProtectedConsentHost(
+        _uniffi_free,
+        _uniffi_clone,
+        request_consent,
+        activate_indicator,
+        wait_for_indicator_stop,
+        deactivate_indicator,
+    )
+    # Send Rust a pointer to the VTable.  Note: this means we need to keep the struct alive forever,
+    # or else bad things will happen when Rust tries to access it.
+    _UniffiLib.uniffi_cua_driver_sdk_fn_init_callback_vtable_protectedconsenthost(ctypes.byref(_uniffi_vtable))
+
+class _UniffiFfiConverterTypeProtectedConsentHost:
+    _handle_map = _UniffiHandleMap()
+
+    @staticmethod
+    def lift(value: int):
+        if (value & 1) == 0:
+            # Rust-generated handle, construct a new class that uses the handle to implement the
+            # interface
+            return ProtectedConsentHostImpl._uniffi_make_instance(value)
+        else:
+            # Python-generated handle, get the object from the handle map
+            return _UniffiFfiConverterTypeProtectedConsentHost._handle_map.remove(value)
+
+    @staticmethod
+    def check_lower(value: ProtectedConsentHost):
+        if not isinstance(value, ProtectedConsentHost):
+            raise TypeError("Expected ProtectedConsentHost subclass, {} found".format(type(value).__name__))
+
+    @staticmethod
+    def lower(value: ProtectedConsentHost):
+         if isinstance(value, ProtectedConsentHostImpl):
+            # Rust-implementated object.  Clone the handle and return it
+            return value._uniffi_clone_handle()
+         else:
+            # Python-implementated object, generate a new vtable handle and return that.
+            return _UniffiFfiConverterTypeProtectedConsentHost._handle_map.insert(value)
+
+    @classmethod
+    def read(cls, buf: _UniffiRustBuffer):
+        ptr = buf.read_u64()
+        if ptr == 0:
+            raise InternalError("Raw handle value was null")
+        return cls.lift(ptr)
+
+    @classmethod
+    def write(cls, value: ProtectedConsentHost, buf: _UniffiRustBuffer):
+        buf.write_u64(cls.lower(value))
+
 class _UniffiFfiConverterUInt8(_UniffiConverterPrimitiveInt):
     CLASS_NAME = "u8"
     VALUE_MIN = 0
@@ -4632,11 +5449,13 @@ __all__ = [
     "InternalError",
     "SessionPermissionMode",
     "EmbeddedPermissionMode",
+    "ProtectedConsentAction",
     "ActionCompletion",
     "DriverError",
     "DriverExecutionMode",
     "EmbeddedDriverError",
     "EmbeddedDriverHostState",
+    "ProtectedConsentHostError",
     "SdkClientKind",
     "RuntimeAuthorizationOptions",
     "ConfiguredDriverOptions",
@@ -4650,6 +5469,8 @@ __all__ = [
     "ImageContent",
     "MacOsPermissionStatus",
     "PrivateWorkerOptions",
+    "ProtectedConsentDecision",
+    "ProtectedConsentRequest",
     "ToolResult",
     "TrustedSessionOptions",
     "create_trusted_session",
@@ -4662,4 +5483,6 @@ __all__ = [
     "CuaDriverSessionProtocol",
     "EmbeddedCuaDriverHost",
     "EmbeddedCuaDriverHostProtocol",
+    "ProtectedConsentHostImpl",
+    "ProtectedConsentHost",
 ]

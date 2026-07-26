@@ -40,7 +40,9 @@ import requests
 
 
 ROOT = Path(__file__).resolve().parent
-WORK_DIR = ROOT / ".work"
+WORK_DIR = Path(
+    os.environ.get("CUA_OSWORLD2_WORK_DIR", ROOT / ".work")
+).expanduser().resolve()
 DEFAULT_CONFIG = WORK_DIR / "local.json"
 OSWORLD_DIR = WORK_DIR / "OSWorld-V2"
 RESULTS_DIR = WORK_DIR / "results"
@@ -58,11 +60,12 @@ CLAIM_PLURAL = "osgymsandboxclaims"
 
 CONTROL_PORT = 5000
 CDP_PORT = 1337
-GUEST_CDP_PORT = 9222
+GUEST_CDP_PORT = 1337
 NOVNC_PORT = 8006
 VLC_PORT = 8080
 DEFAULT_AWS_MOCK_PORT = 31082
 GUEST_DRIVER_SOCKET = "/home/user/.cache/cua-driver/osworld2-pilot.sock"
+STOP_REQUESTED: threading.Event | None = None
 
 GUEST_HTTP_CODE = (
     "import base64,json,sys,urllib.error,urllib.request;"
@@ -467,6 +470,8 @@ def wait_for(
     deadline = time.monotonic() + timeout
     last_progress = 0.0
     while True:
+        if STOP_REQUESTED is not None and STOP_REQUESTED.is_set():
+            raise PilotError(f"stop requested while waiting for {description}")
         value = probe()
         if ready(value):
             return value
@@ -476,7 +481,10 @@ def wait_for(
         if now - last_progress >= 30:
             emit("waiting", resource=description)
             last_progress = now
-        time.sleep(poll)
+        if STOP_REQUESTED is not None:
+            STOP_REQUESTED.wait(timeout=poll)
+        else:
+            time.sleep(poll)
 
 
 def wait_template(http: Callable[[], httpx.Client], namespace: str) -> bool:
@@ -742,7 +750,12 @@ def prepare_task_082(aws_mock_port: int, cache_dir: Path) -> None:
     emit("task_setup_complete", task_id="082")
 
 
-def prepare_browser_task(task_id: str, cache_dir: Path) -> None:
+def prepare_browser_task(
+    task_id: str,
+    cache_dir: Path,
+    *,
+    guest_chrome_profile: str | None = None,
+) -> None:
     if task_id not in {"070", "073"}:
         raise PilotError(f"unsupported lightweight browser task: {task_id}")
     os.environ.setdefault("WEBSITE_HOST_SUFFIX", "web.hku.icu")
@@ -769,6 +782,27 @@ def prepare_browser_task(task_id: str, cache_dir: Path) -> None:
     task_class = getattr(module, f"Task{task_id}")
 
     class FleetSetupController(SetupController):
+        def launch(
+            self,
+            command: str | list[str],
+            shell: bool = False,
+        ) -> None:
+            if (
+                guest_chrome_profile
+                and isinstance(command, list)
+                and command
+                and command[0] == "google-chrome"
+                and not any(
+                    item.startswith("--user-data-dir=") for item in command
+                )
+            ):
+                command = [
+                    command[0],
+                    f"--user-data-dir={guest_chrome_profile}",
+                    *command[1:],
+                ]
+            super().launch(command, shell=shell)
+
         def _chrome_open_tabs_setup(self, urls_to_open: list[str]) -> None:
             self.launch(
                 ["google-chrome", "--remote-debugging-port=1337", *urls_to_open]
@@ -1043,6 +1077,122 @@ def install_prebuilt_driver(
     }
 
 
+def start_image_driver() -> dict[str, Any]:
+    """Start and attest the release-pinned Driver already baked into the image."""
+
+    manifest = read_json(ROOT / "manifest.json")
+    expected_version = str(manifest["cua_driver"]["version"])
+    expected_release = str(manifest["cua_driver"]["release"])
+    expected_archive_sha256 = str(
+        manifest["cua_driver"]["linux_x86_64_archive_sha256"]
+    )
+    installed = guest_exec(
+        ["/usr/local/bin/cua-driver", "--version"],
+        timeout=60,
+    ).get("output", "").strip()
+    if expected_version not in installed:
+        raise PilotError(
+            f"image Driver version mismatch: expected {expected_version}, "
+            f"found {installed!r}"
+        )
+
+    metadata_result = guest_exec(
+        ["cat", "/etc/cua-driver-osworld2-build.json"],
+        timeout=60,
+    )
+    try:
+        metadata = json.loads(metadata_result.get("output", ""))
+    except json.JSONDecodeError as exc:
+        raise PilotError("image Driver metadata is not valid JSON") from exc
+    expected_metadata = {
+        "benchmark_release": manifest["benchmark_release"],
+        "cua_driver_tag": expected_release,
+        "cua_driver_archive_sha256": expected_archive_sha256,
+    }
+    if metadata != expected_metadata:
+        raise PilotError("image Driver metadata did not match the pinned manifest")
+
+    guest_launch(
+        [
+            "bash",
+            "-lc",
+            (
+                "export DISPLAY=\"${DISPLAY:-:0}\"; "
+                "exec env CUA_DRIVER_RS_PERMISSIONS_GATE=0 "
+                "/usr/local/bin/cua-driver serve "
+                f"--socket {GUEST_DRIVER_SOCKET} "
+                "--dangerously-bypass-approvals "
+                ">/home/user/cua-driver.log 2>&1"
+            ),
+        ]
+    )
+    wait_for(
+        description="release-pinned Cua Driver socket",
+        timeout=180,
+        poll=3,
+        probe=lambda: guest_exec(
+            [
+                "bash",
+                "-lc",
+                (
+                    f"if test -S {GUEST_DRIVER_SOCKET}; "
+                    "then printf ready; else printf waiting; fi"
+                ),
+            ],
+            timeout=20,
+        ).get("output", "").strip(),
+        ready=lambda value: value == "ready",
+    )
+    status = guest_exec(
+        ["/usr/local/bin/cua-driver", "status", "--socket", GUEST_DRIVER_SOCKET],
+        timeout=60,
+    ).get("output", "").strip()
+    doctor_path = "/tmp/cua-driver-osworld2-doctor.json"
+    guest_launch(
+        [
+            "bash",
+            "-lc",
+            (
+                "export DISPLAY=\"${DISPLAY:-:0}\"; "
+                "/usr/local/bin/cua-driver doctor --json "
+                f">{doctor_path}.pending "
+                "2>/tmp/cua-driver-osworld2-doctor.log && "
+                f"mv {doctor_path}.pending {doctor_path}"
+            ),
+        ]
+    )
+    wait_for(
+        description="Cua Driver Linux doctor report",
+        timeout=120,
+        poll=3,
+        probe=lambda: guest_exec(
+            [
+                "bash",
+                "-lc",
+                f"if test -s {doctor_path}; then printf ready; else printf waiting; fi",
+            ],
+            timeout=20,
+        ).get("output", "").strip(),
+        ready=lambda value: value == "ready",
+    )
+    try:
+        doctor = json.loads(
+            guest_exec(["cat", doctor_path], timeout=60).get("output", "")
+        )
+    except json.JSONDecodeError as exc:
+        raise PilotError("image Driver doctor report was not valid JSON") from exc
+    emit("driver_ready", release=expected_release, source="container_image")
+    return {
+        "release": expected_release,
+        "version": installed,
+        "archive_sha256": expected_archive_sha256,
+        "metadata": metadata,
+        "source": "container_image",
+        "status": status,
+        "doctor": doctor,
+    }
+
+
 def delete_and_wait(
     *,
     http: Callable[[], httpx.Client],
@@ -1102,28 +1252,41 @@ def namespace_absent(http: Callable[[], httpx.Client], namespace: str) -> bool:
 
 
 def main() -> int:
+    global STOP_REQUESTED
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    parser.add_argument("--container-disk-image")
     parser.add_argument("--aws-region", default=DEFAULT_AWS_REGION)
     parser.add_argument("--aws-mock-port", type=int, default=DEFAULT_AWS_MOCK_PORT)
     parser.add_argument("--setup-task-082", action="store_true")
     parser.add_argument("--task-id", choices=["070", "073"])
     parser.add_argument("--build-driver", action="store_true")
     parser.add_argument("--driver-artifact-dir", type=Path)
+    parser.add_argument("--start-image-driver", action="store_true")
     parser.add_argument("--source-sha")
     parser.add_argument("--poll", type=float, default=5)
     args = parser.parse_args()
 
     local = read_json(args.config)
     secret_name = local.get("fleet_secret_name")
-    image = local.get("container_disk_image")
+    image = args.container_disk_image or local.get("container_disk_image")
     if not isinstance(secret_name, str) or not secret_name:
         raise PilotError("local config is missing fleet_secret_name")
     if not isinstance(image, str) or "@sha256:" not in image:
-        raise PilotError("local config must pin container_disk_image by digest")
-    if args.build_driver and args.driver_artifact_dir:
         raise PilotError(
-            "choose either --build-driver or --driver-artifact-dir"
+            "local config or --container-disk-image must pin the image by digest"
+        )
+    driver_strategies = sum(
+        bool(value)
+        for value in (
+            args.build_driver,
+            args.driver_artifact_dir,
+            args.start_image_driver,
+        )
+    )
+    if driver_strategies > 1:
+        raise PilotError(
+            "choose one Driver setup strategy"
         )
     if (args.build_driver or args.driver_artifact_dir) and not args.source_sha:
         raise PilotError("driver setup requires --source-sha")
@@ -1174,6 +1337,7 @@ def main() -> int:
     claim_created = False
     cleanup_ok = False
     stop_requested = threading.Event()
+    STOP_REQUESTED = stop_requested
 
     def request_stop(_signum: int, _frame: Any) -> None:
         stop_requested.set()
@@ -1224,6 +1388,8 @@ def main() -> int:
             driver_result = install_prebuilt_driver(
                 args.driver_artifact_dir, args.source_sha
             )
+        elif args.start_image_driver:
+            driver_result = start_image_driver()
 
         task_cache = RESULTS_DIR / f"task-{task_id or 'none'}-{suffix}-cache"
         if task_id == "082":
@@ -1297,6 +1463,9 @@ def main() -> int:
         while not stop_requested.wait(timeout=1):
             pass
     finally:
+        # A stop request interrupts provisioning waits, but cleanup has its
+        # own bounded verification loops and must be allowed to complete.
+        stop_requested.clear()
         emit("cleanup_started")
         if bridge:
             bridge.stop()

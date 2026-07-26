@@ -77,7 +77,7 @@ pub struct BrowserEngine {
     pub(crate) pool: CdpPool,
     pub(crate) managed_browsers: ManagedBrowsers,
     pub(crate) existing_profile_grants: ExistingProfileGrants,
-    pub(crate) approval_broker: crate::consent::ApprovalBroker,
+    pub(crate) approval_broker: Arc<crate::consent::ApprovalBroker>,
     mutation_gates: MutationGates,
     reconnect_gates: ReconnectGates,
     session_end_hook: Mutex<Option<crate::session::SessionEndHookRegistration>>,
@@ -525,7 +525,10 @@ impl BrowserEngine {
     /// capability store. Platform crates call this once and register
     /// the five tools via `register_browser_tools`.
     pub fn new(platform: Arc<dyn BrowserPlatform>) -> Arc<Self> {
-        Self::new_with_protected_consent_provider(platform, None)
+        Self::new_with_approval_broker(
+            platform,
+            Arc::new(crate::consent::ApprovalBroker::unavailable()),
+        )
     }
 
     /// Create an engine with a provider installed by a trusted embedding host
@@ -535,13 +538,25 @@ impl BrowserEngine {
         platform: Arc<dyn BrowserPlatform>,
         provider: Option<Arc<dyn crate::consent::ProtectedConsentProvider>>,
     ) -> Arc<Self> {
+        Self::new_with_approval_broker(
+            platform,
+            Arc::new(crate::consent::ApprovalBroker::new(provider)),
+        )
+    }
+
+    /// Create an engine using the runtime-owned broker shared by every
+    /// protected resource adapter.
+    pub fn new_with_approval_broker(
+        platform: Arc<dyn BrowserPlatform>,
+        approval_broker: Arc<crate::consent::ApprovalBroker>,
+    ) -> Arc<Self> {
         let engine = Arc::new(Self {
             platform,
             store: BrowserStore::new(),
             pool: CdpPool::new(),
             managed_browsers: Default::default(),
             existing_profile_grants: ExistingProfileGrants::new(),
-            approval_broker: crate::consent::ApprovalBroker::new(provider),
+            approval_broker,
             mutation_gates: MutationGates::new(),
             reconnect_gates: ReconnectGates::new(),
             session_end_hook: Mutex::new(None),

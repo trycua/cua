@@ -112,12 +112,17 @@ jobs:
             BODY+="\nOr add \`no-release\` to skip."
           fi
 
-          # Delete previous reminder comment if exists, then post new one
-          EXISTING_COMMENT_ID=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-            --jq ".[] | select(.body | contains(\"${COMMENT_MARKER}\")) | .id" 2>/dev/null | head -1)
+          # Delete every previous generated reminder, including duplicates left by
+          # older workflow runs, then post one clean status comment.
+          EXISTING_COMMENT_IDS=$(gh api --paginate \
+            "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" \
+            --jq ".[] | select(.body | contains(\"${COMMENT_MARKER}\")) | .id" 2>/dev/null || true)
 
-          if [ -n "$EXISTING_COMMENT_ID" ]; then
-            gh api -X DELETE "repos/${REPO}/issues/${PR_NUMBER}/comments/${EXISTING_COMMENT_ID}" 2>/dev/null || true
-          fi
+          while IFS= read -r comment_id; do
+            if [ -n "$comment_id" ]; then
+              gh api -X DELETE \
+                "repos/${REPO}/issues/${PR_NUMBER}/comments/${comment_id}" 2>/dev/null || true
+            fi
+          done <<< "$EXISTING_COMMENT_IDS"
 
           echo -e "$BODY" | gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file -

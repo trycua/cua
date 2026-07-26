@@ -90,6 +90,8 @@ class TestReleaseBumpAuthorization(unittest.TestCase):
             "Ask the release owner to apply \\`release:<service>\\` labels",
             reminder,
         )
+        self.assertIn("EXISTING_COMMENT_IDS=$(gh api --paginate", reminder)
+        self.assertNotIn("| head -1", reminder)
 
 
 if __name__ == "__main__":

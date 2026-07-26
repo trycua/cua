@@ -214,6 +214,8 @@ final class NativeVMDisplayPresenter: NSObject, VMDisplayPresenter, NSWindowDele
     private var copyFilesToGuestDesktopAction: (@MainActor ([URL]) async throws -> Void)?
     private var fileDropTask: Task<Void, Never>?
     private var fileDropInProgress = false
+    private var clipboardActionInProgress = false
+    private var clipboardToolbarItems: [NSToolbarItem] = []
     private var captureSystemKeysItem: NSMenuItem?
     private var captureSystemKeysToolbarItem: NSToolbarItem?
     private var showWindowItem: NSMenuItem?
@@ -288,6 +290,8 @@ final class NativeVMDisplayPresenter: NSObject, VMDisplayPresenter, NSWindowDele
         if fileDropTask == nil {
             fileDropInProgress = false
         }
+        clipboardActionInProgress = false
+        clipboardToolbarItems.removeAll()
         captureSystemKeysItem = nil
         captureSystemKeysToolbarItem = nil
         showWindowItem = nil
@@ -335,10 +339,16 @@ final class NativeVMDisplayPresenter: NSObject, VMDisplayPresenter, NSWindowDele
             switch shortcut {
             case .copy:
                 guard copyFromGuestAction != nil else { return false }
-                requestCopyFromGuest()
+                // Consume repeated shortcuts while an action is running instead
+                // of forwarding a second Command-C directly to the guest.
+                if !clipboardActionInProgress {
+                    requestCopyFromGuest()
+                }
             case .paste:
                 guard pasteIntoGuestAction != nil else { return false }
-                requestPasteIntoGuest()
+                if !clipboardActionInProgress {
+                    requestPasteIntoGuest()
+                }
             }
             return true
         }
@@ -464,18 +474,20 @@ final class NativeVMDisplayPresenter: NSObject, VMDisplayPresenter, NSWindowDele
         mainMenu.addItem(editItem)
 
         let copyItem = NSMenuItem(
-            title: "Copy from VM",
+            title: "Copy VM → Mac",
             action: #selector(copyFromGuest(_:)),
             keyEquivalent: "c"
         )
+        copyItem.toolTip = "Send Command-C to the VM, then copy the VM clipboard to this Mac"
         copyItem.target = self
         editMenu.addItem(copyItem)
 
         let pasteItem = NSMenuItem(
-            title: "Paste into VM",
+            title: "Paste Mac → VM",
             action: #selector(pasteIntoGuest(_:)),
             keyEquivalent: "v"
         )
+        pasteItem.toolTip = "Copy this Mac's clipboard into the VM, then send Command-V"
         pasteItem.target = self
         editMenu.addItem(pasteItem)
 
@@ -613,46 +625,68 @@ final class NativeVMDisplayPresenter: NSObject, VMDisplayPresenter, NSWindowDele
 
     private func requestCopyFromGuest() {
         guard let copyFromGuestAction else {
-            showOverlay("Copy unavailable")
+            showOverlay("Copy VM → Mac unavailable")
             return
         }
-        showOverlay("Sending ⌘C to VM…")
+        guard beginClipboardAction() else { return }
+        showOverlay("Copy VM → Mac: sending ⌘C…", automaticallyHides: false)
         Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.endClipboardAction() }
             do {
                 try await copyFromGuestAction()
-                self?.showOverlay("Copied from VM")
+                self.showOverlay("Copied VM clipboard to Mac")
             } catch {
                 Logger.error(
                     "Native clipboard copy failed",
                     metadata: [
-                        "vm": self?.vmName ?? "unknown",
+                        "vm": self.vmName,
                         "error": error.localizedDescription,
                     ])
-                self?.showOverlay("Copy failed — \(error.localizedDescription)")
+                self.showOverlay("Copy VM → Mac failed — \(error.localizedDescription)")
             }
         }
     }
 
     private func requestPasteIntoGuest() {
         guard let pasteIntoGuestAction else {
-            showOverlay("Paste unavailable")
+            showOverlay("Paste Mac → VM unavailable")
             return
         }
-        showOverlay("Syncing clipboard to VM…")
+        guard beginClipboardAction() else { return }
+        showOverlay("Paste Mac → VM: syncing clipboard…", automaticallyHides: false)
         Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.endClipboardAction() }
             do {
                 try await pasteIntoGuestAction()
-                self?.showOverlay("Pasted into VM")
+                self.showOverlay("Pasted Mac clipboard into VM")
             } catch {
                 Logger.error(
                     "Native clipboard paste failed",
                     metadata: [
-                        "vm": self?.vmName ?? "unknown",
+                        "vm": self.vmName,
                         "error": error.localizedDescription,
                     ])
-                self?.showOverlay("Paste failed — \(error.localizedDescription)")
+                self.showOverlay("Paste Mac → VM failed — \(error.localizedDescription)")
             }
         }
+    }
+
+    private func beginClipboardAction() -> Bool {
+        guard !clipboardActionInProgress else {
+            showOverlay("Clipboard transfer already in progress")
+            return false
+        }
+        clipboardActionInProgress = true
+        clipboardToolbarItems.forEach { $0.isEnabled = false }
+        return true
+    }
+
+    private func endClipboardAction() {
+        clipboardActionInProgress = false
+        clipboardToolbarItems.forEach { $0.isEnabled = true }
+        window?.makeFirstResponder(machineView)
     }
 
     private func showOverlay(_ message: String, automaticallyHides: Bool = true) {
@@ -710,19 +744,27 @@ final class NativeVMDisplayPresenter: NSObject, VMDisplayPresenter, NSWindowDele
         let item = NSToolbarItem(itemIdentifier: itemIdentifier)
         switch itemIdentifier {
         case .lumeCopy:
-            item.label = "Copy"
-            item.paletteLabel = "Copy from VM"
-            item.toolTip = "Send ⌘C to the VM and copy its text to the host"
-            item.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "Copy")
+            item.label = "Copy VM → Mac"
+            item.paletteLabel = "Copy VM to Mac"
+            item.toolTip = "Send Command-C to the VM, then copy the VM clipboard to this Mac"
+            item.image = NSImage(
+                systemSymbolName: "arrow.left.doc.on.clipboard",
+                accessibilityDescription: "Copy VM clipboard to Mac"
+            ) ?? NSImage(systemSymbolName: "arrow.left", accessibilityDescription: "VM to Mac")
             item.target = self
             item.action = #selector(copyFromGuest(_:))
+            clipboardToolbarItems.append(item)
         case .lumePaste:
-            item.label = "Paste"
-            item.paletteLabel = "Paste into VM"
-            item.toolTip = "Sync host text and send ⌘V to the VM"
-            item.image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "Paste")
+            item.label = "Paste Mac → VM"
+            item.paletteLabel = "Paste Mac into VM"
+            item.toolTip = "Copy this Mac's clipboard into the VM, then send Command-V"
+            item.image = NSImage(
+                systemSymbolName: "arrow.right.doc.on.clipboard",
+                accessibilityDescription: "Paste Mac clipboard into VM"
+            ) ?? NSImage(systemSymbolName: "arrow.right", accessibilityDescription: "Mac to VM")
             item.target = self
             item.action = #selector(pasteIntoGuest(_:))
+            clipboardToolbarItems.append(item)
         case .lumeShareFolder:
             item.label = "Share Folder"
             item.paletteLabel = "Share Folder"

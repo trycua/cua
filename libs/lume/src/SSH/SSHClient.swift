@@ -155,7 +155,7 @@ public actor SSHClient {
     static func makeChildChannelFuture(
         handlerFuture: EventLoopFuture<NIOSSHHandler>,
         eventLoop: EventLoop,
-        initialize: @escaping (NIOSSHHandler, EventLoopPromise<Channel>) -> Void
+        initialize: @escaping @Sendable (NIOSSHHandler, EventLoopPromise<Channel>) -> Void
     ) -> EventLoopFuture<Channel> {
         handlerFuture.flatMap { sshHandler in
             let childChannelPromise = eventLoop.makePromise(of: Channel.self)

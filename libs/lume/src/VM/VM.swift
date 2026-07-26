@@ -56,6 +56,7 @@ class VM {
     private var nativeAttachRegistered = false
     private var activeSharedDirectories: [SharedDirectory] = []
     private var scopedSharedDirectoryURLs: [URL] = []
+    private var clipboardTransferInProgress = false
     private var sessionCleanedUp = true
     internal let virtualizationServiceFactory:
         (VMVirtualizationServiceContext) throws -> VMVirtualizationService
@@ -499,23 +500,74 @@ class VM {
         await watcher.start()
     }
 
+    private func releaseManualClipboardTransfer(_ watcher: ClipboardWatcher) async {
+        clipboardTransferInProgress = false
+        await watcher.endManualTransfer()
+    }
+
     private func copyClipboardFromGuest() async throws {
         guard let clipboardWatcher else {
             throw ClipboardSyncError.unavailable
         }
+        guard !clipboardTransferInProgress else {
+            throw ClipboardSyncError.transferInProgress
+        }
 
-        let baseline = try? await clipboardWatcher.vmClipboardChangeCount()
-        try await sendGuestClipboardShortcut("c")
-        try await clipboardWatcher.pullVMClipboardToHost(after: baseline)
+        clipboardTransferInProgress = true
+        do {
+            try await clipboardWatcher.beginManualTransfer()
+        } catch {
+            clipboardTransferInProgress = false
+            throw error
+        }
+        do {
+            let baseline = try await clipboardWatcher.vmClipboardChangeCount()
+            for attempt in 0..<2 {
+                try await sendGuestClipboardShortcut("c")
+                do {
+                    try await clipboardWatcher.pullVMClipboardToHost(after: baseline)
+                    await releaseManualClipboardTransfer(clipboardWatcher)
+                    return
+                } catch ClipboardSyncError.guestCopyTimedOut where attempt == 0 {
+                    Logger.debug(
+                        "Guest copy did not update the pasteboard; retrying shortcut",
+                        metadata: ["vm": vmDirContext.name]
+                    )
+                    try await Task.sleep(for: .milliseconds(150))
+                }
+            }
+        } catch {
+            await releaseManualClipboardTransfer(clipboardWatcher)
+            throw error
+        }
     }
 
     private func pasteClipboardIntoGuest() async throws {
         guard let clipboardWatcher else {
             throw ClipboardSyncError.unavailable
         }
+        guard !clipboardTransferInProgress else {
+            throw ClipboardSyncError.transferInProgress
+        }
 
-        try await clipboardWatcher.pushHostClipboardToVM()
-        try await sendGuestClipboardShortcut("v")
+        clipboardTransferInProgress = true
+        do {
+            try await clipboardWatcher.beginManualTransfer()
+        } catch {
+            clipboardTransferInProgress = false
+            throw error
+        }
+        do {
+            try await clipboardWatcher.pushHostClipboardToVM()
+            // Give the guest pasteboard server a moment to publish the new value
+            // before delivering Command-V to the foreground application.
+            try await Task.sleep(for: .milliseconds(100))
+            try await sendGuestClipboardShortcut("v")
+            await releaseManualClipboardTransfer(clipboardWatcher)
+        } catch {
+            await releaseManualClipboardTransfer(clipboardWatcher)
+            throw error
+        }
     }
 
     private func sendGuestClipboardShortcut(_ character: Character) async throws {

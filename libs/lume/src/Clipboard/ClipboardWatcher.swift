@@ -6,17 +6,23 @@ enum ClipboardSyncError: LocalizedError {
     case emptyClipboard
     case contentTooLarge
     case transferFailed
+    case guestCopyTimedOut
+    case transferInProgress
 
     var errorDescription: String? {
         switch self {
         case .unavailable:
             return "Clipboard sync is waiting for guest SSH access."
         case .emptyClipboard:
-            return "The clipboard does not contain text or an image."
+            return "The clipboard does not contain supported text or image data."
         case .contentTooLarge:
             return "The clipboard content is too large to transfer."
         case .transferFailed:
             return "The clipboard transfer failed."
+        case .guestCopyTimedOut:
+            return "The VM did not copy new content. Select something in the VM and try again."
+        case .transferInProgress:
+            return "Another clipboard transfer is already in progress."
         }
     }
 }
@@ -60,6 +66,7 @@ public actor ClipboardWatcher {
     private var cachedSSHClient: SSHClient?
     private var cachedIPAddress: String?
     private var sshCommandInProgress = false
+    private var manualTransferInProgress = false
 
     // Error suppression to avoid flooding logs with repeated failures.
     private var consecutiveFailures = 0
@@ -104,6 +111,23 @@ public actor ClipboardWatcher {
         pendingHostPayload = nil
     }
 
+    /// Prevent the automatic watcher from changing either pasteboard between a
+    /// manual action's baseline read, injected shortcut, and payload transfer.
+    func beginManualTransfer() async throws {
+        while manualTransferInProgress || sshCommandInProgress {
+            try Task.checkCancellation()
+            try await Task.sleep(for: .milliseconds(25))
+        }
+
+        // No automatic SSH command is active and actor isolation prevents a new
+        // polling cycle from starting before this flag is set.
+        manualTransferInProgress = true
+    }
+
+    func endManualTransfer() {
+        manualTransferInProgress = false
+    }
+
     /// Immediately copies host text or image data into the guest clipboard.
     func pushHostClipboardToVM() async throws {
         let snapshot = await readHostClipboard()
@@ -126,16 +150,11 @@ public actor ClipboardWatcher {
     }
 
     /// Immediately reads guest text or image data into the host clipboard.
-    /// When a baseline is supplied, waits briefly for the guest's Copy command.
+    /// When a baseline is supplied, requires the guest's Copy command to
+    /// advance the pasteboard generation before reading its payload.
     func pullVMClipboardToHost(after baseline: Int? = nil) async throws {
         if let baseline {
-            for _ in 0..<15 {
-                let current = try await readVMChangeCount()
-                if current != baseline {
-                    break
-                }
-                try await Task.sleep(for: .milliseconds(100))
-            }
+            try await waitForVMClipboardChange(after: baseline)
         }
 
         let payload = try await readPayloadFromVM()
@@ -163,7 +182,12 @@ public actor ClipboardWatcher {
     }
 
     private func syncBidirectional() async {
+        // Manual Copy/Paste is a multi-step transaction. Do not let polling
+        // overwrite a pasteboard or satisfy a change-count wait in the middle.
+        guard !manualTransferInProgress else { return }
+
         let hostClipboard = await readHostClipboard()
+        guard !manualTransferInProgress else { return }
         if hostClipboard.changeCount != lastHostChangeCount {
             lastHostChangeCount = hostClipboard.changeCount
             if let payload = hostClipboard.payload,
@@ -182,7 +206,9 @@ public actor ClipboardWatcher {
                 try await writePayloadToVM(pendingHostPayload)
                 lastVMPayload = pendingHostPayload
                 self.pendingHostPayload = nil
+                guard !manualTransferInProgress else { return }
                 lastVMChangeCount = try? await readVMChangeCount()
+                guard !manualTransferInProgress else { return }
                 resetFailureState()
             } catch {
                 handleSyncError("Failed to sync clipboard to VM", error: error)
@@ -192,6 +218,7 @@ public actor ClipboardWatcher {
 
         do {
             let currentChangeCount = try await readVMChangeCount()
+            guard !manualTransferInProgress else { return }
             guard let previousChangeCount = lastVMChangeCount else {
                 lastVMChangeCount = currentChangeCount
                 return
@@ -200,6 +227,7 @@ public actor ClipboardWatcher {
             lastVMChangeCount = currentChangeCount
 
             let payload = try await readPayloadFromVM()
+            guard !manualTransferInProgress else { return }
             guard payload != lastVMPayload,
                   payload != lastHostPayload,
                   isValidSize(payload) else {
@@ -277,6 +305,44 @@ public actor ClipboardWatcher {
             throw ClipboardSyncError.transferFailed
         }
         return value
+    }
+
+    /// Wait for the guest pasteboard generation to advance after Command-C.
+    /// This is internal so the timeout behavior can be regression-tested without
+    /// requiring a VM or live SSH server.
+    static func guestClipboardWaitCommand(after baseline: Int, attempts: Int = 25) -> String {
+        let changeCountCommand =
+            "osascript -l JavaScript -e 'ObjC.import(\"AppKit\"); $.NSPasteboard.generalPasteboard.changeCount'"
+        return """
+            baseline='\(baseline)'
+            attempt=0
+            while [ "$attempt" -lt \(attempts) ]; do
+              current=$(\(changeCountCommand)) || exit 1
+              if [ "$current" != "$baseline" ]; then
+                printf '%s\\n' "$current"
+                exit 0
+              fi
+              sleep 0.1
+              attempt=$((attempt + 1))
+            done
+            exit 75
+            """
+    }
+
+    /// Wait in one guest-side command instead of opening a new SSH connection
+    /// for every poll. Besides being faster, this makes a missed guest shortcut
+    /// an explicit timeout rather than allowing stale clipboard content through.
+    private func waitForVMClipboardChange(after baseline: Int) async throws {
+        let result = try await executeSSHCommand(
+            command: Self.guestClipboardWaitCommand(after: baseline),
+            timeout: 5
+        )
+        if result.exitCode == 75 {
+            throw ClipboardSyncError.guestCopyTimedOut
+        }
+        guard result.exitCode == 0 else {
+            throw ClipboardSyncError.transferFailed
+        }
     }
 
     private func readPayloadFromVM() async throws -> ClipboardPayload {

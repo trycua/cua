@@ -1605,6 +1605,34 @@ def main() -> int:
             if pair_valid
             else None
         ),
+        "model_seconds_delta_combined_minus_control": (
+            by_mode["combined"]["model_seconds"]
+            - by_mode["screenshot_ax"]["model_seconds"]
+            if pair_valid
+            else None
+        ),
+        "estimated_cost_usd_by_mode": (
+            {
+                mode: by_mode[mode]["cost"]["estimated_usd"]
+                for mode in MODES
+            }
+            if pair_valid
+            else None
+        ),
+        "estimated_cost_usd_delta_combined_minus_control": (
+            by_mode["combined"]["cost"]["estimated_usd"]
+            - by_mode["screenshot_ax"]["cost"]["estimated_usd"]
+            if pair_valid
+            else None
+        ),
+        "total_estimated_cost_usd": (
+            sum(
+                by_mode[mode]["cost"]["estimated_usd"]
+                for mode in MODES
+            )
+            if pair_valid
+            else None
+        ),
         "fleet_cleanup": cleanup,
         "run_error": run_error,
         "interpretation": (

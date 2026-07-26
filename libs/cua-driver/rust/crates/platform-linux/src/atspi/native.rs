@@ -1229,6 +1229,9 @@ fn screen_to_window_coords(xid: u64, screen_x: i32, screen_y: i32) -> Option<(i3
 /// (`click`, `activate`).
 const ACTIVATION_VERBS: &[&str] = &[
     "click",
+    // Chromium exposes this on a static/text node whose clickable target is an
+    // ancestor. Dropping it would take away a working path.
+    "clickancestor",
     "activate",
     "press",
     "invoke",
@@ -2478,6 +2481,21 @@ mod coord_tests {
         .map(|s| (*s).to_owned())
         .collect();
         assert_eq!(activation_index(&text_view), None);
+    }
+
+    #[test]
+    fn chromium_action_names_stay_activatable() {
+        // Live capture from Chromium on GNOME Wayland. These elements were
+        // actuable before this change and must remain so; only
+        // `showContextMenu` is not an activation.
+        assert!(is_activation_action("activate")); // entry
+        assert!(is_activation_action("press")); // button
+        assert!(is_activation_action("clickAncestor")); // static in web content
+        assert!(!is_activation_action("showContextMenu"));
+        let entry = vec!["activate".to_owned(), "showContextMenu".to_owned()];
+        let statisch = vec!["clickAncestor".to_owned(), "showContextMenu".to_owned()];
+        assert_eq!(activation_index(&entry), Some(0));
+        assert_eq!(activation_index(&statisch), Some(0));
     }
 
     #[test]

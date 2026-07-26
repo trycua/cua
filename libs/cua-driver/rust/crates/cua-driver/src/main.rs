@@ -1,7 +1,9 @@
+#![recursion_limit = "256"]
+
 //! cua-driver-rs — cross-platform background computer-use automation daemon.
 //!
-//! Runs as a MCP JSON-RPC 2.0 server over stdio.  The platform backend is
-//! selected at compile time via conditional compilation.
+//! Runs a daemon-backed MCP JSON-RPC 2.0 proxy over stdio. The platform
+//! backend lives in the `serve` daemon selected at compile time.
 //!
 //! Extra CLI flags (consumed here, not by MCP):
 //!   --cursor-icon  <path.svg|.ico|.png>   custom cursor shape
@@ -12,66 +14,172 @@
 //!   --dwell-ms     <f64>                  post-click dwell override
 //!   --idle-hide-ms <f64>                  idle-hide timeout override
 //!
-//! ## macOS threading model
-//!
-//! AppKit requires the main thread.  On macOS the entry-point is a plain
-//! `fn main()` that:
-//!  1. Initialises the cursor overlay channel synchronously (so
-//!     `run_on_main_thread` always finds it ready).
-//!  2. Spawns a background tokio thread for the MCP server.
-//!  3. Calls `platform_macos::cursor::overlay::run_on_main_thread()` which
-//!     starts `NSApplication.run()` and the 60 fps render loop.
-//!
-//! On all other platforms `#[tokio::main]` is used directly.
+//! On macOS, `serve` keeps AppKit work on the main thread while its socket loop
+//! runs in the background. MCP and CLI client processes never initialize the
+//! platform tool registry.
 
 mod autostart;
 mod bundle;
+mod check_update_tool;
 mod cli;
 mod doctor;
 mod mcp_http;
+mod private_worker;
 mod proxy;
 mod responsibility;
+mod sdk_adapter;
 mod serve;
 mod skills;
 mod telemetry;
-mod check_update_tool;
 mod updater;
 mod version_check;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-
-/// Set by the `Command::Mcp` arm when `--claude-code-computer-use-compat`
-/// is on argv. Read by `build_registry` / `build_registry_no_cursor` to
-/// pick which `screenshot` tool variant to register. Static keeps the
-/// thread of dependency arrows pointed away from the platform crates —
-/// they take `compat: bool` directly, but the binary crate decides what
-/// to pass without making every Command variant carry the flag.
-static CLAUDE_CODE_COMPAT: AtomicBool = AtomicBool::new(false);
 
 fn init_logging() {
     use tracing_subscriber::EnvFilter;
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
-        .with_env_filter(
-            EnvFilter::from_env("CUA_LOG")
-                .add_directive(tracing::Level::WARN.into()),
-        )
+        .with_env_filter(EnvFilter::from_env("CUA_LOG").add_directive(tracing::Level::WARN.into()))
         .init();
+    telemetry::register_stdio_observer();
 }
 
-/// Fire the per-entry-point telemetry event (e.g. `cua_driver_mcp`,
-/// `cua_driver_api_click`). Respects the opt-out env var — no-op when
-/// telemetry is disabled. Always returns immediately: the actual POST
-/// happens on a background thread or tokio task.
-///
-/// Mirrors Swift's `TelemetryClient.shared.record(event:)` call at the
-/// top of `CuaDriverCommand.main()`. The install ping is *not* emitted
-/// here — that's the dedicated `telemetry install-event` subcommand
-/// fired exactly once by the post-install script.
-fn emit_entry_telemetry(command: &cli::Command) {
-    if let Some(event_name) = cli::telemetry_entry_event(command) {
-        telemetry::capture(&event_name, None);
+fn configure_startup_permission_mode(
+    permission_mode: Option<&str>,
+    dangerously_bypass_approvals: bool,
+    allow_legacy_existing_profile_approval: bool,
+    session_policy: Option<&str>,
+    approve_session_policy: bool,
+) -> anyhow::Result<()> {
+    if let Some(mode) = permission_mode {
+        std::env::set_var(cua_driver_core::authorization::PERMISSION_MODE_ENV, mode);
+    } else if dangerously_bypass_approvals
+        && std::env::var_os(cua_driver_core::authorization::PERMISSION_MODE_ENV).is_none()
+    {
+        // The alarming CLI flag is both the unrestricted-mode selector and
+        // the user's explicit launch-time risk acknowledgement. Embedded and
+        // environment-driven launchers retain the two-part mode + acceptance
+        // contract because they do not pass through this CLI normalization.
+        std::env::set_var(
+            cua_driver_core::authorization::PERMISSION_MODE_ENV,
+            "unrestricted",
+        );
+    }
+    if dangerously_bypass_approvals {
+        std::env::set_var(cua_driver_core::authorization::DANGEROUS_BYPASS_ENV, "1");
+    }
+    if allow_legacy_existing_profile_approval {
+        std::env::set_var(
+            cua_driver_core::authorization::LEGACY_EXISTING_PROFILE_APPROVAL_ENV,
+            "1",
+        );
+    }
+    if let Some(path) = session_policy {
+        std::env::set_var(
+            cua_driver_core::session_manifest::SESSION_POLICY_FILE_ENV,
+            path,
+        );
+    }
+    if approve_session_policy {
+        std::env::set_var(
+            cua_driver_core::session_manifest::SESSION_POLICY_APPROVED_ENV,
+            "1",
+        );
+    }
+    cua_driver_core::authorization::validate_startup_authorization()?;
+    if cua_driver_core::authorization::configured_permission_mode()
+        .is_ok_and(|mode| mode == cua_driver_core::authorization::PermissionMode::Unrestricted)
+    {
+        eprintln!(
+            "DANGER: Cua Driver is running in unrestricted mode. Runtime approval prompts are disabled; prompt injection or unintended input may act with every capability allowed by the built-in, managed, and user policy ceilings. Use only in a disposable or fully trusted environment."
+        );
+    }
+    Ok(())
+}
+
+/// Execute finite commands in a child so the parent can observe every exit,
+/// including validation failures and legacy `process::exit` paths. Delivery is
+/// delegated to a detached, no-output worker after the child exits, so network
+/// latency is never added to the foreground command.
+fn maybe_wrap_finite_command() {
+    if telemetry::is_wrapped_cli_child() {
+        return;
+    }
+    let Some(command_name) = cli::finite_command_name_from_argv() else {
+        return;
+    };
+    let tool_name = cli::finite_tool_name_from_argv();
+    let computer_action = cli::finite_computer_action_from_argv();
+    let operation = cli::finite_operation_from_argv();
+    let client_kind = cli::finite_client_kind_from_argv();
+    telemetry::spawn_first_run_registration_worker();
+    let Ok(executable) = std::env::current_exe() else {
+        return;
+    };
+    let started_at = std::time::Instant::now();
+    let status = std::process::Command::new(executable)
+        .args(std::env::args_os().skip(1))
+        .env(telemetry::cli_wrapped_child_env(), "1")
+        .status();
+    let Ok(status) = status else {
+        return;
+    };
+    let exit_code = status.code().unwrap_or(1);
+    telemetry::spawn_cli_completion_worker(
+        command_name,
+        tool_name.as_deref(),
+        computer_action,
+        operation,
+        client_kind,
+        exit_code,
+        started_at.elapsed(),
+    );
+    std::process::exit(exit_code);
+}
+
+fn run_telemetry_command(command: cli::TelemetryCommand) {
+    match command {
+        cli::TelemetryCommand::InstallEvent => telemetry::capture_install(),
+        cli::TelemetryCommand::Enable => match telemetry::set_enabled(true) {
+            Ok(()) => println!("Telemetry enabled. The retained installation ID will be reused."),
+            Err(error) => {
+                eprintln!("cua-driver: failed to enable telemetry: {error}");
+                std::process::exit(1);
+            }
+        },
+        cli::TelemetryCommand::Disable => match telemetry::set_enabled(false) {
+            Ok(()) => println!("Telemetry disabled. The local installation ID was retained; run `cua-driver telemetry reset-id` to erase it."),
+            Err(error) => {
+                eprintln!("cua-driver: failed to disable telemetry: {error}");
+                std::process::exit(1);
+            }
+        },
+        cli::TelemetryCommand::Status { json } => {
+            let status = telemetry::status();
+            if json {
+                println!("{}", serde_json::to_string_pretty(&status).expect("serialize telemetry status"));
+            } else {
+                println!("Telemetry: {} (source: {})", if status.enabled { "enabled" } else { "disabled" }, status.source);
+                println!("Installation ID: {}", status.installation_id.as_deref().unwrap_or("not created"));
+                println!("Registration recorded: {}", status.registration_recorded);
+                println!("Current release recorded: {}", status.current_release_recorded);
+            }
+        }
+        cli::TelemetryCommand::ResetId => match telemetry::reset_id() {
+            Ok(()) => println!("Telemetry installation ID and event markers erased. The enable/disable preference was retained."),
+            Err(error) => {
+                eprintln!("cua-driver: failed to reset telemetry ID: {error}");
+                std::process::exit(1);
+            }
+        },
+        cli::TelemetryCommand::Inspect { event } => match telemetry::inspect_event(&event) {
+            Ok(payload) => println!("{}", serde_json::to_string_pretty(&payload).expect("serialize telemetry payload")),
+            Err(error) => {
+                eprintln!("cua-driver: {error}");
+                std::process::exit(64);
+            }
+        },
     }
 }
 
@@ -97,17 +205,11 @@ fn maybe_init_pip() {
     // Register the platform factory. The set is idempotent so multiple
     // entry points calling this in the same process is safe.
     #[cfg(target_os = "macos")]
-    pip_preview::set_pip_backend_factory(
-        Box::new(platform_macos::pip::MacosPipBackendFactory),
-    );
+    pip_preview::set_pip_backend_factory(Box::new(platform_macos::pip::MacosPipBackendFactory));
     #[cfg(target_os = "windows")]
-    pip_preview::set_pip_backend_factory(
-        Box::new(platform_windows::pip::WindowsPipBackendFactory),
-    );
+    pip_preview::set_pip_backend_factory(Box::new(platform_windows::pip::WindowsPipBackendFactory));
     #[cfg(target_os = "linux")]
-    pip_preview::set_pip_backend_factory(
-        Box::new(platform_linux::pip::LinuxPipBackendFactory),
-    );
+    pip_preview::set_pip_backend_factory(Box::new(platform_linux::pip::LinuxPipBackendFactory));
 
     match pip_preview::start_pip(&cfg) {
         Ok(backend) => {
@@ -117,8 +219,9 @@ fn maybe_init_pip() {
             // closure can re-borrow on every call without taking
             // ownership of the trait object.
             use std::sync::Mutex as StdMutex;
-            static BACKEND: std::sync::OnceLock<StdMutex<Option<Box<dyn pip_preview::PipBackend>>>> =
-                std::sync::OnceLock::new();
+            static BACKEND: std::sync::OnceLock<
+                StdMutex<Option<Box<dyn pip_preview::PipBackend>>>,
+            > = std::sync::OnceLock::new();
             let _ = BACKEND.set(StdMutex::new(Some(backend)));
             cua_driver_core::pip_hook::set_pip_push_fn(|frame| {
                 if let Some(slot) = BACKEND.get() {
@@ -142,24 +245,151 @@ fn maybe_init_pip() {
     }
 }
 
-// ── Registry helpers (macOS) ─────────────────────────────────────────────
+// ── Public SDK runtime host ──────────────────────────────────────────────
 
-/// Build the macOS tool registry and inject the platform-agnostic
-/// `check_for_update` tool. Wrapper lives in the binary crate so the
-/// `cua-driver-core` graph (shared with every `platform-*` crate) stays
-/// free of the `ureq` + rustls + ring deps that the check tool needs.
-#[cfg(target_os = "macos")]
-fn build_macos_registry() -> cua_driver_core::tool::ToolRegistry {
-    let mut r = platform_macos::register_tools();
-    check_update_tool::register_into(&mut r);
-    r
+/// Construct the canonical SDK-owned runtime for the CLI or daemon host.
+/// The private socket and MCP layers consume this object downstream.
+fn build_driver(
+    cursor: cursor_overlay::CursorConfig,
+    compatibility_mode: bool,
+    host_owns_permission_ux: bool,
+) -> Result<Arc<cua_driver_sdk::CuaDriver>, cua_driver_sdk::DriverError> {
+    cua_driver_sdk::CuaDriver::try_create_service_for_host(cua_driver_sdk::DriverHostOptions {
+        cursor,
+        host_owns_permission_ux,
+        host_bundle_id: std::env::var(cua_driver_core::HOST_BUNDLE_ID_ENV).ok(),
+        claude_code_compatibility: compatibility_mode,
+        prepare_desktop_environment: true,
+        register_host_tools: Some(check_update_tool::register_into),
+    })
 }
 
-#[cfg(target_os = "macos")]
-fn build_macos_registry_with_compat(compat: bool) -> cua_driver_core::tool::ToolRegistry {
-    let mut r = platform_macos::register_tools_with_compat(compat);
-    check_update_tool::register_into(&mut r);
-    r
+#[cfg(test)]
+fn build_driver_without_cursor() -> Arc<cua_driver_sdk::CuaDriver> {
+    build_driver(
+        cursor_overlay::CursorConfig {
+            enabled: false,
+            ..cursor_overlay::CursorConfig::default()
+        },
+        false,
+        false,
+    )
+    .expect("test host requires an available desktop runtime")
+}
+
+/// Load the canonical SDK inventory without constructing an action runtime.
+///
+/// Finite metadata commands remain usable from non-interactive Windows
+/// sessions, while `serve`, MCP, and direct SDK creation still fail closed
+/// before accepting desktop actions.
+fn inspect_tools_without_runtime() -> serde_json::Value {
+    cua_driver_sdk::CuaDriver::inspect_host_tools(cua_driver_sdk::DriverHostOptions {
+        cursor: cursor_overlay::CursorConfig {
+            enabled: false,
+            ..cursor_overlay::CursorConfig::default()
+        },
+        host_owns_permission_ux: false,
+        host_bundle_id: None,
+        claude_code_compatibility: false,
+        prepare_desktop_environment: false,
+        register_host_tools: Some(check_update_tool::register_into),
+    })
+}
+
+#[cfg(test)]
+fn test_runtime_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+fn run_mcp_direct(compatibility_mode: bool) -> anyhow::Result<()> {
+    // Validate immutable process policy before platform initialization. The
+    // adapter repeats this check before reading stdin as defense in depth.
+    cua_driver_core::authorization::validate_startup_authorization()?;
+    cua_driver_core::policy::validate_configured_policy()?;
+    let cursor = cursor_overlay::CursorConfig::from_args();
+    // A plain stdio MCP process does not provide the certified AppKit
+    // main-thread host adapter. Explicit direct mode on macOS must therefore
+    // expose facility_unavailable instead of initializing an overlay that can
+    // report success without a usable UI owner. Private-worker and app-service
+    // hosts keep the full facility.
+    #[cfg(target_os = "macos")]
+    let cursor = {
+        let mut cursor = cursor;
+        cursor.enabled = false;
+        cursor
+    };
+    let driver = build_driver(cursor, compatibility_mode, true)?;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(proxy::run_direct(driver))
+}
+
+fn mcp_uses_direct_runtime(socket: Option<&str>, direct: bool) -> anyhow::Result<bool> {
+    mcp_uses_direct_runtime_for(
+        cua_driver_core::embedded_mode(),
+        socket,
+        cfg!(target_os = "macos"),
+        direct,
+    )
+}
+
+fn mcp_uses_direct_runtime_for(
+    embedded: bool,
+    socket: Option<&str>,
+    macos: bool,
+    direct: bool,
+) -> anyhow::Result<bool> {
+    if direct && socket.is_some() {
+        anyhow::bail!("--direct and --socket are mutually exclusive");
+    }
+    if direct {
+        return Ok(true);
+    }
+    if embedded && socket.is_none() {
+        anyhow::bail!("embedded hosts must provide their private service endpoint with --socket");
+    }
+    if macos {
+        // Preserve LaunchServices/TCC attribution for normal macOS clients.
+        Ok(false)
+    } else {
+        Ok(socket.is_none())
+    }
+}
+
+#[cfg(test)]
+mod mcp_runtime_selection_tests {
+    use super::mcp_uses_direct_runtime_for;
+
+    #[test]
+    fn embedded_host_without_private_endpoint_fails_closed() {
+        let error = mcp_uses_direct_runtime_for(true, None, false, false).unwrap_err();
+        assert!(error.to_string().contains("--socket"));
+        let error = mcp_uses_direct_runtime_for(true, None, true, false).unwrap_err();
+        assert!(error.to_string().contains("--socket"));
+    }
+
+    #[test]
+    fn normal_linux_and_windows_stdio_own_the_runtime() {
+        assert!(mcp_uses_direct_runtime_for(false, None, false, false).unwrap());
+        assert!(!mcp_uses_direct_runtime_for(false, Some("service"), false, false).unwrap());
+    }
+
+    #[test]
+    fn normal_macos_stdio_preserves_the_service_boundary() {
+        assert!(!mcp_uses_direct_runtime_for(false, None, true, false).unwrap());
+        assert!(!mcp_uses_direct_runtime_for(false, Some("service"), true, false).unwrap());
+    }
+
+    #[test]
+    fn explicit_direct_owns_the_runtime_on_macos_and_in_embedded_hosts() {
+        assert!(mcp_uses_direct_runtime_for(false, None, true, true).unwrap());
+        assert!(mcp_uses_direct_runtime_for(true, None, true, true).unwrap());
+        assert!(mcp_uses_direct_runtime_for(true, None, false, true).unwrap());
+        let error = mcp_uses_direct_runtime_for(false, Some("service"), true, true).unwrap_err();
+        assert!(error.to_string().contains("mutually exclusive"));
+    }
 }
 
 // ── macOS entry-point ─────────────────────────────────────────────────────
@@ -167,102 +397,118 @@ fn build_macos_registry_with_compat(compat: bool) -> cua_driver_core::tool::Tool
 #[cfg(target_os = "macos")]
 fn main() {
     init_logging();
+    if let Some(code) = cli::run_permissions_host_request_if_requested() {
+        std::process::exit(code);
+    }
+    if let Some(generation) = private_worker::requested_generation() {
+        let (initialized_tx, initialized_rx) = std::sync::mpsc::sync_channel(1);
+        std::thread::spawn(move || {
+            let code = match private_worker::run(generation, Some(initialized_tx)) {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!("cua-driver private worker: {error}");
+                    1
+                }
+            };
+            // AppKit's event loop is process-long. This directly supervised
+            // child has no reusable endpoint, so protocol completion owns the
+            // worker process lifetime.
+            std::process::exit(code);
+        });
+        if initialized_rx.recv().unwrap_or(false) {
+            platform_macos::cursor::overlay::run_on_main_thread();
+        }
+        return;
+    }
+    if telemetry::run_cli_completion_worker_if_requested() {
+        return;
+    }
+    if telemetry::run_lifecycle_worker_if_requested() {
+        return;
+    }
+    if telemetry::run_update_event_worker_if_requested() {
+        return;
+    }
+    maybe_wrap_finite_command();
 
     // ── CLI subcommand dispatch ──────────────────────────────────────────────
     // Handled before AppKit init so `list-tools` / `describe` / `call` exit
     // cleanly without starting the overlay or NSApplication.
     let command = cli::parse_command();
-    emit_entry_telemetry(&command);
+    if !telemetry::is_wrapped_cli_child() && !matches!(&command, cli::Command::Telemetry(_)) {
+        telemetry::spawn_first_run_registration_worker();
+    }
     match command {
-        cli::Command::TelemetryInstallEvent => {
-            // Synchronous install ping (see `telemetry::capture_install`).
-            // Blocks on the POST so the `.installation_recorded` marker
-            // is only written on HTTP success — failed POST means next
-            // launch retries. Installer script already runs us in the
-            // background via `&`, so blocking here is fine.
-            telemetry::capture_install();
-            return;
+        cli::Command::Telemetry(command) => {
+            run_telemetry_command(command);
         }
         cli::Command::ListTools => {
-            let reg = Arc::new(build_macos_registry());
-            cli::run_list_tools(&reg);
-            return;
+            let tools = inspect_tools_without_runtime();
+            cli::run_list_tools(&tools);
         }
         cli::Command::Describe(name) => {
-            let reg = Arc::new(build_macos_registry());
-            cli::run_describe(&reg, &name);
-            return;
+            let tools = inspect_tools_without_runtime();
+            cli::run_describe(&tools, &name);
         }
         cli::Command::McpConfig { client } => {
             cli::run_mcp_config(client.as_deref());
-            return;
         }
         cli::Command::Manifest { pretty } => {
             // Surface 8: machine-readable CLI manifest. Read-only — no
             // registry build needed, no daemon contact.
             cli::run_manifest(pretty);
-            return;
         }
-        cli::Command::Call { tool, json_args, screenshot_out_file, socket } => {
-            // Register callbacks (needed if the tool does screenshots/recording).
-            cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
-                if let Some(wid) = window_id {
-                    platform_macos::capture::screenshot_window_bytes(wid as u32).ok()
-                } else if let Some(p) = pid {
-                    platform_macos::windows::resolve_main_window_id(p as i32).ok()
-                        .and_then(|wid| platform_macos::capture::screenshot_window_bytes(wid).ok())
-                } else {
-                    platform_macos::capture::screenshot_display_bytes().ok()
-                }
-            });
-            cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
-                platform_macos::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
-            });
-            cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
-                platform_macos::recording_hooks::app_state_json_for(window_id, pid)
-            });
-            cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
-                platform_macos::recording_hooks::element_window_local_xy(wid, pid, idx)
-            });
-            cua_driver_core::video::set_video_backend_factory(
-                Box::new(platform_macos::video_sckit::SckitVideoBackendFactory),
-            );
-            let reg = Arc::new(build_macos_registry());
-            reg.init_self_weak();
-            cli::run_call(reg, &tool, json_args, screenshot_out_file, socket);
-            return;
+        cli::Command::Call {
+            tool,
+            json_args,
+            screenshot_out_file,
+            socket,
+        } => {
+            cli::run_call(&tool, json_args, screenshot_out_file, socket);
         }
-        cli::Command::Serve { socket, no_permissions_gate, claude_code_compat } => {
+        cli::Command::Serve {
+            socket,
+            permission_mode,
+            dangerously_bypass_approvals,
+            allow_legacy_existing_profile_approval,
+            session_policy,
+            approve_session_policy,
+            no_permissions_gate,
+            claude_code_compat,
+        } => {
+            if let Err(error) = configure_startup_permission_mode(
+                permission_mode.as_deref(),
+                dangerously_bypass_approvals,
+                allow_legacy_existing_profile_approval,
+                session_policy.as_deref(),
+                approve_session_policy,
+            ) {
+                eprintln!("cua-driver: authorization startup error: {error}");
+                std::process::exit(64);
+            }
             responsibility::reexec_disclaimed_if_needed();
+            let gate_opts =
+                platform_macos::permissions::GateOpts::from_env_and_flag(no_permissions_gate);
+            if let Some((progress, context)) =
+                platform_macos::permissions::gate::prepare_telemetry_context(gate_opts.opt_out)
+            {
+                if progress == platform_macos::permissions::GateProgress::Started {
+                    telemetry::capture_permissions_gate_started(
+                        context.missing_accessibility,
+                        context.missing_screen_recording,
+                    );
+                }
+            }
+            if !platform_macos::permissions::gate::is_gate_reexec() {
+                telemetry::capture_start(
+                    telemetry::event::SERVE_START_LEGACY,
+                    telemetry::Transport::Daemon,
+                );
+            }
             // Long-running daemon — kick off the background update check
             // before any blocking work so the banner can land on stderr
             // early in the serve lifecycle.
             version_check::maybe_announce_update();
-            let gate_opts = platform_macos::permissions::GateOpts::from_env_and_flag(
-                no_permissions_gate,
-            );
-            cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
-                if let Some(wid) = window_id {
-                    platform_macos::capture::screenshot_window_bytes(wid as u32).ok()
-                } else if let Some(p) = pid {
-                    platform_macos::windows::resolve_main_window_id(p as i32).ok()
-                        .and_then(|wid| platform_macos::capture::screenshot_window_bytes(wid).ok())
-                } else {
-                    platform_macos::capture::screenshot_display_bytes().ok()
-                }
-            });
-            cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
-                platform_macos::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
-            });
-            cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
-                platform_macos::recording_hooks::app_state_json_for(window_id, pid)
-            });
-            cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
-                platform_macos::recording_hooks::element_window_local_xy(wid, pid, idx)
-            });
-            cua_driver_core::video::set_video_backend_factory(
-                Box::new(platform_macos::video_sckit::SckitVideoBackendFactory),
-            );
             let pip_cfg = match pip_preview::default_config_path() {
                 Some(p) => pip_preview::PipConfig::from_args_and_file(&p),
                 None => pip_preview::PipConfig::from_args(),
@@ -271,25 +517,27 @@ fn main() {
 
             // Agent-cursor overlay. The DAEMON is the process that actually
             // performs clicks / AX presses, so the overlay NSWindow + render
-            // loop must run HERE — not only in the in-process `mcp` arm. In the
-            // daemon-proxy setup (`mcp` relaunches `open -n -g … serve` and
-            // proxies to it), the proxy never renders and, before this, neither
-            // did the daemon — so every cursor command was a silent no-op and
-            // the agent cursor never appeared. Init the channel before spawning
-            // the serve thread so `run_on_main_thread()` always finds it ready
-            // (mirrors the Mcp arm).
+            // loop must run HERE. The MCP proxy never renders, so the daemon
+            // owns every cursor command and window. Init the channel before spawning
+            // the serve thread so `run_on_main_thread()` always finds it ready.
             let cursor_cfg = cursor_overlay::CursorConfig::from_args();
-            if cursor_cfg.enabled {
-                platform_macos::cursor::overlay::init(cursor_cfg.clone());
-            }
 
             // Honour the compat flag forwarded by the MCP proxy
             // (launch_daemon_and_wait passes `serve
             // --claude-code-computer-use-compat`). The Serve arm is the daemon
             // the proxy talks to, so without this the proxy path always served
             // the full screenshot tool regardless of the client's request.
-            let reg = Arc::new(build_macos_registry_with_compat(claude_code_compat));
-            reg.init_self_weak();
+            let driver = match build_driver(
+                cursor_cfg.clone(),
+                claude_code_compat,
+                cua_driver_core::embedded_mode(),
+            ) {
+                Ok(driver) => driver,
+                Err(error) => {
+                    eprintln!("cua-driver: cannot create desktop runtime: {error}");
+                    std::process::exit(1);
+                }
+            };
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             let pid_path = serve::default_pid_file_path();
 
@@ -317,7 +565,7 @@ fn main() {
             let serve_handle = std::thread::Builder::new()
                 .name("cua-serve".into())
                 .spawn(move || {
-                    serve::run_serve_cmd(reg, &sp, Some(&pid_path));
+                    serve::run_serve_cmd(driver, &sp, Some(&pid_path));
                     std::process::exit(0);
                 })
                 .expect("spawn serve thread");
@@ -333,11 +581,45 @@ fn main() {
             // and the daemon continues to serve — individual tool calls
             // will then fail with the underlying TCC error, mirroring
             // Swift's "user closed the panel" fallback.
-            if let Err(e) = platform_macos::permissions::run_if_needed(gate_opts) {
+            let gate_result = platform_macos::permissions::run_if_needed_with_observer(
+                gate_opts,
+                |progress, context| match progress {
+                    platform_macos::permissions::GateProgress::Started => {
+                        telemetry::capture_permissions_gate_started(
+                            context.missing_accessibility,
+                            context.missing_screen_recording,
+                        );
+                    }
+                    platform_macos::permissions::GateProgress::Dismissed => {
+                        telemetry::capture_permissions_gate_dismissed(
+                            context.missing_accessibility,
+                            context.missing_screen_recording,
+                            context.elapsed,
+                        );
+                    }
+                },
+            );
+            let gate_context = platform_macos::permissions::gate::telemetry_context();
+            if gate_context.engaged {
+                telemetry::capture_permissions_gate_completed(
+                    gate_context.missing_accessibility,
+                    gate_context.missing_screen_recording,
+                    gate_context.panel_shown,
+                    gate_context.dismissed,
+                    telemetry::permissions_gate_resolution(
+                        gate_result.is_err(),
+                        gate_context.dismissed,
+                    ),
+                    gate_context.elapsed,
+                );
+            }
+            if let Err(e) = gate_result {
                 eprintln!("[cua-driver] permissions gate: {e}");
-                eprintln!("[cua-driver] continuing — tool calls touching AX or \
+                eprintln!(
+                    "[cua-driver] continuing — tool calls touching AX or \
                            Screen Recording fail until you grant the missing TCC \
-                           permissions.");
+                           permissions."
+                );
             }
 
             // Keep the main thread alive for the daemon.
@@ -361,35 +643,40 @@ fn main() {
             } else {
                 let _ = serve_handle.join();
             }
-            return;
         }
         cli::Command::Stop { socket } => {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             serve::run_stop_cmd(&sp);
-            return;
+        }
+        cli::Command::Revoke {
+            socket,
+            session,
+            all,
+        } => {
+            let sp = socket.unwrap_or_else(serve::default_socket_path);
+            serve::run_revoke_cmd(&sp, session.as_deref(), all);
         }
         cli::Command::Status { socket } => {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             let pid_path = serve::default_pid_file_path();
             serve::run_status_cmd(&sp, &pid_path);
-            return;
         }
-        cli::Command::Recording { subcommand, args, socket } => {
+        cli::Command::Recording {
+            subcommand,
+            args,
+            socket,
+        } => {
             cli::run_recording_cmd(&subcommand, &args, socket.as_deref());
-            return;
         }
         cli::Command::DumpDocs { pretty, doc_type } => {
-            let reg = Arc::new(build_macos_registry());
-            cli::run_dump_docs_with_type(&reg, pretty, &doc_type);
-            return;
+            let tools = inspect_tools_without_runtime();
+            cli::run_dump_docs_with_type(&tools, pretty, &doc_type);
         }
         cli::Command::Update { apply, json } => {
             cli::run_update_cmd(apply, json);
-            return;
         }
         cli::Command::CheckUpdate { json, no_cache } => {
             cli::run_check_update_cmd(json, no_cache);
-            return;
         }
         cli::Command::Doctor { json } => {
             // Long-running interactive entry point — kick off the
@@ -400,137 +687,88 @@ fn main() {
                 version_check::maybe_announce_update();
             }
             cli::run_doctor_cmd(json);
-            return;
         }
         cli::Command::Diagnose => {
-            let reg = Arc::new(build_macos_registry());
-            cli::run_diagnose_cmd(reg);
-            return;
+            cli::run_diagnose_cmd();
         }
         cli::Command::Permissions { subcommand, json } => {
-            let reg = Arc::new(build_macos_registry());
-            cli::run_permissions_cmd(reg, &subcommand, json);
-            return;
+            cli::run_permissions_cmd(&subcommand, json);
         }
         cli::Command::Autostart { subcommand } => {
             autostart::run_autostart_cmd(&subcommand);
-            return;
         }
         cli::Command::Skills { subcommand, flags } => {
             skills::run(&subcommand, &flags);
-            return;
         }
-        cli::Command::Config { subcommand, key, value, socket } => {
-            let reg = Arc::new(build_macos_registry());
-            reg.init_self_weak();
-            cli::run_config_cmd(reg, subcommand.as_deref(), key.as_deref(), value.as_deref(), socket.as_deref());
-            return;
+        cli::Command::BrowserApprove {
+            pid,
+            strategy,
+            window_id,
+            session,
+            profile_mode,
+            profile_name,
+        } => {
+            cli::run_browser_approve(
+                pid,
+                strategy.as_deref(),
+                window_id,
+                session.as_deref(),
+                profile_mode.as_deref(),
+                profile_name.as_deref(),
+            );
         }
-        cli::Command::Mcp { no_daemon_relaunch, socket, claude_code_compat } => {
-            CLAUDE_CODE_COMPAT.store(claude_code_compat, Ordering::SeqCst);
-            // Long-running MCP server — kick off the background update
-            // check before any TCC / daemon-proxy decisions so the
-            // banner can land on stderr in either dispatch path.
+        cli::Command::Config {
+            subcommand,
+            key,
+            value,
+            socket,
+        } => {
+            cli::run_config_cmd(
+                subcommand.as_deref(),
+                key.as_deref(),
+                value.as_deref(),
+                socket.as_deref(),
+            );
+        }
+        cli::Command::Mcp {
+            socket,
+            direct,
+            claude_code_compat,
+        } => {
+            let startup_started = std::time::Instant::now();
+            // Long-running MCP proxy — kick off the background update check
+            // before connecting to or launching the daemon.
             version_check::maybe_announce_update();
-            // TCC sidestep: if we're a shell-spawned bare binary that
-            // resolves into /Applications/CuaDriver.app, run the
-            // proxy path instead of the in-process MCP server. The
-            // proxy ensures a daemon is up under the bundle's TCC
-            // attribution and forwards stdio MCP through its socket.
-            // Issue #1525 / mirror of Swift PR #1479.
-            if cli::should_use_daemon_proxy(no_daemon_relaunch) {
-                if let Err(e) = cli::run_mcp_via_daemon_proxy(socket, claude_code_compat) {
-                    eprintln!("cua-driver-rs: {e}");
-                    std::process::exit(1);
+            let result = match mcp_uses_direct_runtime(socket.as_deref(), direct) {
+                Ok(true) => {
+                    telemetry::capture_mcp_startup_completed(
+                        "sdk_owned_runtime",
+                        "not_applicable",
+                        true,
+                        startup_started.elapsed(),
+                    );
+                    run_mcp_direct(claude_code_compat)
                 }
-                return;
+                Err(error) => Err(error),
+                Ok(false) => {
+                    cli::run_mcp_via_daemon_proxy(socket, claude_code_compat, |daemon, success| {
+                        telemetry::capture_mcp_startup_completed(
+                            "daemon_proxy",
+                            daemon.telemetry_value(),
+                            success,
+                            startup_started.elapsed(),
+                        )
+                    })
+                }
+            };
+            if let Err(e) = result {
+                eprintln!("cua-driver-rs: {e}");
+                telemetry::flush_pending(std::time::Duration::from_millis(750));
+                std::process::exit(1);
             }
-            // Fall through to the in-process MCP server below. The
-            // `socket` flag is daemon-proxy-only; it has no meaning
-            // in the in-process path, so we drop it on the floor.
-            let _ = socket;
+            telemetry::flush_pending(std::time::Duration::from_millis(750));
         }
     }
-
-    let cursor_cfg = cursor_overlay::CursorConfig::from_args();
-
-    tracing::info!(
-        version = env!("CARGO_PKG_VERSION"),
-        cursor_id = %cursor_cfg.cursor_id,
-        overlay_enabled = cursor_cfg.enabled,
-        has_custom_icon = cursor_cfg.shape.is_some(),
-        "cua-driver-rs starting (macOS)"
-    );
-
-    let enabled = cursor_cfg.enabled;
-
-    // Initialise overlay channel synchronously BEFORE spawning background
-    // thread.  This eliminates a race where run_on_main_thread() could be
-    // called before init() and find an empty channel.
-    if enabled {
-        platform_macos::cursor::overlay::init(cursor_cfg.clone());
-    }
-
-    // Spawn tokio + MCP server on a background thread so the main thread
-    // is free for AppKit.
-    // Register screenshot callback for recording (post-action screenshots).
-    cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
-        if let Some(wid) = window_id {
-            platform_macos::capture::screenshot_window_bytes(wid as u32).ok()
-        } else if let Some(p) = pid {
-            platform_macos::windows::resolve_main_window_id(p as i32).ok()
-                .and_then(|wid| platform_macos::capture::screenshot_window_bytes(wid).ok())
-        } else {
-            platform_macos::capture::screenshot_display_bytes().ok()
-        }
-    });
-
-    // Register click-marker callback for recording (click.png with red crosshair).
-    cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
-        platform_macos::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
-    });
-    cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
-        platform_macos::recording_hooks::app_state_json_for(window_id, pid)
-    });
-    cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
-        platform_macos::recording_hooks::element_window_local_xy(wid, pid, idx)
-    });
-    cua_driver_core::video::set_video_backend_factory(
-        Box::new(platform_macos::video_sckit::SckitVideoBackendFactory),
-    );
-    maybe_init_pip();
-
-    std::thread::Builder::new()
-        .name("cua-mcp".into())
-        .spawn(move || {
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .expect("tokio runtime");
-            let compat = CLAUDE_CODE_COMPAT.load(Ordering::SeqCst);
-            rt.block_on(async move {
-                // Register tools; overlay init has already happened above.
-                let registry = Arc::new(build_macos_registry_with_compat(compat));
-                // Wire up replay tool's back-reference to the registry.
-                registry.init_self_weak();
-                if let Err(e) = cua_driver_core::server::run(registry).await {
-                    tracing::error!("MCP server error: {e}");
-                }
-            });
-            // MCP server exited (stdin closed / client disconnected).
-            // The main thread is blocked in NSApplication.run() and won't
-            // exit on its own — force-exit the process cleanly.
-            std::process::exit(0);
-        })
-        .expect("spawn mcp thread");
-
-    // Main thread: AppKit overlay (blocks until the process exits).
-    if enabled {
-        platform_macos::cursor::overlay::run_on_main_thread();
-    }
-    // Overlay disabled: park the main thread while the MCP background thread
-    // keeps running.
-    loop { std::thread::park(); }
 }
 
 // ── Non-macOS entry-point ─────────────────────────────────────────────────
@@ -538,31 +776,41 @@ fn main() {
 #[cfg(not(target_os = "macos"))]
 fn main() -> anyhow::Result<()> {
     init_logging();
+    if let Some(generation) = private_worker::requested_generation() {
+        return private_worker::run(generation, None);
+    }
+    if telemetry::run_cli_completion_worker_if_requested() {
+        return Ok(());
+    }
+    if telemetry::run_lifecycle_worker_if_requested() {
+        return Ok(());
+    }
+    if telemetry::run_update_event_worker_if_requested() {
+        return Ok(());
+    }
+    maybe_wrap_finite_command();
 
     // ── CLI subcommand dispatch ──────────────────────────────────────────────
     // These commands create their own tokio runtimes internally, so they must
     // run on a plain OS thread — not inside a #[tokio::main] context which
     // would cause nested block_on panics.
     let command = cli::parse_command();
-    emit_entry_telemetry(&command);
+    if !telemetry::is_wrapped_cli_child() && !matches!(&command, cli::Command::Telemetry(_)) {
+        telemetry::spawn_first_run_registration_worker();
+    }
     match command {
-        cli::Command::TelemetryInstallEvent => {
-            // Synchronous install ping (see `telemetry::capture_install`).
-            // Blocks on the POST so the `.installation_recorded` marker
-            // is only written on HTTP success — failed POST means next
-            // launch retries. Installer script already runs us in the
-            // background via `&`, so blocking here is fine.
-            telemetry::capture_install();
+        cli::Command::Telemetry(command) => {
+            run_telemetry_command(command);
             return Ok(());
         }
         cli::Command::ListTools => {
-            let reg = Arc::new(build_registry_no_cursor());
-            cli::run_list_tools(&reg);
+            let tools = inspect_tools_without_runtime();
+            cli::run_list_tools(&tools);
             return Ok(());
         }
         cli::Command::Describe(name) => {
-            let reg = Arc::new(build_registry_no_cursor());
-            cli::run_describe(&reg, &name);
+            let tools = inspect_tools_without_runtime();
+            cli::run_describe(&tools, &name);
             return Ok(());
         }
         cli::Command::McpConfig { client } => {
@@ -575,43 +823,75 @@ fn main() -> anyhow::Result<()> {
             cli::run_manifest(pretty);
             return Ok(());
         }
-        cli::Command::Call { tool, json_args, screenshot_out_file, socket } => {
-            let reg = Arc::new(build_registry_no_cursor());
-            reg.init_self_weak();
-            // run_call builds its own tokio runtime; must run on a fresh thread.
-            std::thread::spawn(move || {
-                cli::run_call(reg, &tool, json_args, screenshot_out_file, socket);
-            }).join().ok();
+        cli::Command::Call {
+            tool,
+            json_args,
+            screenshot_out_file,
+            socket,
+        } => {
+            cli::run_call(&tool, json_args, screenshot_out_file, socket);
             return Ok(());
         }
-        cli::Command::Serve { socket, no_permissions_gate, claude_code_compat } => {
+        cli::Command::Serve {
+            socket,
+            permission_mode,
+            dangerously_bypass_approvals,
+            allow_legacy_existing_profile_approval,
+            session_policy,
+            approve_session_policy,
+            no_permissions_gate,
+            claude_code_compat,
+        } => {
+            configure_startup_permission_mode(
+                permission_mode.as_deref(),
+                dangerously_bypass_approvals,
+                allow_legacy_existing_profile_approval,
+                session_policy.as_deref(),
+                approve_session_policy,
+            )?;
             responsibility::reexec_disclaimed_if_needed();
+            telemetry::capture_start(
+                telemetry::event::SERVE_START_LEGACY,
+                telemetry::Transport::Daemon,
+            );
             // Long-running daemon — kick off the background update check
             // before any blocking work so the banner can land on stderr.
             version_check::maybe_announce_update();
             // The Rust permissions gate is macOS-only (TCC concept).
             // On Windows / Linux the flag is silently accepted for
             // CLI uniformity and ignored. The Claude-Code compat screenshot
-            // surface is likewise macOS-only (register_tools_with_compat),
-            // so the flag is accepted-and-ignored here for CLI uniformity.
+            // surface is accepted on every platform for CLI uniformity.
             let _ = no_permissions_gate;
-            let _ = claude_code_compat;
             // Serve mode needs the cursor overlay just like MCP mode.
             let cursor_cfg = cursor_overlay::CursorConfig::from_args();
-            let reg = Arc::new(build_registry(cursor_cfg));
-            reg.init_self_weak();
+            let driver = build_driver(
+                cursor_cfg,
+                claude_code_compat,
+                cua_driver_core::embedded_mode(),
+            )?;
             maybe_init_pip();
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             let pid_path = serve::default_pid_file_path();
             // run_serve_cmd builds its own runtime; must run on a fresh thread.
             std::thread::spawn(move || {
-                serve::run_serve_cmd(reg, &sp, Some(&pid_path));
-            }).join().ok();
+                serve::run_serve_cmd(driver, &sp, Some(&pid_path));
+            })
+            .join()
+            .ok();
             return Ok(());
         }
         cli::Command::Stop { socket } => {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             serve::run_stop_cmd(&sp);
+            return Ok(());
+        }
+        cli::Command::Revoke {
+            socket,
+            session,
+            all,
+        } => {
+            let sp = socket.unwrap_or_else(serve::default_socket_path);
+            serve::run_revoke_cmd(&sp, session.as_deref(), all);
             return Ok(());
         }
         cli::Command::Status { socket } => {
@@ -620,13 +900,17 @@ fn main() -> anyhow::Result<()> {
             serve::run_status_cmd(&sp, &pid_path);
             return Ok(());
         }
-        cli::Command::Recording { subcommand, args, socket } => {
+        cli::Command::Recording {
+            subcommand,
+            args,
+            socket,
+        } => {
             cli::run_recording_cmd(&subcommand, &args, socket.as_deref());
             return Ok(());
         }
         cli::Command::DumpDocs { pretty, doc_type } => {
-            let reg = Arc::new(build_registry_no_cursor());
-            cli::run_dump_docs_with_type(&reg, pretty, &doc_type);
+            let tools = inspect_tools_without_runtime();
+            cli::run_dump_docs_with_type(&tools, pretty, &doc_type);
             return Ok(());
         }
         cli::Command::Update { apply, json } => {
@@ -648,13 +932,11 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         cli::Command::Diagnose => {
-            let reg = Arc::new(build_registry_no_cursor());
-            cli::run_diagnose_cmd(reg);
+            cli::run_diagnose_cmd();
             return Ok(());
         }
         cli::Command::Permissions { subcommand, json } => {
-            let reg = Arc::new(build_registry_no_cursor());
-            cli::run_permissions_cmd(reg, &subcommand, json);
+            cli::run_permissions_cmd(&subcommand, json);
             return Ok(());
         }
         cli::Command::Autostart { subcommand } => {
@@ -665,270 +947,76 @@ fn main() -> anyhow::Result<()> {
             skills::run(&subcommand, &flags);
             return Ok(());
         }
-        cli::Command::Config { subcommand, key, value, socket } => {
-            let reg = Arc::new(build_registry_no_cursor());
-            reg.init_self_weak();
-            std::thread::spawn(move || {
-                cli::run_config_cmd(reg, subcommand.as_deref(), key.as_deref(), value.as_deref(), socket.as_deref());
-            }).join().ok();
+        cli::Command::BrowserApprove {
+            pid,
+            strategy,
+            window_id,
+            session,
+            profile_mode,
+            profile_name,
+        } => {
+            cli::run_browser_approve(
+                pid,
+                strategy.as_deref(),
+                window_id,
+                session.as_deref(),
+                profile_mode.as_deref(),
+                profile_name.as_deref(),
+            );
             return Ok(());
         }
-        cli::Command::Mcp { no_daemon_relaunch, socket, claude_code_compat } => {
-            CLAUDE_CODE_COMPAT.store(claude_code_compat, Ordering::SeqCst);
-            // Long-running MCP server — kick off the background update
-            // check before any daemon-proxy decisions.
+        cli::Command::Config {
+            subcommand,
+            key,
+            value,
+            socket,
+        } => {
+            cli::run_config_cmd(
+                subcommand.as_deref(),
+                key.as_deref(),
+                value.as_deref(),
+                socket.as_deref(),
+            );
+            return Ok(());
+        }
+        cli::Command::Mcp {
+            socket,
+            direct,
+            claude_code_compat,
+        } => {
+            let startup_started = std::time::Instant::now();
+            // Long-running MCP proxy — kick off the background update check
+            // before connecting to the daemon.
             version_check::maybe_announce_update();
-            // Daemon-proxy sidestep for Windows Session 0 attribution
-            // (and equivalent on Linux when a daemon is up): if a
-            // daemon is listening on the default socket, forward
-            // stdio MCP through it instead of running the server
-            // in-process. The proxy preserves the daemon's session
-            // identity (typically Session 1+ on Windows) so window /
-            // UIA / screen tools see the user's actual desktop —
-            // without this, an `cua-driver mcp` spawned by Claude
-            // Code over SSH lands in Session 0 and every desktop
-            // tool returns empty. See `cli::should_use_daemon_proxy`.
-            if cli::should_use_daemon_proxy(no_daemon_relaunch) {
-                if let Err(e) = cli::run_mcp_via_daemon_proxy(socket, claude_code_compat) {
-                    eprintln!("cua-driver-rs: {e}");
-                    std::process::exit(1);
+            let result = match mcp_uses_direct_runtime(socket.as_deref(), direct) {
+                Ok(true) => {
+                    telemetry::capture_mcp_startup_completed(
+                        "sdk_owned_runtime",
+                        "not_applicable",
+                        true,
+                        startup_started.elapsed(),
+                    );
+                    run_mcp_direct(claude_code_compat)
                 }
-                return Ok(());
+                Err(error) => Err(error),
+                Ok(false) => {
+                    cli::run_mcp_via_daemon_proxy(socket, claude_code_compat, |daemon, success| {
+                        telemetry::capture_mcp_startup_completed(
+                            "daemon_proxy",
+                            daemon.telemetry_value(),
+                            success,
+                            startup_started.elapsed(),
+                        )
+                    })
+                }
+            };
+            if let Err(e) = result {
+                eprintln!("cua-driver-rs: {e}");
+                telemetry::flush_pending(std::time::Duration::from_millis(750));
+                std::process::exit(1);
             }
-            // Fall through to the in-process MCP server below. The
-            // `socket` flag is daemon-proxy-only; ignored on the
-            // in-process path (mirrors the macOS arm's drop-on-floor
-            // behaviour).
-            let _ = socket;
-        }
-    }
-
-    // MCP server mode: this needs a full async tokio runtime.
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("tokio runtime");
-    rt.block_on(async_main())?;
-    Ok(())
-}
-
-#[cfg(not(target_os = "macos"))]
-async fn async_main() -> anyhow::Result<()> {
-
-    let cursor_cfg = cursor_overlay::CursorConfig::from_args();
-
-    tracing::info!(
-        version = env!("CARGO_PKG_VERSION"),
-        os = std::env::consts::OS,
-        cursor_id = %cursor_cfg.cursor_id,
-        overlay_enabled = cursor_cfg.enabled,
-        has_custom_icon = cursor_cfg.shape.is_some(),
-        "cua-driver-rs starting"
-    );
-
-    let registry = Arc::new(build_registry(cursor_cfg));
-    registry.init_self_weak();
-    maybe_init_pip();
-    let result = cua_driver_core::server::run(registry).await;
-    if let Err(e) = &result {
-        tracing::error!("MCP server error: {e}");
-    }
-
-    // The stdio MCP server loop has ended — the client disconnected (stdin
-    // EOF) or a fatal I/O error occurred. The cursor overlay runs on its own
-    // detached thread with an independent Win32 message loop (and we raised the
-    // multimedia timer resolution via `timeBeginPeriod`), so simply returning
-    // is not guaranteed to tear it down promptly: that thread is never joined
-    // and would otherwise keep its render loop alive as an orphan, accumulating
-    // CPU after the client is gone (issue #1808). Force a clean process exit so
-    // the overlay thread dies with us the moment the transport closes — mirrors
-    // the macOS `std::process::exit(0)` after `server::run`.
-    std::process::exit(if result.is_ok() { 0 } else { 1 });
-}
-
-// ── Registry builder (non-macOS) ──────────────────────────────────────────
-
-#[cfg(not(target_os = "macos"))]
-fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> cua_driver_core::tool::ToolRegistry {
-    let compat = CLAUDE_CODE_COMPAT.load(Ordering::SeqCst);
-    #[cfg(target_os = "windows")]
-    {
-        cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
-            if let Some(hwnd) = window_id {
-                platform_windows::capture::screenshot_window_bytes(hwnd).ok()
-            } else if let Some(p) = pid {
-                let wins = platform_windows::win32::list_windows(Some(p as u32));
-                wins.first().and_then(|w| {
-                    platform_windows::capture::screenshot_window_bytes(w.hwnd).ok()
-                })
-            } else {
-                platform_windows::capture::screenshot_display_bytes().ok()
-            }
-        });
-        cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
-            platform_windows::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
-        });
-        cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
-            platform_windows::recording_hooks::app_state_json_for(window_id, pid)
-        });
-        cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
-            platform_windows::recording_hooks::element_window_local_xy(wid, pid, idx)
-        });
-        cua_driver_core::video::set_video_backend_factory(
-            Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),
-        );
-        { let mut r = platform_windows::register_tools_with_cursor(cursor_cfg, compat); check_update_tool::register_into(&mut r); r }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
-            if let Some(xid) = window_id {
-                platform_linux::capture::screenshot_window_bytes(xid).ok()
-            } else if let Some(p) = pid {
-                let wins = platform_linux::x11::list_windows(Some(p as u32));
-                wins.first().and_then(|w| {
-                    platform_linux::capture::screenshot_window_bytes(w.xid).ok()
-                })
-            } else {
-                platform_linux::capture::screenshot_display_bytes().ok()
-            }
-        });
-        cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
-            platform_linux::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
-        });
-        cua_driver_core::video::set_video_backend_factory(
-            Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),
-        );
-        // SSH-driven Wayland+Xwayland sessions inherit DISPLAY but not
-        // XAUTHORITY; adopt the running X server's auth cookie so X11 tools
-        // don't all fail "Authorization required" (#1926). No-op when
-        // XAUTHORITY is already set or there's no DISPLAY.
-        platform_linux::xauth::ensure_xauthority_discovered();
-        // AT-SPI lives on the session bus; when the daemon is started outside
-        // the desktop session (container, headless, runuser, systemd system
-        // unit) DBUS_SESSION_BUS_ADDRESS is unset and the AT-SPI tree comes back
-        // empty. Recover it from /run/user/<uid>/bus or a running session
-        // process before the a11y advertise (which itself needs the bus). No-op
-        // when already set.
-        platform_linux::session_bus::ensure_session_bus_discovered();
-        // Turn on Chromium/Electron (and GTK/Qt) accessibility for the session
-        // so their AT-SPI trees are visible to get_window_state. Best-effort and
-        // idempotent; only on the serve path, not for short-lived CLI calls.
-        platform_linux::a11y::ensure_chromium_accessibility_enabled();
-        { let mut r = platform_linux::register_tools_with_cursor(cursor_cfg, compat); check_update_tool::register_into(&mut r); r }
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-    {
-        let _ = cursor_cfg;
-        let _ = compat;
-        let mut r = cua_driver_core::tool::ToolRegistry::new();
-        r.register(Box::new(crate::stub::UnsupportedPlatformTool));
-        r
-    }
-}
-
-/// Build a registry without initialising the cursor overlay.
-/// Used by CLI subcommands (list-tools / describe / call) that don't need the overlay.
-#[cfg(not(target_os = "macos"))]
-fn build_registry_no_cursor() -> cua_driver_core::tool::ToolRegistry {
-    let compat = CLAUDE_CODE_COMPAT.load(Ordering::SeqCst);
-    #[cfg(target_os = "windows")]
-    {
-        cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
-            if let Some(hwnd) = window_id {
-                platform_windows::capture::screenshot_window_bytes(hwnd).ok()
-            } else if let Some(p) = pid {
-                let wins = platform_windows::win32::list_windows(Some(p as u32));
-                wins.first().and_then(|w| {
-                    platform_windows::capture::screenshot_window_bytes(w.hwnd).ok()
-                })
-            } else {
-                platform_windows::capture::screenshot_display_bytes().ok()
-            }
-        });
-        cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
-            platform_windows::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
-        });
-        cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
-            platform_windows::recording_hooks::app_state_json_for(window_id, pid)
-        });
-        cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
-            platform_windows::recording_hooks::element_window_local_xy(wid, pid, idx)
-        });
-        cua_driver_core::video::set_video_backend_factory(
-            Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),
-        );
-        {
-            let mut r = platform_windows::register_tools_with_cursor(
-                cursor_overlay::CursorConfig { enabled: false, ..Default::default() },
-                compat,
-            );
-            check_update_tool::register_into(&mut r);
-            r
-        }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
-            if let Some(xid) = window_id {
-                platform_linux::capture::screenshot_window_bytes(xid).ok()
-            } else if let Some(p) = pid {
-                let wins = platform_linux::x11::list_windows(Some(p as u32));
-                wins.first().and_then(|w| {
-                    platform_linux::capture::screenshot_window_bytes(w.xid).ok()
-                })
-            } else {
-                platform_linux::capture::screenshot_display_bytes().ok()
-            }
-        });
-        cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
-            platform_linux::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
-        });
-        cua_driver_core::video::set_video_backend_factory(
-            Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),
-        );
-        {
-            let mut r = platform_linux::register_tools_with_cursor(
-                cursor_overlay::CursorConfig { enabled: false, ..Default::default() },
-                compat,
-            );
-            check_update_tool::register_into(&mut r);
-            r
-        }
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-    {
-        let _ = compat;
-        let mut r = cua_driver_core::tool::ToolRegistry::new();
-        r.register(Box::new(crate::stub::UnsupportedPlatformTool));
-        r
-    }
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
-mod stub {
-    use async_trait::async_trait;
-    use cua_driver_core::tool::{Tool, ToolDef, ToolResult};
-    use serde_json::Value;
-
-    pub struct UnsupportedPlatformTool;
-
-    #[async_trait]
-    impl Tool for UnsupportedPlatformTool {
-        fn def(&self) -> &ToolDef {
-            static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
-            DEF.get_or_init(|| ToolDef {
-                name: "unsupported_platform".into(),
-                description: "This platform is not supported.".into(),
-                input_schema: serde_json::json!({"type":"object","properties":{}}),
-                read_only: true,
-                destructive: false,
-                idempotent: true,
-                open_world: false,
-            })
-        }
-        async fn invoke(&self, _args: Value) -> ToolResult {
-            ToolResult::error("Unsupported platform")
+            telemetry::flush_pending(std::time::Duration::from_millis(750));
+            return Ok(());
         }
     }
 }

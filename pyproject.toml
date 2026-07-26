@@ -57,8 +57,6 @@ test = [
     "pytest-xdist>=3.6.1",
     "pytest>=8.0.0",
 ]
-examples = []
-
 [tool.uv]
 package = false
 constraint-dependencies = [

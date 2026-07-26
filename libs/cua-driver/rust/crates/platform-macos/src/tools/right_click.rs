@@ -1,11 +1,13 @@
 use async_trait::async_trait;
-use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{
+    protocol::ToolResult,
+    tool::{Tool, ToolDef},
+};
 use serde_json::Value;
 use std::sync::Arc;
 
 use crate::ax::bindings::{
-    copy_action_names, perform_action, kAXErrorSuccess, AXUIElementRef,
-    copy_string_attr,
+    copy_action_names, copy_string_attr, kAXErrorSuccess, perform_action, AXUIElementRef,
 };
 
 use super::ToolState;
@@ -15,7 +17,9 @@ pub struct RightClickTool {
 }
 
 impl RightClickTool {
-    pub fn new(state: Arc<ToolState>) -> Self { Self { state } }
+    pub fn new(state: Arc<ToolState>) -> Self {
+        Self { state }
+    }
 }
 
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -79,11 +83,16 @@ fn def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for RightClickTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
+        let pid = match args.require_i32("pid") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
         // delivery_mode: foreground briefly fronts the window before the pixel
         // right-click (the explicit last resort for surfaces that drop
         // background CGEvents), via the same skylight assist click uses. The AX
@@ -93,7 +102,7 @@ impl Tool for RightClickTool {
 
         // Surface 6: element_token / element_index precedence resolution.
         let element_token_arg = args.opt_str("element_token");
-        let window_id_arg     = args.opt_u64("window_id").map(|v| v as u32);
+        let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
         let resolved = match cua_driver_core::element_token::resolve_element_args(
             pid,
@@ -108,13 +117,15 @@ impl Tool for RightClickTool {
         let (element_index, window_id) = match resolved {
             cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg),
             cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: wid, element_index: idx, via_token: _,
+                window_id: wid,
+                element_index: idx,
+                via_token: _,
             } => (Some(idx), wid),
         };
-        let x             = args.opt_f64("x");
-        let y             = args.opt_f64("y");
-        let has_xy        = x.is_some() && y.is_some();
-        let partial_xy    = x.is_some() != y.is_some();
+        let x = args.opt_f64("x");
+        let y = args.opt_f64("y");
+        let has_xy = x.is_some() && y.is_some();
+        let partial_xy = x.is_some() != y.is_some();
         let modifiers: Vec<String> = args.str_array("modifier");
 
         if partial_xy {
@@ -125,13 +136,11 @@ impl Tool for RightClickTool {
         }
         if element_index.is_none() && !has_xy {
             return ToolResult::error(
-                "Provide element_index or (x, y) to address the right-click target."
+                "Provide element_index or (x, y) to address the right-click target.",
             );
         }
         if element_index.is_some() && window_id.is_none() {
-            return ToolResult::error(
-                "window_id is required when element_index is used."
-            );
+            return ToolResult::error("window_id is required when element_index is used.");
         }
 
         // ── AX element path ──────────────────────────────────────────────────
@@ -140,20 +149,21 @@ impl Tool for RightClickTool {
             // free the element mid-action (use-after-free → daemon crash).
             let element_guard = match self.state.element_cache.get_element_retained(pid, wid, idx) {
                 Some(e) => e,
-                None    => return ToolResult::error(format!(
-                    "Element index {idx} not found. Call get_window_state first."
-                )),
+                None => {
+                    return ToolResult::error(format!(
+                        "Element index {idx} not found. Call get_window_state first."
+                    ))
+                }
             };
             let element_ptr = element_guard.as_ptr();
 
-            let result = tokio::task::spawn_blocking(move || {
-                ax_show_menu(element_ptr, idx, pid, wid)
-            }).await;
+            let result =
+                tokio::task::spawn_blocking(move || ax_show_menu(element_ptr, idx, pid, wid)).await;
 
             return match result {
-                Ok(Ok(msg))  => ToolResult::text(msg),
-                Ok(Err(e))   => ToolResult::error(format!("Right-click failed: {e}")),
-                Err(e)       => ToolResult::error(format!("Task error: {e}")),
+                Ok(Ok(msg)) => ToolResult::text(msg),
+                Ok(Err(e)) => ToolResult::error(format!("Right-click failed: {e}")),
+                Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
 
@@ -173,14 +183,27 @@ impl Tool for RightClickTool {
                 let scale: f64 = if let Some(ref b) = bounds {
                     if let Ok(png) = crate::capture::screenshot_window_bytes(wid) {
                         if png.len() >= 24 {
-                            let pw = u32::from_be_bytes([png[16], png[17], png[18], png[19]]) as f64;
+                            let pw =
+                                u32::from_be_bytes([png[16], png[17], png[18], png[19]]) as f64;
                             let lw = b.width;
-                            if lw > 0.0 && pw > lw { pw / lw } else { 1.0 }
-                        } else { 1.0 }
-                    } else { 1.0 }
-                } else { 1.0 };
+                            if lw > 0.0 && pw > lw {
+                                pw / lw
+                            } else {
+                                1.0
+                            }
+                        } else {
+                            1.0
+                        }
+                    } else {
+                        1.0
+                    }
+                } else {
+                    1.0
+                };
                 (bounds, scale)
-            }).await.unwrap_or((None, 1.0));
+            })
+            .await
+            .unwrap_or((None, 1.0));
             if let (Some(b), scale) = result {
                 let wx = cx / scale;
                 let wy = cy / scale;
@@ -203,7 +226,10 @@ impl Tool for RightClickTool {
         crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y).await;
         crate::cursor::overlay::send_command(
             cursor_key.clone(),
-            cursor_overlay::OverlayCommand::ClickPulse { x: screen_x, y: screen_y },
+            cursor_overlay::OverlayCommand::ClickPulse {
+                x: screen_x,
+                y: screen_y,
+            },
         );
 
         let mod_suffix = if modifiers.is_empty() {
@@ -218,7 +244,13 @@ impl Tool for RightClickTool {
                 let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                 if let Some(wid) = window_id {
                     crate::input::mouse::right_click_at_xy_with_window_local(
-                        pid, screen_x, screen_y, win_local_x, win_local_y, wid, &m,
+                        pid,
+                        screen_x,
+                        screen_y,
+                        win_local_x,
+                        win_local_y,
+                        wid,
+                        &m,
                     )
                 } else {
                     crate::input::mouse::right_click_at_xy(pid, screen_x, screen_y, &m)
@@ -232,8 +264,13 @@ impl Tool for RightClickTool {
                 }
                 _ => do_it(),
             }
-        }).await;
-        let mode_label = if fg { " (delivery_mode:foreground)" } else { "" };
+        })
+        .await;
+        let mode_label = if fg {
+            " (delivery_mode:foreground)"
+        } else {
+            ""
+        };
         match result {
             Ok(Ok(())) => ToolResult::text(format!("Right-clicked{mod_suffix} at ({screen_x:.1}, {screen_y:.1}){mode_label}."))
                 .with_structured(serde_json::json!({
@@ -250,7 +287,7 @@ impl Tool for RightClickTool {
 fn ax_show_menu(element_ptr: usize, idx: usize, pid: i32, wid: u32) -> anyhow::Result<String> {
     let element = element_ptr as AXUIElementRef;
 
-    let role  = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
+    let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
     let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
 
     let advertised = unsafe { copy_action_names(element) };
@@ -267,7 +304,9 @@ fn ax_show_menu(element_ptr: usize, idx: usize, pid: i32, wid: u32) -> anyhow::R
     if advertised.iter().any(|a| a == "AXShowMenu") {
         let err = unsafe { perform_action(element, "AXShowMenu") };
         if err == kAXErrorSuccess {
-            return Ok(format!("Shown menu for [{idx}] {role} \"{title}\" (AXShowMenu)."));
+            return Ok(format!(
+                "Shown menu for [{idx}] {role} \"{title}\" (AXShowMenu)."
+            ));
         }
         // Advertised but the action failed — fall through to the pixel path
         // rather than erroring out.
@@ -275,11 +314,13 @@ fn ax_show_menu(element_ptr: usize, idx: usize, pid: i32, wid: u32) -> anyhow::R
     }
 
     // Pixel right-click at the element's screen-space center.
-    let (cx, cy) = unsafe { crate::ax::bindings::element_screen_center(element) }
-        .ok_or_else(|| anyhow::anyhow!(
-            "[{idx}] {role} \"{title}\" advertises no AXShowMenu and has no resolvable \
+    let (cx, cy) =
+        unsafe { crate::ax::bindings::element_screen_center(element) }.ok_or_else(|| {
+            anyhow::anyhow!(
+                "[{idx}] {role} \"{title}\" advertises no AXShowMenu and has no resolvable \
              on-screen center for a pixel right-click. Pass x, y directly."
-        ))?;
+            )
+        })?;
     let (wx, wy) = crate::windows::window_bounds_by_id(wid)
         .map(|b| (cx - b.x, cy - b.y))
         .unwrap_or((cx, cy));

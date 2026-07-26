@@ -2,8 +2,8 @@
 
 pub mod nsworkspace;
 
-use std::process::Command;
 use serde::{Deserialize, Serialize};
+use std::process::Command;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppInfo {
@@ -31,74 +31,45 @@ pub struct AppInfo {
 }
 
 /// Enumerate running apps with NSApplicationActivationPolicyRegular.
-/// Uses `osascript` to query System Events — no Accessibility permission needed.
+///
+/// This stays entirely inside AppKit so listing or classifying an application
+/// never triggers the macOS Automation permission for System Events.
 pub fn list_running_apps() -> Vec<AppInfo> {
-    // Use `ps` + NSWorkspace via a brief Swift one-liner via swift-sh is heavy;
-    // instead use the Obj-C bridge via `osascript`.
-    // Fallback: parse `ps -axo pid,command` and cross-reference with bundle IDs.
-    // Better: use a native call via core-foundation bindings.
     list_running_apps_native()
 }
 
 fn list_running_apps_native() -> Vec<AppInfo> {
-    // Use `lsappinfo list` which is a macOS system tool available on all versions.
-    // Alternatively we can use NSWorkspace via objc2 — but for simplicity and
-    // to match the Swift reference, we use a subprocess call to `osascript`.
-    let script = r#"
-set output to ""
-tell application "System Events"
-    set appList to every application process whose background only is false
-    repeat with proc in appList
-        set procName to name of proc
-        set procPid to unix id of proc
-        set bundleId to bundle identifier of proc
-        if bundleId is missing value then set bundleId to ""
-        set isFront to "0"
-        if frontmost of proc then set isFront to "1"
-        set output to output & procName & "|" & procPid & "|" & bundleId & "|" & isFront & linefeed
-    end repeat
-end tell
-return output
-"#;
+    use objc2_app_kit::{NSApplicationActivationPolicy, NSWorkspace};
 
-    let out = Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output();
-
-    match out {
-        Err(_) => vec![],
-        Ok(o) => {
-            let text = String::from_utf8_lossy(&o.stdout);
-            parse_osascript_app_list(&text)
-        }
-    }
-}
-
-fn parse_osascript_app_list(text: &str) -> Vec<AppInfo> {
     let mut apps = Vec::new();
-    for line in text.lines() {
-        let parts: Vec<&str> = line.splitn(4, '|').collect();
-        if parts.len() < 2 { continue; }
-        let name = parts[0].trim().to_owned();
-        let pid: i32 = parts[1].trim().parse().unwrap_or(0);
-        let bundle_id = if parts.len() > 2 && !parts[2].trim().is_empty() {
-            Some(parts[2].trim().to_owned())
-        } else {
-            None
-        };
-        let active = parts.get(3).map(|s| s.trim() == "1").unwrap_or(false);
-        if name.is_empty() || pid == 0 { continue; }
-        apps.push(AppInfo {
-            name,
-            pid,
-            bundle_id,
-            running: true,
-            active,
-            launch_path: None,
-            kind: Some("desktop".to_owned()),
-            last_used: None,
-        });
+    unsafe {
+        let workspace = NSWorkspace::sharedWorkspace();
+        let running = workspace.runningApplications();
+        for index in 0..running.count() {
+            let app = running.objectAtIndex(index);
+            if app.isTerminated()
+                || app.activationPolicy() != NSApplicationActivationPolicy::Regular
+            {
+                continue;
+            }
+            let Some(name) = app.localizedName().map(|value| value.to_string()) else {
+                continue;
+            };
+            let pid = app.processIdentifier();
+            if name.is_empty() || pid <= 0 {
+                continue;
+            }
+            apps.push(AppInfo {
+                name,
+                pid,
+                bundle_id: app.bundleIdentifier().map(|value| value.to_string()),
+                running: true,
+                active: app.isActive(),
+                launch_path: None,
+                kind: Some("desktop".to_owned()),
+                last_used: None,
+            });
+        }
     }
     apps
 }
@@ -334,7 +305,7 @@ pub(crate) fn locate_by_name(name: &str) -> Option<AppLocator> {
 /// this file) to avoid pulling in a plist crate just for this.
 fn bundle_id_for_app_path(app_path: &str) -> Option<String> {
     let plist = format!("{app_path}/Contents/Info.plist");
-    let out = Command::new("plutil")
+    let out = Command::new("/usr/bin/plutil")
         .args(["-extract", "CFBundleIdentifier", "raw", "-o", "-", &plist])
         .output()
         .ok()?;
@@ -361,8 +332,13 @@ pub fn list_all_apps() -> Vec<AppInfo> {
     let installed = scan_installed_apps();
     // Lookup: bundle_id → (launch_path, last_used) from the installed scan.
     let installed_by_bundle: std::collections::HashMap<String, (Option<String>, Option<String>)> =
-        installed.iter()
-            .filter_map(|a| a.bundle_id.clone().map(|b| (b, (a.launch_path.clone(), a.last_used.clone()))))
+        installed
+            .iter()
+            .filter_map(|a| {
+                a.bundle_id
+                    .clone()
+                    .map(|b| (b, (a.launch_path.clone(), a.last_used.clone())))
+            })
             .collect();
     // Backfill running entries with the launch_path the installed scan resolved.
     for app in running.iter_mut() {
@@ -378,13 +354,16 @@ pub fn list_all_apps() -> Vec<AppInfo> {
         }
     }
 
-    let running_bundles: std::collections::HashSet<String> = running.iter()
-        .filter_map(|a| a.bundle_id.clone())
-        .collect();
+    let running_bundles: std::collections::HashSet<String> =
+        running.iter().filter_map(|a| a.bundle_id.clone()).collect();
 
     let mut installed = installed;
     // Remove apps already in running list.
-    installed.retain(|a| !a.bundle_id.as_ref().map_or(false, |b| running_bundles.contains(b)));
+    installed.retain(|a| {
+        !a.bundle_id
+            .as_ref()
+            .is_some_and(|b| running_bundles.contains(b))
+    });
 
     let mut all = running;
     all.extend(installed);
@@ -407,10 +386,14 @@ fn scan_installed_apps() -> Vec<AppInfo> {
     all_dirs.push(user_apps_str);
 
     for dir in all_dirs {
-        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("app") { continue }
+            if path.extension().and_then(|e| e.to_str()) != Some("app") {
+                continue;
+            }
             let plist_path = path.join("Contents/Info.plist");
             if let Some(mut info) = read_app_plist(&plist_path) {
                 info.launch_path = path.to_str().map(str::to_owned);
@@ -464,17 +447,37 @@ pub(crate) fn unix_secs_to_rfc3339(secs: i64) -> String {
 
 fn read_app_plist(plist_path: &std::path::Path) -> Option<AppInfo> {
     let bundle_id_out = Command::new("plutil")
-        .args(["-extract", "CFBundleIdentifier", "raw", "-o", "-",
-               plist_path.to_str()?])
-        .output().ok()?;
-    if !bundle_id_out.status.success() { return None; }
-    let bundle_id = String::from_utf8_lossy(&bundle_id_out.stdout).trim().to_string();
-    if bundle_id.is_empty() { return None; }
+        .args([
+            "-extract",
+            "CFBundleIdentifier",
+            "raw",
+            "-o",
+            "-",
+            plist_path.to_str()?,
+        ])
+        .output()
+        .ok()?;
+    if !bundle_id_out.status.success() {
+        return None;
+    }
+    let bundle_id = String::from_utf8_lossy(&bundle_id_out.stdout)
+        .trim()
+        .to_string();
+    if bundle_id.is_empty() {
+        return None;
+    }
 
     let name_out = Command::new("plutil")
-        .args(["-extract", "CFBundleDisplayName", "raw", "-o", "-",
-               plist_path.to_str()?])
-        .output().ok();
+        .args([
+            "-extract",
+            "CFBundleDisplayName",
+            "raw",
+            "-o",
+            "-",
+            plist_path.to_str()?,
+        ])
+        .output()
+        .ok();
     let name = name_out
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
@@ -482,14 +485,22 @@ fn read_app_plist(plist_path: &std::path::Path) -> Option<AppInfo> {
         .unwrap_or_else(|| {
             // Fallback: CFBundleName.
             Command::new("plutil")
-                .args(["-extract", "CFBundleName", "raw", "-o", "-",
-                       plist_path.to_str().unwrap_or("")])
-                .output().ok()
+                .args([
+                    "-extract",
+                    "CFBundleName",
+                    "raw",
+                    "-o",
+                    "-",
+                    plist_path.to_str().unwrap_or(""),
+                ])
+                .output()
+                .ok()
                 .filter(|o| o.status.success())
                 .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| {
-                    plist_path.parent()
+                    plist_path
+                        .parent()
                         .and_then(|p| p.parent())
                         .and_then(|p| p.file_stem())
                         .and_then(|s| s.to_str())
@@ -498,7 +509,9 @@ fn read_app_plist(plist_path: &std::path::Path) -> Option<AppInfo> {
                 })
         });
 
-    if name.is_empty() { return None; }
+    if name.is_empty() {
+        return None;
+    }
 
     Some(AppInfo {
         name,
@@ -594,7 +607,11 @@ pub fn format_app_list(apps: &[AppInfo]) -> String {
         total - running.len()
     )];
     for app in &running {
-        let bundle = app.bundle_id.as_deref().map(|b| format!(" [{b}]")).unwrap_or_default();
+        let bundle = app
+            .bundle_id
+            .as_deref()
+            .map(|b| format!(" [{b}]"))
+            .unwrap_or_default();
         lines.push(format!("- {} (pid {}){}", app.name, app.pid, bundle));
     }
     lines.join("\n")
@@ -632,7 +649,10 @@ mod tests {
         // 2019-02-28T00:00:00Z → 1551312000.
         assert_eq!(unix_secs_to_rfc3339(1_551_312_000), "2019-02-28T00:00:00Z");
         // The very next second is Mar 1, not Feb 29.
-        assert_eq!(unix_secs_to_rfc3339(1_551_312_000 + 86_400), "2019-03-01T00:00:00Z");
+        assert_eq!(
+            unix_secs_to_rfc3339(1_551_312_000 + 86_400),
+            "2019-03-01T00:00:00Z"
+        );
     }
 
     #[test]

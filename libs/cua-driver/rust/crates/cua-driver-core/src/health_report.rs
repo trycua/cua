@@ -1,7 +1,6 @@
 //! `health_report` — single-call end-to-end driver diagnostics.
 //!
-//! The point of this tool is to let downstream consumers (Hermes Agent
-//! and similar — see NousResearch/hermes-agent#47065) ship one stable
+//! The point of this tool is to let downstream consumers ship one stable
 //! diagnostic call and never have to know cua-driver internals: specific
 //! MCP tool names, TCC field names, bundle IDs, per-platform check
 //! matrix. cua-driver owns the health model entirely; consumers stay
@@ -59,7 +58,11 @@ pub const NAME_SCREEN_CAPTURE_CAPABILITY: &str = "screen_capture_capability";
 /// apply on a platform simply isn't present in that platform's `names`
 /// vector, so the overall rollup ignores it.
 pub fn core_check_names() -> &'static [&'static str] {
-    &[NAME_BINARY_VERSION, NAME_PLATFORM_SUPPORTED, NAME_SESSION_ACTIVE]
+    &[
+        NAME_BINARY_VERSION,
+        NAME_PLATFORM_SUPPORTED,
+        NAME_SESSION_ACTIVE,
+    ]
 }
 
 // ── Output model ─────────────────────────────────────────────────────────────
@@ -338,10 +341,9 @@ fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "health_report".into(),
         // The description is part of the public contract — downstream
-        // consumers (Hermes Agent / `hermes computer-use doctor`)
-        // depend on it spelling out `schema_version="1"` and the per-
+        // consumers depend on it spelling out `schema_version="1"` and the per-
         // platform check matrix. A test pins this commitment.
-        description: r#"Single-call end-to-end driver diagnostics. Designed to let downstream consumers (Hermes Agent and similar) ship one stable call instead of stitching together check_permissions, doctor, version, bundle attribution, and a screenshot probe. cua-driver owns the health model; consumers stay thin.
+        description: r#"Single-call end-to-end driver diagnostics. Designed to let downstream consumers ship one stable call instead of stitching together check_permissions, doctor, version, bundle attribution, and platform capability status. On macOS, prompt-capable direct capture is deliberately skipped; use `cua-driver permissions grant` to verify it explicitly. cua-driver owns the health model; consumers stay thin.
 
 Input — all optional:
   {
@@ -382,7 +384,7 @@ Output — stable contract, schema_version="1":
   - `degraded` — at least one non-core check fails (binary is still usable)
   - `failed`   — any core check fails (binary_version, platform_supported, session_active)
 
-Stability: schema_version="1" is the contract. Future breaking changes will be `"2"`. Adding new check names under the same schema_version is non-breaking; consumers must tolerate unknown check names. Downstream consumer: NousResearch/hermes-agent#47065."#.into(),
+Stability: schema_version="1" is the contract. Future breaking changes will be `"2"`. Adding new check names under the same schema_version is non-breaking; consumers must tolerate unknown check names."#.into(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -715,8 +717,8 @@ mod tests {
         // Every entry must carry hint + message.
         for entry in structured["checks"].as_array().unwrap() {
             assert_eq!(entry["status"], "fail");
-            assert!(entry["hint"].as_str().unwrap_or("").len() > 0);
-            assert!(entry["message"].as_str().unwrap_or("").len() > 0);
+            assert!(!entry["hint"].as_str().unwrap_or("").is_empty());
+            assert!(!entry["message"].as_str().unwrap_or("").is_empty());
         }
     }
 

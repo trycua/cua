@@ -3,7 +3,7 @@ title: Docs & Code MCP Server
 description: "Reference for the hosted Cua Docs & Code MCP Server: endpoint, the four read-only query tools, database tables, and version indexing."
 ---
 
-The Docs & Code MCP Server is a hosted MCP server exposing **read-only** search over Cua's documentation and versioned source code. The endpoint is `https://vk-mcp.cua.ai/mcp` over the streamable-HTTP transport. The Docs & Code MCP Server is backed by SQLite FTS5 for keyword search and LanceDB embeddings using `all-MiniLM-L6-v2`, 384-dimensional vectors, for semantic search. It is re-crawled daily via Modal. All tools are read-only. SQL tools accept SELECT queries only.
+The Docs & Code MCP Server is a hosted MCP server exposing **read-only** search over Cua's documentation and versioned source code. The endpoint is `https://vk-mcp.cua.ai/mcp` over the streamable-HTTP transport. The Docs & Code MCP Server is backed by SQLite FTS5 for keyword search and LanceDB embeddings using `all-MiniLM-L6-v2`, 384-dimensional vectors, for semantic search. It is re-crawled daily. All tools are read-only. SQL tools accept SELECT queries only.
 
 ## Tools
 

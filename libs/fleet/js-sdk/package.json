@@ -1,0 +1,54 @@
+{
+  "name": "@trycua/cyclops",
+  "version": "0.1.0",
+  "description": "OpenAPI-generated JavaScript and TypeScript client for Cua Cyclops",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "clean": "rm -rf dist",
+    "generate": "swagger-typescript-api generate -p ../backend/docs/swagger.json -o ./src/generated -n cyclops-cs-backend.ts --module-name-index 1 --extract-request-body --extract-request-params --extract-response-body --extract-response-error && node ./scripts/patch-generated-client.mjs",
+    "generate:check": "node ./scripts/check-generated-client.mjs",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.js",
+    "prepublishOnly": "npm run generate:check && npm run typecheck && npm test && npm run build"
+  },
+  "keywords": [
+    "cua",
+    "cyclops",
+    "openapi",
+    "sdk"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/trycua/cloud.git",
+    "directory": "cyclops-cs/js-sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/trycua/cloud/issues"
+  },
+  "homepage": "https://github.com/trycua/cloud/tree/main/cyclops-cs/js-sdk#readme",
+  "devDependencies": {
+    "swagger-typescript-api": "13.2.7",
+    "typescript": "5.7.2"
+  }
+}

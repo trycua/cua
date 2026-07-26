@@ -4,9 +4,10 @@
 //! A session is a caller-declared identity that OWNS disposable per-run state:
 //! the agent cursor, per-session config overrides, and any recording it started.
 //! Those concrete registries live OUTSIDE this core crate:
-//!   * the agent cursor → `platform-macos::CursorRegistry` + the overlay,
-//!   * per-session config overrides → `platform-macos::SessionConfigRegistry`,
-//!   * the owned recording → stopped by `serve.rs`'s recording hook.
+//! - the agent cursor → `platform-macos::CursorRegistry` + the overlay,
+//! - per-session config overrides → `platform-macos::SessionConfigRegistry`,
+//! - the owned recording → stopped by `serve.rs`'s recording hook.
+//!
 //! None of them is reachable from a core-only test. They are ALL wired to
 //! disposal through ONE mechanism: each registers a `register_session_end_hook`,
 //! and BOTH teardown paths — `end_session` (explicit) and `evict_idle` (the
@@ -26,8 +27,8 @@
 //! both paths, which is the cross-platform half of the contract.
 
 use cua_driver_core::session::{
-    active_session_count, end_session, evict_idle, is_session_ended,
-    register_session_end_hook, revive_session, touch_session,
+    active_session_count, end_session, evict_idle, is_session_ended, register_session_end_hook,
+    revive_session, touch_session,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
@@ -56,9 +57,10 @@ fn unique_id(tag: &str) -> String {
 
 /// The three disposal side-effects a session owns, each modelling one real
 /// production `register_session_end_hook` registration:
-///   * `cursor_removed`   → `platform-macos`: `CursorRegistry::remove` + overlay.
-///   * `config_cleared`   → `platform-macos`: `SessionConfigRegistry::clear`.
-///   * `recording_stopped`→ `serve.rs`: `RecordingSession::stop_owner(Some(sid))`.
+/// - `cursor_removed`   → `platform-macos`: `CursorRegistry::remove` + overlay.
+/// - `config_cleared`   → `platform-macos`: `SessionConfigRegistry::clear`.
+/// - `recording_stopped`→ `serve.rs`: `RecordingSession::stop_owner(Some(sid))`.
+///
 /// Each counts fires for ONE specific session id (hooks are process-global, so we
 /// filter). A correctly-disposed session shows all three == 1.
 struct Disposal {
@@ -85,7 +87,11 @@ impl Disposal {
             });
         }
 
-        Disposal { cursor_removed, config_cleared, recording_stopped }
+        Disposal {
+            cursor_removed,
+            config_cleared,
+            recording_stopped,
+        }
     }
 
     fn counts(&self) -> (usize, usize, usize) {
@@ -128,14 +134,23 @@ fn end_session_disposes_then_id_reuse_starts_fresh() {
     //    cursor present" (the CursorRegistry is platform-macos, daemon-level only).
     revive_session(&sid);
     touch_session(&sid);
-    assert!(!is_session_ended(&sid), "freshly started session must be live");
-    assert!(active_session_count() >= 1, "session must be counted as active");
+    assert!(
+        !is_session_ended(&sid),
+        "freshly started session must be live"
+    );
+    assert!(
+        active_session_count() >= 1,
+        "session must be counted as active"
+    );
     disposal.assert_not_disposed("just started");
 
     // 2. After activity, the session is alive and NOT evicted under a long TTL.
     touch_session(&sid);
     let evicted = evict_idle(Duration::from_secs(3600));
-    assert!(!evicted.contains(&sid), "long-TTL sweep must not evict a just-touched session");
+    assert!(
+        !evicted.contains(&sid),
+        "long-TTL sweep must not evict a just-touched session"
+    );
     assert!(!is_session_ended(&sid), "still live after a long-TTL sweep");
     disposal.assert_not_disposed("after long-TTL no-op sweep");
 
@@ -146,14 +161,26 @@ fn end_session_disposes_then_id_reuse_starts_fresh() {
     disposal.assert_fully_disposed_once("end_session");
     // The idle-TTL entry is gone, so a later sweep won't re-fire for it
     // (fire_session_end is idempotent regardless).
-    assert!(!evict_idle(Duration::ZERO).contains(&sid), "no leftover TTL entry");
+    assert!(
+        !evict_idle(Duration::ZERO).contains(&sid),
+        "no leftover TTL entry"
+    );
     disposal.assert_fully_disposed_once("end_session is idempotent (no double-dispose)");
 
     // 4. Reuse the same id: it must start FRESH, not a leaked/poisoned remnant.
-    assert!(revive_session(&sid), "re-declaring a recycled id revives it");
+    assert!(
+        revive_session(&sid),
+        "re-declaring a recycled id revives it"
+    );
     touch_session(&sid);
-    assert!(!is_session_ended(&sid), "revived id is live again, actions no longer rejected");
-    assert!(active_session_count() >= 1, "recycled id is counted active again");
+    assert!(
+        !is_session_ended(&sid),
+        "revived id is live again, actions no longer rejected"
+    );
+    assert!(
+        active_session_count() >= 1,
+        "recycled id is counted active again"
+    );
 
     // Clean up so we don't leak the TTL entry past the test.
     end_session(&sid);
@@ -176,7 +203,10 @@ fn idle_ttl_eviction_disposes_like_end_session() {
     let evicted = evict_idle(Duration::from_millis(5));
 
     // (a) the id left the activity map (the shallow signal)...
-    assert!(evicted.contains(&sid), "idle session past the short TTL is evicted");
+    assert!(
+        evicted.contains(&sid),
+        "idle session past the short TTL is evicted"
+    );
     // (b) ...AND it was disposed exactly like end_session: tombstoned + every
     //     cleanup hook fired once. This is the side-effect assertion, not just
     //     map membership.
@@ -208,7 +238,10 @@ fn fresh_session_survives_short_ttl_that_evicts_idle_sibling() {
     assert!(evicted.contains(&idle), "idle sibling evicted");
     idle_disposal.assert_fully_disposed_once("idle sibling disposed");
 
-    assert!(!evicted.contains(&fresh), "freshly-touched session must survive the sweep");
+    assert!(
+        !evicted.contains(&fresh),
+        "freshly-touched session must survive the sweep"
+    );
     assert!(!is_session_ended(&fresh), "fresh session not tombstoned");
     fresh_disposal.assert_not_disposed("fresh session not disposed by the sweep");
 

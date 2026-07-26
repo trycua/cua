@@ -14,7 +14,8 @@ use std::time::{Duration, Instant};
 #[cfg(target_os = "windows")]
 fn main() {
     let mut pipe = std::fs::OpenOptions::new()
-        .read(true).write(true)
+        .read(true)
+        .write(true)
         .open(r"\\.\pipe\cua-driver")
         .expect("open pipe — start daemon first");
 
@@ -25,11 +26,17 @@ fn main() {
         let mut buf = [0u8; 65536];
         let deadline = Instant::now() + Duration::from_secs(4);
         loop {
-            if Instant::now() > deadline { panic!("response timeout"); }
+            if Instant::now() > deadline {
+                panic!("response timeout");
+            }
             let n = p.read(&mut buf).unwrap_or(0);
-            if n == 0 { break; }
+            if n == 0 {
+                break;
+            }
             out.extend_from_slice(&buf[..n]);
-            if out.contains(&b'\n') { break; }
+            if out.contains(&b'\n') {
+                break;
+            }
         }
         String::from_utf8_lossy(&out).into_owned()
     }
@@ -53,30 +60,58 @@ fn main() {
     // 2. Pixel click — pick the first window we can find belonging to our own
     //    daemon (cua-driver.exe doesn't have one, so use the foreground app).
     //    Use list_windows to get a real pid + hwnd, then click on it.
-    let lw = req(&mut pipe, r#"{"method":"call","name":"list_windows","args":{}}"#);
+    let lw = req(
+        &mut pipe,
+        r#"{"method":"call","name":"list_windows","args":{}}"#,
+    );
     let lwv: serde_json::Value = serde_json::from_str(lw.trim()).expect("parse");
-    let wins = lwv.pointer("/result/structuredContent/windows").and_then(|w| w.as_array())
+    let wins = lwv
+        .pointer("/result/structuredContent/windows")
+        .and_then(|w| w.as_array())
         .expect("no windows array");
     // Prefer Chrome — we already verified it accepts PostMessage clicks
     // earlier in the session.  Skip windows that reject PostMessage
     // (e.g. parsecd, system processes).
     let preferred = ["chrome.exe", "msedge.exe", "firefox.exe", "notepad.exe"];
-    let target = wins.iter().find(|w| {
-        let name = w.pointer("/app_name").and_then(|s| s.as_str()).unwrap_or("").to_lowercase();
-        preferred.iter().any(|p| name.contains(p))
-    }).or_else(|| wins.iter().find(|w| {
-        let name = w.pointer("/app_name").and_then(|s| s.as_str()).unwrap_or("");
-        !name.contains("cua-driver") && !name.contains("parsecd")
-            && !name.contains("examples") && !name.contains("dwm")
-    })).expect("no suitable target window");
+    let target = wins
+        .iter()
+        .find(|w| {
+            let name = w
+                .pointer("/app_name")
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .to_lowercase();
+            preferred.iter().any(|p| name.contains(p))
+        })
+        .or_else(|| {
+            wins.iter().find(|w| {
+                let name = w
+                    .pointer("/app_name")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("");
+                !name.contains("cua-driver")
+                    && !name.contains("parsecd")
+                    && !name.contains("examples")
+                    && !name.contains("dwm")
+            })
+        })
+        .expect("no suitable target window");
     let pid = target.pointer("/pid").and_then(|n| n.as_u64()).unwrap();
-    let wid = target.pointer("/window_id").and_then(|n| n.as_u64()).unwrap();
-    println!("Clicking pid={pid} window_id={wid} app={}", target.pointer("/app_name").and_then(|s| s.as_str()).unwrap_or("?"));
+    let wid = target
+        .pointer("/window_id")
+        .and_then(|n| n.as_u64())
+        .unwrap();
+    println!(
+        "Clicking pid={pid} window_id={wid} app={}",
+        target
+            .pointer("/app_name")
+            .and_then(|s| s.as_str())
+            .unwrap_or("?")
+    );
 
     // 1. Missing-target wording (now that we have a real pid + window_id).
-    let missing_req = format!(
-        r#"{{"method":"call","name":"click","args":{{"pid":{pid},"window_id":{wid}}}}}"#
-    );
+    let missing_req =
+        format!(r#"{{"method":"call","name":"click","args":{{"pid":{pid},"window_id":{wid}}}}}"#);
     let r_m = req(&mut pipe, &missing_req);
     let v_m: serde_json::Value = serde_json::from_str(r_m.trim()).expect("parse");
     let err1 = extract_text(&v_m);

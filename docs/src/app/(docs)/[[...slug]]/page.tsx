@@ -172,16 +172,15 @@ export default async function Page(props: { params: Promise<{ slug?: string[] }>
     );
   };
 
-  const tocFooter = () => {
-    // Construct file path from slug
-    const filePath = slug.length === 0 ? 'index.mdx' : `${slug.join('/')}.mdx`;
+  // Construct file path from slug; shared by the TOC footer (desktop) and the
+  // mobile actions block below.
+  const filePath = slug.length === 0 ? 'index.mdx' : `${slug.join('/')}.mdx`;
 
-    return (
-      <div className="mt-4">
-        <DocActionsMenu pageUrl={page.url} pageTitle={page.data.title} filePath={filePath} />
-      </div>
-    );
-  };
+  const tocFooter = () => (
+    <div className="mt-4">
+      <DocActionsMenu pageUrl={page.url} pageTitle={page.data.title} filePath={filePath} />
+    </div>
+  );
 
   return (
     <DocsPage
@@ -253,6 +252,13 @@ export default async function Page(props: { params: Promise<{ slug?: string[] }>
             </div>
           </div>
           <DocsDescription className="text-md mt-1">{page.data.description}</DocsDescription>
+          {/* The doc actions (Copy as markdown, Edit on GitHub, Open in ChatGPT /
+              Claude) normally live in the TOC footer, which fumadocs hides on
+              small screens. Surface them inline here so they stay reachable on
+              mobile; hidden at xl where the TOC and its footer are visible. */}
+          <div className="mt-4 border-t border-fd-border pt-3 xl:hidden">
+            <DocActionsMenu pageUrl={page.url} pageTitle={page.data.title} filePath={filePath} />
+          </div>
         </div>
       </div>
       <DocsBody>

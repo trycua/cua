@@ -179,6 +179,17 @@ impl WindowChangeDetector {
     /// Safe to call from any thread — `CGWindowListCopyWindowInfo` is
     /// documented as thread-safe.
     pub fn snapshot(prior_front: Option<i32>) -> Snapshot {
+        Self::capture(prior_front, true)
+    }
+
+    /// Capture the same before-state without arming reactive focus suppression.
+    /// Foreground delivery owns its temporary activation and restoration, so a
+    /// wildcard lease would race the target while the action is settling.
+    pub fn snapshot_without_suppression(prior_front: Option<i32>) -> Snapshot {
+        Self::capture(prior_front, false)
+    }
+
+    fn capture(prior_front: Option<i32>, suppress_focus: bool) -> Snapshot {
         let window_ids: HashSet<u32> = windows::visible_windows()
             .into_iter()
             .filter(|w| w.layer == 0)
@@ -190,7 +201,7 @@ impl WindowChangeDetector {
         // (any other pid). If there's no frontmost (rare — screensaver,
         // login window), we skip the lease; foreground-change tracking
         // still runs.
-        let lease = prior_front.map(|restore_to| {
+        let lease = prior_front.filter(|_| suppress_focus).map(|restore_to| {
             focus_steal::begin_suppression(
                 None, // wildcard
                 restore_to,
@@ -471,7 +482,10 @@ mod tests {
             foreground_changed: false,
         };
         // No title → just the app name, no parentheses.
-        assert_eq!(c.result_suffix(), "\n\n🪟 Action opened new window(s): Finder.");
+        assert_eq!(
+            c.result_suffix(),
+            "\n\n🪟 Action opened new window(s): Finder."
+        );
     }
 
     /// Regression: `snapshot(prior_front)` must store the caller's

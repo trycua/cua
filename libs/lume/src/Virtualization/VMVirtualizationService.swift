@@ -16,6 +16,7 @@ struct VMVirtualizationServiceContext {
     let nvramPath: Path
     let recoveryMode: Bool
     let usbMassStoragePaths: [Path]?
+    let additionalDiskPaths: [Path]?
     let networkMode: NetworkMode
 }
 
@@ -295,6 +296,13 @@ final class DarwinVirtualizationService: BaseVirtualizationService {
                     try createUSBMassStorageDeviceConfiguration(diskPath: usbPath, readOnly: true))
             }
         }
+        // Attach additional read-write disks as virtio-blk (USB mass storage is rejected for macOS guests).
+        if let extraDisks = config.additionalDiskPaths {
+            for diskPath in extraDisks {
+                storageDevices.append(
+                    try createStorageDeviceConfiguration(diskPath: diskPath, readOnly: false))
+            }
+        }
         vzConfig.storageDevices = storageDevices
         vzConfig.networkDevices = [
             try createNetworkDeviceConfiguration(
@@ -325,6 +333,43 @@ final class DarwinVirtualizationService: BaseVirtualizationService {
         spiceAgentPort.attachment = spiceAgentPortAttachment
         spiceAgentConsoleDevice.ports[0] = spiceAgentPort
         vzConfig.consoleDevices.append(spiceAgentConsoleDevice)
+
+        // Optional serial console for debugging. When LUME_SERIAL_CONSOLE points
+        // at a writable path, attach a virtio serial port whose output is written
+        // there. Useful for observing early boot / recoveryOS behaviour that has
+        // no other headless channel.
+        if let serialLogPath = ProcessInfo.processInfo.environment["LUME_SERIAL_CONSOLE"],
+            !serialLogPath.isEmpty
+        {
+            if !FileManager.default.fileExists(atPath: serialLogPath) {
+                FileManager.default.createFile(atPath: serialLogPath, contents: nil)
+            }
+            if let writeHandle = FileHandle(forWritingAtPath: serialLogPath) {
+                writeHandle.seekToEndOfFile()
+                let serialAttachment = VZFileHandleSerialPortAttachment(
+                    fileHandleForReading: nil,
+                    fileHandleForWriting: writeHandle
+                )
+                // 1) Classic virtio serial port.
+                let serialPort = VZVirtioConsoleDeviceSerialPortConfiguration()
+                serialPort.attachment = serialAttachment
+                vzConfig.serialPorts = [serialPort]
+                // 2) A virtio console port marked isConsole, which designates it
+                //    as the system console — some guests route console output here.
+                let consoleDevice = VZVirtioConsoleDeviceConfiguration()
+                let consolePort = VZVirtioConsolePortConfiguration()
+                consolePort.isConsole = true
+                consolePort.name = "lume.console"
+                consolePort.attachment = serialAttachment
+                consoleDevice.ports[0] = consolePort
+                vzConfig.consoleDevices.append(consoleDevice)
+                Logger.info("Attached serial console", metadata: ["path": serialLogPath])
+            } else {
+                Logger.error(
+                    "Failed to open serial console log for writing",
+                    metadata: ["path": serialLogPath])
+            }
+        }
 
         // Directory sharing
         let directorySharingDevices = createDirectorySharingDevices(
@@ -455,6 +500,14 @@ final class LinuxVirtualizationService: BaseVirtualizationService {
                 storageDevices.append(
                     try createUSBMassStorageDeviceConfiguration(
                         diskPath: usbPath, readOnly: true, cachingMode: diskCachingMode))
+            }
+        }
+        // Attach additional read-write disks as virtio-blk.
+        if let extraDisks = config.additionalDiskPaths {
+            for diskPath in extraDisks {
+                storageDevices.append(
+                    try createStorageDeviceConfiguration(
+                        diskPath: diskPath, readOnly: false, cachingMode: diskCachingMode))
             }
         }
         vzConfig.storageDevices = storageDevices

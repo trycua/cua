@@ -14,6 +14,7 @@ use anyhow::Result;
 pub mod cache;
 pub mod native;
 pub use cache::ElementCache;
+pub use native::ensure_listener_active;
 
 #[derive(Clone, Debug)]
 pub struct AtspiNode {
@@ -21,9 +22,11 @@ pub struct AtspiNode {
     pub role: String,
     pub name: Option<String>,
     pub value: Option<String>,
+    /// Checked state when the accessibility backend exposes one for a toggle.
+    pub checked: Option<bool>,
     pub description: Option<String>,
     pub actions: Vec<String>,
-    /// For pyatspi path: element_key = element_index as u64.
+    /// For AT-SPI: element_key = element_index as u64.
     /// For X11 fallback: element_key = xid.
     pub element_key: u64,
     /// Depth in the markdown tree (0 = top-level window child).
@@ -32,17 +35,46 @@ pub struct AtspiNode {
     /// `element_index` of the nearest actionable ancestor, if any.
     /// Mirrors what the markdown indent shows.
     pub parent_element_index: Option<usize>,
+    /// True when the native AT-SPI walker observed this node below renderer
+    /// web content. Browser-owned consent UI must never match such nodes.
+    pub in_web_content: bool,
 }
 
 pub struct AtspiTreeResult {
     pub tree_markdown: String,
     pub nodes: Vec<AtspiNode>,
+    pub bounds: Vec<(usize, i32, i32, u32, u32)>,
 }
 
 /// Walk the AT-SPI tree for a window identified by (pid, xid).
 /// Falls back to a minimal X11 property tree if AT-SPI is unavailable.
 pub fn walk_tree(pid: u32, xid: u64, query: Option<&str>) -> AtspiTreeResult {
     walk_tree_bounded(pid, xid, query, None, None)
+}
+
+/// Best-effort accessibility snapshot for synchronous trajectory evidence.
+///
+/// Recording brackets an action with before/after captures, so it must use a
+/// smaller budget than the transport's tool-call deadline. Unlike the
+/// interactive tree walker, evidence capture makes one attempt and accepts an
+/// unavailable tree when the target renderer is blocked.
+pub(crate) fn walk_tree_for_recording(
+    pid: u32,
+    xid: u64,
+    timeout: std::time::Duration,
+) -> AtspiTreeResult {
+    if let Ok(Some((tree_markdown, nodes, bounds))) =
+        native::walk_tree_bounded_with_timeout(pid, xid, None, None, timeout)
+    {
+        if !tree_markdown.is_empty() {
+            return AtspiTreeResult {
+                tree_markdown,
+                nodes,
+                bounds,
+            };
+        }
+    }
+    walk_via_x11_properties(xid, None)
 }
 
 /// Walk the AT-SPI tree with caller-supplied caps. `None` for either cap
@@ -65,14 +97,24 @@ pub fn walk_tree_bounded(
     // after launch returns the real tree instead of an empty one. See #1927.
     const MAX_ATTEMPTS: usize = 4;
     for attempt in 0..MAX_ATTEMPTS {
-        if let Ok(Some((raw_md, nodes))) = native::walk_tree_bounded(pid, max_elements, max_depth) {
+        if let Ok(Some((raw_md, nodes, bounds))) =
+            native::walk_tree_bounded(pid, xid, max_elements, max_depth)
+        {
             // `nodes.len() <= 1` == only the root window resolved: the
             // cold-registry symptom. Accept any real tree immediately; only
             // keep waiting on the degenerate case, and accept it anyway on the
             // final attempt rather than discarding a (minimal) valid result.
             if !raw_md.is_empty() && (nodes.len() > 1 || attempt == MAX_ATTEMPTS - 1) {
-                let md = if let Some(q) = query { filter_tree(&raw_md, q) } else { raw_md };
-                return AtspiTreeResult { tree_markdown: md, nodes };
+                let md = if let Some(q) = query {
+                    filter_tree(&raw_md, q)
+                } else {
+                    raw_md
+                };
+                return AtspiTreeResult {
+                    tree_markdown: md,
+                    nodes,
+                    bounds,
+                };
             }
         }
         if attempt < MAX_ATTEMPTS - 1 {
@@ -91,6 +133,15 @@ pub fn walk_tree_bounded(
 /// `effect: "suspected_noop"`.
 pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
     native::perform_action(pid, idx)
+}
+
+/// Give an indexed AT-SPI element keyboard focus without activating its window.
+pub fn focus_element(pid: u32, idx: usize) -> Result<bool> {
+    native::focus_element(pid, idx)
+}
+
+pub fn scroll_element(pid: u32, idx: usize, direction: &str, amount: usize) -> Result<()> {
+    native::scroll_element(pid, idx, direction, amount)
 }
 
 /// Enumerate top-level windows from the AT-SPI registry. The window-listing
@@ -130,61 +181,12 @@ pub fn perform_action_at_screen_point(
 /// For Qt5, which doesn't expose widgets when unfocused, this will return Err.
 /// Returns Ok if an editable was found and text was set, Err otherwise.
 pub fn type_into_editable(pid: u32, text: &str) -> Result<()> {
-    let safe_text = text.replace('\\', "\\\\").replace('\'', "\\'");
-    let script = format!(r#"
-import pyatspi, sys
+    native::type_into_editable(pid, text)
+}
 
-def find_editable(acc, depth=0):
-    # Try to find any EditableText interface, regardless of role
-    try:
-        et = acc.queryEditableText()
-        # If we can query it, return this node
-        return acc
-    except:
-        pass
-
-    # Recursively search children
-    try:
-        for child in acc:
-            result = find_editable(child, depth + 1)
-            if result is not None:
-                return result
-    except:
-        pass
-
-    return None
-
-desktop = pyatspi.Registry.getDesktop(0)
-editable = None
-for app in desktop:
-    try:
-        if app.get_process_id() == {pid}:
-            for win in app:
-                editable = find_editable(win)
-                if editable:
-                    break
-            break
-    except:
-        pass
-
-if editable is None:
-    print("ERROR: No editable found", file=sys.stderr)
-    sys.exit(1)
-
-try:
-    et = editable.queryEditableText()
-    et.setTextContents('{safe_text}')
-    print("ok:atspi")
-except Exception as e:
-    print(f"ERROR: {{e}}", file=sys.stderr)
-    sys.exit(1)
-"#, pid = pid, safe_text = safe_text);
-
-    let out = std::process::Command::new("python3").arg("-c").arg(&script).output()?;
-    if !out.status.success() {
-        anyhow::bail!("{}", String::from_utf8_lossy(&out.stderr).trim().to_owned());
-    }
-    Ok(())
+/// Type into the exact indexed editable from the caller's accessibility snapshot.
+pub fn type_into_editable_at(pid: u32, idx: usize, text: &str) -> Result<()> {
+    native::type_into_editable_at(pid, idx, text)
 }
 
 /// Set the text value of element `idx` within pid's app tree via AT-SPI.
@@ -212,15 +214,6 @@ pub fn focused_is_editable(pid: u32) -> Result<Option<bool>> {
     native::focused_is_editable(pid)
 }
 
-/// Get the screen-coordinate bounding box (x, y, width, height) of element `idx`.
-/// Screen-coordinate bounds for every action node in pid's AT-SPI tree, keyed
-/// by `element_index`. Best-effort: nodes whose bounds can't be read are
-/// omitted rather than erroring the whole call. Returns `(element_index, x, y,
-/// width, height)` tuples in screen coordinates.
-pub fn get_all_element_bounds(pid: u32, xid: u64) -> Result<Vec<(usize, i32, i32, u32, u32)>> {
-    native::get_all_element_bounds(pid, xid)
-}
-
 pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> {
     native::get_element_bounds(pid, idx)
 }
@@ -229,13 +222,17 @@ pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> 
 
 /// Minimal X11 property-based tree (fallback when AT-SPI is unavailable).
 fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
-    use x11rb::connection::Connection;
-    use x11rb::protocol::xproto::*;
     use x11rb::rust_connection::RustConnection;
 
     let (conn, _) = match RustConnection::connect(None) {
         Ok(r) => r,
-        Err(_) => return AtspiTreeResult { tree_markdown: String::new(), nodes: vec![] },
+        Err(_) => {
+            return AtspiTreeResult {
+                tree_markdown: String::new(),
+                nodes: vec![],
+                bounds: vec![],
+            }
+        }
     };
 
     let window = xid as u32;
@@ -252,15 +249,28 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
     let root_node = AtspiNode {
         element_index: Some(0),
         role: "window".into(),
-        name: if title.is_empty() { None } else { Some(title.clone()) },
+        name: if title.is_empty() {
+            None
+        } else {
+            Some(title.clone())
+        },
         value: None,
-        description: if wm_class.is_empty() { None } else { Some(wm_class.clone()) },
+        checked: None,
+        description: if wm_class.is_empty() {
+            None
+        } else {
+            Some(wm_class.clone())
+        },
         actions: vec!["activate".into()],
         element_key: xid,
         depth: 0,
         parent_element_index: None,
+        in_web_content: false,
     };
-    md.push_str(&format!("- [0] window \"{}\" [actions=[activate]]\n", title));
+    md.push_str(&format!(
+        "- [0] window \"{}\" [actions=[activate]]\n",
+        title
+    ));
     nodes.push(root_node);
 
     let raw_md = md;
@@ -270,26 +280,52 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
         raw_md
     };
 
-    AtspiTreeResult { tree_markdown, nodes }
+    AtspiTreeResult {
+        tree_markdown,
+        nodes,
+        bounds: vec![],
+    }
 }
 
 fn get_x11_title(conn: &x11rb::rust_connection::RustConnection, window: u32) -> Option<String> {
     use x11rb::protocol::xproto::*;
     // Try _NET_WM_NAME first.
-    let net_wm_name = conn.intern_atom(false, b"_NET_WM_NAME").ok()?.reply().ok()?.atom;
-    let utf8_string = conn.intern_atom(false, b"UTF8_STRING").ok()?.reply().ok()?.atom;
-    if let Ok(reply) = conn.get_property(false, window, net_wm_name, utf8_string, 0, 1024).ok()?.reply() {
+    let net_wm_name = conn
+        .intern_atom(false, b"_NET_WM_NAME")
+        .ok()?
+        .reply()
+        .ok()?
+        .atom;
+    let utf8_string = conn
+        .intern_atom(false, b"UTF8_STRING")
+        .ok()?
+        .reply()
+        .ok()?
+        .atom;
+    if let Ok(reply) = conn
+        .get_property(false, window, net_wm_name, utf8_string, 0, 1024)
+        .ok()?
+        .reply()
+    {
         if !reply.value.is_empty() {
             return Some(String::from_utf8_lossy(&reply.value).into_owned());
         }
     }
-    let reply = conn.get_property(false, window, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 1024).ok()?.reply().ok()?;
+    let reply = conn
+        .get_property(false, window, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 1024)
+        .ok()?
+        .reply()
+        .ok()?;
     Some(String::from_utf8_lossy(&reply.value).into_owned())
 }
 
 fn get_x11_wm_class(conn: &x11rb::rust_connection::RustConnection, window: u32) -> Option<String> {
     use x11rb::protocol::xproto::*;
-    let reply = conn.get_property(false, window, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 512).ok()?.reply().ok()?;
+    let reply = conn
+        .get_property(false, window, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 512)
+        .ok()?
+        .reply()
+        .ok()?;
     let s = String::from_utf8_lossy(&reply.value);
     // WM_CLASS is two NUL-separated strings: instance_name\0class_name\0
     Some(s.trim_end_matches('\0').replace('\0', "."))
@@ -304,13 +340,22 @@ fn filter_tree(markdown: &str, query: &str) -> String {
 
     for line in &lines {
         let depth = line.chars().take_while(|c| *c == ' ').count() / 2;
-        while ancestors.len() <= depth { ancestors.push(""); last_emitted.push(None); }
-        for d in (depth+1)..ancestors.len() { last_emitted[d] = None; }
+        while ancestors.len() <= depth {
+            ancestors.push("");
+            last_emitted.push(None);
+        }
+        for d in (depth + 1)..ancestors.len() {
+            last_emitted[d] = None;
+        }
         ancestors[depth] = line;
         if line.to_lowercase().contains(&needle) {
             for d in 0..depth {
-                if ancestors[d].is_empty() { continue; }
-                if last_emitted[d] == Some(ancestors[d]) { continue; }
+                if ancestors[d].is_empty() {
+                    continue;
+                }
+                if last_emitted[d] == Some(ancestors[d]) {
+                    continue;
+                }
                 last_emitted[d] = Some(ancestors[d]);
                 output.push(ancestors[d]);
             }
@@ -318,6 +363,10 @@ fn filter_tree(markdown: &str, query: &str) -> String {
             output.push(line);
         }
     }
-    if output.is_empty() { return String::new(); }
-    let mut r = output.join("\n"); r.push('\n'); r
+    if output.is_empty() {
+        return String::new();
+    }
+    let mut r = output.join("\n");
+    r.push('\n');
+    r
 }

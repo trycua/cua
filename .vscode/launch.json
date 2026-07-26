@@ -1,152 +1,22 @@
 {
-    "configurations": [
-        {
-            "name": "Agent UI",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "examples/agent_ui_examples.py",
-            "console": "integratedTerminal",
-            "justMyCode": false,
-            "python": "${workspaceFolder:cua-root}/.venv/bin/python",
-            "cwd": "${workspaceFolder:cua-root}",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som"
-            }
-        },
-        {
-            "name": "Computer UI",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "examples/computer_ui_examples.py",
-            "console": "integratedTerminal",
-            "justMyCode": false,
-            "python": "${workspaceFolder:cua-root}/.venv/bin/python",
-            "cwd": "${workspaceFolder:cua-root}",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som"
-            }
-        },
-        {
-            "name": "Run Computer Examples",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "examples/computer_examples.py",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "python": "${workspaceFolder:cua-root}/.venv/bin/python",
-            "cwd": "${workspaceFolder:cua-root}",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som"
-            }
-        },
-        {
-            "name": "Run Agent Examples",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "examples/agent_examples.py",
-            "console": "integratedTerminal",
-            "justMyCode": false,
-            "python": "${workspaceFolder:cua-root}/.venv/bin/python",
-            "cwd": "${workspaceFolder:cua-root}",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som"
-            }
-        },
-        {
-            "name": "SOM: Run Experiments (No OCR)",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "examples/som_examples.py",
-            "args": [
-                "examples/test_data",
-                "--output-dir",
-                "examples/output",
-                "--ocr",
-                "none",
-                "--mode",
-                "experiment"
-            ],
-            "console": "integratedTerminal",
-            "justMyCode": false,
-            "python": "${workspaceFolder:cua-root}/.venv/bin/python",
-            "cwd": "${workspaceFolder:cua-root}",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som"
-            }
-        },
-        {
-            "name": "SOM: Run Experiments (EasyOCR)",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "examples/som_examples.py",
-            "args": [
-                "examples/test_data",
-                "--output-dir",
-                "examples/output",
-                "--ocr",
-                "easyocr",
-                "--mode",
-                "experiment"
-            ],
-            "console": "integratedTerminal",
-            "justMyCode": false,
-            "python": "${workspaceFolder:cua-root}/.venv/bin/python",
-            "cwd": "${workspaceFolder:cua-root}",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som"
-            }
-        },
-        {
-            "name": "Run Computer Server",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/libs/python/computer-server/run_server.py",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "python": "${workspaceFolder:cua-root}/.venv/bin/python",
-            "cwd": "${workspaceFolder:cua-root}",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som"
-            }
-        },
-        {
-            "name": "Run Computer Server with Args",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/libs/python/computer-server/run_server.py",
-            "args": [
-                "--host",
-                "0.0.0.0",
-                "--port",
-                "8000",
-                "--log-level",
-                "debug"
-            ],
-            "console": "integratedTerminal",
-            "justMyCode": false,
-            "python": "${workspaceFolder:cua-root}/.venv/bin/python",
-            "cwd": "${workspaceFolder:cua-root}",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer-server"
-            }
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "args": [],
-            "cwd": "${workspaceFolder:cua-root}/libs/lume",
-            "name": "Debug lume (libs/lume)",
-            "program": "${workspaceFolder:cua-root}/libs/lume/.build/debug/lume",
-            "preLaunchTask": "swift: Build Debug lume (libs/lume)"
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "args": [],
-            "cwd": "${workspaceFolder:cua-root}/libs/lume",
-            "name": "Release lume (libs/lume)",
-            "program": "${workspaceFolder:cua-root}/libs/lume/.build/release/lume",
-            "preLaunchTask": "swift: Build Release lume (libs/lume)"
-        }
-    ]
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:cua-root}/libs/lume",
+      "name": "Debug lume (libs/lume)",
+      "program": "${workspaceFolder:cua-root}/libs/lume/.build/debug/lume",
+      "preLaunchTask": "swift: Build Debug lume (libs/lume)"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:cua-root}/libs/lume",
+      "name": "Release lume (libs/lume)",
+      "program": "${workspaceFolder:cua-root}/libs/lume/.build/release/lume",
+      "preLaunchTask": "swift: Build Release lume (libs/lume)"
+    }
+  ]
 }

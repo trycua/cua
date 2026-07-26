@@ -46,7 +46,6 @@ fn capture_via_import(xid: u64) -> Result<Vec<u8>> {
 }
 
 fn capture_via_xgetimage(xid: u64) -> Result<(String, u32, u32)> {
-    use x11rb::connection::Connection;
     use x11rb::protocol::xproto::*;
     use x11rb::rust_connection::RustConnection;
 
@@ -57,13 +56,17 @@ fn capture_via_xgetimage(xid: u64) -> Result<(String, u32, u32)> {
     let w = geom.width as u32;
     let h = geom.height as u32;
 
-    let img = conn.get_image(
-        ImageFormat::Z_PIXMAP,
-        window,
-        0, 0,
-        w as u16, h as u16,
-        !0u32,
-    )?.reply()?;
+    let img = conn
+        .get_image(
+            ImageFormat::Z_PIXMAP,
+            window,
+            0,
+            0,
+            w as u16,
+            h as u16,
+            !0u32,
+        )?
+        .reply()?;
 
     // The raw data is BGRA or BGRX depending on depth.
     // Encode as a minimal PNG.
@@ -71,7 +74,7 @@ fn capture_via_xgetimage(xid: u64) -> Result<(String, u32, u32)> {
     let (bpp, has_alpha) = match img.depth {
         32 => (4usize, true),
         24 => (4usize, false),
-        _  => bail!("Unsupported depth: {}", img.depth),
+        _ => bail!("Unsupported depth: {}", img.depth),
     };
 
     // Convert to RGBA.
@@ -156,9 +159,14 @@ pub(crate) fn screenshot_display_bytes_x11() -> Result<Vec<u8>> {
             crate::no_display_hint()
         );
     }
-    let img = conn.get_image(ImageFormat::Z_PIXMAP, root, 0, 0, w as u16, h as u16, !0u32)?.reply()?;
+    let img = conn
+        .get_image(ImageFormat::Z_PIXMAP, root, 0, 0, w as u16, h as u16, !0u32)?
+        .reply()?;
     let bytes = img.data;
-    let bpp = match img.depth { 32 | 24 => 4usize, _ => anyhow::bail!("Unsupported depth") };
+    let bpp = match img.depth {
+        32 | 24 => 4usize,
+        _ => anyhow::bail!("Unsupported depth"),
+    };
     let mut rgba = Vec::with_capacity((w * h * 4) as usize);
     for chunk in bytes.chunks_exact(bpp) {
         let (b, g, r) = (chunk[0], chunk[1], chunk[2]);
@@ -197,4 +205,3 @@ pub fn resize_png_if_needed(png_bytes: &[u8], max_dim: u32) -> Result<Vec<u8>> {
 pub fn crosshair_png_bytes(png_bytes: &[u8], cx: f64, cy: f64) -> Result<Vec<u8>> {
     cua_driver_core::image_utils::crosshair_png_bytes(png_bytes, cx, cy)
 }
-

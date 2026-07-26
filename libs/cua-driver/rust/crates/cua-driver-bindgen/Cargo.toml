@@ -1,0 +1,20 @@
+[package]
+name = "cua-driver-bindgen"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "cua-driver-bindgen"
+path = "src/main.rs"
+
+[[bin]]
+name = "cua-driver-abi-header"
+path = "src/abi_header.rs"
+
+[dependencies]
+uniffi = { workspace = true, features = ["cli"] }
+cbindgen = "=0.29.4"

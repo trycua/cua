@@ -14,16 +14,15 @@
 //!    `FindAll(TreeScope::Children, ...)` makes no z-order guarantee, so we
 //!    deliberately do NOT let it reorder anything Win32 already reported.
 //!
-//! Both sources apply the same filters (visible, non-iconic, non-empty
-//! title). The `filter_pid` argument is applied to the merged list so the
-//! union/dedupe pipeline runs unconditionally.
+//! Both sources apply the same filters (visible, non-empty title). Minimized
+//! windows remain addressable and are reported as off-screen so callers can
+//! restore them explicitly. The `filter_pid` argument is applied to the merged
+//! list so the union/dedupe pipeline runs unconditionally.
 
 use std::collections::HashSet;
 use std::sync::Mutex;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT, TRUE};
-use windows::Win32::Graphics::Dwm::{
-    DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS,
-};
+use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumChildWindows, EnumWindows, GetClassNameW, GetWindowRect, GetWindowTextLengthW,
     GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
@@ -40,6 +39,8 @@ pub struct WindowInfo {
     pub y: i32,
     pub width: i32,
     pub height: i32,
+    pub is_on_screen: bool,
+    pub minimized: bool,
 }
 
 struct EnumState {
@@ -82,11 +83,13 @@ pub fn list_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
     merged
 }
 
-/// Walk `EnumWindows` and collect every visible, non-iconic, non-empty-titled
+/// Walk `EnumWindows` and collect every visible, non-empty-titled
 /// top-level window. No pid filter is applied here — the caller does that on
 /// the merged list.
 fn enumerate_via_enum_windows() -> Vec<WindowInfo> {
-    let state = Mutex::new(EnumState { windows: Vec::new() });
+    let state = Mutex::new(EnumState {
+        windows: Vec::new(),
+    });
     let state_ptr = &state as *const Mutex<EnumState> as isize;
     unsafe {
         let _ = EnumWindows(Some(enum_windows_cb), LPARAM(state_ptr));
@@ -97,10 +100,12 @@ fn enumerate_via_enum_windows() -> Vec<WindowInfo> {
 unsafe extern "system" fn enum_windows_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
     let state = &*(lparam.0 as *const Mutex<EnumState>);
 
-    // Skip invisible or minimized windows.
-    if IsWindowVisible(hwnd).0 == 0 || IsIconic(hwnd).0 != 0 {
+    // Invisible helper windows are not user-addressable. Iconic windows are:
+    // retain them with explicit state so callers can restore them.
+    if IsWindowVisible(hwnd).0 == 0 {
         return TRUE;
     }
+    let minimized = IsIconic(hwnd).0 != 0;
 
     // Get pid.
     let mut pid: u32 = 0;
@@ -108,14 +113,18 @@ unsafe extern "system" fn enum_windows_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
 
     // Get title (skip empty).
     let title_len = GetWindowTextLengthW(hwnd);
-    if title_len == 0 { return TRUE; }
+    if title_len == 0 {
+        return TRUE;
+    }
     let mut buf = vec![0u16; (title_len + 1) as usize];
     GetWindowTextW(hwnd, &mut buf);
     let title = {
         let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
         String::from_utf16_lossy(&buf[..len])
     };
-    if title.trim().is_empty() { return TRUE; }
+    if title.trim().is_empty() {
+        return TRUE;
+    }
 
     // Get bounds — prefer DWM extended frame bounds (includes shadow), fallback to GetWindowRect.
     let (x, y, w, h) = get_window_bounds(hwnd);
@@ -128,6 +137,8 @@ unsafe extern "system" fn enum_windows_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
         y,
         width: w,
         height: h,
+        is_on_screen: !minimized,
+        minimized,
     });
 
     TRUE
@@ -147,7 +158,12 @@ fn get_window_bounds(hwnd: HWND) -> (i32, i32, i32, i32) {
             // Fallback to GetWindowRect.
             let _ = GetWindowRect(hwnd, &mut rect);
         }
-        (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
+        (
+            rect.left,
+            rect.top,
+            rect.right - rect.left,
+            rect.bottom - rect.top,
+        )
     }
 }
 
@@ -265,10 +281,7 @@ pub fn resolve_uwp_host_window(app_pid: u32) -> Option<WindowInfo> {
         matched_frame: None,
     };
     unsafe {
-        let _ = EnumWindows(
-            Some(frame_cb),
-            LPARAM(&mut scan as *mut FrameScan as isize),
-        );
+        let _ = EnumWindows(Some(frame_cb), LPARAM(&mut scan as *mut FrameScan as isize));
     }
 
     let frame = scan.matched_frame?;
@@ -301,5 +314,7 @@ pub fn resolve_uwp_host_window(app_pid: u32) -> Option<WindowInfo> {
         y,
         width: w,
         height: h,
+        is_on_screen: true,
+        minimized: false,
     })
 }

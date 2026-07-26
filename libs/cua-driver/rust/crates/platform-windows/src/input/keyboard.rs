@@ -17,22 +17,19 @@
 
 use anyhow::{bail, Result};
 use std::thread::sleep;
-use std::time::Duration;
-use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use std::time::{Duration, Instant};
+use windows::Win32::Foundation::{BOOL, HWND, LPARAM, TRUE, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
-    KEYBD_EVENT_FLAGS, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP,
-    KEYEVENTF_SCANCODE, KEYEVENTF_UNICODE, MAPVK_VK_TO_VSC, VIRTUAL_KEY,
+    MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+    KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, KEYEVENTF_UNICODE, MAPVK_VK_TO_VSC,
+    VIRTUAL_KEY,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, SetForegroundWindow,
+    EnumChildWindows, GetClassNameW, GetGUIThreadInfo, GetParent, GetWindowThreadProcessId,
+    IsChild, PostMessageW, GUITHREADINFO, WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN,
+    WM_SYSKEYUP,
 };
-use windows::Win32::UI::WindowsAndMessaging::{
-    GetClassNameW, GetWindowThreadProcessId, IsChild,
-    PostMessageW, WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
-};
-use windows::Win32::UI::Input::KeyboardAndMouse::GetFocus;
-use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
 
 // ── XAML / UWP host detection ────────────────────────────────────────────────
 //
@@ -66,14 +63,18 @@ const XAML_HOST_EXES: &[&str] = &[
 fn class_name(hwnd: HWND) -> Option<String> {
     let mut buf = [0u16; 256];
     let n = unsafe { GetClassNameW(hwnd, &mut buf) };
-    if n <= 0 { None } else { Some(String::from_utf16_lossy(&buf[..n as usize])) }
+    if n <= 0 {
+        None
+    } else {
+        Some(String::from_utf16_lossy(&buf[..n as usize]))
+    }
 }
 
 fn owning_exe_basename(hwnd: HWND) -> Option<String> {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{
-        OpenProcess, QueryFullProcessImageNameW,
-        PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
+        PROCESS_QUERY_LIMITED_INFORMATION,
     };
 
     let mut pid: u32 = 0;
@@ -85,8 +86,12 @@ fn owning_exe_basename(hwnd: HWND) -> Option<String> {
     let mut buf = [0u16; 1024];
     let mut len: u32 = buf.len() as u32;
     let result = unsafe {
-        QueryFullProcessImageNameW(handle, PROCESS_NAME_FORMAT(0),
-                                   windows::core::PWSTR(buf.as_mut_ptr()), &mut len)
+        QueryFullProcessImageNameW(
+            handle,
+            PROCESS_NAME_FORMAT(0),
+            windows::core::PWSTR(buf.as_mut_ptr()),
+            &mut len,
+        )
     };
     let _ = unsafe { CloseHandle(handle) };
     if result.is_err() || len == 0 {
@@ -121,42 +126,97 @@ pub fn is_xaml_host_hwnd(hwnd: u64) -> bool {
 
 const KEY_DELAY_MS: u64 = 4;
 
-/// If the target's UI thread has a focused child window that's a descendant
-/// of `parent`, return that child. Otherwise `None`. Used to retarget
+/// If any UI thread under the target has a focused child window that's a
+/// descendant of `parent`, return that child. Otherwise `None`. Used to retarget
 /// `PostMessage(WM_CHAR/WM_KEYDOWN)` from the top-level frame to the actual
 /// editor control (Scintilla in Notepad++, RichEdit in WordPad, etc.) —
 /// top-level WindowProcs don't forward keyboard messages to embedded editors
 /// automatically, so without this drill-down `type_text` silently no-ops
 /// against any app that puts its text surface in a child HWND.
 ///
-/// Uses `AttachThreadInput` to read the target thread's focus state, which
-/// is the standard cross-thread way to read another thread's `GetFocus()`.
-/// We detach immediately after — attaching for the duration of the post
-/// would change input-state visibility for the duration.
+/// Embedded renderers such as WebView2 may put their focused child on a
+/// different UI thread from the native top-level frame. Enumerating descendant
+/// thread ids is therefore required; checking only the frame thread queues the
+/// message successfully but leaves the renderer untouched. More than one of
+/// those threads can retain a focused HWND, so choose the deepest focused
+/// descendant rather than whichever thread happens to enumerate first.
 fn focused_descendant(parent: HWND) -> Option<HWND> {
-    if parent.0.is_null() { return None; }
-    let mut target_pid: u32 = 0;
-    let target_thread = unsafe { GetWindowThreadProcessId(parent, Some(&mut target_pid)) };
-    if target_thread == 0 { return None; }
-    let our_thread = unsafe { GetCurrentThreadId() };
+    if parent.0.is_null() {
+        return None;
+    }
+    let parent_thread = unsafe { GetWindowThreadProcessId(parent, None) };
+    if parent_thread == 0 {
+        return None;
+    }
 
-    let focused = if our_thread == target_thread {
-        unsafe { GetFocus() }
-    } else {
-        let _ = unsafe { AttachThreadInput(our_thread, target_thread, true) };
-        let f = unsafe { GetFocus() };
-        let _ = unsafe { AttachThreadInput(our_thread, target_thread, false) };
-        f
-    };
-    if focused.0.is_null() { return None; }
-    if focused == parent { return None; }
-    // Only retarget if focus is genuinely a descendant of `parent` — protects
-    // against accidentally posting to an unrelated window if the target is
-    // not the foreground app at the moment.
-    if unsafe { IsChild(parent, focused) }.as_bool() {
-        Some(focused)
-    } else {
-        None
+    unsafe extern "system" fn collect_thread(child: HWND, lparam: LPARAM) -> BOOL {
+        let threads = &mut *(lparam.0 as *mut Vec<u32>);
+        let thread = GetWindowThreadProcessId(child, None);
+        if thread != 0 && !threads.contains(&thread) {
+            threads.push(thread);
+        }
+        TRUE
+    }
+
+    let mut target_threads = vec![parent_thread];
+    unsafe {
+        let _ = EnumChildWindows(
+            parent,
+            Some(collect_thread),
+            LPARAM(&mut target_threads as *mut Vec<u32> as isize),
+        );
+    }
+    let mut best: Option<(usize, HWND)> = None;
+    for target_thread in target_threads {
+        let mut info = GUITHREADINFO {
+            cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+            ..Default::default()
+        };
+        if unsafe { GetGUIThreadInfo(target_thread, &mut info) }.is_err() {
+            continue;
+        }
+        let focused = info.hwndFocus;
+        if focused.0.is_null()
+            || focused == parent
+            || !unsafe { IsChild(parent, focused) }.as_bool()
+        {
+            continue;
+        }
+
+        let mut depth = 0usize;
+        let mut current = focused;
+        while current != parent && depth < 64 {
+            let Ok(next) = (unsafe { GetParent(current) }) else {
+                break;
+            };
+            if next.0.is_null() {
+                break;
+            }
+            depth += 1;
+            current = next;
+        }
+        if current == parent && best.as_ref().map_or(true, |(d, _)| depth > *d) {
+            best = Some((depth, focused));
+        }
+    }
+    best.map(|(_, focused)| focused)
+}
+
+/// Wait for an element-focused embedded renderer to expose its child HWND.
+/// UIA SetFocus can complete before WebView2 updates GUITHREADINFO; polling the
+/// observable focus target avoids posting the key to the native frame in that
+/// short interval.
+pub fn wait_for_focused_descendant(hwnd: u64, timeout: Duration) -> Option<u64> {
+    let parent = HWND(hwnd as *mut _);
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(target) = focused_descendant(parent) {
+            return Some(target.0 as usize as u64);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        sleep(Duration::from_millis(10));
     }
 }
 
@@ -193,8 +253,13 @@ unsafe fn post_enter_keystroke(h: HWND) -> Result<()> {
     let vk = windows::Win32::UI::Input::KeyboardAndMouse::VK_RETURN;
     let scan = MapVirtualKeyW(vk.0 as u32, MAPVK_VK_TO_VSC);
     let lp_down = 1u32 | (scan << 16);
-    let lp_up   = lp_down | (1u32 << 30) | (1u32 << 31);
-    PostMessageW(h, WM_KEYDOWN, WPARAM(vk.0 as usize), LPARAM(lp_down as isize))?;
+    let lp_up = lp_down | (1u32 << 30) | (1u32 << 31);
+    PostMessageW(
+        h,
+        WM_KEYDOWN,
+        WPARAM(vk.0 as usize),
+        LPARAM(lp_down as isize),
+    )?;
     // Hold time between KEYDOWN and KEYUP — matches `post_key`'s pattern and
     // gives the target's message loop time to TranslateMessage the KEYDOWN
     // (which synthesizes WM_CHAR(0x0D)) and DispatchMessage the paragraph
@@ -203,7 +268,7 @@ unsafe fn post_enter_keystroke(h: HWND) -> Result<()> {
     // next character — visible in the "ABC\nDEF\nGHI" repro as "ABC / DEF /
     // (gap) / HI".
     sleep(Duration::from_millis(KEY_DELAY_MS));
-    PostMessageW(h, WM_KEYUP,   WPARAM(vk.0 as usize), LPARAM(lp_up   as isize))?;
+    PostMessageW(h, WM_KEYUP, WPARAM(vk.0 as usize), LPARAM(lp_up as isize))?;
     Ok(())
 }
 
@@ -240,7 +305,9 @@ pub fn post_type_text_with_delay(hwnd: u64, text: &str, inter_char_ms: u64) -> R
                 prev_was_cr = false;
             }
             '\n' | '\r' => {
-                unsafe { post_enter_keystroke(h)?; }
+                unsafe {
+                    post_enter_keystroke(h)?;
+                }
                 prev_was_cr = ch == '\r';
                 // Extra settle after Enter — paragraph creation in rich
                 // editors (VCL Writer, Scintilla, RichEdit) is heavier than
@@ -253,7 +320,9 @@ pub fn post_type_text_with_delay(hwnd: u64, text: &str, inter_char_ms: u64) -> R
             _ => {
                 prev_was_cr = false;
                 let code = ch as u32 as usize;
-                unsafe { PostMessageW(h, WM_CHAR, WPARAM(code), LPARAM(1))?; }
+                unsafe {
+                    PostMessageW(h, WM_CHAR, WPARAM(code), LPARAM(1))?;
+                }
                 sleep(Duration::from_millis(KEY_DELAY_MS + inter_char_ms));
             }
         }
@@ -267,6 +336,11 @@ pub fn post_key(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<()> {
         anyhow::bail!(msg);
     }
     let hwnd_win = HWND(hwnd as *mut _);
+    // WebView2/Tauri keeps the editable renderer in a focused child HWND.
+    // Posting only to the top-level frame reports success but never reaches
+    // the renderer; mirror the WM_CHAR path and retarget to that child when
+    // the target thread exposes one.
+    let target = focused_descendant(hwnd_win).unwrap_or(hwnd_win);
     let vk = key_name_to_vk(key)?;
     let has_alt = modifiers.iter().any(|m| *m == "alt" || *m == "menu");
 
@@ -274,8 +348,12 @@ pub fn post_key(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<()> {
     let repeat_lp = |scan: u32, extended: bool, key_up: bool| {
         let mut lp: u32 = 1; // repeat count
         lp |= scan << 16;
-        if extended { lp |= 1 << 24; }
-        if key_up   { lp |= (1 << 30) | (1 << 31); }
+        if extended {
+            lp |= 1 << 24;
+        }
+        if key_up {
+            lp |= (1 << 30) | (1 << 31);
+        }
         LPARAM(lp as isize)
     };
 
@@ -285,25 +363,43 @@ pub fn post_key(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<()> {
         (WM_KEYDOWN, WM_KEYUP)
     };
 
-    let mod_vks: Vec<VIRTUAL_KEY> = modifiers.iter()
-        .filter_map(|m| modifier_vk(m))
-        .collect();
+    let mod_vks: Vec<VIRTUAL_KEY> = modifiers.iter().filter_map(|m| modifier_vk(m)).collect();
 
     unsafe {
         // Press modifiers.
         for mvk in &mod_vks {
             let ms = MapVirtualKeyW(mvk.0 as u32, MAPVK_VK_TO_VSC);
-            PostMessageW(hwnd_win, down_msg, WPARAM(mvk.0 as usize), repeat_lp(ms, false, false))?;
+            PostMessageW(
+                target,
+                down_msg,
+                WPARAM(mvk.0 as usize),
+                repeat_lp(ms, false, false),
+            )?;
         }
         // Press key.
-        PostMessageW(hwnd_win, down_msg, WPARAM(vk.0 as usize), repeat_lp(scan, is_extended(vk), false))?;
+        PostMessageW(
+            target,
+            down_msg,
+            WPARAM(vk.0 as usize),
+            repeat_lp(scan, is_extended(vk), false),
+        )?;
         sleep(Duration::from_millis(KEY_DELAY_MS));
         // Release key.
-        PostMessageW(hwnd_win, up_msg, WPARAM(vk.0 as usize), repeat_lp(scan, is_extended(vk), true))?;
+        PostMessageW(
+            target,
+            up_msg,
+            WPARAM(vk.0 as usize),
+            repeat_lp(scan, is_extended(vk), true),
+        )?;
         // Release modifiers (reverse order).
         for mvk in mod_vks.iter().rev() {
             let ms = MapVirtualKeyW(mvk.0 as u32, MAPVK_VK_TO_VSC);
-            PostMessageW(hwnd_win, up_msg, WPARAM(mvk.0 as usize), repeat_lp(ms, false, true))?;
+            PostMessageW(
+                target,
+                up_msg,
+                WPARAM(mvk.0 as usize),
+                repeat_lp(ms, false, true),
+            )?;
         }
     }
     Ok(())
@@ -344,10 +440,7 @@ pub fn send_key_synthesized(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<
         bail!(msg);
     }
     let key_vk = key_name_to_vk(key)?;
-    let mod_vks: Vec<VIRTUAL_KEY> = modifiers
-        .iter()
-        .filter_map(|m| modifier_vk(m))
-        .collect();
+    let mod_vks: Vec<VIRTUAL_KEY> = modifiers.iter().filter_map(|m| modifier_vk(m)).collect();
 
     // Build the INPUT sequence: modifiers down, key down, key up, modifiers up
     // (reverse order). Each event sends the scancode + EXTENDEDKEY flag where
@@ -394,7 +487,8 @@ pub fn send_key_synthesized(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<
                  and route hotkey calls through it. Until then, the calling \
                  app must already be foreground for delivery_mode:\"foreground\" \
                  to be safe.",
-                target.0, actual_fg.0
+                target.0,
+                actual_fg.0
             );
         }
 
@@ -500,7 +594,8 @@ pub fn send_text_synthesized(hwnd: u64, text: &str) -> Result<()> {
                  the cua-driver-uia worker (UIAccess-manifested PE) and route \
                  type_text through it. Until then, the calling app must already \
                  be foreground for delivery_mode:\"foreground\" to be safe.",
-                target.0, actual_fg.0
+                target.0,
+                actual_fg.0
             );
         }
 
@@ -554,9 +649,15 @@ fn key_input(vk: VIRTUAL_KEY, up: bool) -> INPUT {
     let mut flags: KEYBD_EVENT_FLAGS = KEYBD_EVENT_FLAGS(0);
     // Scancode is more reliable than VK for some apps. EXTENDEDKEY flag
     // makes arrow / nav / right-side modifier keys work correctly.
-    if scan != 0 { flags |= KEYEVENTF_SCANCODE; }
-    if is_extended(vk) { flags |= KEYEVENTF_EXTENDEDKEY; }
-    if up { flags |= KEYEVENTF_KEYUP; }
+    if scan != 0 {
+        flags |= KEYEVENTF_SCANCODE;
+    }
+    if is_extended(vk) {
+        flags |= KEYEVENTF_EXTENDEDKEY;
+    }
+    if up {
+        flags |= KEYEVENTF_KEYUP;
+    }
     INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
@@ -597,15 +698,36 @@ pub fn modifier_hold_inputs(modifiers: &[&str]) -> (Vec<INPUT>, Vec<INPUT>) {
 
 fn is_extended(vk: VIRTUAL_KEY) -> bool {
     use windows::Win32::UI::Input::KeyboardAndMouse::*;
-    matches!(vk,
-        VK_DELETE | VK_INSERT | VK_HOME | VK_END | VK_PRIOR | VK_NEXT |
-        VK_UP | VK_DOWN | VK_LEFT | VK_RIGHT |
-        VK_RCONTROL | VK_RMENU | VK_RWIN | VK_NUMLOCK | VK_SNAPSHOT
+    matches!(
+        vk,
+        VK_DELETE
+            | VK_INSERT
+            | VK_HOME
+            | VK_END
+            | VK_PRIOR
+            | VK_NEXT
+            | VK_UP
+            | VK_DOWN
+            | VK_LEFT
+            | VK_RIGHT
+            | VK_RCONTROL
+            | VK_RMENU
+            | VK_RWIN
+            | VK_NUMLOCK
+            | VK_SNAPSHOT
     )
 }
 
 fn key_name_to_vk(key: &str) -> Result<VIRTUAL_KEY> {
     use windows::Win32::UI::Input::KeyboardAndMouse::*;
+    // Windows reserves the ASCII values themselves as the virtual-key codes
+    // for A-Z and 0-9. Resolve the documented alphanumeric vocabulary
+    // directly so it does not depend on the daemon thread having a current
+    // keyboard layout, which VkKeyScanW requires.
+    if let Some(vk) = crate::keycodes::ascii_alphanumeric_virtual_key_code(key) {
+        return Ok(VIRTUAL_KEY(vk));
+    }
+
     let vk = match key.to_lowercase().as_str() {
         "enter" | "return" => VK_RETURN,
         "tab" => VK_TAB,
@@ -622,9 +744,18 @@ fn key_name_to_vk(key: &str) -> Result<VIRTUAL_KEY> {
         "down" => VK_DOWN,
         "left" => VK_LEFT,
         "right" => VK_RIGHT,
-        "f1" => VK_F1, "f2" => VK_F2, "f3" => VK_F3, "f4" => VK_F4,
-        "f5" => VK_F5, "f6" => VK_F6, "f7" => VK_F7, "f8" => VK_F8,
-        "f9" => VK_F9, "f10" => VK_F10, "f11" => VK_F11, "f12" => VK_F12,
+        "f1" => VK_F1,
+        "f2" => VK_F2,
+        "f3" => VK_F3,
+        "f4" => VK_F4,
+        "f5" => VK_F5,
+        "f6" => VK_F6,
+        "f7" => VK_F7,
+        "f8" => VK_F8,
+        "f9" => VK_F9,
+        "f10" => VK_F10,
+        "f11" => VK_F11,
+        "f12" => VK_F12,
         "ctrl" | "control" => VK_CONTROL,
         "shift" => VK_SHIFT,
         "alt" => VK_MENU,
@@ -633,12 +764,13 @@ fn key_name_to_vk(key: &str) -> Result<VIRTUAL_KEY> {
         "numlock" => VK_NUMLOCK,
         _ => {
             // Single printable character.
-            let ch = key.chars().next()
+            let ch = key
+                .chars()
+                .next()
                 .ok_or_else(|| anyhow::anyhow!("Empty key name"))?;
             // VkKeyScanW returns VK in low byte.
-            let vk_scan = unsafe {
-                windows::Win32::UI::Input::KeyboardAndMouse::VkKeyScanW(ch as u16)
-            };
+            let vk_scan =
+                unsafe { windows::Win32::UI::Input::KeyboardAndMouse::VkKeyScanW(ch as u16) };
             if vk_scan == -1i16 as u16 as i16 {
                 bail!("Unknown key: {key}");
             }

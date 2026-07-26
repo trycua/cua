@@ -31,11 +31,13 @@ def commit(
     committer_email: str | None = None,
     committer_login: str | None = None,
     message: str = "fix: preserve attribution",
+    parent_count: int = 1,
 ):
     return {
         "sha": sha,
         "author": {"login": login} if login else None,
         "committer": {"login": committer_login} if committer_login else None,
+        "parents": [{"sha": f"parent-{index}"} for index in range(parent_count)],
         "commit": {
             "author": {"name": name, "email": email},
             "committer": {
@@ -110,6 +112,34 @@ def test_distinct_resolvable_commit_author_requires_preserved_source():
         authors={12: "source-author"},
         source_emails={12: ["source@institution.example"]},
     )
+
+
+def test_merge_author_does_not_require_a_source_pr():
+    validate(
+        commits=[
+            commit(
+                login="merge-author",
+                email="merge-author@example.com",
+                parent_count=2,
+            )
+        ]
+    )
+
+
+def test_merge_coauthor_still_requires_source_evidence():
+    with pytest.raises(ReleaseError, match="has no explicit same-repository source PR"):
+        validate(
+            commits=[
+                commit(
+                    login="merge-author",
+                    parent_count=2,
+                    message=(
+                        "Merge main\n\n"
+                        "Co-authored-by: Contributor <contributor@institution.example>"
+                    ),
+                )
+            ]
+        )
 
 
 def test_explicit_cherry_pick_source_reference_is_parsed_but_supersedes_is_not():

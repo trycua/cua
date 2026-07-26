@@ -405,6 +405,7 @@ def validate_pr_attribution(
         committer = commit.get("committer") or {}
         committer_email = str(committer.get("email") or "").strip().lower()
         linked_committer = str((item.get("committer") or {}).get("login") or "").strip()
+        is_merge = len(item.get("parents") or []) > 1
         preserved_unlinked_author = (
             not author_login
             and bool(pull_login)
@@ -414,7 +415,10 @@ def validate_pr_attribution(
         # An ordinary direct PR author is credited from pull-request metadata even
         # when their commit email is private. A distinct unlinked author committed
         # by the landing PR author is a strong cherry-pick/preservation signal.
-        if preserved_unlinked_author and author_email not in ignored:
+        #
+        # A merge author records the integration action; authorship remains on
+        # the parent commits. Coauthor trailers are still validated below.
+        if not is_merge and preserved_unlinked_author and author_email not in ignored:
             record_unresolved(
                 email=author_email,
                 name=author_name,
@@ -422,7 +426,7 @@ def validate_pr_attribution(
                 kind="commit author",
                 references=references,
             )
-        elif author_login and (
+        elif not is_merge and author_login and (
             author_login.lower() != pull_login.lower()
             and not is_bot(author_login, bots)
             and author_login.lower() not in internal

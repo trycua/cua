@@ -24,13 +24,13 @@
 //!   omitted from the snapshot — never guessed.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, Mutex, Weak};
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::session::register_session_end_hook;
+use crate::session::register_scoped_session_end_hook;
 
 use super::binding::{
     cardinality_exact_candidate, correlate, selected_tab_target_id, BindingOutcome,
@@ -80,6 +80,7 @@ pub struct BrowserEngine {
     pub(crate) approval_broker: crate::consent::ApprovalBroker,
     mutation_gates: MutationGates,
     reconnect_gates: ReconnectGates,
+    session_end_hook: Mutex<Option<crate::session::SessionEndHookRegistration>>,
 }
 
 fn refuse(code: BrowserRefusalCode, msg: impl Into<String>) -> BrowserRefusal {
@@ -543,9 +544,10 @@ impl BrowserEngine {
             approval_broker: crate::consent::ApprovalBroker::new(provider),
             mutation_gates: MutationGates::new(),
             reconnect_gates: ReconnectGates::new(),
+            session_end_hook: Mutex::new(None),
         });
         let weak: Weak<Self> = Arc::downgrade(&engine);
-        register_session_end_hook(move |session_id| {
+        let registration = register_scoped_session_end_hook(move |session_id| {
             if let Some(engine) = weak.upgrade() {
                 engine.store.remove_session(session_id);
                 engine.cleanup_prepared_session(session_id);
@@ -569,6 +571,7 @@ impl BrowserEngine {
                 }
             }
         });
+        *engine.session_end_hook.lock().unwrap() = Some(registration);
         engine
     }
 

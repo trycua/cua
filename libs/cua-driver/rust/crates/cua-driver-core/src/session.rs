@@ -19,12 +19,15 @@
 //! reverse coupling from core into the platform crates.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc, Mutex, OnceLock,
+};
 use std::time::{Duration, Instant};
 
 use cua_driver_contract::{CaptureScope, EscalationReason};
 
-type SessionEndHook = Box<dyn Fn(&str) + Send + Sync>;
+type SessionEndHook = Arc<dyn Fn(&str) + Send + Sync>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionDeclaration {
@@ -66,6 +69,12 @@ pub struct SessionStartObservation {
     pub revived: bool,
     pub transport: SessionTransport,
     pub client_kind: SessionClientKind,
+    pub capture_scope: CaptureScope,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionObservationState {
+    pub ended: bool,
     pub capture_scope: CaptureScope,
 }
 
@@ -166,7 +175,8 @@ pub trait SessionObserver: Send + Sync + 'static {
 
 static SESSION_OBSERVER: OnceLock<Arc<dyn SessionObserver>> = OnceLock::new();
 type CursorOutcomeReader = Arc<dyn Fn(&str) -> CursorOutcomeObservation + Send + Sync>;
-static CURSOR_OUTCOME_READER: OnceLock<Mutex<Option<CursorOutcomeReader>>> = OnceLock::new();
+static CURSOR_OUTCOME_READERS: OnceLock<Mutex<HashMap<u64, CursorOutcomeReader>>> = OnceLock::new();
+static NEXT_CURSOR_OUTCOME_READER_ID: AtomicU64 = AtomicU64::new(1);
 
 pub fn set_session_observer(observer: Arc<dyn SessionObserver>) -> bool {
     SESSION_OBSERVER.set(observer).is_ok()
@@ -176,11 +186,36 @@ pub fn set_session_observer(observer: Arc<dyn SessionObserver>) -> bool {
 /// used only for the synchronous process-local lookup; the callback returns a
 /// struct that cannot contain raw cursor values.
 pub fn set_cursor_outcome_reader(reader: CursorOutcomeReader) -> bool {
-    *CURSOR_OUTCOME_READER
-        .get_or_init(|| Mutex::new(None))
+    CURSOR_OUTCOME_READERS
+        .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
-        .unwrap() = Some(reader);
+        .unwrap()
+        .insert(0, reader);
     true
+}
+
+pub fn register_scoped_cursor_outcome_reader(
+    reader: CursorOutcomeReader,
+) -> CursorOutcomeReaderRegistration {
+    let id = NEXT_CURSOR_OUTCOME_READER_ID.fetch_add(1, Ordering::Relaxed);
+    CURSOR_OUTCOME_READERS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap()
+        .insert(id, reader);
+    CursorOutcomeReaderRegistration { id }
+}
+
+pub struct CursorOutcomeReaderRegistration {
+    id: u64,
+}
+
+impl Drop for CursorOutcomeReaderRegistration {
+    fn drop(&mut self) {
+        if let Some(readers) = CURSOR_OUTCOME_READERS.get() {
+            readers.lock().unwrap().remove(&self.id);
+        }
+    }
 }
 
 /// Private per-call context. The raw caller session id never crosses into a
@@ -207,7 +242,8 @@ impl SessionToolContext {
     }
 }
 
-static SESSION_END_HOOKS: OnceLock<Mutex<Vec<SessionEndHook>>> = OnceLock::new();
+static SESSION_END_HOOKS: OnceLock<Mutex<HashMap<u64, SessionEndHook>>> = OnceLock::new();
+static NEXT_SESSION_END_HOOK_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Last-activity timestamp per live session id. A session is "touched" every
 /// time a tool call carries its explicit `session` id (see the daemon boundary
@@ -237,6 +273,21 @@ pub fn begin_tool_call(
     transport: SessionTransport,
     client_kind: SessionClientKind,
 ) -> Option<SessionToolContext> {
+    begin_tool_call_with_state(tool_name, args, known_tool, transport, client_kind, None)
+}
+
+/// Begin observation with a runtime-owner-provided view of public session
+/// state. Runtime owners use this seam because their mutable scope and
+/// tombstone state is keyed by a private runtime generation, while telemetry
+/// must continue to report the caller's stable public session label.
+pub fn begin_tool_call_with_state(
+    tool_name: &str,
+    args: &serde_json::Value,
+    known_tool: bool,
+    transport: SessionTransport,
+    client_kind: SessionClientKind,
+    observed_state: Option<SessionObservationState>,
+) -> Option<SessionToolContext> {
     if !known_tool {
         return None;
     }
@@ -246,20 +297,23 @@ pub fn begin_tool_call(
         .filter(|id| is_trackable(id))?;
     let is_start = tool_name == "start_session";
     let is_end = tool_name == "end_session";
-    let revived = is_start && is_session_ended(session_id);
-    if is_session_ended(session_id) && !is_start {
+    let ended = observed_state
+        .map(|state| state.ended)
+        .unwrap_or_else(|| is_session_ended(session_id));
+    let revived = is_start && ended;
+    if ended && !is_start {
         return None;
     }
 
-    touch_session(session_id);
     let capture_scope = if is_start {
         args.get("capture_scope")
             .cloned()
             .and_then(|value| serde_json::from_value(value).ok())
             .unwrap_or_default()
     } else {
-        crate::capture_scope::get_session(session_id)
-            .map(|state| state.policy)
+        observed_state
+            .map(|state| state.capture_scope)
+            .or_else(|| crate::capture_scope::get_session(session_id).map(|state| state.policy))
             .unwrap_or_default()
     };
     let escalation_reason = (tool_name == "escalate_session")
@@ -305,12 +359,26 @@ pub fn begin_tool_call(
 /// daemon's lifetime); eviction is a deliberate non-blocking follow-up.
 static ENDED_SESSIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
-fn hooks() -> &'static Mutex<Vec<SessionEndHook>> {
-    SESSION_END_HOOKS.get_or_init(|| Mutex::new(Vec::new()))
+fn hooks() -> &'static Mutex<HashMap<u64, SessionEndHook>> {
+    SESSION_END_HOOKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn ended_sessions() -> &'static Mutex<HashSet<String>> {
     ENDED_SESSIONS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn public_session_label(session_id: &str) -> &str {
+    let Some(rest) = session_id.strip_prefix("__cua_runtime_") else {
+        return session_id;
+    };
+    let Some((scope, public)) = rest.split_once(':') else {
+        return session_id;
+    };
+    if scope.len() == 32 && scope.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        public
+    } else {
+        session_id
+    }
 }
 
 /// Register a callback invoked with the disconnecting `session_id` whenever a
@@ -320,7 +388,33 @@ fn ended_sessions() -> &'static Mutex<HashSet<String>> {
 /// fires once per proxy exit, but a hook should treat a clear of an unseen id
 /// as a no-op.
 pub fn register_session_end_hook(hook: impl Fn(&str) + Send + Sync + 'static) {
-    hooks().lock().unwrap().push(Box::new(hook));
+    std::mem::forget(register_scoped_session_end_hook(hook));
+}
+
+/// Register a runtime-owned cleanup hook. Dropping the returned guard removes
+/// the callback, preventing create/shutdown cycles from accumulating stale
+/// platform and browser hooks.
+pub fn register_scoped_session_end_hook(
+    hook: impl Fn(&str) + Send + Sync + 'static,
+) -> SessionEndHookRegistration {
+    let id = NEXT_SESSION_END_HOOK_ID.fetch_add(1, Ordering::Relaxed);
+    hooks().lock().unwrap().insert(id, Arc::new(hook));
+    SessionEndHookRegistration { id }
+}
+
+pub struct SessionEndHookRegistration {
+    id: u64,
+}
+
+impl Drop for SessionEndHookRegistration {
+    fn drop(&mut self) {
+        hooks().lock().unwrap().remove(&self.id);
+    }
+}
+
+#[doc(hidden)]
+pub fn session_end_hook_count() -> usize {
+    hooks().lock().unwrap().len()
 }
 
 /// Fan a session-end out to every registered cleanup hook. Called by the daemon
@@ -342,7 +436,13 @@ pub fn fire_session_end(session_id: &str) -> bool {
         }
     }
     crate::capture_scope::clear_session(session_id);
-    for hook in hooks().lock().unwrap().iter() {
+    let registered = hooks()
+        .lock()
+        .unwrap()
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    for hook in registered {
         hook(session_id);
     }
     true
@@ -357,6 +457,35 @@ pub fn revoke_all_sessions() -> usize {
         end_session(session);
     }
     sessions.len()
+}
+
+/// Revoke only sessions owned by one runtime-private namespace.
+pub fn revoke_sessions_with_prefix(prefix: &str) -> usize {
+    let sessions: Vec<String> = activity()
+        .lock()
+        .unwrap()
+        .keys()
+        .filter(|session| session.starts_with(prefix))
+        .cloned()
+        .collect();
+    for session in &sessions {
+        end_session(session);
+    }
+    sessions.len()
+}
+
+/// Forget terminal tombstones owned by a runtime generation that is itself
+/// being destroyed. Live runtimes must retain tombstones until an explicit
+/// `start_session` revival; otherwise an operator revocation could be bypassed
+/// by reusing the same public session label on another transport.
+pub fn forget_ended_sessions_with_prefix(prefix: &str) -> usize {
+    let mut ended = ended_sessions().lock().unwrap();
+    let before = ended.len();
+    ended.retain(|session| !session.starts_with(prefix));
+    let forgotten = before - ended.len();
+    drop(ended);
+    crate::capture_scope::clear_sessions_with_prefix(prefix);
+    forgotten
 }
 
 /// Whether `fire_session_end` has already run for this `session_id`. The
@@ -383,11 +512,12 @@ pub fn revive_session(session_id: &str) -> bool {
     ended_sessions().lock().unwrap().remove(session_id)
 }
 
-/// Record activity for an explicit session id, resetting its idle-TTL clock.
-/// Called at the daemon boundary on every tool call that carries an explicit
-/// `session`. No-op for the anonymous fallback (`"default"` / empty) and for a
-/// session that has already ended (so a late in-flight call can't resurrect a
-/// reaped session's TTL entry).
+/// Record activity for an explicit runtime-private session id, resetting its
+/// idle-TTL clock. Called at the authorized registry boundary after public
+/// arguments have been mapped into their owning runtime namespace. No-op for
+/// the anonymous fallback (`"default"` / empty) and for a session that has
+/// already ended (so a late in-flight call can't resurrect a reaped session's
+/// TTL entry).
 pub fn touch_session(session_id: &str) {
     if !is_trackable(session_id) || is_session_ended(session_id) {
         return;
@@ -396,6 +526,20 @@ pub fn touch_session(session_id: &str) {
         .lock()
         .unwrap()
         .insert(session_id.to_owned(), Instant::now());
+}
+
+#[doc(hidden)]
+pub fn has_session_activity(session_id: &str) -> bool {
+    activity().lock().unwrap().contains_key(session_id)
+}
+
+#[doc(hidden)]
+pub fn session_idle_duration(session_id: &str) -> Option<Duration> {
+    activity()
+        .lock()
+        .unwrap()
+        .get(session_id)
+        .map(Instant::elapsed)
 }
 
 /// End a session explicitly (the `end_session` tool / `session end` CLI verb):
@@ -411,13 +555,32 @@ fn end_session_with_reason(session_id: &str, reason: SessionEndReason) {
         return;
     }
     activity().lock().unwrap().remove(session_id);
-    let cursor_reader = CURSOR_OUTCOME_READER
+    let mut cursor_readers = CURSOR_OUTCOME_READERS
         .get()
-        .and_then(|reader| reader.lock().unwrap().clone());
-    let cursor = cursor_reader.map(|reader| reader(session_id));
+        .map(|readers| {
+            readers
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(id, reader)| (*id, reader.clone()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    cursor_readers.sort_by_key(|(id, _)| *id);
+    let mut fallback = None;
+    let cursor = cursor_readers.into_iter().find_map(|(_, reader)| {
+        let outcome = reader(session_id);
+        if outcome.observed {
+            Some(outcome)
+        } else {
+            fallback.get_or_insert(outcome);
+            None
+        }
+    });
+    let cursor = cursor.or(fallback);
     if fire_session_end(session_id) {
         if let Some(observer) = SESSION_OBSERVER.get() {
-            observer.on_session_ended(session_id, reason, cursor);
+            observer.on_session_ended(public_session_label(session_id), reason, cursor);
         }
     }
 }
@@ -434,6 +597,23 @@ pub fn evict_idle(ttl: Duration) -> Vec<String> {
         let map = activity().lock().unwrap();
         map.iter()
             .filter(|(_, last)| now.duration_since(**last) >= ttl)
+            .map(|(id, _)| id.clone())
+            .collect()
+    };
+    for id in &stale {
+        end_session_with_reason(id, SessionEndReason::IdleTimeout);
+    }
+    stale
+}
+
+/// Runtime-scoped form of [`evict_idle`]. The namespace prefix is minted by
+/// the trusted runtime and never accepted from a tool argument.
+pub fn evict_idle_with_prefix(ttl: Duration, prefix: &str) -> Vec<String> {
+    let now = Instant::now();
+    let stale: Vec<String> = {
+        let map = activity().lock().unwrap();
+        map.iter()
+            .filter(|(id, last)| id.starts_with(prefix) && now.duration_since(**last) >= ttl)
             .map(|(id, _)| id.clone())
             .collect()
     };
@@ -660,6 +840,28 @@ mod tests {
     }
 
     #[test]
+    fn runtime_revoke_retains_tombstones_until_revival_or_runtime_teardown() {
+        let prefix = "__cua_runtime_00112233445566778899aabbccddeeff:";
+        let sid = format!("{prefix}revoked-session");
+        touch_session(&sid);
+
+        assert_eq!(revoke_sessions_with_prefix(prefix), 1);
+        assert!(is_session_ended(&sid));
+        touch_session(&sid);
+        assert!(
+            !has_session_activity(&sid),
+            "ordinary traffic must not resurrect a revoked runtime session"
+        );
+
+        assert!(revive_session(&sid));
+        touch_session(&sid);
+        assert!(has_session_activity(&sid));
+        end_session(&sid);
+        assert_eq!(forget_ended_sessions_with_prefix(prefix), 1);
+        assert!(!is_session_ended(&sid));
+    }
+
+    #[test]
     fn revive_is_noop_for_anonymous_ids() {
         // The anonymous fallback is never tracked, so there is nothing to revive.
         assert!(!revive_session("default"));
@@ -804,6 +1006,20 @@ mod tests {
         .unwrap();
         fire_session_end(control);
 
+        let runtime_owned = "test-observer-runtime-owned-QR78";
+        begin_tool_call_with_state(
+            "click",
+            &serde_json::json!({"session": runtime_owned}),
+            true,
+            SessionTransport::Daemon,
+            SessionClientKind::Direct,
+            Some(SessionObservationState {
+                ended: false,
+                capture_scope: CaptureScope::Window,
+            }),
+        )
+        .unwrap();
+
         let starts = probe.starts.lock().unwrap();
         assert!(starts.iter().any(|(id, observation)| {
             id == explicit
@@ -820,6 +1036,11 @@ mod tests {
         assert!(starts
             .iter()
             .any(|(id, observation)| id == revived && observation.revived));
+        assert!(starts.iter().any(|(id, observation)| {
+            id == runtime_owned
+                && observation.declaration == SessionDeclaration::ImplicitFirstAction
+                && observation.capture_scope == CaptureScope::Window
+        }));
         drop(starts);
 
         let ends = probe.ends.lock().unwrap();

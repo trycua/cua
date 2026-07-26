@@ -70,9 +70,9 @@ fn inject_browser_approvals(tool_name: &str, args: &mut serde_json::Value, sessi
 /// reads the explicit `session`/`cursor_id` arg only, so a cursor appears
 /// exactly when a run declares its session (explicit-required).
 ///
-/// Also refreshes the idle-TTL clock for an explicit session (the minted
-/// fallback is reaped by EOF, not TTL). Returns the effective `_session_id` for
-/// the resurrection guard.
+/// The registry refreshes the runtime-private idle-TTL key after authorization;
+/// this transport helper only returns the effective `_session_id` for the
+/// resurrection guard.
 fn apply_session_identity(args: &mut serde_json::Value, minted: &Option<String>) -> Option<String> {
     let explicit = args
         .as_object()
@@ -92,9 +92,6 @@ fn apply_session_identity(args: &mut serde_json::Value, minted: &Option<String>)
                 serde_json::Value::String(id),
             );
         }
-    }
-    if let Some(sess) = &explicit {
-        cua_driver_core::session::touch_session(sess);
     }
     args.as_object()
         .and_then(|o| o.get("_session_id"))
@@ -251,8 +248,7 @@ async fn invoke_daemon_tool(
     });
 
     if let Some(sid) = &effective_session {
-        if !is_session_lifecycle_tool(&tool_name) && cua_driver_core::session::is_session_ended(sid)
-        {
+        if !is_session_lifecycle_tool(&tool_name) && sdk.is_session_ended(sid) {
             observe_daemon_error(observation, 1);
             return DaemonResponse::err(
                 format!(
@@ -317,7 +313,7 @@ async fn invoke_daemon_tool(
                 }
             },
         };
-        cua_driver_core::session::begin_tool_call(&tool_name, &args, true, transport, client_kind)
+        sdk.begin_tool_call(&tool_name, &args, transport, client_kind)
     });
 
     let result_value = match sdk.invoke_raw(&tool_name, args).await {
@@ -664,7 +660,7 @@ pub async fn run_serve(
                                     .and_then(serde_json::Value::as_str)
                                     .filter(|value| !value.is_empty());
                                 let result: Result<serde_json::Value, String> = if all && session.is_none() {
-                                    let count = cua_driver_core::session::revoke_all_sessions();
+                                    let count = reg.revoke_all_sessions().await;
                                     Ok(serde_json::json!({"revoked": count, "scope": "all"}))
                                 } else if !all {
                                     match session {
@@ -1295,7 +1291,7 @@ pub async fn run_serve(
                                     .and_then(serde_json::Value::as_str)
                                     .filter(|value| !value.is_empty());
                                 let result: Result<serde_json::Value, String> = if all && session.is_none() {
-                                    let count = cua_driver_core::session::revoke_all_sessions();
+                                    let count = reg.revoke_all_sessions().await;
                                     Ok(serde_json::json!({"revoked": count, "scope": "all"}))
                                 } else if !all {
                                     match session {
@@ -1991,6 +1987,40 @@ mod gate_tests {
             PROBE_INVOCATIONS.load(Ordering::SeqCst),
             2,
             "revived-session call must invoke the tool again"
+        );
+
+        // 3d. Bulk revocation must update the adapter-local public tombstone
+        // mirror as well as the runtime-private core tracker.
+        let socket3d = socket.clone();
+        let revoke_all = DaemonRequest {
+            method: "revoke_authorization".into(),
+            name: None,
+            args: Some(serde_json::json!({"all": true})),
+            session_id: None,
+            observation_origin: None,
+            client_kind: None,
+        };
+        let resp = tokio::task::spawn_blocking(move || send_request(&socket3d, &revoke_all))
+            .await
+            .unwrap()
+            .expect("revoke-all response");
+        assert!(resp.ok, "revoke-all should ack ok");
+
+        let socket3e = socket.clone();
+        let s3e = sid.to_owned();
+        let resp =
+            tokio::task::spawn_blocking(move || send_request(&socket3e, &call_req(Some(&s3e))))
+                .await
+                .unwrap()
+                .expect("bulk-revoked call response");
+        assert!(
+            !resp.ok,
+            "bulk-revoked session call must preserve the loud legacy transport refusal"
+        );
+        assert_eq!(
+            PROBE_INVOCATIONS.load(Ordering::SeqCst),
+            2,
+            "bulk-revoked session call must not invoke the tool"
         );
 
         // 4. Anonymous call (no session id) still passes — no false positive.

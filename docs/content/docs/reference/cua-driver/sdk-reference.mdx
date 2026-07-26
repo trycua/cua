@@ -37,8 +37,10 @@ returns a tool error with stable code `permission_denied`.
 `authorization` field is `RuntimeAuthorizationOptions`: an allowed-mode
 set, the compatibility mode inherited by ordinary `CuaDriver` calls, bounded
 manifest path when that compatibility mode is bounded, maximum absolute and
-idle session TTLs, and the separate unrestricted-risk acknowledgement. A
-second same-process runtime returns `DriverError.RuntimeAlreadyExists`.
+idle session TTLs, and the separate unrestricted-risk acknowledgement.
+Applications may create more than one same-process runtime. Each runtime owns
+an independent authorization ceiling, session registry, browser bindings,
+recording state, and shutdown lifecycle.
 
 Trusted host code may call the top-level `create_trusted_session(driver, …)` /
 `createTrustedSession(driver, …)` factory and receive a `CuaDriverSession`.
@@ -150,6 +152,10 @@ Inspect the result before consuming images or structured fields.
 `ActionInterrupted` includes an `ActionCompletion` value: `NotStarted`,
 `Completed`, or `Unknown`. Do not automatically retry a non-idempotent action
 when completion is unknown.
+
+`RuntimeAlreadyExists` remains in the stable error vocabulary for hosts or
+platform facilities that cannot safely establish another owner. Ordinary
+second-runtime creation no longer returns it.
 
 See [MCP tools](/reference/cua-driver/mcp-tools) for the agent-facing tool
 catalog and [SDK, MCP, and process hosting](/concepts/sdk-mcp-and-hosting) for

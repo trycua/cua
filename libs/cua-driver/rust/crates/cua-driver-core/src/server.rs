@@ -863,7 +863,6 @@ pub async fn handle_request(
                         "_transport_session_id".to_owned(),
                         serde_json::Value::String(session.clone()),
                     );
-                    crate::session::touch_session(&session);
                 }
                 if call.name == "browser_prepare" {
                     if let Some(arguments) = call.args.as_object_mut() {

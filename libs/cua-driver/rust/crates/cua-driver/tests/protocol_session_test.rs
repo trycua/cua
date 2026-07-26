@@ -52,7 +52,7 @@ fn concurrent_clients_with_cursor_moves() {
     //! This covers the multi-cursor use case where two Codex agents run simultaneously.
     let mut drivers: Vec<RawDriver> = Vec::new();
     for _ in 0..2 {
-        let Some(d) = RawDriver::spawn() else {
+        let Some(d) = RawDriver::spawn_with_overlay() else {
             return;
         };
         drivers.push(d);
@@ -102,10 +102,10 @@ fn concurrent_multi_driver_isolation() {
     //! Two cua-driver processes running simultaneously with different cursor IDs.
     //! Verifies that concurrent sessions don't interfere — each tracks its own
     //! cursor state and the overlay stays alive under concurrent load.
-    let Some(mut child_a) = RawDriver::spawn() else {
+    let Some(mut child_a) = RawDriver::spawn_with_overlay() else {
         return;
     };
-    let Some(mut child_b) = RawDriver::spawn() else {
+    let Some(mut child_b) = RawDriver::spawn_with_overlay() else {
         return;
     };
 
@@ -215,7 +215,7 @@ fn concurrent_multi_driver_isolation() {
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn multi_cursor_instance_state() {
     //! Two cursor instances can be created with different IDs; each has independent state.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = RawDriver::spawn_with_overlay() else {
         return;
     };
 
@@ -352,7 +352,7 @@ fn overlay_move_cursor_stays_alive() {
     //! sends commands via the global channel.  Any crash in the render thread (e.g. wrong
     //! GCD queue pointer, bad CGImage argument types) would cause this test to fail with
     //! an early EOF or a non-zero exit code.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = RawDriver::spawn_with_overlay() else {
         return;
     };
 
@@ -412,7 +412,7 @@ fn overlay_move_cursor_stays_alive() {
 fn set_agent_cursor_motion_bezier_knobs() {
     //! set_agent_cursor_motion with Bezier/timing knobs — verifies schema accepts them
     //! and returns a non-error response with the updated values in the response text.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = RawDriver::spawn_with_overlay() else {
         return;
     };
 

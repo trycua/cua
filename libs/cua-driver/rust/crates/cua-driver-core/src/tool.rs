@@ -1,17 +1,22 @@
 //! Tool trait and registry.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use serde_json::Value;
+
+thread_local! {
+    static CONSTRUCTION_RUNTIME_SCOPE: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
 
 use crate::{
     pip_hook,
     protocol::{Content, ToolResult},
     recording::{now_ms, screenshot_for, RecordingSession},
     recording_tools::{
-        init_replay_registry, GetRecordingStateTool, ReplayTrajectoryTool, StartRecordingTool,
+        GetRecordingStateTool, ReplayRegistrySlot, ReplayTrajectoryTool, StartRecordingTool,
         StopRecordingTool,
     },
     tool_args::ArgsExt,
@@ -23,6 +28,9 @@ tokio::task_local! {
     /// surface; caller arguments and public session labels cannot influence it.
     static DISPATCH_AUTHORIZATION_CONTEXT:
         Arc<crate::session_authorization::EffectiveAuthorizationContext>;
+    /// Opaque generation for runtime-owned mutable resources. Nested
+    /// dispatches inherit this key, while public arguments can never select it.
+    static DISPATCH_RUNTIME_SCOPE: String;
 }
 
 /// Return the immutable authorization context bound to the current dispatch.
@@ -33,6 +41,34 @@ tokio::task_local! {
 pub(crate) fn current_dispatch_authorization_context(
 ) -> Option<Arc<crate::session_authorization::EffectiveAuthorizationContext>> {
     DISPATCH_AUTHORIZATION_CONTEXT.try_with(Arc::clone).ok()
+}
+
+#[doc(hidden)]
+pub fn current_dispatch_runtime_scope() -> Option<String> {
+    DISPATCH_RUNTIME_SCOPE
+        .try_with(Clone::clone)
+        .ok()
+        .or_else(|| CONSTRUCTION_RUNTIME_SCOPE.with(|scope| scope.borrow().clone()))
+}
+
+#[doc(hidden)]
+pub fn with_runtime_scope<T>(scope: String, action: impl FnOnce() -> T) -> T {
+    struct RestoreScope(Option<String>);
+    impl Drop for RestoreScope {
+        fn drop(&mut self) {
+            CONSTRUCTION_RUNTIME_SCOPE.with(|scope| {
+                scope.replace(self.0.take());
+            });
+        }
+    }
+    let previous = CONSTRUCTION_RUNTIME_SCOPE.with(|current| current.replace(Some(scope)));
+    let _restore = RestoreScope(previous);
+    action()
+}
+
+fn desktop_action_coordinator() -> &'static tokio::sync::Mutex<()> {
+    static COORDINATOR: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    COORDINATOR.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
 pub use cua_driver_contract::{CAPABILITY_VERSION, TOOLS_LIST_SCHEMA_VERSION};
@@ -317,6 +353,16 @@ pub trait Tool: Send + Sync {
     async fn invoke(&self, args: Value) -> ToolResult;
 }
 
+struct RuntimeCleanup(Option<Box<dyn FnOnce() + Send + Sync>>);
+
+impl Drop for RuntimeCleanup {
+    fn drop(&mut self) {
+        if let Some(cleanup) = self.0.take() {
+            cleanup();
+        }
+    }
+}
+
 /// Thread-safe collection of all registered tools.
 pub struct ToolRegistry {
     tools: HashMap<String, Box<dyn Tool>>,
@@ -324,6 +370,10 @@ pub struct ToolRegistry {
     order: Vec<String>,
     /// Shared recording session — auto-records each non-read-only tool call.
     pub recording: Arc<RecordingSession>,
+    replay_registry: ReplayRegistrySlot,
+    session_end_hooks: Vec<crate::session::SessionEndHookRegistration>,
+    cursor_outcome_readers: Vec<crate::session::CursorOutcomeReaderRegistration>,
+    runtime_cleanups: Vec<RuntimeCleanup>,
 }
 
 impl ToolRegistry {
@@ -332,6 +382,10 @@ impl ToolRegistry {
             tools: HashMap::new(),
             order: Vec::new(),
             recording: Arc::new(RecordingSession::new()),
+            replay_registry: Arc::new(std::sync::Mutex::new(std::sync::Weak::new())),
+            session_end_hooks: Vec::new(),
+            cursor_outcome_readers: Vec::new(),
+            runtime_cleanups: Vec::new(),
         }
     }
 
@@ -341,6 +395,25 @@ impl ToolRegistry {
         self.tools.insert(name, tool);
     }
 
+    pub fn retain_session_end_hook(
+        &mut self,
+        registration: crate::session::SessionEndHookRegistration,
+    ) {
+        self.session_end_hooks.push(registration);
+    }
+
+    pub fn retain_cursor_outcome_reader(
+        &mut self,
+        registration: crate::session::CursorOutcomeReaderRegistration,
+    ) {
+        self.cursor_outcome_readers.push(registration);
+    }
+
+    pub fn retain_runtime_cleanup(&mut self, cleanup: impl FnOnce() + Send + Sync + 'static) {
+        self.runtime_cleanups
+            .push(RuntimeCleanup(Some(Box::new(cleanup))));
+    }
+
     /// Register the four platform-independent recording/replay tools.
     /// Call this after all platform tools have been registered.
     pub fn register_recording_tools(&mut self) {
@@ -348,7 +421,9 @@ impl ToolRegistry {
         self.register(Box::new(StartRecordingTool::new(session.clone())));
         self.register(Box::new(StopRecordingTool::new(session.clone())));
         self.register(Box::new(GetRecordingStateTool::new(session)));
-        self.register(Box::new(ReplayTrajectoryTool));
+        self.register(Box::new(ReplayTrajectoryTool::new(
+            self.replay_registry.clone(),
+        )));
         self.register(Box::new(crate::recording_tools::InstallFfmpegTool));
     }
 
@@ -368,7 +443,7 @@ impl ToolRegistry {
     /// Wire up the replay tool's weak self-reference.
     /// Call this once, immediately after `Arc::new(registry)`.
     pub fn init_self_weak(self: &Arc<Self>) {
-        init_replay_registry(Arc::downgrade(self));
+        *self.replay_registry.lock().unwrap() = Arc::downgrade(self);
     }
 
     pub fn tools_list(&self) -> Value {
@@ -420,6 +495,29 @@ impl ToolRegistry {
     /// Invoke a tool by name and (if recording is enabled) write its result to disk.
     pub async fn invoke(&self, name: &str, args: Value) -> ToolResult {
         if let Ok(context) = DISPATCH_AUTHORIZATION_CONTEXT.try_with(Arc::clone) {
+            let mut args = args;
+            crate::tool_args::sanitize_reserved_args(&mut args);
+            if let Some(bound_session) = context.public_session() {
+                let Some(arguments) = args.as_object_mut() else {
+                    return permission_denied_result(
+                        "session-bound nested actions require an object argument".to_owned(),
+                    );
+                };
+                if arguments
+                    .get("session")
+                    .and_then(Value::as_str)
+                    .is_some_and(|session| session != bound_session)
+                {
+                    return permission_denied_result(
+                        "nested action session does not match the bound authorization context"
+                            .to_owned(),
+                    );
+                }
+                arguments.insert(
+                    "session".to_owned(),
+                    Value::String(bound_session.to_owned()),
+                );
+            }
             return self.invoke_authorized(name, args, context.as_ref()).await;
         }
         let context = match crate::session_authorization::configured_registry()
@@ -446,18 +544,23 @@ impl ToolRegistry {
         args: Value,
         context: Arc<crate::session_authorization::EffectiveAuthorizationContext>,
     ) -> ToolResult {
-        DISPATCH_AUTHORIZATION_CONTEXT
-            .scope(
-                context.clone(),
-                self.invoke_authorized(name, args, context.as_ref()),
-            )
+        let runtime_scope = context.runtime_scope_key();
+        DISPATCH_RUNTIME_SCOPE
+            .scope(runtime_scope, async {
+                DISPATCH_AUTHORIZATION_CONTEXT
+                    .scope(
+                        context.clone(),
+                        self.invoke_authorized(name, args, context.as_ref()),
+                    )
+                    .await
+            })
             .await
     }
 
     async fn invoke_authorized(
         &self,
         name: &str,
-        args: Value,
+        mut args: Value,
         context: &crate::session_authorization::EffectiveAuthorizationContext,
     ) -> ToolResult {
         // Deprecated alias: `type_text_chars` → `type_text`.  Swift's
@@ -492,13 +595,31 @@ impl ToolRegistry {
             return permission_denied_result(error.to_string());
         }
 
+        let public_args = args.clone();
+        let recording_args = recording_args_for(resolved_name, &args);
+
+        // Public session labels remain part of the stable transport contract,
+        // but mutable core/platform state must not be keyed by that
+        // caller-chosen label alone. Translate it only after authorization so
+        // policy and manifests continue to evaluate the public request.
+        let runtime_prefix = namespace_runtime_args(&mut args, context);
+        let runtime_session = args
+            .get("session")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        if let Some(session) = runtime_session.as_deref() {
+            crate::session::touch_session(session);
+        }
+
         // Reject modality violations before reserving a recording turn. A
         // rejected action has no before/after evidence and must not leave a
         // pending recorder entry behind.
         if let Err(violation) = crate::capture_scope::enforce_tool(resolved_name, &args) {
             let structured =
                 violation.as_json(args.get("session").and_then(Value::as_str).unwrap_or(""));
-            return ToolResult::error(violation.message).with_structured(structured);
+            let mut result = ToolResult::error(violation.message).with_structured(structured);
+            restore_public_runtime_result(&mut result, &runtime_prefix);
+            return result;
         }
 
         // Capture start time for recording timestamps only after validation.
@@ -512,7 +633,20 @@ impl ToolRegistry {
                 "start_recording" | "stop_recording" | "get_recording_state" | "replay_trajectory"
             );
         let private_consent_turn = is_existing_profile_prepare(resolved_name, &args);
-        let recording_args = recording_args_for(resolved_name, &args);
+        let _desktop_action = if is_physical_desktop_action(resolved_name) {
+            let coordinator = desktop_action_coordinator();
+            // Avoid yielding the dispatch task when the process-wide input
+            // lane is uncontended. On Windows, that yield creates a window in
+            // which the foreground target can lose keyboard eligibility
+            // between the fixture's focus proof and SendInput. Contended
+            // runtimes still wait and serialize through the same mutex.
+            Some(match coordinator.try_lock() {
+                Ok(guard) => guard,
+                Err(_) => coordinator.lock().await,
+            })
+        } else {
+            None
+        };
         let pending_turn = should_record
             .then(|| {
                 if private_consent_turn {
@@ -526,6 +660,18 @@ impl ToolRegistry {
             .flatten();
 
         let mut result = tool.invoke(args.clone()).await;
+        // Coordinate the physical action itself, not post-action evidence
+        // capture or result shaping. Keeping the global desktop lock through
+        // recording/PiP screenshots would unnecessarily block an unrelated
+        // runtime after the input side effect has already completed.
+        drop(_desktop_action);
+        // A long-running authorized action is active work, not idle time.
+        // Refresh again at completion so the idle TTL measures the gap
+        // between calls rather than time spent executing the previous call.
+        if let Some(session) = runtime_session.as_deref() {
+            crate::session::touch_session(session);
+        }
+        restore_public_runtime_result(&mut result, &runtime_prefix);
         let validate_portable_output = match resolved_name {
             "get_desktop_state" | "get_screen_size" | "get_cursor_position" => true,
             "move_cursor" | "click" | "drag" | "scroll" | "type_text" | "press_key" | "hotkey" => {
@@ -583,7 +729,7 @@ impl ToolRegistry {
             let window_id = args.opt_u64("window_id");
             let pid = args.opt_i64("pid");
             if let Some(png_bytes) = screenshot_for(window_id, pid) {
-                let label = synthesize_action_label(name, &args);
+                let label = synthesize_action_label(name, &public_args);
                 pip_hook::push_pip_frame(pip_hook::PipHookFrame {
                     png_bytes,
                     action_label: label,
@@ -593,6 +739,359 @@ impl ToolRegistry {
         }
 
         result
+    }
+}
+
+fn is_physical_desktop_action(tool: &str) -> bool {
+    matches!(
+        tool,
+        "click"
+            | "double_click"
+            | "right_click"
+            | "scroll"
+            | "drag"
+            | "mouse_drag"
+            | "parallel_mouse_drag"
+            | "move_cursor"
+            | "mouse_button_down"
+            | "mouse_button_up"
+            | "type_text"
+            | "press_key"
+            | "hotkey"
+            | "set_value"
+            | "bring_to_front"
+    )
+}
+
+fn namespace_runtime_args(
+    args: &mut Value,
+    context: &crate::session_authorization::EffectiveAuthorizationContext,
+) -> String {
+    let runtime_prefix = format!("__cua_runtime_{}:", context.runtime_scope_key());
+    let Some(arguments) = args.as_object_mut() else {
+        return runtime_prefix;
+    };
+    // The registry is the first boundary shared by every transport and the
+    // direct SDK. Transport adapters may already have injected `_session_id`,
+    // but a direct runtime call only carries the public `session` field. Mint
+    // the trusted ownership key here, after authorization, so recording and
+    // every other session-owned resource use the same runtime-private identity
+    // regardless of which adapter invoked the registry.
+    if !arguments.contains_key("_session_id") {
+        if let Some(session) = arguments
+            .get("session")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+        {
+            arguments.insert("_session_id".to_owned(), Value::String(session));
+        }
+    }
+    for key in ["session", "_session_id", "cursor_id"] {
+        let Some(public) = arguments
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty() && *value != "default")
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        let internal = if public.starts_with(&runtime_prefix) {
+            public
+        } else {
+            format!("{runtime_prefix}{public}")
+        };
+        arguments.insert(key.to_owned(), Value::String(internal));
+    }
+    runtime_prefix
+}
+
+fn restore_public_runtime_result(result: &mut ToolResult, runtime_prefix: &str) {
+    for content in &mut result.content {
+        if let Content::Text { text, .. } = content {
+            *text = text.replace(runtime_prefix, "");
+        }
+    }
+    let mut key_collision = false;
+    if let Some(structured) = result.structured_content.as_mut() {
+        key_collision = restore_public_runtime_value(structured, runtime_prefix);
+    }
+    if key_collision {
+        *result = ToolResult::error(
+            "internal runtime namespace restoration produced a duplicate output key",
+        )
+        .with_structured(serde_json::json!({
+            "code": "runtime_output_key_collision",
+        }));
+    }
+}
+
+fn restore_public_runtime_value(value: &mut Value, runtime_prefix: &str) -> bool {
+    match value {
+        Value::String(text) => {
+            *text = text.replace(runtime_prefix, "");
+            false
+        }
+        Value::Array(values) => values.iter_mut().fold(false, |collision, value| {
+            restore_public_runtime_value(value, runtime_prefix) || collision
+        }),
+        Value::Object(values) => {
+            let original = std::mem::take(values);
+            let mut collision = false;
+            for (key, mut value) in original {
+                collision |= restore_public_runtime_value(&mut value, runtime_prefix);
+                collision |= values
+                    .insert(key.replace(runtime_prefix, ""), value)
+                    .is_some();
+            }
+            collision
+        }
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod runtime_isolation_tests {
+    use super::{
+        desktop_action_coordinator, namespace_runtime_args, restore_public_runtime_result,
+        DISPATCH_RUNTIME_SCOPE,
+    };
+    use crate::{
+        authorization::PermissionMode,
+        protocol::ToolResult,
+        session_authorization::{SessionAuthorizationRegistry, SessionModeCeiling},
+    };
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    use std::time::Duration;
+
+    fn standard_context() -> Arc<crate::session_authorization::EffectiveAuthorizationContext> {
+        let ceiling = SessionModeCeiling::for_trusted_sessions(
+            [PermissionMode::Standard],
+            false,
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        SessionAuthorizationRegistry::with_ceiling(ceiling)
+            .compatibility_context(PermissionMode::Standard, None)
+            .unwrap()
+    }
+
+    struct ReplayProbe {
+        hits: Arc<AtomicUsize>,
+        def: super::ToolDef,
+    }
+
+    #[async_trait::async_trait]
+    impl super::Tool for ReplayProbe {
+        fn def(&self) -> &super::ToolDef {
+            &self.def
+        }
+
+        async fn invoke(&self, _args: serde_json::Value) -> crate::protocol::ToolResult {
+            self.hits.fetch_add(1, Ordering::SeqCst);
+            crate::protocol::ToolResult::text("probe ran")
+        }
+    }
+
+    fn replay_registry(hits: Arc<AtomicUsize>) -> Arc<super::ToolRegistry> {
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(ReplayProbe {
+            hits,
+            def: super::ToolDef {
+                name: "probe".into(),
+                description: "runtime-local replay probe".into(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                }),
+                read_only: false,
+                destructive: false,
+                idempotent: true,
+                open_world: false,
+            },
+        }));
+        registry.register_recording_tools();
+        let registry = Arc::new(registry);
+        registry.init_self_weak();
+        registry
+    }
+
+    #[tokio::test]
+    async fn replay_dispatches_only_through_the_owning_registry() {
+        let hits_a = Arc::new(AtomicUsize::new(0));
+        let hits_b = Arc::new(AtomicUsize::new(0));
+        let registry_a = replay_registry(hits_a.clone());
+        let registry_b = replay_registry(hits_b.clone());
+        let context_b = standard_context();
+        let trajectory = tempfile::tempdir().unwrap();
+        let turn = trajectory.path().join("turn-00001");
+        std::fs::create_dir(&turn).unwrap();
+        std::fs::write(
+            turn.join("action.json"),
+            serde_json::json!({"tool": "probe", "arguments": {}}).to_string(),
+        )
+        .unwrap();
+
+        let result = registry_b
+            .invoke_with_context(
+                "replay_trajectory",
+                serde_json::json!({"dir": trajectory.path(), "delay_ms": 0}),
+                context_b,
+            )
+            .await;
+        assert_ne!(result.is_error, Some(true));
+        assert_eq!(result.structured_content.unwrap()["succeeded"], 1);
+        assert_eq!(hits_a.load(Ordering::SeqCst), 0);
+        assert_eq!(hits_b.load(Ordering::SeqCst), 1);
+
+        drop(registry_a);
+        drop(registry_b);
+    }
+
+    #[tokio::test]
+    async fn element_tokens_are_bound_to_the_dispatch_runtime_generation() {
+        let pid = 8_675_309;
+        let token = DISPATCH_RUNTIME_SCOPE
+            .scope("runtime-a".to_owned(), async {
+                let snapshot = crate::element_token::global().register_snapshot(pid, 44, 1);
+                crate::element_token::token_for(snapshot, 0)
+            })
+            .await;
+
+        let cross_runtime = DISPATCH_RUNTIME_SCOPE
+            .scope("runtime-b".to_owned(), async {
+                crate::element_token::global().resolve(pid, &token)
+            })
+            .await;
+        assert_eq!(
+            cross_runtime.unwrap_err(),
+            "element_token belongs to another runtime generation"
+        );
+        let structured = DISPATCH_RUNTIME_SCOPE
+            .scope("runtime-b".to_owned(), async {
+                crate::element_token::resolve_element_args(pid, None, Some(&token), None, "click")
+                    .unwrap_err()
+            })
+            .await
+            .structured_content
+            .unwrap();
+        assert_eq!(
+            structured.pointer("/refusal/code"),
+            Some(&serde_json::Value::String("generation_mismatch".into()))
+        );
+
+        let owner = DISPATCH_RUNTIME_SCOPE
+            .scope("runtime-a".to_owned(), async {
+                crate::element_token::global().resolve(pid, &token)
+            })
+            .await;
+        assert_eq!(owner.unwrap(), (44, 0));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn physical_desktop_actions_are_admitted_one_at_a_time() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let max_active = Arc::new(AtomicUsize::new(0));
+        let mut tasks = Vec::new();
+        for _ in 0..8 {
+            let active = active.clone();
+            let max_active = max_active.clone();
+            tasks.push(tokio::spawn(async move {
+                let _admission = desktop_action_coordinator().lock().await;
+                let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+                max_active.fetch_max(now, Ordering::SeqCst);
+                tokio::task::yield_now().await;
+                active.fetch_sub(1, Ordering::SeqCst);
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap();
+        }
+        assert_eq!(max_active.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn runtime_namespaces_sessions_and_explicit_cursor_ids_without_leaking_them() {
+        let context = standard_context();
+        let mut args = serde_json::json!({
+            "session": "shared-session",
+            "_session_id": "shared-session",
+            "cursor_id": "shared-cursor",
+        });
+        let prefix = namespace_runtime_args(&mut args, context.as_ref());
+        assert_eq!(args["session"], format!("{prefix}shared-session"));
+        assert_eq!(args["_session_id"], format!("{prefix}shared-session"));
+        assert_eq!(args["cursor_id"], format!("{prefix}shared-cursor"));
+
+        let mut result = ToolResult::text(format!("{prefix}shared-session")).with_structured(
+            serde_json::json!({
+                format!("{prefix}shared-session"): {
+                    "cursor_id": format!("{prefix}shared-cursor"),
+                }
+            }),
+        );
+        restore_public_runtime_result(&mut result, &prefix);
+        assert!(matches!(
+            &result.content[0],
+            crate::protocol::Content::Text { text, .. } if text == "shared-session"
+        ));
+        assert_eq!(
+            result
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/shared-session/cursor_id"))
+                .and_then(serde_json::Value::as_str),
+            Some("shared-cursor")
+        );
+    }
+
+    #[test]
+    fn runtime_namespace_restoration_refuses_duplicate_public_object_keys() {
+        let context = standard_context();
+        let mut args = serde_json::json!({"session": "shared-session"});
+        let prefix = namespace_runtime_args(&mut args, context.as_ref());
+        let mut result = ToolResult::text("ambiguous").with_structured(serde_json::json!({
+            "shared-session": "public",
+            format!("{prefix}shared-session"): "private",
+        }));
+
+        restore_public_runtime_result(&mut result, &prefix);
+
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            result
+                .structured_content
+                .as_ref()
+                .and_then(|value| { value.get("code").and_then(serde_json::Value::as_str) }),
+            Some("runtime_output_key_collision")
+        );
+    }
+
+    #[test]
+    fn runtime_mints_a_private_ownership_key_for_direct_session_calls() {
+        let context = standard_context();
+        let mut args = serde_json::json!({"session": "direct-session"});
+        let prefix = namespace_runtime_args(&mut args, context.as_ref());
+        assert_eq!(args["session"], format!("{prefix}direct-session"));
+        assert_eq!(args["_session_id"], format!("{prefix}direct-session"));
+    }
+
+    #[test]
+    fn anonymous_default_identity_keeps_its_legacy_process_scope() {
+        let context = standard_context();
+        let mut args = serde_json::json!({
+            "session": "default",
+            "_session_id": "default",
+            "cursor_id": "default",
+        });
+        namespace_runtime_args(&mut args, context.as_ref());
+        assert_eq!(args["session"], "default");
+        assert_eq!(args["_session_id"], "default");
+        assert_eq!(args["cursor_id"], "default");
     }
 }
 

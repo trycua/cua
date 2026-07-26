@@ -24,6 +24,23 @@ impl TestDaemon {
         reaper: &mut ChildReaper,
         env: &[(&str, &str)],
     ) -> Option<Self> {
+        Self::spawn_configured(binary, reaper, env, false)
+    }
+
+    pub(crate) fn spawn_with_overlay(
+        binary: &Path,
+        reaper: &mut ChildReaper,
+        env: &[(&str, &str)],
+    ) -> Option<Self> {
+        Self::spawn_configured(binary, reaper, env, true)
+    }
+
+    fn spawn_configured(
+        binary: &Path,
+        reaper: &mut ChildReaper,
+        env: &[(&str, &str)],
+        overlay_enabled: bool,
+    ) -> Option<Self> {
         #[cfg(not(unix))]
         let sequence = DAEMON_SEQUENCE.fetch_add(1, Ordering::Relaxed);
 
@@ -57,17 +74,14 @@ impl TestDaemon {
         };
         let mut command = Command::new(binary);
         command
-            .args([
-                "serve",
-                "--socket",
-                &socket,
-                "--no-permissions-gate",
-                "--no-overlay",
-            ])
+            .args(["serve", "--socket", &socket, "--no-permissions-gate"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(stderr)
             .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false");
+        if !overlay_enabled {
+            command.arg("--no-overlay");
+        }
         for (key, value) in env {
             command.env(key, value);
         }

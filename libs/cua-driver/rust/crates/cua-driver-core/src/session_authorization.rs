@@ -192,6 +192,24 @@ pub struct EffectiveAuthorizationContext {
 }
 
 impl EffectiveAuthorizationContext {
+    /// Opaque process-local generation used to bind mutable runtime resources.
+    ///
+    /// This value is never serialized or accepted from caller input. Core
+    /// dispatch uses it to keep session state, replay registries, element
+    /// handles, browser bindings, and teardown scoped to their owning runtime.
+    #[doc(hidden)]
+    pub fn runtime_scope_key(&self) -> String {
+        self.daemon_generation.0.simple().to_string()
+    }
+
+    #[doc(hidden)]
+    pub fn runtime_session_key(&self, public_session: &str) -> String {
+        format!(
+            "__cua_runtime_{}:{public_session}",
+            self.runtime_scope_key()
+        )
+    }
+
     pub fn mode(&self) -> PermissionMode {
         self.mode
     }

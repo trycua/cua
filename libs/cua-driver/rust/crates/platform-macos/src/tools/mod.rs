@@ -529,9 +529,9 @@ pub fn register_all(
         host_owns_permission_ux,
         host_bundle_id,
     ));
-    {
+    let cursor_outcome_reader = {
         let cursor_registry = state.cursor_registry.clone();
-        let _ = cua_driver_core::session::set_cursor_outcome_reader(std::sync::Arc::new(
+        cua_driver_core::session::register_scoped_cursor_outcome_reader(std::sync::Arc::new(
             move |session_id| {
                 let state = cursor_registry.get(session_id);
                 let motion_customized = state.is_some()
@@ -564,7 +564,22 @@ pub fn register_all(
                     ),
                 }
             },
-        ));
+        ))
+    };
+    registry.retain_cursor_outcome_reader(cursor_outcome_reader);
+    if let Some(runtime_scope) = cua_driver_core::tool::current_dispatch_runtime_scope() {
+        let prefix = format!("__cua_runtime_{runtime_scope}:");
+        let cursor_registry = state.cursor_registry.clone();
+        registry.retain_runtime_cleanup(move || {
+            for cursor in cursor_registry
+                .all_states()
+                .into_iter()
+                .filter(|cursor| cursor.config.cursor_id.starts_with(&prefix))
+            {
+                cursor_registry.remove(&cursor.config.cursor_id);
+                crate::cursor::overlay::remove_cursor(cursor.config.cursor_id);
+            }
+        });
     }
     // Share the element cache with the recording-hook layer so it can
     // resolve element_index → window-local screenshot coords for click.png.
@@ -576,17 +591,19 @@ pub fn register_all(
     {
         let session_config = state.session_config.clone();
         let cursor_registry = state.cursor_registry.clone();
-        cua_driver_core::session::register_session_end_hook(move |session_id| {
-            session_config.clear(session_id);
-            // Per-session agent cursor: the session_id is the cursor key when
-            // the caller gave no explicit cursor_id, so dropping it here both
-            // prunes the metadata registry and stops the overlay painting that
-            // session's cursor. Both paths guard "default" so the anonymous /
-            // one-shot cursor survives. Anonymous sessions that never created a
-            // cursor are a harmless no-op.
-            cursor_registry.remove(session_id);
-            crate::cursor::overlay::remove_cursor(session_id.to_owned());
-        });
+        let registration =
+            cua_driver_core::session::register_scoped_session_end_hook(move |session_id| {
+                session_config.clear(session_id);
+                // Per-session agent cursor: the session_id is the cursor key when
+                // the caller gave no explicit cursor_id, so dropping it here both
+                // prunes the metadata registry and stops the overlay painting that
+                // session's cursor. Both paths guard "default" so the anonymous /
+                // one-shot cursor survives. Anonymous sessions that never created a
+                // cursor are a harmless no-op.
+                cursor_registry.remove(session_id);
+                crate::cursor::overlay::remove_cursor(session_id.to_owned());
+            });
+        registry.retain_session_end_hook(registration);
     }
 
     registry.register(Box::new(list_apps::ListAppsTool));

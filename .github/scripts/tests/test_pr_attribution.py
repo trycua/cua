@@ -31,13 +31,13 @@ def commit(
     committer_email: str | None = None,
     committer_login: str | None = None,
     message: str = "fix: preserve attribution",
-    parent_count: int = 1,
+    parent_shas: tuple[str, ...] = ("base-parent",),
 ):
     return {
         "sha": sha,
         "author": {"login": login} if login else None,
         "committer": {"login": committer_login} if committer_login else None,
-        "parents": [{"sha": f"parent-{index}"} for index in range(parent_count)],
+        "parents": [{"sha": parent} for parent in parent_shas],
         "commit": {
             "author": {"name": name, "email": email},
             "committer": {
@@ -114,25 +114,67 @@ def test_distinct_resolvable_commit_author_requires_preserved_source():
     )
 
 
-def test_merge_author_does_not_require_a_source_pr():
+def test_credited_base_sync_merge_author_does_not_require_a_source_pr():
     validate(
         commits=[
             commit(
+                sha="feature-tip",
+                login="landing-author",
+                message=(
+                    "fix: preserve merge credit\n\n"
+                    "Co-authored-by: Merge Author "
+                    "<123+merge-author@users.noreply.github.com>"
+                ),
+            ),
+            commit(
+                sha="sync-merge",
                 login="merge-author",
                 email="merge-author@example.com",
-                parent_count=2,
-            )
+                parent_shas=("feature-tip", "main-tip"),
+            ),
         ]
     )
+
+
+def test_uncredited_base_sync_merge_author_is_rejected():
+    with pytest.raises(ReleaseError, match="base synchronization merge"):
+        validate(
+            commits=[
+                commit(sha="feature-tip", login="landing-author"),
+                commit(
+                    sha="sync-merge",
+                    login="merge-author",
+                    email="merge-author@example.com",
+                    parent_shas=("feature-tip", "main-tip"),
+                ),
+            ]
+        )
+
+
+def test_other_merge_authors_still_require_preserved_source():
+    with pytest.raises(ReleaseError, match="distinct from landing PR author"):
+        validate(
+            commits=[
+                commit(sha="feature-tip", login="landing-author"),
+                commit(sha="side-tip", login="landing-author"),
+                commit(
+                    sha="feature-merge",
+                    login="merge-author",
+                    parent_shas=("feature-tip", "side-tip"),
+                ),
+            ]
+        )
 
 
 def test_merge_coauthor_still_requires_source_evidence():
     with pytest.raises(ReleaseError, match="has no explicit same-repository source PR"):
         validate(
             commits=[
+                commit(sha="feature-tip", login="landing-author"),
                 commit(
-                    login="merge-author",
-                    parent_count=2,
+                    sha="sync-merge",
+                    login="landing-author",
+                    parent_shas=("feature-tip", "main-tip"),
                     message=(
                         "Merge main\n\n"
                         "Co-authored-by: Contributor <contributor@institution.example>"

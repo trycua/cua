@@ -389,14 +389,15 @@ def native_snapshot(
     if not isinstance(screenshot, str) or not screenshot:
         raise PairedRunError("native Cua Driver snapshot omitted screenshot")
     tree = state.get("tree_markdown")
-    if not isinstance(tree, str):
-        state["tree_markdown"] = ""
-    if not str(state.get("tree_markdown") or "").strip():
-        state["accessibility_degraded"] = True
-        state["accessibility_degraded_reason"] = (
+    if not isinstance(tree, str) or not tree.strip():
+        reason = (
             state.get("degraded_reason")
             or state.get("error")
             or "empty accessibility tree"
+        )
+        raise PairedRunError(
+            "benchmark requires a non-empty native accessibility tree: "
+            f"{reason}"
         )
     return state, screenshot
 

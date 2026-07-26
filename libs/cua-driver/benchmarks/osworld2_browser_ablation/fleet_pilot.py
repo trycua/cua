@@ -889,6 +889,12 @@ def build_and_start_driver(source_sha: str) -> dict[str, Any]:
             "-lc",
             (
                 "export DISPLAY=\"${DISPLAY:-:0}\"; "
+                "runtime_dir=\"/run/user/$(id -u)\"; "
+                "if test -d \"$runtime_dir\"; then "
+                "export XDG_RUNTIME_DIR=\"$runtime_dir\"; fi; "
+                "if test -S \"$runtime_dir/bus\"; then "
+                "export DBUS_SESSION_BUS_ADDRESS="
+                "\"unix:path=$runtime_dir/bus\"; fi; "
                 "exec env CUA_DRIVER_RS_PERMISSIONS_GATE=0 "
                 "/usr/local/bin/cua-driver serve "
                 f"--socket {GUEST_DRIVER_SOCKET} "
@@ -1154,6 +1160,12 @@ def start_image_driver() -> dict[str, Any]:
             "-lc",
             (
                 "export DISPLAY=\"${DISPLAY:-:0}\"; "
+                "runtime_dir=\"/run/user/$(id -u)\"; "
+                "if test -d \"$runtime_dir\"; then "
+                "export XDG_RUNTIME_DIR=\"$runtime_dir\"; fi; "
+                "if test -S \"$runtime_dir/bus\"; then "
+                "export DBUS_SESSION_BUS_ADDRESS="
+                "\"unix:path=$runtime_dir/bus\"; fi; "
                 "/usr/local/bin/cua-driver doctor --json "
                 f">{doctor_path}.pending "
                 "2>/tmp/cua-driver-osworld2-doctor.log && "

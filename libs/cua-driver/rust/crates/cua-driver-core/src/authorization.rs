@@ -84,6 +84,34 @@ pub struct EnforcementAdapterDescriptor {
     pub revocation_triggers: &'static [&'static str],
     pub refusal_code: Option<&'static str>,
     pub provider_requirement: &'static str,
+    /// Mode-specific truth. `state` remains the standard-mode value for
+    /// backward-compatible inventory consumers.
+    pub enforcement_by_mode: AdapterEnforcement,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct AdapterEnforcement {
+    pub standard: RiskEnforcement,
+    pub bounded: RiskEnforcement,
+    pub unrestricted: RiskEnforcement,
+}
+
+impl AdapterEnforcement {
+    pub const fn uniform(state: RiskEnforcement) -> Self {
+        Self {
+            standard: state,
+            bounded: state,
+            unrestricted: state,
+        }
+    }
+
+    pub const fn for_mode(self, mode: PermissionMode) -> RiskEnforcement {
+        match mode {
+            PermissionMode::Standard => self.standard,
+            PermissionMode::Bounded => self.bounded,
+            PermissionMode::Unrestricted => self.unrestricted,
+        }
+    }
 }
 
 const EXISTING_PROFILE_OPERATIONS: &[&str] = &["browser_prepare[strategy.kind=existing_profile]"];
@@ -113,13 +141,31 @@ const EXISTING_PROFILE_REVOCATION: &[&str] = &[
 ];
 
 const PRIVATE_OBSERVATION_OPERATIONS: &[&str] = &[
-    "get_desktop_state[without_file_output]",
+    "get_desktop_state",
     "get_accessibility_tree",
-    "get_window_state[without_file_output]",
+    "get_window_state",
+    "list_apps",
+    "list_windows",
+    "debug_window_info",
+    "get_browser_state",
+    "browser_dialog[action=inspect]",
     "page[action=get_text|query_dom]",
+    "escalate_session",
+    "zoom",
+    "start_recording",
 ];
-const PRIVATE_OBSERVATION_SCOPE_KEYS: &[&str] =
-    &["public_session", "pid", "window_id", "display_generation"];
+const PRIVATE_OBSERVATION_SCOPE_KEYS: &[&str] = &[
+    "daemon_generation",
+    "public_session",
+    "pid",
+    "process_fingerprint",
+    "window_id",
+    "display_generation",
+    "capture_scope",
+    "permission_mode",
+    "managed_policy_sha256",
+    "user_policy_sha256",
+];
 
 const DESKTOP_INPUT_OPERATIONS: &[&str] = &[
     "click",
@@ -132,6 +178,7 @@ const DESKTOP_INPUT_OPERATIONS: &[&str] = &[
     "mouse_button_up",
     "mouse_drag",
     "parallel_mouse_drag",
+    "replay_trajectory",
     "type_text",
     "type_text_chars",
     "press_key",
@@ -140,11 +187,16 @@ const DESKTOP_INPUT_OPERATIONS: &[&str] = &[
     "bring_to_front",
 ];
 const DESKTOP_INPUT_SCOPE_KEYS: &[&str] = &[
+    "daemon_generation",
     "public_session",
     "pid",
+    "process_fingerprint",
     "window_id",
     "display_generation",
     "delivery_mode_ceiling",
+    "permission_mode",
+    "managed_policy_sha256",
+    "user_policy_sha256",
 ];
 
 const FILE_TRANSFER_OPERATIONS: &[&str] = &[
@@ -152,21 +204,72 @@ const FILE_TRANSFER_OPERATIONS: &[&str] = &[
     "browser_download",
     "get_desktop_state[with_file_output]",
     "get_window_state[with_file_output]",
+    "start_recording",
+    "stop_recording",
+    "replay_trajectory",
+    "install_ffmpeg",
 ];
 const FILE_TRANSFER_SCOPE_KEYS: &[&str] = &[
+    "daemon_generation",
     "public_session",
     "browser_binding",
     "tab",
     "canonical_path",
     "destination_class",
+    "direction",
+    "permission_mode",
+    "managed_policy_sha256",
+    "user_policy_sha256",
 ];
 
 const CONSEQUENTIAL_OPERATIONS: &[&str] = &[
     "browser_dialog[action=accept|dismiss]",
     "page[action!=get_text|query_dom]",
 ];
-const CONSEQUENTIAL_SCOPE_KEYS: &[&str] =
-    &["public_session", "browser_binding", "tab", "action_kind"];
+const CONSEQUENTIAL_SCOPE_KEYS: &[&str] = &[
+    "daemon_generation",
+    "public_session",
+    "browser_binding",
+    "tab",
+    "origin",
+    "action_kind",
+    "permission_mode",
+    "managed_policy_sha256",
+    "user_policy_sha256",
+];
+
+const UNBOUNDED_SCRIPT_OPERATIONS: &[&str] = &["page[action=execute_javascript]"];
+
+const BROWSER_BOUND_INPUT_OPERATIONS: &[&str] = &[
+    "browser_navigate",
+    "browser_click",
+    "browser_type",
+    "browser_pointer",
+];
+const BROWSER_BOUND_INPUT_SCOPE_KEYS: &[&str] = &[
+    "daemon_generation",
+    "public_session",
+    "browser_binding",
+    "tab",
+    "origin",
+    "permission_mode",
+    "managed_policy_sha256",
+    "user_policy_sha256",
+];
+
+const PROCESS_CONTROL_OPERATIONS: &[&str] = &["kill_app"];
+const PROCESS_CONTROL_SCOPE_KEYS: &[&str] = &[
+    "daemon_generation",
+    "public_session",
+    "pid",
+    "process_fingerprint",
+    "permission_mode",
+    "managed_policy_sha256",
+    "user_policy_sha256",
+];
+
+const OS_PERMISSION_PROMPT_OPERATIONS: &[&str] = &["check_permissions[prompt=true]"];
+const DRIVER_CONFIGURATION_OPERATIONS: &[&str] = &["set_config"];
 
 const SESSION_REVOCATION: &[&str] = &[
     "indicator_stop",
@@ -193,6 +296,7 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         refusal_code: Some("browser_consent_required"),
         provider_requirement:
             "protected_consent_in_standard; protected_indicator_in_bounded; none_in_unrestricted",
+        enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
     },
     EnforcementAdapterDescriptor {
         id: "private_observation",
@@ -208,6 +312,7 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         revocation_triggers: SESSION_REVOCATION,
         refusal_code: None,
         provider_requirement: "certified_protected_host_not_implemented",
+        enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::MetadataOnly),
     },
     EnforcementAdapterDescriptor {
         id: "desktop_input",
@@ -223,6 +328,7 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         revocation_triggers: SESSION_REVOCATION,
         refusal_code: None,
         provider_requirement: "certified_protected_host_not_implemented",
+        enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::MetadataOnly),
     },
     EnforcementAdapterDescriptor {
         id: "file_transfer_and_output",
@@ -238,6 +344,7 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         revocation_triggers: SESSION_REVOCATION,
         refusal_code: None,
         provider_requirement: "certified_protected_host_not_implemented",
+        enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::MetadataOnly),
     },
     EnforcementAdapterDescriptor {
         id: "browser_consequential_action",
@@ -253,6 +360,108 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         revocation_triggers: SESSION_REVOCATION,
         refusal_code: None,
         provider_requirement: "certified_protected_host_not_implemented",
+        enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::MetadataOnly),
+    },
+    EnforcementAdapterDescriptor {
+        id: "browser_unbounded_script",
+        operations: UNBOUNDED_SCRIPT_OPERATIONS,
+        state: RiskEnforcement::MetadataOnly,
+        risk_class: RiskClass::R3,
+        resource_kind: "unbounded_authenticated_page_script",
+        scope_keys: &[],
+        grant_type: None,
+        idle_ttl_seconds: None,
+        absolute_ttl_seconds: None,
+        indicator_requirement: "not_grantable_in_standard_or_bounded",
+        revocation_triggers: &[],
+        refusal_code: None,
+        provider_requirement: "typed_bounded_adapter_required_before_activation",
+        enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::MetadataOnly),
+    },
+    EnforcementAdapterDescriptor {
+        id: "browser_bound_input",
+        operations: BROWSER_BOUND_INPUT_OPERATIONS,
+        state: RiskEnforcement::MetadataOnly,
+        risk_class: RiskClass::R2,
+        resource_kind: "authenticated_browser_binding_and_tab_input",
+        scope_keys: BROWSER_BOUND_INPUT_SCOPE_KEYS,
+        grant_type: None,
+        idle_ttl_seconds: None,
+        absolute_ttl_seconds: None,
+        indicator_requirement: "not_implemented",
+        revocation_triggers: SESSION_REVOCATION,
+        refusal_code: None,
+        provider_requirement: "certified_protected_host_not_implemented",
+        enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::MetadataOnly),
+    },
+    EnforcementAdapterDescriptor {
+        id: "process_control",
+        operations: PROCESS_CONTROL_OPERATIONS,
+        state: RiskEnforcement::MetadataOnly,
+        risk_class: RiskClass::R3,
+        resource_kind: "exact_process_termination",
+        scope_keys: PROCESS_CONTROL_SCOPE_KEYS,
+        grant_type: None,
+        idle_ttl_seconds: None,
+        absolute_ttl_seconds: None,
+        indicator_requirement: "not_implemented",
+        revocation_triggers: SESSION_REVOCATION,
+        refusal_code: None,
+        provider_requirement: "certified_protected_host_not_implemented",
+        enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::MetadataOnly),
+    },
+    EnforcementAdapterDescriptor {
+        id: "os_permission_prompt",
+        operations: OS_PERMISSION_PROMPT_OPERATIONS,
+        state: RiskEnforcement::MetadataOnly,
+        risk_class: RiskClass::R2,
+        resource_kind: "operating_system_permission_prompt",
+        scope_keys: &["daemon_generation", "permission_mode"],
+        grant_type: None,
+        idle_ttl_seconds: None,
+        absolute_ttl_seconds: None,
+        indicator_requirement: "never_agent_controllable",
+        revocation_triggers: &[],
+        refusal_code: None,
+        provider_requirement: "trusted_host_setup_required_before_activation",
+        enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::MetadataOnly),
+    },
+    EnforcementAdapterDescriptor {
+        id: "driver_configuration",
+        operations: DRIVER_CONFIGURATION_OPERATIONS,
+        state: RiskEnforcement::MetadataOnly,
+        risk_class: RiskClass::R2,
+        resource_kind: "persistent_driver_configuration",
+        scope_keys: &[
+            "daemon_generation",
+            "permission_mode",
+            "managed_policy_sha256",
+            "user_policy_sha256",
+        ],
+        grant_type: None,
+        idle_ttl_seconds: None,
+        absolute_ttl_seconds: None,
+        indicator_requirement: "not_implemented",
+        revocation_triggers: SESSION_REVOCATION,
+        refusal_code: None,
+        provider_requirement: "certified_protected_host_not_implemented",
+        enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::MetadataOnly),
+    },
+    EnforcementAdapterDescriptor {
+        id: "clipboard",
+        operations: &["clipboard_read", "clipboard_write"],
+        state: RiskEnforcement::NotExposed,
+        risk_class: RiskClass::Unclassified,
+        resource_kind: "system_clipboard",
+        scope_keys: &[],
+        grant_type: None,
+        idle_ttl_seconds: None,
+        absolute_ttl_seconds: None,
+        indicator_requirement: "required_before_exposure",
+        revocation_triggers: &[],
+        refusal_code: None,
+        provider_requirement: "capability_not_exposed",
+        enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::NotExposed),
     },
     EnforcementAdapterDescriptor {
         id: "devices",
@@ -268,6 +477,7 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         revocation_triggers: &[],
         refusal_code: None,
         provider_requirement: "capability_not_exposed",
+        enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::NotExposed),
     },
     EnforcementAdapterDescriptor {
         id: "shell_and_network",
@@ -283,6 +493,7 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         revocation_triggers: &[],
         refusal_code: None,
         provider_requirement: "capability_not_exposed",
+        enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::NotExposed),
     },
 ];
 
@@ -295,6 +506,130 @@ pub fn adapter_ids_with_state(state: RiskEnforcement) -> Vec<&'static str> {
         .iter()
         .filter(|adapter| adapter.state == state)
         .map(|adapter| adapter.id)
+        .collect()
+}
+
+pub fn adapter_ids_with_state_for_mode(
+    mode: PermissionMode,
+    state: RiskEnforcement,
+) -> Vec<&'static str> {
+    ENFORCEMENT_ADAPTERS
+        .iter()
+        .filter(|adapter| adapter.enforcement_by_mode.for_mode(mode) == state)
+        .map(|adapter| adapter.id)
+        .collect()
+}
+
+/// Return every resource adapter that composes the exact call.
+///
+/// A call may intentionally require more than one adapter: screenshot output
+/// is both private observation and a file write; trajectory recording is both
+/// observation and file output; arbitrary page script is both consequential
+/// and explicitly unbounded. Admission must satisfy the conjunction rather
+/// than picking the highest-risk adapter and dropping the other boundary.
+pub fn enforcement_adapters_for_call(
+    tool: &str,
+    args: &Value,
+) -> Vec<&'static EnforcementAdapterDescriptor> {
+    let mut ids = Vec::new();
+    let mut add = |id| {
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    };
+
+    if tool == "browser_prepare"
+        && args.pointer("/strategy/kind").and_then(Value::as_str) == Some("existing_profile")
+    {
+        add("browser_prepare.existing_profile");
+    }
+
+    if matches!(
+        tool,
+        "get_desktop_state"
+            | "get_accessibility_tree"
+            | "get_window_state"
+            | "list_apps"
+            | "list_windows"
+            | "debug_window_info"
+            | "get_browser_state"
+            | "escalate_session"
+            | "zoom"
+            | "start_recording"
+    ) || (tool == "page"
+        && matches!(
+            args.get("action").and_then(Value::as_str),
+            Some("get_text" | "query_dom")
+        ))
+        || (tool == "browser_dialog"
+            && args.get("action").and_then(Value::as_str) == Some("inspect"))
+    {
+        add("private_observation");
+    }
+
+    if DESKTOP_INPUT_OPERATIONS.contains(&tool) {
+        add("desktop_input");
+    }
+
+    let writes_screenshot = matches!(tool, "get_desktop_state" | "get_window_state")
+        && args
+            .get("screenshot_out_file")
+            .and_then(Value::as_str)
+            .is_some_and(|path| !path.is_empty());
+    if matches!(
+        tool,
+        "browser_set_input_files"
+            | "browser_download"
+            | "start_recording"
+            | "stop_recording"
+            | "replay_trajectory"
+            | "install_ffmpeg"
+    ) || writes_screenshot
+    {
+        add("file_transfer_and_output");
+    }
+
+    if (tool == "browser_dialog"
+        && matches!(
+            args.get("action").and_then(Value::as_str),
+            Some("accept" | "dismiss")
+        ))
+        || (tool == "page"
+            && !matches!(
+                args.get("action").and_then(Value::as_str),
+                Some("get_text" | "query_dom")
+            ))
+    {
+        add("browser_consequential_action");
+    }
+
+    if tool == "page" && args.get("action").and_then(Value::as_str) == Some("execute_javascript") {
+        add("browser_unbounded_script");
+    }
+
+    if BROWSER_BOUND_INPUT_OPERATIONS.contains(&tool) {
+        add("browser_bound_input");
+    }
+
+    if PROCESS_CONTROL_OPERATIONS.contains(&tool) {
+        add("process_control");
+    }
+
+    if tool == "check_permissions" && args.get("prompt").and_then(Value::as_bool).unwrap_or(true) {
+        add("os_permission_prompt");
+    }
+
+    if DRIVER_CONFIGURATION_OPERATIONS.contains(&tool) {
+        add("driver_configuration");
+    }
+
+    ids.into_iter()
+        .map(|id| {
+            ENFORCEMENT_ADAPTERS
+                .iter()
+                .find(|adapter| adapter.id == id)
+                .expect("call mapping references a declared enforcement adapter")
+        })
         .collect()
 }
 
@@ -312,7 +647,6 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         // Public driver/OS metadata with no user-content payload.
         "get_screen_size"
         | "get_cursor_position"
-        | "check_permissions"
         | "get_config"
         | "get_session_state"
         | "get_agent_cursor_state"
@@ -338,22 +672,20 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "hotkey"
         | "set_value"
         | "launch_app"
-        | "list_apps"
-        | "kill_app"
-        | "list_windows"
         | "bring_to_front"
-        | "debug_window_info"
         | "start_session"
         | "end_session"
         | "set_agent_cursor_enabled"
         | "set_agent_cursor_motion"
-        | "set_agent_cursor_style"
-        | "stop_recording"
-        | "replay_trajectory" => RiskClass::R1,
+        | "set_agent_cursor_style" => RiskClass::R1,
 
         // Surfaces that can reveal or control sensitive local/authenticated
         // state. Most remain metadata-only until their resource adapters ship.
         "zoom"
+        | "list_apps"
+        | "list_windows"
+        | "debug_window_info"
+        | "check_permissions"
         | "get_accessibility_tree"
         | "set_config"
         | "escalate_session"
@@ -368,6 +700,9 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         // External/file side effects or generic compound action surfaces.
         "get_desktop_state"
         | "get_window_state"
+        | "kill_app"
+        | "stop_recording"
+        | "replay_trajectory"
         | "install_ffmpeg"
         | "page"
         | "browser_dialog"
@@ -379,14 +714,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
     RiskAssessment {
         class,
         enforcement: RiskEnforcement::MetadataOnly,
-        operation_sensitive: matches!(
-            tool,
-            "browser_prepare"
-                | "browser_dialog"
-                | "page"
-                | "get_desktop_state"
-                | "get_window_state"
-        ),
+        operation_sensitive: matches!(class, RiskClass::R2 | RiskClass::R3 | RiskClass::R4),
     }
 }
 
@@ -447,6 +775,15 @@ pub fn classify_tool_call(tool: &str, args: &Value) -> RiskAssessment {
             },
             enforcement: RiskEnforcement::MetadataOnly,
             operation_sensitive: true,
+        },
+        "check_permissions" => RiskAssessment {
+            class: if args.get("prompt").and_then(Value::as_bool).unwrap_or(true) {
+                RiskClass::R2
+            } else {
+                RiskClass::R0
+            },
+            enforcement: RiskEnforcement::MetadataOnly,
+            operation_sensitive: args.get("prompt").and_then(Value::as_bool).unwrap_or(true),
         },
         _ => advertised_risk_for(tool),
     }
@@ -727,6 +1064,18 @@ pub fn status_json() -> serde_json::Value {
     let managed_policy = crate::policy::configured_managed_policy();
     let user_policy_sha256 = crate::policy::user_policy_sha256().ok().flatten();
     let managed_policy_sha256 = crate::policy::managed_policy_sha256().ok().flatten();
+    let effective_active_risk_enforcement = mode
+        .as_ref()
+        .map(|mode| adapter_ids_with_state_for_mode(*mode, RiskEnforcement::Active))
+        .unwrap_or_default();
+    let effective_metadata_only_risk_enforcement = mode
+        .as_ref()
+        .map(|mode| adapter_ids_with_state_for_mode(*mode, RiskEnforcement::MetadataOnly))
+        .unwrap_or_default();
+    let effective_not_exposed_risk_enforcement = mode
+        .as_ref()
+        .map(|mode| adapter_ids_with_state_for_mode(*mode, RiskEnforcement::NotExposed))
+        .unwrap_or_default();
     let session_policy = crate::session_manifest::configured_session_manifest();
     let session_policy_status = session_policy
         .as_ref()
@@ -766,6 +1115,9 @@ pub fn status_json() -> serde_json::Value {
         "active_risk_enforcement": adapter_ids_with_state(RiskEnforcement::Active),
         "metadata_only_risk_enforcement": adapter_ids_with_state(RiskEnforcement::MetadataOnly),
         "not_exposed_risk_enforcement": adapter_ids_with_state(RiskEnforcement::NotExposed),
+        "effective_active_risk_enforcement": effective_active_risk_enforcement,
+        "effective_metadata_only_risk_enforcement": effective_metadata_only_risk_enforcement,
+        "effective_not_exposed_risk_enforcement": effective_not_exposed_risk_enforcement,
         "enforcement_adapters": enforcement_adapter_inventory_json(),
         "protected_consent_collector": crate::consent::configured_provider_id(),
         "session_policy_configured": std::env::var_os(crate::session_manifest::SESSION_POLICY_FILE_ENV).is_some(),
@@ -899,6 +1251,24 @@ mod tests {
     }
 
     #[test]
+    fn os_permission_prompt_is_argument_sensitive() {
+        let read_only =
+            classify_tool_call("check_permissions", &serde_json::json!({"prompt": false}));
+        assert_eq!(read_only.class, RiskClass::R0);
+        assert!(!read_only.operation_sensitive);
+
+        for args in [serde_json::json!({}), serde_json::json!({"prompt": true})] {
+            let prompting = classify_tool_call("check_permissions", &args);
+            assert_eq!(prompting.class, RiskClass::R2);
+            assert!(prompting.operation_sensitive);
+        }
+        assert_eq!(
+            advertised_risk_for("check_permissions").class,
+            RiskClass::R2
+        );
+    }
+
+    #[test]
     fn process_targeted_tools_cannot_target_the_authorization_daemon() {
         let error = authorize_tool_call(
             "click",
@@ -922,6 +1292,11 @@ mod tests {
                 "adapter {} needs at least one operation selector",
                 adapter.id
             );
+            assert_eq!(
+                adapter.state, adapter.enforcement_by_mode.standard,
+                "legacy state must remain the standard-mode value for {}",
+                adapter.id
+            );
         }
 
         assert_eq!(
@@ -935,11 +1310,20 @@ mod tests {
                 "desktop_input",
                 "file_transfer_and_output",
                 "browser_consequential_action",
+                "browser_unbounded_script",
+                "browser_bound_input",
+                "process_control",
+                "os_permission_prompt",
+                "driver_configuration",
             ]
         );
         assert_eq!(
             adapter_ids_with_state(RiskEnforcement::NotExposed),
-            vec!["devices", "shell_and_network"]
+            vec!["clipboard", "devices", "shell_and_network"]
+        );
+        assert_eq!(
+            adapter_ids_with_state_for_mode(PermissionMode::Standard, RiskEnforcement::Active),
+            vec!["browser_prepare.existing_profile"]
         );
 
         let existing = ENFORCEMENT_ADAPTERS
@@ -949,6 +1333,72 @@ mod tests {
         assert_eq!(existing.idle_ttl_seconds, Some(30 * 60));
         assert_eq!(existing.absolute_ttl_seconds, Some(8 * 60 * 60));
         assert_eq!(existing.refusal_code, Some("browser_consent_required"));
+    }
+
+    #[test]
+    fn exact_call_inventory_composes_overlapping_resource_boundaries() {
+        let ids = |tool, args: Value| {
+            enforcement_adapters_for_call(tool, &args)
+                .into_iter()
+                .map(|adapter| adapter.id)
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            ids(
+                "get_desktop_state",
+                serde_json::json!({"screenshot_out_file": "/tmp/capture.png"})
+            ),
+            vec!["private_observation", "file_transfer_and_output"]
+        );
+        assert_eq!(
+            ids("page", serde_json::json!({"action": "execute_javascript"})),
+            vec!["browser_consequential_action", "browser_unbounded_script"]
+        );
+        assert_eq!(
+            ids("start_recording", serde_json::json!({})),
+            vec!["private_observation", "file_transfer_and_output"]
+        );
+        assert_eq!(
+            ids("escalate_session", serde_json::json!({})),
+            vec!["private_observation"]
+        );
+        assert_eq!(
+            ids("type_text_chars", serde_json::json!({})),
+            vec!["desktop_input"]
+        );
+        assert_eq!(
+            ids("replay_trajectory", serde_json::json!({})),
+            vec!["desktop_input", "file_transfer_and_output"]
+        );
+        assert_eq!(
+            ids("get_browser_state", serde_json::json!({})),
+            vec!["private_observation"]
+        );
+        assert_eq!(
+            ids("browser_dialog", serde_json::json!({"action": "inspect"})),
+            vec!["private_observation"]
+        );
+        assert_eq!(
+            ids("browser_click", serde_json::json!({})),
+            vec!["browser_bound_input"]
+        );
+        assert_eq!(
+            ids("kill_app", serde_json::json!({})),
+            vec!["process_control"]
+        );
+        assert_eq!(
+            ids("check_permissions", serde_json::json!({"prompt": false})),
+            Vec::<&str>::new()
+        );
+        assert_eq!(
+            ids("check_permissions", serde_json::json!({})),
+            vec!["os_permission_prompt"]
+        );
+        assert_eq!(
+            ids("set_config", serde_json::json!({})),
+            vec!["driver_configuration"]
+        );
     }
 
     #[test]
@@ -964,8 +1414,25 @@ mod tests {
                 "private_observation",
                 "desktop_input",
                 "file_transfer_and_output",
-                "browser_consequential_action"
+                "browser_consequential_action",
+                "browser_unbounded_script",
+                "browser_bound_input",
+                "process_control",
+                "os_permission_prompt",
+                "driver_configuration"
             ])
+        );
+        assert_eq!(
+            status["not_exposed_risk_enforcement"],
+            serde_json::json!(["clipboard", "devices", "shell_and_network"])
+        );
+        assert_eq!(
+            status["effective_active_risk_enforcement"],
+            serde_json::json!(["browser_prepare.existing_profile"])
+        );
+        assert_eq!(
+            status["effective_metadata_only_risk_enforcement"],
+            status["metadata_only_risk_enforcement"]
         );
         assert_eq!(
             status["enforcement_adapters"],

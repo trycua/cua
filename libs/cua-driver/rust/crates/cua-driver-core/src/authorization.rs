@@ -335,18 +335,19 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
     EnforcementAdapterDescriptor {
         id: "file_transfer_and_output",
         operations: FILE_TRANSFER_OPERATIONS,
-        state: RiskEnforcement::MetadataOnly,
+        state: RiskEnforcement::Active,
         risk_class: RiskClass::R3,
         resource_kind: "canonical_file_path_and_destination",
         scope_keys: FILE_TRANSFER_SCOPE_KEYS,
-        grant_type: None,
-        idle_ttl_seconds: None,
-        absolute_ttl_seconds: None,
-        indicator_requirement: "not_implemented",
+        grant_type: Some("protected_resource_grant"),
+        idle_ttl_seconds: Some(30 * 60),
+        absolute_ttl_seconds: Some(8 * 60 * 60),
+        indicator_requirement: "required_in_standard_and_bounded",
         revocation_triggers: SESSION_REVOCATION,
-        refusal_code: None,
-        provider_requirement: "certified_protected_host_not_implemented",
-        enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::MetadataOnly),
+        refusal_code: Some("protected_consent_required"),
+        provider_requirement:
+            "protected_consent_in_standard; protected_indicator_in_bounded; none_in_unrestricted",
+        enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
     },
     EnforcementAdapterDescriptor {
         id: "browser_consequential_action",
@@ -585,8 +586,8 @@ pub fn enforcement_adapters_for_call(
             | "start_recording"
             | "stop_recording"
             | "replay_trajectory"
-            | "install_ffmpeg"
     ) || writes_screenshot
+        || (tool == "install_ffmpeg" && args.get("confirm").and_then(Value::as_bool) == Some(true))
     {
         add("file_transfer_and_output");
     }
@@ -782,19 +783,9 @@ pub fn classify_tool_call(tool: &str, args: &Value) -> RiskAssessment {
             } else {
                 RiskClass::R2
             },
-            // Screenshot-to-file is a compound observation + file-egress
-            // operation. It remains metadata-only as a whole until the file
-            // adapter ships, while the observation half is still enforced by
-            // the canonical adapter conjunction.
-            enforcement: if args
-                .get("screenshot_out_file")
-                .and_then(Value::as_str)
-                .is_some_and(|path| !path.is_empty())
-            {
-                RiskEnforcement::MetadataOnly
-            } else {
-                RiskEnforcement::Active
-            },
+            // Screenshot-to-file composes the active observation and exact
+            // file-output adapters at the canonical dispatch boundary.
+            enforcement: RiskEnforcement::Active,
             operation_sensitive: true,
         },
         "get_accessibility_tree"
@@ -817,6 +808,31 @@ pub fn classify_tool_call(tool: &str, args: &Value) -> RiskAssessment {
             enforcement: RiskEnforcement::MetadataOnly,
             operation_sensitive: args.get("prompt").and_then(Value::as_bool).unwrap_or(true),
         },
+        "browser_set_input_files"
+        | "browser_download"
+        | "start_recording"
+        | "stop_recording"
+        | "replay_trajectory" => RiskAssessment {
+            class: RiskClass::R3,
+            enforcement: RiskEnforcement::Active,
+            operation_sensitive: true,
+        },
+        "install_ffmpeg" => {
+            let confirmed = args.get("confirm").and_then(Value::as_bool) == Some(true);
+            RiskAssessment {
+                class: if confirmed {
+                    RiskClass::R3
+                } else {
+                    RiskClass::R0
+                },
+                enforcement: if confirmed {
+                    RiskEnforcement::Active
+                } else {
+                    RiskEnforcement::MetadataOnly
+                },
+                operation_sensitive: confirmed,
+            }
+        }
         tool if DESKTOP_INPUT_OPERATIONS.contains(&tool) && tool != "replay_trajectory" => {
             let mut risk = advertised_risk_for(tool);
             risk.enforcement = RiskEnforcement::Active;
@@ -1291,7 +1307,7 @@ mod tests {
                 &serde_json::json!({"screenshot_out_file": "/tmp/capture.png"}),
             );
             assert_eq!(egress.class, RiskClass::R3);
-            assert_eq!(egress.enforcement, RiskEnforcement::MetadataOnly);
+            assert_eq!(egress.enforcement, RiskEnforcement::Active);
             assert!(egress.operation_sensitive);
             assert_eq!(advertised_risk_for(tool).class, RiskClass::R3);
         }
@@ -1351,13 +1367,13 @@ mod tests {
             vec![
                 "browser_prepare.existing_profile",
                 "private_observation",
-                "desktop_input"
+                "desktop_input",
+                "file_transfer_and_output"
             ]
         );
         assert_eq!(
             adapter_ids_with_state(RiskEnforcement::MetadataOnly),
             vec![
-                "file_transfer_and_output",
                 "browser_consequential_action",
                 "browser_unbounded_script",
                 "browser_bound_input",
@@ -1375,7 +1391,8 @@ mod tests {
             vec![
                 "browser_prepare.existing_profile",
                 "private_observation",
-                "desktop_input"
+                "desktop_input",
+                "file_transfer_and_output"
             ]
         );
 
@@ -1425,6 +1442,14 @@ mod tests {
             vec!["desktop_input", "file_transfer_and_output"]
         );
         assert_eq!(
+            ids("install_ffmpeg", serde_json::json!({})),
+            Vec::<&str>::new()
+        );
+        assert_eq!(
+            ids("install_ffmpeg", serde_json::json!({"confirm": true})),
+            vec!["file_transfer_and_output"]
+        );
+        assert_eq!(
             ids("get_browser_state", serde_json::json!({})),
             vec!["private_observation"]
         );
@@ -1462,13 +1487,13 @@ mod tests {
             serde_json::json!([
                 "browser_prepare.existing_profile",
                 "private_observation",
-                "desktop_input"
+                "desktop_input",
+                "file_transfer_and_output"
             ])
         );
         assert_eq!(
             status["metadata_only_risk_enforcement"],
             serde_json::json!([
-                "file_transfer_and_output",
                 "browser_consequential_action",
                 "browser_unbounded_script",
                 "browser_bound_input",
@@ -1486,7 +1511,8 @@ mod tests {
             serde_json::json!([
                 "browser_prepare.existing_profile",
                 "private_observation",
-                "desktop_input"
+                "desktop_input",
+                "file_transfer_and_output"
             ])
         );
         assert_eq!(

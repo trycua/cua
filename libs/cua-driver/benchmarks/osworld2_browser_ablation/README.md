@@ -167,3 +167,19 @@ tool refusals, retries, and categorized failures.
 The deterministic one-VM smoke established these ports and contracts, but it
 is not an official benchmark score. Only runs using the gated, release-matched
 tasks and assets may be reported as OSWorld 2 results.
+
+## Canonical paired run
+
+This directory retains the standalone pilot and four-mode experiment contract.
+The repeatable one-task run is split by ownership:
+
+1. Cua Cloud builds the pinned OSWorld 2 image with the pinned Driver release,
+   renders the Fleet template with an immutable ECR digest, and passes guest
+   preflight.
+2. Harbor generates the selected gated task outside its checkout and runs the
+   screenshot-only control and Cua Driver treatment serially on one Fleet slot.
+3. This manifest supplies the release and observation-policy invariants used
+   to interpret the paired result.
+
+The standalone `fleet_pilot.py` remains useful for diagnostics, but its
+ad-hoc-pool and chunked-upload path is not the canonical benchmark deployment.

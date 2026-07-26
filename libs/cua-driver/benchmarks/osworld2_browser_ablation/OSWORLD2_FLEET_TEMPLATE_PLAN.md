@@ -2,83 +2,63 @@
 
 ## Goal
 
-Replace the disposable browser-ablation pilot with one reusable OSGym template
-contract that runs the pinned OSWorld 2 release and supports Cua Driver without
-leaking credentials, task contents, or evaluator data.
+Run a paired OSWorld 2 browser-use ablation on one reusable Fleet VM contract
+without leaking credentials, gated task contents, or evaluator data.
 
 ## Definition of done
 
-- A named OSGym template can create one Fleet VM from an immutable OSWorld 2
-  image reference.
-- The VM can pass its readiness check, accept the required OSWorld 2 setup,
-  and run Cua Driver at the recorded Cua source revision.
-- The benchmark records every immutable input, exposes only required services,
-  and cleans up claims and transient runtime material.
-- A small pilot proves provisioning, driver connection, and one permitted
-  evaluation path before any larger benchmark run.
+- Cua Cloud builds a release-pinned OSWorld 2 container disk containing the
+  pinned Cua Driver release and provisions it only by immutable digest.
+- The VM preflight proves the native screenshot, non-empty accessibility tree,
+  pinned Driver executable, and guest-local Chrome CDP listener.
+- Harbor runs one control trial and one Driver treatment trial serially against
+  one Fleet slot, with identical task, model, prompt, and turn budget.
+- The official evaluator scores both trials and the result records exact image,
+  Driver, task, model-route, and runner revisions.
 
-## Plan
+## Repository ownership
 
-1. Freeze the OSWorld 2 release contract.
+- **Cua:** observation/action policy, release manifest, pilot tooling, and
+  Driver-side evidence contract in this directory.
+- **Cua Cloud:** private ECR repository, image builder, immutable template
+  renderer, claim preflight, and Fleet lifecycle.
+- **Harbor:** private-source OSWorld 2 adapter and the paired
+  screenshot-control/Cua-Driver-treatment runner.
 
-   Record one release identifier for the OSWorld code, task classes, gated
-   assets, VM image, and mocked-web configuration. Use immutable image digests
-   and reject a run if any supplied input differs from the recorded release.
+Gated task modules, assets, evaluator credentials, and generated private Harbor
+datasets stay outside all three source trees.
 
-2. Define the base image boundary.
+## Execution order
 
-   Start from the official OSWorld 2 Ubuntu image. Build a derived immutable
-   Fleet image only for stable guest requirements: the Cua Driver runtime
-   dependencies, the workspace readiness service, network configuration, and
-   non-secret diagnostics. Keep task assets, model credentials, GitLab tokens,
-   and run-specific state out of the image.
+1. Merge and apply the private Cloud ECR declaration.
+2. Manually dispatch the Cloud image build. It verifies the official OSWorld 2
+   qcow2 and Cua Driver archives, installs Driver into the guest, pushes the
+   container disk, and reports its manifest digest.
+3. Render the Cloud template with that exact digest and run its one-VM
+   preflight. Chrome CDP remains guest-local on `127.0.0.1:1337`; only the
+   OSWorld control service is exposed.
+4. Generate one private Harbor task from the pinned gated OSWorld checkout.
+5. Run Harbor with `n_concurrent_trials: 1`: screenshot-only control first,
+   screenshot plus Cua Driver treatment second.
+6. Verify cleanup and record the paired evaluator outcomes and provenance.
 
-3. Add a first-class OSGym sandbox template.
+## First result and expansion
 
-   Define the VM image, four CPU cores, eight GiB memory, readiness probe, and
-   required services in one OSGymSandboxTemplate. Start from the pilot's
-   control, browser-debugging, noVNC, and VLC endpoints. Add an explicit Cua
-   Driver access contract: either an authenticated MCP service or the existing
-   authenticated loopback bridge, selected once and documented. Do not expose
-   arbitrary guest ports.
+The first paired task is an integration proof, not a publishable benchmark
+claim. After it passes, freeze a browser-heavy subset before looking at
+treatment outcomes and run multiple attempts per task. Report success rate,
+steps, wall time, tokens, retries, tool refusals, and categorized failures.
 
-4. Keep Cua Driver revision-specific.
+## Confirmed pilot evidence
 
-   Build or upload the driver artifact from the recorded Cua revision at run
-   time, then verify its version and connection before evaluation. This keeps
-   the reusable OSWorld image stable while preserving benchmark provenance.
+The recovered disposable pilot already proved one OSWorld 2 VM with native
+screenshots, a non-empty Linux accessibility tree, exact Chrome binding, CDP
+semantics/actions, and an official task score of `1.0`. That run used the
+combined mode interactively; it does not establish a control-versus-treatment
+benchmark result.
 
-5. Move the pilot to the template contract.
+## Remaining proof
 
-   Change the pilot from creating an ad-hoc workspace pool to referencing the
-   durable template and creating only a claim. Preserve its one-VM invariant,
-   authenticated guest bridges, cleanup behavior, and no-secret-in-state rule.
-
-6. Validate in gates.
-
-   First validate schema rendering and service names locally. Then run a
-   credential-free provisioning dry run. Next run one disposable Fleet VM and
-   verify readiness, Cua Driver, browser control, and cleanup. Only after that
-   run one permitted OSWorld 2 task and record the release and driver evidence.
-
-## Risks to resolve before implementation
-
-- Confirm which OSWorld 2 service ports must be reachable through Fleet rather
-  than through the authenticated bridge.
-- Confirm whether the official V2 image can be repackaged as a container disk
-  without changing benchmark behavior.
-- Keep gated task classes, assets, model keys, and GitLab credentials runtime
-  injected and outside template, image, logs, and source control.
-
-## Smallest first slice
-
-Add the template manifest and a renderer test that proves the immutable image,
-resources, readiness probe, and approved service list. Then adapt the existing
-pilot to reference that template without changing its evaluation logic.
-
-## Review note
-
-An independent CloudCode review was requested. Its service was unavailable due
-to repeated overload responses, so this plan is based on the local pilot and
-the official OSWorld 2 release contract; obtain that review before finalizing
-implementation.
+The derived image build, immutable template preflight, and paired Harbor run
+remain unproven on the exact reconciled commits. Do not publish benchmark
+claims until those three gates pass and their artifacts are retained.

@@ -25,6 +25,13 @@
     "archive_size": 14189763267,
     "archive_sha256": "eb737ae70b49849e24af407de6a518439a23de05a8497096a948334ce0a909aa"
   },
+  "cua_driver": {
+    "repository": "trycua/cua",
+    "release": "cua-driver-rs-v0.12.6",
+    "version": "0.12.6",
+    "linux_x86_64_archive": "cua-driver-rs-0.12.6-linux-x86_64-binary.tar.gz",
+    "linux_x86_64_archive_sha256": "795b8464a25b036fe1a47d9cd1f560d6b4e2ab58e23630c0de3d9feff4757039"
+  },
   "task_hash_manifest": {
     "path": "manifests/task_hashes.json",
     "sha256": "3312a7df40dbd004c300804f71c57d5a23a083d6c675082fcc34c60a37f9a76c"

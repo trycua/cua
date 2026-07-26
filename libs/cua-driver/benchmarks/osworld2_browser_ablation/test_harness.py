@@ -116,6 +116,12 @@ class BindingTests(unittest.TestCase):
 
 
 class MatrixTests(unittest.TestCase):
+    def test_manifest_pins_the_driver_release_archive(self) -> None:
+        manifest = harness.read_json_object(harness.DEFAULT_MANIFEST)
+        driver = manifest["cua_driver"]
+        self.assertEqual(driver["release"], "cua-driver-rs-v0.12.6")
+        self.assertEqual(len(driver["linux_x86_64_archive_sha256"]), 64)
+
     def test_default_pilot_matrix_has_240_episodes(self) -> None:
         manifest = harness.read_json_object(harness.DEFAULT_MANIFEST)
         tasks = [f"task_{index:03d}" for index in range(1, 21)]

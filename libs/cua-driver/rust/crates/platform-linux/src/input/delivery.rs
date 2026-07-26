@@ -15,7 +15,7 @@
 //!     specific non-focused window the way X11/macOS/Windows can (this is a
 //!     platform constraint, reported honestly, like macOS pixel input being
 //!     driver-unverifiable). When no libei backend is available
-//!     (`PORTAL_LIBEI_ENABLED == false`) the tool returns a structured
+//!     (`PORTAL_INPUT_ENABLED == false`) the tool returns a structured
 //!     `background_unavailable` error so the caller can escalate to foreground.
 //!
 //! - `foreground` — activate the target first, inject, then restore the prior
@@ -58,7 +58,9 @@ impl DeliveryMode {
         Self::parse(args.get("delivery_mode").and_then(|v| v.as_str()))
     }
 
-    pub fn is_foreground(self) -> bool { matches!(self, Self::Foreground) }
+    pub fn is_foreground(self) -> bool {
+        matches!(self, Self::Foreground)
+    }
 }
 
 /// JSON-schema fragment for the `delivery_mode` field. Include this in every
@@ -90,23 +92,47 @@ pub fn delivery_mode_schema() -> Value {
 /// Reason a `background` delivery cannot be performed on Wayland.
 #[derive(Copy, Clone, Debug)]
 pub enum BackgroundUnavailable {
-    /// No libei backend (built without `portal-libei`, or the portal session
+    /// No libei backend (built without `portal-input`, or the portal session
     /// was denied / unavailable). Input has no actuator at all.
     NoLibeiBackend,
+    /// X11/Chromium does not accept synthetic pointer or keyboard input
+    /// addressed to an occluded, unfocused renderer without briefly moving
+    /// focus, which background delivery forbids.
+    ChromiumInput,
+    /// The remaining backend can only inject into the globally focused widget.
+    FocusedInputOnly,
+    /// WebKitGTK rejects synthetic XSendEvent input and no real target-addressed
+    /// pointer backend is available in this session.
+    WebKitSyntheticInput,
 }
 
 impl BackgroundUnavailable {
     fn code(self) -> &'static str {
         match self {
             Self::NoLibeiBackend => "background_unavailable",
+            Self::ChromiumInput => "background_unavailable",
+            Self::FocusedInputOnly => "background_unavailable",
+            Self::WebKitSyntheticInput => "background_unavailable",
         }
     }
     fn detail(self) -> &'static str {
         match self {
-            Self::NoLibeiBackend =>
+            Self::NoLibeiBackend => {
                 "no libei input backend on this Wayland compositor (built without \
-                 portal-libei, or the xdg-desktop-portal RemoteDesktop session was \
-                 unavailable/denied): synthetic input has no actuator",
+                 portal-input, or the xdg-desktop-portal RemoteDesktop session was \
+                 unavailable/denied): synthetic input has no actuator"
+            }
+            Self::ChromiumInput => {
+                "Chromium/Electron does not accept pointer or keyboard input \
+                 addressed to an occluded, unfocused renderer through X11 \
+                 background injection"
+            }
+            Self::FocusedInputOnly => {
+                "the requested target has no focus-free input backend; the remaining XTest/X11 route can only deliver to the globally focused widget"
+            }
+            Self::WebKitSyntheticInput => {
+                "WebKitGTK rejects synthetic XSendEvent input and this session has no real target-addressed pointer backend"
+            }
         }
     }
 }
@@ -114,7 +140,9 @@ impl BackgroundUnavailable {
 /// Build the structured `background_unavailable` error returned when a
 /// `delivery_mode:"background"` injection has no Wayland backend. Mirrors the
 /// Windows silent-drop error so callers branch on `code` identically.
-pub fn background_unavailable_error(reason: BackgroundUnavailable) -> cua_driver_core::protocol::ToolResult {
+pub fn background_unavailable_error(
+    reason: BackgroundUnavailable,
+) -> cua_driver_core::protocol::ToolResult {
     let detail = reason.detail();
     cua_driver_core::protocol::ToolResult::error(format!(
         "Background delivery is not available: {detail}. Either call bring_to_front \
@@ -137,26 +165,52 @@ mod tests {
     #[test]
     fn delivery_mode_parses_known_values() {
         let j = |s: &str| serde_json::json!({"delivery_mode": s});
-        assert_eq!(DeliveryMode::from_args(&j("background")), DeliveryMode::Background);
-        assert_eq!(DeliveryMode::from_args(&j("foreground")), DeliveryMode::Foreground);
+        assert_eq!(
+            DeliveryMode::from_args(&j("background")),
+            DeliveryMode::Background
+        );
+        assert_eq!(
+            DeliveryMode::from_args(&j("foreground")),
+            DeliveryMode::Foreground
+        );
         // Case-insensitive, matching macOS / Windows.
-        assert_eq!(DeliveryMode::from_args(&j("Foreground")), DeliveryMode::Foreground);
+        assert_eq!(
+            DeliveryMode::from_args(&j("Foreground")),
+            DeliveryMode::Foreground
+        );
     }
 
     #[test]
     fn delivery_mode_defaults_to_background() {
         // Missing field, garbage value, null, and the removed legacy "auto" all
         // resolve to Background — the no-foreground-by-default contract.
-        assert_eq!(DeliveryMode::from_args(&serde_json::json!({})), DeliveryMode::Background);
-        assert_eq!(DeliveryMode::from_args(&serde_json::json!({"delivery_mode": "garbage"})), DeliveryMode::Background);
-        assert_eq!(DeliveryMode::from_args(&serde_json::json!({"delivery_mode": "auto"})), DeliveryMode::Background);
-        assert_eq!(DeliveryMode::from_args(&serde_json::json!({"delivery_mode": null})), DeliveryMode::Background);
+        assert_eq!(
+            DeliveryMode::from_args(&serde_json::json!({})),
+            DeliveryMode::Background
+        );
+        assert_eq!(
+            DeliveryMode::from_args(&serde_json::json!({"delivery_mode": "garbage"})),
+            DeliveryMode::Background
+        );
+        assert_eq!(
+            DeliveryMode::from_args(&serde_json::json!({"delivery_mode": "auto"})),
+            DeliveryMode::Background
+        );
+        assert_eq!(
+            DeliveryMode::from_args(&serde_json::json!({"delivery_mode": null})),
+            DeliveryMode::Background
+        );
     }
 
     #[test]
     fn delivery_mode_schema_advertises_two_modes() {
         let s = delivery_mode_schema();
-        let en: Vec<&str> = s["enum"].as_array().unwrap().iter().filter_map(|v| v.as_str()).collect();
+        let en: Vec<&str> = s["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
         assert_eq!(en, vec!["background", "foreground"]);
         assert_eq!(s["default"], "background");
     }

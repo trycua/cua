@@ -1,293 +1,98 @@
-"""SQLite-based credential storage for Cua CLI."""
+"""Secure credential storage for Cua CLI."""
 
-import os
-import sqlite3
-from pathlib import Path
-from typing import Optional
+import json
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
+from typing import Any
 
-# Default storage location
-CUA_DIR = Path.home() / ".cua"
-CREDENTIALS_DB = CUA_DIR / "credentials.db"
+import keyring
+from keyring.errors import KeyringError, PasswordDeleteError
 
-# Key names
-API_KEY_NAME = "api_key"
-
-# Workspace key patterns
-ACTIVE_WORKSPACE_KEY = "active_workspace"
+KEYRING_SERVICE = "run.cua.ai"
+KEYRING_ACCOUNT = "cua-cli"
 
 
-class CredentialStore:
-    """SQLite-based credential store with WAL mode for concurrent access."""
+class CredentialStorageError(RuntimeError):
+    """Raised when the operating system credential vault is unavailable."""
 
-    def __init__(self, db_path: Path | None = None):
-        """Initialize the credential store.
 
-        Args:
-            db_path: Path to the SQLite database. Defaults to ~/.cua/credentials.db
-        """
-        self.db_path = db_path or CREDENTIALS_DB
-        self._ensure_db()
+@dataclass(frozen=True)
+class OAuthCredentials:
+    """OIDC tokens issued to the CLI's public client."""
 
-    def _ensure_db(self) -> None:
-        """Ensure the database and table exist."""
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+    access_token: str
+    refresh_token: str | None
+    expires_at: datetime
+    token_type: str = "Bearer"
+    scope: str | None = None
 
-        conn = sqlite3.connect(self.db_path)
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "OAuthCredentials":
         try:
-            # Enable WAL mode for better concurrent access
-            conn.execute("PRAGMA journal_mode=WAL")
-
-            # Create key-value table
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS kv (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                )
-            """)
-            conn.commit()
-        finally:
-            conn.close()
-
-    def get(self, key: str) -> Optional[str]:
-        """Get a value from the store.
-
-        Args:
-            key: The key to look up
-
-        Returns:
-            The value, or None if not found
-        """
-        conn = sqlite3.connect(self.db_path)
-        try:
-            cursor = conn.execute("SELECT value FROM kv WHERE key = ?", (key,))
-            row = cursor.fetchone()
-            return row[0] if row else None
-        finally:
-            conn.close()
-
-    def set(self, key: str, value: str) -> None:
-        """Set a value in the store.
-
-        Args:
-            key: The key to set
-            value: The value to store
-        """
-        conn = sqlite3.connect(self.db_path)
-        try:
-            conn.execute(
-                "INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)",
-                (key, value),
+            expires_at = datetime.fromisoformat(value["expires_at"])
+            if expires_at.tzinfo is None:
+                raise ValueError("expires_at must include a timezone")
+            return cls(
+                access_token=str(value["access_token"]),
+                refresh_token=value.get("refresh_token"),
+                expires_at=expires_at.astimezone(UTC),
+                token_type=str(value.get("token_type", "Bearer")),
+                scope=value.get("scope"),
             )
-            conn.commit()
-        finally:
-            conn.close()
+        except (KeyError, TypeError, ValueError) as error:
+            raise CredentialStorageError(
+                "Stored Cua credentials are invalid; log in again."
+            ) from error
 
-    def delete(self, key: str) -> bool:
-        """Delete a value from the store.
-
-        Args:
-            key: The key to delete
-
-        Returns:
-            True if the key was deleted, False if it didn't exist
-        """
-        conn = sqlite3.connect(self.db_path)
-        try:
-            cursor = conn.execute("DELETE FROM kv WHERE key = ?", (key,))
-            conn.commit()
-            return cursor.rowcount > 0
-        finally:
-            conn.close()
-
-    def delete_by_prefix(self, prefix: str) -> int:
-        """Delete all keys matching a prefix.
-
-        Args:
-            prefix: The key prefix to match (uses LIKE prefix%)
-
-        Returns:
-            Number of rows deleted
-        """
-        conn = sqlite3.connect(self.db_path)
-        try:
-            cursor = conn.execute("DELETE FROM kv WHERE key LIKE ?", (prefix + "%",))
-            conn.commit()
-            return cursor.rowcount
-        finally:
-            conn.close()
-
-    def list_by_prefix(self, prefix: str) -> list[tuple[str, str]]:
-        """List all key-value pairs matching a prefix.
-
-        Args:
-            prefix: The key prefix to match (uses LIKE prefix%)
-
-        Returns:
-            List of (key, value) tuples
-        """
-        conn = sqlite3.connect(self.db_path)
-        try:
-            cursor = conn.execute("SELECT key, value FROM kv WHERE key LIKE ?", (prefix + "%",))
-            return cursor.fetchall()
-        finally:
-            conn.close()
-
-    def clear(self) -> None:
-        """Clear all stored credentials."""
-        conn = sqlite3.connect(self.db_path)
-        try:
-            conn.execute("DELETE FROM kv")
-            conn.commit()
-        finally:
-            conn.close()
+    def to_dict(self) -> dict[str, Any]:
+        value = asdict(self)
+        value["expires_at"] = self.expires_at.astimezone(UTC).isoformat()
+        return value
 
 
-# Module-level convenience functions
-_store: Optional[CredentialStore] = None
+def _read() -> str | None:
+    try:
+        return keyring.get_password(KEYRING_SERVICE, KEYRING_ACCOUNT)
+    except KeyringError as error:
+        raise CredentialStorageError(
+            "No secure credential store is available. Configure an OS keyring before logging in."
+        ) from error
 
 
-def _get_store() -> CredentialStore:
-    """Get the global credential store instance."""
-    global _store
-    if _store is None:
-        _store = CredentialStore()
-    return _store
+def load_credentials() -> OAuthCredentials | None:
+    """Load OIDC credentials from the operating system credential vault."""
+    raw = _read()
+    if raw is None:
+        return None
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise CredentialStorageError("Stored Cua credentials are invalid; log in again.") from error
+    if not isinstance(value, dict):
+        raise CredentialStorageError("Stored Cua credentials are invalid; log in again.")
+    return OAuthCredentials.from_dict(value)
 
 
-def save_workspace(slug: str, api_key: str, name: str, org: str) -> None:
-    """Save workspace credentials and metadata."""
-    store = _get_store()
-    store.set(f"workspace:{slug}:api_key", api_key)
-    store.set(f"workspace:{slug}:name", name)
-    store.set(f"workspace:{slug}:org", org)
+def save_credentials(credentials: OAuthCredentials) -> None:
+    """Store OIDC credentials in the operating system credential vault."""
+    try:
+        keyring.set_password(KEYRING_SERVICE, KEYRING_ACCOUNT, json.dumps(credentials.to_dict()))
+    except KeyringError as error:
+        raise CredentialStorageError(
+            "No secure credential store is available. Configure an OS keyring before logging in."
+        ) from error
 
 
-def get_active_workspace() -> Optional[str]:
-    """Get the slug of the currently active workspace."""
-    return _get_store().get(ACTIVE_WORKSPACE_KEY)
-
-
-def set_active_workspace(slug: str) -> None:
-    """Set the active workspace by slug."""
-    _get_store().set(ACTIVE_WORKSPACE_KEY, slug)
-
-
-def list_workspaces() -> list[dict]:
-    """List all authenticated workspaces.
-
-    Returns:
-        List of dicts with keys: slug, name, org, is_active
-    """
-    store = _get_store()
-    active = store.get(ACTIVE_WORKSPACE_KEY)
-    rows = store.list_by_prefix("workspace:")
-
-    # Group by slug — extract from keys like workspace:<slug>:api_key
-    slugs: dict[str, dict] = {}
-    for key, value in rows:
-        parts = key.split(":")
-        if len(parts) != 3:
-            continue
-        slug = parts[1]
-        field = parts[2]
-        if slug not in slugs:
-            slugs[slug] = {"slug": slug, "name": "", "org": "", "is_active": False}
-        if field == "name":
-            slugs[slug]["name"] = value
-        elif field == "org":
-            slugs[slug]["org"] = value
-
-    # Only include workspaces that have an api_key stored
-    result = []
-    for key, _value in rows:
-        parts = key.split(":")
-        if len(parts) == 3 and parts[2] == "api_key" and parts[1] in slugs:
-            ws = slugs[parts[1]]
-            ws["is_active"] = ws["slug"] == active
-            result.append(ws)
-
-    result.sort(key=lambda ws: ws["slug"])
-    return result
-
-
-def get_workspace_api_key(slug: str) -> Optional[str]:
-    """Get the API key for a specific workspace."""
-    return _get_store().get(f"workspace:{slug}:api_key")
-
-
-def delete_workspace(slug: str) -> None:
-    """Delete all stored data for a workspace."""
-    store = _get_store()
-    store.delete(f"workspace:{slug}:api_key")
-    store.delete(f"workspace:{slug}:name")
-    store.delete(f"workspace:{slug}:org")
-
-
-def clear_all_workspaces() -> None:
-    """Delete all workspace keys and the active workspace marker."""
-    store = _get_store()
-    store.delete_by_prefix("workspace:")
-    store.delete(ACTIVE_WORKSPACE_KEY)
-
-
-def get_api_key() -> Optional[str]:
-    """Get the stored API key.
-
-    Priority:
-    1. CUA_API_KEY environment variable
-    2. Active workspace's API key
-    3. Legacy 'api_key' key (backward compat)
-
-    Returns:
-        The API key, or None if not found
-    """
-    # Environment variable takes precedence
-    env_key = os.environ.get("CUA_API_KEY")
-    if env_key:
-        return env_key
-
-    # Active workspace
-    store = _get_store()
-    active_slug = store.get(ACTIVE_WORKSPACE_KEY)
-    if active_slug:
-        ws_key = store.get(f"workspace:{active_slug}:api_key")
-        if ws_key:
-            return ws_key
-
-    # Legacy fallback
-    return store.get(API_KEY_NAME)
-
-
-def save_api_key(api_key: str) -> None:
-    """Save an API key to the credential store (legacy path)."""
-    _get_store().set(API_KEY_NAME, api_key)
-
-
-def clear_credentials() -> None:
-    """Clear all stored credentials including workspaces and legacy key."""
-    store = _get_store()
-    clear_all_workspaces()
-    store.delete(API_KEY_NAME)
-
-
-def clear_legacy_credentials() -> None:
-    """Clear only the legacy API key (not workspace data)."""
-    _get_store().delete(API_KEY_NAME)
-
-
-def require_api_key() -> str:
-    """Get the API key, raising an error if not found.
-
-    Returns:
-        The API key
-
-    Raises:
-        RuntimeError: If no API key is configured
-    """
-    api_key = get_api_key()
-    if not api_key:
-        raise RuntimeError(
-            "No API key configured. Run 'cua auth login' to authenticate, "
-            "or set the CUA_API_KEY environment variable."
-        )
-    return api_key
+def clear_credentials() -> bool:
+    """Remove locally stored OIDC credentials, returning whether any existed."""
+    if _read() is None:
+        return False
+    try:
+        keyring.delete_password(KEYRING_SERVICE, KEYRING_ACCOUNT)
+    except PasswordDeleteError:
+        return False
+    except KeyringError as error:
+        raise CredentialStorageError(
+            "Could not remove credentials from the operating system credential store."
+        ) from error
+    return True

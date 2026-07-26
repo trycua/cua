@@ -25,7 +25,7 @@ pub const TERMINAL_WM_CLASS_SUBSTRINGS: &[&str] = &[
     "iterm",
     "kitty",
     "konsole",
-    "terminal",   // catches "Terminal", "xfce4-terminal-window", etc.
+    "terminal", // catches "Terminal", "xfce4-terminal-window", etc.
     "tilix",
     "wezterm",
     "xterm",
@@ -102,14 +102,7 @@ mod tests {
 
     #[test]
     fn rejects_non_terminal_process_names() {
-        for n in [
-            "firefox",
-            "code",
-            "chrome",
-            "nautilus",
-            "gedit",
-            "",
-        ] {
+        for n in ["firefox", "code", "chrome", "nautilus", "gedit", ""] {
             assert!(
                 !is_terminal_process_name(n),
                 "non-terminal {n:?} must not match"
@@ -128,7 +121,7 @@ mod tests {
             ("gnome-terminal-server", "Gnome-terminal"),
             ("xterm", "XTerm"),
             ("tilix", "Tilix"),
-            ("iterm", "iTerm"),  // hypothetical port, but the substring matters
+            ("iterm", "iTerm"), // hypothetical port, but the substring matters
         ] {
             assert!(
                 wm_class_matches_terminal(instance, class),

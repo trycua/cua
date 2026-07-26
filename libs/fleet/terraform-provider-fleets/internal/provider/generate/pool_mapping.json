@@ -1,0 +1,182 @@
+{
+  "resource_description": "A Cyclops computer-use pool. The pool name also owns its same-named namespace.",
+  "attributes": [
+    {
+      "name": "id",
+      "go_name": "ID",
+      "value_type": "string",
+      "mode": "computed"
+    },
+    {
+      "name": "name",
+      "go_name": "Name",
+      "value_type": "string",
+      "mode": "required",
+      "description": "DNS label used for both pool and namespace.",
+      "dns_label": true,
+      "requires_replace": true
+    },
+    {
+      "name": "namespace",
+      "go_name": "Namespace",
+      "value_type": "string",
+      "mode": "computed"
+    },
+    {
+      "name": "replicas",
+      "go_name": "Replicas",
+      "value_type": "int64",
+      "mode": "required",
+      "crd_path": "spec.replicas"
+    },
+    {
+      "name": "cpu_cores",
+      "go_name": "CPUCores",
+      "value_type": "int64",
+      "mode": "required",
+      "crd_path": "spec.template.cpuCores"
+    },
+    {
+      "name": "memory",
+      "go_name": "Memory",
+      "value_type": "string",
+      "mode": "required",
+      "crd_path": "spec.template.memory"
+    },
+    {
+      "name": "container_disk_image",
+      "go_name": "ContainerDiskImage",
+      "value_type": "string",
+      "mode": "required",
+      "crd_path": "spec.template.containerDiskImage"
+    },
+    {
+      "name": "image_pull_secret",
+      "go_name": "ImagePullSecret",
+      "value_type": "string",
+      "mode": "optional_computed",
+      "crd_path": "spec.template.imagePullSecret",
+      "description": "Kubernetes image pull secret. Defaults to ecr-credentials."
+    },
+    {
+      "name": "runtime",
+      "go_name": "Runtime",
+      "value_type": "string",
+      "mode": "optional_computed",
+      "crd_path": "spec.template.runtime"
+    },
+    {
+      "name": "firmware",
+      "go_name": "Firmware",
+      "value_type": "string",
+      "mode": "optional_computed",
+      "crd_path": "spec.template.firmware"
+    },
+    {
+      "name": "readiness_probe_json",
+      "go_name": "ReadinessProbeJSON",
+      "value_type": "normalized_json",
+      "mode": "optional",
+      "crd_path": "spec.template.probes",
+      "description": "JSON object for the VMI readinessProbe."
+    },
+    {
+      "name": "liveness_probe_json",
+      "go_name": "LivenessProbeJSON",
+      "value_type": "normalized_json",
+      "mode": "optional",
+      "crd_path": "spec.template.probes",
+      "description": "JSON object for the VMI livenessProbe."
+    },
+    {
+      "name": "phase",
+      "go_name": "Phase",
+      "value_type": "string",
+      "mode": "computed",
+      "crd_path": "status.phase"
+    },
+    {
+      "name": "total_count",
+      "go_name": "TotalCount",
+      "value_type": "int64",
+      "mode": "computed",
+      "crd_path": "status.totalCount"
+    },
+    {
+      "name": "available_count",
+      "go_name": "AvailableCount",
+      "value_type": "int64",
+      "mode": "computed",
+      "crd_path": "status.availableCount"
+    },
+    {
+      "name": "claimed_count",
+      "go_name": "ClaimedCount",
+      "value_type": "int64",
+      "mode": "computed",
+      "crd_path": "status.claimedCount"
+    }
+  ],
+  "blocks": [
+    {
+      "name": "service",
+      "model": "serviceModel",
+      "collection": "set",
+      "crd_path": "spec.services",
+      "fields": [
+        {
+          "name": "name",
+          "go_name": "Name",
+          "value_type": "string",
+          "mode": "required",
+          "crd_path": "name"
+        },
+        {
+          "name": "target_port",
+          "go_name": "TargetPort",
+          "value_type": "int64",
+          "mode": "required",
+          "crd_path": "targetPort"
+        },
+        {
+          "name": "protocol",
+          "go_name": "Protocol",
+          "value_type": "string",
+          "mode": "optional_computed",
+          "crd_path": "protocol"
+        }
+      ],
+      "go_name": "Services"
+    },
+    {
+      "name": "autoscaling",
+      "model": "autoscalingModel",
+      "collection": "single",
+      "crd_path": "spec.autoscaling",
+      "fields": [
+        {
+          "name": "min_pool_size",
+          "go_name": "MinPoolSize",
+          "value_type": "int64",
+          "mode": "optional_computed",
+          "crd_path": "minPoolSize"
+        },
+        {
+          "name": "initial_pool_size",
+          "go_name": "InitialPoolSize",
+          "value_type": "int64",
+          "mode": "optional_computed",
+          "crd_path": "initialPoolSize"
+        },
+        {
+          "name": "max_pool_size",
+          "go_name": "MaxPoolSize",
+          "value_type": "int64",
+          "mode": "required",
+          "crd_path": "maxPoolSize"
+        }
+      ],
+      "go_name": "Autoscaling"
+    }
+  ]
+}

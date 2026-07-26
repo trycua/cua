@@ -13,9 +13,16 @@ pub struct AXElement {
 
 /// Roles to skip when extracting plain text.
 const SKIP_ROLES: &[&str] = &[
-    "AXWindow", "AXApplication", "AXGroup", "AXScrollArea",
-    "AXSplitGroup", "AXSplitter", "AXMenuBar", "AXMenu",
-    "AXMenuBarItem", "AXUnknown",
+    "AXWindow",
+    "AXApplication",
+    "AXGroup",
+    "AXScrollArea",
+    "AXSplitGroup",
+    "AXSplitter",
+    "AXMenuBar",
+    "AXMenu",
+    "AXMenuBarItem",
+    "AXUnknown",
 ];
 
 /// Roles whose text content is always extracted (without filtering).
@@ -28,19 +35,27 @@ impl AXPageReader {
         let mut last: Option<String> = None;
 
         for line in tree_markdown.lines() {
-            let Some(el) = parse_ax_line(line) else { continue };
+            let Some(el) = parse_ax_line(line) else {
+                continue;
+            };
 
             let is_text_role = TEXT_ROLES.contains(&el.role.as_str());
             let is_skipped = SKIP_ROLES.contains(&el.role.as_str());
 
-            if is_skipped && !is_text_role { continue; }
+            if is_skipped && !is_text_role {
+                continue;
+            }
 
             // Pick the best text: title > value > description.
             let text = best_text(&el);
-            if text.is_empty() { continue; }
+            if text.is_empty() {
+                continue;
+            }
 
             // Deduplicate consecutive identical lines.
-            if last.as_deref() == Some(&text) { continue; }
+            if last.as_deref() == Some(&text) {
+                continue;
+            }
             last = Some(text.clone());
             lines_out.push(text);
         }
@@ -55,7 +70,9 @@ impl AXPageReader {
 
         let mut result = Vec::new();
         for line in tree_markdown.lines() {
-            let Some(el) = parse_ax_line(line) else { continue };
+            let Some(el) = parse_ax_line(line) else {
+                continue;
+            };
             if match_all || roles.iter().any(|r| *r == el.role) {
                 result.push(el);
             }
@@ -138,7 +155,13 @@ fn parse_ax_line(line: &str) -> Option<AXElement> {
         }
     }
 
-    Some(AXElement { role, title, value, description, index })
+    Some(AXElement {
+        role,
+        title,
+        value,
+        description,
+        index,
+    })
 }
 
 /// Parse a double-quoted string starting at the beginning of `s`.
@@ -153,12 +176,10 @@ fn parse_quoted_string(s: &str) -> (String, &str) {
     loop {
         match chars.next() {
             None => return (result, ""),
-            Some((i, '\\')) => {
-                match chars.next() {
-                    Some((_, c)) => result.push(c),
-                    None => return (result, &s[i + 1..]),
-                }
-            }
+            Some((i, '\\')) => match chars.next() {
+                Some((_, c)) => result.push(c),
+                None => return (result, &s[i + 1..]),
+            },
             Some((i, '"')) => {
                 return (result, &s[i + 1..]);
             }
@@ -173,24 +194,29 @@ fn split_first_word(s: &str) -> (&str, &str) {
 }
 
 fn best_text(el: &AXElement) -> String {
-    if !el.title.is_empty() { return el.title.clone(); }
-    if !el.value.is_empty() { return el.value.clone(); }
-    if !el.description.is_empty() { return el.description.clone(); }
+    if !el.title.is_empty() {
+        return el.title.clone();
+    }
+    if !el.value.is_empty() {
+        return el.value.clone();
+    }
+    if !el.description.is_empty() {
+        return el.description.clone();
+    }
     String::new()
 }
 
 fn css_selector_to_ax_roles(selector: &str) -> Vec<&'static str> {
     match selector.trim() {
-        "a" | "link"                => vec!["AXLink"],
-        "button"                    => vec!["AXButton"],
-        "input"                     => vec!["AXTextField", "AXCheckBox", "AXRadioButton"],
-        "h1" | "h2" | "h3"
-        | "h4" | "h5" | "h6"       => vec!["AXHeading"],
-        "p"                         => vec!["AXStaticText"],
-        "img"                       => vec!["AXImage"],
-        "select"                    => vec!["AXPopUpButton", "AXComboBox"],
-        "li"                        => vec!["AXStaticText"],
-        "*" | ""                    => vec![],
-        _                           => vec![],
+        "a" | "link" => vec!["AXLink"],
+        "button" => vec!["AXButton"],
+        "input" => vec!["AXTextField", "AXCheckBox", "AXRadioButton"],
+        "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => vec!["AXHeading"],
+        "p" => vec!["AXStaticText"],
+        "img" => vec!["AXImage"],
+        "select" => vec!["AXPopUpButton", "AXComboBox"],
+        "li" => vec!["AXStaticText"],
+        "*" | "" => vec![],
+        _ => vec![],
     }
 }

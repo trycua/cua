@@ -1,9 +1,4 @@
----
-name: cua-driver-rs-linux
-description: Drive a native Linux app via the cua-driver CLI — snapshot the AT-SPI tree, click by element_index or pixel, type, screenshot, record, verify via re-snapshot. Background by default (no foreground steal, no real-pointer move) on X11. Wayland input/capture is opt-in and still preview.
----
-
-# cua-driver-rs — Linux
+# cua-driver — Linux
 
 The Linux backend drives X11 apps **in the background**: clicks and
 keystrokes are injected to the target window without raising it,
@@ -67,8 +62,9 @@ keystroke / XSendEvent / XTest / foreground rungs are not read-back-confirmed
 **`effect` / `escalation`** — alongside `verified`, action responses carry the
 cross-platform `effect` (`confirmed` / `unverifiable` / `suspected_noop`) and,
 when you should change rung, `escalation:{recommended, reason}`. See `SKILL.md`
-→ behavior matrix. The Linux-specific value of `recommended` is **`foreground`
-on Wayland** (background pixel can't target an unfocused window) and
+→ behavior matrix. On a standard Wayland compositor the Linux-specific value
+of `recommended` is **`foreground`** (raw background pixels cannot target an
+unfocused window); the opt-in nested compositor is a separate environment. Use
 **`px` on X11** (an element px action — background pixel click — lands via
 AT-SPI `do_action`-at-point off the screenshot already in the snapshot — the
 matrix below).
@@ -101,8 +97,9 @@ Modality is chosen at **action time**, by how you address the target:
 
 `get_window_state` returning `degraded:true` (empty AT-SPI walk) is the cue to
 do an **element px action** off that same screenshot (X11) or escalate to
-`delivery_mode:"foreground"` (Wayland — background pixel can't target an
-unfocused window there).
+`delivery_mode:"foreground"` (standard Wayland: raw background pixels cannot
+target an unfocused window there). The nested compositor has its own
+experimental per-surface routes.
 
 ## Cross-platform schema residuals (Linux)
 
@@ -116,12 +113,11 @@ CI so the three surfaces can't drift. Linux-relevant notes:
   Linux builds rejected it via `additionalProperties:false` (it was
   effectively macOS-only); it is now uniformly schema-accepted — Linux
   glides a per-session cursor on X11 where the overlay is available.
-- **Windowless screen-absolute clicks** are supported on Linux, but Linux
-  has **no per-call `scope` param** (that form is macOS-only). Linux gates
-  the windowless path on the persisted `capture_scope` config: opt in once
-  with `set_config capture_scope=desktop`, then send `x,y` with no
-  pid/window_id. Under the default `capture_scope=window` a windowless
-  action is rejected with a structured `desktop_scope_disabled` error.
+- **Windowless screen-absolute actions** pass `scope:"desktop"` with no
+  pid/window_id, uniformly with macOS and Windows. The session must have
+  effective desktop scope (`start_session(..., capture_scope:"desktop")`, or
+  an explicitly escalated `auto` session). Strict window sessions receive
+  `desktop_scope_disabled`; no persistent config is read or written.
 
 ## AT-SPI needs the session bus (headless / containers / `runuser`)
 
@@ -180,42 +176,37 @@ uinput, escalate to `delivery_mode:"foreground"`. (`type_text` in the
 `background` rung is focus-dependent for non-editable widgets; that's the one
 genuine background limitation, and `foreground` is the documented escalation.)
 
-## Wayland (opt-in — still preview)
+## Wayland
 
-Native Wayland support is behind an opt-in flag and not yet at the same
-maturity as X11:
+Set `CUA_DRIVER_RS_ENABLE_WAYLAND=1` to enable native Wayland support. The
+driver selects a backend from compositor capabilities:
 
-- `CUA_DRIVER_RS_ENABLE_WAYLAND=1` enables the native-Wayland backend.
-  On wlroots compositors (labwc/sway) it uses foreign-toplevel +
-  screencopy; on GNOME-Mutter / KDE-KWin, which expose no client
-  protocols for cross-window enumeration, cua-driver brings its own
-  nested compositor (`CUA_WAYLAND_NEST=1`).
-- Without the flag, on a Wayland session the driver falls back to
-  XWayland where available.
-- Screenshots work via `grim` / wlr-screencopy. **Video recording is
-  not yet available on Wayland** — the recorder is `x11grab`, which is
-  X11-only.
-- **`delivery_mode` on Wayland is constrained by the protocol**, honestly:
-  input goes through libei + xdg-desktop-portal, which injects to the
-  **compositor's input focus** — there is no per-window background targeting
-  like X11/macOS/Windows. So `background` can't aim at a specific non-focused
-  window, and `bring_to_front` has no standalone external activate (the
-  compositor bundles activation into the virtual-pointer/click path) — it
-  returns `bring_to_front_wayland_bundled` and points you at
-  `delivery_mode:"foreground"` on the input call instead. The delivery
-  contract also defines a structured `background_unavailable` error for the
-  no-libei-backend case (built without `portal-libei` or a denied portal
-  session); when input has no actuator the tools surface an error rather
-  than silently succeeding.
-- **Wayland escalation is `foreground`, NOT `px`.** This is the
-  one place the cross-platform escalation hint flips. Everywhere else
-  (macOS, X11, most Windows surfaces) a background pixel click can
-  land on an unfocused window, so `escalation.recommended` is `px`.
-  On Wayland an unfocused window **cannot** be pixel-targeted in the
-  background (libei injects only to compositor focus → `background_unavailable`),
-  so the hint on action responses and on a `degraded` `get_window_state` is
-  `foreground`: re-call the action with `delivery_mode:"foreground"`, don't
-  expect an element px action off the screenshot to land in the background.
+- Sway and other wlroots compositors use foreign-toplevel discovery,
+  wlr-screencopy, virtual pointer, and virtual keyboard protocols.
+- GNOME/Mutter uses the bundled WinRects Shell helper for target geometry and
+  activation, plus portal/libei for foreground raw input.
+- KDE/KWin uses AT-SPI and portal facilities where available. Target-specific
+  foreground activation remains experimental, so unsafe raw input refuses.
+- The optional `cua-compositor` is a separate nested session enabled
+  explicitly for controlled automation. GNOME and KDE never switch into it.
+
+Sway recording works through the wlroots recorder path and is exercised by the
+canonical harness runner. Portal-backed GNOME recording is still an evidence
+gap. Capture and recording availability therefore depend on the compositor,
+installed helpers, and portal grant.
+
+Standard Wayland has no general client protocol for raw input to an arbitrary
+occluded surface. Background AX actions can still deliver through AT-SPI, and
+a PX left click can deliver when hit-testing resolves to an actionable AT-SPI
+control. Other focus-bound background pointer and keyboard shapes return an
+exact `background_unavailable` result. They do not report success after a
+silent drop.
+
+Use `delivery_mode:"foreground"` for raw Wayland input. The driver activates
+the selected target through a verified compositor adapter before dispatch. If
+the compositor has no target-addressable activation or input backend, the call
+refuses before sending input. Reconstructing coordinates alone does not make
+raw background PX possible on a standard compositor.
 
 ## Quick triage
 
@@ -226,7 +217,7 @@ If a tool call surprises you on Linux:
    "is there a bus"), the discovered `DBUS_SESSION_BUS_ADDRESS`, and
    `ffmpeg` availability (for recording).
 2. Check `XDG_SESSION_TYPE` — `x11` is fully supported; `wayland`
-   needs `CUA_DRIVER_RS_ENABLE_WAYLAND=1` for native input (preview),
+   needs `CUA_DRIVER_RS_ENABLE_WAYLAND=1` for the native backend,
    else XWayland.
 3. **Empty AT-SPI tree** (`get_window_state` returns `degraded:true`) — in
    order of likelihood: (a) the daemon isn't on the desktop session bus
@@ -251,17 +242,13 @@ ask the user.
 
 ## What to expect
 
-| Intent | Status |
-|---|---|
-| Snapshot AT-SPI tree | ✅ GTK3/4, Qt5/6, wxWidgets, Electron (GTK4/Qt6 can be partial — re-snapshot) |
-| Pixel click | ✅ background `XSendEvent`, no focus steal, no pointer move |
-| Element-indexed click | ✅ AT-SPI `do_action` |
-| Type text | ✅ AT-SPI focus-free, with XTest / pty fallback for the focused widget |
-| Hotkey / `press_key` | ✅ |
-| Screenshot full-display | ✅ X11; ✅ Wayland via `grim` |
-| Screenshot per-window | ✅ X11 |
-| `launch_app` | ✅ env-scrubbed launch (no workspace steal) |
-| Recording (video) | ✅ X11 (`x11grab`); ⚠️ Wayland not yet supported (preview) |
+| Environment | Proven baseline | Main limits |
+|---|---|---|
+| X11/Openbox | AT-SPI trees and actions, foreground pointer and keyboard input, window and desktop capture, and video | Raw background delivery remains toolkit-specific; unsupported shapes refuse |
+| Sway/wlroots | AT-SPI, native discovery, full-display and cropped-window screencopy, foreground input, semantic background actions, and video | Raw background pointer and keyboard input remains focus-bound |
+| GNOME/Mutter | AT-SPI, WinRects geometry and activation, capture, and portal/libei foreground input | Requires the helper and portal grant; portal video parity remains open |
+| KDE/KWin | AT-SPI and generic discovery where exposed | Target-specific activation and behavioral coverage remain experimental |
+| Nested `cua-compositor` | Versioned direct per-surface input, native GTK 31/31, capture/scope 5/5, and partial Electron coverage | The complete shared matrix remains experimental; do not infer standard-Wayland support |
 
 See `SKILL.md` for the cross-platform loop (snapshot-before-AND-after,
 pixel-click contract, failure modes) and `RECORDING.md` for session

@@ -12,26 +12,64 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use std::process::Command;
 
+struct SecureCapturePath {
+    directory: std::path::PathBuf,
+    file: std::path::PathBuf,
+}
+
+impl SecureCapturePath {
+    fn new(file_name: &str) -> anyhow::Result<Self> {
+        use std::os::unix::fs::DirBuilderExt;
+
+        let directory = std::env::temp_dir().join(format!(
+            "cua-driver-rs-capture-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::DirBuilder::new().mode(0o700).create(&directory)?;
+        let file = directory.join(file_name);
+        Ok(Self { directory, file })
+    }
+}
+
+impl Drop for SecureCapturePath {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.file);
+        let _ = std::fs::remove_dir(&self.directory);
+    }
+}
+
 /// Capture a window by its `window_id` (CGWindowID).
 /// Returns raw PNG bytes or an error.
 pub fn screenshot_window_bytes(window_id: u32) -> anyhow::Result<Vec<u8>> {
-    let tmp_path = format!("/tmp/cua-driver-rs-capture-{}.png", window_id);
+    let capture = SecureCapturePath::new("window.png")?;
+    let tmp_path = capture.file.to_string_lossy().into_owned();
 
-    let status = Command::new("screencapture")
+    let output = Command::new("screencapture")
         .args([
-            "-l", &window_id.to_string(),
-            "-x",  // no sound
-            "-o",  // no shadow
+            "-l",
+            &window_id.to_string(),
+            "-x", // no sound
+            "-o", // no shadow
             &tmp_path,
         ])
-        .status()?;
+        .output()?;
 
-    if !status.success() {
-        anyhow::bail!("screencapture failed for window {window_id}");
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        if stderr.is_empty() {
+            anyhow::bail!(
+                "screencapture failed for window {window_id} with status {}",
+                output.status
+            );
+        }
+        anyhow::bail!(
+            "screencapture failed for window {window_id} with status {}: {stderr}",
+            output.status
+        );
     }
 
-    let bytes = std::fs::read(&tmp_path)?;
-    let _ = std::fs::remove_file(&tmp_path);
+    let bytes = std::fs::read(&capture.file)?;
 
     if bytes.is_empty() {
         anyhow::bail!("screencapture produced empty output for window {window_id}");
@@ -51,19 +89,28 @@ pub fn screenshot_window(window_id: u32) -> anyhow::Result<(String, u32, u32)> {
 /// Capture the full main display.
 /// Returns raw PNG bytes or an error.
 pub fn screenshot_display_bytes() -> anyhow::Result<Vec<u8>> {
-    // Use a pid-unique path so concurrent cua-driver processes don't step on each other.
-    let tmp_path = format!("/tmp/cua-driver-rs-display-{}.png", std::process::id());
+    let capture = SecureCapturePath::new("display.png")?;
+    let tmp_path = capture.file.to_string_lossy().into_owned();
 
-    let status = Command::new("screencapture")
-        .args(["-x", &*tmp_path])
-        .status()?;
+    let output = Command::new("screencapture")
+        .args(["-x", &tmp_path])
+        .output()?;
 
-    if !status.success() {
-        anyhow::bail!("screencapture failed for main display");
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        if stderr.is_empty() {
+            anyhow::bail!(
+                "screencapture failed for main display with status {}",
+                output.status
+            );
+        }
+        anyhow::bail!(
+            "screencapture failed for main display with status {}: {stderr}",
+            output.status
+        );
     }
 
-    let bytes = std::fs::read(&tmp_path)?;
-    let _ = std::fs::remove_file(&tmp_path);
+    let bytes = std::fs::read(&capture.file)?;
 
     if bytes.is_empty() {
         anyhow::bail!("screencapture produced empty output for main display");
@@ -101,12 +148,7 @@ pub fn resize_png_if_needed(png_bytes: &[u8], max_dim: u32) -> anyhow::Result<Ve
 /// `path`. Used by `click`'s `debug_image_out` param to verify
 /// coordinate spaces. The crosshair uses top-left-origin coords
 /// matching the click tool's convention.
-pub fn write_crosshair_png(
-    png_bytes: &[u8],
-    cx: f64,
-    cy: f64,
-    path: &str,
-) -> anyhow::Result<()> {
+pub fn write_crosshair_png(png_bytes: &[u8], cx: f64, cy: f64, path: &str) -> anyhow::Result<()> {
     cua_driver_core::image_utils::write_crosshair_png(png_bytes, cx, cy, path)
 }
 

@@ -36,13 +36,15 @@ pub fn list_processes() -> Vec<ProcessInfo> {
             Err(_) => continue,
         };
 
-        let proc_name = status.lines()
+        let proc_name = status
+            .lines()
             .find(|l| l.starts_with("Name:"))
             .map(|l| l[5..].trim().to_owned())
             .unwrap_or_default();
 
         let cmdline_path = proc_dir.join(&*pid_str).join("cmdline");
-        let cmdline = fs::read(cmdline_path).ok()
+        let cmdline = fs::read(cmdline_path)
+            .ok()
             .map(|b| {
                 // cmdline is NUL-separated; first entry is argv[0].
                 let s = String::from_utf8_lossy(&b);
@@ -50,7 +52,11 @@ pub fn list_processes() -> Vec<ProcessInfo> {
             })
             .unwrap_or_default();
 
-        result.push(ProcessInfo { pid, name: proc_name, cmdline });
+        result.push(ProcessInfo {
+            pid,
+            name: proc_name,
+            cmdline,
+        });
     }
 
     result.sort_by_key(|p| p.pid);

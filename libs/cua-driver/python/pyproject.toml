@@ -4,10 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cua-driver"
-version = "0.5.1"
-description = "Python wrapper for cua-driver - cross-platform MCP server for computer-use automation"
+version = "0.12.6"
+description = "Rust-backed Cua Driver SDK and bundled executable for client applications"
 readme = "README.md"
-license = "MIT"
+license = { text = "MIT" }
 authors = [
     { name = "TryCua", email = "hello@trycua.com" }
 ]
@@ -17,6 +17,7 @@ keywords = [
     "automation",
     "accessibility",
     "screen-capture",
+    "sdk",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -36,6 +37,9 @@ requires-python = ">=3.10"
 
 dependencies = []
 
+[project.optional-dependencies]
+test = ["pytest"]
+
 [project.urls]
 Homepage = "https://github.com/trycua/cua"
 Documentation = "https://github.com/trycua/cua/tree/main/libs/cua-driver"
@@ -49,5 +53,11 @@ cua-driver = "cua_driver.__main__:main"
 packages = ["src/cua_driver"]
 artifacts = [
     "src/cua_driver/bin/*",
+    "src/cua_driver/*.dylib",
+    "src/cua_driver/*.so",
+    "src/cua_driver/*.dll",
 ]
 pure-python = false
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"

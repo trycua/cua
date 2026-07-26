@@ -88,6 +88,5 @@ Customize your evaluation with these options:
 
 ## Learn more
 
-- Notebook with end‑to‑end examples: https://github.com/trycua/cua/blob/main/notebooks/eval_osworld.ipynb
 - Docs: https://cua.ai/docs/cua/guide/integrations/hud
 - Live traces: https://app.hud.ai

@@ -1,1 +1,23 @@
-{ "title": "Driver", "pages": ["install", "connect-your-agent", "choose-a-modality", "drive-a-web-page", "keep-running", "personalize-cursor", "update", "windows-ssh"] }
+{
+  "title": "Driver",
+  "pages": [
+    "install",
+    "use-sdk-in-process",
+    "verify-a-desktop-action",
+    "use-claude-agent-sdk",
+    "use-codex-sdk",
+    "expose-mcp-from-desktop-app",
+    "install-agent-skill",
+    "run-in-macos-lume-vm",
+    "run-tests-in-macos-lume-vm",
+    "connect-your-agent",
+    "drive-a-web-page",
+    "record-and-render-a-trajectory",
+    "keep-running",
+    "restrict-tool-access",
+    "personalize-cursor",
+    "update",
+    "troubleshoot-stale-macos-permissions",
+    "windows-ssh"
+  ]
+}

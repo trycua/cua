@@ -63,7 +63,6 @@ Our slot landed at **2:30 a.m.** (_perks of the cheapest sponsor tier_). Thirty 
 
 - **Leave something tangible.** We provided a Jupyter Notebook teams could run immediately.
 - **Narrow scope, strong starts.** The more focused the challenge, the more **robust starting points** you should provide.
-- **Want the details?** [Here’s the notebook we left participants](https://github.com/trycua/cua/blob/main/notebooks/sota_hackathon.ipynb).
 
 ![hack-booth](./assets/hack-workshop.jpeg)
 

@@ -1,0 +1,78 @@
+name: "CI: Nix Linux Rust source"
+
+# Nix owns reproducible Linux package and Rust-source builds. Interactive
+# desktop behavior is owned by the Rust E2E workflows.
+on:
+  pull_request:
+    paths:
+      - "flake.nix"
+      - "flake.lock"
+      - "nix/cua-driver/**"
+      - "libs/cua-driver/rust/.cargo/**"
+      - "libs/cua-driver/rust/Cargo.toml"
+      - "libs/cua-driver/rust/Cargo.lock"
+      - "libs/cua-driver/rust/crates/cua-driver/**"
+      - "libs/cua-driver/rust/crates/cua-driver-core/**"
+      - "libs/cua-driver/rust/crates/cua-driver-testkit/**"
+      - "libs/cua-driver/rust/crates/cursor-overlay/**"
+      - "libs/cua-driver/rust/crates/pip-preview/**"
+      - "libs/cua-driver/rust/crates/platform-linux/**"
+      - "libs/cua-driver/tests/fixtures/shared/web/index.html"
+      - ".github/workflows/ci-nix-linux.yml"
+  push:
+    branches: [main]
+    paths:
+      - "flake.nix"
+      - "flake.lock"
+      - "nix/cua-driver/**"
+      - "libs/cua-driver/rust/.cargo/**"
+      - "libs/cua-driver/rust/Cargo.toml"
+      - "libs/cua-driver/rust/Cargo.lock"
+      - "libs/cua-driver/rust/crates/cua-driver/**"
+      - "libs/cua-driver/rust/crates/cua-driver-core/**"
+      - "libs/cua-driver/rust/crates/cua-driver-testkit/**"
+      - "libs/cua-driver/rust/crates/cursor-overlay/**"
+      - "libs/cua-driver/rust/crates/pip-preview/**"
+      - "libs/cua-driver/rust/crates/platform-linux/**"
+      - "libs/cua-driver/tests/fixtures/shared/web/index.html"
+      - ".github/workflows/ci-nix-linux.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-nix-linux-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-source:
+    name: Nix / ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: compositor build
+            attribute: cua-compositor-build
+          - name: driver package
+            attribute: cua-driver-build
+          - name: Rust unit tests
+            attribute: cua-driver-linux-rust-unit
+          - name: YAML policy VM
+            attribute: cua-driver-policy-yaml
+          - name: Rego policy VM
+            attribute: cua-driver-policy-rego
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install Nix
+        uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Build ${{ matrix.name }}
+        run: >-
+          nix build
+          .#checks.x86_64-linux.${{ matrix.attribute }}
+          --no-link --print-build-logs --show-trace

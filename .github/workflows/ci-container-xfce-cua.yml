@@ -1,0 +1,103 @@
+name: "CI: Container XFCE Cua"
+
+on:
+  pull_request:
+    paths:
+      - "libs/xfce-cua/**"
+      - ".github/workflows/ci-container-xfce-cua.yml"
+
+jobs:
+  build-and-smoke:
+    name: build-and-smoke (${{ matrix.platform }})
+    runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set expected Debian architecture
+        id: architecture
+        run: |
+          case "${{ matrix.platform }}" in
+            linux/amd64) echo "debian=amd64" >> "$GITHUB_OUTPUT" ;;
+            linux/arm64) echo "debian=arm64" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build native image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./libs/xfce-cua
+          file: ./libs/xfce-cua/Dockerfile
+          load: true
+          platforms: ${{ matrix.platform }}
+          tags: xfce-cua:ci
+
+      - name: Verify native packages
+        env:
+          EXPECTED_ARCH: ${{ steps.architecture.outputs.debian }}
+        run: |
+          docker run --rm \
+            --user cua \
+            -e HOME=/home/cua \
+            -e EXPECTED_ARCH \
+            xfce-cua:ci \
+            bash -lc '
+              test "$(dpkg --print-architecture)" = "$EXPECTED_ARCH"
+              /opt/venv/bin/cua-driver --version
+              /opt/venv/bin/python -c "import importlib.util; from cua_driver import CuaDriver, get_binary_path; assert importlib.util.find_spec(\"computer_server\") is None; print(get_binary_path())"
+              ffmpeg -version | head -1
+            '
+
+      - name: Verify desktop services
+        run: |
+          docker run --rm --detach \
+            --name xfce-cua-ci \
+            -e VNC_PW=ci-test \
+            xfce-cua:ci
+          trap 'docker stop xfce-cua-ci >/dev/null 2>&1 || true' EXIT
+
+          for attempt in $(seq 1 60); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' xfce-cua-ci)
+            if [ "$status" = "healthy" ]; then
+              break
+            fi
+            if [ "$status" = "unhealthy" ] || [ "$attempt" -eq 60 ]; then
+              docker logs xfce-cua-ci
+              exit 1
+            fi
+            sleep 2
+          done
+
+          docker exec xfce-cua-ci curl --fail --silent \
+            http://127.0.0.1:6901/vnc.html >/dev/null
+          docker exec xfce-cua-ci supervisorctl \
+            -c /etc/supervisor/supervisord.conf status
+
+          docker exec --detach --user cua xfce-cua-ci \
+            /opt/venv/bin/cua-driver serve --dangerously-bypass-approvals
+          for attempt in $(seq 1 30); do
+            if docker exec --user cua xfce-cua-ci \
+              /opt/venv/bin/cua-driver status >/dev/null 2>&1; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              docker logs xfce-cua-ci
+              exit 1
+            fi
+            sleep 1
+          done
+
+          docker exec --user cua xfce-cua-ci bash -lc '
+            /opt/venv/bin/cua-driver doctor --json |
+              /opt/venv/bin/python -c "import json, sys; report = json.load(sys.stdin); at_spi = next(probe for probe in report[\"probes\"] if probe[\"label\"] == \"AT-SPI\"); assert report[\"ok\"]; assert at_spi[\"status\"] == \"ok\", at_spi"
+          '
+          docker stop xfce-cua-ci
+          trap - EXIT

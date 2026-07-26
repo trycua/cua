@@ -53,3 +53,18 @@ This workspace is preconfigured with Swift language support, build tasks, and de
    - Reference to any related issues
    - Screenshots or logs if relevant
 3. Respond to any feedback from maintainers
+
+## Testing Offline Unattended Setup
+
+Use a local Apple restore image to exercise the vanilla macOS flow end to end:
+
+```bash
+lume create macos-tahoe --ipsw ~/Downloads/macos-tahoe.ipsw --unattended tahoe
+lume run macos-tahoe
+lume ssh macos-tahoe 'id -un'
+```
+
+The guest should report `lume`, accept SSH with the default `lume` password,
+and boot without Setup Assistant. Tahoe is the currently verified preset;
+Sequoia's remaining Accessibility-step issue is tracked in
+[#2155](https://github.com/trycua/cua/issues/2155).

@@ -1,0 +1,43 @@
+{
+  "name": "cyclops-cs",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b --noEmit",
+    "lint": "biome check",
+    "lint:fix": "biome check --write",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "gen:api": "swagger-typescript-api generate -p ./backend/docs/swagger.json -o ./src/api/generated -n cyclops-cs-backend.ts --module-name-index 1 --extract-request-body --extract-request-params --extract-response-body --extract-response-error"
+  },
+  "dependencies": {
+    "@cloudscape-design/collection-hooks": "^1.0.93",
+    "@cloudscape-design/components": "^3.0.825",
+    "@cloudscape-design/global-styles": "^1.0.36",
+    "@novnc/novnc": "^1.7.0",
+    "ansi-to-html": "^0.7.2",
+    "keycloak-js": "^25.0.6",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.15",
+    "@playwright/test": "^1.60.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "swagger-typescript-api": "13.2.7",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11"
+  },
+  "pnpm": {
+    "patchedDependencies": {
+      "@novnc/novnc@1.7.0": "patches/@novnc__novnc@1.7.0.patch"
+    }
+  }
+}

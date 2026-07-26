@@ -86,10 +86,10 @@ const SDK_CONFIGS: SDKConfig[] = [
     tagPrefix: 'lume-v',
     packageDir: 'libs/lume',
     packageName: 'lume',
-    outputDir: 'lume/reference',
+    outputDir: 'reference/lume',
     extractionType: 'swift-dump-docs',
     minVersion: '0.2',
-    docsBasePath: 'lume/reference',
+    docsBasePath: 'reference/lume',
   },
   {
     name: 'cuabot',
@@ -525,7 +525,7 @@ function generateVersionedLumeMDX(
       // Insert old-version callout instead
       result.push('<Callout type="warn">');
       result.push(
-        `  This is documentation for **v${majorMinor}**. [View latest version](/lume/reference/cli-reference).`
+        `  This is documentation for **v${majorMinor}**. [View latest version](/reference/lume/cli-reference).`
       );
       result.push('</Callout>');
       result.push('');

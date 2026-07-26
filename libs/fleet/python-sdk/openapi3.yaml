@@ -1,0 +1,1246 @@
+openapi: 3.0.3
+info:
+  title: Cyclops CS Backend API
+  description: "Backend sidecar for the cyclops-cs SPA — Keycloak-authenticated key\n\
+    management, authenticated reverse proxies (gateway / k8s / orch), and\nthe in-process\
+    \ OSGym batch driver.\n\nThe batch driver exposes two pool-scoped surfaces:\n\
+    - `/api/batch/{pool}/...` — submit, poll, cancel a single batch by ID\n- `/api/label/{pool}/{label}/...`\
+    \ — aggregate operations across batches\n  in `{pool}` that share a `name` field\
+    \ (the \"label\")\n"
+  version: '0.2'
+  contact:
+    name: API Support
+    url: https://cua.ai/support
+    email: support@trycua.com
+servers:
+- url: https://run.cua.ai
+  description: Production
+security:
+- BearerAuth: []
+paths:
+  /healthz:
+    get:
+      summary: Liveness/readiness probe
+      operationId: healthz
+      tags:
+      - health
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /api/keys:
+    get:
+      summary: List the calling user's API keys
+      operationId: listKeys
+      tags:
+      - keys
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListKeysResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      summary: Create a new API key
+      operationId: createKey
+      description: Creates a Keycloak service-account client owned by the calling
+        user. The returned `client_secret` is shown exactly once.
+      tags:
+      - keys
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateKeyRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateKeyResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/keys/{id}:
+    delete:
+      summary: Revoke an API key by Keycloak client UUID
+      operationId: deleteKey
+      tags:
+      - keys
+      parameters:
+      - name: id
+        in: path
+        required: true
+        description: Keycloak client UUID
+        schema:
+          type: string
+      responses:
+        '204':
+          description: No Content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/batch/{pool}/submit:
+    post:
+      summary: Submit a batch of rollouts
+      operationId: submitBatch
+      description: 'Asynchronously queues a batch of OSGym rollouts under `{pool}`.
+
+        Returns immediately with a `batch_id`; poll
+
+        `/api/batch/{pool}/{id}/status` for progress and
+
+        `/api/batch/{pool}/{id}/results` for the final payload.
+
+
+        The pool is bound by the URL path; any `pool_name` in the body must
+
+        match the URL pool or the request is rejected with 400.
+
+        '
+      tags:
+      - batch
+      parameters:
+      - name: pool
+        in: path
+        required: true
+        description: Pool name (DNS-1123 label)
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchSubmitRequest'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchSubmitResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/batch/{pool}/lanes:
+    post:
+      summary: Acquire warm VM lanes
+      operationId: acquireLanes
+      description: 'Explicitly provisions N warm VMs ("lanes") and returns their vm_ids.
+        Pass each as `RunConfig.vm_id` to run actions on it (state persists across
+        batches), and `DELETE` this route to release them. All-or-nothing: a partial
+        acquisition is rolled back, and 503 is returned if the pool can''t supply
+        every lane in time.'
+      tags:
+      - batch
+      parameters:
+      - name: pool
+        in: path
+        required: true
+        description: Pool name
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcquireLanesRequest'
+      responses:
+        '200':
+          description: Lanes acquired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AcquireLanesResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          description: Pool could not supply the requested lanes
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      summary: Release warm VM lanes
+      operationId: releaseLanes
+      description: Shuts down the given VMs (lanes from `acquireLanes` or `vm_id`s
+        returned by a `keep_warm` batch). Best-effort and idempotent — unknown or
+        already-gone ids are ignored.
+      tags:
+      - batch
+      parameters:
+      - name: pool
+        in: path
+        required: true
+        description: Pool name
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReleaseLanesRequest'
+      responses:
+        '200':
+          description: Release accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReleaseLanesResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/batch/{pool}/{id}/status:
+    get:
+      summary: Poll batch progress
+      operationId: getBatchStatus
+      tags:
+      - batch
+      parameters:
+      - name: pool
+        in: path
+        required: true
+        description: Pool name
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        description: Batch ID (UUID returned by submit)
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchStatusResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/batch/{pool}/{id}/results:
+    get:
+      summary: Final batch results
+      operationId: getBatchResults
+      description: 'Returns 200 with the full results once the batch is in a terminal
+
+        status (completed/failed). While still running, returns 202 with a
+
+        `message` field.
+
+        '
+      tags:
+      - batch
+      parameters:
+      - name: pool
+        in: path
+        required: true
+        description: Pool name
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        description: Batch ID
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Completed — full results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchResultsResponse'
+        '202':
+          description: Still running
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchInProgressResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/batch/{pool}/{id}:
+    delete:
+      summary: Cancel a batch
+      operationId: cancelBatch
+      description: 'Hard-cancels the batch — aborts in-flight /reset and /step calls
+
+        and stops dispatch. Idempotent on terminal batches. Returns 200
+
+        with the final status.
+
+        '
+      tags:
+      - batch
+      parameters:
+      - name: pool
+        in: path
+        required: true
+        description: Pool name
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        description: Batch ID
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelBatchResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/label/{pool}/{label}/batch:
+    post:
+      summary: Submit a batch under a pool and label
+      operationId: submitLabelBatch
+      description: 'Same as `/api/batch/{pool}/submit` but pins the batch''s `name`
+
+        field to the URL label, overriding any value in the body. The
+
+        label is scoped to `{pool}`; aggregate routes under
+
+        `/api/label/{pool}/{label}/*` only see batches submitted to the
+
+        same pool.
+
+        '
+      tags:
+      - label
+      parameters:
+      - name: pool
+        in: path
+        required: true
+        description: Pool name (DNS-1123 label)
+        schema:
+          type: string
+      - name: label
+        in: path
+        required: true
+        description: Batch label / name
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchSubmitRequest'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchSubmitResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/label/{pool}/{label}/status:
+    get:
+      summary: Aggregate status for all batches under a pool+label
+      operationId: getLabelStatus
+      description: Aggregates only batches submitted under `{pool}`; batches with
+        the same label in other pools are invisible.
+      tags:
+      - label
+      parameters:
+      - name: pool
+        in: path
+        required: true
+        description: Pool name
+        schema:
+          type: string
+      - name: label
+        in: path
+        required: true
+        description: Batch label
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LabelStatusResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/label/{pool}/{label}/results:
+    get:
+      summary: Aggregate results for all batches under a pool+label
+      operationId: getLabelResults
+      description: 'Default mode returns 200 only once every matched batch is completed.
+
+        Pass `?completed_only=true` to drain partial results (200 with the
+
+        filtered subset; non-completed batches are visible via status).
+
+        Aggregates only batches submitted under `{pool}`.
+
+        '
+      tags:
+      - label
+      parameters:
+      - name: pool
+        in: path
+        required: true
+        description: Pool name
+        schema:
+          type: string
+      - name: label
+        in: path
+        required: true
+        description: Batch label
+        schema:
+          type: string
+      - name: completed_only
+        in: query
+        required: false
+        description: Return completed batches only (drain mode)
+        schema:
+          type: boolean
+      responses:
+        '200':
+          description: OK — all batches completed (or drain mode)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LabelResultsResponse'
+        '202':
+          description: Still running (non-drain mode)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LabelInProgressResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/label/{pool}/{label}:
+    delete:
+      summary: Cancel every non-terminal batch under a label (scoped to pool)
+      operationId: cancelLabel
+      description: Cancels only batches submitted under `{pool}`; same label in other
+        pools is untouched.
+      tags:
+      - label
+      parameters:
+      - name: pool
+        in: path
+        required: true
+        description: Pool name
+        schema:
+          type: string
+      - name: label
+        in: path
+        required: true
+        description: Batch label
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelLabelResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/gateway/{pool}/lanes:
+    post:
+      summary: Create Lane
+      description: 'Create a lane: a fresh OSGymSandboxClaim bound to a Sandbox.
+
+
+        The lane id is the stable handle the customer holds. The
+
+        underlying claim CR''s name rotates on swap; the lane id does
+
+        not. The initial bind is via the normal queue+CAS-PATCH flow,
+
+        same as /reset.'
+      operationId: create_lane_lanes_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LaneCreateRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LaneResponse'
+        '503':
+          description: Bind timeout — warm pool exhausted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LaneErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      parameters:
+      - name: pool
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Pool name (DNS-1123 label)
+      tags:
+      - lanes
+  /api/gateway/{pool}/lanes/{lane_id}/swap:
+    post:
+      summary: Swap
+      description: 'New-first claim rotation for ``lane_id``.
+
+
+        Calls into the pure protocol body in osgym/lane_swap.py with a
+
+        K8s-backed SwapDeps. The lane keeps its bound VM if the swap
+
+        bind times out (SwapAtomicity); the new vm_id is returned on
+
+        success.'
+      operationId: swap_lanes__lane_id__swap_post
+      parameters:
+      - name: pool
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Pool name (DNS-1123 label)
+      - name: lane_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Lane Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LaneSwapResponse'
+        '404':
+          description: Lane not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LaneErrorResponse'
+        '503':
+          description: Swap bind timeout — old VM retained
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LaneErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      tags:
+      - lanes
+  /api/gateway/{pool}/lanes/{lane_id}:
+    delete:
+      summary: Delete Lane
+      description: Release the lane's bound claim. Idempotent.
+      operationId: delete_lane_lanes__lane_id__delete
+      parameters:
+      - name: pool
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Pool name (DNS-1123 label)
+      - name: lane_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Lane Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LaneDeleteResponse'
+        '404':
+          description: Lane not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LaneErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      tags:
+      - lanes
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: "Keycloak access token.\n- For `/api/keys` and `/api/{k8s,orch}`:\
+        \ SPA user JWT (azp=cyclops-cs-spa).\n- For `/api/batch/{pool}/*` and `/api/label/{pool}/*`:\
+        \ service-account JWT\n  minted via `client_credentials` against a per-key\
+        \ client; the token's\n  `namespace` claim must equal `pool-{pool}` (OPA-enforced).\
+        \ SPA tokens\n  may target any pool.\n"
+  responses:
+    BadRequest:
+      description: Bad Request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Not Found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+    HealthResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+    KeyClient:
+      type: object
+      properties:
+        id:
+          type: string
+        client_id:
+          type: string
+        name:
+          type: string
+        namespace:
+          type: string
+        owner_sub:
+          type: string
+    ListKeysResponse:
+      type: object
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/KeyClient'
+    CreateKeyRequest:
+      type: object
+      required:
+      - name
+      - namespace
+      properties:
+        name:
+          type: string
+          example: ci-prod
+        namespace:
+          type: string
+          example: test-pool
+    CreateKeyResponse:
+      type: object
+      properties:
+        client_id:
+          type: string
+        client_secret:
+          type: string
+        name:
+          type: string
+        namespace:
+          type: string
+        token_url:
+          type: string
+    Action:
+      type: object
+      required:
+      - action_type
+      properties:
+        action_type:
+          type: string
+          description: OSGym action type (e.g. CLICK, TYPE, KEY).
+          example: CLICK
+        parameters:
+          type: object
+          additionalProperties: true
+          description: Action-type-specific parameters (e.g. `{x, y, button}` for
+            CLICK).
+    RunConfig:
+      type: object
+      required:
+      - steps
+      properties:
+        steps:
+          type: array
+          description: 'Ordered actions to execute on the rollout VM. A step with
+            `action_type: "RESET"` is a reserved control action: instead of being
+            forwarded to the VM, it hard-resets the VM in place (new vm_id, clean
+            baseline desktop), so one run can execute several independent episodes
+            on a warm instance.'
+          items:
+            $ref: '#/components/schemas/Action'
+          maxItems: 10000
+        timeout:
+          type: integer
+          minimum: 0
+          maximum: 86400
+          description: Per-rollout timeout in seconds (max 24h).
+        vm_id:
+          type: string
+          description: Reattach this run to an existing warm VM (instance reuse /
+            "lane"), typically a vm_id returned by a previous `keep_warm` batch, instead
+            of acquiring a fresh one. If that claim has already expired, the run transparently
+            falls back to a fresh VM.
+    BatchSubmitRequest:
+      type: object
+      required:
+      - runs
+      properties:
+        runs:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunConfig'
+          maxItems: 10000
+        concurrency:
+          type: integer
+          default: 10
+          minimum: 1
+          maximum: 1000
+        pool_name:
+          type: string
+          description: Optional — must match the URL `{pool}` if provided; ignored
+            otherwise.
+        name:
+          type: string
+          description: Optional batch name. Overridden by the URL `{label}` on label
+            routes.
+          maxLength: 256
+        keep_warm:
+          type: boolean
+          description: 'Leave each run''s VM running when the run ends (instead of
+            shutting it down), so a follow-up batch can reattach to it via RunConfig.vm_id
+            (read each lane''s surviving id from RunResult.vm_id). Best-effort: a
+            warm VM is reaped after its claim TTL (~minutes), after which reattach
+            falls back to a fresh VM.'
+    BatchSubmitResponse:
+      type: object
+      properties:
+        batch_id:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    AcquireLanesRequest:
+      type: object
+      required:
+      - n
+      properties:
+        n:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          description: Number of warm VM lanes to acquire.
+    AcquireLanesResponse:
+      type: object
+      properties:
+        vm_ids:
+          type: array
+          description: One warm VM id per acquired lane. Use as RunConfig.vm_id.
+          items:
+            type: string
+    ReleaseLanesRequest:
+      type: object
+      required:
+      - vm_ids
+      properties:
+        vm_ids:
+          type: array
+          description: VM ids to shut down (lanes to release).
+          items:
+            type: string
+    ReleaseLanesResponse:
+      type: object
+      properties:
+        released:
+          type: integer
+          description: Number of vm_ids submitted for release.
+    BatchProgress:
+      type: object
+      properties:
+        completed:
+          type: integer
+        total:
+          type: integer
+        ok:
+          type: integer
+        failed:
+          type: integer
+    BatchStatusResponse:
+      type: object
+      properties:
+        batch_id:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+        progress:
+          $ref: '#/components/schemas/BatchProgress'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    BatchInProgressResponse:
+      type: object
+      properties:
+        batch_id:
+          type: string
+        status:
+          type: string
+        message:
+          type: string
+    CancelBatchResponse:
+      type: object
+      properties:
+        batch_id:
+          type: string
+        status:
+          type: string
+    TimingStats:
+      type: object
+      properties:
+        n:
+          type: integer
+        min:
+          type: integer
+          format: int64
+        mean:
+          type: number
+          format: double
+        max:
+          type: integer
+          format: int64
+    BatchSummary:
+      type: object
+      properties:
+        n_ok:
+          type: integer
+        n_fail:
+          type: integer
+        total_wall_ms:
+          type: integer
+          format: int64
+        reset_stats:
+          $ref: '#/components/schemas/TimingStats'
+        step_stats:
+          $ref: '#/components/schemas/TimingStats'
+        shutdown_stats:
+          $ref: '#/components/schemas/TimingStats'
+    RunResult:
+      type: object
+      properties:
+        run_id:
+          type: integer
+        vm_id:
+          type: string
+        ok:
+          type: boolean
+        error:
+          type: string
+        reset_ms:
+          type: integer
+          format: int64
+        step_ms:
+          type: array
+          items:
+            type: integer
+            format: int64
+        shutdown_ms:
+          type: integer
+          format: int64
+        actions:
+          type: array
+          items:
+            type: string
+        screenshots:
+          type: array
+          items:
+            type: string
+    BatchResultsResponse:
+      type: object
+      properties:
+        batch_id:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+        runs:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunResult'
+        s3_bucket:
+          type: string
+        s3_key:
+          type: string
+        s3_presigned_url:
+          type: string
+        summary:
+          $ref: '#/components/schemas/BatchSummary'
+    LabelBatchSummary:
+      type: object
+      properties:
+        batch_id:
+          type: string
+        status:
+          type: string
+        progress:
+          $ref: '#/components/schemas/BatchProgress'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        s3_key:
+          type: string
+        s3_presigned_url:
+          type: string
+    LabelStatusResponse:
+      type: object
+      properties:
+        label:
+          type: string
+        batch_count:
+          type: integer
+        all_completed:
+          type: boolean
+        progress:
+          $ref: '#/components/schemas/BatchProgress'
+        batches:
+          type: array
+          items:
+            $ref: '#/components/schemas/LabelBatchSummary'
+    LabelInProgressResponse:
+      type: object
+      properties:
+        label:
+          type: string
+        batch_count:
+          type: integer
+        all_completed:
+          type: boolean
+        message:
+          type: string
+    LabelResultsResponse:
+      type: object
+      properties:
+        label:
+          type: string
+        batch_count:
+          type: integer
+        completed_batch_count:
+          type: integer
+        all_completed:
+          type: boolean
+        batches:
+          type: array
+          items:
+            $ref: '#/components/schemas/BatchResultsResponse'
+        summary:
+          $ref: '#/components/schemas/BatchSummary'
+    CancelLabelBatchItem:
+      type: object
+      properties:
+        batch_id:
+          type: string
+        status:
+          type: string
+    CancelLabelResponse:
+      type: object
+      properties:
+        label:
+          type: string
+        batch_count:
+          type: integer
+        cancelled_count:
+          type: integer
+        already_done:
+          type: integer
+        batches:
+          type: array
+          items:
+            $ref: '#/components/schemas/CancelLabelBatchItem'
+    HealthzResponse:
+      properties:
+        status:
+          type: string
+          title: Status
+      type: object
+      required:
+      - status
+      title: HealthzResponse
+    LaneCreateRequest:
+      properties:
+        ttl_seconds:
+          type: integer
+          title: Ttl Seconds
+          default: 300
+      type: object
+      title: LaneCreateRequest
+      description: 'Body of POST /lanes.
+
+
+        ``ttl_seconds`` is the absolute time the claim is reserved for;
+
+        after that the reaper deletes it. With ``autoRenew=true`` the lane
+
+        auto-renew timer in pool-operator pushes this forward, so the
+
+        customer''s effective TTL is "as long as the lane exists".'
+    LaneDeleteResponse:
+      properties:
+        lane_id:
+          type: string
+          title: Lane Id
+      type: object
+      required:
+      - lane_id
+      title: LaneDeleteResponse
+    LaneResponse:
+      properties:
+        lane_id:
+          type: string
+          title: Lane Id
+        vm_id:
+          type: string
+          title: Vm Id
+        screenshot:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Screenshot
+      type: object
+      required:
+      - lane_id
+      - vm_id
+      title: LaneResponse
+    LaneSwapResponse:
+      properties:
+        lane_id:
+          type: string
+          title: Lane Id
+        vm_id:
+          type: string
+          title: Vm Id
+        wait_seconds:
+          type: number
+          title: Wait Seconds
+      type: object
+      required:
+      - lane_id
+      - vm_id
+      - wait_seconds
+      title: LaneSwapResponse
+    PoolListResponse:
+      properties:
+        vms:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          title: Vms
+        count:
+          type: integer
+          title: Count
+      type: object
+      required:
+      - vms
+      - count
+      title: PoolListResponse
+    ResetRequest:
+      properties:
+        task_config:
+          additionalProperties: true
+          type: object
+          title: Task Config
+        timeout:
+          type: integer
+          title: Timeout
+      type: object
+      required:
+      - task_config
+      - timeout
+      title: ResetRequest
+    ResetResponse:
+      properties:
+        screenshot:
+          type: string
+          title: Screenshot
+        problem:
+          type: string
+          title: Problem
+        vm_id:
+          type: string
+          title: Vm Id
+      type: object
+      required:
+      - screenshot
+      - problem
+      - vm_id
+      title: ResetResponse
+    ScreenshotResponse:
+      properties:
+        screenshot:
+          type: string
+          title: Screenshot
+        vm_id:
+          type: string
+          title: Vm Id
+      type: object
+      required:
+      - screenshot
+      - vm_id
+      title: ScreenshotResponse
+    ShutdownRequest:
+      properties:
+        vm_id:
+          type: string
+          title: Vm Id
+      type: object
+      required:
+      - vm_id
+      title: ShutdownRequest
+    ShutdownResponse:
+      properties:
+        vm_id:
+          type: string
+          title: Vm Id
+      type: object
+      required:
+      - vm_id
+      title: ShutdownResponse
+    StepRequest:
+      properties:
+        action:
+          type: string
+          title: Action
+        vm_id:
+          type: string
+          title: Vm Id
+        timeout:
+          type: integer
+          title: Timeout
+          default: 300
+      type: object
+      required:
+      - action
+      - vm_id
+      title: StepRequest
+    StepResponse:
+      properties:
+        screenshot:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Screenshot
+        is_finish:
+          type: boolean
+          title: Is Finish
+        reward:
+          type: number
+          title: Reward
+      type: object
+      required:
+      - screenshot
+      - is_finish
+      - reward
+      title: StepResponse
+    LaneErrorResponse:
+      properties:
+        message:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Message
+        reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reason
+        lane_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Lane Id
+      type: object
+      title: ErrorResponse

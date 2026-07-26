@@ -142,10 +142,9 @@ tool refusals, retries, and categorized failures.
 - Provision `replicas: 1`; confirm one available replica and one sandbox owner.
 - Use the immutable private `containerDisk` digest derived from the pinned QEMU
   archive.
-- Build Cua Driver from the recorded Cua source SHA and upload it with a
-  checksum to a private ephemeral artifact bucket at run start. Remove that
-  bucket in the same cleanup path as the Fleet namespace; no persistent bucket
-  is required during this credential-gated setup phase.
+- Use the image-baked, release-pinned Cua Driver archive. Verify its version,
+  archive SHA-256, and `/etc/cua-driver-osworld2-build.json` against
+  `manifest.json` before starting the daemon.
 - The `0624` image exposes OSWorld control on `5000`, Chrome CDP on `1337`,
   noVNC on `8006`, and VLC on `8080`.
 - Start Cua Driver as the desktop user with the guest display/session bus and
@@ -170,16 +169,36 @@ tasks and assets may be reported as OSWorld 2 results.
 
 ## Canonical paired run
 
-This directory retains the standalone pilot and four-mode experiment contract.
-The repeatable one-task run is split by ownership:
+`run_paired_gpt55.py` is the repeatable single-task integration pilot. It
+creates one Fleet VM through `fleet_pilot.py`, runs official asset-free
+Task070 twice with fresh task tenants and Chrome profiles, and compares:
 
-1. Cua Cloud builds the pinned OSWorld 2 image with the pinned Driver release,
-   renders the Fleet template with an immutable ECR digest, and passes guest
-   preflight.
-2. Harbor generates the selected gated task outside its checkout and runs the
-   screenshot-only control and Cua Driver treatment serially on one Fleet slot.
-3. This manifest supplies the release and observation-policy invariants used
-   to interpret the paired result.
+- control: native screenshot + accessibility tree;
+- treatment: the identical native inputs plus CDP `semantic_v2` observations
+  and typed browser actions.
 
-The standalone `fleet_pilot.py` remains useful for diagnostics, but its
-ad-hoc-pool and chunked-upload path is not the canonical benchmark deployment.
+The runner takes the new immutable image digest separately so the ignored
+Fleet config does not need to be edited or copied:
+
+```bash
+CUA_OSWORLD2_WORK_DIR=/path/to/prepared/.work \
+/path/to/prepared/.work/OSWorld-V2/.venv/bin/python run_paired_gpt55.py \
+  --config /path/to/prepared/.work/local.json \
+  --container-disk-image \
+    '<account>.dkr.ecr.<region>.amazonaws.com/osworld-v2-ubuntu-x86@sha256:<digest>' \
+  --env-file /path/to/private/.env.local \
+  --model gpt-5.5 \
+  --reasoning-effort xhigh \
+  --max-steps 24 \
+  --order control-first
+```
+
+The run refuses unpinned OSWorld code/tasks, a mutable image tag, mismatched
+Driver metadata, degraded native accessibility, inexact browser binding,
+model-snapshot drift, evaluator errors, task-reset drift, or unverified Fleet
+cleanup. Raw screenshots, observations, model responses, action outcomes,
+official scores, latency, usage, estimated cost, and provenance remain in the
+ignored `.work/results` directory.
+
+This one Task070 pair is integration evidence, not a population-level OSWorld
+V2 estimate. The 240-episode matrix above remains the publishable follow-up.

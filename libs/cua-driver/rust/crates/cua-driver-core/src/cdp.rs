@@ -326,9 +326,7 @@ mod tests {
             let id = call["id"].as_u64().unwrap();
             websocket
                 .send(Message::Text(
-                    json!({ "method": "Runtime.consoleAPICalled", "params": {} })
-                        .to_string()
-                        .into(),
+                    json!({ "method": "Runtime.consoleAPICalled", "params": {} }).to_string(),
                 ))
                 .await
                 .unwrap();
@@ -338,8 +336,7 @@ mod tests {
                         "id": id,
                         "result": { "result": { "value": "compat" } }
                     })
-                    .to_string()
-                    .into(),
+                    .to_string(),
                 ))
                 .await
                 .unwrap();

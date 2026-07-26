@@ -1,8 +1,8 @@
 //! `cua-driver update --apply` implementation.
 //!
 //! Delegates the actual install work to the canonical installer scripts:
-//! - Unix:    `libs/cua-driver/scripts/install.sh` (delegates to
-//!            `_install-rust.sh` by default)
+//! - Unix: `libs/cua-driver/scripts/install.sh` (delegates to
+//!   `_install-rust.sh` by default)
 //! - Windows: `libs/cua-driver/scripts/install.ps1`
 //!
 //! Why not reimplement the download / atomic-swap / GC in Rust? Those scripts

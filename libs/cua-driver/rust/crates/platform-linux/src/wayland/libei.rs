@@ -479,7 +479,8 @@ fn open_eis_context() -> anyhow::Result<(reis::ei::Context, PortalKeepAlive)> {
         .map_err(|e| anyhow::anyhow!("failed to build tokio runtime for ashpd: {e}"))?;
 
     let (fd, proxy, session) = rt.block_on(async {
-        let proxy = RemoteDesktop::new()
+        let connection = super::portal::fresh_session_connection().await?;
+        let proxy = RemoteDesktop::with_connection(connection)
             .await
             .map_err(|e| anyhow::anyhow!("portal RemoteDesktop proxy unreachable: {e}. Install xdg-desktop-portal-gnome / xdg-desktop-portal-kde."))?;
         let session = proxy

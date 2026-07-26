@@ -15,6 +15,7 @@ on:
       - ".release-please-manifest.json"
       - "release-please-config.json"
       - ".github/workflows/ci-test-scripts.yml"
+      - ".github/workflows/ci-contributor-attribution.yml"
       - "docs/release-backfill-runbook.md"
       - "libs/cua-driver/scripts/**"
 

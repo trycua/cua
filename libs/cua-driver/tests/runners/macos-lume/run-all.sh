@@ -3,7 +3,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../../.." && pwd)"
+# A copied runner may target a clean, exact source tree during release certification.
+REPO_ROOT="${CUA_E2E_REPO_ROOT:-$(cd "${SCRIPT_DIR}/../../../../.." && pwd)}"
 DRIVER_ROOT="${REPO_ROOT}/libs/cua-driver"
 RUST_ROOT="${DRIVER_ROOT}/rust"
 ARTIFACT_DIR="${REPO_ROOT}/artifacts/cua-driver/macos"
@@ -136,17 +137,21 @@ echo "[BUILD IDENTITY] Invalidating the macOS backend for ${SOURCE_SHA}"
 cargo clean --manifest-path "${RUST_ROOT}/Cargo.toml" -p platform-macos
 
 echo "[INSTALL] Building and installing ${SOURCE_SHA} with the golden signing identity"
-bash "${DRIVER_ROOT}/scripts/install-local.sh" --release --autostart \
+bash "${DRIVER_ROOT}/scripts/install-local.sh" \
+  --release --autostart --require-stable-signing \
   2>&1 | tee "${ARTIFACT_DIR}/install-local.log"
 
-codesign -d -r- /Applications/CuaDriver.app \
+codesign -d -r- /Applications/CuaDriverLocal.app \
   > "${ARTIFACT_DIR}/codesign-requirement.txt" 2>&1
 if ! grep -Fq "certificate leaf" "${ARTIFACT_DIR}/codesign-requirement.txt"; then
-  echo "CuaDriver.app is not signed with the golden image's stable certificate identity" >&2
+  echo "CuaDriverLocal.app is not signed with the golden image's stable certificate identity" >&2
   exit 1
 fi
 
-INSTALLED_BIN="${HOME}/.local/bin/cua-driver"
+INSTALLED_BIN="${HOME}/.local/bin/cua-driver-local"
+export CUA_E2E_INSTALLED_DRIVER_BIN="${INSTALLED_BIN}"
+# install-local.sh intentionally uses a separate namespace from release installs.
+export CUA_E2E_MACOS_DAEMON_SOCKET="${CUA_E2E_MACOS_DAEMON_SOCKET:-${HOME}/Library/Caches/cua-driver-local/cua-driver-local.sock}"
 PERMISSIONS_FILE="${ARTIFACT_DIR}/permissions.json"
 PERMISSIONS_READY=0
 for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -154,7 +159,8 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
       && jq -e '
         .accessibility == true
         and .screen_recording == true
-        and .screen_recording_capturable == true
+        and .screen_recording_capturable == null
+        and .direct_capture_status == "not_checked"
         and .source.attribution == "driver-daemon"
       ' "${PERMISSIONS_FILE}" >/dev/null; then
     PERMISSIONS_READY=1
@@ -168,9 +174,63 @@ if [[ "${PERMISSIONS_READY}" != 1 ]]; then
   exit 1
 fi
 
-echo "[AUTOMATION] Verifying the installed CuaDriver can query System Events"
+LOCAL_PLIST="${HOME}/Library/LaunchAgents/com.trycua.cua-driver-local.plist"
+RESTORE_STANDARD_DAEMON=0
+restore_standard_daemon() {
+  local command_status=$?
+  trap - EXIT
+  if [[ "${RESTORE_STANDARD_DAEMON}" != 1 ]]; then
+    exit "${command_status}"
+  fi
+  set +e
+  echo "[AUTHORIZATION] Restoring the worker's standard autostart daemon"
+  "${INSTALLED_BIN}" stop --socket "${CUA_E2E_MACOS_DAEMON_SOCKET}" >/dev/null 2>&1
+  launchctl load "${LOCAL_PLIST}"
+  local standard_ready=0
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if "${INSTALLED_BIN}" status --socket "${CUA_E2E_MACOS_DAEMON_SOCKET}" \
+        | grep -Fq "permission mode: standard"; then
+      standard_ready=1
+      break
+    fi
+    sleep 1
+  done
+  if [[ "${standard_ready}" != 1 ]]; then
+    echo "The disposable worker could not restore its standard autostart daemon" >&2
+    if [[ "${command_status}" == 0 ]]; then
+      command_status=1
+    fi
+  fi
+  set -e
+  exit "${command_status}"
+}
+trap restore_standard_daemon EXIT
+
+echo "[AUTHORIZATION] Starting the disposable worker daemon in unrestricted mode"
+launchctl unload "${LOCAL_PLIST}" 2>/dev/null || true
+"${INSTALLED_BIN}" stop --socket "${CUA_E2E_MACOS_DAEMON_SOCKET}" >/dev/null 2>&1 || true
+RESTORE_STANDARD_DAEMON=1
+open -n -g /Applications/CuaDriverLocal.app --args \
+  serve \
+  --permission-mode unrestricted \
+  --dangerously-bypass-approvals
+UNRESTRICTED_READY=0
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  if "${INSTALLED_BIN}" status --socket "${CUA_E2E_MACOS_DAEMON_SOCKET}" \
+      | grep -Fq "permission mode: unrestricted"; then
+    UNRESTRICTED_READY=1
+    break
+  fi
+  sleep 1
+done
+if [[ "${UNRESTRICTED_READY}" != 1 ]]; then
+  echo "The macOS behavior matrix could not start its unrestricted worker daemon" >&2
+  exit 1
+fi
+
+echo "[APP DISCOVERY] Verifying the installed CuaDriver can enumerate apps"
 if ! "${INSTALLED_BIN}" list_apps '{}' > "${ARTIFACT_DIR}/driver-list-apps.json"; then
-  echo "CuaDriver cannot control System Events; rebuild the seed and grant the Automation prompt" >&2
+  echo "CuaDriver cannot enumerate applications" >&2
   exit 2
 fi
 
@@ -190,6 +250,13 @@ if [[ "${RUN_STANDALONE_BROWSER}" == 1 ]]; then
     mv "${BROWSER_ARTIFACT_DIR}" "${BROWSER_ARTIFACT_ARCHIVE}/macos-standalone-browser"
     echo "Previous standalone-browser evidence preserved at ${BROWSER_ARTIFACT_ARCHIVE}/macos-standalone-browser"
   fi
+  set +e
   CUA_E2E_ARTIFACT_DIR="${BROWSER_ARTIFACT_DIR}" \
     "${REPO_ROOT}/scripts/ci/run-rust-standalone-browser-e2e.sh"
+  BROWSER_STATUS=$?
+  set -e
+
+  if [[ "${BROWSER_STATUS}" != 0 ]]; then
+    exit "${BROWSER_STATUS}"
+  fi
 fi

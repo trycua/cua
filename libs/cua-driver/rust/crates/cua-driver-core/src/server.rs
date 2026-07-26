@@ -4,9 +4,41 @@ use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 use tracing::warn;
 
-use crate::policy::{configured_policy, PolicyDecision};
+use crate::authorization::authorize_tool_call;
 use crate::protocol::{initialize_result, InitializeMetadata, Request, Response, ResponseBody};
 use crate::tool::ToolRegistry;
+
+/// Runtime contract consumed by protocol adapters such as MCP.
+///
+/// The standalone server implements this with the public Cua Driver SDK; the
+/// `ToolRegistry` implementation remains for core-level tests and embedders.
+/// Keeping the protocol dependent on this small contract prevents transports
+/// from reaching through the SDK into its private platform registry.
+#[async_trait::async_trait]
+pub trait ToolProvider: Send + Sync {
+    fn tools_list(&self) -> serde_json::Value;
+    async fn invoke_tool(
+        &self,
+        name: &str,
+        arguments: serde_json::Value,
+    ) -> Result<serde_json::Value, String>;
+}
+
+#[async_trait::async_trait]
+impl ToolProvider for ToolRegistry {
+    fn tools_list(&self) -> serde_json::Value {
+        ToolRegistry::tools_list(self)
+    }
+
+    async fn invoke_tool(
+        &self,
+        name: &str,
+        arguments: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        serde_json::to_value(self.invoke_from_trusted_adapter(name, arguments).await)
+            .map_err(|error| format!("Serialize error: {error}"))
+    }
+}
 
 /// Receives privacy-bounded observations from the stdio MCP transport.
 ///
@@ -148,6 +180,7 @@ pub enum ToolRefusalCode {
     BrowserReconnectExhausted,
     BrowserInputIncomplete,
     BrowserActionUnavailable,
+    BrowserOriginOutsideScope,
     Other,
 }
 
@@ -170,6 +203,7 @@ impl ToolRefusalCode {
             Self::BrowserReconnectExhausted => "browser_reconnect_exhausted",
             Self::BrowserInputIncomplete => "browser_input_incomplete",
             Self::BrowserActionUnavailable => "browser_action_unavailable",
+            Self::BrowserOriginOutsideScope => "browser_origin_outside_scope",
             Self::Other => "other",
         }
     }
@@ -195,6 +229,7 @@ impl ToolRefusalCode {
             Some("browser_reconnect_exhausted") => Self::BrowserReconnectExhausted,
             Some("browser_input_incomplete") => Self::BrowserInputIncomplete,
             Some("browser_action_unavailable") => Self::BrowserActionUnavailable,
+            Some("browser_origin_outside_scope") => Self::BrowserOriginOutsideScope,
             Some(_) | None => Self::Other,
         }
     }
@@ -219,6 +254,7 @@ impl From<crate::browser::refusal::BrowserRefusalCode> for ToolRefusalCode {
             BrowserRefusalCode::BrowserReconnectExhausted => Self::BrowserReconnectExhausted,
             BrowserRefusalCode::BrowserInputIncomplete => Self::BrowserInputIncomplete,
             BrowserRefusalCode::BrowserActionUnavailable => Self::BrowserActionUnavailable,
+            BrowserRefusalCode::BrowserOriginOutsideScope => Self::BrowserOriginOutsideScope,
         }
     }
 }
@@ -567,15 +603,22 @@ pub fn tool_observation_timer(
 /// and all other arguments remain outside the observer seam.
 pub fn session_tool_context(
     req: &Request,
-    registry: &ToolRegistry,
+    is_known_tool: impl Fn(&str) -> bool,
     transport: crate::session::SessionTransport,
 ) -> Option<crate::session::SessionToolContext> {
     if req.method != "tools/call" {
         return None;
     }
     let call = req.tool_call().ok()?;
-    let known_tool = call.name == "type_text_chars" || registry.get_def(&call.name).is_some();
-    crate::session::begin_tool_call(&call.name, &call.args, known_tool, transport)
+    let known_tool = call.name == "type_text_chars" || is_known_tool(&call.name);
+    let client_kind = match transport {
+        crate::session::SessionTransport::Cli => crate::session::SessionClientKind::Cli,
+        crate::session::SessionTransport::Daemon => crate::session::SessionClientKind::Direct,
+        crate::session::SessionTransport::McpStdio | crate::session::SessionTransport::McpHttp => {
+            crate::session::SessionClientKind::Mcp
+        }
+    };
+    crate::session::begin_tool_call(&call.name, &call.args, known_tool, transport, client_kind)
 }
 
 fn notify_session_started(metadata: InitializeMetadata) {
@@ -782,43 +825,25 @@ fn size_bucket(size: usize) -> OutputSizeBucket {
 pub async fn handle_request(
     req: Request,
     id: serde_json::Value,
-    registry: &Arc<ToolRegistry>,
+    provider: &dyn ToolProvider,
 ) -> Response {
     match req.method.as_str() {
         "initialize" => Response::ok(id, initialize_result()),
 
-        "tools/list" => Response::ok(id, registry.tools_list()),
+        "tools/list" => Response::ok(id, provider.tools_list()),
 
         "tools/call" => match req.tool_call() {
             Err(e) => Response::error(id, -32602, format!("Invalid params: {e}")),
             Ok(mut call) => {
                 crate::tool_args::sanitize_reserved_args(&mut call.args);
-                match configured_policy() {
-                    Ok(Some(policy)) => match policy.evaluate(&call.name, &call.args) {
-                        PolicyDecision::Allow => {}
-                        PolicyDecision::Deny(reason) => {
-                            return Response::error(
-                                id,
-                                -32603,
-                                format!("Permission denied: {reason}"),
-                            );
-                        }
-                        PolicyDecision::Error(message) => {
-                            return Response::error(
-                                id,
-                                -32603,
-                                format!("Policy evaluation error: {message}"),
-                            );
-                        }
-                    },
-                    Ok(None) => {}
-                    Err(message) => {
-                        return Response::error(
-                            id,
-                            -32603,
-                            format!("Policy loading error: {message}"),
-                        );
-                    }
+                if let Err(error) = authorize_tool_call(&call.name, &call.args) {
+                    return Response::ok(
+                        id,
+                        tool_error_result(
+                            error.to_string(),
+                            serde_json::json!({"code": "permission_denied"}),
+                        ),
+                    );
                 }
 
                 let public_session = call
@@ -838,7 +863,6 @@ pub async fn handle_request(
                         "_transport_session_id".to_owned(),
                         serde_json::Value::String(session.clone()),
                     );
-                    crate::session::touch_session(&session);
                 }
                 if call.name == "browser_prepare" {
                     if let Some(arguments) = call.args.as_object_mut() {
@@ -857,10 +881,12 @@ pub async fn handle_request(
                     }
                 }
 
-                let result = registry.invoke(&call.name, call.args).await;
-                match serde_json::to_value(result) {
-                    Ok(v) => Response::ok(id, v),
-                    Err(e) => Response::error(id, -32603, format!("Serialize error: {e}")),
+                match provider.invoke_tool(&call.name, call.args).await {
+                    Ok(result) => Response::ok(id, result),
+                    Err(error) => Response::ok(
+                        id,
+                        tool_error_result(error, serde_json::json!({"exit_code": 1})),
+                    ),
                 }
             }
         },
@@ -872,12 +898,72 @@ pub async fn handle_request(
     }
 }
 
+fn tool_error_result(message: String, structured: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "content": [{"type": "text", "text": message}],
+        "isError": true,
+        "structuredContent": structured,
+    })
+}
+
 #[cfg(test)]
 mod observation_tests {
     use super::*;
+    use std::sync::Mutex;
+
+    struct CapturingProvider {
+        arguments: Mutex<Option<serde_json::Value>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ToolProvider for CapturingProvider {
+        fn tools_list(&self) -> serde_json::Value {
+            serde_json::json!({"tools": []})
+        }
+
+        async fn invoke_tool(
+            &self,
+            _name: &str,
+            arguments: serde_json::Value,
+        ) -> Result<serde_json::Value, String> {
+            self.arguments.lock().unwrap().replace(arguments);
+            Ok(serde_json::json!({"content": [], "isError": false}))
+        }
+    }
 
     fn timer(known: bool, valid: bool, path: StdioExecutionPath) -> ToolObservationTimer {
         ToolObservationTimer::start("click".to_owned(), known, valid, path)
+    }
+
+    #[tokio::test]
+    async fn mcp_boundary_replaces_forged_reserved_fields_with_host_evidence() {
+        let provider = CapturingProvider {
+            arguments: Mutex::new(None),
+        };
+        let request: Request = serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "browser_download",
+                "arguments": {
+                    "session": "public",
+                    "_session_id": "forged-owner",
+                    "_transport_session_id": "forged-transport",
+                    "_cua_browser_download_mcp_host_approved": false,
+                    "_protected_process_fingerprint": {"pid": 1}
+                }
+            }
+        }))
+        .unwrap();
+        let response = handle_request(request, serde_json::json!(1), &provider).await;
+        assert!(matches!(response.body, ResponseBody::Result { .. }));
+
+        let arguments = provider.arguments.lock().unwrap().clone().unwrap();
+        assert_eq!(arguments["_session_id"], "public");
+        assert_eq!(arguments["_transport_session_id"], "public");
+        assert_eq!(arguments["_cua_browser_download_mcp_host_approved"], true);
+        assert!(arguments.get("_protected_process_fingerprint").is_none());
     }
 
     #[test]

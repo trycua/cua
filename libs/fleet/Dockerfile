@@ -15,13 +15,8 @@ RUN pnpm install --frozen-lockfile --ignore-workspace
 COPY . .
 RUN pnpm build
 
-# Runtime stage — nginx serves static files and proxies /api to cyclops-ctrl.
+# Runtime stage — nginx serves static files and proxies /api to the backend.
 FROM nginx:1.27-alpine AS runtime
-
-# In-cluster DNS for the cyclops-ctrl Service. Override at deploy-time
-# with the CYCLOPS_CTRL env var if cyclops-cs runs outside the cyclops
-# namespace or against a different controller.
-ENV CYCLOPS_CTRL=http://cyclops-ctrl.cyclops:8080
 
 # In-cluster DNS for the cyclops-cs-backend Service (sibling Deployment
 # in the same namespace). Override if the backend is reached at a

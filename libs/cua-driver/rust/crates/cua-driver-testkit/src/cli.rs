@@ -26,6 +26,13 @@ pub struct CliDriver {
 
 impl CliDriver {
     pub fn new() -> Self {
+        Self::with_daemon_env(&[])
+    }
+
+    /// Start a test-owned daemon with explicit immutable startup settings.
+    /// This is used for permission-mode and policy tests; tool-call child
+    /// processes remain ordinary clients and do not receive these values.
+    pub fn with_daemon_env(env: &[(&str, &str)]) -> Self {
         let bin = driver_binary();
         if !bin.exists() {
             return CliDriver {
@@ -35,7 +42,7 @@ impl CliDriver {
             };
         }
         let mut reaper = ChildReaper::new();
-        let daemon = TestDaemon::spawn(&bin, &mut reaper, &[]);
+        let daemon = TestDaemon::spawn(&bin, &mut reaper, env);
         CliDriver {
             bin,
             _reaper: Some(reaper),
@@ -46,6 +53,10 @@ impl CliDriver {
     /// Whether the driver binary exists (caller should skip the test if not).
     pub fn available(&self) -> bool {
         self.bin.exists() && self.daemon.is_some()
+    }
+
+    pub fn daemon_socket(&self) -> Option<&str> {
+        self.daemon.as_ref().map(|daemon| daemon.socket.as_str())
     }
 }
 
@@ -93,10 +104,16 @@ impl Driver for CliDriver {
         };
 
         let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
         // The CLI prints structuredContent (pretty JSON) or plain text — parse
         // when it's JSON, else keep it as text.
         let structured = serde_json::from_str::<Value>(&stdout).unwrap_or(Value::Null);
         let is_error = !out.status.success();
-        ToolResponse::new(stdout, structured, is_error, Value::Null)
+        let text = if stdout.is_empty() && is_error {
+            stderr
+        } else {
+            stdout
+        };
+        ToolResponse::new(text, structured, is_error, Value::Null)
     }
 }

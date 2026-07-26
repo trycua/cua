@@ -1,4 +1,0 @@
-[toolchain]
-channel = "1.97.0"
-targets = ["wasm32-wasip2"]
-profile = "minimal"

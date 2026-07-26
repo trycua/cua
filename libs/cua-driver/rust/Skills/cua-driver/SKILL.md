@@ -1,7 +1,7 @@
 ---
 name: cua-driver
 description: Drive a native GUI app (macOS, Windows, Linux) via the cua-driver CLI (default) or MCP server; snapshot its accessibility tree, click/type/scroll by element_index or pixel coordinates, and verify via re-snapshot without bringing the target to the foreground. Use when the user asks you to operate, drive, automate, or perform a GUI task in a real application on the host.
-version: 0.9.1 # x-release-please-version
+version: 0.12.6 # x-release-please-version
 metadata:
   openclaw:
     requires:
@@ -23,6 +23,9 @@ metadata:
       - name: CUA_DRIVER_RS_MCP_HTTP_PORT
         required: false
         description: Optional port for the local MCP HTTP endpoint.
+      - name: CUA_DRIVER_RS_MCP_HTTP_TOKEN
+        required: false
+        description: Required host-generated bearer token when the local MCP HTTP endpoint is enabled.
     homepage: https://cua.ai/docs/cua-driver
 ---
 
@@ -128,11 +131,12 @@ Tool names are `snake_case`, management subcommands are
 `kebab-case` — no ambiguity. Tools invoked as `cua-driver
 <tool-name> '<JSON-args>'`. Management subcommands:
 
-- `cua-driver serve` — start the persistent daemon (**required for every
-  tool call**). CLI and MCP processes are adapters; the daemon owns policy,
-  platform identity, state, and the per-pid element cache.
-  macOS users: see `MACOS.md` for the LaunchServices-routed launch
-  form.
+- `cua-driver serve` — start an explicit persistent service when short-lived
+  clients must share runtime state or a platform identity. Bare MCP owns its
+  runtime directly on Windows/Linux and uses the signed app service on macOS;
+  `cua-driver mcp --socket <endpoint>` selects a service explicitly.
+  One-shot CLI tool calls still use the service path. macOS users: see
+  `MACOS.md` for the LaunchServices-routed launch form.
 - `cua-driver stop` / `status`
 - `cua-driver list-tools`, `describe <tool>`
 - `cua-driver recording start|stop|status` — see `RECORDING.md`
@@ -186,8 +190,12 @@ recording, do a pixel click (`click({pid,x,y})`) or a `move_cursor`
 first to put the cursor on-screen; subsequent AX actions then glide the
 full path normally.
 
-Requires the daemon process's UI runloop, which `cua-driver serve`
-bootstraps. One-shot CLI adapters do not own an overlay themselves.
+Requires a suitable UI event loop. Service and private-worker runtimes provide
+one. On macOS, a same-process SDK runtime or `cua-driver mcp --direct` without
+a certified host main-thread adapter returns a structured
+`facility_unavailable` result for overlay operations; do not treat that as a
+successful cursor move. One-shot CLI adapters do not own an overlay
+themselves.
 
 ## The core invariant — snapshot before AND after every action
 
@@ -501,8 +509,10 @@ connection have their tool calls **serialized** by the transport — they take
 turns, not run in parallel. That's not a correctness problem (session + window
 isolation means they can't collide), just a throughput one. For genuinely
 parallel agents, give each its **own connection**: separate `cua-driver mcp`
-processes, or point each agent's MCP client at the daemon's HTTP endpoint
-(`CUA_DRIVER_RS_MCP_HTTP_PORT` → `POST http://127.0.0.1:<port>/mcp`). The daemon
+processes, or point each agent's MCP client at the daemon's HTTP endpoint.
+Set `CUA_DRIVER_RS_MCP_HTTP_PORT` and a host-generated
+`CUA_DRIVER_RS_MCP_HTTP_TOKEN` of at least 32 characters, then send
+`Authorization: Bearer <token>` to `POST http://127.0.0.1:<port>/mcp`. The daemon
 serves connections concurrently; per-connection ordering keeps each agent's own
 sequence (e.g. `3 → + → 1 → =`) correct.
 
@@ -685,7 +695,7 @@ schema-rejected.
 
 Genuinely platform-specific params stay OUT of the shared contract by
 design (launch-app identifiers, the Windows-only `debug_window_info`, the
-macOS-only `check_permissions.prompt`). The per-OS files list the
+macOS-only status-only `check_permissions.prompt`). The per-OS files list the
 residuals that matter when you drive on that platform.
 
 ## Pixel-coordinate clicks

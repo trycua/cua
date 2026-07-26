@@ -602,9 +602,8 @@ pub fn paint_cursor(
     let bloom_outer = tiny_skia::Color::from_rgba8(or_, og, ob, (26.0 * alpha_scale) as u8);
     let bloom_zero = tiny_skia::Color::from_rgba8(or_, og, ob, 0);
 
-    let bloom_paint = {
-        let mut p = tiny_skia::Paint::default();
-        p.shader = tiny_skia::RadialGradient::new(
+    let bloom_paint = tiny_skia::Paint {
+        shader: tiny_skia::RadialGradient::new(
             tiny_skia::Point::from_xy(px as f32, py as f32),
             tiny_skia::Point::from_xy(px as f32, py as f32), // focal = center
             bloom_r,
@@ -616,9 +615,9 @@ pub fn paint_cursor(
             tiny_skia::SpreadMode::Pad,
             tiny_skia::Transform::identity(),
         )
-        .unwrap_or(tiny_skia::Shader::SolidColor(bloom_inner));
-        p.anti_alias = true;
-        p
+        .unwrap_or(tiny_skia::Shader::SolidColor(bloom_inner)),
+        anti_alias: true,
+        ..Default::default()
     };
 
     if let Some(r) = tiny_skia::Rect::from_xywh(
@@ -633,17 +632,21 @@ pub fn paint_cursor(
     if core.pressed {
         let [pr, pg, pb, _] = core.palette.cursor_mid;
         let ring_color = tiny_skia::Color::from_rgba8(pr, pg, pb, (210.0 * alpha_scale) as u8);
-        let mut ring_paint = tiny_skia::Paint::default();
-        ring_paint.shader = tiny_skia::Shader::SolidColor(ring_color);
-        ring_paint.anti_alias = true;
+        let ring_paint = tiny_skia::Paint {
+            shader: tiny_skia::Shader::SolidColor(ring_color),
+            anti_alias: true,
+            ..Default::default()
+        };
         let stroke = tiny_skia::Stroke {
             width: 3.0 * sf,
             ..Default::default()
         };
         let core_fill = tiny_skia::Color::from_rgba8(pr, pg, pb, (110.0 * alpha_scale) as u8);
-        let mut fill_paint = tiny_skia::Paint::default();
-        fill_paint.shader = tiny_skia::Shader::SolidColor(core_fill);
-        fill_paint.anti_alias = true;
+        let fill_paint = tiny_skia::Paint {
+            shader: tiny_skia::Shader::SolidColor(core_fill),
+            anti_alias: true,
+            ..Default::default()
+        };
         let mut pb = tiny_skia::PathBuilder::new();
         pb.push_circle(px as f32, py as f32, 6.5 * sf);
         if let Some(path) = pb.finish() {
@@ -686,16 +689,22 @@ pub fn paint_cursor(
             (fh * s) as f32,
         ) {
             // Faint fill
-            let mut fill_paint = tiny_skia::Paint::default();
-            fill_paint.shader =
-                tiny_skia::Shader::SolidColor(tiny_skia::Color::from_rgba8(cr, cg, cb, fill_a));
+            let fill_paint = tiny_skia::Paint {
+                shader: tiny_skia::Shader::SolidColor(tiny_skia::Color::from_rgba8(
+                    cr, cg, cb, fill_a,
+                )),
+                ..Default::default()
+            };
             pm.fill_rect(rect, &fill_paint, tiny_skia::Transform::identity(), None);
 
             // Border stroke (2px glow)
-            let mut border_paint = tiny_skia::Paint::default();
-            border_paint.shader =
-                tiny_skia::Shader::SolidColor(tiny_skia::Color::from_rgba8(cr, cg, cb, border_a));
-            border_paint.anti_alias = true;
+            let border_paint = tiny_skia::Paint {
+                shader: tiny_skia::Shader::SolidColor(tiny_skia::Color::from_rgba8(
+                    cr, cg, cb, border_a,
+                )),
+                anti_alias: true,
+                ..Default::default()
+            };
             let stroke = tiny_skia::Stroke {
                 width: 2.5 * sf,
                 ..Default::default()
@@ -722,9 +731,11 @@ pub fn paint_cursor(
         let alpha = ((1.0 - t) * 180.0 * alpha_scale as f64) as u8;
         let [cr, cg, cb, _] = core.palette.cursor_mid;
         let ring_color = tiny_skia::Color::from_rgba8(cr, cg, cb, alpha);
-        let mut ring_paint = tiny_skia::Paint::default();
-        ring_paint.shader = tiny_skia::Shader::SolidColor(ring_color);
-        ring_paint.anti_alias = true;
+        let ring_paint = tiny_skia::Paint {
+            shader: tiny_skia::Shader::SolidColor(ring_color),
+            anti_alias: true,
+            ..Default::default()
+        };
         let stroke = tiny_skia::Stroke {
             width: 2.0 * sf,
             ..Default::default()
@@ -810,8 +821,10 @@ pub fn paint_cursor(
         .post_scale(scale, scale)
         .post_rotate(rotation_deg)
         .post_translate(px as f32, py as f32);
-        let mut paint = tiny_skia::PixmapPaint::default();
-        paint.opacity = alpha_scale;
+        let paint = tiny_skia::PixmapPaint {
+            opacity: alpha_scale,
+            ..Default::default()
+        };
         pm.draw_pixmap(0, 0, pix, &paint, transform, None);
     }
 }
@@ -879,9 +892,8 @@ pub fn draw_default_arrow(
     };
 
     let a = (255.0 * alpha_scale) as u8;
-    let fill_paint = {
-        let mut p = tiny_skia::Paint::default();
-        p.shader = tiny_skia::LinearGradient::new(
+    let fill_paint = tiny_skia::Paint {
+        shader: tiny_skia::LinearGradient::new(
             tiny_skia::Point::from_xy(tip.0, tip.1),
             tiny_skia::Point::from_xy(tail.0, tail.1),
             vec![
@@ -894,9 +906,9 @@ pub fn draw_default_arrow(
         )
         .unwrap_or(tiny_skia::Shader::SolidColor(tiny_skia::Color::from_rgba8(
             r1, g1, b1, a,
-        )));
-        p.anti_alias = true;
-        p
+        ))),
+        anti_alias: true,
+        ..Default::default()
     };
 
     pm.fill_path(
@@ -908,10 +920,11 @@ pub fn draw_default_arrow(
     );
 
     // White outline (faded with alpha_scale).
-    let mut stroke_paint = tiny_skia::Paint::default();
-    stroke_paint.shader =
-        tiny_skia::Shader::SolidColor(tiny_skia::Color::from_rgba8(255, 255, 255, a));
-    stroke_paint.anti_alias = true;
+    let stroke_paint = tiny_skia::Paint {
+        shader: tiny_skia::Shader::SolidColor(tiny_skia::Color::from_rgba8(255, 255, 255, a)),
+        anti_alias: true,
+        ..Default::default()
+    };
     let stroke = tiny_skia::Stroke {
         width: 1.5,
         ..Default::default()

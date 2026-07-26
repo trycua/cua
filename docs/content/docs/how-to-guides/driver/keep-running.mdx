@@ -6,7 +6,12 @@ description: Register Cua Driver as a persistent daemon that starts automaticall
 import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Cua Driver requires a daemon for tool execution. The daemon owns the per-pid element cache, permission policy, recording and configuration state, macOS TCC attribution, and the Windows interactive-session context. MCP and one-shot CLI calls fail if they cannot reach it.
+External MCP clients and one-shot CLI calls require a daemon. The daemon owns
+the per-pid element cache, permission policy, recording and configuration
+state, macOS TCC attribution, and the Windows interactive-session context. Keep
+it running when you use those interfaces. Applications that import
+`CuaDriver.create()` execute through the same-process SDK and do not need this
+setup.
 
 <Tabs items={['macOS', 'Windows', 'Linux']}>
   <Tab value="macOS">
@@ -18,6 +23,11 @@ If you have a checkout of the [cua repo](https://github.com/trycua/cua), the hel
 ```bash
 bash libs/cua-driver/scripts/install-local.sh --autostart
 ```
+
+Local installers embed the checkout's full Git commit in
+`get_config.source_sha`. A build from a modified or untracked source tree uses
+`<commit>-dirty` so it cannot be mistaken for an exact commit build. Source
+snapshots without `.git` must provide `CUA_DRIVER_SOURCE_SHA` explicitly.
 
 If you installed via the one-line installer and have no checkout, create the plist yourself. Save this file at `~/Library/LaunchAgents/com.trycua.cua-driver.plist`:
 

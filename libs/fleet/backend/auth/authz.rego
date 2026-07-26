@@ -91,21 +91,6 @@ allow {
     is_interactive_client
 }
 
-# /api/pool-templates — per-user saved pool configs (list, create, get,
-# delete). Exact interactive clients only; the backend scopes operations to the caller's
-# sub, so a user can only ever read or mutate their own templates.
-allow {
-    input.route == "/api/pool-templates"
-    input.user.sub != ""
-    is_interactive_client
-}
-
-allow {
-    input.route == "/api/pool-templates/{name}"
-    input.user.sub != ""
-    is_interactive_client
-}
-
 # /api/k8s/{path...} — kubectl-proxy passthrough.
 #
 # Any exact interactive client may read customer-facing resources (their pools, the pods
@@ -304,20 +289,6 @@ allow {
 
 allow {
     input.route == "/api/namespaces/{name}"
-    input.user.sub != ""
-    is_user_key_client
-}
-
-# Pool templates — user API keys manage their owner's templates, same as
-# SPA users (the backend scopes every call to the resolved sub).
-allow {
-    input.route == "/api/pool-templates"
-    input.user.sub != ""
-    is_user_key_client
-}
-
-allow {
-    input.route == "/api/pool-templates/{name}"
     input.user.sub != ""
     is_user_key_client
 }

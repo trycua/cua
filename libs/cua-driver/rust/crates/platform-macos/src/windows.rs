@@ -250,7 +250,7 @@ pub fn resolve_main_window_id(pid: i32) -> anyhow::Result<u32> {
     }
     let mut on_screen: Vec<&&WindowInfo> = pid_windows.iter().filter(|w| w.is_on_screen).collect();
     if !on_screen.is_empty() {
-        on_screen.sort_by(|a, b| b.z_index.cmp(&a.z_index));
+        on_screen.sort_by_key(|window| std::cmp::Reverse(window.z_index));
         return Ok(on_screen[0].window_id);
     }
     let largest = pid_windows.iter().max_by(|a, b| {

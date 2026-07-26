@@ -31,6 +31,28 @@ Use one explicit `session` value throughout. Never substitute a raw CDP
 target id, tab ordinal, URL match, or remembered ref for a capability returned
 by `get_browser_state`.
 
+### Browser recording feedback
+
+On macOS and Windows, ref- and coordinate-targeted browser mutations drive the
+same session-scoped agent cursor overlay as native window actions.
+`browser_click` and click-like pointer actions glide to the live page target
+and pulse; `browser_type` glides to and pulses the editable target; hover and
+scroll glide without a click pulse. This feedback is visual-only: it never
+moves the user's physical pointer, changes focus or z-order, or substitutes for
+CDP delivery.
+
+The driver rechecks the live page visibility over CDP before every visual
+action. An unselected tab remains fully addressable, but its session cursor is
+hidden. When the selected tab acts, its cursor becomes the only browser-session
+cursor shown for that native window. Use one declared session per tab when a
+recording should give tabs stable, distinct cursor colors.
+
+The overlay is emitted only when the page point can be mapped safely into the
+exact bound native window. In particular, unprovable child-frame coordinates
+are skipped rather than drawn in the wrong place. `browser_navigate` has no
+page target, so it intentionally does not invent cursor motion; use a textual
+recording overlay to explain navigation in a public demo.
+
 ## 1. Select an exact native window
 
 Start or discover the app with the native tools and select one returned
@@ -109,6 +131,14 @@ window, toggle its uniquely labelled per-instance checkbox, prove that the
 loopback endpoint belongs to the approved process, and close the temporary
 tab. The result reports all visible `side_effects`. Missing, localized, or
 ambiguous controls are refused; never click a similar-looking prompt yourself.
+On current macOS Chrome, the internal page may omit its web AX subtree. The
+driver's bounded fallback is limited to a temporary tab it created and
+navigated. It requires the committed fixed URL, expected selected-tab title,
+no active omnibox edit, one unique checkbox-shaped control in the setup-page
+region, an unchanged target window, PID-routed input, and a verified state
+transition on that same control. Unsupported appearance, scale, zoom,
+window-size, or toolbar geometry refuses without a click; the fallback does not
+authorize generic pixel interaction.
 
 The grant lives only in the daemon, is scoped and expiring, and is discarded
 when the daemon restarts. A bounded reconnect can reuse it only while the same
@@ -136,6 +166,30 @@ cua-driver get_browser_state \
   '{"target_id":"<target>","tab_id":"<tab>",
     "session":"browser-run-1","snapshot_format":"semantic_v2"}'
 ```
+
+Set `include_screenshot:true` when the visual state matters, including when the
+exact tab is open but unselected:
+
+```bash
+cua-driver get_browser_state \
+  '{"target_id":"<target>","tab_id":"<tab>",
+    "session":"browser-run-1","snapshot_format":"semantic_v2",
+    "include_screenshot":true}'
+```
+
+The result includes a PNG image part, the flat compatibility fields
+`screenshot_width`, `screenshot_height`, and `screenshot_mime_type`, plus a
+structured `screenshot` object. That object identifies the coordinate space as
+`viewport_css_px` and reports `viewport_css_width`, `viewport_css_height`,
+`pixel_to_css_scale_x`, and `pixel_to_css_scale_y`. When grounding a coordinate
+action from the PNG, convert image pixels to the browser action space with
+`css_x = png_x * pixel_to_css_scale_x` and
+`css_y = png_y * pixel_to_css_scale_y`; do not assume device scale factor 1.
+
+Cua Driver captures the exact tab viewport through CDP. It does not select the
+tab or foreground the browser window. Capture is opt-in because authenticated
+pages may contain sensitive information, and a requested capture refuses when
+the driver cannot return valid viewport metrics and a valid bounded PNG.
 
 `semantic_v2` composes the page accessibility tree, pierced DOM, layout, and
 viewport state. Read the compact `outline` for page content, use `refs` only

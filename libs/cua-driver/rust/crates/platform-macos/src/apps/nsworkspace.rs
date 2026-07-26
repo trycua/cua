@@ -114,6 +114,9 @@ pub fn open_application(
     let config = build_configuration(cfg);
 
     let (tx, rx) = std::sync::mpsc::sync_channel::<CompletionResult>(1);
+    // NSWorkspace may invoke its completion on another thread; retain atomic
+    // callback ownership even though objc2 does not mark the retained app Send.
+    #[allow(clippy::arc_with_non_send_sync)]
     let tx = Arc::new(std::sync::Mutex::new(Some(tx)));
 
     let block = make_completion_block(tx);
@@ -152,6 +155,9 @@ pub fn open_urls_with_application(
     let ns_array = NSArray::from_vec(ns_urls);
 
     let (tx, rx) = std::sync::mpsc::sync_channel::<CompletionResult>(1);
+    // NSWorkspace may invoke its completion on another thread; retain atomic
+    // callback ownership even though objc2 does not mark the retained app Send.
+    #[allow(clippy::arc_with_non_send_sync)]
     let tx = Arc::new(std::sync::Mutex::new(Some(tx)));
 
     let block = make_completion_block(tx);
@@ -307,7 +313,7 @@ fn make_completion_block(
                 }
             };
             // Take the sender out so the channel closes after one send.
-            let sender = tx.lock().ok().and_then(|mut g| g.take());
+            let sender = tx.lock().ok().and_then(|mut guard| guard.take());
             if let Some(s) = sender {
                 let _ = s.send(result);
             }

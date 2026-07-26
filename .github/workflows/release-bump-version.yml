@@ -32,6 +32,7 @@ on:
           - npm/cuabot
           - docker/cuabot
           - docker/kasm
+          - docker/xfce-cua
           - docker/xfce
           - docker/lumier
           - docker/qemu-android
@@ -64,7 +65,7 @@ jobs:
           TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         run: |
           case "$ACTOR:$TRIGGERING_ACTOR" in
-            "f-trycua:f-trycua"|"cua-release-bot[bot]:cua-release-bot[bot]")
+            "f-trycua:f-trycua"|"r33drichards:r33drichards"|"cua-release-bot[bot]:cua-release-bot[bot]")
               echo "Version bump authorized for $ACTOR."
               ;;
             *)
@@ -178,6 +179,10 @@ jobs:
               ;;
             "docker/kasm")
               echo "directory=libs/kasm" >> $GITHUB_OUTPUT
+              echo "type=docker" >> $GITHUB_OUTPUT
+              ;;
+            "docker/xfce-cua")
+              echo "directory=libs/xfce-cua" >> $GITHUB_OUTPUT
               echo "type=docker" >> $GITHUB_OUTPUT
               ;;
             "docker/xfce")

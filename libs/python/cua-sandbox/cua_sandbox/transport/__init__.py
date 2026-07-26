@@ -1,6 +1,7 @@
 from cua_sandbox.transport.adb import ADBTransport
 from cua_sandbox.transport.base import Transport
 from cua_sandbox.transport.cloud import CloudTransport
+from cua_sandbox.transport.fleet import FleetTransport
 from cua_sandbox.transport.http import HTTPTransport
 from cua_sandbox.transport.local import LocalTransport
 from cua_sandbox.transport.osworld import OSWorldTransport
@@ -16,6 +17,7 @@ __all__ = [
     "WebSocketTransport",
     "HTTPTransport",
     "CloudTransport",
+    "FleetTransport",
     "QMPTransport",
     "OSWorldTransport",
     "ADBTransport",

@@ -62,6 +62,21 @@ impl McpDriver {
         args: &[&str],
         recording_label: Option<&str>,
     ) -> Option<Self> {
+        let mut daemon_env = env.to_vec();
+        let e2e_unrestricted = std::env::var_os("CUA_E2E_UNRESTRICTED_GUI").is_some();
+        let caller_selected_mode = daemon_env
+            .iter()
+            .any(|(name, _)| *name == "CUA_DRIVER_PERMISSION_MODE");
+        if args.is_empty() && e2e_unrestricted && !caller_selected_mode {
+            // Canonical GUI behavior runners execute in disposable desktops
+            // and opt into this testkit-only switch. Translate it at the
+            // daemon boundary so unrelated SDK/runtime tests in the same
+            // runner do not inherit product authorization variables.
+            daemon_env.extend([
+                ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
+                ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
+            ]);
+        }
         let bin = driver_binary();
         if !bin.exists() {
             eprintln!("[testkit] driver binary not built at {bin:?} — skipping");
@@ -72,7 +87,7 @@ impl McpDriver {
         let daemon = if args.is_empty() {
             // Environment that changes tool behavior belongs on the daemon,
             // because the stdio process is now only a transport proxy.
-            Some(TestDaemon::spawn(&bin, &mut reaper, env)?)
+            Some(TestDaemon::spawn(&bin, &mut reaper, &daemon_env)?)
         } else {
             None
         };
@@ -95,7 +110,7 @@ impl McpDriver {
         } else {
             cmd.args(args);
         }
-        for (key, value) in env {
+        for (key, value) in &daemon_env {
             cmd.env(key, value);
         }
         let mut driver = spawn_in_job(&mut cmd)

@@ -39,7 +39,7 @@ pub const TERMINAL_BUNDLE_IDS: &[&str] = &[
 /// from [`TERMINAL_BUNDLE_IDS`]. Case-sensitive, exact match — bundle
 /// ids are reverse-DNS and case-significant per Apple's convention.
 pub fn is_terminal_bundle_id(bundle_id: &str) -> bool {
-    TERMINAL_BUNDLE_IDS.iter().any(|b| *b == bundle_id)
+    TERMINAL_BUNDLE_IDS.contains(&bundle_id)
 }
 
 /// Returns `true` when `pid` belongs to a known terminal emulator.

@@ -45,7 +45,7 @@ let
 in
 pp.buildPythonPackage {
   pname = "cua-train";
-  version = "0.1.0";
+  version = "0.1.1";
   pyproject = true;
 
   src = builtins.path {

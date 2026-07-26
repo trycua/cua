@@ -452,14 +452,12 @@ fn set_select_via_js(
 
     let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
 
-    if raw.starts_with("SET:") {
-        let dom_val = &raw[4..];
+    if let Some(dom_val) = raw.strip_prefix("SET:") {
         Ok(format!(
             "✅ Set select [{element_index}] '{element_title}' to '{value}' via \
              Safari JavaScript (DOM value: \"{dom_val}\")."
         ))
-    } else if raw.starts_with("NOTFOUND:") {
-        let available = &raw[9..];
+    } else if let Some(available) = raw.strip_prefix("NOTFOUND:") {
         anyhow::bail!(
             "No <option> matching '{value}' found in any <select>. \
              Available (text|value): {available}"

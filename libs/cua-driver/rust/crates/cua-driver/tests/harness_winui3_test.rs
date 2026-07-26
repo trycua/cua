@@ -6,12 +6,10 @@
 //! shows up in both suites.
 //!
 //! WinUI3-specific surfaces under test:
-//!   - CommandBarFlyout : popup hosted in same HWND, rendered via XAML
-//!                        Islands / DComp. Tests UIA descent into the
-//!                        flyout subtree.
-//!   - XAML Popup       : Popup primitive (NOT a separate HWND).
-//!                        Regression guard that the agent doesn't lose
-//!                        track of in-window flyouts.
+//! - CommandBarFlyout: popup hosted in same HWND, rendered via XAML Islands /
+//!   DComp. Tests UIA descent into the flyout subtree.
+//! - XAML Popup: Popup primitive (NOT a separate HWND). Regression guard that
+//!   the agent doesn't lose track of in-window flyouts.
 //!
 //! Run via:
 //!   ..\tests\runners\windows-sandbox\run-tests-in-sandbox.ps1 harness_winui3

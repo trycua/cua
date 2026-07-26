@@ -89,6 +89,42 @@ pub struct AXNode {
     /// Screen-coordinate bounding rect `[x, y, width, height]` captured at
     /// walk time. `None` when AX didn't report a usable position+size.
     pub frame: Option<[f64; 4]>,
+    /// AXValue coerced to a string for ALL CF types (CFNumber → "8",
+    /// CFBoolean → "1"/"0", CFString as-is). Kept separate from `value`
+    /// (string-only) so tree_markdown and the has_content gate — both of
+    /// which read `value` — stay byte-identical; only the structured
+    /// `elements` array consumes this.
+    pub value_state: Option<String>,
+    /// AXValueDescription — human-readable value form (e.g. "8 dB").
+    pub value_description: Option<String>,
+    /// AXMinValue / AXMaxValue for range controls (sliders, steppers).
+    pub min_value: Option<f64>,
+    pub max_value: Option<f64>,
+    /// AXEnabled. `None` when the app doesn't report the attribute.
+    pub enabled: Option<bool>,
+    /// AXSelected. `None` when the app doesn't report the attribute.
+    pub selected: Option<bool>,
+}
+
+#[derive(Default)]
+struct ControlState {
+    value_state: Option<String>,
+    value_description: Option<String>,
+    min_value: Option<f64>,
+    max_value: Option<f64>,
+    enabled: Option<bool>,
+    selected: Option<bool>,
+}
+
+fn read_control_state_if_actionable<F>(is_actionable: bool, read: F) -> ControlState
+where
+    F: FnOnce() -> ControlState,
+{
+    if is_actionable {
+        read()
+    } else {
+        ControlState::default()
+    }
 }
 
 pub struct TreeWalkResult {
@@ -216,7 +252,7 @@ pub fn walk_tree_bounded(
                 })
                 .collect()
         } else {
-            top_level.iter().copied().collect()
+            top_level.to_vec()
         };
 
         // Walk each top-level child at depth 0.
@@ -327,7 +363,12 @@ unsafe fn walk_element(
     // (digit buttons). Merging them would produce "2" (quoted) instead of (2)
     // (parens), breaking _find_calc_button which searches for "(2)".
     let title = copy_string_attr(element, "AXTitle");
-    let value = copy_string_attr(element, "AXValue");
+    // Read AXValue once with enough type information to preserve the existing
+    // string-only markdown while also exposing numeric/boolean control state.
+    let copied_value = copy_stringish_attr(element, "AXValue");
+    let value = copied_value
+        .as_ref()
+        .and_then(|copied| copied.string_value.clone());
     // AXPlaceholderValue as fallback for empty text fields.
     let value = value
         .filter(|v| !v.trim().is_empty())
@@ -367,6 +408,23 @@ unsafe fn walk_element(
 
     let element_ptr = element as usize;
     let frame = element_screen_rect(element);
+    // Structured `elements` only contains actionable nodes. Keep all new AX
+    // round-trips behind that same gate so display-only rows pay no cost.
+    let control_state = read_control_state_if_actionable(is_actionable, || ControlState {
+        value_state: copied_value
+            .map(|copied| copied.state_value)
+            .filter(|v| !v.trim().is_empty())
+            .or_else(|| value.clone())
+            .map(|v| v.trim().to_owned())
+            .filter(|v| !v.is_empty()),
+        value_description: copy_string_attr(element, "AXValueDescription")
+            .map(|v| v.trim().to_owned())
+            .filter(|v| !v.is_empty()),
+        min_value: copy_number_attr(element, "AXMinValue"),
+        max_value: copy_number_attr(element, "AXMaxValue"),
+        enabled: copy_bool_attr(element, "AXEnabled"),
+        selected: copy_bool_attr(element, "AXSelected"),
+    });
     let node = if is_actionable {
         let idx = *counter;
         *counter += 1;
@@ -398,6 +456,12 @@ unsafe fn walk_element(
             depth,
             parent_element_index: parent_index,
             frame,
+            value_state: control_state.value_state.clone(),
+            value_description: control_state.value_description.clone(),
+            min_value: control_state.min_value,
+            max_value: control_state.max_value,
+            enabled: control_state.enabled,
+            selected: control_state.selected,
         }
     } else {
         AXNode {
@@ -425,6 +489,12 @@ unsafe fn walk_element(
             depth,
             parent_element_index: parent_index,
             frame,
+            value_state: control_state.value_state.clone(),
+            value_description: control_state.value_description.clone(),
+            min_value: control_state.min_value,
+            max_value: control_state.max_value,
+            enabled: control_state.enabled,
+            selected: control_state.selected,
         }
     };
 
@@ -535,8 +605,8 @@ fn filter_tree(markdown: &str, query: &str) -> String {
             current_ancestor.push("");
             last_emitted_at.push(None);
         }
-        for deeper in (depth + 1)..current_ancestor.len() {
-            last_emitted_at[deeper] = None;
+        for emitted_at in last_emitted_at.iter_mut().skip(depth + 1) {
+            *emitted_at = None;
         }
         current_ancestor[depth] = line;
 
@@ -575,4 +645,34 @@ fn leading_indent_depth(line: &str) -> usize {
         }
     }
     count / 2
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn control_state_reads_are_gated_by_actionability() {
+        let reads = Cell::new(0);
+        let display_only = read_control_state_if_actionable(false, || {
+            reads.set(reads.get() + 1);
+            ControlState {
+                enabled: Some(true),
+                ..ControlState::default()
+            }
+        });
+        assert_eq!(reads.get(), 0, "display-only nodes must not read state");
+        assert_eq!(display_only.enabled, None);
+
+        let actionable = read_control_state_if_actionable(true, || {
+            reads.set(reads.get() + 1);
+            ControlState {
+                enabled: Some(true),
+                ..ControlState::default()
+            }
+        });
+        assert_eq!(reads.get(), 1, "actionable nodes must read state once");
+        assert_eq!(actionable.enabled, Some(true));
+    }
 }

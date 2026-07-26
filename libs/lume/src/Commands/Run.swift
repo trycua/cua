@@ -34,6 +34,12 @@ struct Run: AsyncParsableCommand {
         completion: .file())
     var usbStorageDevices: [String] = []
 
+    @Option(
+        name: [.customLong("disk")],
+        help: "Disk image to attach as a read-write virtio-blk device (e.g. --disk=\"scratch.img\")",
+        completion: .file())
+    var additionalDisks: [String] = []
+
     @Option(help: "Github Container Registry to pull the images from. Defaults to ghcr.io")
     var registry: String = "ghcr.io"
 
@@ -132,6 +138,10 @@ struct Run: AsyncParsableCommand {
         usbStorageDevices.map { Path($0) }
     }
 
+    private var parsedAdditionalDisks: [Path] {
+        additionalDisks.map { Path($0) }
+    }
+
     init() {
     }
 
@@ -156,6 +166,7 @@ struct Run: AsyncParsableCommand {
             diskPath: diskPath.map { Path($0) },
             nvramPath: nvramPath.map { Path($0) },
             usbMassStoragePaths: parsedUSBStorageDevices.isEmpty ? nil : parsedUSBStorageDevices,
+            additionalDiskPaths: parsedAdditionalDisks.isEmpty ? nil : parsedAdditionalDisks,
             networkMode: parsedNetworkMode,
             clipboard: clipboard
         )

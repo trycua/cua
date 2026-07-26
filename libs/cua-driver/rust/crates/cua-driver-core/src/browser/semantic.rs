@@ -250,6 +250,30 @@ impl SemanticDocument {
     }
 }
 
+impl DomIndex {
+    fn is_ancestor_of(&self, ancestor: i64, mut descendant: i64) -> bool {
+        let mut visited = HashSet::new();
+        while visited.insert(descendant) {
+            let Some(parent) = self
+                .nodes
+                .get(&descendant)
+                .and_then(|node| node.parent_backend_node_id)
+            else {
+                return false;
+            };
+            if parent == ancestor {
+                return true;
+            }
+            descendant = parent;
+        }
+        false
+    }
+
+    fn shares_dom_branch(&self, left: i64, right: i64) -> bool {
+        self.is_ancestor_of(left, right) || self.is_ancestor_of(right, left)
+    }
+}
+
 pub(crate) fn build_dom_index(root: &Value) -> DomIndex {
     fn walk(
         node: &Value,
@@ -531,7 +555,7 @@ pub(crate) fn compose_accessibility_tree(
     }
 
     supplement_dom_actions(&mut nodes, dom, layout, viewport, &frame);
-    apply_page_occlusion(&mut nodes, layout);
+    apply_page_occlusion(&mut nodes, dom, layout);
     remove_redundant_static_text(&mut nodes);
     SemanticDocument {
         nodes,
@@ -541,7 +565,7 @@ pub(crate) fn compose_accessibility_tree(
     }
 }
 
-fn apply_page_occlusion(nodes: &mut [SemanticNode], layout: &LayoutIndex) {
+fn apply_page_occlusion(nodes: &mut [SemanticNode], dom: &DomIndex, layout: &LayoutIndex) {
     for node in nodes {
         if node.visibility != BrowserVisibility::InViewport {
             continue;
@@ -557,6 +581,7 @@ fn apply_page_occlusion(nodes: &mut [SemanticNode], layout: &LayoutIndex) {
         };
         let covered = layout.nodes.iter().any(|(&backend, overlay)| {
             if backend == target_backend
+                || dom.shares_dom_branch(backend, target_backend)
                 || overlay
                     .paint_order
                     .is_none_or(|paint| paint <= target_paint)
@@ -938,11 +963,10 @@ fn remove_redundant_static_text(nodes: &mut Vec<SemanticNode>) {
         let Some(name) = node.name.as_deref() else {
             return false;
         };
-        !node
-            .parent_ax_id
+        node.parent_ax_id
             .as_ref()
             .and_then(|parent| names.get(parent))
-            .is_some_and(|parent_name| parent_name == name)
+            .is_none_or(|parent_name| parent_name != name)
     });
 }
 
@@ -1377,6 +1401,69 @@ mod tests {
             .iter()
             .all(|node| node.name.as_deref() != Some("Covered")));
         assert_eq!(page.omissions.page_occluded, 1);
+    }
+
+    #[test]
+    fn dialog_container_does_not_occlude_its_own_actions() {
+        let dom = build_dom_index(&json!({
+            "nodeType": 9,
+            "frameId": "F_MAIN",
+            "children": [{
+                "nodeType": 1,
+                "nodeName": "DIV",
+                "backendNodeId": 10,
+                "attributes": ["role", "alertdialog", "aria-label", "Remove app"],
+                "children": [
+                    {"nodeType": 1, "nodeName": "BUTTON", "backendNodeId": 11,
+                     "attributes": ["aria-label", "Cancel"]},
+                    {"nodeType": 1, "nodeName": "BUTTON", "backendNodeId": 12,
+                     "attributes": ["aria-label", "Remove"]}
+                ]
+            }]
+        }));
+        let layout = build_layout_index(&json!({
+            "strings": ["block", "visible", "1", "auto", "default", "static", "0", "fixed", "100"],
+            "documents": [{
+                "nodes": {"backendNodeId": [10, 11, 12]},
+                "layout": {
+                    "nodeIndex": [0, 1, 2],
+                    "bounds": [[0, 0, 800, 600], [250, 400, 120, 36], [390, 400, 120, 36]],
+                    "styles": [
+                        [0, 1, 2, 3, 4, 7, 8, 3, 3],
+                        [0, 1, 2, 3, 4, 5, 6, 3, 3],
+                        [0, 1, 2, 3, 4, 5, 6, 3, 3]
+                    ],
+                    "paintOrders": [100, 10, 11]
+                }
+            }]
+        }));
+        let viewport = parse_viewport(&json!({
+            "cssVisualViewport": {"pageX": 0.0, "pageY": 0.0,
+                                  "clientWidth": 800.0, "clientHeight": 600.0}
+        }));
+        let ax = json!({"nodes": [
+            {"nodeId": "root", "ignored": false, "role": {"value": "RootWebArea"},
+             "childIds": ["dialog"]},
+            {"nodeId": "dialog", "parentId": "root", "ignored": false,
+             "backendDOMNodeId": 10, "role": {"value": "alertdialog"},
+             "name": {"value": "Remove app"}, "childIds": ["cancel", "remove"]},
+            {"nodeId": "cancel", "parentId": "dialog", "ignored": false,
+             "backendDOMNodeId": 11, "role": {"value": "button"},
+             "name": {"value": "Cancel"}, "childIds": []},
+            {"nodeId": "remove", "parentId": "dialog", "ignored": false,
+             "backendDOMNodeId": 12, "role": {"value": "button"},
+             "name": {"value": "Remove"}, "childIds": []}
+        ]});
+        let document = compose_accessibility_tree(&ax, &dom, &layout, &viewport, frame());
+        let page = document.page(0, 300, None, None);
+        let actions = page
+            .selected
+            .iter()
+            .filter(|node| !node.actions.is_empty())
+            .filter_map(|node| node.name.as_deref())
+            .collect::<Vec<_>>();
+        assert_eq!(actions, vec!["Cancel", "Remove"]);
+        assert_eq!(page.omissions.page_occluded, 0);
     }
 
     #[test]

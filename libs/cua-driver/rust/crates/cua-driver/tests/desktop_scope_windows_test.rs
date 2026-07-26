@@ -119,6 +119,16 @@ fn element_center(state: &cua_driver_testkit::ToolResponse, id: &str) -> (i64, i
     )
 }
 
+fn marker_value(state: &cua_driver_testkit::ToolResponse, marker: &str) -> Option<u64> {
+    let text = state.tree_text();
+    let idx = text.find(marker)? + marker.len();
+    let digits: String = text[idx..]
+        .chars()
+        .take_while(|character| character.is_ascii_digit())
+        .collect();
+    digits.parse().ok()
+}
+
 fn start_scope(driver: &mut McpDriver, session: &str, scope: &str) {
     let r = driver.call(
         "start_session",
@@ -287,6 +297,68 @@ fn desktop_scope_windowless_scroll_lands_on_control() {
                 after_y < before_y,
                 "desktop scroll did not move the WPF outer viewport: before_y={before_y}, after_y={after_y}"
             );
+        },
+    );
+}
+
+#[test]
+#[ignore]
+fn desktop_scope_hotkey_releases_modifiers() {
+    run_desktop_fixture_case(
+        "hotkey",
+        DriverRoute::WindowsSendInput,
+        |pid, wid, window_session, desktop_session, driver| {
+            let hotkey = driver.call(
+                "hotkey",
+                serde_json::json!({
+                    "session": desktop_session, "scope": "desktop",
+                    "keys": ["ctrl", "shift", "h"]
+                }),
+            );
+            assert!(
+                !hotkey.is_error(),
+                "desktop hotkey failed: {}",
+                hotkey.text()
+            );
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                let state = snapshot(driver, window_session, pid, wid);
+                if marker_value(&state, "accel_fired=").unwrap_or(0) >= 1 {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "WPF did not observe ctrl+shift+h: {}",
+                    hotkey.text()
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            }
+
+            // WPF's F5 input binding has no modifiers. It increments the same
+            // counter only when Ctrl/Shift were released after the chord.
+            let plain_key = driver.call(
+                "press_key",
+                serde_json::json!({
+                    "session": desktop_session, "scope": "desktop", "key": "f5"
+                }),
+            );
+            assert!(
+                !plain_key.is_error(),
+                "post-hotkey plain F5 failed: {}",
+                plain_key.text()
+            );
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                let state = snapshot(driver, window_session, pid, wid);
+                if marker_value(&state, "accel_fired=").unwrap_or(0) >= 2 {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "plain F5 did not match after hotkey; modifier state may still be latched"
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            }
         },
     );
 }

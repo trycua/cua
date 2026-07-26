@@ -201,7 +201,7 @@ CUA_DRIVER_POLICY_FILE=~/.cua-driver/policy.yaml cua-driver serve
   </Tab>
 </Tabs>
 
-The policy is loaded once when the process starts. Changing the file while the daemon is running has no effect until the daemon restarts.
+The policy is loaded once when the process starts. Changing the file while the daemon is running has no effect until the daemon restarts. A missing or invalid configured file prevents the daemon from binding its action socket.
 
 ## Verify the policy is active
 
@@ -246,7 +246,7 @@ If you use `cua-driver autostart enable`, add the environment variable to the la
 ## Troubleshooting
 
 **All calls are denied even though my policy allows them.**
-Check that `CUA_DRIVER_POLICY_FILE` points to the correct path and that the daemon has been restarted after setting the variable. A typo in the file path means the policy file is not found, which disables enforcement and allows all calls. A warning is logged at startup when the path does not exist.
+Check that `CUA_DRIVER_POLICY_FILE` points to the correct path and that the daemon has been restarted after setting the variable. A typo or unreadable file now fails daemon startup instead of disabling enforcement.
 
 **The daemon fails to start with a policy parse error.**
 YAML policies must not contain empty tool names, and Rego policies must define `data.cua.policy.allow` as a boolean rule. Run `cat $CUA_DRIVER_POLICY_FILE` to confirm the file is readable and syntactically valid.
@@ -255,10 +255,11 @@ YAML policies must not contain empty tool names, and Rego policies must define `
 The rule might exist but the argument constraints are not satisfied. Check the denial message: `"argument 'text' must be at most 500 characters"` tells you which constraint failed. For Rego policies, add a `print` statement temporarily to trace which branch runs.
 
 **I want to allow all tools.**
-Do not set `CUA_DRIVER_POLICY_FILE`. When the variable is absent, the policy engine is disabled and every tool call is allowed.
+Do not set `CUA_DRIVER_POLICY_FILE`. The user-policy layer is then absent. The built-in risk map, permission mode, managed policy, and active resource grants still apply.
 
 ## Related
 
 - [Permission policies](/reference/cua-driver/permission-policies): full YAML schema and Rego interface reference
 - [How permission policies work](/concepts/how-permission-policies-work): the engine internals, evaluation order, and trust model
+- [Permission modes and bounded autonomy](/reference/cua-driver/permission-modes): standard, autonomous, and unrestricted startup
 - [MCP tools](/reference/cua-driver/mcp-tools): complete list of tool names and their arguments

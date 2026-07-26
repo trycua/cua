@@ -8,6 +8,7 @@
 #![cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 
 use cua_driver_testkit::{Driver, McpDriver, RawDriver};
+use std::collections::BTreeSet;
 
 #[test]
 fn tools_list_schema_shape() {
@@ -76,6 +77,10 @@ fn tools_list_schema_shape() {
             "get_browser_state schema missing {field}"
         );
     }
+    assert_eq!(
+        browser_state["inputSchema"]["properties"]["include_screenshot"]["default"], false,
+        "get_browser_state should advertise opt-in exact-tab capture"
+    );
     for (name, required) in [
         ("browser_prepare", &["pid"][..]),
         ("browser_navigate", &["target_id", "tab_id", "url"][..]),
@@ -105,21 +110,53 @@ fn tools_list_schema_shape() {
         }
     }
 
-    for tool in [
+    const DELIVERY_MODE_TOOLS: &[&str] = &[
         "click",
         "double_click",
         "right_click",
+        "drag",
         "type_text",
         "press_key",
         "hotkey",
         "scroll",
-    ] {
+        "browser_dialog",
+    ];
+    for tool in DELIVERY_MODE_TOOLS {
         let delivery = &properties(tool)["delivery_mode"];
         assert!(
             enum_contains(delivery, "background") && enum_contains(delivery, "foreground"),
             "{tool}.delivery_mode should advertise background and foreground: {delivery:?}"
         );
     }
+    let schema_tools: BTreeSet<&str> = tools
+        .iter()
+        .filter(|tool| tool["inputSchema"]["properties"]["delivery_mode"].is_object())
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    let capability_tools: BTreeSet<&str> = tools
+        .iter()
+        .filter(|tool| {
+            tool["capabilities"].as_array().is_some_and(|capabilities| {
+                capabilities
+                    .iter()
+                    .any(|capability| capability == "input.delivery_mode")
+            })
+        })
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    let expected_tools: BTreeSet<&str> = DELIVERY_MODE_TOOLS.iter().copied().collect();
+    assert_eq!(
+        schema_tools, expected_tools,
+        "unexpected delivery_mode schema set"
+    );
+    assert_eq!(
+        capability_tools, expected_tools,
+        "input.delivery_mode must match the exact runtime schema support set"
+    );
+    assert_eq!(
+        list_resp["result"]["capability_version"], "1",
+        "adding one capability token is additive and must not bump the vocabulary version"
+    );
     // Capture scope belongs to the session lifecycle on every platform. The
     // action-level `scope` selects a coordinate/transport form but cannot
     // override the session policy enforced by the registry.
@@ -218,7 +255,7 @@ fn tools_list_schema_shape() {
 }
 
 #[test]
-fn legacy_page_mutation_flag_is_read_by_the_spawned_daemon() {
+fn legacy_page_mutation_requires_unrestricted_launch_and_operator_opt_in() {
     let args = serde_json::json!({
         "action": "enable_javascript_apple_events",
         "user_has_confirmed_enabling": false
@@ -229,16 +266,18 @@ fn legacy_page_mutation_flag_is_read_by_the_spawned_daemon() {
         let response = driver.call("page", args.clone());
         assert!(response.is_error(), "mutation must refuse by default");
         assert!(
-            response
-                .text()
-                .contains("CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1"),
-            "default refusal must name the operator gate: {}",
+            response.text().contains("requires unrestricted mode"),
+            "default refusal must name the trusted launch gate: {}",
             response.text()
         );
     }
 
-    let mut driver = McpDriver::spawn_with_env(&[("CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS", "1")])
-        .expect("spawn source-built driver with daemon-scoped compatibility flag");
+    let mut driver = McpDriver::spawn_with_env(&[
+        ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
+        ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
+        ("CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS", "1"),
+    ])
+    .expect("spawn source-built driver with unrestricted legacy compatibility enabled");
     let response = driver.call("page", args);
     assert!(
         response.is_error(),

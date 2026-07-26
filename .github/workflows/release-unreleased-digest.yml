@@ -36,6 +36,7 @@ jobs:
           SERVICE_TAG_DIR["npm/core"]="npm-core-v|libs/typescript/core/"
           SERVICE_TAG_DIR["npm/playground"]="npm-playground-v|libs/typescript/playground/"
           SERVICE_TAG_DIR["npm/cuabot"]="cuabot-v|libs/cuabot/"
+          SERVICE_TAG_DIR["docker/xfce-cua"]="docker-xfce-cua-v|libs/xfce-cua/"
           SERVICE_TAG_DIR["docker/xfce"]="docker-xfce-v|libs/xfce/"
           SERVICE_TAG_DIR["docker/kasm"]="docker-kasm-v|libs/kasm/"
           SERVICE_TAG_DIR["docker/lumier"]="docker-lumier-v|libs/lumier/"

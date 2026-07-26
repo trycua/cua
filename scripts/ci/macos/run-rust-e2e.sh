@@ -18,6 +18,8 @@ Usage: run-rust-e2e.sh [--no-build]
 Run from a logged-in macOS desktop after install-local and TCC authorization.
 The testkit proxies MCP calls through the installed CuaDriver daemon.
 The installed daemon must embed the same CUA_DRIVER_SOURCE_SHA as this source.
+Because this is a disposable behavior-test desktop, that daemon must have been
+started with --permission-mode unrestricted --dangerously-bypass-approvals.
 Maintainers should use libs/cua-driver/tests/runners/macos-lume/run-all.sh.
 The contributor-facing command always runs the complete matrix.
 EOF
@@ -115,6 +117,14 @@ if [[ ! -x "${CUA_TEST_DRIVER_BIN}" ]]; then
   echo "Required driver binary was not built: ${CUA_TEST_DRIVER_BIN}" >&2
   exit 1
 fi
+MACOS_DAEMON_SOCKET="${CUA_E2E_MACOS_DAEMON_SOCKET:-${HOME}/Library/Caches/cua-driver/cua-driver.sock}"
+MACOS_DAEMON_BIN="${CUA_E2E_INSTALLED_DRIVER_BIN:-${CUA_TEST_DRIVER_BIN}}"
+if ! "${MACOS_DAEMON_BIN}" status --socket "${MACOS_DAEMON_SOCKET}" \
+    | grep -Fq "permission mode: unrestricted"; then
+  echo "macOS canonical E2E requires an explicitly unrestricted disposable worker daemon" >&2
+  echo "Use tests/runners/macos-lume/run-all.sh, which restores standard mode afterward" >&2
+  exit 1
+fi
 
 required_fixtures=()
 required_fixtures+=("${CUA_TEST_APPS_ROOT}/harness-electron/CuaTestHarness.Electron.app")
@@ -174,6 +184,15 @@ run_test() {
 }
 
 if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
+  run_test protected-permission-prompt-socket cargo test -p cua-driver \
+    --test permission_prompt_authorization_test -- --test-threads=1
+  run_test protected-host-self-launch cargo test -p platform-macos \
+    launch_app::tests -- --test-threads=1
+  run_test sdk-runtime-contract cargo test -p cua-driver-sdk --lib -- --test-threads=1
+  run_test sdk-runtime-configuration cargo test -p cua-driver-sdk \
+    --test runtime_configuration -- --test-threads=1
+  run_test private-worker-lifecycle cargo test -p cua-driver \
+    --test private_worker_test -- --test-threads=1
   run_test shared-app-matrix cargo test -p cua-driver --test cross_platform_behavior_test -- \
     --ignored --exact shared_web_action_matrix_is_state_verified \
     --nocapture --test-threads=1

@@ -14,6 +14,13 @@
 
 use cua_driver_testkit::RawDriver;
 
+fn spawn_unrestricted_with_overlay() -> Option<RawDriver> {
+    RawDriver::spawn_with_overlay_and_env(&[
+        ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
+        ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
+    ])
+}
+
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn concurrent_clients() {
@@ -52,7 +59,7 @@ fn concurrent_clients_with_cursor_moves() {
     //! This covers the multi-cursor use case where two Codex agents run simultaneously.
     let mut drivers: Vec<RawDriver> = Vec::new();
     for _ in 0..2 {
-        let Some(d) = RawDriver::spawn() else {
+        let Some(d) = spawn_unrestricted_with_overlay() else {
             return;
         };
         drivers.push(d);
@@ -66,7 +73,7 @@ fn concurrent_clients_with_cursor_moves() {
     }
 
     // Each process moves its cursor to different positions.
-    let positions = vec![(100.0_f64, 200.0_f64), (500.0, 600.0)];
+    let positions = [(100.0_f64, 200.0_f64), (500.0, 600.0)];
     for ((i, d), (px, py)) in drivers.iter_mut().enumerate().zip(positions.iter()) {
         d.send(&serde_json::json!({
             "jsonrpc":"2.0","id":2,"method":"tools/call",
@@ -102,10 +109,10 @@ fn concurrent_multi_driver_isolation() {
     //! Two cua-driver processes running simultaneously with different cursor IDs.
     //! Verifies that concurrent sessions don't interfere — each tracks its own
     //! cursor state and the overlay stays alive under concurrent load.
-    let Some(mut child_a) = RawDriver::spawn() else {
+    let Some(mut child_a) = spawn_unrestricted_with_overlay() else {
         return;
     };
-    let Some(mut child_b) = RawDriver::spawn() else {
+    let Some(mut child_b) = spawn_unrestricted_with_overlay() else {
         return;
     };
 
@@ -215,7 +222,7 @@ fn concurrent_multi_driver_isolation() {
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn multi_cursor_instance_state() {
     //! Two cursor instances can be created with different IDs; each has independent state.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted_with_overlay() else {
         return;
     };
 
@@ -352,7 +359,7 @@ fn overlay_move_cursor_stays_alive() {
     //! sends commands via the global channel.  Any crash in the render thread (e.g. wrong
     //! GCD queue pointer, bad CGImage argument types) would cause this test to fail with
     //! an early EOF or a non-zero exit code.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted_with_overlay() else {
         return;
     };
 
@@ -412,7 +419,7 @@ fn overlay_move_cursor_stays_alive() {
 fn set_agent_cursor_motion_bezier_knobs() {
     //! set_agent_cursor_motion with Bezier/timing knobs — verifies schema accepts them
     //! and returns a non-error response with the updated values in the response text.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted_with_overlay() else {
         return;
     };
 

@@ -1,0 +1,194 @@
+---
+title: 'SDK, MCP, and process hosting'
+description: 'How Cua Driver separates its typed application contract, agent protocol, and desktop process identity.'
+---
+
+Cua Driver has two caller interfaces and three local execution topologies.
+These solve different problems:
+
+- The **SDK** is a typed application API for Python, TypeScript, and Rust.
+- **MCP** is the runtime-neutral agent protocol exposed by the Cua Driver
+  server.
+- A **same-process runtime** performs desktop work inside the importing app.
+- A **private worker** gives one SDK host a supervised child-process boundary
+  over inherited pipes, without a listener or reconnect path.
+- A **daemon runtime** performs desktop work in a long-lived process with a
+  stable operating-system identity.
+
+These dimensions form a grid:
+
+| Topology | Typed SDK | MCP / CLI |
+| --- | --- | --- |
+| Same process | **Primary for applications embedding Cua Driver** | Default stdio MCP owner on Windows and Linux; explicit `--direct` on macOS |
+| Private worker | `create_private_worker()` / `createPrivateWorker()` for per-host process isolation | Not reconnectable and not advertised as an MCP endpoint |
+| Daemon | Compatibility or app-shared runtime | Standalone macOS default and explicit `--socket` service mode |
+
+The SDK adds unique value in the same-process cell: typed records and direct
+calls across the generated native boundary without a socket. If application
+code talks to the same daemon as an agent, the SDK is mainly a typed
+compatibility adapter over that existing daemon.
+
+## One typed contract
+
+The public typed `CuaDriver` SDK contract is canonical:
+
+```text
+private platform implementations
+              |
+              v
+public typed CuaDriver SDK contract
+       |          |          |
+       v          v          v
+   Rust apps   UniFFI      MCP server adapter
+              /    \             |
+          Python  TypeScript   agents and CLI
+```
+
+The MCP server is downstream of the same public SDK contract as an
+application. It does not maintain a second implementation of desktop tools.
+MCP remains valuable because it standardizes discovery, calls, results, tasks,
+and transport for agent runtimes; the generated language SDKs are for
+applications embedding the native runtime.
+
+Authorization is part of the native runtime, below this topology choice. A
+same-process `CuaDriver.create()` call and a daemon-backed call both pass the
+same registry authorization boundary before platform dispatch. MCP, HTTP, CLI,
+and daemon adapters may reject a call earlier for defense in depth, but they do
+not replace or weaken that native check.
+
+Released calls resolve a process-owned compatibility context. A trusted
+same-process host can additionally construct immutable session-bound action
+objects beneath an immutable runtime ceiling. No model-facing tool, public
+session string, environment field, or reconnect label can select that
+authority. An embedded service may additionally bind a session only on its
+original authenticated host connection. A standalone shared daemon still
+refuses trusted-session creation.
+
+## Why the daemon still exists
+
+Some external agents and CLI calls are short-lived or run outside the desktop
+app that owns permissions. A daemon gives them a stable execution identity,
+long-lived session state, and one controlled gateway to the physical desktop.
+
+On macOS, Accessibility and Screen Recording grants attach to an application
+identity and responsibility chain. The standalone `CuaDriver.app` daemon keeps
+that identity stable across CLI and agent reconnects. A signed app that needs
+to expose MCP can instead spawn a private daemon directly so the child reuses
+the app's TCC grants.
+
+On Windows, an explicit daemon can remain in the logged-in interactive session
+while an SSH or service-side client cannot access that desktop. Ordinary
+Windows and Linux stdio MCP processes now own their runtime directly and shut
+it down on stdin EOF. On every platform, service mode
+also owns cleanup for recordings, cursors, policy, and per-session state when a
+client disconnects.
+
+Bare `cua-driver mcp` therefore no longer discovers and joins an already
+running default service on Windows or Linux. Use `cua-driver mcp --socket
+<endpoint>` when an agent must share that service's sessions and resources.
+The explicit connection path preserves the released daemon protocol.
+
+Standalone macOS keeps the opposite default because `CuaDriver.app` owns its
+stable TCC identity. `cua-driver mcp --direct` is the explicit opt-in for a
+host that wants the MCP process itself to own the runtime and accepts the
+spawning application's TCC attribution. It cannot be combined with
+`--socket`.
+
+Private workers use the same generated SDK contract but exchange versioned
+request/response envelopes over child stdin/stdout. The host supplies the
+authorization ceiling before readiness, owns the only channel, and terminates
+the child when that channel closes. A timed-out or broken action reports
+whether it was definitely not started, completed, or has unknown completion.
+The worker provides native cursor and main-thread facilities without opening a
+daemon socket.
+
+Remote carriers use the same transport-free Rust envelope seam. The carrier
+must authenticate a principal, bind a connection generation, preserve request
+IDs and deadlines, negotiate a compatible envelope version and cancellation
+support before dispatch, forward cancellation when an action future is
+dropped, and return a separately bound channel for trusted sessions.
+The Cua Driver core does not depend on gRPC, HTTP/2, or another carrier, and no
+generated Python/TypeScript remote constructor is shipped yet.
+
+## Why embedded applications may choose either topology
+
+Apps such as signed Electron desktop clients may want their own permission row
+and onboarding. If only the app calls Cua Driver, `CuaDriver.create()` runs the
+runtime in that permission-owning process. If external agents must connect,
+the app can host a private daemon and publish its MCP connection. Both routes
+consume the same typed behavior; the difference is lifecycle and process
+identity, not a different action implementation.
+
+See [Process model](/reference/cua-driver/process-model) for platform details
+and [Expose MCP from a desktop app](/how-to-guides/driver/expose-mcp-from-desktop-app)
+for the hosted-daemon procedure.
+
+## Current process facility contract
+
+A trusted application may own multiple direct runtimes in one process. This is
+lifecycle and resource coordination, not a security boundary or desktop
+virtualization:
+
+| Facility | Current ownership | Concurrency rule |
+| --- | --- | --- |
+| Runtime ceiling, effective session contexts, revocation | Runtime-owned | Isolated within each opaque runtime generation |
+| Tool registry, browser engine and grants, recording session | Runtime-owned | Released only by their owning session/runtime |
+| Permission/policy compatibility caches and bounded compatibility manifest | Immutable process configuration | Explicit configured constructors must agree with contradictory environment values or fail |
+| Session activity, capture scopes, element tokens, browser refs, cursor keys | Runtime-namespaced | The same public session label in two runtimes remains independent; stale or cross-runtime handles fail closed |
+| Physical pointer, keyboard, focus, overlay, and platform event loops | Process/platform coordinated | Native input and focus action turns are admitted one at a time; all runtimes still operate the same physical desktop |
+| CDP listener claims and the download gate | Process-coordinated | A listener/profile claim or download lease cannot be silently taken over by another runtime |
+| Recording platform callbacks, video/PiP factories, policy, observers, ABI executor | Immutable process callbacks/coordinator | Shared only where the process identity and platform configuration are the same |
+
+Shutting down runtime A does not revoke runtime B's sessions or stop its
+recording. Public session labels and element-token wire formats remain
+unchanged; the runtime generation is private and never accepted from a tool
+argument.
+
+The reserved anonymous `default` cursor/session fallback is process-shared and
+does not provide lifecycle isolation. Give each concurrent host operation an
+explicit session (or cursor ID). The first enabled runtime initializes the
+process-global overlay template; later runtimes reuse it and can customize
+their own namespaced cursors through the cursor tools.
+
+Arbitrary code in the host process can inspect or interfere with every
+runtime. Use separate private workers or services for crash isolation,
+different trust domains, different OS identities, or independent desktops.
+
+On macOS, the cursor overlay additionally requires an AppKit main-thread UI
+owner. A direct runtime without a certified host adapter returns structured
+`facility_unavailable` results for cursor-overlay operations; it does not
+report success or start hidden AppKit work on an unsafe thread. A private
+worker or service owns the required event loop. A headless service or worker
+without Window Server graphic-session access returns the same refusal instead
+of claiming an overlay that cannot render.
+
+## Service transport hardening
+
+The optional loopback HTTP MCP listener is disabled unless
+`CUA_DRIVER_RS_MCP_HTTP_PORT` is set. When enabled,
+`CUA_DRIVER_RS_MCP_HTTP_TOKEN` is also required and must contain 32–4096
+non-whitespace characters. Clients send it as `Authorization: Bearer
+<token>`. A port-only configuration now fails daemon startup instead of
+silently exposing or disabling the endpoint.
+
+Windows daemon named pipes now grant access only to the daemon owner's user
+SID and verify the connected process SID before reading a request. Clients
+running as another user or security principal are rejected; run the client and
+daemon under the same intended interactive user. This is an intentional
+fail-closed change from the earlier broad local ACL.
+
+## Agent SDK integration is intentionally asymmetric
+
+| Agent SDK | Native application callbacks | External MCP route |
+| --------- | ---------------------------- | ------------------ |
+| Claude Agent SDK | Supported in Python and TypeScript through its in-process custom-tool server | Supported in Python and TypeScript |
+| Codex SDK | No direct custom-tool callback boundary | Supported in Python and TypeScript |
+
+Claude's in-process custom-tool server is an adapter inside the host
+application; the callbacks still call the native Cua Driver SDK directly.
+Codex uses `cua-driver mcp` because MCP is its supported tool-extension
+boundary. MCP remains an adapter over the same SDK-owned runtime; using MCP
+does not imply that a daemon is present.
+
+See [Use Cua Driver with Claude Agent SDK](/how-to-guides/driver/use-claude-agent-sdk)
+and [Use Cua Driver with Codex SDK](/how-to-guides/driver/use-codex-sdk).

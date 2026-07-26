@@ -1,3 +1,4 @@
+import ArgumentParser
 import Foundation
 import Testing
 
@@ -161,6 +162,81 @@ func testClonePreservesPairedBootPolicyState() throws {
     #expect(try Data(contentsOf: cloneDir.nvramPath.url) == nvramData)
     #expect(cloneConfig.machineIdentifier != sourceMachineIdentifier)
     #expect(cloneConfig.macAddress != sourceMacAddress)
+}
+
+@MainActor
+@Test("run rejects primary and duplicate additional disk aliases")
+func testRunRejectsAdditionalDiskAliases() async throws {
+    let tempConfigDir = try createTempDirectory()
+    let tempHomeDir = try createTempDirectory()
+
+    defer {
+        try? FileManager.default.removeItem(at: tempConfigDir)
+        try? FileManager.default.removeItem(at: tempHomeDir)
+    }
+
+    let previousXDGConfigHome = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"]
+    setenv("XDG_CONFIG_HOME", tempConfigDir.path, 1)
+    defer {
+        if let previousXDGConfigHome {
+            setenv("XDG_CONFIG_HOME", previousXDGConfigHome, 1)
+        } else {
+            unsetenv("XDG_CONFIG_HOME")
+        }
+    }
+
+    let settingsManager = SettingsManager(fileManager: .default)
+    try settingsManager.setHomeDirectory(path: tempHomeDir.path)
+    let home = Home(settingsManager: settingsManager, fileManager: .default)
+    let controller = LumeController(home: home, vmFactory: TestVMFactory())
+    let vmDir = try home.getVMDirectory("data-disk-validation")
+    try FileManager.default.createDirectory(
+        at: vmDir.dir.url,
+        withIntermediateDirectories: true
+    )
+    try Data(repeating: 0, count: 1024).write(to: vmDir.diskPath.url)
+    try Data(repeating: 0, count: 1024).write(to: vmDir.nvramPath.url)
+    try vmDir.saveConfig(
+        VMConfig(
+            os: "macOS",
+            cpuCount: 1,
+            memorySize: 1024,
+            diskSize: 1024,
+            display: "1024x768"
+        ))
+
+    do {
+        try await controller.runVM(
+            name: vmDir.name,
+            noDisplay: true,
+            additionalDiskPaths: [Path(vmDir.diskPath.url)]
+        )
+        Issue.record("Expected the primary boot disk alias to be rejected")
+    } catch let error as ValidationError {
+        #expect(String(describing: error).contains("must differ from the primary boot disk"))
+    }
+
+    let additionalDiskURL = tempHomeDir.appendingPathComponent("additional.img")
+    let additionalDiskAliasURL = tempHomeDir.appendingPathComponent("additional-alias.img")
+    try Data(repeating: 0, count: 1024).write(to: additionalDiskURL)
+    try FileManager.default.createSymbolicLink(
+        at: additionalDiskAliasURL,
+        withDestinationURL: additionalDiskURL
+    )
+
+    do {
+        try await controller.runVM(
+            name: vmDir.name,
+            noDisplay: true,
+            additionalDiskPaths: [
+                Path(additionalDiskURL),
+                Path(additionalDiskAliasURL),
+            ]
+        )
+        Issue.record("Expected duplicate additional disk aliases to be rejected")
+    } catch let error as ValidationError {
+        #expect(String(describing: error).contains("Duplicate additional disk image"))
+    }
 }
 
 private func createTempDirectory() throws -> URL {

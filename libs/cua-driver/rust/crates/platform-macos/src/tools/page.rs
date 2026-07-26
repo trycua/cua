@@ -157,7 +157,7 @@ impl PageBackend for MacOsPageBackend {
         let cursor_key = "default".to_owned();
         crate::cursor::overlay::send_command(
             cursor_key.clone(),
-            cursor_overlay::OverlayCommand::PinAbove(window_id as u64),
+            cursor_overlay::OverlayCommand::PinAbove(window_id),
         );
         crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y).await;
         self.state

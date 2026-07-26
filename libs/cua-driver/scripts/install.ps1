@@ -113,7 +113,7 @@ $BinaryName = "cua-driver.exe"
 # where the baked line hasn't been updated yet.
 #
 # ~~~ BAKED_VERSION: auto-updated in the release PR — do not edit ~~~
-$Script:CuaDriverRsBakedVersion = "0.9.1" # x-release-please-version
+$Script:CuaDriverRsBakedVersion = "0.12.6" # x-release-please-version
 # ~~~ END_BAKED_VERSION ~~~
 
 # ---------- Path resolution ------------------------------------------------
@@ -1098,10 +1098,11 @@ if (-not $skipDownload) {
         New-Item -ItemType Directory -Force -Path $versionedDir | Out-Null
         Copy-Item -LiteralPath (Join-Path $stageDir $BinaryName) -Destination (Join-Path $versionedDir $BinaryName) -Force
         Write-Step "installed $versionedDir\$BinaryName (version $version, target $target)"
-        # Optional sibling: the uiAccess'd worker (cua-driver-uia.exe). Started
-        # shipping with cua-driver-rs-v0.2.8; absent in earlier releases. Copy
-        # it when present so `cua-driver autostart enable` can register the
-        # second ShellExecute-based scheduled task. See #1602.
+        # Optional sibling: the reserved uiAccess worker
+        # (cua-driver-uia.exe). It started shipping with
+        # cua-driver-rs-v0.2.8 and is absent in earlier releases. Copy it when
+        # present for a future authenticated daemon-internal forwarding path;
+        # current autostart does not launch it. See #1602.
         $uiaStage = Join-Path $stageDir 'cua-driver-uia.exe'
         if (Test-Path -LiteralPath $uiaStage) {
             Copy-Item -LiteralPath $uiaStage -Destination (Join-Path $versionedDir 'cua-driver-uia.exe') -Force

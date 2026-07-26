@@ -59,10 +59,10 @@ mod v2_tests;
 
 pub use engine::BrowserEngine;
 pub use platform::{
-    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, ExistingProfileSetupOutcome,
-    ExistingProfileSetupRequest, PrepareAction, PrepareAttachment, PrepareAttachmentKind,
-    PrepareAuthorization, PrepareOutcome, PrepareProfile, PrepareProfileMode, PrepareRequest,
-    PrepareSideEffects, PrepareStrategy,
+    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
+    BrowserVisualActionKind, ExistingProfileSetupOutcome, ExistingProfileSetupRequest,
+    PrepareAction, PrepareAttachment, PrepareAttachmentKind, PrepareAuthorization, PrepareOutcome,
+    PrepareProfile, PrepareProfileMode, PrepareRequest, PrepareSideEffects, PrepareStrategy,
 };
 pub use refusal::{BrowserRefusal, BrowserRefusalCode};
 pub use setup_descriptor::{

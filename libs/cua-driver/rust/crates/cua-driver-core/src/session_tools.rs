@@ -11,13 +11,15 @@
 //! fields, but lifecycle and policy tools accept only the public `session`
 //! name. Transport metadata can never mint or alter capture policy.
 
-use crate::capture_scope::{
-    bind_session, escalate_session, get_session, BindError, CaptureScopePolicy, EscalateError,
-    EscalationReason,
-};
+use crate::capture_scope::{bind_session, escalate_session, get_session, BindError, EscalateError};
 use crate::protocol::ToolResult;
 use crate::tool::{Tool, ToolDef};
+use crate::tool_args::parse_typed_input;
 use async_trait::async_trait;
+use cua_driver_contract::{
+    CaptureScope, EndSessionInput, EscalateSessionInput, EscalationReason, GetSessionStateInput,
+    StartSessionInput,
+};
 use serde_json::{json, Value};
 use std::sync::OnceLock;
 
@@ -31,27 +33,6 @@ fn session_id_of(args: &Value) -> Option<String> {
         .map(|s| s.to_owned())
 }
 
-fn capture_scope_arg(args: &Value) -> Result<Option<CaptureScopePolicy>, ToolResult> {
-    let Some(raw) = args.get("capture_scope") else {
-        return Ok(None);
-    };
-    let Some(raw) = raw.as_str() else {
-        return Err(ToolResult::error(
-            "start_session.capture_scope must be one of: auto, window, desktop.",
-        )
-        .with_structured(json!({ "code": "invalid_capture_scope" })));
-    };
-    CaptureScopePolicy::parse(raw).map(Some).ok_or_else(|| {
-        ToolResult::error(format!(
-            "invalid capture_scope '{raw}'; expected auto, window, or desktop"
-        ))
-        .with_structured(json!({
-            "code": "invalid_capture_scope",
-            "capture_scope": raw,
-        }))
-    })
-}
-
 // ── start_session ─────────────────────────────────────────────────────────────
 
 pub struct StartSessionTool;
@@ -61,52 +42,35 @@ static START_DEF: OnceLock<ToolDef> = OnceLock::new();
 #[async_trait]
 impl Tool for StartSessionTool {
     fn def(&self) -> &ToolDef {
-        START_DEF.get_or_init(|| ToolDef {
-            name: "start_session".into(),
-            description:
-                "Declare a session — a named, color-coded identity for THIS agent run. \
-                 Pass a stable `session` id and choose capture_scope=auto|window|desktop; \
-                 the agent cursor, capture policy, per-session config, and recording all \
-                 key on it, and it follows the run across any apps/windows. \
-                 The cursor's color is derived from the id, so distinct runs are visually \
-                 distinct. A cursor is shown only for a declared session — call this (or \
-                 pass `session` on your first action) to opt in. Idempotent: re-calling \
-                 with the same id just refreshes its idle-TTL. End it with `end_session` \
-                 (or let the idle-TTL reclaim it). Concurrent runs/subagents each pass \
-                 their own `session` to get their own cursor."
-                .into(),
-            input_schema: json!({
-                "type": "object",
-                "required": ["session"],
-                "properties": {
-                    "session": {
-                        "type": "string",
-                        "description": "Stable session id for this run (e.g. \"research-run-1\")."
-                    },
-                    "capture_scope": {
-                        "type": "string",
-                        "enum": ["auto", "window", "desktop"],
-                        "default": "auto",
-                        "description": "Per-session perception/action modality. auto starts window-only and requires explicit escalation before desktop tools; window and desktop are strict. Immutable for the live session."
-                    }
-                },
-                "additionalProperties": true
-            }),
-            read_only: false,
-            destructive: false,
-            idempotent: true,
-            open_world: false,
-        })
+        START_DEF.get_or_init(|| session_tool_def("start_session"))
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         let Some(id) = session_id_of(&args) else {
             return ToolResult::error("start_session requires a non-empty `session` id.");
         };
-        let requested = match capture_scope_arg(&args) {
-            Ok(scope) => scope,
+        if let Some(raw) = args.get("capture_scope") {
+            let Some(raw) = raw.as_str() else {
+                return ToolResult::error(
+                    "start_session.capture_scope must be one of: auto, window, desktop.",
+                )
+                .with_structured(json!({ "code": "invalid_capture_scope" }));
+            };
+            if CaptureScope::parse(raw).is_none() {
+                return ToolResult::error(format!(
+                    "invalid capture_scope '{raw}'; expected auto, window, or desktop"
+                ))
+                .with_structured(json!({
+                    "code": "invalid_capture_scope",
+                    "capture_scope": raw,
+                }));
+            }
+        }
+        let input = match parse_typed_input::<StartSessionInput>("start_session", args) {
+            Ok(input) => input,
             Err(result) => return result,
         };
+        let requested = input.capture_scope;
         let was_ended = crate::session::is_session_ended(&id);
         if !was_ended {
             match bind_session(&id, requested) {
@@ -163,11 +127,12 @@ impl Tool for StartSessionTool {
         // Refresh (or begin) the session's idle-TTL clock. The cursor appears on
         // the first action carrying this `session`.
         crate::session::touch_session(&id);
-        let mut structured = scope.as_json(&id);
-        if let Some(object) = structured.as_object_mut() {
-            object.insert("active".to_owned(), Value::Bool(true));
-            object.insert("revived".to_owned(), Value::Bool(revived));
-        }
+        let structured = serde_json::to_value(cua_driver_contract::StartSessionOutput {
+            state: scope.output(&id),
+            active: true,
+            revived,
+        })
+        .expect("start_session output serializes");
         ToolResult::text(format!(
             "✅ Session '{id}' is active with capture_scope='{}'.",
             scope.policy
@@ -185,37 +150,7 @@ static ESCALATE_DEF: OnceLock<ToolDef> = OnceLock::new();
 #[async_trait]
 impl Tool for EscalateSessionTool {
     fn def(&self) -> &ToolDef {
-        ESCALATE_DEF.get_or_init(|| ToolDef {
-            name: "escalate_session".into(),
-            description: "Unlock the desktop phase of an auto capture-scope session after the window action ladder has been exhausted and verified. This is a one-way transition for the live session and records a bounded reason.".into(),
-            input_schema: json!({
-                "type": "object",
-                "required": ["session", "reason"],
-                "properties": {
-                    "session": { "type": "string" },
-                    "reason": {
-                        "type": "string",
-                        "enum": [
-                            "ax_tree_pixel_mismatch",
-                            "background_delivery_failed",
-                            "foreground_ineffective",
-                            "no_window_target",
-                            "other"
-                        ]
-                    },
-                    "detail": {
-                        "type": "string",
-                        "maxLength": 200,
-                        "description": "Optional bounded diagnostic detail. Never use secrets or page content."
-                    }
-                },
-                "additionalProperties": true
-            }),
-            read_only: false,
-            destructive: false,
-            idempotent: false,
-            open_world: false,
-        })
+        ESCALATE_DEF.get_or_init(|| session_tool_def("escalate_session"))
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
@@ -223,16 +158,28 @@ impl Tool for EscalateSessionTool {
             return ToolResult::error("escalate_session requires a public `session` id.")
                 .with_structured(json!({ "code": "session_required" }));
         };
-        let Some(reason) = args
+        if args
             .get("reason")
             .and_then(Value::as_str)
             .and_then(EscalationReason::parse)
-        else {
+            .is_none()
+        {
             return ToolResult::error("escalate_session.reason is invalid.")
                 .with_structured(json!({ "code": "invalid_escalation_reason" }));
+        }
+        let input = match parse_typed_input::<EscalateSessionInput>("escalate_session", args) {
+            Ok(input) => input,
+            Err(result) => return result,
         };
-        let detail = args.get("detail").and_then(Value::as_str);
-        match escalate_session(&id, reason, detail) {
+        if input
+            .detail
+            .as_ref()
+            .is_some_and(|detail| detail.chars().count() > 200)
+        {
+            return ToolResult::error("escalate_session.detail must be at most 200 characters.")
+                .with_structured(json!({ "code": "invalid_escalation_detail" }));
+        }
+        match escalate_session(&id, input.reason, input.detail.as_deref()) {
             Ok(state) => ToolResult::text(format!("✅ Session '{id}' escalated to desktop scope."))
                 .with_structured(state.as_json(&id)),
             Err(error) => {
@@ -272,20 +219,7 @@ static GET_STATE_DEF: OnceLock<ToolDef> = OnceLock::new();
 #[async_trait]
 impl Tool for GetSessionStateTool {
     fn def(&self) -> &ToolDef {
-        GET_STATE_DEF.get_or_init(|| ToolDef {
-            name: "get_session_state".into(),
-            description: "Read the live session's capture policy and effective scope.".into(),
-            input_schema: json!({
-                "type": "object",
-                "required": ["session"],
-                "properties": { "session": { "type": "string" } },
-                "additionalProperties": true
-            }),
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            open_world: false,
-        })
+        GET_STATE_DEF.get_or_init(|| session_tool_def("get_session_state"))
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
@@ -293,6 +227,9 @@ impl Tool for GetSessionStateTool {
             return ToolResult::error("get_session_state requires a public `session` id.")
                 .with_structured(json!({ "code": "session_required" }));
         };
+        if let Err(result) = parse_typed_input::<GetSessionStateInput>("get_session_state", args) {
+            return result;
+        }
         let Some(state) = get_session(&id) else {
             return ToolResult::error(format!("session '{id}' is not active"))
                 .with_structured(json!({ "code": "session_not_started", "session": id }));
@@ -315,39 +252,31 @@ static END_DEF: OnceLock<ToolDef> = OnceLock::new();
 #[async_trait]
 impl Tool for EndSessionTool {
     fn def(&self) -> &ToolDef {
-        END_DEF.get_or_init(|| ToolDef {
-            name: "end_session".into(),
-            description: "End a session declared with `start_session`: removes its agent cursor, \
-                 stops any recording it owns, and clears its per-session config. Call this \
-                 when a run finishes so its cursor doesn't linger (otherwise the idle-TTL \
-                 reclaims it after a period of inactivity). Idempotent."
-                .into(),
-            input_schema: json!({
-                "type": "object",
-                "required": ["session"],
-                "properties": {
-                    "session": {
-                        "type": "string",
-                        "description": "The session id to end."
-                    }
-                },
-                "additionalProperties": true
-            }),
-            read_only: false,
-            destructive: true,
-            idempotent: true,
-            open_world: false,
-        })
+        END_DEF.get_or_init(|| session_tool_def("end_session"))
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         let Some(id) = session_id_of(&args) else {
             return ToolResult::error("end_session requires a non-empty `session` id.");
         };
+        if let Err(result) = parse_typed_input::<EndSessionInput>("end_session", args) {
+            return result;
+        }
         crate::session::end_session(&id);
-        ToolResult::text(format!("✅ Session '{id}' ended."))
-            .with_structured(json!({ "session": id, "active": false }))
+        ToolResult::text(format!("✅ Session '{id}' ended.")).with_structured(
+            serde_json::to_value(cua_driver_contract::EndSessionOutput {
+                session: id,
+                active: false,
+            })
+            .expect("end_session output serializes"),
+        )
     }
+}
+
+fn session_tool_def(name: &str) -> ToolDef {
+    let contract = cua_driver_contract::tool_contract(name)
+        .unwrap_or_else(|| panic!("canonical contract missing {name}"));
+    ToolDef::from_contract(&contract)
 }
 
 #[cfg(test)]

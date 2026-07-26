@@ -58,7 +58,7 @@ fn consent_surface_ids(
                 && window.bounds.height > 0.0
         })
         .collect::<Vec<_>>();
-    windows.sort_by(|left, right| right.z_index.cmp(&left.z_index));
+    windows.sort_by_key(|window| std::cmp::Reverse(window.z_index));
     let mut seen = HashSet::new();
     iter::once(approved_window_id)
         .chain(windows.into_iter().map(|window| window.window_id))
@@ -267,6 +267,12 @@ mod tests {
             depth,
             parent_element_index: None,
             frame: None,
+            value_state: None,
+            value_description: None,
+            min_value: None,
+            max_value: None,
+            enabled: None,
+            selected: None,
         }
     }
 

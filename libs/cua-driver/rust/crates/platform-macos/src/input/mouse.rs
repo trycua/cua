@@ -112,14 +112,27 @@ pub fn scroll_wheel_desktop(
     move_cursor_desktop(x, y)?;
     std::thread::sleep(std::time::Duration::from_millis(40));
     for _ in 0..ticks.max(1) {
-        let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
-            .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
-        let wheel_y = (delta_y_per_tick / 120).clamp(-10, 10);
-        let wheel_x = (delta_x_per_tick / 120).clamp(-10, 10);
-        let event =
-            CGEvent::new_scroll_event(source, ScrollEventUnit::LINE, 2, wheel_y, wheel_x, 0)
-                .map_err(|_| anyhow::anyhow!("CGEvent::new_scroll_event failed"))?;
-        unsafe { CGEventSetLocation(event.as_ptr() as *mut std::ffi::c_void, x, y) };
+        // AppKit does not reliably consume synthetic LINE-unit events posted
+        // through the global HID queue. pynput's proven macOS desktop path uses
+        // PIXEL units, a null source, and scales each logical wheel notch to ten
+        // pixels. Keep that exact controller convention instead of attaching
+        // synthetic source state unrelated to the physical pointer we warped.
+        let wheel_y = (delta_y_per_tick / 12).clamp(-100, 100);
+        let wheel_x = (delta_x_per_tick / 12).clamp(-100, 100);
+        let event_ref = unsafe {
+            CGEventCreateScrollWheelEvent2(
+                std::ptr::null_mut(),
+                ScrollEventUnit::PIXEL,
+                2,
+                wheel_y,
+                wheel_x,
+                0,
+            )
+        };
+        if event_ref.is_null() {
+            return Err(anyhow::anyhow!("CGEventCreateScrollWheelEvent2 failed"));
+        }
+        let event = unsafe { CGEvent::from_ptr(event_ref) };
         event.post(CGEventTapLocation::HID);
         std::thread::sleep(std::time::Duration::from_millis(30));
     }
@@ -146,6 +159,18 @@ pub fn click_at_xy_desktop_preserving_cursor(x: f64, y: f64) -> anyhow::Result<(
 }
 
 extern "C" {
+    /// Quartz's non-variadic scroll-event constructor. The public desktop
+    /// path intentionally passes a null source to match real mouse-controller
+    /// libraries such as pynput.
+    fn CGEventCreateScrollWheelEvent2(
+        source: core_graphics::sys::CGEventSourceRef,
+        units: core_graphics::event::CGScrollEventUnit,
+        wheel_count: u32,
+        wheel1: i32,
+        wheel2: i32,
+        wheel3: i32,
+    ) -> core_graphics::sys::CGEventRef;
+
     /// Reconnect the mouse-delta stream to the (just-warped) cursor position so a
     /// synthesized click hit-tests at the new location, not the pre-warp one.
     fn CGAssociateMouseAndMouseCursorPosition(connected: bool) -> i32;
@@ -154,6 +179,8 @@ extern "C" {
 /// Like `click_at_xy` but also stamps window-local `(wx, wy)` onto the event.
 /// When `wid` is provided, additionally stamps Chromium routing fields
 /// (f51 / f58 / f91 / f92) for better backgrounded-target delivery.
+// The flattened arguments mirror the native event fields used by existing callers.
+#[allow(clippy::too_many_arguments)]
 pub fn click_at_xy_with_window_local(
     pid: i32,
     x: f64,
@@ -279,6 +306,8 @@ fn click_at_xy_inner(
 ///
 /// Uses both SkyLight `SLEventPostToPid` AND `CGEvent::post_to_pid` (belt+suspenders)
 /// for AppKit / Catalyst target coverage.
+// The flattened arguments mirror the native event fields used by existing callers.
+#[allow(clippy::too_many_arguments)]
 pub fn click_at_xy_chromium(
     pid: i32,
     screen_x: f64,
@@ -298,7 +327,7 @@ pub fn click_at_xy_chromium(
     let win_local = (win_local_x, win_local_y);
     let off_local = (-1.0_f64, -1.0_f64);
     let flags = parse_modifier_flags(modifiers);
-    let click_pairs = count.max(1).min(2);
+    let click_pairs = count.clamp(1, 2);
     let window_id = wid as i64;
 
     // All 5 events share the same click-group ID so WindowServer / Chromium
@@ -421,6 +450,8 @@ pub fn click_at_xy_chromium(
 ///
 /// Like the Swift reference `MouseInput.drag`, uses the SkyLight path for
 /// backgrounded-target delivery.
+// The drag primitive deliberately exposes its complete native event contract.
+#[allow(clippy::too_many_arguments)]
 pub fn drag_at_xy(
     pid: i32,
     from_x: f64,
@@ -555,6 +586,8 @@ pub fn drag_at_xy(
 /// pointer capture and drag tracking. PID-routed `post_to_pid` events are
 /// suitable for background delivery, but they can be silently filtered by the
 /// renderer even when the target is frontmost.
+// The drag primitive deliberately exposes its complete native event contract.
+#[allow(clippy::too_many_arguments)]
 pub fn drag_at_xy_foreground(
     from_x: f64,
     from_y: f64,
@@ -824,6 +857,7 @@ fn right_click_at_xy_inner(
 /// - Fires `SLEventPostToPid` (SkyLight path — reaches backgrounded Chromium/Catalyst).
 /// - Also fires `CGEvent::post_to_pid` (public path — lands on AppKit targets where
 ///   SkyLight mouse delivery drops).
+///
 /// Both are always posted in sequence regardless of whether the other succeeded.
 ///
 /// Field stamps applied (always):
@@ -842,7 +876,9 @@ fn right_click_at_xy_inner(
 /// `button_number` MUST match the button encoded in the event type (right-down
 /// stamped with f3=0 routes as a left-click on the receiving side — this was the
 /// right-click-lands-as-nothing bug). Left=0, Right=1, Middle=2.
-fn post_mouse_event(
+// These arguments are the individual CGEvent fields stamped by this low-level primitive.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn post_mouse_event(
     pid: i32,
     event: &CGEvent,
     window_local: Option<(f64, f64)>,
@@ -945,6 +981,8 @@ fn post_mouse_moved_primer(
 /// `window_local`/`wid`: when known, stamp the window-local point and the
 /// Chromium window-routing fields (f51/f91/f92) for backgrounded delivery —
 /// identical in spirit to `post_mouse_event`.
+// These arguments are the individual wheel-event fields used by existing callers.
+#[allow(clippy::too_many_arguments)]
 pub fn scroll_wheel_at_xy(
     pid: i32,
     screen_x: f64,

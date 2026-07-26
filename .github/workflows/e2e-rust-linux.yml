@@ -17,6 +17,7 @@ on:
           - shared
           - native
           - capture
+          - installer
       cell_filter:
         description: "Optional shared-cell substring for targeted diagnostics"
         required: false
@@ -165,9 +166,68 @@ jobs:
           compression-level: 0
           retention-days: 14
 
+  installer:
+    if: inputs.lane == 'all' || inputs.lane == 'installer'
+    name: "Linux / install-local.sh smoke"
+    needs: source
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang pkg-config libdbus-1-dev libpipewire-0.3-dev \
+            libspa-0.2-dev libei-dev libwayland-dev libxkbcommon-dev \
+            libx11-dev libxi-dev libxtst-dev libxext-dev
+      - name: Install into an isolated local namespace
+        shell: bash
+        env:
+          CUA_DRIVER_SOURCE_SHA: ${{ needs.source.outputs.sha }}
+          CUA_DRIVER_LOCAL_HOME: ${{ runner.temp }}/cua-driver-local-home
+          CUA_DRIVER_LOCAL_INSTALL_DIR: ${{ runner.temp }}/cua-driver-local-bin
+        run: |
+          set -euo pipefail
+          bash libs/cua-driver/scripts/install-local.sh --release
+          installed="$CUA_DRIVER_LOCAL_INSTALL_DIR/cua-driver-local"
+          test -x "$installed"
+          "$installed" --version | tee "$RUNNER_TEMP/cua-driver-local-version.txt"
+
+          socket="$RUNNER_TEMP/cua-driver-local.sock"
+          "$installed" serve --socket "$socket" \
+            >"$RUNNER_TEMP/cua-driver-local-daemon.log" 2>&1 &
+          daemon_pid=$!
+          trap 'kill "$daemon_pid" 2>/dev/null || true; wait "$daemon_pid" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 30); do
+            [[ -S "$socket" ]] && break
+            kill -0 "$daemon_pid"
+            sleep 1
+          done
+          test -S "$socket"
+          "$installed" --socket "$socket" call get_config '{}' \
+            | tee "$RUNNER_TEMP/cua-driver-local-config.json"
+          grep -Fq "$CUA_DRIVER_SOURCE_SHA" "$RUNNER_TEMP/cua-driver-local-config.json"
+      - name: Upload installer evidence
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: rust-linux-install-local
+          path: |
+            ${{ runner.temp }}/cua-driver-local-version.txt
+            ${{ runner.temp }}/cua-driver-local-config.json
+            ${{ runner.temp }}/cua-driver-local-daemon.log
+          if-no-files-found: ignore
+          retention-days: 14
+
   summary:
     if: always()
-    needs: [source, shared, native, capture]
+    needs: [source, shared, native, capture, installer]
     name: "Linux / matrix summary"
     runs-on: ubuntu-latest
     timeout-minutes: 10

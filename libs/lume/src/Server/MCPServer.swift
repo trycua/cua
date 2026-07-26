@@ -27,6 +27,7 @@ final class LumeMCPServer {
 
         let transport = StdioTransport()
         try await mcpServer?.start(transport: transport)
+        TelemetryClient.shared.recordMCPSessionStarted()
         await mcpServer?.waitUntilCompleted()
     }
 
@@ -543,46 +544,62 @@ final class LumeMCPServer {
     // MARK: - Tool Call Handler
 
     private func handleToolCall(_ params: CallTool.Parameters) async -> CallTool.Result {
+        let startedAt = Date()
+        let result: CallTool.Result
         do {
             switch params.name {
             case "lume_list_vms":
-                return try await handleListVMs(params.arguments)
+                result = try await handleListVMs(params.arguments)
             case "lume_get_vm":
-                return try await handleGetVM(params.arguments)
+                result = try await handleGetVM(params.arguments)
             case "lume_run_vm":
-                return try await handleRunVM(params.arguments)
+                result = try await handleRunVM(params.arguments)
             case "lume_stop_vm":
-                return try await handleStopVM(params.arguments)
+                result = try await handleStopVM(params.arguments)
             case "lume_clone_vm":
-                return try await handleCloneVM(params.arguments)
+                result = try await handleCloneVM(params.arguments)
             case "lume_delete_vm":
-                return try await handleDeleteVM(params.arguments)
+                result = try await handleDeleteVM(params.arguments)
             case "lume_exec":
-                return try await handleExec(params.arguments)
+                result = try await handleExec(params.arguments)
             case "lume_create_vm":
-                return try await handleCreateVM(params.arguments)
+                result = try await handleCreateVM(params.arguments)
             case "lume_resize_disk":
-                return try await handleResizeDisk(params.arguments)
+                result = try await handleResizeDisk(params.arguments)
             case "check_for_update":
-                return try await handleCheckForUpdate(params.arguments)
+                result = try await handleCheckForUpdate(params.arguments)
             default:
-                return CallTool.Result(
+                result = CallTool.Result(
                     content: [.text("Unknown tool: \(params.name)")],
                     isError: true
                 )
             }
         } catch {
-            return CallTool.Result(
+            result = CallTool.Result(
                 content: [.text("Error: \(error.localizedDescription)")],
                 isError: true
             )
         }
+        let success = result.isError != true
+        TelemetryClient.shared.recordMCPToolCompleted(
+            toolName: params.name,
+            success: success,
+            errorClass: success ? .none : (params.name == "check_for_update" ? .unavailable : .operationError),
+            elapsed: Date().timeIntervalSince(startedAt)
+        )
+        return result
     }
 
     // MARK: - Tool Implementations
 
     private func handleCheckForUpdate(_ args: [String: Value]?) async throws -> CallTool.Result {
         let state = await LumeVersionCheck.checkUpdateState(noCache: false)
+        TelemetryClient.shared.recordUpdateChecked(
+            source: "mcp",
+            outcome: state.error != nil ? "unavailable" : (state.updateAvailable ? "available" : "up_to_date"),
+            targetVersion: state.latestVersion,
+            cacheHit: state.cacheHit
+        )
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -649,7 +666,8 @@ final class LumeMCPServer {
                     noDisplay: noDisplay,
                     sharedDirectories: sharedDirectories,
                     storage: storage,
-                    clipboard: clipboard
+                    clipboard: clipboard,
+                    telemetryTransport: .mcpStdio
                 )
             } catch {
                 Logger.error(
@@ -827,7 +845,8 @@ final class LumeMCPServer {
             display: "1920x1080",
             ipsw: ipsw,
             storage: storage,
-            unattendedConfig: unattendedConfig
+            unattendedConfig: unattendedConfig,
+            telemetryTransport: .mcpStdio
         )
 
         var response = "VM '\(name)' creation started. Status: provisioning."

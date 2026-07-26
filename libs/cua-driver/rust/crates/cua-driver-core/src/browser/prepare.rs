@@ -5,7 +5,7 @@ use std::future::Future;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -56,6 +56,7 @@ fn with_setup_side_effects(
     if !setup.opened_setup_page
         && !setup.closed_setup_page
         && !setup.enabled_remote_debugging
+        && !setup.used_bounded_pixel_fallback
         && !setup.focused_setup_address_field
         && !setup.foregrounded_window
         && !setup.injected_global_input
@@ -69,6 +70,7 @@ fn with_setup_side_effects(
             "closed_setup_page": setup.closed_setup_page,
             "focused_setup_address_field": setup.focused_setup_address_field,
             "enabled_remote_debugging": setup.enabled_remote_debugging,
+            "used_bounded_pixel_fallback": setup.used_bounded_pixel_fallback,
             "foregrounded_window": setup.foregrounded_window,
             "injected_global_input": setup.injected_global_input,
         },
@@ -181,6 +183,7 @@ struct PreparedProfile {
 
 pub(crate) struct ManagedBrowser {
     child: Child,
+    owned_pid: i64,
     profile: PathBuf,
     delete_profile: bool,
     marker: ProfileMarker,
@@ -195,6 +198,19 @@ impl Drop for ManagedBrowser {
             // fans out into renderer/utility descendants, so killing only the
             // root Child can leave profile writers alive after cleanup.
             libc::kill(-(self.child.id() as i32), libc::SIGKILL);
+        }
+        #[cfg(target_os = "windows")]
+        if self.owned_pid != i64::from(self.child.id()) {
+            // Edge on Windows ARM may use a short-lived launcher process and
+            // transfer the browser role to a descendant. The listener owner
+            // was attested inside that driver-spawned process tree, so reap
+            // that exact process tree when its owning session ends.
+            let _ = Command::new("taskkill.exe")
+                .args(["/PID", &self.owned_pid.to_string(), "/T", "/F"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -322,6 +338,18 @@ fn isolated_browser_command(executable: &str, profile: &Path) -> Command {
         .stdout(Stdio::null())
         .stderr(stderr);
     command
+}
+
+fn clean_spawn_exit_can_be_launcher_handoff(status: &ExitStatus) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        status.success()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = status;
+        false
+    }
 }
 
 fn write_profile_marker(path: &Path, marker: &ProfileMarker) -> Result<(), BrowserRefusal> {
@@ -454,6 +482,7 @@ async fn wait_for_spawned_endpoint(
 ) -> Result<OwnedEndpoint, BrowserRefusal> {
     let deadline = Instant::now() + Duration::from_secs(20);
     let port_file = profile.join("DevToolsActivePort");
+    let mut observed_clean_launcher_exit = false;
     loop {
         if let Some(status) = child.try_wait().map_err(|error| {
             refusal(
@@ -461,10 +490,18 @@ async fn wait_for_spawned_endpoint(
                 format!("could not inspect the isolated browser process: {error}"),
             )
         })? {
-            return Err(refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("isolated browser exited before exposing DevTools ({status})"),
-            ));
+            if clean_spawn_exit_can_be_launcher_handoff(&status) {
+                // Edge on Windows ARM can transfer the browser role to a
+                // descendant and let its launcher exit successfully. Keep
+                // waiting for the driver-owned profile's port file; the live
+                // listener and its descendant ownership are attested below.
+                observed_clean_launcher_exit = true;
+            } else {
+                return Err(refusal(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("isolated browser exited before exposing DevTools ({status})"),
+                ));
+            }
         }
         if let Ok(text) = fs::read_to_string(&port_file) {
             let mut lines = text.lines();
@@ -481,6 +518,7 @@ async fn wait_for_spawned_endpoint(
                             ownership: EndpointOwnershipProof {
                                 method: EndpointOwnershipMethod::SpawnedByDriver,
                                 owner_pid: i64::from(child.id()),
+                                listener_pid: None,
                                 detail: Some(
                                     "driver-spawned process and private profile port file"
                                         .to_owned(),
@@ -494,7 +532,11 @@ async fn wait_for_spawned_endpoint(
         if Instant::now() >= deadline {
             return Err(refusal(
                 BrowserRefusalCode::BrowserRouteUnavailable,
-                "isolated browser did not expose a loopback DevTools endpoint before timeout",
+                if observed_clean_launcher_exit {
+                    "isolated browser launcher exited cleanly, but its process tree did not expose a loopback DevTools endpoint before timeout"
+                } else {
+                    "isolated browser did not expose a loopback DevTools endpoint before timeout"
+                },
             ));
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -508,20 +550,35 @@ async fn attest_spawned_endpoint(
 ) -> Result<OwnedEndpoint, BrowserRefusal> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        if let Some(live) = engine.platform.discover_owned_endpoint(child_pid).await? {
+        if let Some(live) = engine
+            .platform
+            .discover_spawned_endpoint(child_pid, &profile_endpoint.ws_url)
+            .await?
+        {
             if live.http_port == profile_endpoint.http_port
                 && live.ws_url == profile_endpoint.ws_url
             {
+                let runtime_pid = spawned_runtime_pid(&live.ownership);
                 return Ok(OwnedEndpoint {
                     ws_url: live.ws_url,
                     http_port: live.http_port,
                     ownership: EndpointOwnershipProof {
                         method: EndpointOwnershipMethod::SpawnedByDriver,
-                        owner_pid: child_pid,
-                        detail: Some(
+                        // The platform already proved the exact listener is in
+                        // child_pid's process tree. Promote that live process
+                        // to the prepared-browser identity so ARM64 launcher
+                        // handoffs remain bindable and reapable. Later Windows
+                        // reproof normalizes ownership to this stable pid while
+                        // retaining any new exact listener separately.
+                        owner_pid: runtime_pid,
+                        listener_pid: live.ownership.listener_pid,
+                        detail: Some(if runtime_pid == child_pid {
                             "driver-owned profile port file plus live loopback socket owner"
-                                .to_owned(),
-                        ),
+                                .to_owned()
+                        } else {
+                            "driver-owned profile port file plus live loopback socket owner promoted from a short-lived launcher process"
+                                    .to_owned()
+                        }),
                     },
                 });
             }
@@ -536,8 +593,19 @@ async fn attest_spawned_endpoint(
     }
 }
 
+fn spawned_runtime_pid(ownership: &EndpointOwnershipProof) -> i64 {
+    ownership.listener_pid.unwrap_or(ownership.owner_pid)
+}
+
 impl BrowserEngine {
+    pub(crate) fn is_driver_owned_pid_for_session(&self, session: &str, pid: i64) -> bool {
+        self.managed_browsers.lock().unwrap().iter().any(|browser| {
+            browser.owned_pid == pid && browser.owner_sessions.iter().any(|owner| owner == session)
+        })
+    }
+
     pub(crate) fn cleanup_prepared_session(&self, session: &str) {
+        self.protected_resource_ownership.remove_session(session);
         self.managed_browsers
             .lock()
             .unwrap()
@@ -649,8 +717,13 @@ impl BrowserEngine {
                 owner_sessions.push(transport_session);
             }
         }
+        for owner in &owner_sessions {
+            self.protected_resource_ownership
+                .mark_driver_owned_pid(owner, prepared_pid);
+        }
         self.managed_browsers.lock().unwrap().push(ManagedBrowser {
             child,
+            owned_pid: prepared_pid,
             profile: prepared_profile.path,
             delete_profile: prepared_profile.delete_on_cleanup,
             marker: prepared_profile.marker,
@@ -675,6 +748,12 @@ impl BrowserEngine {
         &self,
         request: PrepareRequest,
     ) -> Result<PrepareOutcome, BrowserRefusal> {
+        enum ConsentPath {
+            Protected,
+            LegacyArtifact,
+            Unrestricted,
+        }
+
         let window_id = request.window_id.ok_or_else(|| {
             refusal(
                 BrowserRefusalCode::BrowserConsentRequired,
@@ -686,24 +765,53 @@ impl BrowserEngine {
             window_id,
             session: request.session.clone(),
         };
-        match request.authorization.as_ref() {
-            Some(PrepareAuthorization::ApprovalArtifact(token)) => {
-                consume_existing_profile_approval(token, &scope)?;
-            }
-            // The ordinary MCP destructive-tool marker proves transport
-            // provenance, not a person's approval of their authenticated
-            // profile. It is deliberately insufficient here.
-            Some(PrepareAuthorization::McpHost) | None => {
-                return Err(refusal(
+        let mode = crate::tool::current_dispatch_authorization_context()
+            .map(|context| context.mode())
+            .map(Ok)
+            .unwrap_or_else(crate::authorization::configured_permission_mode)
+            .map_err(|error| {
+                refusal(
                     BrowserRefusalCode::BrowserConsentRequired,
-                    "existing-profile attachment requires a fresh operation-bound browser-approve artifact",
+                    format!("permission mode is unavailable: {error}"),
                 )
-                .with_detail(serde_json::json!({
-                    "approval_request_id": uuid::Uuid::new_v4().to_string(),
-                    "approval_command": "cua-driver browser-approve --strategy existing_profile --pid <pid> --window-id <window_id> --session <session>",
-                })));
+            })?;
+        let consent_path = if mode == crate::authorization::PermissionMode::Unrestricted {
+            ConsentPath::Unrestricted
+        } else if self.approval_broker.provider_id().is_some() {
+            ConsentPath::Protected
+        } else if crate::authorization::legacy_existing_profile_approval_enabled() {
+            match request.authorization.as_ref() {
+                Some(PrepareAuthorization::ApprovalArtifact(token)) => {
+                    consume_existing_profile_approval(token, &scope)?;
+                    ConsentPath::LegacyArtifact
+                }
+                // The ordinary MCP destructive-tool marker proves transport
+                // provenance, not a person's approval of their authenticated
+                // profile. It is deliberately insufficient here.
+                Some(PrepareAuthorization::McpHost) | None => {
+                    return Err(refusal(
+                        BrowserRefusalCode::BrowserConsentRequired,
+                        "legacy existing-profile compatibility requires a fresh operation-bound browser-approve artifact",
+                    )
+                    .with_detail(serde_json::json!({
+                        "approval_request_id": uuid::Uuid::new_v4().to_string(),
+                        "approval_command": "cua-driver browser-approve --strategy existing_profile --pid <pid> --window-id <window_id> --session <session>",
+                        "legacy_approval_enabled": true,
+                    })));
+                }
             }
-        }
+        } else {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserConsentRequired,
+                "existing-profile attachment requires a certified trusted-consent provider in standard/bounded mode; the legacy file-backed artifact is disabled",
+            )
+            .with_detail(serde_json::json!({
+                "permission_mode": mode.as_str(),
+                "trusted_consent_required": true,
+                "legacy_approval_enabled": false,
+                "protected_consent_collector": self.approval_broker.provider_id(),
+            })));
+        };
         if request.profile.is_some() || request.allow_launch {
             return Err(refusal(
                 BrowserRefusalCode::BrowserConsentRequired,
@@ -830,6 +938,58 @@ impl BrowserEngine {
             return Err(error);
         }
 
+        // Consent is collected only after the exact process, native window,
+        // browser product, and endpoint owner have all been proven. This keeps
+        // the human-visible request exact and avoids activating an indicator
+        // for a target that cannot be attached.
+        let protected_consent = if matches!(consent_path, ConsentPath::Protected) {
+            let transport_session = request
+                .transport_session
+                .as_deref()
+                .unwrap_or(request.session.as_str());
+            let approval_request = self.approval_broker.request(
+                mode,
+                "browser_prepare.existing_profile",
+                crate::authorization::RiskClass::R2,
+                request.session.clone(),
+                transport_session.to_owned(),
+                serde_json::json!({
+                    "pid": request.pid,
+                    "window_id": window_id,
+                    "process_fingerprint": fingerprint.clone(),
+                    "browser_product": classification.product_kind,
+                    "endpoint_owner_pid": endpoint.ownership.owner_pid,
+                }),
+                format!(
+                    "Attach Cua Driver to {:?} window {} using its logged-in profile",
+                    classification.product_kind, window_id
+                ),
+            );
+            Some(
+                if mode == crate::authorization::PermissionMode::Bounded {
+                    self.approval_broker
+                        .activate_preapproved(&approval_request)
+                        .await
+                } else {
+                    self.approval_broker.approve(&approval_request).await
+                }
+                .map_err(|error| {
+                    refusal(
+                        BrowserRefusalCode::BrowserConsentRequired,
+                        format!("protected existing-profile consent was not granted: {error}"),
+                    )
+                    .with_detail(serde_json::json!({
+                        "permission_mode": mode.as_str(),
+                        "trusted_consent_required": true,
+                        "provider": self.approval_broker.provider_id(),
+                        "approval_request_id": approval_request.nonce,
+                    }))
+                })?,
+            )
+        } else {
+            None
+        };
+
         let previous_grant = self
             .existing_profile_grant(
                 &request.session,
@@ -840,6 +1000,9 @@ impl BrowserEngine {
         let previous_grant = match previous_grant {
             Ok(grant) => grant,
             Err(error) => {
+                if let Some(protected) = protected_consent.as_ref() {
+                    self.approval_broker.revoke(protected).await;
+                }
                 let error = with_setup_side_effects(error, &setup);
                 if setup_pending {
                     return Err(setup_guard
@@ -860,11 +1023,15 @@ impl BrowserEngine {
             fingerprint,
             "chromium".to_owned(),
             endpoint.ws_url.clone(),
+            protected_consent,
         );
         if let Some(previous) = previous_grant {
             self.pool
                 .release_existing(&previous.endpoint_ws_url, previous.generation)
                 .await;
+            if let Some(protected) = previous.protected_consent.as_ref() {
+                self.approval_broker.revoke(protected).await;
+            }
             if previous.endpoint_ws_url != endpoint.ws_url {
                 self.pool.release_claim_marker(&previous.endpoint_ws_url);
             }
@@ -976,6 +1143,7 @@ impl BrowserEngine {
                 opened_setup_page: setup.opened_setup_page,
                 closed_setup_page: setup.closed_setup_page,
                 enabled_remote_debugging: setup.enabled_remote_debugging,
+                used_bounded_pixel_fallback: setup.used_bounded_pixel_fallback,
                 focused_setup_address_field: setup.focused_setup_address_field,
                 foregrounded_window: setup.foregrounded_window,
                 injected_global_input: setup.injected_global_input,
@@ -1041,6 +1209,7 @@ mod tests {
                 opened_setup_page: true,
                 closed_setup_page: true,
                 enabled_remote_debugging: true,
+                used_bounded_pixel_fallback: true,
                 focused_setup_address_field: true,
                 foregrounded_window: true,
                 injected_global_input: true,
@@ -1051,6 +1220,10 @@ mod tests {
         assert_eq!(detail["setup_side_effects"]["opened_setup_page"], true);
         assert_eq!(
             detail["setup_side_effects"]["enabled_remote_debugging"],
+            true
+        );
+        assert_eq!(
+            detail["setup_side_effects"]["used_bounded_pixel_fallback"],
             true
         );
         assert_eq!(detail["cause"]["original"], true);
@@ -1117,6 +1290,42 @@ mod tests {
         }
         #[cfg(target_os = "linux")]
         assert!(args.iter().any(|arg| arg == "--password-store=basic"));
+    }
+
+    #[test]
+    fn clean_launcher_exit_is_only_deferred_on_windows() {
+        let mut command = if cfg!(target_os = "windows") {
+            let mut command = Command::new("cmd.exe");
+            command.args(["/C", "exit", "0"]);
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args(["-c", "exit 0"]);
+            command
+        };
+        let status = command.status().unwrap();
+        assert_eq!(
+            clean_spawn_exit_can_be_launcher_handoff(&status),
+            cfg!(target_os = "windows")
+        );
+    }
+
+    #[test]
+    fn spawned_runtime_promotes_a_proven_listener_without_losing_the_root() {
+        let proof = EndpointOwnershipProof {
+            method: EndpointOwnershipMethod::ListeningSocketPid,
+            owner_pid: 42,
+            listener_pid: Some(43),
+            detail: Some("listener 43 proven inside process tree 42".to_owned()),
+        };
+        assert_eq!(spawned_runtime_pid(&proof), 43);
+        assert_eq!(proof.owner_pid, 42);
+
+        let root_owned = EndpointOwnershipProof {
+            listener_pid: None,
+            ..proof
+        };
+        assert_eq!(spawned_runtime_pid(&root_owned), 42);
     }
 
     #[cfg(target_os = "linux")]

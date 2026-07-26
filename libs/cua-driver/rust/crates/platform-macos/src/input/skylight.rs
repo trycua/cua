@@ -261,7 +261,7 @@ unsafe fn extract_event_record(event_ptr: *mut c_void) -> *mut c_void {
 ///
 /// Returns `true` when `SLEventPostToPid` resolved and the post was attempted.
 /// Returns `false` when the SPI is absent — caller falls back to `CGEvent::post_to_pid`.
-pub fn post_to_pid(pid: pid_t, event_ptr: *mut c_void, attach_auth_message: bool) -> bool {
+pub(super) fn post_to_pid(pid: pid_t, event_ptr: *mut c_void, attach_auth_message: bool) -> bool {
     let post_fn = match post_to_pid_fn() {
         Some(f) => f,
         None => return false,
@@ -302,7 +302,7 @@ pub fn post_to_pid(pid: pid_t, event_ptr: *mut c_void, attach_auth_message: bool
 
 /// Stamp a window-local `(x, y)` point onto `event_ptr` via the private
 /// `CGEventSetWindowLocation` SPI. Returns `true` when the SPI resolved.
-pub fn set_window_location(event_ptr: *mut c_void, x: f64, y: f64) -> bool {
+pub(super) fn set_window_location(event_ptr: *mut c_void, x: f64, y: f64) -> bool {
     match set_window_loc_fn() {
         Some(f) => {
             unsafe { f(event_ptr, x, y) };
@@ -314,7 +314,7 @@ pub fn set_window_location(event_ptr: *mut c_void, x: f64, y: f64) -> bool {
 
 /// Stamp `value` onto `event_ptr` at raw SkyLight field index `field` via
 /// `SLEventSetIntegerValueField`. Returns `false` when SPI absent.
-pub fn set_integer_field(event_ptr: *mut c_void, field: u32, value: i64) -> bool {
+pub(super) fn set_integer_field(event_ptr: *mut c_void, field: u32, value: i64) -> bool {
     match set_int_field_fn() {
         Some(f) => {
             unsafe { f(event_ptr, field, value) };
@@ -425,6 +425,28 @@ pub fn get_process_psn_for_window(window_id: u32, pid: libc::pid_t, out_psn: &mu
     false
 }
 
+/// Make `target_pid` and `target_wid` WindowServer-frontmost and leave them
+/// there. Unlike [`with_foreground_assist`], this deliberately does not save or
+/// restore the previous process. It is the persistent counterpart required by
+/// focus-proxy surfaces whose input channel is armed only while genuinely
+/// frontmost.
+///
+/// Returns `true` only when the target PSN resolved and WindowServer accepted
+/// `SLPSSetFrontProcessWithOptions`.
+pub fn set_front_process_persistently(target_pid: libc::pid_t, target_wid: u32) -> bool {
+    let Some(set_front) = set_front_process_fn() else {
+        return false;
+    };
+    let mut target_psn = [0u8; 8];
+    if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
+        return false;
+    }
+
+    // kCPSNoWindows = 0x400. Supplying the exact target window still makes
+    // that window's process frontmost while avoiding a broad all-window raise.
+    unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) == 0 }
+}
+
 /// Tool-agnostic foreground-assist: briefly front `window_id`, run `body` (which
 /// posts the synthetic input), then restore the prior frontmost process.
 ///
@@ -443,6 +465,47 @@ pub fn with_foreground_assist(
     body: impl FnOnce() -> anyhow::Result<()>,
 ) -> anyhow::Result<bool> {
     with_menu_shortcut_activation(target_pid, target_wid, body)
+}
+
+/// Activate an exact target window for a global HID keyboard action.
+///
+/// Unlike [`with_menu_shortcut_activation`], this helper must not run `action`
+/// when the private foreground SPI is unavailable: a global HID event has no
+/// pid addressing and would otherwise land in whichever application is
+/// currently frontmost. The short settles keep the target frontmost until
+/// WindowServer has routed both sides of the key chord, then restore the prior
+/// process even when the action fails.
+pub fn with_foreground_hid_activation(
+    target_pid: libc::pid_t,
+    target_wid: u32,
+    action: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let set_front = set_front_process_fn()
+        .ok_or_else(|| anyhow::anyhow!("foreground HID delivery is unavailable"))?;
+
+    let mut prev_psn = [0u8; 8];
+    let prev_ok = get_front_process_fn()
+        .map(|f| unsafe { f(prev_psn.as_mut_ptr() as *mut c_void) } == 0)
+        .unwrap_or(false);
+
+    let mut target_psn = [0u8; 8];
+    if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
+        anyhow::bail!("could not resolve target window for foreground HID delivery");
+    }
+    let activated = unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) };
+    if activated != 0 {
+        anyhow::bail!("WindowServer rejected foreground HID activation");
+    }
+
+    std::thread::sleep(std::time::Duration::from_millis(40));
+    let result = action();
+    std::thread::sleep(std::time::Duration::from_millis(40));
+
+    if prev_ok {
+        unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
+    }
+
+    result
 }
 
 /// Activate `target_pid`'s window `target_wid` for NSMenu key dispatch, run `action`,

@@ -150,7 +150,41 @@ jobs:
             git checkout -B "$BRANCH" "origin/$BRANCH"
             git config user.name "trycua-release[bot]"
             git config user.email "trycua-release[bot]@users.noreply.github.com"
-            git rebase origin/main
+            if ! git rebase origin/main; then
+              mapfile -t CONFLICTS < <(git diff --name-only --diff-filter=U)
+              if [[ "${#CONFLICTS[@]}" -ne 1 || \
+                    "${CONFLICTS[0]}" != ".release-please-manifest.json" ]]; then
+                git rebase --abort
+                echo "::error::Release branch has conflicts beyond the shared manifest"
+                exit 1
+              fi
+
+              # Each component release PR rewrites the shared manifest from
+              # its original base. Keep main's versions for other components
+              # and carry forward only the version(s) owned by this PR.
+              git show origin/main:.release-please-manifest.json \
+                > "$RUNNER_TEMP/main-release-manifest.json"
+              git show "origin/$BRANCH:.release-please-manifest.json" \
+                > "$RUNNER_TEMP/branch-release-manifest.json"
+              COMPONENT_ARGS=()
+              if [[ "$DRIVER" == "true" ]]; then
+                COMPONENT_ARGS+=(--component cua-driver-rs)
+              fi
+              if [[ "$LUME" == "true" ]]; then
+                COMPONENT_ARGS+=(--component lume)
+              fi
+              python3 .github/scripts/merge_release_please_manifests.py \
+                --main "$RUNNER_TEMP/main-release-manifest.json" \
+                --release "$RUNNER_TEMP/branch-release-manifest.json" \
+                "${COMPONENT_ARGS[@]}" \
+                > .release-please-manifest.json
+              git add .release-please-manifest.json
+              if ! GIT_EDITOR=true git rebase --continue; then
+                git rebase --abort
+                echo "::error::Release branch still conflicts after manifest reconciliation"
+                exit 1
+              fi
+            fi
             if [[ "$DRIVER" == "true" ]]; then
               DRIVER_VERSION=$(tr -d '[:space:]' < libs/cua-driver/rust/VERSION)
               cargo update --manifest-path libs/cua-driver/rust/Cargo.toml \

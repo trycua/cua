@@ -153,7 +153,7 @@ Requests are billed in credits, deducted from your Cua account balance. Every re
 <details>
 <summary><strong>Can I still use my own Anthropic key (BYOK)?</strong></summary>
 
-Yes. The agent SDK still supports direct provider access. Just use `anthropic/claude-sonnet-4-5-20250929` instead of the `cua/` prefix and set your `ANTHROPIC_API_KEY`. See [Supported Model Providers](https://cua.ai/docs/cua/guide/fundamentals/vlms) for details.
+Yes. The agent SDK still supports direct provider access. Just use `anthropic/claude-sonnet-4-5-20250929` instead of the `cua/` prefix and set your `ANTHROPIC_API_KEY`.
 
 </details>
 
@@ -184,10 +184,9 @@ If there's a model or feature you need, let us know in [Discord](https://discord
 
 ## Need Help?
 
-- **Documentation**: [cua.ai/docs/cua/guide/fundamentals/cua-vlm-router](https://cua.ai/docs/cua/guide/fundamentals/cua-vlm-router)
 - **Quickstart Guide**: [cua.ai/docs/cua/guide/get-started/using-agent-sdk](https://cua.ai/docs/cua/guide/get-started/using-agent-sdk)
 - **Discord Community**: [discord.gg/cua-ai](https://discord.gg/cua-ai)
 
 ---
 
-Get started at [cua.ai](https://cua.ai) or check out the [VLM Router docs](https://cua.ai/docs/cua/guide/fundamentals/cua-vlm-router).
+Get started at [cua.ai](https://cua.ai) or join the [Discord community](https://discord.gg/cua-ai) if you need help.

@@ -13,8 +13,10 @@ from release_attribution import (
     ReleaseError,
     _change_contributors,
     build_manifest,
+    changelog_references_change,
     linked_issue_numbers,
     login_from_email,
+    release_bump,
     release_entries,
     render_body,
     render_card_svg,
@@ -254,6 +256,28 @@ def test_legacy_release_bump_subject_is_recognized():
     assert LEGACY_RELEASE_BUMP_RE.match("Bump cua-driver-rs to v0.8.3")
     assert LEGACY_RELEASE_BUMP_RE.match("Bump lume to v0.3.16")
     assert not LEGACY_RELEASE_BUMP_RE.match("feat(driver): bump reconnect retries")
+
+
+def test_changelog_accepts_verified_commit_link_when_pr_suffix_is_missing():
+    commit_sha = "2dad3e519e17b27eaa793151b8671957f578072c"
+    section = (
+        "## [0.11.0] (2026-07-22)\n\n"
+        "* **cua-driver:** add persistent sessions "
+        f"([{commit_sha[:7]}](https://github.com/trycua/cua/commit/{commit_sha}))\n"
+    )
+
+    assert changelog_references_change(section, 2339, [commit_sha])
+    assert changelog_references_change(section + "* fix ([#2408](url))\n", 2408, [])
+    assert not changelog_references_change(section, 9999, ["f" * 40])
+
+
+def test_breaking_change_remains_minor_before_one_dot_zero():
+    changes = [{"type": "feat", "breaking": True}]
+
+    assert release_bump(changes, "0.11.0") == "minor"
+    assert release_bump(changes, "1.0.0") == "major"
+    with pytest.raises(ReleaseError, match="not semantic"):
+        release_bump(changes, "next")
 
 
 def test_manifest_is_pr_first_and_renders_deterministically(tmp_path: Path):

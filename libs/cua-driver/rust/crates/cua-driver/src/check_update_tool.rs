@@ -63,6 +63,10 @@ impl Tool for CheckForUpdateTool {
         let state = tokio::task::spawn_blocking(|| crate::version_check::check_update_state(false))
             .await
             .expect("version_check::check_update_state never panics");
+        crate::version_check::capture_update_state(
+            &state,
+            crate::telemetry::UpdateCheckSource::Mcp,
+        );
 
         let summary = if let Some(err) = &state.error {
             format!("Update check failed: {err}")

@@ -1,5 +1,111 @@
 # Changelog
 
+## [0.12.6](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.5...cua-driver-rs-v0.12.6) (2026-07-24)
+
+
+### Bug Fixes
+
+* **cua-driver:** isolate Wayland portal connections ([#2552](https://github.com/trycua/cua/issues/2552)) ([074ec16](https://github.com/trycua/cua/commit/074ec16647809619aed56454967225b67c945ee5))
+
+## [0.12.5](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.4...cua-driver-rs-v0.12.5) (2026-07-24)
+
+
+### Bug Fixes
+
+* **cua-driver:** enforce authorization in embedded SDK ([#2542](https://github.com/trycua/cua/issues/2542)) ([06bda89](https://github.com/trycua/cua/commit/06bda89f078e882a64ecccb78700ff26dc4d210f))
+* **cua-driver:** refuse dropped ConsoleHost typing on Windows ARM64 ([bd5a8d3](https://github.com/trycua/cua/commit/bd5a8d343cec5b9125b144e62d5348bc7814a425))
+
+## [0.12.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.3...cua-driver-rs-v0.12.4) (2026-07-24)
+
+
+### Bug Fixes
+
+* **cua-driver:** deliver foreground pixel hotkeys through HID ([#2464](https://github.com/trycua/cua/issues/2464)) ([bc1a58d](https://github.com/trycua/cua/commit/bc1a58d7926fadbc79b7d2925895878b9ab81cda))
+* **cua-driver:** expose skill install failure details ([#2510](https://github.com/trycua/cua/issues/2510)) ([d614d8d](https://github.com/trycua/cua/commit/d614d8db689cd663f9e8d784ff03ac1bd388f506))
+* **cua-driver:** honor Cargo target dir in local installs ([#2486](https://github.com/trycua/cua/issues/2486)) ([7cb6810](https://github.com/trycua/cua/commit/7cb6810b429ec9723c9e2050d6670340eeda4265))
+* **cua-driver:** show Windows browser action cursors ([#2532](https://github.com/trycua/cua/issues/2532)) ([8271dd8](https://github.com/trycua/cua/commit/8271dd8abaafe49f774f5f6a9ba676b0596510d0))
+* **cua-driver:** support Windows ARM64 browser sessions ([9c5a78b](https://github.com/trycua/cua/commit/9c5a78b65b09bedceea1faafe09f1ac9488e588b))
+* **cua-driver:** wait for generic type_text completion ([#2463](https://github.com/trycua/cua/issues/2463)) ([3858c7f](https://github.com/trycua/cua/commit/3858c7f2aafc3d03f5a6342d255a625d79b184fb))
+
+## [0.12.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.2...cua-driver-rs-v0.12.3) (2026-07-23)
+
+
+### Bug Fixes
+
+* **cua-driver:** diagnose stale local MCP registrations ([#2498](https://github.com/trycua/cua/issues/2498)) ([df10b6d](https://github.com/trycua/cua/commit/df10b6d3d4b194a714656d3d8758db5017234de0))
+* **cua-driver:** prevent silent ad-hoc local signing ([#2495](https://github.com/trycua/cua/issues/2495)) ([b680ff2](https://github.com/trycua/cua/commit/b680ff2db0c87407e188f6d8fdd28a6bc77228b0))
+* **cua-driver:** show active-tab browser cursors on macOS ([#2493](https://github.com/trycua/cua/issues/2493)) ([c7675a0](https://github.com/trycua/cua/commit/c7675a04d5d3b53a0809db8347b11a23ac81ce63))
+* **cua-driver:** verify desktop input effects and release modifiers ([#2492](https://github.com/trycua/cua/issues/2492)) ([5b68ef5](https://github.com/trycua/cua/commit/5b68ef596f9adf183121e864d19db5e0ee7ddd4d))
+
+## [0.12.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.1...cua-driver-rs-v0.12.2) (2026-07-23)
+
+
+### Bug Fixes
+
+* **cua-driver:** tolerate fileno-less Python stdio ([#2482](https://github.com/trycua/cua/issues/2482)) ([d041f1a](https://github.com/trycua/cua/commit/d041f1a580d413bbe5da6645fd58b9088b2cdd4a))
+* **cua-driver:** trust native macOS sentinel focus ([#2481](https://github.com/trycua/cua/issues/2481)) ([6c2bbcc](https://github.com/trycua/cua/commit/6c2bbccfe5ad6690ef0961c492b34a3493354e84))
+
+## [0.12.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.0...cua-driver-rs-v0.12.1) (2026-07-23)
+
+
+### Bug Fixes
+
+* **cua-driver:** make macOS SDK load standalone ([#2477](https://github.com/trycua/cua/issues/2477)) ([457b17e](https://github.com/trycua/cua/commit/457b17eae8ea2d2ca1b45ad5b23fc342787769a7))
+
+## [0.12.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.11.0...cua-driver-rs-v0.12.0) (2026-07-22)
+
+
+### Features
+
+* **cua-driver:** add client and modality telemetry ([#2441](https://github.com/trycua/cua/issues/2441)) ([5cd0000](https://github.com/trycua/cua/commit/5cd0000e2e018a835303a8f8bdd82a88ea483a6e))
+* **cua-driver:** add true in-process SDK runtime ([#2461](https://github.com/trycua/cua/issues/2461)) ([617508a](https://github.com/trycua/cua/commit/617508a7ae123f277b203d31fca29933927a4636))
+* **cua-driver:** add versioned native ABI ([b172afc](https://github.com/trycua/cua/commit/b172afc75f39832a4bdfaa9040d6d4f556449b49))
+* **cua-driver:** expose macOS control state in window elements ([db281a3](https://github.com/trycua/cua/commit/db281a3b0d9bbabaf74f3c6847adf6abbb66995a))
+
+
+### Bug Fixes
+
+* **cua-driver:** advertise delivery mode capability ([7f6657c](https://github.com/trycua/cua/commit/7f6657c440cedf1f20c6307c849a89487f867b41)), closes [#2425](https://github.com/trycua/cua/issues/2425)
+* **cua-driver:** avoid SIGCHLD handler in doctor ([31bbc07](https://github.com/trycua/cua/commit/31bbc074d75f59fe2c417cddc66cf4093bd8330b)), closes [#2348](https://github.com/trycua/cua/issues/2348)
+* **cua-driver:** enforce scope for mouse button actions ([caa241b](https://github.com/trycua/cua/commit/caa241be5f801e2060d4f5823fde64f9e6dc2be4)), closes [#2368](https://github.com/trycua/cua/issues/2368)
+* **cua-driver:** support Electron UniFFI buffers ([#2455](https://github.com/trycua/cua/issues/2455)) ([d3bf82a](https://github.com/trycua/cua/commit/d3bf82a2cbb27fd83cfa836c04f9f5678e3e3aad))
+
+## [0.11.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.10.0...cua-driver-rs-v0.11.0) (2026-07-22)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cua-driver:** replace language MCP clients with Rust SDKs ([#2341](https://github.com/trycua/cua/issues/2341))
+
+### Features
+
+* **cua-driver:** add persistent macOS interactive input sessions ([2dad3e5](https://github.com/trycua/cua/commit/2dad3e519e17b27eaa793151b8671957f578072c))
+* **cua-driver:** add Rust-owned embedded host for SDK and MCP ([#2427](https://github.com/trycua/cua/issues/2427)) ([5016dc1](https://github.com/trycua/cua/commit/5016dc16bfe54c165e6678104ec521a6d85f76db))
+* **cua-driver:** capture inactive tabs and retain modal controls ([#2426](https://github.com/trycua/cua/issues/2426)) ([c4d7ddc](https://github.com/trycua/cua/commit/c4d7ddc5bc7c00faf3e9102bee664ea47b2f5fac))
+* **cua-driver:** replace language MCP clients with Rust SDKs ([#2341](https://github.com/trycua/cua/issues/2341)) ([b8a0f32](https://github.com/trycua/cua/commit/b8a0f32a06c75225ba24ebb5ab14f6507fa90d15))
+* **cua-driver:** track update funnel telemetry ([#2392](https://github.com/trycua/cua/issues/2392)) ([994308a](https://github.com/trycua/cua/commit/994308a96649109c4e6334acba7179acc8542155))
+
+
+### Bug Fixes
+
+* **cua-driver:** classify health_report as read-only diagnostics ([#2408](https://github.com/trycua/cua/issues/2408)) ([16e7573](https://github.com/trycua/cua/commit/16e7573363adaf3cb6abcfbe8ebf04b7172ff160)), closes [#2399](https://github.com/trycua/cua/issues/2399)
+* **cua-driver:** make macOS permission consent explicit and durable ([#2407](https://github.com/trycua/cua/issues/2407)) ([7ac41be](https://github.com/trycua/cua/commit/7ac41be61e6b1c0034cd9d4de48ac2d5f7bf6b13))
+* **cua-driver:** request macOS permissions from running daemon ([#2414](https://github.com/trycua/cua/issues/2414)) ([231839d](https://github.com/trycua/cua/commit/231839de8161c85b63b86f8a54678a0cd9816335))
+* **cua-driver:** separate local and release identities ([#2404](https://github.com/trycua/cua/issues/2404)) ([a8d8142](https://github.com/trycua/cua/commit/a8d8142bc1dfef641cae80680e0aa9c9230fffb8))
+
+## [0.10.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.9.1...cua-driver-rs-v0.10.0) (2026-07-20)
+
+
+### Features
+
+* **cua-driver:** add protected permission modes and consent grants ([#2383](https://github.com/trycua/cua/issues/2383)) ([c75e606](https://github.com/trycua/cua/commit/c75e60636c11e21ef44f1ebbe1c1350339bae295))
+
+
+### Bug Fixes
+
+* **cua-driver:** bound tool telemetry volume ([#2382](https://github.com/trycua/cua/issues/2382)) ([99d4d61](https://github.com/trycua/cua/commit/99d4d613abc35a67753d206fcf3371673fb75edd))
+* **cua-driver:** register bundle in LaunchServices before tccutil reset ([#2376](https://github.com/trycua/cua/issues/2376)) ([767acf2](https://github.com/trycua/cua/commit/767acf25f25ea668ffab428e4f2e8985896de98e))
+
 ## [0.9.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.9.0...cua-driver-rs-v0.9.1) (2026-07-20)
 
 

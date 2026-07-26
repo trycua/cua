@@ -13,13 +13,7 @@ use serde::{Deserialize, Serialize};
 
 #[inline]
 pub fn clamp01(v: f64) -> f64 {
-    if v < 0.0 {
-        0.0
-    } else if v > 1.0 {
-        1.0
-    } else {
-        v
-    }
+    v.clamp(0.0, 1.0)
 }
 
 #[inline]

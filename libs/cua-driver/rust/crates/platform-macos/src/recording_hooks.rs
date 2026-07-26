@@ -10,15 +10,25 @@
 //! which lives in `ToolState`. `tools::register_all` shares the active cache
 //! here via `set_element_cache` at startup.
 
-use std::sync::{Arc, OnceLock};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex, OnceLock, Weak},
+};
 
 use crate::ax::bindings::{element_screen_center, AXUIElementRef};
 use crate::ax::cache::ElementCache;
 
-static ELEMENT_CACHE: OnceLock<Arc<ElementCache>> = OnceLock::new();
+static ELEMENT_CACHES: OnceLock<Mutex<HashMap<String, Weak<ElementCache>>>> = OnceLock::new();
 
 pub fn set_element_cache(cache: Arc<ElementCache>) {
-    let _ = ELEMENT_CACHE.set(cache);
+    let runtime_scope =
+        cua_driver_core::tool::current_dispatch_runtime_scope().unwrap_or_else(|| "legacy".into());
+    let mut caches = ELEMENT_CACHES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap();
+    caches.retain(|_, cache| cache.strong_count() > 0);
+    caches.insert(runtime_scope, Arc::downgrade(&cache));
 }
 
 /// Build `app_state.json` bytes for the turn folder. Walks the AX tree for
@@ -50,7 +60,14 @@ pub fn app_state_json_for(window_id: Option<u64>, pid: Option<i64>) -> Option<Ve
 /// by subtracting the window's screen origin and multiplying by the
 /// screenshot's pixels-per-point scale.
 pub fn element_window_local_xy(window_id: u64, pid: i64, element_index: u32) -> Option<(f64, f64)> {
-    let cache = ELEMENT_CACHE.get()?;
+    let runtime_scope =
+        cua_driver_core::tool::current_dispatch_runtime_scope().unwrap_or_else(|| "legacy".into());
+    let cache = ELEMENT_CACHES
+        .get()?
+        .lock()
+        .unwrap()
+        .get(&runtime_scope)?
+        .upgrade()?;
     let pid_i32 = i32::try_from(pid).ok()?;
     let window_id_u32 = u32::try_from(window_id).ok()?;
     // Retain so a concurrent get_window_state can't free the element between

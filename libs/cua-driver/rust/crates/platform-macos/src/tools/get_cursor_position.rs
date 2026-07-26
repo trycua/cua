@@ -1,7 +1,9 @@
 use async_trait::async_trait;
+use cua_driver_contract::GetCursorPositionInput;
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
+    tool_args::parse_typed_input,
 };
 use serde_json::Value;
 
@@ -12,8 +14,11 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "get_cursor_position".into(),
-        description: "Return the current mouse cursor position in screen points (origin top-left).".into(),
-        input_schema: serde_json::json!({"type":"object","properties":{},"additionalProperties":false}),
+        description: "Return the current mouse cursor position in screen points (origin top-left)."
+            .into(),
+        input_schema: serde_json::json!({"type":"object","properties":{
+            "session": cua_driver_core::tool_schema::session_schema()
+        },"additionalProperties":false}),
         read_only: true,
         destructive: false,
         idempotent: true,
@@ -27,7 +32,12 @@ impl Tool for GetCursorPositionTool {
         def()
     }
 
-    async fn invoke(&self, _args: Value) -> ToolResult {
+    async fn invoke(&self, args: Value) -> ToolResult {
+        if let Err(result) =
+            parse_typed_input::<GetCursorPositionInput>("get_cursor_position", args)
+        {
+            return result;
+        }
         // Create a null event and query its location to get cursor position.
         use core_graphics::{
             event::CGEvent,

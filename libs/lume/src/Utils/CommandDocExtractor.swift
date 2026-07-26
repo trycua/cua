@@ -339,6 +339,7 @@ enum CommandDocExtractor {
                 OptionDoc(name: "shared-dir", shortName: nil, help: "Directory to share with the VM (format: path or path:ro or path:rw)", type: "[String]", defaultValue: nil, isOptional: true),
                 OptionDoc(name: "mount", shortName: nil, help: "For Linux VMs only, attach a read-only disk image", type: "String", defaultValue: nil, isOptional: true),
                 OptionDoc(name: "usb-storage", shortName: nil, help: "Disk image to attach as USB mass storage device", type: "[String]", defaultValue: nil, isOptional: true),
+                OptionDoc(name: "disk", shortName: nil, help: "Disk image to attach as a read-write virtio-blk device", type: "[String]", defaultValue: nil, isOptional: true),
                 OptionDoc(name: "registry", shortName: nil, help: "Container registry URL", type: "String", defaultValue: "ghcr.io", isOptional: false),
                 OptionDoc(name: "organization", shortName: nil, help: "Organization to pull from", type: "String", defaultValue: "trycua", isOptional: false),
                 OptionDoc(name: "vnc-port", shortName: nil, help: "Port for VNC server (0 for auto-assign)", type: "Int", defaultValue: "0", isOptional: false),

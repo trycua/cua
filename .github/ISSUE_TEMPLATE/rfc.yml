@@ -1,0 +1,140 @@
+name: Request for comments
+description: Propose a public contract or architectural decision before implementation
+title: "[RFC]: "
+labels:
+  - review
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for public API, CLI, MCP, protocol, cross-platform architecture,
+        permission, security, compatibility, or multi-component decisions. Search for
+        existing proposals first. Do not disclose vulnerabilities, credentials, private
+        user data, partner context, or sensitive screenshots in a public issue.
+
+        The issue is the discussion and decision record. If the proposal needs a longer
+        specification or diagrams, add a linked `rfcs/<issue>-<short-name>.md` pull request
+        using the repository's `rfcs/0000-template.md`.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Primary area
+      options:
+        - Cua Driver
+        - SDK or bindings
+        - MCP or agent integration
+        - CLI
+        - Lume
+        - Containers or images
+        - Cross-component architecture
+        - Security, privacy, or permissions
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: State the proposed decision in one paragraph.
+      placeholder: We should...
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation and current state
+      description: What problem exists today, who encounters it, and why does it need an architectural decision?
+    validations:
+      required: true
+
+  - type: textarea
+    id: goals
+    attributes:
+      label: Goals
+      description: List observable outcomes that define success.
+      placeholder: |
+        - ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals
+      description: List nearby concerns intentionally excluded from the proposal.
+      placeholder: |
+        - ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: Describe ownership, public contracts, lifecycle, process and transport boundaries, and platform behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe the strongest alternatives and their material tradeoffs.
+    validations:
+      required: true
+
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility and migration
+      description: Explain additive rollout, deprecation, breaking changes, rollback, and release sequencing.
+    validations:
+      required: true
+
+  - type: textarea
+    id: security
+    attributes:
+      label: Security, privacy, permissions, and telemetry
+      description: Identify permission boundaries and data that must never be collected or exposed. Use private security reporting for vulnerabilities.
+    validations:
+      required: true
+
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation and acceptance evidence
+      description: What tests and cross-platform evidence must pass before this is considered complete?
+    validations:
+      required: true
+
+  - type: textarea
+    id: unresolved
+    attributes:
+      label: Unresolved questions
+      description: Which decisions should reviewers focus on?
+      placeholder: |
+        - ...
+    validations:
+      required: true
+
+  - type: input
+    id: rfc_document
+    attributes:
+      label: RFC document pull request
+      description: Optional link to the detailed repository-local RFC.
+      placeholder: https://github.com/trycua/cua/pull/...
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched for duplicate issues and RFCs.
+          required: true
+        - label: This public proposal contains no credentials, private user or partner data, sensitive screenshots, or vulnerability details.
+          required: true
+        - label: I described the problem, alternatives, migration, and evidence required—not only an implementation preference.
+          required: true

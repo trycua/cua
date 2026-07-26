@@ -1,7 +1,9 @@
 use async_trait::async_trait;
+use cua_driver_contract::HotkeyInput;
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
+    tool_args::parse_typed_projection,
 };
 use libc;
 use serde_json::Value;
@@ -41,7 +43,9 @@ fn def() -> &'static ToolDef {
                SLPSSetFrontProcessWithOptions) so native menu key-equivalents \
                (Cmd+Z, Cmd+W) dispatch, then restore the prior frontmost — the \
                explicit escalation for menu-bar shortcuts on non-Chromium apps that \
-               ignore a background combo. Requires window_id.\n\n\
+               ignore a background combo. With x,y, the focused field receives \
+               the chord through the foreground HID queue (needed by native \
+               Chromium fields such as the omnibox). Requires window_id.\n\n\
              A combo is never driver-verifiable (no read-back) → effect:\"unverifiable\"; \
              confirm via screenshot. NOTE: a keyboard combo does NOT focus a text \
              field — to type into a backgrounded Electron input, establish real \
@@ -103,7 +107,15 @@ impl Tool for HotkeyTool {
             && args.get("pid").is_none()
             && args.get("window_id").is_none()
         {
-            let raw_keys = args.str_array("keys");
+            let input = match parse_typed_projection::<HotkeyInput>("hotkey", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
+            };
+            let raw_keys = input.keys;
+            if raw_keys.len() < 2 {
+                return ToolResult::error("hotkey.keys must contain at least two keys.")
+                    .with_structured(serde_json::json!({ "code": "invalid_arguments" }));
+            }
             let modifiers: Vec<String> = raw_keys
                 .iter()
                 .filter(|key| is_modifier(key))
@@ -176,9 +188,9 @@ impl Tool for HotkeyTool {
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
         let fg = delivery_mode.is_foreground();
 
-        // px form: pixel-click to focus, then the combo acts on the focused field
-        // (e.g. Cmd+V into a Chromium input). After it, deliver the combo via the
-        // plain background path (the focus-click already fronted if fg).
+        // px form: focus the field before sending the combo. Foreground delivery
+        // still needs to front the target for the chord itself: the focus helper
+        // restores the previous app before returning.
         let px_focus = {
             let px = args.get("x").and_then(|v| v.as_f64());
             let py = args.get("y").and_then(|v| v.as_f64());
@@ -224,11 +236,22 @@ impl Tool for HotkeyTool {
             || async move {
                 tokio::task::spawn_blocking(move || {
                     let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                    // px-focus already clicked/fronted the target → deliver background.
-                    match (fg && !px_focus, window_id) {
+                    match (fg, px_focus, window_id) {
+                        // Chrome's native omnibox and Chromium/Electron inputs
+                        // require a genuine foreground HID chord. Keep the exact
+                        // target frontmost until both key events are consumed;
+                        // otherwise Cmd+A/Cmd+V can be silently ignored.
+                        (true, true, Some(wid)) => {
+                            crate::input::skylight::with_foreground_hid_activation(
+                                pid as libc::pid_t,
+                                wid,
+                                || crate::input::keyboard::press_key_global(&key, &m),
+                            )?;
+                            Ok(())
+                        }
                         // foreground rung: briefly front the window so NSMenu key
                         // equivalents dispatch, then restore prior frontmost.
-                        (true, Some(wid)) => {
+                        (true, false, Some(wid)) => {
                             crate::input::skylight::with_menu_shortcut_activation(
                                 pid as libc::pid_t,
                                 wid,
@@ -246,7 +269,7 @@ impl Tool for HotkeyTool {
         )
         .await;
 
-        let changes = snapshot.detect_async().await;
+        let changes = super::finish_window_observation(snapshot, &args).await;
 
         match result {
             Ok(Ok(())) => {

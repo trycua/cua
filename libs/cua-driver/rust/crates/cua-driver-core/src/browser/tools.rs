@@ -10,14 +10,16 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use crate::protocol::ToolResult;
-use crate::tool::{Tool, ToolDef, ToolRegistry};
+use crate::protocol::{Content, ToolResult};
+use crate::tool::{ProtectedResourceOwnership, Tool, ToolDef, ToolRegistry};
 use crate::tool_args::ArgsExt;
 
 use super::approval::MCP_HOST_APPROVAL_ARG;
 use super::download::BrowserDownloadTool;
-use super::engine::BrowserEngine;
-use super::platform::{PrepareAuthorization, PrepareProfile, PrepareRequest, PrepareStrategy};
+use super::engine::{BrowserEngine, BrowserTabScreenshot};
+use super::platform::{
+    BrowserVisualActionKind, PrepareAuthorization, PrepareProfile, PrepareRequest, PrepareStrategy,
+};
 use super::pointer::BrowserPointerTool;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::store::BrowserActionKind;
@@ -91,6 +93,114 @@ fn schema_session() -> Value {
     })
 }
 
+pub(crate) fn browser_resource_ownership(
+    engine: &BrowserEngine,
+    args: &Value,
+) -> ProtectedResourceOwnership {
+    let Some(session) = args
+        .get("session")
+        .and_then(Value::as_str)
+        .filter(|session| !session.is_empty())
+    else {
+        return ProtectedResourceOwnership::UserOwned;
+    };
+    let runtime_session = crate::tool::current_dispatch_authorization_context()
+        .map(|context| context.runtime_session_key(session))
+        .unwrap_or_else(|| session.to_owned());
+    let pid = args.get("pid").and_then(Value::as_i64).or_else(|| {
+        args.get("target_id")
+            .and_then(Value::as_str)
+            .and_then(|target_id| engine.store.get_target(&runtime_session, target_id).ok())
+            .map(|target| target.pid)
+    });
+    if pid.is_some_and(|pid| {
+        engine.is_driver_owned_pid_for_session(&runtime_session, pid)
+            || engine.is_driver_owned_pid_for_session(session, pid)
+    }) {
+        ProtectedResourceOwnership::DriverOwned
+    } else {
+        ProtectedResourceOwnership::UserOwned
+    }
+}
+
+pub(crate) async fn browser_protected_resource_scope(
+    engine: &BrowserEngine,
+    args: &Value,
+    tool_name: &str,
+) -> Result<Option<Value>, String> {
+    let session = args
+        .get("session")
+        .and_then(Value::as_str)
+        .filter(|session| !session.is_empty())
+        .ok_or_else(|| "the browser operation requires an explicit session".to_owned())?;
+    let target_id = args
+        .get("target_id")
+        .and_then(Value::as_str)
+        .filter(|target| !target.is_empty())
+        .ok_or_else(|| "the browser operation requires an exact target_id".to_owned())?;
+    let tab_id = args
+        .get("tab_id")
+        .and_then(Value::as_str)
+        .filter(|tab| !tab.is_empty())
+        .ok_or_else(|| "the browser operation requires an exact tab_id".to_owned())?;
+    let runtime_session = crate::tool::current_dispatch_authorization_context()
+        .map(|context| context.runtime_session_key(session))
+        .unwrap_or_else(|| session.to_owned());
+    let (validated, live_origin) = engine
+        .attest_protected_tab(&runtime_session, target_id, tab_id)
+        .await
+        .map_err(|error| error.message)?;
+    let target = validated.record;
+    let tab = validated.tab;
+    let requested_origin = if tool_name == "browser_navigate" {
+        let requested = args
+            .get("url")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "browser_navigate requires a destination URL".to_owned())?;
+        if requested.to_ascii_lowercase().starts_with("about:") {
+            Some("about:".to_owned())
+        } else {
+            let parsed = url::Url::parse(requested)
+                .map_err(|_| "the destination URL is invalid".to_owned())?;
+            Some(parsed.origin().ascii_serialization())
+        }
+    } else {
+        None
+    };
+    let action_class = match tool_name {
+        "get_browser_state" => "page_observation",
+        "browser_navigate" => "navigation",
+        "browser_dialog" => "page_dialog_resolution",
+        _ => "page_input",
+    };
+    let mut resource = json!({
+        "kind": "authenticated_browser_tab",
+        "target_id": target_id,
+        "tab_id": tab_id,
+        "pid": target.pid,
+        "process_fingerprint": target.fingerprint,
+        "binding_generation": target.generation,
+        "cdp_target_id": tab.cdp_target_id,
+        "tab_generation": tab.generation,
+        "live_origin": live_origin,
+        "requested_origin": requested_origin,
+        "action_class": action_class,
+    });
+    if tool_name == "browser_dialog" {
+        resource["dialog_id"] = args.get("dialog_id").cloned().unwrap_or(Value::Null);
+        resource["dialog_action"] = args.get("action").cloned().unwrap_or(Value::Null);
+        resource["delivery_mode"] = Value::String(
+            args.get("delivery_mode")
+                .and_then(Value::as_str)
+                .unwrap_or("background")
+                .to_owned(),
+        );
+        resource["prompt_text_present"] =
+            Value::Bool(args.get("prompt_text").and_then(Value::as_str).is_some());
+    }
+    Ok(Some(resource))
+}
+
 fn semantic_ref_value(listed: &super::engine::SemanticListedRef) -> Value {
     json!({
         "ref": listed.external,
@@ -102,6 +212,32 @@ fn semantic_ref_value(listed: &super::engine::SemanticListedRef) -> Value {
         "frame": listed.node.frame.kind.as_str(),
         "visibility": listed.node.visibility.as_str(),
     })
+}
+
+fn with_tab_screenshot(mut result: ToolResult, screenshot: BrowserTabScreenshot) -> ToolResult {
+    if let Some(structured) = result.structured_content.as_mut() {
+        structured["screenshot"] = json!({
+            "source": "cdp_tab",
+            "scope": "viewport",
+            "mime_type": "image/png",
+            "width": screenshot.width,
+            "height": screenshot.height,
+            "coordinate_space": "viewport_css_px",
+            "viewport_css_width": screenshot.viewport_css_width,
+            "viewport_css_height": screenshot.viewport_css_height,
+            "pixel_to_css_scale_x": screenshot.pixel_to_css_scale_x,
+            "pixel_to_css_scale_y": screenshot.pixel_to_css_scale_y,
+            "tab_activation": "not_requested",
+            "window_foregrounding": "not_requested",
+        });
+        structured["screenshot_width"] = json!(screenshot.width);
+        structured["screenshot_height"] = json!(screenshot.height);
+        structured["screenshot_mime_type"] = json!("image/png");
+    }
+    result
+        .content
+        .insert(0, Content::image_png(screenshot.data_base64));
+    result
 }
 
 // ── get_browser_state ────────────────────────────────────────────────────────
@@ -152,6 +288,11 @@ impl GetBrowserStateTool {
                         "type": "string",
                         "description": "Opaque continuation minted by an earlier semantic_v2 response."
                     },
+                    "include_screenshot": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Capture the exact tab viewport as PNG through CDP without selecting the tab or foregrounding its native window. The request refuses if capture cannot be completed."
+                    },
                 },
                 "additionalProperties": true
             }),
@@ -168,6 +309,32 @@ impl GetBrowserStateTool {
 impl Tool for GetBrowserStateTool {
     fn def(&self) -> &ToolDef {
         &self.def
+    }
+
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if adapter_id == "private_observation" {
+            browser_resource_ownership(&self.engine, args)
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        if adapter_id == "private_observation"
+            && args.get("target_id").and_then(Value::as_str).is_some()
+        {
+            browser_protected_resource_scope(&self.engine, args, "get_browser_state").await
+        } else {
+            Ok(None)
+        }
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
@@ -190,6 +357,15 @@ impl Tool for GetBrowserStateTool {
             let snapshot_format = args
                 .opt_str("snapshot_format")
                 .unwrap_or_else(|| "dom_refs_v1".into());
+            let include_screenshot = match args.get("include_screenshot") {
+                None => false,
+                Some(Value::Bool(include)) => *include,
+                Some(_) => {
+                    return ToolResult::error(
+                        "Field include_screenshot has wrong type: expected boolean",
+                    )
+                }
+            };
             if snapshot_format != "dom_refs_v1" && snapshot_format != "semantic_v2" {
                 return ToolResult::error(format!(
                     "snapshot_format must be \"dom_refs_v1\" or \"semantic_v2\", got {snapshot_format:?}"
@@ -205,7 +381,7 @@ impl Tool for GetBrowserStateTool {
                 );
             }
             if snapshot_format == "semantic_v2" {
-                return match self
+                let snapshot = match self
                     .engine
                     .snapshot_tab_semantic(
                         &session,
@@ -272,10 +448,21 @@ impl Tool for GetBrowserStateTool {
                             },
                         }))
                     }
-                    Err(refusal) => refusal.to_tool_result(),
+                    Err(refusal) => return refusal.to_tool_result(),
                 };
+                if include_screenshot {
+                    return match self
+                        .engine
+                        .capture_tab_screenshot(&session, &target_id, &tab_id)
+                        .await
+                    {
+                        Ok(screenshot) => with_tab_screenshot(snapshot, screenshot),
+                        Err(refusal) => refusal.to_tool_result(),
+                    };
+                }
+                return snapshot;
             }
-            return match self
+            let snapshot = match self
                 .engine
                 .snapshot_tab(&session, &target_id, &tab_id)
                 .await
@@ -314,8 +501,19 @@ impl Tool for GetBrowserStateTool {
                         },
                     }))
                 }
-                Err(refusal) => refusal.to_tool_result(),
+                Err(refusal) => return refusal.to_tool_result(),
             };
+            if include_screenshot {
+                return match self
+                    .engine
+                    .capture_tab_screenshot(&session, &target_id, &tab_id)
+                    .await
+                {
+                    Ok(screenshot) => with_tab_screenshot(snapshot, screenshot),
+                    Err(refusal) => refusal.to_tool_result(),
+                };
+            }
+            return snapshot;
         }
 
         // Bind mode: pid + window_id.
@@ -393,13 +591,15 @@ impl BrowserPrepareTool {
             name: "browser_prepare".into(),
             description: "Explicitly prepare an owned DevTools endpoint for a browser \
                 pid. Existing endpoints are detected without side effects. Acting setup \
-                requires MCP-host approval or a short-lived token from the interactive \
-                browser-approve command, allow_launch=true, and a driver-owned isolated \
-                profile. It launches a separate browser and never copies, modifies, or \
-                terminates the requested user profile. Existing-profile attachment is \
-                explicit, requires an exact interactive approval artifact, and never \
-                treats ordinary MCP transport approval as profile consent. On proven \
-                platforms, that approval also permits one bounded exact-window setup: \
+                for an isolated profile requires host approval or a short-lived setup \
+                token plus allow_launch=true. It launches a separate browser and never \
+                copies, modifies, or terminates the requested user profile. Existing-profile \
+                attachment is explicit and follows the daemon's immutable permission mode: \
+                standard requires a certified protected-consent provider, bounded requires \
+                a launch-approved exact resource manifest plus protected indicator, and \
+                unrestricted requires explicit trusted startup risk acceptance. Ordinary MCP \
+                transport approval never proves profile consent. On proven platforms, an \
+                authorized request also permits one bounded exact-window setup: \
                 open the recognized browser product's fixed remote-debugging page, toggle \
                 its uniquely matched per-instance checkbox, prove the PID-owned loopback \
                 endpoint, and close the temporary tab. Every visible effect is reported; \
@@ -412,7 +612,7 @@ impl BrowserPrepareTool {
                     "window_id": { "type": "integer", "description": "Exact native window approval anchor; required for strategy.kind=existing_profile." },
                     "approval_token": {
                         "type": "string",
-                        "description": "Single-use token minted by `cua-driver browser-approve` for direct CLI/raw use. Omit for an MCP-host-approved call."
+                        "description": "Legacy single-use setup token. Existing-profile use is disabled unless a trusted launcher explicitly enables the same-user-writable compatibility path."
                     },
                     "allow_launch": {
                         "type": "boolean",
@@ -576,6 +776,30 @@ impl Tool for BrowserNavigateTool {
         &self.def
     }
 
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if adapter_id == "browser_bound_input" {
+            browser_resource_ownership(&self.engine, args)
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        if adapter_id == "browser_bound_input" {
+            browser_protected_resource_scope(&self.engine, args, "browser_navigate").await
+        } else {
+            Ok(None)
+        }
+    }
+
     async fn invoke(&self, args: Value) -> ToolResult {
         let (target_id, tab_id, url) = match (
             args.require_str("target_id"),
@@ -699,6 +923,30 @@ impl BrowserClickTool {
 impl Tool for BrowserClickTool {
     fn def(&self) -> &ToolDef {
         &self.def
+    }
+
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if adapter_id == "browser_bound_input" {
+            browser_resource_ownership(&self.engine, args)
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        if adapter_id == "browser_bound_input" {
+            browser_protected_resource_scope(&self.engine, args, "browser_click").await
+        } else {
+            Ok(None)
+        }
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
@@ -852,6 +1100,36 @@ impl Tool for BrowserClickTool {
                     .to_tool_result()
                 }
             };
+            // Cursor feedback is best-effort and visual-only. A missing box
+            // must not turn a valid DOM-event action into a refusal.
+            let _ = conn
+                .call(
+                    Some(cdp),
+                    "DOM.scrollIntoViewIfNeeded",
+                    json!({ "backendNodeId": backend }),
+                )
+                .await;
+            if let Ok(box_model) = conn
+                .call(
+                    Some(cdp),
+                    "DOM.getBoxModel",
+                    json!({ "backendNodeId": backend }),
+                )
+                .await
+            {
+                if let Some((x, y)) = quad_center(&box_model) {
+                    self.engine
+                        .visualize_browser_action(
+                            &session,
+                            &validated,
+                            cdp,
+                            x,
+                            y,
+                            BrowserVisualActionKind::Click,
+                        )
+                        .await;
+                }
+            }
             return match conn
                 .call(
                     Some(cdp),
@@ -921,6 +1199,17 @@ impl Tool for BrowserClickTool {
             (None, Some(pt)) => pt,
             (None, None) => unreachable!("validated above"),
         };
+
+        self.engine
+            .visualize_browser_action(
+                &session,
+                &validated,
+                cdp,
+                x,
+                y,
+                BrowserVisualActionKind::Click,
+            )
+            .await;
 
         if let Err(error) = conn
             .call(
@@ -1090,6 +1379,30 @@ impl Tool for BrowserTypeTool {
         &self.def
     }
 
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if adapter_id == "browser_bound_input" {
+            browser_resource_ownership(&self.engine, args)
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        if adapter_id == "browser_bound_input" {
+            browser_protected_resource_scope(&self.engine, args, "browser_type").await
+        } else {
+            Ok(None)
+        }
+    }
+
     async fn invoke(&self, args: Value) -> ToolResult {
         let (target_id, tab_id, text) = match (
             args.require_str("target_id"),
@@ -1221,6 +1534,37 @@ impl Tool for BrowserTypeTool {
                 "the requested ref is not a focused editable element",
             )
             .to_tool_result();
+        }
+
+        // Give the recording a visual target before text delivery. Keep this
+        // best-effort: editability/input semantics never depend on the overlay.
+        let _ = conn
+            .call(
+                Some(cdp),
+                "DOM.scrollIntoViewIfNeeded",
+                json!({ "backendNodeId": entry.backend_node_id }),
+            )
+            .await;
+        if let Ok(box_model) = conn
+            .call(
+                Some(cdp),
+                "DOM.getBoxModel",
+                json!({ "backendNodeId": entry.backend_node_id }),
+            )
+            .await
+        {
+            if let Some((x, y)) = quad_center(&box_model) {
+                self.engine
+                    .visualize_browser_action(
+                        &session,
+                        &validated,
+                        cdp,
+                        x,
+                        y,
+                        BrowserVisualActionKind::Type,
+                    )
+                    .await;
+            }
         }
 
         let requested_chars = text.chars().count();
@@ -1463,6 +1807,36 @@ impl BrowserDialogTool {
 impl Tool for BrowserDialogTool {
     fn def(&self) -> &ToolDef {
         &self.def
+    }
+
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if matches!(
+            adapter_id,
+            "private_observation" | "browser_consequential_action"
+        ) {
+            browser_resource_ownership(&self.engine, args)
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        if matches!(
+            adapter_id,
+            "private_observation" | "browser_consequential_action"
+        ) {
+            browser_protected_resource_scope(&self.engine, args, "browser_dialog").await
+        } else {
+            Ok(None)
+        }
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
@@ -1934,6 +2308,10 @@ mod tests {
             "get_browser_state must be strictly read-only"
         );
         assert!(state.def().idempotent);
+        assert_eq!(
+            state.def().input_schema["properties"]["include_screenshot"]["default"],
+            false
+        );
 
         let prepare = BrowserPrepareTool::new(e.clone());
         assert!(prepare.def().destructive);
@@ -2051,6 +2429,23 @@ mod tests {
             let result = tool.invoke(args).await;
             assert_eq!(result.is_error, Some(true));
         }
+    }
+
+    #[tokio::test]
+    async fn snapshot_rejects_non_boolean_include_screenshot() {
+        let result = GetBrowserStateTool::new(engine())
+            .invoke(json!({
+                "target_id": "bt-fixture",
+                "tab_id": "tab-fixture",
+                "session": "browser-run",
+                "include_screenshot": "yes"
+            }))
+            .await;
+        assert_eq!(result.is_error, Some(true));
+        assert!(matches!(
+            &result.content[0],
+            Content::Text { text, .. } if text.contains("expected boolean")
+        ));
     }
 
     #[tokio::test]

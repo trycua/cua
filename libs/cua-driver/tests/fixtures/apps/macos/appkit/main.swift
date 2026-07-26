@@ -43,6 +43,7 @@ let kContextButtonAID = "btn-context"
 let kMenuActionAID = "lbl-menu-action"
 let kScrollerAID = "scroll-tall"
 let kScrollOffsetAID = "lbl-scroll-offset"
+let kAccelCountAID = "lbl-accel-count"
 let kScrollTopMarker = "SCROLL_TOP_MARKER_v1"
 let kScrollBottomMarker = "SCROLL_BOTTOM_MARKER_v1"
 let kExitButtonAID = "btn-exit"
@@ -63,6 +64,9 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate {
     let checkStateLabel = NSTextField(labelWithString: "agreed=false")
     let menuActionLabel = NSTextField(labelWithString: "menu_action=none")
     let scrollOffsetLabel = NSTextField(labelWithString: "scroll_offset=0")
+    let accelCountLabel = NSTextField(labelWithString: "accel_fired=0")
+    var accelCount = 0
+    var keyMonitor: Any?
 
     // Pinned content size — every launch MUST produce a byte-identical window
     // so screenshot dimensions (and the hardcoded pixel coords the harness tests
@@ -90,6 +94,7 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate {
         window.setContentSize(HarnessWindowController.kContentSize)
         super.init()
         buildContent()
+        installKeyboardMonitor()
     }
 
     func show() {
@@ -164,12 +169,15 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate {
         lastActionLabel.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
         clickCountLabel.setAccessibilityIdentifier(kClickCountAID)
         clickCountLabel.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        accelCountLabel.setAccessibilityIdentifier(kAccelCountAID)
+        accelCountLabel.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
         let clickRow = NSStackView()
         clickRow.orientation = .horizontal
         clickRow.spacing = 12
         clickRow.addArrangedSubview(clickTarget)
         clickRow.addArrangedSubview(lastActionLabel)
         clickRow.addArrangedSubview(clickCountLabel)
+        clickRow.addArrangedSubview(accelCountLabel)
         content.addArrangedSubview(clickRow)
 
         // slider — NSSlider drives the `drag` / `set_value` tools (AXValue).
@@ -232,10 +240,11 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate {
         let scrollWrap = NSStackView()
         scrollWrap.orientation = .horizontal
         scrollWrap.spacing = 12
-        let scroller = NSScrollView(frame: NSRect(x: 0, y: 0, width: 360, height: 120))
+        let scroller = NSScrollView(frame: NSRect(x: 0, y: 0, width: 480, height: 120))
+        scroller.translatesAutoresizingMaskIntoConstraints = false
         scroller.hasVerticalScroller = true
         scroller.borderType = .lineBorder
-        let bodyText = NSTextView(frame: NSRect(x: 0, y: 0, width: 340, height: 600))
+        let bodyText = NSTextView(frame: NSRect(x: 0, y: 0, width: 460, height: 600))
         bodyText.isEditable = false
         // The NSScrollView's AXScrollArea is NOT surfaced by get_window_state — only
         // the document AXTextArea is. Put scroll-tall on the document view so the
@@ -260,6 +269,10 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate {
         scroller.contentView.postsBoundsChangedNotifications = true
         scrollWrap.addArrangedSubview(scroller)
         scrollWrap.addArrangedSubview(scrollOffsetLabel)
+        NSLayoutConstraint.activate([
+            scroller.widthAnchor.constraint(equalToConstant: 480),
+            scroller.heightAnchor.constraint(equalToConstant: 120),
+        ])
         content.addArrangedSubview(scrollWrap)
 
         // exit
@@ -290,6 +303,31 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate {
         f.font = NSFont.systemFont(ofSize: 13, weight: .bold)
         f.textColor = .secondaryLabelColor
         return f
+    }
+
+    private func installKeyboardMonitor() {
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
+            [weak self] event in
+            guard let self else { return event }
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            let chordFlags: NSEvent.ModifierFlags = [.control, .shift]
+            let key = event.charactersIgnoringModifiers?.lowercased()
+            let isChord = flags.contains(chordFlags) && key == "k"
+            let hasModifiers = !flags.intersection([.command, .control, .option, .shift]).isEmpty
+            let isPlainF5 = event.keyCode == 96 && !hasModifiers
+            if isChord || isPlainF5 {
+                self.accelCount += 1
+                self.accelCountLabel.stringValue = "accel_fired=\(self.accelCount)"
+                return nil
+            }
+            return event
+        }
+    }
+
+    deinit {
+        if let keyMonitor {
+            NSEvent.removeMonitor(keyMonitor)
+        }
     }
 
     // MARK: - Actions

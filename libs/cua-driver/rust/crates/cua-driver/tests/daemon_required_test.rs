@@ -1,5 +1,7 @@
 //! Public tool transports must fail closed when no daemon is reachable.
 
+#[cfg(not(target_os = "macos"))]
+use std::io::Write as _;
 use std::process::Command;
 
 use cua_driver_testkit::{CliDriver, Driver};
@@ -60,6 +62,83 @@ fn embedded_mcp_does_not_fall_back_without_daemon() {
     );
 }
 
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn default_mcp_owns_a_runtime_without_a_daemon() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+        .arg("mcp")
+        .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn direct MCP");
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "clientInfo": {"name": "direct-runtime-test", "version": "0"}
+        }
+    });
+    writeln!(
+        child.stdin.as_mut().expect("direct MCP stdin"),
+        "{}",
+        request
+    )
+    .expect("write initialize");
+    drop(child.stdin.take());
+    let output = child.wait_with_output().expect("wait for direct MCP EOF");
+    assert!(
+        output.status.success(),
+        "direct MCP failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let response: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("initialize response JSON");
+    assert_eq!(response["result"]["serverInfo"]["name"], "cua-driver");
+}
+
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn direct_mcp_rejects_admin_disabled_unrestricted_mode_before_requests() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+        .arg("mcp")
+        .env("CUA_DRIVER_PERMISSION_MODE", "unrestricted")
+        .env("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1")
+        .env("CUA_DRIVER_DISABLE_UNRESTRICTED", "1")
+        .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("run direct MCP with managed lock");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unrestricted is disabled"),
+        "unexpected stderr: {stderr}"
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "authorization rejection must precede protocol output"
+    );
+}
+
+#[test]
+fn embedded_mcp_without_private_endpoint_fails_closed() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+        .args(["mcp", "--embedded"])
+        .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
+        .output()
+        .expect("run embedded MCP without endpoint");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("must provide their private service endpoint"),
+        "unexpected stderr: {stderr}"
+    );
+}
+
 #[test]
 fn cli_call_succeeds_through_test_owned_daemon() {
     let mut driver = CliDriver::new();
@@ -68,4 +147,172 @@ fn cli_call_succeeds_through_test_owned_daemon() {
     let response = driver.call("get_config", serde_json::json!({}));
     assert!(!response.is_error(), "CLI call failed: {}", response.text());
     assert!(response.structured().is_object());
+}
+
+#[test]
+fn revoke_cli_ends_the_exact_live_session() {
+    let mut driver = CliDriver::new();
+    assert!(driver.available(), "test daemon failed to start");
+    let session = format!("revoke-cli-{}", std::process::id());
+    let started = driver.call(
+        "start_session",
+        serde_json::json!({"session": session, "capture_scope": "window"}),
+    );
+    assert!(!started.is_error(), "start failed: {}", started.text());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+        .args([
+            "revoke",
+            "--session",
+            &session,
+            "--socket",
+            driver.daemon_socket().expect("test daemon socket"),
+        ])
+        .output()
+        .expect("run authorization revoke command");
+    assert!(
+        output.status.success(),
+        "revoke failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let state = driver.call("get_session_state", serde_json::json!({"session": session}));
+    assert!(state.is_error());
+}
+
+#[test]
+fn forged_legacy_artifact_cannot_authorize_existing_profile_in_standard_mode() {
+    let mut driver = CliDriver::new();
+    assert!(driver.available(), "test daemon failed to start");
+
+    let token = uuid::Uuid::new_v4().to_string();
+    let approval_root = std::env::temp_dir().join("cua-driver-browser-approvals-v1");
+    std::fs::create_dir_all(&approval_root).expect("create legacy approval directory");
+    let artifact_path = approval_root.join(format!("{token}.json"));
+    let expires_unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis()
+        + 60_000;
+    std::fs::write(
+        &artifact_path,
+        serde_json::to_vec(&serde_json::json!({
+            "schema": "cua-browser-existing-profile-approval-v1",
+            "token": token,
+            "scope": {
+                "pid": 42,
+                "window_id": 7,
+                "session": "forged-standard-attach"
+            },
+            "expires_unix_ms": expires_unix_ms
+        }))
+        .unwrap(),
+    )
+    .expect("write syntactically valid forged legacy artifact");
+
+    let response = driver.call(
+        "browser_prepare",
+        serde_json::json!({
+            "pid": 42,
+            "window_id": 7,
+            "session": "forged-standard-attach",
+            "strategy": { "kind": "existing_profile" },
+            "approval_token": token
+        }),
+    );
+    let _ = std::fs::remove_file(&artifact_path);
+
+    assert_eq!(response.structured()["status"], "refused");
+    assert_eq!(
+        response.structured()["refusal"]["code"],
+        "browser_consent_required"
+    );
+    assert_eq!(
+        response.structured()["refusal"]["detail"]["legacy_approval_enabled"],
+        false
+    );
+    assert!(
+        response.structured()["refusal"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("file-backed artifact is disabled")),
+        "unexpected refusal: {}",
+        response.structured()
+    );
+}
+
+#[test]
+fn unrestricted_mode_skips_runtime_existing_profile_consent() {
+    let mut driver = CliDriver::with_daemon_env(&[
+        ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
+        ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
+    ]);
+    assert!(
+        driver.available(),
+        "unrestricted test daemon failed to start"
+    );
+
+    let response = driver.call(
+        "browser_prepare",
+        serde_json::json!({
+            "pid": i64::MAX,
+            "window_id": 7,
+            "session": "unrestricted-attach",
+            "strategy": { "kind": "existing_profile" }
+        }),
+    );
+
+    assert_eq!(response.structured()["status"], "refused");
+    assert_ne!(
+        response.structured()["refusal"]["code"],
+        "browser_consent_required",
+        "unrestricted attach unexpectedly requested runtime consent: {}",
+        response.structured()
+    );
+}
+
+#[test]
+fn bounded_manifest_is_an_immutable_deny_by_default_layer() {
+    let directory = tempfile::tempdir().expect("temporary bounded policy directory");
+    let policy_path = directory.path().join("bounded.yaml");
+    std::fs::write(
+        &policy_path,
+        r#"
+version: 1
+mode: bounded
+expires_after: 1h
+idle_timeout: 10m
+resources: {}
+allow:
+  tools: [get_config]
+deny:
+  tools: [list_apps]
+"#,
+    )
+    .expect("write bounded policy");
+    let policy = policy_path.display().to_string();
+    let mut driver = CliDriver::with_daemon_env(&[
+        ("CUA_DRIVER_PERMISSION_MODE", "bounded"),
+        ("CUA_DRIVER_SESSION_POLICY_FILE", &policy),
+        ("CUA_DRIVER_SESSION_POLICY_APPROVED", "1"),
+    ]);
+    assert!(driver.available(), "bounded test daemon failed to start");
+
+    let allowed = driver.call("get_config", serde_json::json!({}));
+    assert!(
+        !allowed.is_error(),
+        "allowed call failed: {}",
+        allowed.text()
+    );
+
+    let denied = driver.call("list_apps", serde_json::json!({}));
+    assert!(denied.is_error());
+    assert!(denied
+        .text()
+        .contains("bounded session policy denies tool 'list_apps'"));
+
+    let undeclared = driver.call("get_screen_size", serde_json::json!({}));
+    assert!(undeclared.is_error());
+    assert!(undeclared
+        .text()
+        .contains("outside the bounded session policy"));
 }

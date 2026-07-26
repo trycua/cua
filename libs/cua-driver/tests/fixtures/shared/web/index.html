@@ -220,7 +220,7 @@
   });
 
   $('keyboard-input').addEventListener('keydown', e => {
-    if (e.ctrlKey && e.shiftKey && e.code === 'Digit7') {
+    if (e.ctrlKey && e.shiftKey && e.code === 'KeyH') {
       $('keyboard-status').textContent = 'key_state=hotkey';
     } else if (e.key === 'Enter') {
       const value = $('keyboard-input').value;

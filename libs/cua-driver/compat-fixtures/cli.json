@@ -1,0 +1,41 @@
+{
+  "help_lines": [
+    "cross-platform computer-use automation driver",
+    "Usage: cua-driver [SUBCOMMAND] [OPTIONS]",
+    "Subcommands: mcp, list-tools, describe, call, serve, stop, revoke, status, config, telemetry, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, browser-approve, manifest"
+  ],
+  "manifest": {
+    "schema_version": "1",
+    "binary_version_format": "semver",
+    "mcp_args": [
+      "mcp"
+    ],
+    "subcommands": {
+      "mcp": [
+        ["--socket", "string"],
+        ["--claude-code-computer-use-compat", "flag"],
+        ["--embedded", "flag"],
+        ["--host-bundle-id", "string"]
+      ],
+      "serve": [
+        ["--socket", "string"],
+        ["--permission-mode", "string"],
+        ["--dangerously-bypass-approvals", "flag"],
+        ["--session-policy", "string"],
+        ["--approve-session-policy", "flag"],
+        ["--no-permissions-gate", "flag"],
+        ["--embedded", "flag"],
+        ["--host-bundle-id", "string"]
+      ],
+      "call": [
+        ["tool", "positional-string"],
+        ["json-args", "positional-json"],
+        ["--screenshot-out-file", "string"],
+        ["--socket", "string"]
+      ],
+      "manifest": [
+        ["--pretty", "flag"]
+      ]
+    }
+  }
+}

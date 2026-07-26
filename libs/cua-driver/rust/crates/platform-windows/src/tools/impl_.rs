@@ -8715,9 +8715,12 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(cua_driver_core::page::PageTool::new(
         std::sync::Arc::new(super::page::WindowsPageBackend::new()),
     )));
-    let browser_engine = cua_driver_core::browser::BrowserEngine::new(std::sync::Arc::new(
-        crate::browser_platform::WindowsBrowserPlatform::new(state.cursor_registry.clone()),
-    ));
+    let browser_engine = cua_driver_core::browser::BrowserEngine::new_with_approval_broker(
+        std::sync::Arc::new(crate::browser_platform::WindowsBrowserPlatform::new(
+            state.cursor_registry.clone(),
+        )),
+        r.approval_broker(),
+    );
     cua_driver_core::browser::register_browser_tools(&browser_engine, &mut r);
     r.register_recording_tools();
     r.register_session_tools();

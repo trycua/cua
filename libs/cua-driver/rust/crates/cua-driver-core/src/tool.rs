@@ -374,19 +374,75 @@ pub struct ToolRegistry {
     session_end_hooks: Vec<crate::session::SessionEndHookRegistration>,
     cursor_outcome_readers: Vec<crate::session::CursorOutcomeReaderRegistration>,
     runtime_cleanups: Vec<RuntimeCleanup>,
+    /// Runtime-owned protected-consent broker shared by every resource
+    /// adapter. Keeping it at the canonical dispatch boundary prevents
+    /// browser, desktop, and file adapters from growing independent provider
+    /// identities or grant lifecycles.
+    approval_broker: Arc<crate::consent::ApprovalBroker>,
+    protected_resource_grants: Arc<crate::consent::ProtectedResourceGrants>,
 }
 
 impl ToolRegistry {
     pub fn new() -> Self {
+        Self::new_with_protected_consent_provider(None)
+    }
+
+    /// Construct a registry with a provider installed by a trusted embedding
+    /// host. Public tool calls and transport metadata cannot replace it.
+    pub fn new_with_protected_consent_provider(
+        provider: Option<Arc<dyn crate::consent::ProtectedConsentProvider>>,
+    ) -> Self {
+        let approval_broker = Arc::new(crate::consent::ApprovalBroker::new(provider));
+        let protected_resource_grants = Arc::new(crate::consent::ProtectedResourceGrants::new(
+            approval_broker.clone(),
+        ));
+        let weak_grants = Arc::downgrade(&protected_resource_grants);
+        let session_end_hook =
+            crate::session::register_scoped_session_end_hook(move |session_id| {
+                let Some(grants) = weak_grants.upgrade() else {
+                    return;
+                };
+                let revoked = grants.revoke_session(session_id);
+                if revoked.is_empty() {
+                    return;
+                }
+                if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+                    runtime.spawn(async move {
+                        for grant in revoked {
+                            grants.broker().revoke(&grant).await;
+                        }
+                    });
+                }
+            });
         Self {
             tools: HashMap::new(),
             order: Vec::new(),
             recording: Arc::new(RecordingSession::new()),
             replay_registry: Arc::new(std::sync::Mutex::new(std::sync::Weak::new())),
-            session_end_hooks: Vec::new(),
+            session_end_hooks: vec![session_end_hook],
             cursor_outcome_readers: Vec::new(),
             runtime_cleanups: Vec::new(),
+            approval_broker,
+            protected_resource_grants,
         }
+    }
+
+    /// Return the runtime-owned broker for adapter construction.
+    ///
+    /// This is intentionally not exposed through MCP/CLI arguments. Platform
+    /// registries pass the clone to resource adapters while assembling one
+    /// trusted runtime.
+    pub fn approval_broker(&self) -> Arc<crate::consent::ApprovalBroker> {
+        self.approval_broker.clone()
+    }
+
+    pub fn protected_resource_grants(&self) -> Arc<crate::consent::ProtectedResourceGrants> {
+        self.protected_resource_grants.clone()
+    }
+
+    /// Content-free authorization status for this exact runtime.
+    pub fn authorization_status_json(&self) -> Value {
+        crate::authorization::status_json_with_provider(self.approval_broker.provider_id())
     }
 
     pub fn register(&mut self, tool: Box<dyn Tool>) {

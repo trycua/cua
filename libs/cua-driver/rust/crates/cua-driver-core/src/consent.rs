@@ -7,9 +7,10 @@
 //! implementations must authenticate their private channel before adapting it
 //! to this interface.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -20,11 +21,6 @@ use uuid::Uuid;
 use crate::authorization::{PermissionMode, RiskClass};
 
 const DEFAULT_REQUEST_TTL: Duration = Duration::from_secs(2 * 60);
-static CONFIGURED_PROVIDER_ID: OnceLock<&'static str> = OnceLock::new();
-
-pub fn configured_provider_id() -> Option<&'static str> {
-    CONFIGURED_PROVIDER_ID.get().copied()
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -147,9 +143,6 @@ impl ApprovalBroker {
     }
 
     pub fn new(provider: Option<Arc<dyn ProtectedConsentProvider>>) -> Self {
-        if let Some(provider) = provider.as_ref() {
-            let _ = CONFIGURED_PROVIDER_ID.set(provider.provider_id());
-        }
         Self {
             daemon_instance: Arc::from(Uuid::new_v4().to_string()),
             next_generation: Arc::new(AtomicU64::new(1)),
@@ -174,6 +167,32 @@ impl ApprovalBroker {
         resource: Value,
         human_summary: impl Into<String>,
     ) -> ConsentRequest {
+        self.request_bound(
+            permission_mode,
+            operation,
+            risk_class,
+            public_session,
+            transport_session,
+            resource,
+            human_summary,
+            crate::policy::managed_policy_sha256().ok().flatten(),
+            crate::policy::user_policy_sha256().ok().flatten(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn request_bound(
+        &self,
+        permission_mode: PermissionMode,
+        operation: impl Into<String>,
+        risk_class: RiskClass,
+        public_session: impl Into<String>,
+        transport_session: impl Into<String>,
+        resource: Value,
+        human_summary: impl Into<String>,
+        managed_policy_sha256: Option<String>,
+        user_policy_sha256: Option<String>,
+    ) -> ConsentRequest {
         let expires_unix_ms = now_unix_ms() + DEFAULT_REQUEST_TTL.as_millis();
         let mut request = ConsentRequest {
             schema: "cua-protected-consent-request-v1",
@@ -181,8 +200,8 @@ impl ApprovalBroker {
             generation: self.next_generation.fetch_add(1, Ordering::Relaxed),
             daemon_instance: self.daemon_instance.to_string(),
             permission_mode,
-            managed_policy_sha256: crate::policy::managed_policy_sha256().ok().flatten(),
-            user_policy_sha256: crate::policy::user_policy_sha256().ok().flatten(),
+            managed_policy_sha256,
+            user_policy_sha256,
             operation: operation.into(),
             risk_class,
             public_session: public_session.into(),
@@ -280,6 +299,219 @@ impl ApprovalBroker {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ResourceGrantKey {
+    runtime_scope: String,
+    public_session: String,
+    transport_session: String,
+    adapter_id: String,
+    resource_digest: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResourceGrant {
+    pub adapter_id: String,
+    pub resource_digest: String,
+    pub protected: ProtectedGrant,
+    mode: PermissionMode,
+    managed_policy_sha256: Option<String>,
+    user_policy_sha256: Option<String>,
+    created_at: Instant,
+    last_used_at: Instant,
+    idle_ttl: Duration,
+    absolute_ttl: Duration,
+}
+
+impl ResourceGrant {
+    pub fn is_live(&self) -> bool {
+        self.protected.is_live()
+    }
+
+    fn expired(&self, now: Instant) -> bool {
+        !self.is_live()
+            || now.duration_since(self.last_used_at) >= self.idle_ttl
+            || now.duration_since(self.created_at) >= self.absolute_ttl
+    }
+}
+
+/// Per-runtime store and admission coordinator for every protected resource
+/// adapter beyond existing-profile attachment.
+///
+/// Only canonical resource digests become map keys. Raw paths, text, page
+/// content, selectors, and typed input are never retained by this store.
+pub struct ProtectedResourceGrants {
+    broker: Arc<ApprovalBroker>,
+    grants: Mutex<HashMap<ResourceGrantKey, ResourceGrant>>,
+    admission: tokio::sync::Mutex<()>,
+}
+
+impl ProtectedResourceGrants {
+    pub fn new(broker: Arc<ApprovalBroker>) -> Self {
+        Self {
+            broker,
+            grants: Mutex::new(HashMap::new()),
+            admission: tokio::sync::Mutex::new(()),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn authorize(
+        &self,
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+        adapter_id: &str,
+        risk_class: RiskClass,
+        lifecycle_session: Option<&str>,
+        resource: Value,
+        human_summary: &str,
+        idle_ttl: Duration,
+        absolute_ttl: Duration,
+    ) -> Result<Option<ResourceGrant>, ConsentError> {
+        if context.mode() == PermissionMode::Unrestricted {
+            return Ok(None);
+        }
+        let resource_digest = digest_resource(adapter_id, &resource);
+        let key = resource_grant_key(context, lifecycle_session, adapter_id, &resource_digest);
+        if let Some(grant) = self.lookup(&key, context) {
+            return Ok(Some(grant));
+        }
+
+        // Collapse concurrent requests for the same or different protected
+        // resources into a single provider turn. Re-check after waiting so a
+        // peer that just approved the same exact scope supplies the grant.
+        let _admission = self.admission.lock().await;
+        if let Some(grant) = self.lookup(&key, context) {
+            return Ok(Some(grant));
+        }
+
+        let public_session = context
+            .public_session()
+            .or(lifecycle_session)
+            .unwrap_or("compatibility");
+        let transport_session = context.transport_session().unwrap_or(public_session);
+        let request = self.broker.request_bound(
+            context.mode(),
+            adapter_id,
+            risk_class,
+            public_session,
+            transport_session,
+            resource,
+            human_summary,
+            context.managed_policy_sha256().map(str::to_owned),
+            context.user_policy_sha256().map(str::to_owned),
+        );
+        let protected = match context.mode() {
+            PermissionMode::Standard => self.broker.approve(&request).await?,
+            PermissionMode::Bounded => self.broker.activate_preapproved(&request).await?,
+            PermissionMode::Unrestricted => unreachable!("handled before protected admission"),
+        };
+        let now = Instant::now();
+        let grant = ResourceGrant {
+            adapter_id: adapter_id.to_owned(),
+            resource_digest,
+            protected,
+            mode: context.mode(),
+            managed_policy_sha256: context.managed_policy_sha256().map(str::to_owned),
+            user_policy_sha256: context.user_policy_sha256().map(str::to_owned),
+            created_at: now,
+            last_used_at: now,
+            idle_ttl,
+            absolute_ttl,
+        };
+        self.grants.lock().unwrap().insert(key, grant.clone());
+        Ok(Some(grant))
+    }
+
+    fn lookup(
+        &self,
+        key: &ResourceGrantKey,
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+    ) -> Option<ResourceGrant> {
+        let now = Instant::now();
+        let mut grants = self.grants.lock().unwrap();
+        let grant = grants.get_mut(key)?;
+        if grant.expired(now)
+            || grant.mode != context.mode()
+            || grant.managed_policy_sha256.as_deref() != context.managed_policy_sha256()
+            || grant.user_policy_sha256.as_deref() != context.user_policy_sha256()
+        {
+            if let Some(expired) = grants.remove(key) {
+                expired.protected.indicator.revoke();
+            }
+            return None;
+        }
+        grant.last_used_at = now;
+        Some(grant.clone())
+    }
+
+    pub fn revoke_session(&self, session: &str) -> Vec<ProtectedGrant> {
+        let mut removed = Vec::new();
+        self.grants.lock().unwrap().retain(|key, grant| {
+            let keep = key.public_session != session && key.transport_session != session;
+            if !keep {
+                grant.protected.indicator.revoke();
+                removed.push(grant.protected.clone());
+            }
+            keep
+        });
+        removed
+    }
+
+    pub fn revoke_all(&self) -> Vec<ProtectedGrant> {
+        let mut grants = self.grants.lock().unwrap();
+        let removed = grants
+            .drain()
+            .map(|(_, grant)| {
+                grant.protected.indicator.revoke();
+                grant.protected
+            })
+            .collect();
+        removed
+    }
+
+    pub fn broker(&self) -> &Arc<ApprovalBroker> {
+        &self.broker
+    }
+}
+
+impl Drop for ProtectedResourceGrants {
+    fn drop(&mut self) {
+        for (_, grant) in self.grants.get_mut().unwrap().drain() {
+            grant.protected.indicator.revoke();
+        }
+    }
+}
+
+fn resource_grant_key(
+    context: &crate::session_authorization::EffectiveAuthorizationContext,
+    lifecycle_session: Option<&str>,
+    adapter_id: &str,
+    resource_digest: &str,
+) -> ResourceGrantKey {
+    let public_session = context
+        .public_session()
+        .or(lifecycle_session)
+        .unwrap_or("compatibility");
+    ResourceGrantKey {
+        runtime_scope: context.runtime_scope_key(),
+        public_session: context.runtime_session_key(public_session),
+        transport_session: context
+            .transport_session()
+            .unwrap_or(public_session)
+            .to_owned(),
+        adapter_id: adapter_id.to_owned(),
+        resource_digest: resource_digest.to_owned(),
+    }
+}
+
+fn digest_resource(adapter_id: &str, resource: &Value) -> String {
+    let canonical = serde_json::json!({
+        "adapter_id": adapter_id,
+        "resource": resource,
+    });
+    let bytes = serde_json::to_vec(&canonical).expect("serialize protected resource");
+    format!("{:x}", Sha256::digest(bytes))
+}
+
 fn now_unix_ms() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -323,7 +555,6 @@ fn digest_request(request: &ConsentRequest) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
 
     struct FakeProvider {
         action: ConsentAction,
@@ -397,6 +628,134 @@ mod tests {
             serde_json::json!({"pid": 42, "window_id": 7}),
             "Attach to Chromium window 7",
         )
+    }
+
+    fn authorization_context(
+        mode: PermissionMode,
+    ) -> Arc<crate::session_authorization::EffectiveAuthorizationContext> {
+        let ceiling = crate::session_authorization::SessionModeCeiling::for_trusted_sessions(
+            [mode],
+            mode == PermissionMode::Unrestricted,
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        crate::session_authorization::SessionAuthorizationRegistry::with_ceiling(ceiling)
+            .compatibility_context(mode, None)
+            .unwrap()
+    }
+
+    #[test]
+    fn provider_identity_is_runtime_scoped() {
+        let with_provider = crate::tool::ToolRegistry::new_with_protected_consent_provider(Some(
+            provider(ConsentAction::Accept),
+        ));
+        let without_provider = crate::tool::ToolRegistry::new();
+
+        assert_eq!(
+            with_provider.authorization_status_json()["protected_consent_collector"],
+            "test.protected-provider"
+        );
+        assert_eq!(
+            without_provider.authorization_status_json()["protected_consent_collector"],
+            serde_json::Value::Null
+        );
+    }
+
+    #[tokio::test]
+    async fn exact_resource_grants_are_reused_and_scope_changes_reprompt() {
+        let provider = provider(ConsentAction::Accept);
+        let broker = Arc::new(ApprovalBroker::new(Some(provider.clone())));
+        let grants = ProtectedResourceGrants::new(broker);
+        let context = authorization_context(PermissionMode::Standard);
+
+        let first = grants
+            .authorize(
+                &context,
+                "private_observation",
+                RiskClass::R2,
+                Some("public-a"),
+                serde_json::json!({"pid": 42, "window_id": 7}),
+                "Observe app window 7",
+                Duration::from_secs(30),
+                Duration::from_secs(60),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let reused = grants
+            .authorize(
+                &context,
+                "private_observation",
+                RiskClass::R2,
+                Some("public-a"),
+                serde_json::json!({"pid": 42, "window_id": 7}),
+                "Observe app window 7",
+                Duration::from_secs(30),
+                Duration::from_secs(60),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.protected.id, reused.protected.id);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
+
+        grants
+            .authorize(
+                &context,
+                "private_observation",
+                RiskClass::R2,
+                Some("public-a"),
+                serde_json::json!({"pid": 42, "window_id": 8}),
+                "Observe app window 8",
+                Duration::from_secs(30),
+                Duration::from_secs(60),
+            )
+            .await
+            .unwrap();
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn revocation_is_immediate_and_unrestricted_skips_the_broker() {
+        let provider = provider(ConsentAction::Accept);
+        let broker = Arc::new(ApprovalBroker::new(Some(provider.clone())));
+        let grants = ProtectedResourceGrants::new(broker);
+        let standard = authorization_context(PermissionMode::Standard);
+        let live = grants
+            .authorize(
+                &standard,
+                "desktop_input",
+                RiskClass::R1,
+                Some("public-a"),
+                serde_json::json!({"pid": 42, "window_id": 7}),
+                "Control app window 7",
+                Duration::from_secs(30),
+                Duration::from_secs(60),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let revoked = grants.revoke_session(&standard.runtime_session_key("public-a"));
+        assert_eq!(revoked.len(), 1);
+        assert!(!live.is_live());
+
+        let unrestricted = authorization_context(PermissionMode::Unrestricted);
+        assert!(grants
+            .authorize(
+                &unrestricted,
+                "desktop_input",
+                RiskClass::R1,
+                Some("public-b"),
+                serde_json::json!({"pid": 9, "window_id": 2}),
+                "Control app window 2",
+                Duration::from_secs(30),
+                Duration::from_secs(60),
+            )
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

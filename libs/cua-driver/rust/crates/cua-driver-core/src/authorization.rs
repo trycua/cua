@@ -1059,6 +1059,16 @@ pub fn validate_startup_authorization() -> anyhow::Result<()> {
 
 /// Content-free authorization state suitable for status/health output.
 pub fn status_json() -> serde_json::Value {
+    status_json_with_provider(None)
+}
+
+/// Content-free authorization state for one runtime-owned provider.
+///
+/// Provider identity is runtime state, never a process-global first-writer
+/// value: multiple direct runtimes may install different trusted hosts.
+pub fn status_json_with_provider(
+    protected_consent_collector: Option<&'static str>,
+) -> serde_json::Value {
     let mode = configured_permission_mode();
     let policy = crate::policy::configured_policy();
     let managed_policy = crate::policy::configured_managed_policy();
@@ -1119,7 +1129,7 @@ pub fn status_json() -> serde_json::Value {
         "effective_metadata_only_risk_enforcement": effective_metadata_only_risk_enforcement,
         "effective_not_exposed_risk_enforcement": effective_not_exposed_risk_enforcement,
         "enforcement_adapters": enforcement_adapter_inventory_json(),
-        "protected_consent_collector": crate::consent::configured_provider_id(),
+        "protected_consent_collector": protected_consent_collector,
         "session_policy_configured": std::env::var_os(crate::session_manifest::SESSION_POLICY_FILE_ENV).is_some(),
         "session_policy_approved_at_startup": env_flag(crate::session_manifest::SESSION_POLICY_APPROVED_ENV),
         "session_policy_valid": session_policy.is_ok(),

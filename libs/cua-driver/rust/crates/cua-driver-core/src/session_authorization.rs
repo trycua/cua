@@ -232,6 +232,21 @@ impl EffectiveAuthorizationContext {
         self.public_session.as_deref()
     }
 
+    #[doc(hidden)]
+    pub fn transport_session(&self) -> Option<&str> {
+        self.transport_session.as_deref()
+    }
+
+    #[doc(hidden)]
+    pub fn user_policy_sha256(&self) -> Option<&str> {
+        self.user_policy_sha256.as_deref()
+    }
+
+    #[doc(hidden)]
+    pub fn managed_policy_sha256(&self) -> Option<&str> {
+        self.managed_policy_sha256.as_deref()
+    }
+
     pub fn is_expired(&self) -> bool {
         if self.revoked.load(Ordering::Acquire) {
             return true;

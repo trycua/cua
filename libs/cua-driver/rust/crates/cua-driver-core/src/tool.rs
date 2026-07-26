@@ -1,6 +1,7 @@
 //! Tool trait and registry.
 
 use std::collections::HashMap;
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -686,8 +687,7 @@ impl ToolRegistry {
             return permission_denied_result(error.to_string());
         }
 
-        let public_args = args.clone();
-        let recording_args = recording_args_for(resolved_name, &args);
+        let mut public_args = args.clone();
 
         // Public session labels remain part of the stable transport contract,
         // but mutable core/platform state must not be keyed by that
@@ -754,6 +754,28 @@ impl ToolRegistry {
                 return protected_consent_refusal(error);
             }
         }
+        if crate::authorization::enforcement_adapters_for_call(resolved_name, &public_args)
+            .iter()
+            .any(|adapter| adapter.id == "file_transfer_and_output")
+        {
+            if let Err(refusal) = self
+                .authorize_file_transfer(
+                    resolved_name,
+                    &mut public_args,
+                    context,
+                    runtime_session.as_deref(),
+                )
+                .await
+            {
+                return refusal;
+            }
+            // File adapters rewrite exact paths to their canonical form after
+            // approval. Dispatch must receive those same values, while the
+            // private session namespace remains transport-internal.
+            args = public_args.clone();
+            namespace_runtime_args(&mut args, context);
+        }
+        let recording_args = recording_args_for(resolved_name, &public_args);
         if crate::authorization::enforcement_adapters_for_call(resolved_name, &public_args)
             .iter()
             .any(|adapter| adapter.id == "desktop_input")
@@ -1108,6 +1130,266 @@ impl ToolRegistry {
             .await?;
         Ok(())
     }
+
+    async fn authorize_file_transfer(
+        &self,
+        tool_name: &str,
+        args: &mut Value,
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+        lifecycle_session: Option<&str>,
+    ) -> Result<(), ToolResult> {
+        if context.mode() == crate::authorization::PermissionMode::Unrestricted {
+            return Ok(());
+        }
+        let (resource, summary) = match tool_name {
+            "browser_set_input_files" => {
+                let files = canonical_upload_files(args)?;
+                let count = files.len();
+                args["files"] = serde_json::json!(files);
+                (
+                    serde_json::json!({
+                        "kind": "browser_upload",
+                        "target_id": args.get("target_id").and_then(Value::as_str),
+                        "tab_id": args.get("tab_id").and_then(Value::as_str),
+                        "ref": args.get("ref").and_then(Value::as_str),
+                        "direction": "local_to_browser",
+                        "canonical_paths": files,
+                    }),
+                    format!("Allow Cua to upload {count} exact local file(s) to this browser tab"),
+                )
+            }
+            "browser_download" => {
+                let destination =
+                    canonical_existing_directory(required_path_arg(args, "destination_root")?)?;
+                args["destination_root"] = Value::String(destination.clone());
+                (
+                    serde_json::json!({
+                        "kind": "browser_download",
+                        "target_id": args.get("target_id").and_then(Value::as_str),
+                        "tab_id": args.get("tab_id").and_then(Value::as_str),
+                        "ref": args.get("ref").and_then(Value::as_str),
+                        "direction": "browser_to_local",
+                        "canonical_destination_root": destination,
+                    }),
+                    "Allow Cua to download one file from this browser tab to the exact destination directory".to_owned(),
+                )
+            }
+            "get_desktop_state" | "get_window_state" => {
+                let output =
+                    canonical_proposed_path(required_path_arg(args, "screenshot_out_file")?)?;
+                args["screenshot_out_file"] = Value::String(output.clone());
+                (
+                    serde_json::json!({
+                        "kind": "screenshot_output",
+                        "tool": tool_name,
+                        "pid": args.get("pid").and_then(Value::as_i64),
+                        "window_id": args.get("window_id").and_then(Value::as_u64),
+                        "direction": "driver_to_local",
+                        "canonical_output_path": output,
+                    }),
+                    "Allow Cua to write this screenshot to the exact local path".to_owned(),
+                )
+            }
+            "start_recording" => {
+                let output = canonical_proposed_path(required_path_arg(args, "output_dir")?)?;
+                args["output_dir"] = Value::String(output.clone());
+                (
+                    serde_json::json!({
+                        "kind": "recording_output",
+                        "direction": "driver_to_local",
+                        "canonical_output_directory": output,
+                        "record_video": args.get("record_video").and_then(Value::as_bool).unwrap_or(false),
+                    }),
+                    "Allow Cua to write trajectory evidence to the exact local directory"
+                        .to_owned(),
+                )
+            }
+            "stop_recording" => {
+                let state = self.recording.current_state();
+                let Some(output_dir) = state.output_dir else {
+                    // Stopping an already-stopped recorder is a side-effect-free
+                    // no-op and must not manufacture an approval prompt.
+                    return Ok(());
+                };
+                let output = canonical_proposed_path(&output_dir)?;
+                (
+                    serde_json::json!({
+                        "kind": "recording_finalize",
+                        "direction": "driver_to_local",
+                        "canonical_output_directory": output,
+                    }),
+                    "Allow Cua to finalize the active recording in its exact local directory"
+                        .to_owned(),
+                )
+            }
+            "replay_trajectory" => {
+                let source = canonical_existing_directory(required_path_arg(args, "dir")?)?;
+                args["dir"] = Value::String(source.clone());
+                (
+                    serde_json::json!({
+                        "kind": "trajectory_replay",
+                        "direction": "local_to_driver",
+                        "canonical_source_directory": source,
+                    }),
+                    "Allow Cua to read and replay actions from the exact trajectory directory"
+                        .to_owned(),
+                )
+            }
+            "install_ffmpeg" if args.get("confirm").and_then(Value::as_bool) == Some(true) => (
+                serde_json::json!({
+                    "kind": "dependency_install",
+                    "dependency": "ffmpeg",
+                    "direction": "network_to_system",
+                }),
+                "Allow Cua to install ffmpeg using the detected system package manager".to_owned(),
+            ),
+            _ => {
+                return Err(protected_scope_refusal(
+                    "the file-transfer operation has no reviewed exact scope",
+                ))
+            }
+        };
+
+        self.protected_resource_grants
+            .authorize(
+                context,
+                "file_transfer_and_output",
+                crate::authorization::RiskClass::R3,
+                lifecycle_session,
+                resource,
+                &format!("{summary} using {tool_name}"),
+                Duration::from_secs(30 * 60),
+                Duration::from_secs(8 * 60 * 60),
+            )
+            .await
+            .map_err(protected_consent_refusal)?;
+        Ok(())
+    }
+}
+
+fn required_path_arg<'a>(args: &'a Value, key: &str) -> Result<&'a str, ToolResult> {
+    args.get(key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| protected_scope_refusal(&format!("missing exact path field `{key}`")))
+}
+
+fn expanded_path(raw: &str) -> Result<PathBuf, ToolResult> {
+    let path = if raw == "~" {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .ok_or_else(|| protected_scope_refusal("the home directory is unavailable"))?
+    } else if let Some(relative) = raw.strip_prefix("~/") {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .ok_or_else(|| protected_scope_refusal("the home directory is unavailable"))?
+            .join(relative)
+    } else {
+        PathBuf::from(raw)
+    };
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(path))
+            .map_err(|_| protected_scope_refusal("the current directory is unavailable"))
+    }
+}
+
+fn canonical_existing_directory(raw: &str) -> Result<String, ToolResult> {
+    let path = expanded_path(raw)?;
+    let metadata = std::fs::symlink_metadata(&path)
+        .map_err(|_| protected_scope_refusal("the exact directory does not exist"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(protected_scope_refusal(
+            "the exact path must name a directory directly, not a link or file",
+        ));
+    }
+    std::fs::canonicalize(path)
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|_| protected_scope_refusal("the exact directory could not be canonicalized"))
+}
+
+fn canonical_upload_files(args: &Value) -> Result<Vec<String>, ToolResult> {
+    let files = args
+        .get("files")
+        .and_then(Value::as_array)
+        .filter(|files| !files.is_empty() && files.len() <= 32)
+        .ok_or_else(|| protected_scope_refusal("files must contain between 1 and 32 paths"))?;
+    files
+        .iter()
+        .map(|value| {
+            let raw = value
+                .as_str()
+                .ok_or_else(|| protected_scope_refusal("every upload path must be a string"))?;
+            let path = Path::new(raw);
+            if !path.is_absolute() {
+                return Err(protected_scope_refusal(
+                    "every upload path must be absolute",
+                ));
+            }
+            let metadata = std::fs::symlink_metadata(path)
+                .map_err(|_| protected_scope_refusal("an exact upload path does not exist"))?;
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(protected_scope_refusal(
+                    "upload paths must name regular files directly, not links or directories",
+                ));
+            }
+            std::fs::canonicalize(path)
+                .map(|path| path.to_string_lossy().into_owned())
+                .map_err(|_| protected_scope_refusal("an upload path could not be canonicalized"))
+        })
+        .collect()
+}
+
+/// Resolve a not-yet-created output without creating it before approval.
+///
+/// The deepest existing ancestor is canonicalized first, so symlinked parents
+/// are captured in the approved identity. Only normal path components may be
+/// appended after that ancestor; lexical parent traversal never enters a
+/// protected-resource digest.
+fn canonical_proposed_path(raw: &str) -> Result<String, ToolResult> {
+    let path = expanded_path(raw)?;
+    if path.exists() {
+        return std::fs::canonicalize(path)
+            .map(|path| path.to_string_lossy().into_owned())
+            .map_err(|_| protected_scope_refusal("the exact path could not be canonicalized"));
+    }
+
+    let mut existing = path.as_path();
+    let mut suffix = Vec::new();
+    while !existing.exists() {
+        let name = existing
+            .file_name()
+            .ok_or_else(|| protected_scope_refusal("the output path has no existing ancestor"))?;
+        suffix.push(name.to_os_string());
+        existing = existing
+            .parent()
+            .ok_or_else(|| protected_scope_refusal("the output path has no existing ancestor"))?;
+    }
+    let metadata = std::fs::symlink_metadata(existing)
+        .map_err(|_| protected_scope_refusal("the output ancestor is unavailable"))?;
+    if !metadata.is_dir() {
+        return Err(protected_scope_refusal(
+            "the output path's existing ancestor is not a directory",
+        ));
+    }
+    let mut canonical = std::fs::canonicalize(existing)
+        .map_err(|_| protected_scope_refusal("the output ancestor could not be canonicalized"))?;
+    for component in suffix.into_iter().rev() {
+        let component_path = Path::new(&component);
+        if !matches!(
+            component_path.components().next(),
+            Some(Component::Normal(_))
+        ) || component_path.components().count() != 1
+        {
+            return Err(protected_scope_refusal(
+                "the output path contains an unsafe component",
+            ));
+        }
+        canonical.push(component);
+    }
+    Ok(canonical.to_string_lossy().into_owned())
 }
 
 fn is_physical_desktop_action(tool: &str) -> bool {
@@ -1221,8 +1503,8 @@ fn restore_public_runtime_value(value: &mut Value, runtime_prefix: &str) -> bool
 #[cfg(test)]
 mod runtime_isolation_tests {
     use super::{
-        desktop_action_coordinator, namespace_runtime_args, restore_public_runtime_result,
-        DISPATCH_RUNTIME_SCOPE,
+        canonical_proposed_path, desktop_action_coordinator, namespace_runtime_args,
+        restore_public_runtime_result, DISPATCH_RUNTIME_SCOPE,
     };
     use crate::{
         authorization::PermissionMode,
@@ -1235,7 +1517,7 @@ mod runtime_isolation_tests {
     };
     use std::sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc,
+        Arc, Mutex,
     };
     use std::time::Duration;
 
@@ -1273,6 +1555,26 @@ mod runtime_isolation_tests {
     struct ObservationProbe {
         hits: Arc<AtomicUsize>,
         def: super::ToolDef,
+    }
+
+    struct ArgumentProbe {
+        hits: Arc<AtomicUsize>,
+        last_args: Arc<Mutex<Option<serde_json::Value>>>,
+        def: super::ToolDef,
+    }
+
+    #[async_trait::async_trait]
+    impl super::Tool for ArgumentProbe {
+        fn def(&self) -> &super::ToolDef {
+            &self.def
+        }
+
+        async fn invoke(&self, args: serde_json::Value) -> crate::protocol::ToolResult {
+            self.hits.fetch_add(1, Ordering::SeqCst);
+            self.last_args.lock().unwrap().replace(args.clone());
+            crate::protocol::ToolResult::text("file operation ran")
+                .with_structured(serde_json::json!({"received": args}))
+        }
     }
 
     #[async_trait::async_trait]
@@ -1357,6 +1659,28 @@ mod runtime_isolation_tests {
                 destructive: false,
                 idempotent: false,
                 open_world: false,
+            },
+        }));
+        Arc::new(registry)
+    }
+
+    fn file_registry(
+        provider: Option<Arc<dyn ProtectedConsentProvider>>,
+        hits: Arc<AtomicUsize>,
+        last_args: Arc<Mutex<Option<serde_json::Value>>>,
+    ) -> Arc<super::ToolRegistry> {
+        let mut registry = super::ToolRegistry::new_with_protected_consent_provider(provider);
+        registry.register(Box::new(ArgumentProbe {
+            hits,
+            last_args,
+            def: super::ToolDef {
+                name: "browser_set_input_files".into(),
+                description: "test file transfer".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: true,
             },
         }));
         Arc::new(registry)
@@ -1515,7 +1839,11 @@ mod runtime_isolation_tests {
 
         assert_ne!(result.is_error, Some(true));
         assert_eq!(hits.load(Ordering::SeqCst), 1);
-        assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            provider.requests.load(Ordering::SeqCst),
+            2,
+            "trajectory recording requires independent observation and exact output grants"
+        );
     }
 
     #[tokio::test]
@@ -1569,6 +1897,89 @@ mod runtime_isolation_tests {
         }
         assert_eq!(hits.load(Ordering::SeqCst), 3);
         assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn file_transfer_refuses_before_dispatch_and_reuses_only_the_exact_paths() {
+        let files = tempfile::tempdir().unwrap();
+        let first = files.path().join("first.txt");
+        let second = files.path().join("second.txt");
+        std::fs::write(&first, b"first").unwrap();
+        std::fs::write(&second, b"second").unwrap();
+
+        let denied_hits = Arc::new(AtomicUsize::new(0));
+        let denied = file_registry(None, denied_hits.clone(), Arc::new(Mutex::new(None)))
+            .invoke_with_context(
+                "browser_set_input_files",
+                serde_json::json!({
+                    "target_id": "browser",
+                    "tab_id": "tab",
+                    "ref": "p1:0",
+                    "session": "transfer",
+                    "files": [first],
+                }),
+                standard_context(),
+            )
+            .await;
+        assert_eq!(denied_hits.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            denied
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(serde_json::Value::as_str),
+            Some("protected_consent_required")
+        );
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let last_args = Arc::new(Mutex::new(None));
+        let provider = Arc::new(AcceptingProvider {
+            requests: AtomicUsize::new(0),
+        });
+        let registry = file_registry(Some(provider.clone()), hits.clone(), last_args.clone());
+        let context = standard_context();
+        for path in [&first, &first, &second] {
+            let result = registry
+                .invoke_with_context(
+                    "browser_set_input_files",
+                    serde_json::json!({
+                        "target_id": "browser",
+                        "tab_id": "tab",
+                        "ref": "p1:0",
+                        "session": "transfer",
+                        "files": [path],
+                    }),
+                    context.clone(),
+                )
+                .await;
+            assert_ne!(result.is_error, Some(true));
+        }
+        assert_eq!(hits.load(Ordering::SeqCst), 3);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
+        let expected = std::fs::canonicalize(second)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            last_args.lock().unwrap().as_ref().unwrap()["files"][0],
+            expected
+        );
+    }
+
+    #[test]
+    fn proposed_output_scope_canonicalizes_the_existing_ancestor_without_creating_output() {
+        let root = tempfile::tempdir().unwrap();
+        let proposed = root.path().join("nested").join("capture.png");
+        let canonical = canonical_proposed_path(proposed.to_str().unwrap()).unwrap();
+        assert_eq!(
+            canonical,
+            std::fs::canonicalize(root.path())
+                .unwrap()
+                .join("nested")
+                .join("capture.png")
+                .to_string_lossy()
+        );
+        assert!(!proposed.exists());
     }
 
     #[tokio::test]
@@ -1767,6 +2178,16 @@ fn protected_consent_refusal(error: crate::consent::ConsentError) -> ToolResult 
         "status": "refused",
         "refusal": {
             "code": code,
+            "message": message,
+        }
+    }))
+}
+
+fn protected_scope_refusal(message: &str) -> ToolResult {
+    ToolResult::error(message).with_structured(serde_json::json!({
+        "status": "refused",
+        "refusal": {
+            "code": "protected_resource_scope_invalid",
             "message": message,
         }
     }))

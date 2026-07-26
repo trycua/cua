@@ -8722,11 +8722,12 @@ pub fn build_registry_with_provider(
     r.register(Box::new(cua_driver_core::page::PageTool::new(
         std::sync::Arc::new(super::page::WindowsPageBackend::new()),
     )));
-    let browser_engine = cua_driver_core::browser::BrowserEngine::new_with_approval_broker(
+    let browser_engine = cua_driver_core::browser::BrowserEngine::new_with_runtime_services(
         std::sync::Arc::new(crate::browser_platform::WindowsBrowserPlatform::new(
             state.cursor_registry.clone(),
         )),
         r.approval_broker(),
+        r.protected_resource_ownership(),
     );
     cua_driver_core::browser::register_browser_tools(&browser_engine, &mut r);
     r.register_recording_tools();

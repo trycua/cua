@@ -101,13 +101,19 @@ fn browser_resource_ownership(engine: &BrowserEngine, args: &Value) -> Protected
     else {
         return ProtectedResourceOwnership::UserOwned;
     };
+    let runtime_session = crate::tool::current_dispatch_authorization_context()
+        .map(|context| context.runtime_session_key(session))
+        .unwrap_or_else(|| session.to_owned());
     let pid = args.get("pid").and_then(Value::as_i64).or_else(|| {
         args.get("target_id")
             .and_then(Value::as_str)
-            .and_then(|target_id| engine.store.get_target(session, target_id).ok())
+            .and_then(|target_id| engine.store.get_target(&runtime_session, target_id).ok())
             .map(|target| target.pid)
     });
-    if pid.is_some_and(|pid| engine.is_driver_owned_pid_for_session(session, pid)) {
+    if pid.is_some_and(|pid| {
+        engine.is_driver_owned_pid_for_session(&runtime_session, pid)
+            || engine.is_driver_owned_pid_for_session(session, pid)
+    }) {
         ProtectedResourceOwnership::DriverOwned
     } else {
         ProtectedResourceOwnership::UserOwned

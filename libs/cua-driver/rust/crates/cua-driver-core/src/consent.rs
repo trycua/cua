@@ -7,7 +7,7 @@
 //! implementations must authenticate their private channel before adapting it
 //! to this interface.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -343,6 +343,39 @@ pub struct ProtectedResourceGrants {
     broker: Arc<ApprovalBroker>,
     grants: Mutex<HashMap<ResourceGrantKey, ResourceGrant>>,
     admission: tokio::sync::Mutex<()>,
+}
+
+/// Runtime-owned proof that a process was created and remains managed by Cua.
+///
+/// Tool arguments can select a PID but can never populate this store. The
+/// browser engine records only an attested isolated process that it launched,
+/// and removes that proof with the owning lifecycle session.
+#[derive(Default)]
+pub struct ProtectedResourceOwnershipStore {
+    pids_by_session: Mutex<HashMap<String, HashSet<i64>>>,
+}
+
+impl ProtectedResourceOwnershipStore {
+    pub fn mark_driver_owned_pid(&self, session: &str, pid: i64) {
+        self.pids_by_session
+            .lock()
+            .unwrap()
+            .entry(session.to_owned())
+            .or_default()
+            .insert(pid);
+    }
+
+    pub fn is_driver_owned_pid(&self, session: &str, pid: i64) -> bool {
+        self.pids_by_session
+            .lock()
+            .unwrap()
+            .get(session)
+            .is_some_and(|pids| pids.contains(&pid))
+    }
+
+    pub fn remove_session(&self, session: &str) {
+        self.pids_by_session.lock().unwrap().remove(session);
+    }
 }
 
 impl ProtectedResourceGrants {

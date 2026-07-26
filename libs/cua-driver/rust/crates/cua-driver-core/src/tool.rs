@@ -401,6 +401,7 @@ pub struct ToolRegistry {
     /// identities or grant lifecycles.
     approval_broker: Arc<crate::consent::ApprovalBroker>,
     protected_resource_grants: Arc<crate::consent::ProtectedResourceGrants>,
+    protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
 }
 
 impl ToolRegistry {
@@ -417,9 +418,15 @@ impl ToolRegistry {
         let protected_resource_grants = Arc::new(crate::consent::ProtectedResourceGrants::new(
             approval_broker.clone(),
         ));
+        let protected_resource_ownership =
+            Arc::new(crate::consent::ProtectedResourceOwnershipStore::default());
         let weak_grants = Arc::downgrade(&protected_resource_grants);
+        let weak_ownership = Arc::downgrade(&protected_resource_ownership);
         let session_end_hook =
             crate::session::register_scoped_session_end_hook(move |session_id| {
+                if let Some(ownership) = weak_ownership.upgrade() {
+                    ownership.remove_session(session_id);
+                }
                 let Some(grants) = weak_grants.upgrade() else {
                     return;
                 };
@@ -445,6 +452,7 @@ impl ToolRegistry {
             runtime_cleanups: Vec::new(),
             approval_broker,
             protected_resource_grants,
+            protected_resource_ownership,
         }
     }
 
@@ -459,6 +467,12 @@ impl ToolRegistry {
 
     pub fn protected_resource_grants(&self) -> Arc<crate::consent::ProtectedResourceGrants> {
         self.protected_resource_grants.clone()
+    }
+
+    pub fn protected_resource_ownership(
+        &self,
+    ) -> Arc<crate::consent::ProtectedResourceOwnershipStore> {
+        self.protected_resource_ownership.clone()
     }
 
     /// Content-free authorization status for this exact runtime.
@@ -705,9 +719,24 @@ impl ToolRegistry {
         // avoids prompting for a call the session policy will refuse, while
         // preserving the public arguments in the grant scope and the private
         // runtime session key in its revocation lifecycle.
+        let runtime_proves_driver_owned = runtime_session
+            .as_deref()
+            .zip(public_args.get("pid").and_then(Value::as_i64))
+            .is_some_and(|(session, pid)| {
+                self.protected_resource_ownership
+                    .is_driver_owned_pid(session, pid)
+                    || public_args
+                        .get("session")
+                        .and_then(Value::as_str)
+                        .is_some_and(|public_session| {
+                            self.protected_resource_ownership
+                                .is_driver_owned_pid(public_session, pid)
+                        })
+            });
         if crate::authorization::enforcement_adapters_for_call(resolved_name, &public_args)
             .iter()
             .any(|adapter| adapter.id == "private_observation")
+            && !runtime_proves_driver_owned
             && tool
                 .protected_resource_ownership("private_observation", &public_args)
                 .await
@@ -715,6 +744,23 @@ impl ToolRegistry {
         {
             if let Err(error) = self
                 .authorize_private_observation(
+                    resolved_name,
+                    &public_args,
+                    context,
+                    runtime_session.as_deref(),
+                )
+                .await
+            {
+                return protected_consent_refusal(error);
+            }
+        }
+        if crate::authorization::enforcement_adapters_for_call(resolved_name, &public_args)
+            .iter()
+            .any(|adapter| adapter.id == "desktop_input")
+            && !runtime_proves_driver_owned
+        {
+            if let Err(error) = self
+                .authorize_desktop_input(
                     resolved_name,
                     &public_args,
                     context,
@@ -852,6 +898,9 @@ impl ToolRegistry {
         context: &crate::session_authorization::EffectiveAuthorizationContext,
         lifecycle_session: Option<&str>,
     ) -> Result<(), crate::consent::ConsentError> {
+        if context.mode() == crate::authorization::PermissionMode::Unrestricted {
+            return Ok(());
+        }
         let browser_target = args.get("target_id").and_then(Value::as_str);
         let browser_tab = args.get("tab_id").and_then(Value::as_str);
         let (resource, summary) = if let Some(target_id) = browser_target {
@@ -956,6 +1005,100 @@ impl ToolRegistry {
                 context,
                 "private_observation",
                 crate::authorization::RiskClass::R2,
+                lifecycle_session,
+                resource,
+                &format!("{summary} using {tool_name}"),
+                Duration::from_secs(30 * 60),
+                Duration::from_secs(8 * 60 * 60),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn authorize_desktop_input(
+        &self,
+        tool_name: &str,
+        args: &Value,
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+        lifecycle_session: Option<&str>,
+    ) -> Result<(), crate::consent::ConsentError> {
+        if context.mode() == crate::authorization::PermissionMode::Unrestricted {
+            return Ok(());
+        }
+        let delivery_mode = if tool_name == "bring_to_front" {
+            "foreground"
+        } else {
+            args.get("delivery_mode")
+                .and_then(Value::as_str)
+                .unwrap_or("background")
+        };
+        let (resource, summary) = if let Some(window_id) =
+            args.get("window_id").and_then(Value::as_u64)
+        {
+            let pid = args.get("pid").and_then(Value::as_i64);
+            (
+                    serde_json::json!({
+                        "kind": "window_input",
+                        "pid": pid,
+                        "window_id": window_id,
+                        "delivery_mode_ceiling": delivery_mode,
+                    }),
+                    match pid {
+                        Some(pid) => format!(
+                            "Allow Cua to control window {window_id} of process {pid} in {delivery_mode} mode"
+                        ),
+                        None => format!(
+                            "Allow Cua to control window {window_id} in {delivery_mode} mode"
+                        ),
+                    },
+                )
+        } else if let Some(pid) = args.get("pid").and_then(Value::as_i64) {
+            (
+                serde_json::json!({
+                    "kind": "application_input",
+                    "pid": pid,
+                    "delivery_mode_ceiling": delivery_mode,
+                }),
+                format!("Allow Cua to control process {pid} in {delivery_mode} mode"),
+            )
+        } else {
+            let display = self
+                .tools
+                .get("get_screen_size")
+                .ok_or_else(|| {
+                    crate::consent::ConsentError::Provider(
+                        "display identity is unavailable".to_owned(),
+                    )
+                })?
+                .invoke(serde_json::json!({}))
+                .await;
+            if display.is_error == Some(true) {
+                return Err(crate::consent::ConsentError::Provider(
+                    "display identity could not be read".to_owned(),
+                ));
+            }
+            let display = display.structured_content.ok_or_else(|| {
+                crate::consent::ConsentError::Provider(
+                    "display identity was not returned".to_owned(),
+                )
+            })?;
+            (
+                serde_json::json!({
+                    "kind": "display_input",
+                    "width": display.get("width").and_then(Value::as_u64),
+                    "height": display.get("height").and_then(Value::as_u64),
+                    "scale_factor": display.get("scale_factor").and_then(Value::as_f64),
+                    "delivery_mode_ceiling": delivery_mode,
+                }),
+                format!("Allow Cua to control the current desktop in {delivery_mode} mode"),
+            )
+        };
+
+        self.protected_resource_grants
+            .authorize(
+                context,
+                "desktop_input",
+                crate::authorization::RiskClass::R1,
                 lifecycle_session,
                 resource,
                 &format!("{summary} using {tool_name}"),
@@ -1109,6 +1252,19 @@ mod runtime_isolation_tests {
             .unwrap()
     }
 
+    fn unrestricted_context() -> Arc<crate::session_authorization::EffectiveAuthorizationContext> {
+        let ceiling = SessionModeCeiling::for_trusted_sessions(
+            [PermissionMode::Unrestricted],
+            true,
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        SessionAuthorizationRegistry::with_ceiling(ceiling)
+            .compatibility_context(PermissionMode::Unrestricted, None)
+            .unwrap()
+    }
+
     struct ReplayProbe {
         hits: Arc<AtomicUsize>,
         def: super::ToolDef,
@@ -1186,6 +1342,26 @@ mod runtime_isolation_tests {
         Arc::new(registry)
     }
 
+    fn input_registry(
+        provider: Option<Arc<dyn ProtectedConsentProvider>>,
+        hits: Arc<AtomicUsize>,
+    ) -> Arc<super::ToolRegistry> {
+        let mut registry = super::ToolRegistry::new_with_protected_consent_provider(provider);
+        registry.register(Box::new(ObservationProbe {
+            hits,
+            def: super::ToolDef {
+                name: "click".into(),
+                description: "test input".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+        }));
+        Arc::new(registry)
+    }
+
     #[async_trait::async_trait]
     impl super::Tool for ReplayProbe {
         fn def(&self) -> &super::ToolDef {
@@ -1227,7 +1403,7 @@ mod runtime_isolation_tests {
         let hits_b = Arc::new(AtomicUsize::new(0));
         let registry_a = replay_registry(hits_a.clone());
         let registry_b = replay_registry(hits_b.clone());
-        let context_b = standard_context();
+        let context_b = unrestricted_context();
         let trajectory = tempfile::tempdir().unwrap();
         let turn = trajectory.path().join("turn-00001");
         std::fs::create_dir(&turn).unwrap();
@@ -1340,6 +1516,87 @@ mod runtime_isolation_tests {
         assert_ne!(result.is_error, Some(true));
         assert_eq!(hits.load(Ordering::SeqCst), 1);
         assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn desktop_input_refuses_before_dispatch_and_scopes_foreground_separately() {
+        let denied_hits = Arc::new(AtomicUsize::new(0));
+        let denied = input_registry(None, denied_hits.clone())
+            .invoke_with_context(
+                "click",
+                serde_json::json!({
+                    "pid": 42,
+                    "window_id": 7,
+                    "session": "control",
+                    "x": 10,
+                    "y": 20
+                }),
+                standard_context(),
+            )
+            .await;
+        assert_eq!(denied_hits.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            denied
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(serde_json::Value::as_str),
+            Some("protected_consent_required")
+        );
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let provider = Arc::new(AcceptingProvider {
+            requests: AtomicUsize::new(0),
+        });
+        let registry = input_registry(Some(provider.clone()), hits.clone());
+        let context = standard_context();
+        for delivery_mode in ["background", "background", "foreground"] {
+            let result = registry
+                .invoke_with_context(
+                    "click",
+                    serde_json::json!({
+                        "pid": 42,
+                        "window_id": 7,
+                        "session": "control",
+                        "delivery_mode": delivery_mode,
+                        "x": 10,
+                        "y": 20
+                    }),
+                    context.clone(),
+                )
+                .await;
+            assert_ne!(result.is_error, Some(true));
+        }
+        assert_eq!(hits.load(Ordering::SeqCst), 3);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn runtime_owned_pid_is_prompt_light_and_session_revocation_removes_provenance() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let registry = input_registry(None, hits.clone());
+        let context = standard_context();
+        let runtime_session = context.runtime_session_key("isolated");
+        registry
+            .protected_resource_ownership()
+            .mark_driver_owned_pid(&runtime_session, 42);
+        let args = serde_json::json!({
+            "pid": 42,
+            "window_id": 7,
+            "session": "isolated",
+            "x": 10,
+            "y": 20
+        });
+        let first = registry
+            .invoke_with_context("click", args.clone(), context.clone())
+            .await;
+        assert_ne!(first.is_error, Some(true));
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+        crate::session::fire_session_end(&runtime_session);
+        let after_end = registry.invoke_with_context("click", args, context).await;
+        assert_eq!(after_end.is_error, Some(true));
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

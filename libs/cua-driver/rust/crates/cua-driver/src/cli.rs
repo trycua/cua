@@ -2518,21 +2518,184 @@ fn permission_grant_needs_direct_capture(structured: &serde_json::Value) -> bool
         && !permission_flag(structured, "screen_recording_capturable")
 }
 
-fn permission_check_request(
-    prompt: bool,
-    probe_direct_capture: bool,
-) -> crate::serve::DaemonRequest {
+fn permission_status_request() -> crate::serve::DaemonRequest {
     crate::serve::DaemonRequest {
         method: "call".into(),
         name: Some("check_permissions".into()),
         args: Some(serde_json::json!({
-            "prompt": prompt,
-            "probe_direct_capture": probe_direct_capture,
+            "prompt": false,
+            "probe_direct_capture": false,
         })),
         session_id: None,
         observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
         client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
     }
+}
+
+/// Handle the private LaunchServices child used by `permissions grant`.
+///
+/// This runs before ordinary CLI wrapping and never opens a daemon socket. The
+/// app bundle asks macOS for the grants under its own responsible-process
+/// identity, and macOS remains the only surface that can approve them.
+#[cfg(target_os = "macos")]
+pub fn run_permissions_host_request_if_requested() -> Option<i32> {
+    use std::io::Write as _;
+    use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if args.first().map(String::as_str) != Some(platform_macos::tools::PERMISSIONS_HOST_REQUEST_ARG)
+    {
+        return None;
+    }
+    if !crate::bundle::is_executable_inside_cuadriver_app() {
+        eprintln!("permission host request requires the installed CuaDriver app bundle");
+        return Some(77);
+    }
+    let result_file = args
+        .windows(2)
+        .find(|pair| pair[0] == "--result-file")
+        .map(|pair| pair[1].clone());
+    let Some(result_file) = result_file else {
+        eprintln!("permission host request omitted --result-file");
+        return Some(64);
+    };
+    let result_path = std::path::Path::new(&result_file);
+    let expected_parent = std::fs::canonicalize(std::env::temp_dir()).ok();
+    let actual_parent = result_path.parent().and_then(|parent| {
+        std::fs::canonicalize(parent)
+            .ok()
+            .or_else(|| Some(parent.to_path_buf()))
+    });
+    let valid_name = result_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("cua-driver-permissions-") && name.ends_with(".json"));
+    if !valid_name || expected_parent != actual_parent {
+        eprintln!("permission host result path is outside the private temporary-file namespace");
+        return Some(64);
+    }
+    let probe_direct_capture = args.iter().any(|arg| arg == "--probe-direct-capture");
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("permission host runtime failed: {error}");
+            return Some(70);
+        }
+    };
+    let result = runtime.block_on(
+        platform_macos::tools::request_permissions_from_launchservices_host(probe_direct_capture),
+    );
+    let payload = match serde_json::to_vec(&result) {
+        Ok(payload) => payload,
+        Err(error) => {
+            eprintln!("permission host result serialization failed: {error}");
+            return Some(70);
+        }
+    };
+    let write_result = std::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(result_path)
+        .and_then(|mut file| {
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+            file.write_all(&payload)
+        });
+    match write_result {
+        Ok(()) => Some(0),
+        Err(error) => {
+            eprintln!("permission host result write failed: {error}");
+            Some(74)
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn request_permissions_via_launchservices(
+    probe_direct_capture: bool,
+) -> Result<serde_json::Value, String> {
+    use std::fs::OpenOptions;
+    use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+    use std::process::{Command as ProcessCommand, Stdio};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("system clock unavailable: {error}"))?
+        .as_nanos();
+    let result_file = std::env::temp_dir().join(format!(
+        "cua-driver-permissions-{}-{nonce}.json",
+        std::process::id()
+    ));
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&result_file)
+        .map_err(|error| format!("create permission result file: {error}"))?;
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))
+        .map_err(|error| format!("secure permission result file: {error}"))?;
+
+    let app_name = crate::bundle::app_name();
+    let app_path = crate::bundle::app_bundle_path();
+    let mut args = vec![
+        "-n".to_owned(),
+        "-W".to_owned(),
+        "-g".to_owned(),
+        app_path.to_owned(),
+        "--args".to_owned(),
+        platform_macos::tools::PERMISSIONS_HOST_REQUEST_ARG.to_owned(),
+        "--result-file".to_owned(),
+        result_file.to_string_lossy().into_owned(),
+    ];
+    if probe_direct_capture {
+        args.push("--probe-direct-capture".to_owned());
+    }
+    let mut child = ProcessCommand::new("/usr/bin/open")
+        .args(&args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| format!("launch {app_name} permission host: {error}"))?;
+    let status = {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Ok(status),
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                Ok(None) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break Err(format!(
+                        "{app_name} permission host timed out after 180 seconds"
+                    ));
+                }
+                Err(error) => break Err(format!("wait for {app_name} permission host: {error}")),
+            }
+        }
+    };
+    let payload = status.and_then(|status| {
+        if !status.success() {
+            return Err(format!(
+                "{app_name} permission host exited with {:?}",
+                status.code()
+            ));
+        }
+        std::fs::read(&result_file).map_err(|error| format!("read permission host result: {error}"))
+    });
+    let _ = std::fs::remove_file(&result_file);
+    let payload = payload?;
+    let result: serde_json::Value = serde_json::from_slice(&payload)
+        .map_err(|error| format!("parse permission host result: {error}"))?;
+    result
+        .get("structuredContent")
+        .cloned()
+        .ok_or_else(|| "permission host returned no structured status".to_owned())
 }
 
 /// Launch CuaDriver via LaunchServices so the permission prompt attributes to
@@ -2582,22 +2745,19 @@ fn run_permissions_grant() {
         // and only a fresh process image sees a later grant. During each
         // restart the socket briefly disappears, so tolerate transient
         // connection failures rather than bailing on the first one.
-        let req = permission_check_request(false, false);
-        // A daemon that is already inside the permission gate may be a
-        // prompt-suppressed re-exec. Merely polling it cannot register a
-        // missing Screen Recording row. Re-raise the two required TCC requests
-        // through the daemon identity, but deliberately defer Tahoe's separate
-        // direct-capture probe until after the explanation below.
-        let prompt_req = permission_check_request(true, false);
+        let req = permission_status_request();
+        // A dedicated LaunchServices child requests the grants under the
+        // CuaDriver app identity. No prompt-capable method exists on the
+        // agent-reachable daemon socket.
+        let staged_status = request_permissions_via_launchservices(false).ok();
         let poll_deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
-        let mut ax = false;
-        let mut sr = false;
-        let mut required_prompts_requested = !daemon_already_running;
+        let mut ax = staged_status
+            .as_ref()
+            .is_some_and(|status| permission_flag(status, "accessibility"));
+        let mut sr = staged_status
+            .as_ref()
+            .is_some_and(|status| permission_flag(status, "screen_recording"));
         loop {
-            if !required_prompts_requested {
-                required_prompts_requested = crate::serve::send_request(&socket, &prompt_req)
-                    .is_ok_and(|response| response.ok);
-            }
             if let Some(structured) = crate::serve::send_request(&socket, &req)
                 .ok()
                 .filter(|r| r.ok)
@@ -2648,32 +2808,15 @@ fn run_permissions_grant() {
         );
         println!("Choose Allow to request and verify direct capture now…");
 
-        let direct_req = permission_check_request(true, true);
-        let direct_deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
-        let mut direct_status = None;
-        loop {
-            if let Some(structured) = crate::serve::send_request(&socket, &direct_req)
-                .ok()
-                .filter(|r| r.ok)
-                .and_then(|r| r.result)
-                .and_then(|res| res.get("structuredContent").cloned())
-            {
-                direct_status = Some(structured.clone());
-                if permission_grant_is_ready(&structured) {
-                    println!(
-                        "\n✅ {app_name} has Accessibility, Screen Recording, and direct capture access. You're set."
-                    );
-                    return;
-                }
-                // The explicit probe returned a real negative result (the
-                // user denied the consent or ScreenCaptureKit failed). Do not
-                // hammer the user with the same system dialog in a poll loop.
-                break;
-            }
-            if std::time::Instant::now() >= direct_deadline {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_secs(2));
+        let direct_status = request_permissions_via_launchservices(true).ok();
+        if direct_status
+            .as_ref()
+            .is_some_and(permission_grant_is_ready)
+        {
+            println!(
+                "\n✅ {app_name} has Accessibility, Screen Recording, and direct capture access. You're set."
+            );
+            return;
         }
 
         eprintln!("\n❌ {app_name} still cannot use direct ScreenCaptureKit capture.");
@@ -3753,20 +3896,15 @@ mod tests {
     }
 
     #[test]
-    fn permission_grant_stages_required_prompts_before_direct_capture() {
-        let staged = permission_check_request(true, false);
-        let staged_args = staged.args.expect("staged request args");
-        assert_eq!(staged_args.get("prompt"), Some(&serde_json::json!(true)));
+    fn permission_status_request_is_read_only_and_uses_the_public_tool_route() {
+        let status = permission_status_request();
+        assert_eq!(status.method, "call");
+        assert_eq!(status.name.as_deref(), Some("check_permissions"));
+        let args = status.args.expect("status request args");
+        assert_eq!(args.get("prompt"), Some(&serde_json::json!(false)));
         assert_eq!(
-            staged_args.get("probe_direct_capture"),
+            args.get("probe_direct_capture"),
             Some(&serde_json::json!(false))
-        );
-
-        let direct = permission_check_request(true, true);
-        let direct_args = direct.args.expect("direct request args");
-        assert_eq!(
-            direct_args.get("probe_direct_capture"),
-            Some(&serde_json::json!(true))
         );
     }
 

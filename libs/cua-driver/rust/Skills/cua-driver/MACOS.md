@@ -311,13 +311,14 @@ macOS-specific residuals worth knowing (the rest of the capture/dispatch/
 addressing params are a shared cross-platform contract — see `SKILL.md` →
 _Cross-platform parameter contract_):
 
-- **`check_permissions.prompt` is macOS-only.** In the signed standalone
-  service, `true` may raise the TCC Accessibility / Screen-Recording dialogs
-  and run the direct ScreenCaptureKit probe. In an in-process SDK runtime,
-  private embedded host, or `cua-driver mcp --direct`, the host owns permission
-  UX: the driver forces this request into a read-only check, reports
-  `source.attribution:"host"`, and leaves direct-capture readiness
-  `not_checked`. There is no Windows/Linux equivalent.
+- **`check_permissions.prompt` is macOS-only and public calls are
+  status-only.** Omitted `prompt` defaults to `false`; explicit `true` is
+  refused before platform dispatch in every mode. For a signed standalone
+  install, the human-run `cua-driver permissions grant` command launches a
+  short-lived CuaDriver app instance through LaunchServices so macOS owns the
+  approval UI and direct ScreenCaptureKit probe. In an in-process SDK runtime,
+  private embedded host, or `cua-driver mcp --direct`, the embedding host owns
+  permission UX. There is no Windows/Linux equivalent.
 - **`session` always worked on macOS;** the cross-platform change is that
   Windows/Linux stopped _rejecting_ it. No macOS-side change to how you
   pass it.
@@ -376,9 +377,9 @@ so a naive read-back "confirms" a value that isn't really there.
 The driver **detects Electron and refuses to trust that echo**: an
 AX-path `type_text` on an Electron app returns `effect:"unverifiable"` +
 `escalation:{recommended:"px"}`, **never** a false `verified:true`.
-  (On Catalyst the AX value reads back unreadable, so it reports
-  unverified too.) Bottom line: on these surfaces **do not trust the AX
-  confirm — the screenshot in the same response is the only truth.**
+(On Catalyst the AX value reads back unreadable, so it reports
+unverified too.) Bottom line: on these surfaces **do not trust the AX
+confirm — the screenshot in the same response is the only truth.**
 
 Fix — **one call**: `type_text({pid, window_id, x, y, text})`. Passing
 `x,y` (no `element_index`) is the **element px action** form of
@@ -421,7 +422,7 @@ functional and one perceptual:
   state go `DISABLED` when their owning app isn't the key window
   (Preview rotate, IINA speed change, most editor commands).
   AXPick + AXPress will dispatch successfully from the driver's side but
-    no-op at the target — you get a silent false-pass.
+  no-op at the target — you get a silent false-pass.
 - **Perceptual (matters for demos, screen recordings, and anything
   the user watches live):** macOS's screen-rendered menu bar
   always belongs to the _frontmost_ app. AXPick on a backgrounded

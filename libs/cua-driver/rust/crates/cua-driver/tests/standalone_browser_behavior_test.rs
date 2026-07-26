@@ -734,8 +734,14 @@ fn spawn_driver(label: &str) -> McpDriver {
 
 #[cfg(not(target_os = "macos"))]
 fn spawn_standard_driver(label: &str) -> McpDriver {
-    McpDriver::spawn_named(label)
-        .expect("cua-driver binary/daemon is required for standalone browser E2E")
+    McpDriver::spawn_named_with_env(
+        label,
+        &[
+            ("CUA_DRIVER_PERMISSION_MODE", "standard"),
+            ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "0"),
+        ],
+    )
+    .expect("cua-driver binary/daemon is required for standalone browser E2E")
 }
 
 #[cfg(target_os = "linux")]
@@ -1118,16 +1124,6 @@ fn launch_browser(spec: &BrowserSpec, label: &str) -> BrowserFixture {
 
 fn launch_browser_with_html(spec: &BrowserSpec, label: &str, html: String) -> BrowserFixture {
     launch_browser_with_driver(spec, label, html, spawn_driver(label))
-}
-
-#[cfg(not(target_os = "macos"))]
-fn launch_browser_in_standard_mode(spec: &BrowserSpec, label: &str) -> BrowserFixture {
-    launch_browser_with_driver(
-        spec,
-        label,
-        standalone_fixture_html(),
-        spawn_standard_driver(label),
-    )
 }
 
 fn launch_browser_with_driver(
@@ -2158,17 +2154,22 @@ fn run_existing_profile_standard_refusal(spec: &BrowserSpec) {
             RefusalCode::BrowserConsentRequired,
         ),
         |evidence| {
-            let mut fixture = launch_browser_in_standard_mode(spec, &scenario);
+            // Fixture discovery, posture, and evidence capture are protected
+            // desktop operations in their own right. Keep those on the
+            // explicitly unrestricted disposable-test driver, then use a
+            // separate standard daemon solely as the authorization subject.
+            let mut fixture = launch_browser(spec, &scenario);
+            let mut standard_driver =
+                spawn_standard_driver(&format!("{scenario}-authorization-subject"));
+            fixture.driver.start_behavior_recording();
             *evidence = recording_evidence(fixture.driver.recording_dir());
             run_with_background_oracles(&mut fixture, |fixture| {
                 let session = format!("standalone-standard-refusal-{}", fixture.pid);
-                let started = fixture
-                    .driver
+                let started = standard_driver
                     .call("start_session", serde_json::json!({ "session": session }));
                 assert!(!started.is_error(), "start_session failed: {}", started.raw);
 
-                fixture.driver.start_behavior_recording();
-                let refused = fixture.driver.call(
+                let refused = standard_driver.call(
                     "browser_prepare",
                     serde_json::json!({
                         "pid": fixture.pid as i64,
@@ -2190,12 +2191,16 @@ fn run_existing_profile_standard_refusal(spec: &BrowserSpec) {
                     refused.raw
                 );
                 wait_for_text(&fixture.server, "lbl-counter", "counter=0");
-                Observation::refused(
+                let observation = Observation::refused(
                     RefusalCode::BrowserConsentRequired,
                     vec![OracleKind::FixtureState],
                     refused.text(),
                     Evidence::default(),
-                )
+                );
+                let ended =
+                    standard_driver.call("end_session", serde_json::json!({ "session": session }));
+                assert!(!ended.is_error(), "end_session failed: {}", ended.raw);
+                observation
             })
         },
     );

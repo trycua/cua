@@ -2,6 +2,7 @@
 name = "cua-driver-core"
 version.workspace = true
 edition.workspace = true
+publish = false
 
 [features]
 default = ["yaml", "rego"]

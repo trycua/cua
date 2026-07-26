@@ -687,7 +687,7 @@ Returns: `accessibility` + `screen_recording` (booleans from the TCC preflight A
 **Arguments:**
 
 - `probe_direct_capture` (boolean, optional): When prompting and Screen Recording is granted, also run the live ScreenCaptureKit probe that may raise Tahoe's direct-capture consent. Default true. Set false for a staged Accessibility/Screen Recording request.
-- `prompt` (boolean, optional): Raise the system permission prompts for missing grants. Default true.
+- `prompt` (boolean, optional): Raise the system permission prompts for missing grants. Default false; only a trusted host setup route may set true.
 
 ### `health_report`
 

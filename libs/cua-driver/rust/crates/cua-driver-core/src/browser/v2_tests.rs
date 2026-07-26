@@ -27,7 +27,8 @@ use super::platform::{
 use super::pointer::BrowserPointerTool;
 use super::refusal::BrowserRefusal;
 use super::tools::{
-    BrowserClickTool, BrowserNavigateTool, BrowserPrepareTool, BrowserTypeTool, GetBrowserStateTool,
+    browser_protected_resource_scope, BrowserClickTool, BrowserNavigateTool, BrowserPrepareTool,
+    BrowserTypeTool, GetBrowserStateTool,
 };
 use super::types::{
     BrowserClassification, BrowserEngineFamily, BrowserProduct, EndpointOwnershipMethod,
@@ -45,6 +46,7 @@ struct FixtureState {
     oopif_supported: bool,
     oopif_present: bool,
     emit_rogue_attach: bool,
+    main_url: String,
     main_loader: String,
     iframe_loader: String,
     oopif_loader: String,
@@ -70,6 +72,7 @@ impl Default for FixtureState {
             oopif_supported: true,
             oopif_present: true,
             emit_rogue_attach: false,
+            main_url: "https://fixture.test/".into(),
             main_loader: "L_MAIN_1".into(),
             iframe_loader: "L_IFRAME_1".into(),
             oopif_loader: "L_OOPIF_1".into(),
@@ -442,7 +445,7 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     "frame": {
                         "id": "F_MAIN",
                         "loaderId": st.main_loader.clone(),
-                        "url": "https://fixture.test/",
+                        "url": st.main_url.clone(),
                     },
                     "childFrames": [{
                         "frame": {
@@ -1883,6 +1886,50 @@ async fn rogue_attach_announcements_are_contained() {
 }
 
 // ── Mutation routing + frame identity revalidation ──────────────────────────
+
+#[tokio::test]
+async fn protected_browser_scope_reproves_live_origin_and_omits_sensitive_url_text() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let args = json!({
+        "target_id": target,
+        "tab_id": tab,
+        "session": SESSION,
+        "x": 10,
+        "y": 20,
+    });
+
+    let first = browser_protected_resource_scope(&f.engine, &args, "browser_click")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(first["live_origin"], "https://fixture.test");
+    assert!(
+        !first.to_string().contains("secret"),
+        "the resource must not contain a full URL"
+    );
+    let observation = browser_protected_resource_scope(&f.engine, &args, "get_browser_state")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(observation["action_class"], "page_observation");
+    assert_eq!(first["action_class"], "page_input");
+
+    f.state.lock().unwrap().main_url = "https://bank.example/transfer?secret=one-time-token".into();
+    let second = browser_protected_resource_scope(&f.engine, &args, "browser_click")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(second["live_origin"], "https://bank.example");
+    assert_ne!(
+        first, second,
+        "cross-origin navigation must rotate the grant scope"
+    );
+    assert!(
+        !second.to_string().contains("one-time-token"),
+        "query text must never reach the consent resource"
+    );
+}
 
 #[tokio::test]
 async fn click_routes_oopif_refs_through_the_contained_child_session() {

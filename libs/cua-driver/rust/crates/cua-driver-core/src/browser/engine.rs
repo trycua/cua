@@ -28,6 +28,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::session::register_scoped_session_end_hook;
@@ -101,6 +102,32 @@ fn authorize_live_browser_origin(
     manifest
         .authorize_browser_url(live_url)
         .map_err(|error| refuse(BrowserRefusalCode::BrowserOriginOutsideScope, error))
+}
+
+fn protected_live_origin_scope(raw: &str) -> Result<String, BrowserRefusal> {
+    if raw.trim() == "about:blank" {
+        return Ok("about:blank".to_owned());
+    }
+    let parsed = url::Url::parse(raw).map_err(|_| {
+        refuse(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "the live top-level browser URL is invalid",
+        )
+    })?;
+    let origin = parsed.origin().ascii_serialization();
+    if origin != "null" {
+        return Ok(origin);
+    }
+
+    // Opaque origins (for example file: and data:) cannot safely share one
+    // generic "null" grant. Bind them to a one-way document digest without
+    // sending the full path/query/fragment to the consent provider.
+    let digest = Sha256::digest(raw.as_bytes());
+    let digest = digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    Ok(format!("{}:sha256:{digest}", parsed.scheme()))
 }
 
 fn route_err(context: &str, err: impl std::fmt::Display) -> BrowserRefusal {
@@ -1404,24 +1431,7 @@ impl BrowserEngine {
             .map(Ok)
             .unwrap_or_else(crate::authorization::configured_permission_mode);
         if dispatch_mode.is_ok_and(|mode| mode == crate::authorization::PermissionMode::Bounded) {
-            let frame_tree = conn
-                .call(Some(&cdp_session), "Page.getFrameTree", json!({}))
-                .await
-                .map_err(|error| {
-                    route_err(
-                        "could not prove the live browser origin before bounded-mode input",
-                        error,
-                    )
-                })?;
-            let live_url = frame_tree
-                .pointer("/frameTree/frame/url")
-                .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    refuse(
-                        BrowserRefusalCode::BrowserOriginOutsideScope,
-                        "the live top-level browser origin could not be proven",
-                    )
-                })?;
+            let live_url = self.live_top_level_url(&conn, &cdp_session).await?;
             let manifest = match dispatch_context.as_deref() {
                 Some(context) => context.bounded_manifest(),
                 None => {
@@ -1433,7 +1443,7 @@ impl BrowserEngine {
                     })?
                 }
             };
-            authorize_live_browser_origin(manifest, live_url)?;
+            authorize_live_browser_origin(manifest, &live_url)?;
         }
         Ok(ValidatedTab {
             conn,
@@ -1442,6 +1452,46 @@ impl BrowserEngine {
             native,
             cdp_session,
         })
+    }
+
+    async fn live_top_level_url(
+        &self,
+        conn: &CdpConnection,
+        cdp_session: &str,
+    ) -> Result<String, BrowserRefusal> {
+        let frame_tree = conn
+            .call(Some(cdp_session), "Page.getFrameTree", json!({}))
+            .await
+            .map_err(|error| {
+                route_err("could not prove the live top-level browser document", error)
+            })?;
+        frame_tree
+            .pointer("/frameTree/frame/url")
+            .and_then(Value::as_str)
+            .filter(|url| !url.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                refuse(
+                    BrowserRefusalCode::BrowserOriginOutsideScope,
+                    "the live top-level browser origin could not be proven",
+                )
+            })
+    }
+
+    pub(crate) async fn attest_protected_tab(
+        &self,
+        session: &str,
+        target_id: &str,
+        tab_id: &str,
+    ) -> Result<(ValidatedTab, String), BrowserRefusal> {
+        let validated = self
+            .revalidate_for_mutation(session, target_id, Some(tab_id))
+            .await?;
+        let live_url = self
+            .live_top_level_url(&validated.conn, &validated.cdp_session)
+            .await?;
+        let live_origin = protected_live_origin_scope(&live_url)?;
+        Ok((validated, live_origin))
     }
 
     /// Animate platform-owned browser feedback without coupling it to input

@@ -11,6 +11,13 @@
 
 use cua_driver_testkit::RawDriver;
 
+fn spawn_unrestricted() -> Option<RawDriver> {
+    RawDriver::spawn_with_env(&[
+        ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
+        ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
+    ])
+}
+
 #[test]
 #[cfg(target_os = "windows")]
 fn screenshot() {
@@ -329,7 +336,7 @@ fn zoom_from_zoom_click_round_trip() {
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn recording_session() {
     //! Enable recording, invoke a non-read-only tool (recorded), disable, verify action.json written.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -529,7 +536,7 @@ fn start_recording_record_video_flag_accepted() {
     //! session enters the enabled state. Full video lifecycle is
     //! covered by the manual demo + the per-platform smoke when
     //! ffmpeg is installed.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -572,7 +579,7 @@ fn replay_trajectory() {
     //! Write a minimal no-GUI trajectory, replay it, verify succeeded=1.
     //! The test daemon deliberately starts with `--no-overlay`, so an
     //! agent-cursor move would correctly refuse before exercising replay.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -695,7 +702,7 @@ fn click_debug_image_out() {
 fn set_config_screenshot_resize() {
     //! set_config(max_image_dimension=200) then screenshot — returned image must
     //! have both dimensions ≤ 200. Verifies the ResizeRegistry pipeline end-to-end.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 

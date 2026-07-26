@@ -255,7 +255,7 @@ fn tools_list_schema_shape() {
 }
 
 #[test]
-fn legacy_page_mutation_flag_is_read_by_the_spawned_daemon() {
+fn legacy_page_mutation_requires_unrestricted_launch_and_operator_opt_in() {
     let args = serde_json::json!({
         "action": "enable_javascript_apple_events",
         "user_has_confirmed_enabling": false
@@ -266,16 +266,18 @@ fn legacy_page_mutation_flag_is_read_by_the_spawned_daemon() {
         let response = driver.call("page", args.clone());
         assert!(response.is_error(), "mutation must refuse by default");
         assert!(
-            response
-                .text()
-                .contains("CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1"),
-            "default refusal must name the operator gate: {}",
+            response.text().contains("requires unrestricted mode"),
+            "default refusal must name the trusted launch gate: {}",
             response.text()
         );
     }
 
-    let mut driver = McpDriver::spawn_with_env(&[("CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS", "1")])
-        .expect("spawn source-built driver with daemon-scoped compatibility flag");
+    let mut driver = McpDriver::spawn_with_env(&[
+        ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
+        ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
+        ("CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS", "1"),
+    ])
+    .expect("spawn source-built driver with unrestricted legacy compatibility enabled");
     let response = driver.call("page", args);
     assert!(
         response.is_error(),

@@ -102,7 +102,6 @@ pub(crate) struct RuntimeSession {
     connection: AuthenticatedActionConnection,
     context: Arc<EffectiveAuthorizationContext>,
     public_session: String,
-    transport_session: String,
 }
 
 impl RuntimeSession {
@@ -126,14 +125,6 @@ impl RuntimeSession {
         arguments.insert(
             "session".to_owned(),
             Value::String(self.public_session.clone()),
-        );
-        arguments.insert(
-            "_session_id".to_owned(),
-            Value::String(self.public_session.clone()),
-        );
-        arguments.insert(
-            "_transport_session_id".to_owned(),
-            Value::String(self.transport_session.clone()),
         );
         let result = self
             .runtime
@@ -238,11 +229,43 @@ impl DriverRuntime {
             .await
     }
 
+    pub(crate) async fn invoke_from_trusted_adapter(
+        &self,
+        name: &str,
+        mut args: Value,
+    ) -> Option<CoreToolResult> {
+        let evidence =
+            cua_driver_core::tool::TrustedInvocationEvidence::extract_from_adapter_args(&mut args);
+        self.invoke_with_context_and_evidence(
+            name,
+            args,
+            self.compatibility_context.clone(),
+            evidence,
+        )
+        .await
+    }
+
     async fn invoke_with_context(
         &self,
         name: &str,
         args: Value,
         context: Arc<EffectiveAuthorizationContext>,
+    ) -> Option<CoreToolResult> {
+        self.invoke_with_context_and_evidence(
+            name,
+            args,
+            context,
+            cua_driver_core::tool::TrustedInvocationEvidence::default(),
+        )
+        .await
+    }
+
+    async fn invoke_with_context_and_evidence(
+        &self,
+        name: &str,
+        args: Value,
+        context: Arc<EffectiveAuthorizationContext>,
+        evidence: cua_driver_core::tool::TrustedInvocationEvidence,
     ) -> Option<CoreToolResult> {
         if !self.is_running() {
             return None;
@@ -259,7 +282,10 @@ impl DriverRuntime {
                     .map(|session| context.runtime_session_key(session))
             })
             .flatten();
-        let result = self.registry.invoke_with_context(name, args, context).await;
+        let result = self
+            .registry
+            .invoke_with_context_and_evidence(name, args, context, evidence)
+            .await;
         if let Some(session) = ending_session {
             // `end_session` is a lifecycle boundary: do not report completion
             // until any recording owned by the session has finalized.
@@ -293,7 +319,6 @@ impl DriverRuntime {
             connection,
             context,
             public_session,
-            transport_session,
         }))
     }
 }

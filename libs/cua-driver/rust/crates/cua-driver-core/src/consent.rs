@@ -128,6 +128,8 @@ pub enum ConsentError {
     Expired,
     #[error("persistent consent indicator could not be activated: {0}")]
     Indicator(String),
+    #[error("protected resource is outside the bounded session policy: {0}")]
+    BoundedResource(String),
 }
 
 #[derive(Clone)]
@@ -402,6 +404,16 @@ impl ProtectedResourceGrants {
         if context.mode() == PermissionMode::Unrestricted {
             return Ok(None);
         }
+        if context.mode() == PermissionMode::Bounded {
+            let manifest = context.bounded_manifest().ok_or_else(|| {
+                ConsentError::BoundedResource(
+                    "bounded mode has no approved session manifest".to_owned(),
+                )
+            })?;
+            manifest
+                .authorize_protected_resource(adapter_id, &resource)
+                .map_err(ConsentError::BoundedResource)?;
+        }
         let resource_digest = digest_resource(adapter_id, &resource);
         let key = resource_grant_key(context, lifecycle_session, adapter_id, &resource_digest);
         if let Some(grant) = self.lookup(&key, context) {
@@ -487,6 +499,21 @@ impl ProtectedResourceGrants {
             keep
         });
         removed
+    }
+
+    pub fn revoke_resource(
+        &self,
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+        lifecycle_session: Option<&str>,
+        adapter_id: &str,
+        resource: &Value,
+    ) -> Option<ProtectedGrant> {
+        let digest = digest_resource(adapter_id, resource);
+        let key = resource_grant_key(context, lifecycle_session, adapter_id, &digest);
+        self.grants.lock().unwrap().remove(&key).map(|grant| {
+            grant.protected.indicator.revoke();
+            grant.protected
+        })
     }
 
     pub fn revoke_all(&self) -> Vec<ProtectedGrant> {

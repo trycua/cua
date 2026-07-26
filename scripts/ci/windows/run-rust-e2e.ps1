@@ -50,6 +50,11 @@ $env:CUA_TEST_APPS_ROOT = Join-Path $rustRoot "test-apps"
 $env:CUA_TEST_REQUIRE_FIXTURES = "1"
 $env:CUA_TEST_DRIVER_STDERR = "1"
 $env:CUA_E2E_FORBID_SKIPS = "1"
+# This matrix runs in a disposable, authenticated desktop session. This
+# testkit-only switch gives spawned behavior daemons explicit unrestricted
+# authorization without leaking product authorization variables into the
+# SDK/runtime tests executed by this runner.
+$env:CUA_E2E_UNRESTRICTED_GUI = "1"
 $sourceMarker = Join-Path $repoRoot ".cua-e2e-source-sha"
 if (Test-Path $sourceMarker) {
     $env:CUA_E2E_SOURCE_MARKER = $sourceMarker
@@ -255,6 +260,10 @@ function Test-E2eRecordings {
 $script:FailureCount = 0
 
 if ($suite -in @("shared", "all")) {
+    Invoke-CargoTest "protected permission prompt socket" @(
+        "test", "-p", "cua-driver", "--test", "permission_prompt_authorization_test", "--",
+        "--test-threads=1"
+    )
     Invoke-CargoTest "SDK runtime contract" @(
         "test", "-p", "cua-driver-sdk", "--lib", "--", "--test-threads=1"
     )

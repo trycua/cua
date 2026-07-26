@@ -397,6 +397,9 @@ mod mcp_runtime_selection_tests {
 #[cfg(target_os = "macos")]
 fn main() {
     init_logging();
+    if let Some(code) = cli::run_permissions_host_request_if_requested() {
+        std::process::exit(code);
+    }
     if let Some(generation) = private_worker::requested_generation() {
         let (initialized_tx, initialized_rx) = std::sync::mpsc::sync_channel(1);
         std::thread::spawn(move || {

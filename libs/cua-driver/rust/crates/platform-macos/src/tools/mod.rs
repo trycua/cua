@@ -40,6 +40,11 @@ use std::sync::Arc;
 
 use crate::{ax::cache::ElementCache, cursor::state::CursorRegistry};
 
+pub use check_permissions::{
+    request_from_launchservices_host as request_permissions_from_launchservices_host,
+    PERMISSIONS_HOST_REQUEST_ARG,
+};
+
 /// Per-process zoom context — stores the padded crop origin and resize scale
 /// from the most recent `zoom` call, so `click(from_zoom=true)` can translate
 /// zoom-image pixel coordinates back to full-window coordinates.

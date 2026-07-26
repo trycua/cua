@@ -1328,6 +1328,34 @@ impl NativeAbiDriver {
         })
     }
 
+    pub(crate) async fn invoke_from_trusted_adapter(
+        &self,
+        name: &str,
+        arguments: Value,
+    ) -> Result<Value, DriverError> {
+        let runtime = {
+            let handle = *self.handle.lock().unwrap();
+            if handle.is_null() {
+                return Err(DriverError::Shutdown);
+            }
+            unsafe {
+                handle
+                    .cast::<CuaDriverHandle>()
+                    .as_ref()
+                    .expect("live ABI handle is non-null")
+                    .runtime
+                    .clone()
+            }
+        };
+        let result = runtime
+            .invoke_from_trusted_adapter(name, arguments)
+            .await
+            .ok_or(DriverError::Shutdown)?;
+        serde_json::to_value(result).map_err(|error| DriverError::Protocol {
+            reason: format!("serialize {name} trusted-adapter result: {error}"),
+        })
+    }
+
     pub(crate) async fn shutdown(&self) -> Result<(), DriverError> {
         let (receiver, guard) = {
             let (sender, receiver) = oneshot::channel();

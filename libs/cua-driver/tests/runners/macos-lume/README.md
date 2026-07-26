@@ -199,9 +199,9 @@ explicitly requests an Apple Events-backed browser or app operation; do not
 pre-grant those in the seed. These are normal macOS consent flows; do not edit
 `TCC.db`. Rerun the commands and require them to finish without another prompt.
 Then verify the daemon's own
-identity and the read-only status contract before running the explicit live
-capture probe. The first command must not raise a dialog; the second is
-intentionally prompt-capable:
+identity and the read-only status contract before running the explicit
+LaunchServices-hosted grant flow. The first command must not raise a dialog;
+the second is intentionally prompt-capable and must be run by the human:
 
 ```bash
 ~/.local/bin/cua-driver-local permissions status --json | jq -e '
@@ -211,15 +211,16 @@ intentionally prompt-capable:
   and .direct_capture_status == "not_checked"
   and .source.attribution == "driver-daemon"
 '
-~/.local/bin/cua-driver-local call check_permissions '{"prompt":true}' | jq -e '
-  .structuredContent.screen_recording_capturable == true
-  and .structuredContent.direct_capture_status == "ready"
+~/.local/bin/cua-driver-local permissions grant
+~/.local/bin/cua-driver-local permissions status --json | jq -e '
+  .accessibility == true
+  and .screen_recording == true
 '
 codesign -d -r- /Applications/CuaDriverLocal.app 2>&1 | grep 'certificate leaf'
 csrutil status
 ```
 
-All four commands must succeed, and `csrutil status` must report disabled.
+All five commands must succeed, and `csrutil status` must report disabled.
 Stop the builder and clone it to a date/version-named private seed plus two
 stopped backups:
 

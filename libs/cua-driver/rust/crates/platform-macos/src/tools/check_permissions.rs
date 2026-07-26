@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
-    tool::{Tool, ToolDef},
+    tool::{ProtectedResourceOwnership, Tool, ToolDef},
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -12,6 +12,10 @@ use crate::permissions::status::{
     screen_recording_granted,
 };
 
+/// Private argv sentinel shared by the trusted CLI launcher and the public
+/// launch_app refusal.
+pub const PERMISSIONS_HOST_REQUEST_ARG: &str = "__permissions-host-request";
+
 pub struct CheckPermissionsTool {
     state: Arc<ToolState>,
 }
@@ -20,6 +24,19 @@ impl CheckPermissionsTool {
     pub fn new(state: Arc<ToolState>) -> Self {
         Self { state }
     }
+}
+
+/// LaunchServices-hosted permission setup entrypoint. This is deliberately
+/// not registered as an agent tool or exposed on the daemon socket: the
+/// standalone `permissions grant` command launches the app bundle and macOS
+/// owns the actual approval UI.
+pub async fn request_from_launchservices_host(probe_direct_capture: bool) -> ToolResult {
+    let tool = CheckPermissionsTool::new(Arc::new(ToolState::new(false, false, None)));
+    tool.invoke(serde_json::json!({
+        "prompt": true,
+        "probe_direct_capture": probe_direct_capture,
+    }))
+    .await
 }
 
 fn driver_bundle_id_for_executable(executable: &str) -> Option<&'static str> {
@@ -179,7 +196,8 @@ fn def() -> &'static ToolDef {
             "properties": {
                 "prompt": {
                     "type": "boolean",
-                    "description": "Raise the system permission prompts for missing grants. Default true.",
+                    "description": "Raise the system permission prompts for missing grants. Default false; only a trusted host setup route may set true.",
+                    "default": false,
                 },
                 "probe_direct_capture": {
                     "type": "boolean",
@@ -188,8 +206,9 @@ fn def() -> &'static ToolDef {
             },
             "additionalProperties": false,
         }),
-        // Not read_only because the default path may raise a modal dialog
-        // (mirrors Swift annotation `readOnlyHint: false`).
+        // Not read_only because an explicit prompt=true would raise a modal
+        // dialog if invoked by the trusted host helper. The public registry
+        // refuses that shape before platform dispatch.
         read_only: false,
         destructive: false,
         idempotent: true,
@@ -203,15 +222,30 @@ impl Tool for CheckPermissionsTool {
         def()
     }
 
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        _args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if adapter_id == "os_permission_prompt"
+            && !should_prompt_permissions(true, self.state.host_owns_permission_ux)
+        {
+            ProtectedResourceOwnership::DriverOwned
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        // Default to prompting — same default + rationale as Swift.
+        // Public calls default to read-only inspection. Only the
+        // LaunchServices-hosted setup route passes prompt=true.
         // Embedded mode hard-disables prompting regardless of the arg (the
         // host owns the grant flow). This and the startup gate are the only
         // `request_*` call sites, so both being gated makes prompts
         // unreachable when embedded.
         let should_prompt = should_prompt_permissions(
-            args.bool_or("prompt", true),
+            args.bool_or("prompt", false),
             self.state.host_owns_permission_ux,
         );
         let probe_direct_capture = args.bool_or("probe_direct_capture", true);

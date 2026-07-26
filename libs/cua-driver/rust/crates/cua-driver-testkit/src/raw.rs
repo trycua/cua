@@ -31,17 +31,25 @@ impl RawDriver {
     /// if the binary isn't built — callers early-return so an un-built binary
     /// skips rather than fails.
     pub fn spawn() -> Option<Self> {
-        Self::spawn_daemon_backed(false)
+        Self::spawn_daemon_backed(false, &[])
+    }
+
+    /// Spawn the daemon-backed driver with an explicit test environment.
+    ///
+    /// Permission-mode tests use this to model a trusted host's launch-time
+    /// configuration without mutating the test process environment.
+    pub fn spawn_with_env(env: &[(&str, &str)]) -> Option<Self> {
+        Self::spawn_daemon_backed(false, env)
     }
 
     /// Spawn a daemon-backed raw driver with the certified platform overlay
     /// host enabled. Cursor protocol tests use this deliberately; ordinary
     /// protocol tests keep the no-overlay daemon so they remain headless.
     pub fn spawn_with_overlay() -> Option<Self> {
-        Self::spawn_daemon_backed(true)
+        Self::spawn_daemon_backed(true, &[])
     }
 
-    fn spawn_daemon_backed(overlay_enabled: bool) -> Option<Self> {
+    fn spawn_daemon_backed(overlay_enabled: bool, env: &[(&str, &str)]) -> Option<Self> {
         let bin = driver_binary();
         if !bin.exists() {
             eprintln!("[testkit] driver binary not built at {bin:?} — skipping");
@@ -49,9 +57,9 @@ impl RawDriver {
         }
         let mut reaper = ChildReaper::new();
         let daemon = if overlay_enabled {
-            TestDaemon::spawn_with_overlay(&bin, &mut reaper, &[])?
+            TestDaemon::spawn_with_overlay(&bin, &mut reaper, env)?
         } else {
-            TestDaemon::spawn(&bin, &mut reaper, &[])?
+            TestDaemon::spawn(&bin, &mut reaper, env)?
         };
         let mut command = Command::new(&bin);
         command

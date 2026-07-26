@@ -532,7 +532,43 @@ fn configure_linux_runtime(prepare_desktop_environment: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use cua_driver_core::consent::{
+        ConsentAction, ConsentRequest, IndicatorLease, ProtectedConsentProvider, ProviderDecision,
+    };
+    use std::sync::atomic::AtomicBool;
     use std::time::Duration;
+
+    struct TestProtectedHost;
+
+    #[async_trait]
+    impl ProtectedConsentProvider for TestProtectedHost {
+        fn provider_id(&self) -> &'static str {
+            "test.runtime-protected-host"
+        }
+
+        async fn request_consent(
+            &self,
+            request: &ConsentRequest,
+        ) -> Result<ProviderDecision, String> {
+            Ok(ProviderDecision {
+                action: ConsentAction::Accept,
+                request_digest: request.request_digest.clone(),
+            })
+        }
+
+        async fn activate_indicator(
+            &self,
+            request: &ConsentRequest,
+        ) -> Result<IndicatorLease, String> {
+            Ok(IndicatorLease::new(
+                format!("test-indicator-{}", request.generation),
+                Arc::new(AtomicBool::new(false)),
+            ))
+        }
+
+        async fn deactivate_indicator(&self, _indicator_id: &str) {}
+    }
 
     fn standard_options() -> RuntimeOptions {
         let ceiling = SessionModeCeiling::for_trusted_sessions(
@@ -542,7 +578,10 @@ mod tests {
             Duration::from_secs(30),
         )
         .unwrap();
-        RuntimeOptions::embedded_with_ceiling(false, ceiling, PermissionMode::Standard, None)
+        let mut options =
+            RuntimeOptions::embedded_with_ceiling(false, ceiling, PermissionMode::Standard, None);
+        options.protected_consent_provider = Some(Arc::new(TestProtectedHost));
+        options
     }
 
     #[tokio::test]

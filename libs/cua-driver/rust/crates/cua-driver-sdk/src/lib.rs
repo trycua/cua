@@ -1740,11 +1740,15 @@ mod tests {
 
         if std::env::var("CUA_REQUIRE_GUI").as_deref() == Ok("1") {
             for session in [&first_session, &second_session] {
-                let screen = session
-                    .call_tool("get_screen_size".into(), "{}".into())
+                let windows = session
+                    .call_tool("list_windows".into(), "{}".into())
                     .await
                     .unwrap();
-                assert!(!screen.is_error, "direct runtime could not inspect the GUI");
+                assert!(
+                    !windows.is_error,
+                    "direct runtime could not inspect the GUI: {}",
+                    windows.text
+                );
             }
         }
 
@@ -1796,13 +1800,14 @@ mod tests {
             serde_json::from_str(recording_state.structured_json.as_deref().unwrap()).unwrap();
         assert_eq!(recording["enabled"], true);
         if std::env::var("CUA_REQUIRE_GUI").as_deref() == Ok("1") {
-            let screen_after_other_shutdown = second_session
-                .call_tool("get_screen_size".into(), "{}".into())
+            let windows_after_other_shutdown = second_session
+                .call_tool("list_windows".into(), "{}".into())
                 .await
                 .unwrap();
             assert!(
-                !screen_after_other_shutdown.is_error,
-                "runtime B lost GUI access after runtime A shut down"
+                !windows_after_other_shutdown.is_error,
+                "runtime B lost GUI access after runtime A shut down: {}",
+                windows_after_other_shutdown.text
             );
         }
 

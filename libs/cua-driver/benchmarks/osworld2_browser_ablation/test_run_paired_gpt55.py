@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -190,6 +191,38 @@ class PolicyTests(unittest.TestCase):
         )
         self.assertTrue(errors)
         self.assertTrue(any("combined" in error for error in errors))
+
+    def test_stop_pilot_escalates_if_signals_are_ignored(self) -> None:
+        class IgnoringProcess:
+            def __init__(self) -> None:
+                self.waits = 0
+                self.killed = False
+
+            def poll(self):
+                return None
+
+            def send_signal(self, _signal):
+                return None
+
+            def terminate(self):
+                return None
+
+            def kill(self):
+                self.killed = True
+
+            def wait(self, timeout):
+                self.waits += 1
+                if self.waits <= 2:
+                    raise subprocess.TimeoutExpired("pilot", timeout)
+                return -9
+
+        process = IgnoringProcess()
+        with self.assertRaisesRegex(
+            paired.PairedRunError,
+            "cleanup requires independent verification",
+        ):
+            paired.stop_pilot(process)
+        self.assertTrue(process.killed)
 
 
 class AccountingTests(unittest.TestCase):

@@ -35,8 +35,12 @@ private-window-picker bypass dialog when ScreenCaptureKit is queried,
 `direct_capture_status: "not_checked"`. This preserves the command's read-only,
 no-prompt contract.
 
-`permissions grant` explains the additional dialog before deliberately
-triggering it, then requires a successful live capture probe. macOS describes
+`permissions grant` never sends a prompt-capable request over the daemon
+socket. It launches a short-lived instance of the installed CuaDriver app
+through LaunchServices, explains the additional dialog before deliberately
+triggering it, and requires a successful live capture probe. The child returns
+only content-free grant status through a private temporary file; that file
+cannot grant permission or widen an agent session. macOS describes
 the combined privacy category as screen and system-audio recording even though
 Cua Driver's current ScreenCaptureKit recorder captures screen video only and
 does not enable audio capture. The consent is limited to macOS capture; it does

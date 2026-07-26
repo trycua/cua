@@ -49,6 +49,11 @@ impl RawDriver {
         Self::spawn_daemon_backed(true, &[])
     }
 
+    /// Spawn an overlay-enabled daemon with explicit trusted launch settings.
+    pub fn spawn_with_overlay_and_env(env: &[(&str, &str)]) -> Option<Self> {
+        Self::spawn_daemon_backed(true, env)
+    }
+
     fn spawn_daemon_backed(overlay_enabled: bool, env: &[(&str, &str)]) -> Option<Self> {
         let bin = driver_binary();
         if !bin.exists() {

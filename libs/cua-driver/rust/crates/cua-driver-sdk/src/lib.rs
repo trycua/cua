@@ -1299,13 +1299,25 @@ impl CuaDriver {
     pub async fn call_tool_from_trusted_adapter(
         &self,
         name: &str,
-        arguments: Value,
+        mut arguments: Value,
     ) -> Result<ToolResult, DriverError> {
         if !arguments.is_object() {
             return Err(DriverError::InvalidArguments {
                 tool: name.into(),
                 reason: "arguments must be a JSON object".into(),
             });
+        }
+        if let DriverBackend::Embedded(runtime) = &self.backend {
+            let raw = runtime.invoke_from_trusted_adapter(name, arguments).await?;
+            return normalize_result(raw);
+        }
+
+        // Trust evidence is local to the adapter/runtime boundary. A private
+        // worker re-establishes it in the child; remote and daemon transports
+        // derive their own evidence from their authenticated connection and
+        // must never receive underscore-prefixed claims from this process.
+        if !matches!(&self.backend, DriverBackend::PrivateWorker(_)) {
+            cua_driver_core::tool_args::sanitize_reserved_args(&mut arguments);
         }
         self.invoke(name, arguments).await
     }
@@ -1807,17 +1819,32 @@ mod tests {
         );
 
         if std::env::var("CUA_REQUIRE_GUI").as_deref() == Ok("1") {
-            for session in [&first_session, &second_session] {
-                let windows = session
-                    .call_tool("list_windows".into(), "{}".into())
-                    .await
-                    .unwrap();
-                assert!(
-                    !windows.is_error,
-                    "direct runtime could not inspect the GUI: {}",
-                    windows.text
-                );
-            }
+            let standard_windows = first_session
+                .call_tool("list_windows".into(), "{}".into())
+                .await
+                .unwrap();
+            assert!(
+                standard_windows.is_error
+                    && matches!(
+                        standard_windows.error_code.as_deref(),
+                        Some(
+                            "protected_consent_required" | "protected_consent_provider_failed"
+                        )
+                    ),
+                "a standard direct runtime without usable protected-consent prerequisites must fail closed: code={:?} text={}",
+                standard_windows.error_code,
+                standard_windows.text
+            );
+
+            let unrestricted_windows = second_session
+                .call_tool("list_windows".into(), "{}".into())
+                .await
+                .unwrap();
+            assert!(
+                !unrestricted_windows.is_error,
+                "explicitly acknowledged unrestricted runtime could not inspect the GUI: {}",
+                unrestricted_windows.text
+            );
         }
 
         let second_recording_dir = tempfile::tempdir().unwrap();

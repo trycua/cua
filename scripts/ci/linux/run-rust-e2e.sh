@@ -57,6 +57,12 @@ export CUA_TEST_APPS_ROOT="${RUST_ROOT}/test-apps"
 export CUA_TEST_REQUIRE_FIXTURES=1
 export CUA_TEST_DRIVER_STDERR=1
 export CUA_E2E_FORBID_SKIPS=1
+# The canonical behavior matrix runs inside a disposable CI desktop and must
+# exercise protected GUI operations without interactive approvals. This
+# testkit-only switch authorizes its spawned behavior daemons without leaking
+# product authorization variables into SDK/runtime tests in the same runner.
+# Focused tests can still select standard/bounded mode explicitly.
+export CUA_E2E_UNRESTRICTED_GUI=1
 # This runner contract requires a real or virtual desktop. Make GUI-dependent
 # lifecycle proofs fail instead of silently returning without evidence.
 export CUA_REQUIRE_GUI=1
@@ -172,6 +178,8 @@ run_test() {
 }
 
 if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
+  run_test protected-permission-prompt-socket \
+    cargo test -p cua-driver --test permission_prompt_authorization_test -- --test-threads=1
   run_test sdk-runtime-contract \
     cargo test -p cua-driver-sdk --lib -- --test-threads=1
   run_test sdk-runtime-configuration \

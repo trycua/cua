@@ -24,12 +24,12 @@ use std::sync::{
 
 const RECORDING_IDLE_TTL_SECS_DEFAULT: u64 = 300;
 const SESSION_IDLE_TTL_SECS_DEFAULT: u64 = 300;
-static DIRECT_RUNTIME_ACTIVE: AtomicBool = AtomicBool::new(false);
 #[cfg(test)]
 pub(crate) static TEST_RUNTIME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum RuntimeCreateError {
+    #[allow(dead_code)]
     #[error(
         "runtime_already_exists: one direct Cua Driver runtime is already active in this process"
     )]
@@ -39,33 +39,6 @@ pub(crate) enum RuntimeCreateError {
     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     #[error("runtime_unavailable: {0}")]
     Unavailable(String),
-}
-
-struct RuntimeOwnershipGuard {
-    released: AtomicBool,
-}
-
-impl RuntimeOwnershipGuard {
-    fn acquire() -> Result<Self, RuntimeCreateError> {
-        DIRECT_RUNTIME_ACTIVE
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .map_err(|_| RuntimeCreateError::AlreadyExists)?;
-        Ok(Self {
-            released: AtomicBool::new(false),
-        })
-    }
-
-    fn release(&self) {
-        if !self.released.swap(true, Ordering::AcqRel) {
-            DIRECT_RUNTIME_ACTIVE.store(false, Ordering::Release);
-        }
-    }
-}
-
-impl Drop for RuntimeOwnershipGuard {
-    fn drop(&mut self) {
-        self.release();
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -181,7 +154,6 @@ pub(crate) struct DriverRuntime {
     registry: Arc<ToolRegistry>,
     authorization_registry: Arc<SessionAuthorizationRegistry>,
     compatibility_context: Arc<EffectiveAuthorizationContext>,
-    ownership: RuntimeOwnershipGuard,
     shutdown: AtomicBool,
     last_activity: AtomicU64,
     /// Calls hold a read guard; shutdown takes the write guard after closing
@@ -211,15 +183,15 @@ impl DriverRuntime {
                 .legacy_context()
                 .map_err(RuntimeCreateError::Authorization)?,
         };
-        let ownership = RuntimeOwnershipGuard::acquire()?;
-        let registry = Arc::new(build_registry(&options));
+        let registry = Arc::new(cua_driver_core::tool::with_runtime_scope(
+            compatibility_context.runtime_scope_key(),
+            || build_registry(&options),
+        ));
         registry.init_self_weak();
-        register_recording_session_end_hook(&registry);
         let runtime = Arc::new(Self {
             registry,
             authorization_registry,
             compatibility_context,
-            ownership,
             shutdown: AtomicBool::new(false),
             last_activity: AtomicU64::new(now_unix_secs()),
             lifecycle: tokio::sync::RwLock::new(()),
@@ -232,14 +204,24 @@ impl DriverRuntime {
         !self.shutdown.load(Ordering::Acquire)
     }
 
+    pub(crate) fn runtime_scope_key(&self) -> String {
+        self.compatibility_context.runtime_scope_key()
+    }
+
     pub(crate) async fn shutdown(&self) {
         self.shutdown.store(true, Ordering::Release);
         let _drained = self.lifecycle.write().await;
         self.authorization_registry.revoke_all();
-        cua_driver_core::session::revoke_all_sessions();
+        let runtime_prefix = format!(
+            "__cua_runtime_{}:",
+            self.compatibility_context.runtime_scope_key()
+        );
+        cua_driver_core::session::revoke_sessions_with_prefix(&runtime_prefix);
+        cua_driver_core::session::forget_ended_sessions_with_prefix(&runtime_prefix);
+        cua_driver_core::element_token::global()
+            .clear_runtime_scope(&self.compatibility_context.runtime_scope_key());
         let recording = self.registry.recording.clone();
         let _ = tokio::task::spawn_blocking(move || recording.stop_owner(None)).await;
-        self.ownership.release();
     }
 
     pub(crate) fn tools_list(&self) -> Option<Value> {
@@ -269,7 +251,7 @@ impl DriverRuntime {
             .then(|| {
                 args.get("session")
                     .and_then(Value::as_str)
-                    .map(str::to_owned)
+                    .map(|session| context.runtime_session_key(session))
             })
             .flatten();
         let result = self.registry.invoke_with_context(name, args, context).await;
@@ -315,16 +297,18 @@ impl Drop for DriverRuntime {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Release);
         self.authorization_registry.revoke_all();
-        // Explicit `shutdown()` drains work, finalizes recordings, and clears
-        // compatibility sessions. Drop can happen later than shutdown in
-        // garbage-collected bindings, after a replacement runtime has already
-        // acquired process ownership. It must therefore stay runtime-scoped
-        // and non-blocking rather than touching process-global session state.
+        let runtime_scope = self.compatibility_context.runtime_scope_key();
+        let runtime_prefix = format!("__cua_runtime_{runtime_scope}:");
+        cua_driver_core::session::revoke_sessions_with_prefix(&runtime_prefix);
+        cua_driver_core::session::forget_ended_sessions_with_prefix(&runtime_prefix);
+        cua_driver_core::element_token::global().clear_runtime_scope(&runtime_scope);
+        // Explicit `shutdown()` drains work and finalizes recordings. Drop is
+        // runtime-scoped and non-blocking so a retained binding cannot affect
+        // another generation.
         let recording = self.registry.recording.clone();
         std::thread::spawn(move || {
             let _ = recording.stop_owner(None);
         });
-        self.ownership.release();
     }
 }
 
@@ -371,11 +355,17 @@ fn spawn_lifecycle_maintenance(runtime: &Arc<DriverRuntime>) {
         if !runtime.is_running() {
             break;
         }
-        let ended = cua_driver_core::session::evict_idle(session_ttl);
+        let ended = cua_driver_core::session::evict_idle_with_prefix(
+            session_ttl,
+            &format!(
+                "__cua_runtime_{}:",
+                runtime.compatibility_context.runtime_scope_key()
+            ),
+        );
         if !ended.is_empty() {
             tracing::info!(
                 count = ended.len(),
-                "idle-TTL reclaimed sessions: {ended:?}"
+                "idle-TTL reclaimed runtime-owned sessions"
             );
         }
         let idle = now_unix_secs().saturating_sub(runtime.last_activity.load(Ordering::Relaxed));
@@ -383,19 +373,6 @@ fn spawn_lifecycle_maintenance(runtime: &Arc<DriverRuntime>) {
             tracing::warn!("recording idle {idle}s ≥ {recording_ttl}s TTL; auto-stopping");
             let _ = runtime.registry.recording.stop_owner(None);
         }
-    });
-}
-
-fn register_recording_session_end_hook(registry: &Arc<ToolRegistry>) {
-    let recording = Arc::downgrade(&registry.recording);
-    cua_driver_core::session::register_session_end_hook(move |session| {
-        let Some(recording) = recording.upgrade() else {
-            return;
-        };
-        let session = session.to_owned();
-        std::thread::spawn(move || {
-            let _ = recording.stop_owner(Some(&session));
-        });
     });
 }
 
@@ -448,6 +425,18 @@ fn build_registry(options: &RuntimeOptions) -> ToolRegistry {
     if let Some(register_host_tools) = options.register_host_tools {
         register_host_tools(&mut registry);
     }
+    let recording = Arc::downgrade(&registry.recording);
+    let recording_session_end =
+        cua_driver_core::session::register_scoped_session_end_hook(move |session| {
+            let Some(recording) = recording.upgrade() else {
+                return;
+            };
+            let session = session.to_owned();
+            std::thread::spawn(move || {
+                let _ = recording.stop_owner(Some(&session));
+            });
+        });
+    registry.retain_session_end_hook(recording_session_end);
     registry
 }
 
@@ -529,5 +518,115 @@ fn configure_linux_runtime(prepare_desktop_environment: bool) {
         cua_driver_core::video::set_video_backend_factory(Box::new(
             cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory,
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn standard_options() -> RuntimeOptions {
+        let ceiling = SessionModeCeiling::for_trusted_sessions(
+            [PermissionMode::Standard],
+            false,
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        RuntimeOptions::embedded_with_ceiling(false, ceiling, PermissionMode::Standard, None)
+    }
+
+    #[tokio::test]
+    async fn authorized_dispatch_refreshes_only_the_runtime_private_activity_key() {
+        let _runtime_test = TEST_RUNTIME_LOCK.lock().unwrap();
+        let runtime = DriverRuntime::create(standard_options()).unwrap();
+        let public = "runtime-activity-refresh";
+        let internal = runtime.compatibility_context.runtime_session_key(public);
+        let prefix = format!(
+            "__cua_runtime_{}:",
+            runtime.compatibility_context.runtime_scope_key()
+        );
+
+        runtime
+            .invoke(
+                "start_session",
+                serde_json::json!({"session": public, "capture_scope": "auto"}),
+            )
+            .await
+            .unwrap();
+        assert!(cua_driver_core::session::has_session_activity(&internal));
+        assert!(!cua_driver_core::session::has_session_activity(public));
+
+        std::thread::sleep(Duration::from_millis(20));
+        let idle_before_refresh =
+            cua_driver_core::session::session_idle_duration(&internal).unwrap();
+        runtime
+            .invoke("health_report", serde_json::json!({"session": public}))
+            .await
+            .unwrap();
+        let idle_after_refresh =
+            cua_driver_core::session::session_idle_duration(&internal).unwrap();
+        assert!(
+            idle_after_refresh < idle_before_refresh,
+            "authorized traffic must reset the private idle clock: before={idle_before_refresh:?} after={idle_after_refresh:?} ended={}",
+            cua_driver_core::session::is_session_ended(&internal)
+        );
+        let evicted =
+            cua_driver_core::session::evict_idle_with_prefix(idle_before_refresh, &prefix);
+        assert!(
+            !evicted.contains(&internal),
+            "continuous authorized traffic must refresh the private idle clock"
+        );
+
+        runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn idle_eviction_finalizes_the_owning_runtime_recording() {
+        let _runtime_test = TEST_RUNTIME_LOCK.lock().unwrap();
+        let runtime = DriverRuntime::create(standard_options()).unwrap();
+        let public = "runtime-recording-idle";
+        let internal = runtime.compatibility_context.runtime_session_key(public);
+        let prefix = format!(
+            "__cua_runtime_{}:",
+            runtime.compatibility_context.runtime_scope_key()
+        );
+        runtime
+            .invoke(
+                "start_session",
+                serde_json::json!({"session": public, "capture_scope": "auto"}),
+            )
+            .await
+            .unwrap();
+        let output = tempfile::tempdir().unwrap();
+        let started = runtime
+            .invoke(
+                "start_recording",
+                serde_json::json!({
+                    "session": public,
+                    "output_dir": output.path(),
+                    "record_video": false,
+                }),
+            )
+            .await
+            .unwrap();
+        assert_ne!(started.is_error, Some(true));
+        assert!(runtime.registry.recording.current_state().enabled);
+
+        let evicted = cua_driver_core::session::evict_idle_with_prefix(Duration::ZERO, &prefix);
+        assert!(evicted.contains(&internal));
+        for _ in 0..100 {
+            if !runtime.registry.recording.current_state().enabled {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            !runtime.registry.recording.current_state().enabled,
+            "session-end hook must finalize recording after idle eviction"
+        );
+
+        runtime.shutdown().await;
     }
 }

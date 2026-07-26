@@ -31,13 +31,28 @@ impl RawDriver {
     /// if the binary isn't built — callers early-return so an un-built binary
     /// skips rather than fails.
     pub fn spawn() -> Option<Self> {
+        Self::spawn_daemon_backed(false)
+    }
+
+    /// Spawn a daemon-backed raw driver with the certified platform overlay
+    /// host enabled. Cursor protocol tests use this deliberately; ordinary
+    /// protocol tests keep the no-overlay daemon so they remain headless.
+    pub fn spawn_with_overlay() -> Option<Self> {
+        Self::spawn_daemon_backed(true)
+    }
+
+    fn spawn_daemon_backed(overlay_enabled: bool) -> Option<Self> {
         let bin = driver_binary();
         if !bin.exists() {
             eprintln!("[testkit] driver binary not built at {bin:?} — skipping");
             return None;
         }
         let mut reaper = ChildReaper::new();
-        let daemon = TestDaemon::spawn(&bin, &mut reaper, &[])?;
+        let daemon = if overlay_enabled {
+            TestDaemon::spawn_with_overlay(&bin, &mut reaper, &[])?
+        } else {
+            TestDaemon::spawn(&bin, &mut reaper, &[])?
+        };
         let mut command = Command::new(&bin);
         command
             .args(["mcp", "--socket", &daemon.socket])

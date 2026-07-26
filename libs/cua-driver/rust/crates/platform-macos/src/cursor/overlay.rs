@@ -157,19 +157,24 @@ fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
 
 /// Initialise global overlay state (call once, before run_on_main_thread).
 pub fn init(cfg: CursorConfig) {
-    let (tx, rx) = std::sync::mpsc::sync_channel(4096);
-    let _ = CMD_TX.set(tx);
-    *CMD_RX_CELL.lock().unwrap() = Some(rx);
-    *ARRIVAL_TX.lock().unwrap() = Some(HashMap::new());
-    let mut cursors = IndexMap::new();
-    cursors.insert("default".to_owned(), RenderState::new(cfg.clone()));
-    *RENDER.lock().unwrap() = Some(RenderMap {
-        cursors,
-        win_w: 0.0,
-        win_h: 0.0,
-        backing_scale: 1.0, // overwritten in run_appkit() once the NSScreen is known
-        template: cfg,
-        ended: std::collections::HashSet::new(),
+    static INITIALIZED: OnceLock<()> = OnceLock::new();
+    INITIALIZED.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::sync_channel(4096);
+        CMD_TX
+            .set(tx)
+            .expect("cursor overlay sender is initialized exactly once");
+        *CMD_RX_CELL.lock().unwrap() = Some(rx);
+        *ARRIVAL_TX.lock().unwrap() = Some(HashMap::new());
+        let mut cursors = IndexMap::new();
+        cursors.insert("default".to_owned(), RenderState::new(cfg.clone()));
+        *RENDER.lock().unwrap() = Some(RenderMap {
+            cursors,
+            win_w: 0.0,
+            win_h: 0.0,
+            backing_scale: 1.0, // overwritten in run_appkit() once the NSScreen is known
+            template: cfg,
+            ended: std::collections::HashSet::new(),
+        });
     });
 }
 

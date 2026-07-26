@@ -83,7 +83,18 @@ The daemon belongs in the interactive user session instead. It may be kept there
 
 ## Session identity and shared state
 
-A daemon drives one physical machine. Multiple MCP clients can connect at the same time, but they still share the same screen, keyboard, pointer, accessibility tree, and recording machinery. Session identity does not make concurrent control independent. Two agents clicking at once still contend for the same desktop.
+A daemon drives one physical machine. Multiple MCP clients can connect at the
+same time, and a trusted SDK host may create multiple direct runtimes, but they
+still share the same screen, keyboard, pointer, accessibility tree, and OS
+focus. Session or runtime identity does not create an independent desktop.
+Native pointer, keyboard, value-setting, and focus calls are admitted one at a
+time inside a process so their input delivery does not overlap. Post-action
+recording and PiP capture happen after that admission is released and may
+observe later desktop activity. Application lifecycle operations and
+browser/CDP mutations are not covered by the input gate. Higher-level sequences
+can still interleave unless the host schedules them; in particular, do not
+split a button-down/drag/up gesture across independently scheduled runtime
+calls.
 
 On Windows and Linux, bare MCP processes each own a separate runtime. To
 deliberately share one daemon across several MCP clients, start the daemon and
@@ -91,6 +102,15 @@ give every client the same explicit `cua-driver mcp --socket <endpoint>`
 command. Do not rely on ambient daemon discovery.
 
 Session identity solves a narrower state problem. When a proxy starts, it mints a session identity and stamps forwarded calls with it. The daemon uses that identity to scope mutable state to one client lifetime. Recording ownership, per-session config overrides, and the agent-cursor overlay are all keyed by session.
+
+For same-process SDK runtimes, Cua adds a private runtime generation behind the
+public session label. Two runtimes may therefore both use `research-1` without
+sharing capture scope, tombstones, cursor ownership, recording teardown,
+browser refs, or element tokens. The private generation is never serialized
+and is not a credential or same-process security boundary.
+
+`default` is the reserved anonymous fallback, not an isolated session label.
+Concurrent hosts should always declare an explicit session.
 
 <VideoDemo
   className="my-8"
@@ -114,7 +134,8 @@ construct a fresh tool registry or continue with partial state.
 
 For a same-process SDK runtime, the importing application owns the equivalent
 lifetime. End every session, await `shutdown()`, and release the generated
-binding handle during orderly teardown.
+binding handle during orderly teardown. Shutting down one direct runtime does
+not stop or revoke another direct runtime in the same process.
 
 Before each daemon-backed SDK action, the client reads the daemon metadata and
 verifies contract, tool-schema, capability, and MCP

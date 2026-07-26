@@ -1121,6 +1121,7 @@ impl Drop for OperationGuard {
 /// statically linked into the same distribution.
 pub(crate) struct NativeAbiDriver {
     handle: Mutex<*mut ffi::Handle>,
+    runtime_scope_key: String,
 }
 
 pub(crate) struct NativeAbiSession {
@@ -1146,16 +1147,27 @@ impl NativeAbiDriver {
         let status =
             unsafe { ffi::create(options.as_ptr(), options.len(), &mut handle, &mut error) };
         status_result(status, &mut error, "create embedded runtime")?;
+        let runtime_scope_key = unsafe {
+            handle
+                .cast::<CuaDriverHandle>()
+                .as_ref()
+                .expect("successful ABI creation returns a non-null handle")
+                .runtime
+                .runtime_scope_key()
+        };
         Ok(Self {
             handle: Mutex::new(handle),
+            runtime_scope_key,
         })
     }
 
     pub(crate) fn create_for_host(options: RuntimeOptions) -> Result<Self, DriverError> {
         let runtime = DriverRuntime::create(options).map_err(map_runtime_create_error)?;
+        let runtime_scope_key = runtime.runtime_scope_key();
         let handle = Box::into_raw(Box::new(CuaDriverHandle { runtime })).cast::<ffi::Handle>();
         Ok(Self {
             handle: Mutex::new(handle),
+            runtime_scope_key,
         })
     }
 
@@ -1185,6 +1197,10 @@ impl NativeAbiDriver {
 
     fn raw_handle(&self) -> *mut ffi::Handle {
         *self.handle.lock().unwrap()
+    }
+
+    pub(crate) fn runtime_scope_key(&self) -> &str {
+        &self.runtime_scope_key
     }
 
     pub(crate) fn is_available(&self) -> bool {
@@ -1557,6 +1573,32 @@ mod tests {
             cua_driver_destroy_v1(&mut handle);
         }
         assert!(handle.is_null());
+    }
+
+    #[test]
+    fn abi_can_own_two_runtime_handles_concurrently() {
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let mut first = ptr::null_mut();
+        let mut second = ptr::null_mut();
+        let mut first_error = CuaDriverBuffer::empty();
+        let mut second_error = CuaDriverBuffer::empty();
+        assert_eq!(
+            unsafe { cua_driver_create_v1(ptr::null(), 0, &mut first, &mut first_error) },
+            CuaDriverStatus::Ok
+        );
+        assert_eq!(
+            unsafe { cua_driver_create_v1(ptr::null(), 0, &mut second, &mut second_error) },
+            CuaDriverStatus::Ok
+        );
+        assert!(!first.is_null());
+        assert!(!second.is_null());
+        assert_ne!(first, second);
+        unsafe {
+            cua_driver_destroy_v1(&mut first);
+            cua_driver_destroy_v1(&mut second);
+        }
+        assert!(first.is_null());
+        assert!(second.is_null());
     }
 
     #[tokio::test]

@@ -22,9 +22,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use cua_driver_core::protocol::{Request, Response};
-use cua_driver_core::server::{
-    handle_request, session_tool_context, tool_observation_timer, StdioExecutionPath,
-};
+use cua_driver_core::server::{handle_request, tool_observation_timer, StdioExecutionPath};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{debug, info, warn};
@@ -143,11 +141,14 @@ async fn dispatch(body: &[u8], sdk: &Arc<crate::sdk_adapter::SdkAdapter>) -> Opt
     };
     req.id.as_ref()?;
     let initialize_metadata = req.initialize_metadata();
-    let session_context = session_tool_context(
-        &req,
-        |name| sdk.is_known_tool(name),
-        cua_driver_core::session::SessionTransport::McpHttp,
-    );
+    let session_context = req.tool_call().ok().and_then(|call| {
+        sdk.begin_tool_call(
+            &call.name,
+            &call.args,
+            cua_driver_core::session::SessionTransport::McpHttp,
+            cua_driver_core::session::SessionClientKind::Mcp,
+        )
+    });
     let id = req.id.clone().unwrap_or(serde_json::Value::Null);
     apply_session_identity(&mut req);
     let timer = http_tool_observation_timer(&req, |name| sdk.is_known_tool(name));
@@ -182,10 +183,9 @@ fn serialize(resp: &Response) -> String {
 }
 
 /// Mirror an explicit `session` arg into `_session_id` (the per-session config /
-/// recording key) and refresh its idle-TTL — the HTTP-side equivalent of
-/// `serve.rs::apply_session_identity`. The agent cursor reads `session` directly
-/// (so it already works); this keeps config + recording session-scoping
-/// consistent across transports.
+/// recording key) — the HTTP-side equivalent of
+/// `serve.rs::apply_session_identity`. Runtime-private idle-TTL activity is
+/// refreshed later at the authorized registry boundary.
 fn apply_session_identity(req: &mut Request) {
     let Some(params) = req.params.as_mut() else {
         return;
@@ -201,7 +201,6 @@ fn apply_session_identity(req: &mut Request) {
     if let Some(sess) = session {
         args.entry("_session_id")
             .or_insert_with(|| serde_json::Value::String(sess.clone()));
-        cua_driver_core::session::touch_session(&sess);
     }
 }
 

@@ -543,7 +543,7 @@ State persists for the life of the daemon; a restart resets to disabled with no 
 
 Stop trajectory recording. Disables further per-turn capture and, when video was enabled, gracefully terminates the ffmpeg subprocess so the mp4's moov atom is finalized (the file is playable). Calling stop on an already-stopped session is a no-op. The response carries `last_video_path` pointing at the finalized mp4 (when video was on).
 
-A manual `stop_recording` is **unconditional** — it stops whatever recording is active regardless of which session started it. Ownership-scoped teardown (so one MCP client disconnecting can't stop a recording a later client started) is handled by the daemon's `session_end` lifecycle signal, not by this tool.
+A manual `stop_recording` is **unconditional** — it stops whatever recording is active regardless of which session started it. Ownership-scoped teardown (so one client disconnecting can't stop a recording a later client started) is handled by the registry's `session_end` lifecycle hook, not by this tool.
 
 **Arguments:** none.
 

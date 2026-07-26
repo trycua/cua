@@ -569,7 +569,9 @@ fn start_recording_record_video_flag_accepted() {
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn replay_trajectory() {
-    //! Write a minimal trajectory (one move_cursor turn), replay it, verify succeeded=1.
+    //! Write a minimal no-GUI trajectory, replay it, verify succeeded=1.
+    //! The test daemon deliberately starts with `--no-overlay`, so an
+    //! agent-cursor move would correctly refuse before exercising replay.
     let Some(mut d) = RawDriver::spawn() else {
         return;
     };
@@ -580,7 +582,7 @@ fn replay_trajectory() {
     std::fs::create_dir_all(&turn_dir).unwrap();
     std::fs::write(
         turn_dir.join("action.json"),
-        r#"{"tool":"move_cursor","arguments":{"x":50.0,"y":60.0}}"#,
+        r#"{"tool":"start_session","arguments":{"session":"replay-protocol","capture_scope":"auto"}}"#,
     )
     .unwrap();
 

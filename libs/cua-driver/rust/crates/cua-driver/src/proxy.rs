@@ -82,10 +82,9 @@ pub async fn run_direct(driver: Arc<cua_driver_sdk::CuaDriver>) -> anyhow::Resul
                     .map(|session| {
                         public_sessions.insert(session);
                         request.tool_call().ok().and_then(|call| {
-                            cua_driver_core::session::begin_tool_call(
+                            sdk.begin_tool_call(
                                 &call.name,
                                 &call.args,
-                                sdk.is_known_tool(&call.name),
                                 cua_driver_core::session::SessionTransport::McpStdio,
                                 cua_driver_core::session::SessionClientKind::Mcp,
                             )

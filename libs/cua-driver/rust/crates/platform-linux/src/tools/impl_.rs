@@ -6959,9 +6959,9 @@ impl Tool for BringToFrontTool {
 
 pub fn build_registry(compat: bool) -> ToolRegistry {
     let state = ToolState::new();
-    {
+    let cursor_outcome_reader = {
         let cursor_registry = state.cursor_registry.clone();
-        let _ = cua_driver_core::session::set_cursor_outcome_reader(std::sync::Arc::new(
+        cua_driver_core::session::register_scoped_cursor_outcome_reader(std::sync::Arc::new(
             move |session_id| {
                 let state = cursor_registry.get(session_id);
                 let motion_customized = state.is_some()
@@ -6994,12 +6994,12 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
                     ),
                 }
             },
-        ));
-    }
-    {
+        ))
+    };
+    let session_end_hook = {
         let cursor_registry = state.cursor_registry.clone();
         let state_for_session_end = state.clone();
-        cua_driver_core::session::register_session_end_hook(move |session_id| {
+        cua_driver_core::session::register_scoped_session_end_hook(move |session_id| {
             cursor_registry.remove(session_id);
             crate::overlay::remove_cursor(session_id.to_owned());
             state_for_session_end
@@ -7008,9 +7008,25 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
                 .unwrap()
                 .remove(session_id);
             crate::input::forget_master_pointer(session_id);
+        })
+    };
+    let mut r = ToolRegistry::new();
+    r.retain_cursor_outcome_reader(cursor_outcome_reader);
+    r.retain_session_end_hook(session_end_hook);
+    if let Some(runtime_scope) = cua_driver_core::tool::current_dispatch_runtime_scope() {
+        let prefix = format!("__cua_runtime_{runtime_scope}:");
+        let cursor_registry = state.cursor_registry.clone();
+        r.retain_runtime_cleanup(move || {
+            for cursor in cursor_registry
+                .all_states()
+                .into_iter()
+                .filter(|cursor| cursor.config.cursor_id.starts_with(&prefix))
+            {
+                cursor_registry.remove(&cursor.config.cursor_id);
+                crate::overlay::remove_cursor(cursor.config.cursor_id);
+            }
         });
     }
-    let mut r = ToolRegistry::new();
     r.register(Box::new(ListAppsTool));
     r.register(Box::new(ListWindowsTool));
     r.register(Box::new(GetWindowStateTool {

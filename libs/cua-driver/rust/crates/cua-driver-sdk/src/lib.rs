@@ -572,6 +572,18 @@ desktop_tool_methods!(define_exported_tool_names);
 
 #[uniffi::export]
 impl CuaDriver {
+    #[doc(hidden)]
+    pub fn runtime_scope_prefix(&self) -> Option<String> {
+        match &self.backend {
+            DriverBackend::Embedded(native) => {
+                Some(format!("__cua_runtime_{}:", native.runtime_scope_key()))
+            }
+            DriverBackend::Daemon(_)
+            | DriverBackend::PrivateWorker(_)
+            | DriverBackend::Remote(_) => None,
+        }
+    }
+
     /// Create a same-process driver runtime. This constructor never launches
     /// `cua-driver` and never opens daemon IPC.
     #[uniffi::constructor]
@@ -1657,18 +1669,190 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn direct_runtime_is_process_exclusive_and_reusable_after_shutdown() {
+    async fn direct_runtimes_have_independent_sessions_and_shutdown() {
         let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
-        let first = CuaDriver::create(None).unwrap();
-        assert!(matches!(
-            CuaDriver::create(None),
-            Err(DriverError::RuntimeAlreadyExists)
-        ));
-        first.shutdown().await.unwrap();
-        let replacement = configured_standard_driver();
-        let replacement_session = replacement
+        let hook_baseline = cua_driver_core::session::session_end_hook_count();
+        let first = configured_standard_driver();
+        let second = CuaDriver::create_configured(ConfiguredDriverOptions {
+            claude_code_compatibility: false,
+            authorization: RuntimeAuthorizationOptions {
+                allowed_modes: vec![
+                    SessionPermissionMode::Standard,
+                    SessionPermissionMode::Unrestricted,
+                ],
+                compatibility_mode: SessionPermissionMode::Standard,
+                compatibility_bounded_manifest_path: None,
+                unrestricted_acknowledged: true,
+                max_session_ttl_seconds: 60,
+                max_idle_ttl_seconds: 30,
+            },
+        })
+        .unwrap();
+        let first_session = first
             .create_trusted_session(TrustedSessionOptions {
-                public_session: "replacement-after-stale-runtime".into(),
+                public_session: "same-public-label".into(),
+                mode: SessionPermissionMode::Standard,
+                ttl_seconds: 60,
+                idle_ttl_seconds: 30,
+                bounded_manifest_path: None,
+            })
+            .unwrap();
+        let second_session = second
+            .create_trusted_session(TrustedSessionOptions {
+                public_session: "same-public-label".into(),
+                mode: SessionPermissionMode::Unrestricted,
+                ttl_seconds: 60,
+                idle_ttl_seconds: 30,
+                bounded_manifest_path: None,
+            })
+            .unwrap();
+
+        let first_started = first_session
+            .call_tool(
+                "start_session".into(),
+                serde_json::json!({
+                    "session": "same-public-label",
+                    "capture_scope": "auto"
+                })
+                .to_string(),
+            )
+            .await
+            .unwrap();
+        let second_started = second_session
+            .call_tool(
+                "start_session".into(),
+                serde_json::json!({
+                    "session": "same-public-label",
+                    "capture_scope": "window"
+                })
+                .to_string(),
+            )
+            .await
+            .unwrap();
+        assert!(first_started.text.contains("'same-public-label'"));
+        assert!(second_started.text.contains("'same-public-label'"));
+        assert!(!first_started.text.contains("__cua_runtime_"));
+        assert!(!second_started.text.contains("__cua_runtime_"));
+        assert!(
+            !cua_driver_core::session::has_session_activity("same-public-label"),
+            "transport-visible labels must never become process-global activity keys"
+        );
+
+        if std::env::var("CUA_REQUIRE_GUI").as_deref() == Ok("1") {
+            for session in [&first_session, &second_session] {
+                let screen = session
+                    .call_tool("get_screen_size".into(), "{}".into())
+                    .await
+                    .unwrap();
+                assert!(!screen.is_error, "direct runtime could not inspect the GUI");
+            }
+        }
+
+        let second_recording_dir = tempfile::tempdir().unwrap();
+        let recording_started = second_session
+            .call_tool(
+                "start_recording".into(),
+                serde_json::json!({
+                    "session": "same-public-label",
+                    "output_dir": second_recording_dir.path(),
+                    "record_video": false
+                })
+                .to_string(),
+            )
+            .await
+            .unwrap();
+        assert!(!recording_started.is_error);
+
+        first_session
+            .call_tool(
+                "end_session".into(),
+                serde_json::json!({"session": "same-public-label"}).to_string(),
+            )
+            .await
+            .unwrap();
+        first.shutdown().await.unwrap();
+        drop(first);
+
+        let second_state = second_session
+            .call_tool(
+                "get_session_state".into(),
+                serde_json::json!({"session": "same-public-label"}).to_string(),
+            )
+            .await
+            .unwrap();
+        assert!(!second_state.is_error);
+        let structured: Value =
+            serde_json::from_str(second_state.structured_json.as_deref().unwrap()).unwrap();
+        assert_eq!(structured["session"], "same-public-label");
+        assert_eq!(structured["capture_scope"], "window");
+        let recording_state = second_session
+            .call_tool(
+                "get_recording_state".into(),
+                serde_json::json!({"session": "same-public-label"}).to_string(),
+            )
+            .await
+            .unwrap();
+        let recording: Value =
+            serde_json::from_str(recording_state.structured_json.as_deref().unwrap()).unwrap();
+        assert_eq!(recording["enabled"], true);
+        if std::env::var("CUA_REQUIRE_GUI").as_deref() == Ok("1") {
+            let screen_after_other_shutdown = second_session
+                .call_tool("get_screen_size".into(), "{}".into())
+                .await
+                .unwrap();
+            assert!(
+                !screen_after_other_shutdown.is_error,
+                "runtime B lost GUI access after runtime A shut down"
+            );
+        }
+
+        second_session
+            .call_tool(
+                "stop_recording".into(),
+                serde_json::json!({"session": "same-public-label"}).to_string(),
+            )
+            .await
+            .unwrap();
+
+        second_session.close();
+        second.shutdown().await.unwrap();
+        drop(first_session);
+        drop(second_session);
+        drop(second);
+        assert_eq!(
+            cua_driver_core::session::session_end_hook_count(),
+            hook_baseline
+        );
+    }
+
+    #[tokio::test]
+    async fn authorization_expiry_in_one_runtime_does_not_affect_another() {
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let expiring = CuaDriver::create_configured(ConfiguredDriverOptions {
+            claude_code_compatibility: false,
+            authorization: RuntimeAuthorizationOptions {
+                allowed_modes: vec![SessionPermissionMode::Standard],
+                compatibility_mode: SessionPermissionMode::Standard,
+                compatibility_bounded_manifest_path: None,
+                unrestricted_acknowledged: false,
+                max_session_ttl_seconds: 2,
+                max_idle_ttl_seconds: 2,
+            },
+        })
+        .unwrap();
+        let stable = configured_standard_driver();
+        let expiring_session = expiring
+            .create_trusted_session(TrustedSessionOptions {
+                public_session: "expiry-isolation".into(),
+                mode: SessionPermissionMode::Standard,
+                ttl_seconds: 1,
+                idle_ttl_seconds: 1,
+                bounded_manifest_path: None,
+            })
+            .unwrap();
+        let stable_session = stable
+            .create_trusted_session(TrustedSessionOptions {
+                public_session: "expiry-isolation".into(),
                 mode: SessionPermissionMode::Standard,
                 ttl_seconds: 60,
                 idle_ttl_seconds: 30,
@@ -1676,19 +1860,22 @@ mod tests {
             })
             .unwrap();
 
-        // Dropping the already-shut-down generation must not revoke sessions
-        // owned by the replacement runtime.
-        drop(first);
-        let result = replacement_session
+        tokio::time::sleep(std::time::Duration::from_millis(1_100)).await;
+        let expired = expiring_session
             .call_tool("health_report".into(), "{}".into())
             .await
             .unwrap();
-        assert_ne!(result.error_code.as_deref(), Some("permission_denied"));
+        assert_eq!(expired.error_code.as_deref(), Some("permission_denied"));
+        let live = stable_session
+            .call_tool("health_report".into(), "{}".into())
+            .await
+            .unwrap();
+        assert_ne!(live.error_code.as_deref(), Some("permission_denied"));
 
-        replacement_session.close();
-        replacement.shutdown().await.unwrap();
-        let after_drop = CuaDriver::create(None).unwrap();
-        after_drop.shutdown().await.unwrap();
+        stable_session.close();
+        expiring_session.close();
+        stable.shutdown().await.unwrap();
+        expiring.shutdown().await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

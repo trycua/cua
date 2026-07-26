@@ -78,6 +78,7 @@ pub struct BrowserEngine {
     pub(crate) managed_browsers: ManagedBrowsers,
     pub(crate) existing_profile_grants: ExistingProfileGrants,
     pub(crate) approval_broker: Arc<crate::consent::ApprovalBroker>,
+    pub(crate) protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
     mutation_gates: MutationGates,
     reconnect_gates: ReconnectGates,
     session_end_hook: Mutex<Option<crate::session::SessionEndHookRegistration>>,
@@ -525,9 +526,10 @@ impl BrowserEngine {
     /// capability store. Platform crates call this once and register
     /// the five tools via `register_browser_tools`.
     pub fn new(platform: Arc<dyn BrowserPlatform>) -> Arc<Self> {
-        Self::new_with_approval_broker(
+        Self::new_with_runtime_services(
             platform,
             Arc::new(crate::consent::ApprovalBroker::unavailable()),
+            Arc::new(crate::consent::ProtectedResourceOwnershipStore::default()),
         )
     }
 
@@ -538,9 +540,10 @@ impl BrowserEngine {
         platform: Arc<dyn BrowserPlatform>,
         provider: Option<Arc<dyn crate::consent::ProtectedConsentProvider>>,
     ) -> Arc<Self> {
-        Self::new_with_approval_broker(
+        Self::new_with_runtime_services(
             platform,
             Arc::new(crate::consent::ApprovalBroker::new(provider)),
+            Arc::new(crate::consent::ProtectedResourceOwnershipStore::default()),
         )
     }
 
@@ -550,6 +553,18 @@ impl BrowserEngine {
         platform: Arc<dyn BrowserPlatform>,
         approval_broker: Arc<crate::consent::ApprovalBroker>,
     ) -> Arc<Self> {
+        Self::new_with_runtime_services(
+            platform,
+            approval_broker,
+            Arc::new(crate::consent::ProtectedResourceOwnershipStore::default()),
+        )
+    }
+
+    pub fn new_with_runtime_services(
+        platform: Arc<dyn BrowserPlatform>,
+        approval_broker: Arc<crate::consent::ApprovalBroker>,
+        protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
+    ) -> Arc<Self> {
         let engine = Arc::new(Self {
             platform,
             store: BrowserStore::new(),
@@ -557,6 +572,7 @@ impl BrowserEngine {
             managed_browsers: Default::default(),
             existing_profile_grants: ExistingProfileGrants::new(),
             approval_broker,
+            protected_resource_ownership,
             mutation_gates: MutationGates::new(),
             reconnect_gates: ReconnectGates::new(),
             session_end_hook: Mutex::new(None),

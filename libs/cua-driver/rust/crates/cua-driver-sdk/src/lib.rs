@@ -1544,6 +1544,22 @@ mod tests {
         .unwrap()
     }
 
+    #[cfg(target_os = "macos")]
+    fn configured_unrestricted_driver() -> Arc<CuaDriver> {
+        CuaDriver::create_configured(ConfiguredDriverOptions {
+            claude_code_compatibility: false,
+            authorization: RuntimeAuthorizationOptions {
+                allowed_modes: vec![SessionPermissionMode::Unrestricted],
+                compatibility_mode: SessionPermissionMode::Unrestricted,
+                compatibility_bounded_manifest_path: None,
+                unrestricted_acknowledged: true,
+                max_session_ttl_seconds: 60,
+                max_idle_ttl_seconds: 30,
+            },
+        })
+        .unwrap()
+    }
+
     struct SlowHostTool;
 
     static SLOW_HOST_TOOL_DEF: std::sync::OnceLock<cua_driver_core::tool::ToolDef> =
@@ -2411,7 +2427,10 @@ mod tests {
     #[tokio::test]
     async fn direct_macos_runtime_reports_cursor_overlay_facility_unavailable() {
         let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
-        let driver = CuaDriver::create(None).unwrap();
+        // This test is about the unavailable host-owned cursor facility, not
+        // protected input admission. Use an explicitly acknowledged
+        // unrestricted runtime so the call reaches that platform invariant.
+        let driver = configured_unrestricted_driver();
         for (tool, arguments) in [
             (
                 "set_agent_cursor_enabled",

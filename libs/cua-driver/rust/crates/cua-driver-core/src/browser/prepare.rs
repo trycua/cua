@@ -605,6 +605,7 @@ impl BrowserEngine {
     }
 
     pub(crate) fn cleanup_prepared_session(&self, session: &str) {
+        self.protected_resource_ownership.remove_session(session);
         self.managed_browsers
             .lock()
             .unwrap()
@@ -715,6 +716,10 @@ impl BrowserEngine {
             if !owner_sessions.contains(&transport_session) {
                 owner_sessions.push(transport_session);
             }
+        }
+        for owner in &owner_sessions {
+            self.protected_resource_ownership
+                .mark_driver_owned_pid(owner, prepared_pid);
         }
         self.managed_browsers.lock().unwrap().push(ManagedBrowser {
             child,

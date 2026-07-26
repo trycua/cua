@@ -318,18 +318,19 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
     EnforcementAdapterDescriptor {
         id: "desktop_input",
         operations: DESKTOP_INPUT_OPERATIONS,
-        state: RiskEnforcement::MetadataOnly,
+        state: RiskEnforcement::Active,
         risk_class: RiskClass::R1,
         resource_kind: "user_window_or_display_input",
         scope_keys: DESKTOP_INPUT_SCOPE_KEYS,
-        grant_type: None,
-        idle_ttl_seconds: None,
-        absolute_ttl_seconds: None,
-        indicator_requirement: "not_implemented",
+        grant_type: Some("protected_resource_grant"),
+        idle_ttl_seconds: Some(30 * 60),
+        absolute_ttl_seconds: Some(8 * 60 * 60),
+        indicator_requirement: "required_in_standard_and_bounded",
         revocation_triggers: SESSION_REVOCATION,
-        refusal_code: None,
-        provider_requirement: "certified_protected_host_not_implemented",
-        enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::MetadataOnly),
+        refusal_code: Some("protected_consent_required"),
+        provider_requirement:
+            "protected_consent_in_standard; protected_indicator_in_bounded; none_in_unrestricted",
+        enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
     },
     EnforcementAdapterDescriptor {
         id: "file_transfer_and_output",
@@ -816,6 +817,11 @@ pub fn classify_tool_call(tool: &str, args: &Value) -> RiskAssessment {
             enforcement: RiskEnforcement::MetadataOnly,
             operation_sensitive: args.get("prompt").and_then(Value::as_bool).unwrap_or(true),
         },
+        tool if DESKTOP_INPUT_OPERATIONS.contains(&tool) && tool != "replay_trajectory" => {
+            let mut risk = advertised_risk_for(tool);
+            risk.enforcement = RiskEnforcement::Active;
+            risk
+        }
         _ => advertised_risk_for(tool),
     }
 }
@@ -1342,12 +1348,15 @@ mod tests {
 
         assert_eq!(
             adapter_ids_with_state(RiskEnforcement::Active),
-            vec!["browser_prepare.existing_profile", "private_observation"]
+            vec![
+                "browser_prepare.existing_profile",
+                "private_observation",
+                "desktop_input"
+            ]
         );
         assert_eq!(
             adapter_ids_with_state(RiskEnforcement::MetadataOnly),
             vec![
-                "desktop_input",
                 "file_transfer_and_output",
                 "browser_consequential_action",
                 "browser_unbounded_script",
@@ -1363,7 +1372,11 @@ mod tests {
         );
         assert_eq!(
             adapter_ids_with_state_for_mode(PermissionMode::Standard, RiskEnforcement::Active),
-            vec!["browser_prepare.existing_profile", "private_observation"]
+            vec![
+                "browser_prepare.existing_profile",
+                "private_observation",
+                "desktop_input"
+            ]
         );
 
         let existing = ENFORCEMENT_ADAPTERS
@@ -1446,12 +1459,15 @@ mod tests {
         let status = status_json();
         assert_eq!(
             status["active_risk_enforcement"],
-            serde_json::json!(["browser_prepare.existing_profile", "private_observation"])
+            serde_json::json!([
+                "browser_prepare.existing_profile",
+                "private_observation",
+                "desktop_input"
+            ])
         );
         assert_eq!(
             status["metadata_only_risk_enforcement"],
             serde_json::json!([
-                "desktop_input",
                 "file_transfer_and_output",
                 "browser_consequential_action",
                 "browser_unbounded_script",
@@ -1467,7 +1483,11 @@ mod tests {
         );
         assert_eq!(
             status["effective_active_risk_enforcement"],
-            serde_json::json!(["browser_prepare.existing_profile", "private_observation"])
+            serde_json::json!([
+                "browser_prepare.existing_profile",
+                "private_observation",
+                "desktop_input"
+            ])
         );
         assert_eq!(
             status["effective_metadata_only_risk_enforcement"],

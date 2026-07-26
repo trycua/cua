@@ -22,6 +22,7 @@ use thiserror::Error;
 
 mod abi;
 mod embedded;
+mod protected_host;
 pub mod remote;
 mod runtime;
 mod service_session;
@@ -29,6 +30,10 @@ mod service_session;
 pub mod worker;
 use abi::{NativeAbiDriver, NativeAbiSession};
 pub use embedded::*;
+pub use protected_host::{
+    ProtectedConsentAction, ProtectedConsentDecision, ProtectedConsentHost,
+    ProtectedConsentHostError, ProtectedConsentRequest,
+};
 use remote::{DriverEnvelopeChannel, RemoteBoundSession, RemoteDriverClient};
 use runtime::RuntimeOptions;
 use service_session::ServiceSessionClient;
@@ -351,6 +356,26 @@ pub struct ConfiguredDriverOptions {
     pub authorization: RuntimeAuthorizationOptions,
 }
 
+fn configured_driver_options_json(options: &ConfiguredDriverOptions) -> Value {
+    let allowed_modes = options
+        .authorization
+        .allowed_modes
+        .iter()
+        .map(|mode| mode.as_str())
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "claude_code_compatibility": options.claude_code_compatibility,
+        "authorization": {
+            "allowed_modes": allowed_modes,
+            "compatibility_mode": options.authorization.compatibility_mode.as_str(),
+            "compatibility_bounded_manifest_path": options.authorization.compatibility_bounded_manifest_path.clone(),
+            "unrestricted_acknowledged": options.authorization.unrestricted_acknowledged,
+            "max_session_ttl_seconds": options.authorization.max_session_ttl_seconds,
+            "max_idle_ttl_seconds": options.authorization.max_idle_ttl_seconds,
+        }
+    })
+}
+
 /// Trusted host request for one immutable, connection-bound action surface.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
 pub struct TrustedSessionOptions {
@@ -607,28 +632,52 @@ impl CuaDriver {
     /// agent tool. Existing `create()` callers remain unchanged.
     #[uniffi::constructor]
     pub fn create_configured(options: ConfiguredDriverOptions) -> Result<Arc<Self>, DriverError> {
-        let allowed_modes = options
-            .authorization
-            .allowed_modes
-            .iter()
-            .map(|mode| mode.as_str())
-            .collect::<Vec<_>>();
-        let native_options = serde_json::json!({
-            "claude_code_compatibility": options.claude_code_compatibility,
-            "authorization": {
-                "allowed_modes": allowed_modes,
-                "compatibility_mode": options.authorization.compatibility_mode.as_str(),
-                "compatibility_bounded_manifest_path": options.authorization.compatibility_bounded_manifest_path,
-                "unrestricted_acknowledged": options.authorization.unrestricted_acknowledged,
-                "max_session_ttl_seconds": options.authorization.max_session_ttl_seconds,
-                "max_idle_ttl_seconds": options.authorization.max_idle_ttl_seconds,
-            }
-        });
+        let native_options = configured_driver_options_json(&options);
         Ok(Arc::new(Self {
             backend: DriverBackend::Embedded(Arc::new(NativeAbiDriver::create_configured(
                 native_options,
             )?)),
             client_kind: DaemonClientKind::Unknown,
+        }))
+    }
+
+    /// Create a configured same-process runtime with protected approval and
+    /// persistent Stop UI supplied by trusted embedding-host code.
+    ///
+    /// The callback object is immutable runtime configuration. Applications
+    /// must not expose it to an agent or implement it using ordinary MCP
+    /// elicitation, model-visible stdio, or an auto-accepting callback.
+    #[uniffi::constructor]
+    pub fn create_configured_with_protected_host(
+        options: ConfiguredDriverOptions,
+        host: Arc<dyn ProtectedConsentHost>,
+    ) -> Result<Arc<Self>, DriverError> {
+        let provider = protected_host::SdkProtectedConsentProvider::new(host);
+        Ok(Arc::new(Self {
+            backend: DriverBackend::Embedded(Arc::new(
+                NativeAbiDriver::create_configured_with_protected_provider(
+                    configured_driver_options_json(&options),
+                    provider,
+                )?,
+            )),
+            client_kind: DaemonClientKind::Unknown,
+        }))
+    }
+
+    /// Language-package entry point for a configured protected-host runtime.
+    #[uniffi::constructor]
+    pub fn create_configured_with_protected_host_and_client_kind(
+        options: ConfiguredDriverOptions,
+        host: Arc<dyn ProtectedConsentHost>,
+        client_kind: SdkClientKind,
+    ) -> Result<Arc<Self>, DriverError> {
+        let driver = Self::create_configured_with_protected_host(options, host)?;
+        let DriverBackend::Embedded(runtime) = &driver.backend else {
+            unreachable!("protected-host constructor always returns an embedded runtime")
+        };
+        Ok(Arc::new(Self {
+            backend: DriverBackend::Embedded(runtime.clone()),
+            client_kind: client_kind.into(),
         }))
     }
 
@@ -785,6 +834,7 @@ impl CuaDriver {
             register_host_tools: options.register_host_tools,
             authorization_ceiling: None,
             compatibility_authorization: None,
+            protected_consent_provider: None,
         })
     }
 
@@ -891,6 +941,7 @@ impl CuaDriver {
                     register_host_tools: options.register_host_tools,
                     authorization_ceiling: None,
                     compatibility_authorization: None,
+                    protected_consent_provider: None,
                 },
             )?)),
             client_kind: DaemonClientKind::Unknown,
@@ -939,6 +990,7 @@ impl CuaDriver {
                     register_host_tools: options.register_host_tools,
                     authorization_ceiling: Some(ceiling),
                     compatibility_authorization: Some((mode, manifest)),
+                    protected_consent_provider: None,
                 },
             )?)),
             client_kind: DaemonClientKind::Unknown,

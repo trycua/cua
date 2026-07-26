@@ -6958,6 +6958,13 @@ impl Tool for BringToFrontTool {
 // ── registry ─────────────────────────────────────────────────────────────────
 
 pub fn build_registry(compat: bool) -> ToolRegistry {
+    build_registry_with_provider(compat, None)
+}
+
+pub fn build_registry_with_provider(
+    compat: bool,
+    provider: Option<std::sync::Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
+) -> ToolRegistry {
     let state = ToolState::new();
     let cursor_outcome_reader = {
         let cursor_registry = state.cursor_registry.clone();
@@ -7010,7 +7017,7 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
             crate::input::forget_master_pointer(session_id);
         })
     };
-    let mut r = ToolRegistry::new();
+    let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
     r.retain_cursor_outcome_reader(cursor_outcome_reader);
     r.retain_session_end_hook(session_end_hook);
     if let Some(runtime_scope) = cua_driver_core::tool::current_dispatch_runtime_scope() {

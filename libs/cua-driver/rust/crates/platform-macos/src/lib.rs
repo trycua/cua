@@ -83,6 +83,26 @@ pub fn register_tools_with_cursor(
     host_owns_permission_ux: bool,
     host_bundle_id: Option<String>,
 ) -> ToolRegistry {
+    register_tools_with_cursor_and_provider(
+        None,
+        cfg,
+        compat,
+        host_owns_permission_ux,
+        host_bundle_id,
+    )
+}
+
+/// Register all macOS tools with a constructor-installed protected host.
+///
+/// This is used by the canonical SDK runtime. The original public constructor
+/// remains unchanged for callers that do not host protected consent.
+pub fn register_tools_with_cursor_and_provider(
+    provider: Option<std::sync::Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
+    cfg: cursor_overlay::CursorConfig,
+    compat: bool,
+    host_owns_permission_ux: bool,
+    host_bundle_id: Option<String>,
+) -> ToolRegistry {
     #[cfg(target_os = "macos")]
     {
         let cursor_overlay_available =
@@ -90,7 +110,7 @@ pub fn register_tools_with_cursor(
         if cursor_overlay_available {
             cursor::overlay::init(cfg);
         }
-        let mut r = ToolRegistry::new();
+        let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
         tools::register_all(
             &mut r,
             compat,
@@ -106,6 +126,7 @@ pub fn register_tools_with_cursor(
         let _ = compat;
         let _ = host_owns_permission_ux;
         let _ = host_bundle_id;
+        let _ = provider;
         ToolRegistry::new()
     }
 }

@@ -1161,6 +1161,22 @@ impl NativeAbiDriver {
         })
     }
 
+    pub(crate) fn create_configured_with_protected_provider(
+        options: Value,
+        provider: Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>,
+    ) -> Result<Self, DriverError> {
+        let options: AbiDriverOptions =
+            serde_json::from_value(options).map_err(|error| DriverError::Configuration {
+                reason: format!("invalid configured host options: {error}"),
+            })?;
+        let mut runtime_options =
+            runtime_options_from_abi(options).map_err(|error| DriverError::Configuration {
+                reason: error.message,
+            })?;
+        runtime_options.protected_consent_provider = Some(provider);
+        Self::create_for_host(runtime_options)
+    }
+
     pub(crate) fn create_for_host(options: RuntimeOptions) -> Result<Self, DriverError> {
         let runtime = DriverRuntime::create(options).map_err(map_runtime_create_error)?;
         let runtime_scope_key = runtime.runtime_scope_key();

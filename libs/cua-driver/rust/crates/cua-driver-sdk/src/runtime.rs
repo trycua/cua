@@ -41,7 +41,7 @@ pub(crate) enum RuntimeCreateError {
     Unavailable(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct RuntimeOptions {
     pub cursor: CursorConfig,
     /// Whether the importing/embedding host owns macOS permission UX. Such a
@@ -54,6 +54,10 @@ pub(crate) struct RuntimeOptions {
     pub register_host_tools: Option<fn(&mut ToolRegistry)>,
     pub authorization_ceiling: Option<SessionModeCeiling>,
     pub compatibility_authorization: Option<(PermissionMode, Option<Arc<SessionManifest>>)>,
+    /// Constructor-only protected host. This object is never reachable from
+    /// public tool arguments or transport metadata.
+    pub protected_consent_provider:
+        Option<Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
 }
 
 impl RuntimeOptions {
@@ -70,6 +74,7 @@ impl RuntimeOptions {
             register_host_tools: None,
             authorization_ceiling: None,
             compatibility_authorization: None,
+            protected_consent_provider: None,
         }
     }
 
@@ -390,7 +395,8 @@ fn build_registry(options: &RuntimeOptions) -> ToolRegistry {
     #[cfg(target_os = "macos")]
     let mut registry = {
         configure_macos_runtime();
-        platform_macos::register_tools_with_cursor(
+        platform_macos::register_tools_with_cursor_and_provider(
+            options.protected_consent_provider.clone(),
             options.cursor.clone(),
             options.compatibility_mode,
             options.host_owns_permission_ux,
@@ -401,7 +407,8 @@ fn build_registry(options: &RuntimeOptions) -> ToolRegistry {
     #[cfg(target_os = "windows")]
     let mut registry = {
         configure_windows_runtime();
-        platform_windows::register_tools_with_cursor(
+        platform_windows::register_tools_with_cursor_and_provider(
+            options.protected_consent_provider.clone(),
             options.cursor.clone(),
             options.compatibility_mode,
         )
@@ -410,7 +417,8 @@ fn build_registry(options: &RuntimeOptions) -> ToolRegistry {
     #[cfg(target_os = "linux")]
     let mut registry = {
         configure_linux_runtime(options.prepare_desktop_environment);
-        platform_linux::register_tools_with_cursor(
+        platform_linux::register_tools_with_cursor_and_provider(
+            options.protected_consent_provider.clone(),
             options.cursor.clone(),
             options.compatibility_mode,
         )

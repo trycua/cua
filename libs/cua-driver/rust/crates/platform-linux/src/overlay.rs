@@ -106,19 +106,24 @@ fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
 }
 
 pub fn init(cfg: CursorConfig) {
-    let (tx, rx) = std::sync::mpsc::sync_channel(4096);
-    let _ = CMD_TX.set(tx);
-    *CMD_RX_CELL.lock().unwrap() = Some(rx);
-    *ARRIVAL_TX.lock().unwrap() = Some(HashMap::new());
-    let mut cursors = HashMap::new();
-    cursors.insert("default".to_owned(), RenderState::new(cfg.clone()));
-    *RENDER.lock().unwrap() = Some(RenderMap {
-        cursors,
-        scr_w: 1920,
-        scr_h: 1080,
-        template: cfg,
-        ended: HashSet::new(),
-        last_active: None,
+    static INITIALIZED: OnceLock<()> = OnceLock::new();
+    INITIALIZED.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::sync_channel(4096);
+        CMD_TX
+            .set(tx)
+            .expect("cursor overlay sender is initialized exactly once");
+        *CMD_RX_CELL.lock().unwrap() = Some(rx);
+        *ARRIVAL_TX.lock().unwrap() = Some(HashMap::new());
+        let mut cursors = HashMap::new();
+        cursors.insert("default".to_owned(), RenderState::new(cfg.clone()));
+        *RENDER.lock().unwrap() = Some(RenderMap {
+            cursors,
+            scr_w: 1920,
+            scr_h: 1080,
+            template: cfg,
+            ended: HashSet::new(),
+            last_active: None,
+        });
     });
 }
 

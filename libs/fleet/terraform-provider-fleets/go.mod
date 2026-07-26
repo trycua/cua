@@ -1,4 +1,4 @@
-module github.com/trycua/terraform-provider-cyclops
+module github.com/trycua/terraform-provider-fleets
 
 go 1.25.8
 

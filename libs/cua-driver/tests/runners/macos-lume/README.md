@@ -199,9 +199,9 @@ explicitly requests an Apple Events-backed browser or app operation; do not
 pre-grant those in the seed. These are normal macOS consent flows; do not edit
 `TCC.db`. Rerun the commands and require them to finish without another prompt.
 Then verify the daemon's own
-identity and the read-only status contract before running the explicit live
-capture probe. The first command must not raise a dialog; the second is
-intentionally prompt-capable:
+identity and the read-only status contract before running the explicit
+LaunchServices-hosted grant flow. The first command must not raise a dialog;
+the second is intentionally prompt-capable and must be run by the human:
 
 ```bash
 ~/.local/bin/cua-driver-local permissions status --json | jq -e '
@@ -211,15 +211,16 @@ intentionally prompt-capable:
   and .direct_capture_status == "not_checked"
   and .source.attribution == "driver-daemon"
 '
-~/.local/bin/cua-driver-local call check_permissions '{"prompt":true}' | jq -e '
-  .structuredContent.screen_recording_capturable == true
-  and .structuredContent.direct_capture_status == "ready"
+~/.local/bin/cua-driver-local permissions grant
+~/.local/bin/cua-driver-local permissions status --json | jq -e '
+  .accessibility == true
+  and .screen_recording == true
 '
 codesign -d -r- /Applications/CuaDriverLocal.app 2>&1 | grep 'certificate leaf'
 csrutil status
 ```
 
-All four commands must succeed, and `csrutil status` must report disabled.
+All five commands must succeed, and `csrutil status` must report disabled.
 Stop the builder and clone it to a date/version-named private seed plus two
 stopped backups:
 
@@ -292,7 +293,20 @@ separate typed results and MP4 evidence under
 `artifacts/cua-driver/macos-standalone-browser/`. Missing external browsers are
 a hard failure for this option; they never shrink the reported matrix. On a
 repeat run, the entrypoint preserves the previous standalone-browser evidence
-in a temporary archive before creating a fresh artifact directory.
+in a temporary archive before creating a fresh artifact directory. The
+entrypoint temporarily restarts the disposable worker daemon in unrestricted
+mode for the authorized existing-profile success rows, then restores its
+standard autostart daemon even when a browser row fails.
+
+On macOS Tahoe, first-use Chrome can present a native local-network discovery
+prompt over `chrome://inspect/#remote-debugging`. The standalone-browser lane
+uses loopback DevTools and does not need LAN discovery. Before freezing a seed
+that will run this optional lane, launch Chrome on that exact page in the VM
+display, choose **Don't Allow**, quit Chrome, then relaunch the page and require
+that the prompt does not return. Do not answer or dismiss OS consent UI while
+the behavior matrix is running. If an existing immutable seed lacks this
+decision, clone it to a new versioned seed, complete this setup there, stop it,
+and use that new seed for workers; never update the original seed in place.
 
 The entrypoint refuses the wrong OS, user session, SIP state, dirty or
 unidentified source, missing dependencies, ad-hoc signature, stale installed

@@ -5,13 +5,19 @@ description: How the Cua Driver permission policy engine evaluates YAML and Rego
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Cua Driver's permission policy engine sits between daemon clients (MCP, CLI, or direct socket clients) and the tool implementation. Before the daemon executes any tool call it asks the policy engine whether the call is allowed. This page explains how the engine is structured, when it is active, and what guarantees it provides.
+Cua Driver's permission policy engine sits at the native runtime dispatch
+boundary, between every public caller and the tool implementation. Before a
+direct SDK runtime, private worker, MCP process, or daemon executes a tool
+call, it asks the same policy engine whether the call is allowed.
 
 ## The enforcement point
 
-Every tool call reaches a running `cua-driver serve` daemon. A thin `cua-driver mcp` process proxies MCP calls over the local socket; `cua-driver call` sends its one request to the same daemon.
-
-The authorization coordinator is always invoked in the daemon before tool execution. It evaluates the built-in risk map, managed policy, user policy, and autonomous session manifest in order. The MCP proxy may repeat the user-policy check as an earlier defense-in-depth check. A denial at either point returns an error to the client; the tool implementation is never reached.
+Every public path reaches the authorization coordinator before platform
+dispatch. It evaluates the built-in risk map, managed policy, user policy, and
+bounded session manifest in order. Adapters may repeat a check earlier as
+defense in depth, but they cannot authorize a request the runtime denies. A
+denial returns an error to the client and the tool implementation is never
+reached.
 
 ## Deny-by-default
 
@@ -19,19 +25,31 @@ The engine is deny-by-default. A tool that is not explicitly mentioned in the po
 
 The deny-by-default behavior applies within each configured policy. When `CUA_DRIVER_POLICY_FILE` is unset, that layer is absent for compatibility. The reviewed built-in tool and risk map still rejects unknown tools, and the default permission mode remains `standard`.
 
-An explicitly configured policy path is an operator assertion that the layer must exist. If the path is missing, unreadable, empty, or invalid, the daemon exits before binding its action socket.
+An explicitly configured policy path is an operator assertion that the layer
+must exist. If the path is missing, unreadable, empty, or invalid, runtime
+construction fails before tools are registered or a service binds its action
+endpoint.
 
 ## Policy composition and modes
 
-`CUA_DRIVER_MANAGED_POLICY_FILE` loads an administrator ceiling in the same YAML or Rego formats. A call must pass both the managed and user layers. The daemon hashes each immutable policy snapshot and includes those hashes in protected approval requests and status output.
+`CUA_DRIVER_MANAGED_POLICY_FILE` loads an administrator ceiling in the same
+YAML or Rego formats. A call must pass both the managed and user layers. The
+runtime hashes each immutable policy snapshot and includes those hashes in
+protected approval requests and status output.
 
 Permission mode is separate from capability policy. Policy answers whether a call is inside the allowed ceiling. Mode answers whether an allowed operation must stop for protected human approval. Approval and unrestricted mode cannot widen the policy ceiling. See [Permission modes and bounded autonomy](/reference/cua-driver/permission-modes).
 
-## Process-lifetime snapshot
+## Runtime-lifetime snapshot
 
-The policy file is loaded once when the daemon starts. All subsequent calls share the same immutable policy object for the lifetime of that process. There is no reload endpoint and no hot-swap path. Changing the policy takes effect only after the daemon restarts.
+The policy file is loaded once when the runtime starts. All subsequent calls
+through that runtime generation share the same immutable policy object. There
+is no reload endpoint and no hot-swap path. Changing the policy takes effect
+only after a direct runtime, private worker, MCP process, or daemon is
+restarted.
 
-This makes the policy a reliable static contract: the same rule that was in effect when the daemon started will still be in effect when the last tool call of the session runs.
+This makes the policy a reliable static contract: the same rule that was in
+effect when the runtime started remains in effect through its last admitted
+call.
 
 ## YAML evaluation
 
@@ -62,13 +80,16 @@ At evaluation time, the driver:
 3. Sets the input and evaluates `data.cua.policy.allow`.
 4. Maps the result: `true` → Allow, `false` or `undefined` → Deny, error → Error.
 
-Because Regorus runs inside the Cua Driver daemon and does not spawn a policy subprocess, there is no additional policy IPC per call.
+Because Regorus runs inside the runtime owner and does not spawn a policy
+subprocess, there is no additional policy IPC per call.
 
 ## Argument sanitization before evaluation
 
 Two transformations happen before the arguments reach the policy engine:
 
-- **`_session_id` removal.** The daemon injects a `_session_id` field for session tracking. This is an internal implementation detail that is not relevant to policy decisions, so it is stripped before evaluation.
+- **Internal session-field removal.** Runtime and transport adapters may inject
+  reserved session fields for lifecycle tracking. These are stripped before
+  evaluation so a caller-controlled label cannot change policy authority.
 - **Tool name canonicalization.** The deprecated `type_text_chars` alias is normalized to `type_text` before any rule is consulted, so policies written against the canonical name cover both forms automatically.
 
 ## What the engine does not cover
@@ -84,13 +105,20 @@ A policy that allows `screenshot` permits an agent to take an unlimited number o
 
 ## Trust model
 
-The policy is evaluated in the same process as the tool implementation. An agent that can replace or inject code into the daemon can bypass it. Local shell access alone does not turn ordinary MCP arguments, files, TTY input, or environment values into protected consent. Use a trusted launcher to own daemon startup settings and OS isolation to keep the agent from replacing the daemon.
+The policy is evaluated in the same process as the tool implementation. An
+agent that can replace or inject code into the runtime-owning process can
+bypass it. Local shell access alone does not turn ordinary MCP arguments,
+files, TTY input, or environment values into protected consent. Use a trusted
+host to construct direct runtimes, or a trusted launcher and OS isolation for
+workers and services.
 
-For remote agents connecting through the daemon's network socket, the policy provides a meaningful boundary: the daemon will not execute a tool that the policy blocks, regardless of what the agent sends.
+For remote agents connecting through an authenticated service, the policy
+provides a meaningful boundary: the service runtime will not execute a tool
+that the policy blocks, regardless of what the agent sends.
 
 ## Related
 
 - [Restrict tool access with permission policies](/how-to-guides/driver/restrict-tool-access): step-by-step setup guide
 - [Permission policies](/reference/cua-driver/permission-policies): YAML schema and Rego input interface
 - [Permission modes and bounded autonomy](/reference/cua-driver/permission-modes): how mode, consent grants, and policy layers compose
-- [Process model](/reference/cua-driver/process-model): how CLI and MCP clients reach the daemon
+- [Process model](/reference/cua-driver/process-model): direct, worker, MCP, and service ownership

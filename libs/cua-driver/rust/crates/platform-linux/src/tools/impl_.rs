@@ -6828,7 +6828,46 @@ impl Tool for KillAppTool {
         })
     }
 
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        if adapter_id != "process_control" {
+            return Ok(None);
+        }
+        use cua_driver_core::browser::platform::BrowserPlatform;
+        let pid = args
+            .get("pid")
+            .and_then(Value::as_i64)
+            .filter(|pid| *pid > 0)
+            .ok_or_else(|| "kill_app requires a positive integer pid".to_owned())?;
+        let fingerprint = crate::browser_platform::LinuxBrowserPlatform
+            .process_fingerprint(pid)
+            .await
+            .map_err(|error| error.message)?;
+        Ok(Some(json!({
+            "kind": "process_instance",
+            "fingerprint": fingerprint,
+        })))
+    }
+
     async fn invoke(&self, args: Value) -> ToolResult {
+        if let Some(expected) = args.get("_protected_process_fingerprint") {
+            let current = match self
+                .protected_resource_scope("process_control", &args)
+                .await
+            {
+                Ok(Some(scope)) => scope["fingerprint"].clone(),
+                Ok(None) => Value::Null,
+                Err(message) => return kill_app_stale_process_refusal(message),
+            };
+            if current != *expected {
+                return kill_app_stale_process_refusal(
+                    "the process identity changed at the termination boundary".to_owned(),
+                );
+            }
+        }
         let pid_i = match args.get("pid").and_then(|v| v.as_i64()) {
             Some(p) if p > 0 && p <= i32::MAX as i64 => p as i32,
             Some(_) => {
@@ -6852,6 +6891,16 @@ impl Tool for KillAppTool {
             ))
         }
     }
+}
+
+fn kill_app_stale_process_refusal(message: String) -> ToolResult {
+    ToolResult::error(message.clone()).with_structured(json!({
+        "status": "refused",
+        "refusal": {
+            "code": "protected_resource_scope_stale",
+            "message": message,
+        }
+    }))
 }
 
 // ── bring_to_front (Linux) ───────────────────────────────────────────────────
@@ -6958,10 +7007,17 @@ impl Tool for BringToFrontTool {
 // ── registry ─────────────────────────────────────────────────────────────────
 
 pub fn build_registry(compat: bool) -> ToolRegistry {
+    build_registry_with_provider(compat, None)
+}
+
+pub fn build_registry_with_provider(
+    compat: bool,
+    provider: Option<std::sync::Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
+) -> ToolRegistry {
     let state = ToolState::new();
-    {
+    let cursor_outcome_reader = {
         let cursor_registry = state.cursor_registry.clone();
-        let _ = cua_driver_core::session::set_cursor_outcome_reader(std::sync::Arc::new(
+        cua_driver_core::session::register_scoped_cursor_outcome_reader(std::sync::Arc::new(
             move |session_id| {
                 let state = cursor_registry.get(session_id);
                 let motion_customized = state.is_some()
@@ -6994,12 +7050,12 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
                     ),
                 }
             },
-        ));
-    }
-    {
+        ))
+    };
+    let session_end_hook = {
         let cursor_registry = state.cursor_registry.clone();
         let state_for_session_end = state.clone();
-        cua_driver_core::session::register_session_end_hook(move |session_id| {
+        cua_driver_core::session::register_scoped_session_end_hook(move |session_id| {
             cursor_registry.remove(session_id);
             crate::overlay::remove_cursor(session_id.to_owned());
             state_for_session_end
@@ -7008,9 +7064,25 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
                 .unwrap()
                 .remove(session_id);
             crate::input::forget_master_pointer(session_id);
+        })
+    };
+    let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
+    r.retain_cursor_outcome_reader(cursor_outcome_reader);
+    r.retain_session_end_hook(session_end_hook);
+    if let Some(runtime_scope) = cua_driver_core::tool::current_dispatch_runtime_scope() {
+        let prefix = format!("__cua_runtime_{runtime_scope}:");
+        let cursor_registry = state.cursor_registry.clone();
+        r.retain_runtime_cleanup(move || {
+            for cursor in cursor_registry
+                .all_states()
+                .into_iter()
+                .filter(|cursor| cursor.config.cursor_id.starts_with(&prefix))
+            {
+                cursor_registry.remove(&cursor.config.cursor_id);
+                crate::overlay::remove_cursor(cursor.config.cursor_id);
+            }
         });
     }
-    let mut r = ToolRegistry::new();
     r.register(Box::new(ListAppsTool));
     r.register(Box::new(ListWindowsTool));
     r.register(Box::new(GetWindowStateTool {
@@ -7103,9 +7175,11 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(cua_driver_core::page::PageTool::new(Arc::new(
         super::page::LinuxPageBackend::new(),
     ))));
-    let browser_engine = cua_driver_core::browser::BrowserEngine::new(Arc::new(
-        crate::browser_platform::LinuxBrowserPlatform,
-    ));
+    let browser_engine = cua_driver_core::browser::BrowserEngine::new_with_runtime_services(
+        Arc::new(crate::browser_platform::LinuxBrowserPlatform),
+        r.approval_broker(),
+        r.protected_resource_ownership(),
+    );
     cua_driver_core::browser::register_browser_tools(&browser_engine, &mut r);
     r.register_recording_tools();
     r.register_session_tools();

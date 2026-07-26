@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use crate::protocol::{Content, ToolResult};
-use crate::tool::{Tool, ToolDef, ToolRegistry};
+use crate::tool::{ProtectedResourceOwnership, Tool, ToolDef, ToolRegistry};
 use crate::tool_args::ArgsExt;
 
 use super::approval::MCP_HOST_APPROVAL_ARG;
@@ -91,6 +91,114 @@ fn schema_session() -> Value {
         "type": "string",
         "description": "Stable caller-declared session id. Browser targets, tabs, and refs are scoped to this session."
     })
+}
+
+pub(crate) fn browser_resource_ownership(
+    engine: &BrowserEngine,
+    args: &Value,
+) -> ProtectedResourceOwnership {
+    let Some(session) = args
+        .get("session")
+        .and_then(Value::as_str)
+        .filter(|session| !session.is_empty())
+    else {
+        return ProtectedResourceOwnership::UserOwned;
+    };
+    let runtime_session = crate::tool::current_dispatch_authorization_context()
+        .map(|context| context.runtime_session_key(session))
+        .unwrap_or_else(|| session.to_owned());
+    let pid = args.get("pid").and_then(Value::as_i64).or_else(|| {
+        args.get("target_id")
+            .and_then(Value::as_str)
+            .and_then(|target_id| engine.store.get_target(&runtime_session, target_id).ok())
+            .map(|target| target.pid)
+    });
+    if pid.is_some_and(|pid| {
+        engine.is_driver_owned_pid_for_session(&runtime_session, pid)
+            || engine.is_driver_owned_pid_for_session(session, pid)
+    }) {
+        ProtectedResourceOwnership::DriverOwned
+    } else {
+        ProtectedResourceOwnership::UserOwned
+    }
+}
+
+pub(crate) async fn browser_protected_resource_scope(
+    engine: &BrowserEngine,
+    args: &Value,
+    tool_name: &str,
+) -> Result<Option<Value>, String> {
+    let session = args
+        .get("session")
+        .and_then(Value::as_str)
+        .filter(|session| !session.is_empty())
+        .ok_or_else(|| "the browser operation requires an explicit session".to_owned())?;
+    let target_id = args
+        .get("target_id")
+        .and_then(Value::as_str)
+        .filter(|target| !target.is_empty())
+        .ok_or_else(|| "the browser operation requires an exact target_id".to_owned())?;
+    let tab_id = args
+        .get("tab_id")
+        .and_then(Value::as_str)
+        .filter(|tab| !tab.is_empty())
+        .ok_or_else(|| "the browser operation requires an exact tab_id".to_owned())?;
+    let runtime_session = crate::tool::current_dispatch_authorization_context()
+        .map(|context| context.runtime_session_key(session))
+        .unwrap_or_else(|| session.to_owned());
+    let (validated, live_origin) = engine
+        .attest_protected_tab(&runtime_session, target_id, tab_id)
+        .await
+        .map_err(|error| error.message)?;
+    let target = validated.record;
+    let tab = validated.tab;
+    let requested_origin = if tool_name == "browser_navigate" {
+        let requested = args
+            .get("url")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "browser_navigate requires a destination URL".to_owned())?;
+        if requested.to_ascii_lowercase().starts_with("about:") {
+            Some("about:".to_owned())
+        } else {
+            let parsed = url::Url::parse(requested)
+                .map_err(|_| "the destination URL is invalid".to_owned())?;
+            Some(parsed.origin().ascii_serialization())
+        }
+    } else {
+        None
+    };
+    let action_class = match tool_name {
+        "get_browser_state" => "page_observation",
+        "browser_navigate" => "navigation",
+        "browser_dialog" => "page_dialog_resolution",
+        _ => "page_input",
+    };
+    let mut resource = json!({
+        "kind": "authenticated_browser_tab",
+        "target_id": target_id,
+        "tab_id": tab_id,
+        "pid": target.pid,
+        "process_fingerprint": target.fingerprint,
+        "binding_generation": target.generation,
+        "cdp_target_id": tab.cdp_target_id,
+        "tab_generation": tab.generation,
+        "live_origin": live_origin,
+        "requested_origin": requested_origin,
+        "action_class": action_class,
+    });
+    if tool_name == "browser_dialog" {
+        resource["dialog_id"] = args.get("dialog_id").cloned().unwrap_or(Value::Null);
+        resource["dialog_action"] = args.get("action").cloned().unwrap_or(Value::Null);
+        resource["delivery_mode"] = Value::String(
+            args.get("delivery_mode")
+                .and_then(Value::as_str)
+                .unwrap_or("background")
+                .to_owned(),
+        );
+        resource["prompt_text_present"] =
+            Value::Bool(args.get("prompt_text").and_then(Value::as_str).is_some());
+    }
+    Ok(Some(resource))
 }
 
 fn semantic_ref_value(listed: &super::engine::SemanticListedRef) -> Value {
@@ -201,6 +309,32 @@ impl GetBrowserStateTool {
 impl Tool for GetBrowserStateTool {
     fn def(&self) -> &ToolDef {
         &self.def
+    }
+
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if adapter_id == "private_observation" {
+            browser_resource_ownership(&self.engine, args)
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        if adapter_id == "private_observation"
+            && args.get("target_id").and_then(Value::as_str).is_some()
+        {
+            browser_protected_resource_scope(&self.engine, args, "get_browser_state").await
+        } else {
+            Ok(None)
+        }
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
@@ -642,6 +776,30 @@ impl Tool for BrowserNavigateTool {
         &self.def
     }
 
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if adapter_id == "browser_bound_input" {
+            browser_resource_ownership(&self.engine, args)
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        if adapter_id == "browser_bound_input" {
+            browser_protected_resource_scope(&self.engine, args, "browser_navigate").await
+        } else {
+            Ok(None)
+        }
+    }
+
     async fn invoke(&self, args: Value) -> ToolResult {
         let (target_id, tab_id, url) = match (
             args.require_str("target_id"),
@@ -765,6 +923,30 @@ impl BrowserClickTool {
 impl Tool for BrowserClickTool {
     fn def(&self) -> &ToolDef {
         &self.def
+    }
+
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if adapter_id == "browser_bound_input" {
+            browser_resource_ownership(&self.engine, args)
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        if adapter_id == "browser_bound_input" {
+            browser_protected_resource_scope(&self.engine, args, "browser_click").await
+        } else {
+            Ok(None)
+        }
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
@@ -1197,6 +1379,30 @@ impl Tool for BrowserTypeTool {
         &self.def
     }
 
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if adapter_id == "browser_bound_input" {
+            browser_resource_ownership(&self.engine, args)
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        if adapter_id == "browser_bound_input" {
+            browser_protected_resource_scope(&self.engine, args, "browser_type").await
+        } else {
+            Ok(None)
+        }
+    }
+
     async fn invoke(&self, args: Value) -> ToolResult {
         let (target_id, tab_id, text) = match (
             args.require_str("target_id"),
@@ -1601,6 +1807,36 @@ impl BrowserDialogTool {
 impl Tool for BrowserDialogTool {
     fn def(&self) -> &ToolDef {
         &self.def
+    }
+
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if matches!(
+            adapter_id,
+            "private_observation" | "browser_consequential_action"
+        ) {
+            browser_resource_ownership(&self.engine, args)
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        if matches!(
+            adapter_id,
+            "private_observation" | "browser_consequential_action"
+        ) {
+            browser_protected_resource_scope(&self.engine, args, "browser_dialog").await
+        } else {
+            Ok(None)
+        }
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {

@@ -225,13 +225,10 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoi
 Unregister-ScheduledTask -TaskName $env:CUA_DRIVER_AS_TASK -Confirm:$false -ErrorAction SilentlyContinue
 Register-ScheduledTask -TaskName $env:CUA_DRIVER_AS_TASK -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description "${env:CUA_DRIVER_AS_CLI}: serve daemon, auto-start at interactive logon, RunLevel=Highest for UWP/AppContainer support" | Out-Null
 
-# Note: the uiAccess'd worker (`cua-driver-uia.exe`) does NOT get its own
-# scheduled task. uiAccess PEs can only be launched via ShellExecute, and
-# Task Scheduler's PowerShell-wrapper Action path returns ERROR_NOT_LOGGED_ON
-# (0x800710E0). Instead, `cua-driver serve` itself spawns the sibling worker
-# via ShellExecuteEx at startup (see serve.rs `maybe_spawn_uia_worker`),
-# which works because the spawn originates from a Session-2 process with an
-# interactive desktop. See #1602.
+# The uiAccess worker (`cua-driver-uia.exe`) has no public client route and is
+# not started by this task. The High-IL daemon is the supported path for
+# elevated/AppContainer pixel input. A future worker path must be forwarded by
+# the authorized parent daemon rather than exposed to public clients. See #1602.
 "#;
 
     pub fn enable(exe: &str) -> Result<()> {
@@ -317,8 +314,8 @@ Register-ScheduledTask -TaskName $env:CUA_DRIVER_AS_TASK -Action $action -Trigge
     pub fn disable() -> Result<()> {
         // Tear down the legacy release `cua-driver-uia` task only when
         // managing the release product. Older versions registered a separate
-        // task for the worker; current versions spawn it from serve.rs. Local
-        // management must never alter that release task.
+        // task for the worker; current versions retain no worker autostart.
+        // Local management must never alter that release task.
         if !crate::bundle::is_local_installation() {
             let _ = Command::new("schtasks")
                 .args(["/Delete", "/TN", "cua-driver-uia", "/F"])

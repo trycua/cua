@@ -1,6 +1,6 @@
-# Terraform Provider for Cyclops
+# Terraform Provider for Cua Fleets
 
-This provider manages `OSGymWorkspacePool` resources through the Cyclops API. It uses the same user-key OAuth credentials and tenant-scoped authorization as the Cyclops Python SDK and dashboard.
+This provider manages `OSGymWorkspacePool` resources through the Fleet API. It uses the same user-key OAuth credentials and tenant-scoped authorization as the Fleet Python SDK and dashboard.
 
 ## Development
 
@@ -13,11 +13,11 @@ KUBEBUILDER_ASSETS="$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@
   TF_ACC=1 go test -tags=acceptance ./internal/provider -run TestAccPoolLifecycle -v
 ```
 
-The provider source address is `trycua/cyclops`. A pool owns the same-named Cyclops namespace: create bootstraps the namespace, and destroy deletes the pool followed by that namespace.
+The provider source address is `trycua/fleets`. A pool owns the same-named Fleet namespace: create bootstraps the namespace, and destroy deletes the pool followed by that namespace.
 
 ## Authentication
 
-Create a user API key in Cyclops and configure its returned `client_id`, `client_secret`, and `token_url`. For short-lived workflows, `access_token` can be supplied instead.
+Create a user API key in Cua and configure its returned `client_id`, `client_secret`, and `token_url`. For short-lived workflows, `access_token` can be supplied instead.
 
 All provider arguments support environment variables:
 
@@ -34,7 +34,7 @@ The Terraform models, schema, CRD-derived descriptions, enum validators, numeric
 - `clusters/base/osgym/crd.yaml`, the production `OSGymWorkspacePool` CRD
 - `internal/provider/generate/pool_mapping.json`, the explicit CRD-to-Terraform shape mapping
 
-From `cyclops-cs/terraform-provider-cyclops/`, run:
+From `cyclops-cs/terraform-provider-fleets/`, run:
 
 ```bash
 go generate ./...

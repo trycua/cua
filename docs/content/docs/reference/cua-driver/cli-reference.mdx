@@ -64,7 +64,7 @@ Requires a Cua Driver daemon. JSON arguments may be passed as a positional JSON 
 
 Run the stdio MCP server.
 
-On Windows and Linux, bare cua-driver mcp owns its runtime directly and shuts it down on stdin EOF. On macOS it proxies to CuaDriver.app so desktop permissions retain the app identity. Pass --socket to select an explicit daemon endpoint.
+On Windows and Linux, bare cua-driver mcp owns its runtime directly and shuts it down on stdin EOF. On macOS it proxies to CuaDriver.app so desktop permissions retain the app identity. Pass --direct to make the macOS MCP process own the runtime and TCC attribution, or --socket to select an explicit daemon endpoint.
 
 **Options:**
 
@@ -77,8 +77,9 @@ On Windows and Linux, bare cua-driver mcp owns its runtime directly and shuts it
 
 | Name | Description |
 | ---- | ----------- |
+| `--direct` | Own the runtime in this MCP process; mutually exclusive with --socket. |
 | `--claude-code-computer-use-compat` | Expose the Claude Code computer-use compatibility screenshot surface. |
-| `--embedded` | Require a daemon spawned by the embedding host instead of auto-launching the standalone app. |
+| `--embedded` | Declare embedding-host mode. Without --direct, require the host's private service through --socket instead of auto-launching the standalone app. |
 
 ### `cua-driver serve`
 

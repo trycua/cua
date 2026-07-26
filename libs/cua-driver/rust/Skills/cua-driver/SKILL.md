@@ -131,11 +131,12 @@ Tool names are `snake_case`, management subcommands are
 `kebab-case` — no ambiguity. Tools invoked as `cua-driver
 <tool-name> '<JSON-args>'`. Management subcommands:
 
-- `cua-driver serve` — start the persistent daemon (**required for every
-  tool call**). CLI and MCP processes are adapters; the daemon owns policy,
-  platform identity, state, and the per-pid element cache.
-  macOS users: see `MACOS.md` for the LaunchServices-routed launch
-  form.
+- `cua-driver serve` — start an explicit persistent service when short-lived
+  clients must share runtime state or a platform identity. Bare MCP owns its
+  runtime directly on Windows/Linux and uses the signed app service on macOS;
+  `cua-driver mcp --socket <endpoint>` selects a service explicitly.
+  One-shot CLI tool calls still use the service path. macOS users: see
+  `MACOS.md` for the LaunchServices-routed launch form.
 - `cua-driver stop` / `status`
 - `cua-driver list-tools`, `describe <tool>`
 - `cua-driver recording start|stop|status` — see `RECORDING.md`
@@ -189,8 +190,12 @@ recording, do a pixel click (`click({pid,x,y})`) or a `move_cursor`
 first to put the cursor on-screen; subsequent AX actions then glide the
 full path normally.
 
-Requires the daemon process's UI runloop, which `cua-driver serve`
-bootstraps. One-shot CLI adapters do not own an overlay themselves.
+Requires a suitable UI event loop. Service and private-worker runtimes provide
+one. On macOS, a same-process SDK runtime or `cua-driver mcp --direct` without
+a certified host main-thread adapter returns a structured
+`facility_unavailable` result for overlay operations; do not treat that as a
+successful cursor move. One-shot CLI adapters do not own an overlay
+themselves.
 
 ## The core invariant — snapshot before AND after every action
 
@@ -690,7 +695,7 @@ schema-rejected.
 
 Genuinely platform-specific params stay OUT of the shared contract by
 design (launch-app identifiers, the Windows-only `debug_window_info`, the
-macOS-only `check_permissions.prompt`). The per-OS files list the
+macOS-only status-only `check_permissions.prompt`). The per-OS files list the
 residuals that matter when you drive on that platform.
 
 ## Pixel-coordinate clicks

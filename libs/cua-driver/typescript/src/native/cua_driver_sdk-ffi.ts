@@ -293,6 +293,21 @@ const DEFINITIONS = {
       ret: FfiType.Void,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_driver_sdk_fn_clone_protectedconsenthost": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_free_protectedconsenthost": {
+      args: [FfiType.Handle],
+      ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_init_callback_vtable_protectedconsenthost": {
+      args: [FfiType.Reference(FfiType.Struct("VTableCallbackInterfaceCuaDriverSdkProtectedConsentHost"))],
+      ret: FfiType.Void,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_driver_sdk_fn_func_create_trusted_session": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -335,6 +350,16 @@ const DEFINITIONS = {
     },
     "uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with_client_kind": {
       args: [FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with_protected_host": {
+      args: [FfiType.RustBuffer, FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with_protected_host_and_client_kind": {
+      args: [FfiType.RustBuffer, FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: true,
     },
@@ -432,6 +457,11 @@ const DEFINITIONS = {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_fn_method_cuadriver_runtime_scope_prefix": {
+      args: [FfiType.Handle],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
     },
     "uniffi_cua_driver_sdk_fn_method_cuadriver_scroll": {
       args: [FfiType.Handle, FfiType.RustBuffer],
@@ -578,6 +608,26 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_driver_sdk_fn_method_protectedconsenthost_request_consent": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_fn_method_protectedconsenthost_activate_indicator": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_fn_method_protectedconsenthost_wait_for_indicator_stop": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_fn_method_protectedconsenthost_deactivate_indicator": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "ffi_cua_driver_sdk_uniffi_contract_version": {
       args: [],
       ret: FfiType.UInt32,
@@ -624,6 +674,16 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_client_kind": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_protected_host": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_protected_host_and_client_kind": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -719,6 +779,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_driver_sdk_checksum_method_cuadriver_press_key": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_cuadriver_runtime_scope_prefix": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -868,6 +933,26 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_request_consent": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_activate_indicator": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_wait_for_indicator_stop": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_deactivate_indicator": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
   },
   callbacks: {
     "RustFutureContinuationCallback": {
@@ -880,11 +965,70 @@ const DEFINITIONS = {
       ret: FfiType.Void,
       hasRustCallStatus: false,
     },
+    "ForeignFutureCompleterust_buffer": {
+      args: [FfiType.Handle, FfiType.Struct("ForeignFutureResultRustBuffer")],
+      ret: FfiType.Void,
+      hasRustCallStatus: false,
+    },
+    "CallbackInterfaceCuaDriverSdkProtectedConsentHostMethod0": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.Callback("ForeignFutureCompleterust_buffer"), FfiType.Handle],
+      ret: FfiType.Struct("ForeignFutureDroppedCallbackStruct"),
+      hasRustCallStatus: false,
+      outReturn: true,
+    },
+    "CallbackInterfaceCuaDriverSdkProtectedConsentHostMethod1": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.Callback("ForeignFutureCompleterust_buffer"), FfiType.Handle],
+      ret: FfiType.Struct("ForeignFutureDroppedCallbackStruct"),
+      hasRustCallStatus: false,
+      outReturn: true,
+    },
+    "ForeignFutureCompletevoid": {
+      args: [FfiType.Handle, FfiType.Struct("ForeignFutureResultVoid")],
+      ret: FfiType.Void,
+      hasRustCallStatus: false,
+    },
+    "CallbackInterfaceCuaDriverSdkProtectedConsentHostMethod2": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.Callback("ForeignFutureCompletevoid"), FfiType.Handle],
+      ret: FfiType.Struct("ForeignFutureDroppedCallbackStruct"),
+      hasRustCallStatus: false,
+      outReturn: true,
+    },
+    "CallbackInterfaceCuaDriverSdkProtectedConsentHostMethod3": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.Callback("ForeignFutureCompletevoid"), FfiType.Handle],
+      ret: FfiType.Struct("ForeignFutureDroppedCallbackStruct"),
+      hasRustCallStatus: false,
+      outReturn: true,
+    },
+    "CallbackInterfaceCloneCuaDriverSdk_ProtectedConsentHost": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "CallbackInterfaceFreeCuaDriverSdk_ProtectedConsentHost": {
+      args: [FfiType.Handle],
+      ret: FfiType.Void,
+      hasRustCallStatus: false,
+    },
   },
   structs: {
     "ForeignFutureDroppedCallbackStruct": [
       { name: "handle", type: FfiType.Handle },
       { name: "free", type: FfiType.Callback("ForeignFutureDroppedCallback") },
+    ],
+    "ForeignFutureResultRustBuffer": [
+      { name: "return_value", type: FfiType.RustBuffer },
+      { name: "call_status", type: FfiType.RustCallStatus },
+    ],
+    "ForeignFutureResultVoid": [
+      { name: "call_status", type: FfiType.RustCallStatus },
+    ],
+    "VTableCallbackInterfaceCuaDriverSdkProtectedConsentHost": [
+      { name: "uniffi_free", type: FfiType.Callback("CallbackInterfaceFreeCuaDriverSdk_ProtectedConsentHost") },
+      { name: "uniffi_clone", type: FfiType.Callback("CallbackInterfaceCloneCuaDriverSdk_ProtectedConsentHost") },
+      { name: "request_consent", type: FfiType.Callback("CallbackInterfaceCuaDriverSdkProtectedConsentHostMethod0") },
+      { name: "activate_indicator", type: FfiType.Callback("CallbackInterfaceCuaDriverSdkProtectedConsentHostMethod1") },
+      { name: "wait_for_indicator_stop", type: FfiType.Callback("CallbackInterfaceCuaDriverSdkProtectedConsentHostMethod2") },
+      { name: "deactivate_indicator", type: FfiType.Callback("CallbackInterfaceCuaDriverSdkProtectedConsentHostMethod3") },
     ],
   },
 } as const;
@@ -944,6 +1088,9 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_free_cuadriversession(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_driver_sdk_fn_clone_embeddedcuadriverhost(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_free_embeddedcuadriverhost(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cua_driver_sdk_fn_clone_protectedconsenthost(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cua_driver_sdk_fn_free_protectedconsenthost(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cua_driver_sdk_fn_init_callback_vtable_protectedconsenthost(vtable: UniffiVTableCallbackInterfaceCuaDriverSdkProtectedConsentHost): void;
     uniffi_cua_driver_sdk_fn_func_create_trusted_session(driver: bigint, options: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_func_current_mac_os_permission_status(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_func_open_mac_os_screen_recording_settings(uniffi_out_err: UniffiRustCallStatus): void;
@@ -953,6 +1100,8 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_constructor_cuadriver_create(options: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured(options: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with_client_kind(options: Uint8Array, clientKind: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with_protected_host(options: Uint8Array, host: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with_protected_host_and_client_kind(options: Uint8Array, host: bigint, clientKind: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_private_worker(options: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_private_worker_with_client_kind(options: Uint8Array, clientKind: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_with_client_kind(options: Uint8Array, clientKind: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
@@ -972,6 +1121,7 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_method_cuadriver_metadata(uniffiSelf: bigint): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_move_cursor(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_press_key(uniffiSelf: bigint, input: Uint8Array): bigint;
+    uniffi_cua_driver_sdk_fn_method_cuadriver_runtime_scope_prefix(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_method_cuadriver_scroll(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_shutdown(uniffiSelf: bigint): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_socket_path(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -1001,6 +1151,10 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_state(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_stop(uniffiSelf: bigint): bigint;
     uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_wait_for_exit(uniffiSelf: bigint, generation: Uint8Array): bigint;
+    uniffi_cua_driver_sdk_fn_method_protectedconsenthost_request_consent(uniffiSelf: bigint, request: Uint8Array): bigint;
+    uniffi_cua_driver_sdk_fn_method_protectedconsenthost_activate_indicator(uniffiSelf: bigint, request: Uint8Array): bigint;
+    uniffi_cua_driver_sdk_fn_method_protectedconsenthost_wait_for_indicator_stop(uniffiSelf: bigint, indicatorId: Uint8Array): bigint;
+    uniffi_cua_driver_sdk_fn_method_protectedconsenthost_deactivate_indicator(uniffiSelf: bigint, indicatorId: Uint8Array): bigint;
     ffi_cua_driver_sdk_uniffi_contract_version(): number;
     uniffi_cua_driver_sdk_checksum_func_create_trusted_session(): number;
     uniffi_cua_driver_sdk_checksum_func_current_mac_os_permission_status(): number;
@@ -1011,6 +1165,8 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create(): number;
     uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured(): number;
     uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_client_kind(): number;
+    uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_protected_host(): number;
+    uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_protected_host_and_client_kind(): number;
     uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_private_worker(): number;
     uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_private_worker_with_client_kind(): number;
     uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_with_client_kind(): number;
@@ -1030,6 +1186,7 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_checksum_method_cuadriver_metadata(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_move_cursor(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_press_key(): number;
+    uniffi_cua_driver_sdk_checksum_method_cuadriver_runtime_scope_prefix(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_scroll(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_shutdown(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_socket_path(): number;
@@ -1059,6 +1216,10 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_state(): number;
     uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_stop(): number;
     uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_wait_for_exit(): number;
+    uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_request_consent(): number;
+    uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_activate_indicator(): number;
+    uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_wait_for_indicator_stop(): number;
+    uniffi_cua_driver_sdk_checksum_method_protectedconsenthost_deactivate_indicator(): number;
     // Codegen call sites use these via `nativeModule().rustbuffer_alloc(...)`
     // and `nativeModule().rustbuffer_free(...)`. The runtime's registered
     // module exposes them as method properties.
@@ -1088,4 +1249,27 @@ export type UniffiForeignFutureDroppedCallback = (handle: bigint) => void;
 export type UniffiForeignFutureDroppedCallbackStruct = {
   handle: bigint;
   free: UniffiForeignFutureDroppedCallback;
+};
+export type UniffiForeignFutureResultRustBuffer = {
+  return_value: Uint8Array;
+  call_status: UniffiRustCallStatus;
+};
+export type UniffiForeignFutureCompleterustBuffer = (callbackData: bigint, result: UniffiForeignFutureResultRustBuffer) => void;
+type UniffiCallbackInterfaceCuaDriverSdkProtectedConsentHostMethod0 = (uniffiHandle: bigint, request: Uint8Array, uniffiFutureCallback: UniffiForeignFutureCompleterustBuffer, uniffiCallbackData: bigint) => UniffiForeignFutureDroppedCallbackStruct;
+type UniffiCallbackInterfaceCuaDriverSdkProtectedConsentHostMethod1 = (uniffiHandle: bigint, request: Uint8Array, uniffiFutureCallback: UniffiForeignFutureCompleterustBuffer, uniffiCallbackData: bigint) => UniffiForeignFutureDroppedCallbackStruct;
+export type UniffiForeignFutureResultVoid = {
+  call_status: UniffiRustCallStatus;
+};
+export type UniffiForeignFutureCompletevoid = (callbackData: bigint, result: UniffiForeignFutureResultVoid) => void;
+type UniffiCallbackInterfaceCuaDriverSdkProtectedConsentHostMethod2 = (uniffiHandle: bigint, indicatorId: Uint8Array, uniffiFutureCallback: UniffiForeignFutureCompletevoid, uniffiCallbackData: bigint) => UniffiForeignFutureDroppedCallbackStruct;
+type UniffiCallbackInterfaceCuaDriverSdkProtectedConsentHostMethod3 = (uniffiHandle: bigint, indicatorId: Uint8Array, uniffiFutureCallback: UniffiForeignFutureCompletevoid, uniffiCallbackData: bigint) => UniffiForeignFutureDroppedCallbackStruct;
+type UniffiCallbackInterfaceCloneCuaDriverSdkProtectedConsentHost = (handle: bigint) => UniffiResult<void>;
+type UniffiCallbackInterfaceFreeCuaDriverSdkProtectedConsentHost = (handle: bigint) => void;
+export type UniffiVTableCallbackInterfaceCuaDriverSdkProtectedConsentHost = {
+  uniffi_free: UniffiCallbackInterfaceFreeCuaDriverSdkProtectedConsentHost;
+  uniffi_clone: UniffiCallbackInterfaceCloneCuaDriverSdkProtectedConsentHost;
+  request_consent: UniffiCallbackInterfaceCuaDriverSdkProtectedConsentHostMethod0;
+  activate_indicator: UniffiCallbackInterfaceCuaDriverSdkProtectedConsentHostMethod1;
+  wait_for_indicator_stop: UniffiCallbackInterfaceCuaDriverSdkProtectedConsentHostMethod2;
+  deactivate_indicator: UniffiCallbackInterfaceCuaDriverSdkProtectedConsentHostMethod3;
 };

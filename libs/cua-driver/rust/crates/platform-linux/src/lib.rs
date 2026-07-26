@@ -133,13 +133,21 @@ pub fn register_tools() -> ToolRegistry {
 /// (pid + window_id required, JPEG @ 85%, text note pointing at pixel
 /// tools). See `tools::impl_::ScreenshotCompatTool`.
 pub fn register_tools_with_cursor(cfg: cursor_overlay::CursorConfig, compat: bool) -> ToolRegistry {
+    register_tools_with_cursor_and_provider(None, cfg, compat)
+}
+
+pub fn register_tools_with_cursor_and_provider(
+    provider: Option<std::sync::Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
+    cfg: cursor_overlay::CursorConfig,
+    compat: bool,
+) -> ToolRegistry {
     #[cfg(target_os = "linux")]
     wayland::ensure_nested_session();
     if cfg.enabled {
         overlay::init(cfg.clone());
         overlay::run_on_thread();
     }
-    tools::build_registry(compat)
+    tools::build_registry_with_provider(compat, provider)
 }
 
 #[cfg(test)]

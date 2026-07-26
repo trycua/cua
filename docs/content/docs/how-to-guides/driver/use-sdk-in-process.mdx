@@ -9,6 +9,13 @@ Use the same-process SDK when your application owns the desktop-control
 lifecycle. `CuaDriver.create()` loads the Rust runtime into the importing
 process; it does not launch `cua-driver serve` or use IPC.
 
+The importing application owns OS permissions and permission UX. On macOS,
+direct `check_permissions` calls are read-only even when `prompt` is requested;
+relaunch the responsible host after changing TCC grants. Direct macOS runtimes
+also return `facility_unavailable` for agent-cursor overlay operations unless
+the host installs a certified AppKit main-thread adapter. Use a private worker
+or explicit service when the overlay is required.
+
 ## Install the SDK
 
 <Tabs groupId="language" persist items={['Python', 'TypeScript']}>

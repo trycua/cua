@@ -543,7 +543,7 @@ State persists for the life of the daemon; a restart resets to disabled with no 
 
 Stop trajectory recording. Disables further per-turn capture and, when video was enabled, gracefully terminates the ffmpeg subprocess so the mp4's moov atom is finalized (the file is playable). Calling stop on an already-stopped session is a no-op. The response carries `last_video_path` pointing at the finalized mp4 (when video was on).
 
-A manual `stop_recording` is **unconditional** — it stops whatever recording is active regardless of which session started it. Ownership-scoped teardown (so one MCP client disconnecting can't stop a recording a later client started) is handled by the daemon's `session_end` lifecycle signal, not by this tool.
+A manual `stop_recording` is **unconditional** — it stops whatever recording is active regardless of which session started it. Ownership-scoped teardown (so one client disconnecting can't stop a recording a later client started) is handled by the registry's `session_end` lifecycle hook, not by this tool.
 
 **Arguments:** none.
 
@@ -687,7 +687,7 @@ Returns: `accessibility` + `screen_recording` (booleans from the TCC preflight A
 **Arguments:**
 
 - `probe_direct_capture` (boolean, optional): When prompting and Screen Recording is granted, also run the live ScreenCaptureKit probe that may raise Tahoe's direct-capture consent. Default true. Set false for a staged Accessibility/Screen Recording request.
-- `prompt` (boolean, optional): Raise the system permission prompts for missing grants. Default true.
+- `prompt` (boolean, optional): Raise the system permission prompts for missing grants. Default false; only a trusted host setup route may set true.
 
 ### `health_report`
 

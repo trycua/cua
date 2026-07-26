@@ -1,3 +1,3 @@
-provider "cyclops" {
+provider "fleets" {
   endpoint = "https://cyclops.example.com"
 }

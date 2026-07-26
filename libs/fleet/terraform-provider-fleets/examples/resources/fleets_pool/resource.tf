@@ -1,4 +1,4 @@
-resource "cyclops_pool" "example" {
+resource "fleets_pool" "example" {
   name                 = "example-linux"
   replicas             = 1
   cpu_cores            = 4

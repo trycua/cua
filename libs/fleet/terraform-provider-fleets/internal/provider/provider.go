@@ -11,10 +11,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
-	"github.com/trycua/terraform-provider-cyclops/internal/client"
+	"github.com/trycua/terraform-provider-fleets/internal/client"
 )
 
-type cyclopsProvider struct{ version string }
+type fleetsProvider struct{ version string }
 
 type providerModel struct {
 	Endpoint     types.String `tfsdk:"endpoint"`
@@ -25,17 +25,17 @@ type providerModel struct {
 }
 
 func New(version string) func() provider.Provider {
-	return func() provider.Provider { return &cyclopsProvider{version: version} }
+	return func() provider.Provider { return &fleetsProvider{version: version} }
 }
 
-func (p *cyclopsProvider) Metadata(_ context.Context, _ provider.MetadataRequest, resp *provider.MetadataResponse) {
-	resp.TypeName = "cyclops"
+func (p *fleetsProvider) Metadata(_ context.Context, _ provider.MetadataRequest, resp *provider.MetadataResponse) {
+	resp.TypeName = "fleets"
 	resp.Version = p.version
 }
 
-func (p *cyclopsProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
+func (p *fleetsProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manage Cyclops computer-use pools.",
+		Description: "Manage Cua Fleet computer-use pools.",
 		Attributes: map[string]schema.Attribute{
 			"endpoint":      schema.StringAttribute{Required: true, Description: "Cyclops base URL, for example https://cyclops.example.com."},
 			"access_token":  schema.StringAttribute{Optional: true, Sensitive: true, Description: "Bearer token. May also be set with CYCLOPS_ACCESS_TOKEN."},
@@ -46,7 +46,7 @@ func (p *cyclopsProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 	}
 }
 
-func (p *cyclopsProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
+func (p *fleetsProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
 	var data providerModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
 	if resp.Diagnostics.HasError() {
@@ -64,20 +64,20 @@ func (p *cyclopsProvider) Configure(ctx context.Context, req provider.ConfigureR
 		TokenURL: value(data.TokenURL, "CYCLOPS_TOKEN_URL"),
 	})
 	if err != nil {
-		resp.Diagnostics.AddError("Invalid Cyclops provider configuration", err.Error())
+		resp.Diagnostics.AddError("Invalid Fleets provider configuration", err.Error())
 		return
 	}
 	resp.DataSourceData = apiClient
 	resp.ResourceData = apiClient
 }
 
-func (p *cyclopsProvider) Resources(_ context.Context) []func() resource.Resource {
-	return []func() resource.Resource{NewPoolResource}
+func (p *fleetsProvider) Resources(_ context.Context) []func() resource.Resource {
+	return []func() resource.Resource{NewPoolResource, NewLegacyPoolResource}
 }
 
-func (p *cyclopsProvider) DataSources(_ context.Context) []func() datasource.DataSource { return nil }
+func (p *fleetsProvider) DataSources(_ context.Context) []func() datasource.DataSource { return nil }
 
-var _ provider.Provider = (*cyclopsProvider)(nil)
+var _ provider.Provider = (*fleetsProvider)(nil)
 
 func objectValue(ctx context.Context, object types.Object, target any, diagnostics *diag.Diagnostics) bool {
 	if object.IsNull() || object.IsUnknown() {

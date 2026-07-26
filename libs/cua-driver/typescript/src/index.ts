@@ -13,6 +13,12 @@ CuaDriver.create = (options) =>
   CuaDriver.createWithClientKind(options, SdkClientKind.Typescript)
 CuaDriver.createConfigured = (options) =>
   CuaDriver.createConfiguredWithClientKind(options, SdkClientKind.Typescript)
+CuaDriver.createConfiguredWithProtectedHost = (options, host) =>
+  CuaDriver.createConfiguredWithProtectedHostAndClientKind(
+    options,
+    host,
+    SdkClientKind.Typescript,
+  )
 CuaDriver.createPrivateWorker = (options) =>
   CuaDriver.createPrivateWorkerWithClientKind(options, SdkClientKind.Typescript)
 CuaDriver.connect = (socketPath: string | undefined) =>

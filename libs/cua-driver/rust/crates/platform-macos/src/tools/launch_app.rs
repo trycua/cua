@@ -98,6 +98,12 @@ impl Tool for LaunchAppTool {
         let additional_arguments: Vec<String> = args.str_array("additional_arguments");
         if additional_arguments
             .iter()
+            .any(|argument| argument == super::check_permissions::PERMISSIONS_HOST_REQUEST_ARG)
+        {
+            return protected_host_launch_refusal();
+        }
+        if additional_arguments
+            .iter()
             .any(|argument| contains_remote_debugging_flag(argument))
         {
             return ToolResult::error(
@@ -110,6 +116,9 @@ impl Tool for LaunchAppTool {
                 "Provide either bundle_id or name to identify the app to launch.",
             );
         }
+        if bundle_id.as_deref().is_some_and(is_cua_driver_bundle_id) {
+            return protected_host_launch_refusal();
+        }
         if let Some(ref bid) = bundle_id {
             if crate::apps::resolve_bundle_id_to_locator(bid).is_none() {
                 return structured_launch_error(
@@ -119,12 +128,19 @@ impl Tool for LaunchAppTool {
                 );
             }
         } else if let Some(ref n) = name {
-            if crate::apps::locate_by_name(n).is_none() {
+            let Some(locator) = crate::apps::locate_by_name(n) else {
                 return structured_launch_error(
                     "APP_NOT_INSTALLED",
                     format!("No installed macOS app found for name '{n}'."),
                     serde_json::json!({ "name": n }),
                 );
+            };
+            let (_, resolved_bundle_id) = locator.app_ref_and_bundle_id();
+            if resolved_bundle_id
+                .as_deref()
+                .is_some_and(is_cua_driver_bundle_id)
+            {
+                return protected_host_launch_refusal();
             }
         }
         if let Some(err) = preflight_file_urls(&urls) {
@@ -478,6 +494,18 @@ fn contains_remote_debugging_flag(value: &str) -> bool {
     lower.contains("--remote-debugging-port") || lower.contains("--remote-debugging-pipe")
 }
 
+fn is_cua_driver_bundle_id(bundle_id: &str) -> bool {
+    matches!(bundle_id, "com.trycua.driver" | "com.trycua.driver.local")
+}
+
+fn protected_host_launch_refusal() -> ToolResult {
+    structured_launch_error(
+        "PROTECTED_HOST_ENTRYPOINT",
+        "launch_app cannot launch Cua Driver's protected host; operating-system permission UI must originate outside the agent tool stream".to_owned(),
+        serde_json::json!({}),
+    )
+}
+
 // ── Blocking helpers ──────────────────────────────────────────────────────────
 
 /// Poll for the pid's layer-0 windows, retrying up to 5x100ms to absorb
@@ -603,7 +631,12 @@ fn hex_value(byte: u8) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{contains_remote_debugging_flag, local_file_target, preflight_file_urls};
+    use super::{
+        contains_remote_debugging_flag, is_cua_driver_bundle_id, local_file_target,
+        preflight_file_urls, LaunchAppTool,
+    };
+    use cua_driver_core::tool::Tool;
+    use serde_json::json;
     use std::path::PathBuf;
 
     #[test]
@@ -658,5 +691,40 @@ mod tests {
         assert!(!contains_remote_debugging_flag(
             "--user-data-dir=/tmp/profile"
         ));
+    }
+
+    #[test]
+    fn recognizes_release_and_local_protected_host_bundle_ids() {
+        assert!(is_cua_driver_bundle_id("com.trycua.driver"));
+        assert!(is_cua_driver_bundle_id("com.trycua.driver.local"));
+        assert!(!is_cua_driver_bundle_id("com.trycua.harness.tauri"));
+    }
+
+    #[tokio::test]
+    async fn launch_app_cannot_reach_private_permission_host_entrypoint() {
+        let result = LaunchAppTool
+            .invoke(json!({
+                "bundle_id": "com.example.not-installed",
+                "additional_arguments": [
+                    "__permissions-host-request",
+                    "--result-file",
+                    "/tmp/cua-driver-permissions-forged.json"
+                ]
+            }))
+            .await;
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            result.structured_content.unwrap()["error"],
+            "PROTECTED_HOST_ENTRYPOINT"
+        );
+
+        let result = LaunchAppTool
+            .invoke(json!({ "bundle_id": "com.trycua.driver" }))
+            .await;
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            result.structured_content.unwrap()["error"],
+            "PROTECTED_HOST_ENTRYPOINT"
+        );
     }
 }

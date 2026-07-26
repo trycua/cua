@@ -13,14 +13,25 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/trycua/terraform-provider-cyclops/internal/client"
+	"github.com/trycua/terraform-provider-fleets/internal/client"
 )
 
-type poolResource struct{ client *client.Client }
+type poolResource struct {
+	client     *client.Client
+	legacyType bool
+}
 
 func NewPoolResource() resource.Resource { return &poolResource{} }
 
+// NewLegacyPoolResource keeps existing state readable after users replace the
+// provider address. New configurations must use fleets_pool.
+func NewLegacyPoolResource() resource.Resource { return &poolResource{legacyType: true} }
+
 func (r *poolResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+	if r.legacyType {
+		resp.TypeName = "cyclops_pool"
+		return
+	}
 	resp.TypeName = req.ProviderTypeName + "_pool"
 }
 

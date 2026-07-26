@@ -19,7 +19,7 @@ These dimensions form a grid:
 
 | Topology | Typed SDK | MCP / CLI |
 | --- | --- | --- |
-| Same process | **Primary for client applications** | Default stdio MCP owner on Windows and Linux |
+| Same process | **Primary for applications embedding Cua Driver** | Default stdio MCP owner on Windows and Linux; explicit `--direct` on macOS |
 | Private worker | `create_private_worker()` / `createPrivateWorker()` for per-host process isolation | Not reconnectable and not advertised as an MCP endpoint |
 | Daemon | Compatibility or app-shared runtime | Standalone macOS default and explicit `--socket` service mode |
 
@@ -88,6 +88,12 @@ running default service on Windows or Linux. Use `cua-driver mcp --socket
 <endpoint>` when an agent must share that service's sessions and resources.
 The explicit connection path preserves the released daemon protocol.
 
+Standalone macOS keeps the opposite default because `CuaDriver.app` owns its
+stable TCC identity. `cua-driver mcp --direct` is the explicit opt-in for a
+host that wants the MCP process itself to own the runtime and accepts the
+spawning application's TCC attribution. It cannot be combined with
+`--socket`.
+
 Private workers use the same generated SDK contract but exchange versioned
 request/response envelopes over child stdin/stdout. The host supplies the
 authorization ceiling before readiness, owns the only channel, and terminates
@@ -98,7 +104,9 @@ daemon socket.
 
 Remote carriers use the same transport-free Rust envelope seam. The carrier
 must authenticate a principal, bind a connection generation, preserve request
-IDs and deadlines, and return a separately bound channel for trusted sessions.
+IDs and deadlines, negotiate a compatible envelope version and cancellation
+support before dispatch, forward cancellation when an action future is
+dropped, and return a separately bound channel for trusted sessions.
 The Cua Driver core does not depend on gRPC, HTTP/2, or another carrier, and no
 generated Python/TypeScript remote constructor is shipped yet.
 
@@ -117,23 +125,42 @@ for the hosted-daemon procedure.
 
 ## Current process facility contract
 
-The first SDK-owned-runtime milestone deliberately permits one direct runtime
-per process. This makes the remaining process facilities explicit without
-pretending that two in-process objects are isolated:
+A trusted application may own multiple direct runtimes in one process. This is
+lifecycle and resource coordination, not a security boundary or desktop
+virtualization:
 
 | Facility | Current ownership | Concurrency rule |
 | --- | --- | --- |
-| Runtime ceiling, effective session contexts, revocation | Runtime-owned | Isolated within the one runtime generation |
-| Tool registry, browser engine and grants, recording session | Runtime-owned | Released on session/runtime shutdown |
+| Runtime ceiling, effective session contexts, revocation | Runtime-owned | Isolated within each opaque runtime generation |
+| Tool registry, browser engine and grants, recording session | Runtime-owned | Released only by their owning session/runtime |
 | Permission/policy compatibility caches and bounded compatibility manifest | Immutable process configuration | Explicit configured constructors must agree with contradictory environment values or fail |
-| Session activity, capture scopes, element-token registry, CDP port claims | Process-coordinated | Safe only under the one-direct-runtime guard |
-| Recording platform callbacks, video/PiP factories, observers, ABI executor | Immutable process callbacks/coordinator | First installation is shared by the runtime generation |
-| macOS cursor overlay and other UI event-loop facilities | Process/platform coordinated | Requires the appropriate host main-thread adapter or an explicit worker/service |
+| Session activity, capture scopes, element tokens, browser refs, cursor keys | Runtime-namespaced | The same public session label in two runtimes remains independent; stale or cross-runtime handles fail closed |
+| Physical pointer, keyboard, focus, overlay, and platform event loops | Process/platform coordinated | Native input and focus action turns are admitted one at a time; all runtimes still operate the same physical desktop |
+| CDP listener claims and the download gate | Process-coordinated | A listener/profile claim or download lease cannot be silently taken over by another runtime |
+| Recording platform callbacks, video/PiP factories, policy, observers, ABI executor | Immutable process callbacks/coordinator | Shared only where the process identity and platform configuration are the same |
 
-A second direct `CuaDriver.create()` returns the structured
-`runtime_already_exists` conflict. Separate trust domains use separate
-runtime-owner processes. Complete same-process multi-runtime support remains a
-later isolation gate; it cannot be enabled merely by removing the guard.
+Shutting down runtime A does not revoke runtime B's sessions or stop its
+recording. Public session labels and element-token wire formats remain
+unchanged; the runtime generation is private and never accepted from a tool
+argument.
+
+The reserved anonymous `default` cursor/session fallback is process-shared and
+does not provide lifecycle isolation. Give each concurrent host operation an
+explicit session (or cursor ID). The first enabled runtime initializes the
+process-global overlay template; later runtimes reuse it and can customize
+their own namespaced cursors through the cursor tools.
+
+Arbitrary code in the host process can inspect or interfere with every
+runtime. Use separate private workers or services for crash isolation,
+different trust domains, different OS identities, or independent desktops.
+
+On macOS, the cursor overlay additionally requires an AppKit main-thread UI
+owner. A direct runtime without a certified host adapter returns structured
+`facility_unavailable` results for cursor-overlay operations; it does not
+report success or start hidden AppKit work on an unsafe thread. A private
+worker or service owns the required event loop. A headless service or worker
+without Window Server graphic-session access returns the same refusal instead
+of claiming an overlay that cannot render.
 
 ## Service transport hardening
 

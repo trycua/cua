@@ -95,6 +95,9 @@ impl Tool for SetAgentCursorEnabledTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        if !self.state.cursor_overlay_available {
+            return super::cursor_overlay_unavailable();
+        }
         use cua_driver_core::tool_args::ArgsExt;
         let enabled = match args.require_bool("enabled") {
             Ok(v) => v,
@@ -220,6 +223,9 @@ impl Tool for SetAgentCursorMotionTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        if !self.state.cursor_overlay_available {
+            return super::cursor_overlay_unavailable();
+        }
         use cua_driver_core::tool_args::ArgsExt;
         let cursor_id = resolve_cursor_key(&args);
 
@@ -391,6 +397,9 @@ impl Tool for SetAgentCursorStyleTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        if !self.state.cursor_overlay_available {
+            return super::cursor_overlay_unavailable();
+        }
         let cursor_id = resolve_cursor_key(&args);
 
         // ── image_path ────────────────────────────────────────────────────────
@@ -575,6 +584,9 @@ impl Tool for GetAgentCursorStateTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        if !self.state.cursor_overlay_available {
+            return super::cursor_overlay_unavailable();
+        }
         // Scope to the CALLER's cursor (explicit cursor_id > injected
         // _session_id > "default"). Returning every session's cursors here was a
         // cross-session leak, and deriving the top-level `enabled` via

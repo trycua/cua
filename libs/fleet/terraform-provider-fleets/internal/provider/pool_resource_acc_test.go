@@ -17,7 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
-	cyclopsprovider "github.com/trycua/terraform-provider-cyclops/internal/provider"
+	fleetsprovider "github.com/trycua/terraform-provider-fleets/internal/provider"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -65,7 +65,7 @@ func TestAccPoolLifecycle(t *testing.T) {
 	defer apiServer.Close()
 
 	providerConfig := fmt.Sprintf(`
-provider "cyclops" {
+provider "fleets" {
   endpoint      = %q
   client_id     = "terraform-e2e"
   client_secret = "terraform-secret"
@@ -75,7 +75,7 @@ provider "cyclops" {
 
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: map[string]func() (tfprotov6.ProviderServer, error){
-			"cyclops": providerserver.NewProtocol6WithError(cyclopsprovider.New("test")()),
+			"fleets": providerserver.NewProtocol6WithError(fleetsprovider.New("test")()),
 		},
 		CheckDestroy: func(_ *terraform.State) error {
 			_, err := dynamicClient.Resource(poolGVR).Namespace("terraform-e2e").Get(context.Background(), "terraform-e2e", metav1.GetOptions{})
@@ -88,22 +88,22 @@ provider "cyclops" {
 			{
 				Config: providerConfig + poolConfig(1, "4Gi"),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("cyclops_pool.test", "name", "terraform-e2e"),
-					resource.TestCheckResourceAttr("cyclops_pool.test", "namespace", "terraform-e2e"),
-					resource.TestCheckResourceAttr("cyclops_pool.test", "replicas", "1"),
-					resource.TestCheckResourceAttr("cyclops_pool.test", "service.#", "1"),
-					resource.TestCheckResourceAttr("cyclops_pool.test", "autoscaling.max_pool_size", "5"),
+					resource.TestCheckResourceAttr("fleets_pool.test", "name", "terraform-e2e"),
+					resource.TestCheckResourceAttr("fleets_pool.test", "namespace", "terraform-e2e"),
+					resource.TestCheckResourceAttr("fleets_pool.test", "replicas", "1"),
+					resource.TestCheckResourceAttr("fleets_pool.test", "service.#", "1"),
+					resource.TestCheckResourceAttr("fleets_pool.test", "autoscaling.max_pool_size", "5"),
 				),
 			},
 			{
 				Config: providerConfig + poolConfig(2, "8Gi"),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("cyclops_pool.test", "replicas", "2"),
-					resource.TestCheckResourceAttr("cyclops_pool.test", "memory", "8Gi"),
+					resource.TestCheckResourceAttr("fleets_pool.test", "replicas", "2"),
+					resource.TestCheckResourceAttr("fleets_pool.test", "memory", "8Gi"),
 				),
 			},
 			{
-				ResourceName:      "cyclops_pool.test",
+				ResourceName:      "fleets_pool.test",
 				ImportState:       true,
 				ImportStateVerify: true,
 			},
@@ -113,7 +113,7 @@ provider "cyclops" {
 
 func poolConfig(replicas int, memory string) string {
 	return fmt.Sprintf(`
-resource "cyclops_pool" "test" {
+resource "fleets_pool" "test" {
   name                 = "terraform-e2e"
   replicas             = %d
   cpu_cores            = 2

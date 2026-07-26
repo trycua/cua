@@ -12,6 +12,7 @@
 
 use async_trait::async_trait;
 use cua_driver_core::{
+    browser::platform::BrowserPlatform,
     protocol::ToolResult,
     tool::{Tool, ToolDef},
 };
@@ -50,7 +51,47 @@ impl Tool for KillAppTool {
         def()
     }
 
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        if adapter_id != "process_control" {
+            return Ok(None);
+        }
+        let pid = args
+            .get("pid")
+            .and_then(Value::as_i64)
+            .filter(|pid| *pid > 0)
+            .ok_or_else(|| "kill_app requires a positive integer pid".to_owned())?;
+        let fingerprint = crate::browser::MacOsBrowserPlatform::default()
+            .process_fingerprint(pid)
+            .await
+            .map_err(|error| error.message)?;
+        Ok(Some(serde_json::json!({
+            "kind": "process_instance",
+            "fingerprint": fingerprint,
+        })))
+    }
+
     async fn invoke(&self, args: Value) -> ToolResult {
+        if let Some(expected) = args.get("_protected_process_fingerprint") {
+            let current = match self
+                .protected_resource_scope("process_control", &args)
+                .await
+            {
+                Ok(Some(scope)) => scope["fingerprint"].clone(),
+                Ok(None) => Value::Null,
+                Err(message) => {
+                    return stale_process_refusal(message);
+                }
+            };
+            if current != *expected {
+                return stale_process_refusal(
+                    "the process identity changed at the termination boundary".to_owned(),
+                );
+            }
+        }
         let pid_i = match args.get("pid").and_then(|v| v.as_i64()) {
             Some(p) if p > 0 && p <= i32::MAX as i64 => p as i32,
             Some(_) => {
@@ -80,4 +121,14 @@ impl Tool for KillAppTool {
             ))
         }
     }
+}
+
+fn stale_process_refusal(message: String) -> ToolResult {
+    ToolResult::error(message.clone()).with_structured(serde_json::json!({
+        "status": "refused",
+        "refusal": {
+            "code": "protected_resource_scope_stale",
+            "message": message,
+        }
+    }))
 }

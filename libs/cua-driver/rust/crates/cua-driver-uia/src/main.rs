@@ -1,8 +1,9 @@
 // cua-driver-uia: Windows uiAccess-elevated tool worker.
 //
 // Listens on \\.\pipe\cua-driver-uia for line-delimited JSON requests with the
-// same shape as cua-driver's daemon pipe (\\.\pipe\cua-driver), so cua-driver's
-// CLI and MCP server can prefer this worker on Windows for UIPI-blocked ops.
+// same shape as cua-driver's daemon pipe (\\.\pipe\cua-driver). This is a
+// daemon-internal privilege boundary: public CLI/MCP clients must enter through
+// the canonical daemon authorization path and cannot call this worker directly.
 //
 // Protocol (one JSON object per line, both directions):
 //   request : {"method":"call","name":"<tool>","args":{...}}
@@ -12,8 +13,9 @@
 //   response: {"ok":true,"result":...}
 //             {"ok":false,"error":"...","exit_code":N}
 //
-// The protocol is intentionally byte-identical to cua-driver/serve.rs so that
-// the existing client code in cli.rs::run_call can talk to either pipe.
+// The protocol is intentionally byte-identical to cua-driver/serve.rs for a
+// future authorized parent-daemon forwarding path. No public client route is
+// exposed while that forwarding path is unavailable.
 
 #[cfg(not(target_os = "windows"))]
 fn main() {
@@ -214,7 +216,7 @@ unsafe fn current_user_sid_string() -> Option<String> {
 }
 
 #[cfg(target_os = "windows")]
-unsafe fn named_pipe_client_sid(pipe: *mut std::ffi::c_void) -> Option<String> {
+unsafe fn named_pipe_client_identity(pipe: *mut std::ffi::c_void) -> Option<(u32, String)> {
     #[link(name = "kernel32")]
     extern "system" {
         fn GetNamedPipeClientProcessId(
@@ -253,12 +255,48 @@ unsafe fn named_pipe_client_sid(pipe: *mut std::ffi::c_void) -> Option<String> {
     if opened == 0 || token.is_null() {
         return None;
     }
-    token_user_sid(token)
+    token_user_sid(token).map(|sid| (client_process_id, sid))
 }
 
 #[cfg(target_os = "windows")]
 fn current_user_pipe_sddl(sid: &str) -> String {
     format!("D:P(A;;GA;;;{sid})S:(ML;;NW;;;LW)")
+}
+
+#[cfg(target_os = "windows")]
+fn authorized_parent_pid_from_args() -> anyhow::Result<u32> {
+    cua_driver_uia::authorized_parent_pid_from(std::env::args().skip(1))
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn exit_when_authorized_parent_exits(parent_pid: u32) -> anyhow::Result<()> {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn OpenProcess(
+            desired_access: u32,
+            inherit_handle: i32,
+            process_id: u32,
+        ) -> *mut std::ffi::c_void;
+        fn WaitForSingleObject(handle: *mut std::ffi::c_void, milliseconds: u32) -> u32;
+        fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+    }
+    const SYNCHRONIZE: u32 = 0x0010_0000;
+    const INFINITE: u32 = 0xffff_ffff;
+    const WAIT_OBJECT_0: u32 = 0;
+    let parent = OpenProcess(SYNCHRONIZE, 0, parent_pid);
+    if parent.is_null() {
+        anyhow::bail!("open authorized parent process {parent_pid}");
+    }
+    let parent_handle = parent as usize;
+    std::thread::spawn(move || {
+        let parent = parent_handle as *mut std::ffi::c_void;
+        let wait = unsafe { WaitForSingleObject(parent, INFINITE) };
+        let _ = unsafe { CloseHandle(parent) };
+        if wait == WAIT_OBJECT_0 {
+            std::process::exit(0);
+        }
+    });
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
@@ -271,14 +309,16 @@ fn main() -> anyhow::Result<()> {
         .with_writer(std::io::stderr)
         .init();
 
+    let authorized_parent_pid = authorized_parent_pid_from_args()?;
+    unsafe { exit_when_authorized_parent_exits(authorized_parent_pid)? };
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    rt.block_on(async_main())
+    rt.block_on(async_main(authorized_parent_pid))
 }
 
 #[cfg(target_os = "windows")]
-async fn async_main() -> anyhow::Result<()> {
+async fn async_main(authorized_parent_pid: u32) -> anyhow::Result<()> {
     use std::os::windows::io::AsRawHandle as _;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::windows::named_pipe::ServerOptions;
@@ -309,10 +349,20 @@ async fn async_main() -> anyhow::Result<()> {
             .await
             .map_err(|e| anyhow::anyhow!("named pipe connect: {e}"))?;
 
-        let client_sid =
-            unsafe { named_pipe_client_sid(server.as_raw_handle().cast::<std::ffi::c_void>()) };
-        if client_sid.as_deref() != Some(owner_sid.as_str()) {
-            tracing::warn!("UIAccess named-pipe connection rejected before request parsing");
+        let client_identity = unsafe {
+            named_pipe_client_identity(server.as_raw_handle().cast::<std::ffi::c_void>())
+        };
+        if !cua_driver_uia::client_identity_is_authorized(
+            client_identity
+                .as_ref()
+                .map(|(pid, sid)| (*pid, sid.as_str())),
+            authorized_parent_pid,
+            &owner_sid,
+        ) {
+            tracing::warn!(
+                expected_parent_pid = authorized_parent_pid,
+                "UIAccess named-pipe connection rejected before request parsing"
+            );
             let _ = server.disconnect();
             continue;
         }

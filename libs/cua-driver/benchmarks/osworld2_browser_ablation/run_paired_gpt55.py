@@ -168,6 +168,76 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def verify_osworld_provenance() -> dict[str, Any]:
+    manifest = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))
+    if not (OSWORLD_DIR / ".git").exists():
+        raise PairedRunError(f"OSWorld checkout is missing: {OSWORLD_DIR}")
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=OSWORLD_DIR,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+    ).stdout.strip()
+    expected_head = str(manifest["osworld_code"]["commit"])
+    if head != expected_head:
+        raise PairedRunError(
+            f"OSWorld checkout is {head}, expected release commit {expected_head}"
+        )
+    tracked_status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=no"],
+        cwd=OSWORLD_DIR,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+    ).stdout.strip()
+    if tracked_status:
+        raise PairedRunError("OSWorld checkout has tracked modifications")
+    tag = subprocess.run(
+        ["git", "describe", "--exact-match", "--tags", "HEAD"],
+        cwd=OSWORLD_DIR,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+    ).stdout.strip()
+    if tag != manifest["osworld_code"]["tag"]:
+        raise PairedRunError(
+            f"OSWorld checkout tag is {tag!r}, expected "
+            f"{manifest['osworld_code']['tag']!r}"
+        )
+    task_hash_manifest = (
+        OSWORLD_DIR
+        / "cache"
+        / "osworld_v2_tasks_metadata"
+        / manifest["task_hash_manifest"]["path"]
+    )
+    if not task_hash_manifest.is_file():
+        raise PairedRunError("official gated task hash manifest is missing")
+    task_hash_manifest_sha256 = sha256_file(task_hash_manifest)
+    if task_hash_manifest_sha256 != manifest["task_hash_manifest"]["sha256"]:
+        raise PairedRunError("official gated task hash manifest did not match")
+    task_hashes = json.loads(task_hash_manifest.read_text(encoding="utf-8"))
+    expected_task = (task_hashes.get("files") or {}).get("task_070.py")
+    task_path = OSWORLD_DIR / "evaluation_examples" / "task_class" / "task_070.py"
+    if not isinstance(expected_task, dict) or not task_path.is_file():
+        raise PairedRunError("official gated Task070 source is missing")
+    task_sha256 = sha256_file(task_path)
+    if (
+        task_sha256 != expected_task.get("sha256")
+        or task_path.stat().st_size != expected_task.get("size")
+    ):
+        raise PairedRunError("official gated Task070 source did not match its manifest")
+    return {
+        "checkout": str(OSWORLD_DIR),
+        "git_head": head,
+        "git_tag": tag,
+        "tracked_worktree_clean": True,
+        "task_hash_manifest_sha256": task_hash_manifest_sha256,
+        "task_070_sha256": task_sha256,
+        "task_070_size": task_path.stat().st_size,
+    }
+
+
 def driver_call(
     name: str,
     arguments: dict[str, Any],
@@ -952,6 +1022,9 @@ def reset_and_setup_task(cache_dir: Path) -> dict[str, Any]:
     if f"--user-data-dir={guest_profile}" not in chrome_command.splitlines():
         raise PairedRunError("Chrome did not use the fresh episode profile")
     initial_evaluation = evaluate_task(cache_dir)
+    initial_teamchat = evaluate_teamchat_summary(cache_dir)
+    if initial_teamchat["posted_summary"]:
+        raise PairedRunError("fresh Task070 state already contained an agent summary")
     cache_hashes = {
         path.name: sha256_file(path)
         for path in sorted(cache_dir.iterdir())
@@ -961,6 +1034,7 @@ def reset_and_setup_task(cache_dir: Path) -> dict[str, Any]:
         "guest_chrome_profile": guest_profile,
         "chrome_command": chrome_command.splitlines(),
         "initial_evaluation": initial_evaluation,
+        "initial_teamchat": initial_teamchat,
         "cache_file_sha256": cache_hashes,
     }
 
@@ -994,6 +1068,71 @@ def evaluate_task(cache_dir: Path) -> dict[str, Any]:
         "task_class": TASK_CLASS,
         "score": score,
         "raw": detail,
+    }
+
+
+def evaluate_teamchat_summary(cache_dir: Path) -> dict[str, Any]:
+    sys.path.insert(0, str(OSWORLD_DIR))
+    from evaluation_examples.task_class import task_070
+
+    env = SimpleNamespace(
+        cache_dir=str(cache_dir.resolve()),
+        vm_ip="127.0.0.1",
+    )
+    raw = task_070.get_state_with_cookie(
+        env,
+        {
+            "url": task_070.build_website_url(task_070.TEAMCHAT_APP),
+            "cookie_save_name": task_070.TEAMCHAT_COOKIE_FILE,
+            "state_save_name": "task_070_teamchat_state.json",
+            "return_type": "json",
+        },
+    )
+    if not isinstance(raw, dict):
+        raise PairedRunError("failed to fetch Task070 TeamChat state")
+    current = raw.get("data", raw)
+    if not isinstance(current, dict):
+        raise PairedRunError("Task070 TeamChat state omitted data")
+    teamchat = current.get("teamchat", current)
+    if not isinstance(teamchat, dict):
+        raise PairedRunError("Task070 TeamChat state omitted workspace data")
+    current_user = teamchat.get("currentUser") or {}
+    current_user_id = current_user.get("userId")
+    channel_messages = (teamchat.get("messages") or {}).get(
+        task_070.TEAMCHAT_CHANNEL_ID,
+        [],
+    )
+    initial_messages = (
+        task_070._build_slack_state()
+        .get("messages", {})
+        .get(task_070.TEAMCHAT_CHANNEL_ID, [])
+    )
+    initial_ids = {
+        item.get("messageId")
+        for item in initial_messages
+        if isinstance(item, dict)
+    }
+    summaries = [
+        item
+        for item in channel_messages
+        if isinstance(item, dict)
+        and item.get("messageId") not in initial_ids
+        and item.get("senderId") == current_user_id
+        and len(str(item.get("content") or "").strip()) >= 20
+    ]
+    return {
+        "posted_summary": bool(summaries),
+        "new_summary_message_count": len(summaries),
+        "summary_messages": [
+            {
+                "message_id": item.get("messageId"),
+                "content_length": len(str(item.get("content") or "")),
+                "content_sha256": hashlib.sha256(
+                    str(item.get("content") or "").encode("utf-8")
+                ).hexdigest(),
+            }
+            for item in summaries
+        ],
     }
 
 
@@ -1075,6 +1214,7 @@ def run_episode(
     done_reason: str | None = None
     failure: str | None = None
     evaluation: dict[str, Any] | None = None
+    supplemental_task_checks: dict[str, Any] | None = None
     session_ended = False
     steps_executed = 0
     start_session(session)
@@ -1135,6 +1275,7 @@ def run_episode(
     if failure is None:
         try:
             evaluation = evaluate_task(cache_dir)
+            supplemental_task_checks = evaluate_teamchat_summary(cache_dir)
         except Exception as exc:
             failure = f"{type(exc).__name__}: {exc}"
     result = {
@@ -1158,9 +1299,14 @@ def run_episode(
         "model_seconds": sum(
             float(record.get("model_seconds") or 0.0) for record in model_records
         ),
+        "action_seconds": sum(
+            float((item.get("outcome") or {}).get("action_seconds") or 0.0)
+            for item in history
+        ),
         "usage": usage_sum(model_records),
         "cost": estimate_standard_cost(model_records),
         "evaluation": evaluation,
+        "supplemental_task_checks": supplemental_task_checks,
         "score_gain_from_initial": (
             evaluation["score"] - reset_evidence["initial_evaluation"]["score"]
             if evaluation is not None
@@ -1247,6 +1393,7 @@ def provenance(
     container_disk_image: str,
     live: dict[str, Any],
     args: argparse.Namespace,
+    osworld_provenance: dict[str, Any],
 ) -> dict[str, Any]:
     manifest = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))
     git_head = subprocess.run(
@@ -1263,6 +1410,7 @@ def provenance(
         "benchmark_runner_git_head": git_head,
         "runner_sha256": sha256_file(Path(__file__)),
         "task_file_sha256": sha256_file(task_path),
+        "osworld": osworld_provenance,
         "container_disk_image": container_disk_image,
         "fleet": {
             "namespace": live["namespace"],
@@ -1338,6 +1486,7 @@ def main() -> int:
     args = parse_args()
     if args.max_steps <= 0:
         raise PairedRunError("--max-steps must be positive")
+    osworld_provenance = verify_osworld_provenance()
     config = fleet_pilot.read_json(args.config)
     image = args.container_disk_image or config.get("container_disk_image")
     if not isinstance(image, str) or "@sha256:" not in image:
@@ -1368,6 +1517,7 @@ def main() -> int:
                 container_disk_image=image,
                 live=live,
                 args=args,
+                osworld_provenance=osworld_provenance,
             ),
         )
         modes = (

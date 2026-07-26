@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "name": "Cua Driver OSWorld 2 browser-use ablation",
+  "benchmark_release": "osworld-v2-2026.06.24",
+  "osworld_code": {
+    "repository": "https://github.com/xlang-ai/OSWorld-V2.git",
+    "bootstrap_branch": "main",
+    "bootstrap_commit": "83f19747da485a29c2e406daf9e732219fef33a7",
+    "tag": "v2026.06.24",
+    "commit": "2b9b7b4eb73243d557bdbf2998fe18d8e18e19c6"
+  },
+  "tasks": {
+    "repository": "xlangai/osworld_v2_tasks",
+    "revision": "v2026.06.24",
+    "expected_count": 108
+  },
+  "assets": {
+    "repository": "xlangai/osworld_v2_assets_gated",
+    "revision": "v2026.06.24"
+  },
+  "image": {
+    "repository": "xlangai/v2-image",
+    "revision": "v2026.06.24",
+    "archive": "osworld-v2-ubuntu-x86.qcow2.zip",
+    "archive_size": 14189763267,
+    "archive_sha256": "eb737ae70b49849e24af407de6a518439a23de05a8497096a948334ce0a909aa"
+  },
+  "task_hash_manifest": {
+    "path": "manifests/task_hashes.json",
+    "sha256": "3312a7df40dbd004c300804f71c57d5a23a083d6c675082fcc34c60a37f9a76c"
+  },
+  "fleet": {
+    "replicas": 1,
+    "cpu_cores": 4,
+    "memory": "8Gi",
+    "guest_ports": {
+      "server": 5000,
+      "chrome_cdp": 1337,
+      "novnc": 8006,
+      "vlc": 8080,
+      "cua_driver_proxy": 3002
+    }
+  },
+  "pilot": {
+    "task_count": 20,
+    "seeds": [
+      0,
+      1,
+      2
+    ],
+    "modes": [
+      "screenshot_only",
+      "screenshot_ax",
+      "cdp_only",
+      "combined"
+    ],
+    "expected_episodes": 240
+  }
+}

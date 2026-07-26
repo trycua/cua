@@ -6,9 +6,8 @@
 //! backend lives in the `serve` daemon selected at compile time.
 //!
 //! Extra CLI flags (consumed here, not by MCP):
-//!   --cursor-icon  <path.svg|.ico|.png>   custom cursor shape
-//!   --cursor-id    <id>                   multi-cursor instance id
-//!   --cursor-palette <name>               named colour palette
+//!   --cursor-theme <installed-theme-id>   installed cursor theme
+//!   --cursor-reduced-motion <auto|on|off> accessibility motion preference
 //!   --no-overlay                          start with overlay disabled
 //!   --glide-ms     <f64>                  glide duration override
 //!   --dwell-ms     <f64>                  post-click dwell override
@@ -181,6 +180,37 @@ fn run_telemetry_command(command: cli::TelemetryCommand) {
             }
         },
     }
+}
+
+fn run_cursor_theme_command(args: &[String]) -> ! {
+    let executable = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(error) => {
+            eprintln!("cua-driver: cannot locate cursor-theme compiler: {error}");
+            std::process::exit(1);
+        }
+    };
+    let binary_name = if cfg!(target_os = "windows") {
+        "cua-cursor-theme.exe"
+    } else {
+        "cua-cursor-theme"
+    };
+    let sidecar = executable
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join(binary_name);
+    let status = match std::process::Command::new(&sidecar).args(args).status() {
+        Ok(status) => status,
+        Err(error) => {
+            eprintln!(
+                "cua-driver: cursor-theme compiler is unavailable at {}: {error}",
+                sidecar.display()
+            );
+            eprintln!("Reinstall Cua Driver so the matching authoring sidecar is present.");
+            std::process::exit(1);
+        }
+    };
+    std::process::exit(status.code().unwrap_or(1));
 }
 
 /// Wire up the experimental picture-in-picture preview window.
@@ -700,6 +730,9 @@ fn main() {
         cli::Command::Skills { subcommand, flags } => {
             skills::run(&subcommand, &flags);
         }
+        cli::Command::CursorTheme { args } => {
+            run_cursor_theme_command(&args);
+        }
         cli::Command::BrowserApprove {
             pid,
             strategy,
@@ -946,6 +979,9 @@ fn main() -> anyhow::Result<()> {
         cli::Command::Skills { subcommand, flags } => {
             skills::run(&subcommand, &flags);
             return Ok(());
+        }
+        cli::Command::CursorTheme { args } => {
+            run_cursor_theme_command(&args);
         }
         cli::Command::BrowserApprove {
             pid,

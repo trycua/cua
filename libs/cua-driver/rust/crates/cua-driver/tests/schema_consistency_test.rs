@@ -200,6 +200,67 @@ fn portable_desktop_contracts_are_accepted_by_active_backend() {
 }
 
 #[test]
+fn canonical_cursor_contracts_match_active_backend() {
+    let Some(mut driver) = RawDriver::spawn() else {
+        return;
+    };
+
+    driver.send(&json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": { "name": "cursor-contract-gate", "version": "1" }
+        }
+    }));
+    let _ = driver.recv();
+    driver.send(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }));
+    let response = driver.recv();
+    let live_tools = response["result"]["tools"]
+        .as_array()
+        .expect("tools/list must return result.tools");
+
+    for contract in manifest().tools.into_iter().filter(|contract| {
+        contract.schema_mode == SchemaMode::CanonicalRuntime
+            && contract
+                .capabilities
+                .iter()
+                .any(|capability| capability.starts_with("agent_cursor."))
+    }) {
+        let live = live_tools
+            .iter()
+            .find(|entry| entry["name"].as_str() == Some(&contract.name))
+            .unwrap_or_else(|| panic!("{} missing from live registry", contract.name));
+        assert_eq!(
+            live["description"], contract.description,
+            "{} description",
+            contract.name
+        );
+        assert_eq!(
+            live["inputSchema"], contract.input_schema,
+            "{} input schema",
+            contract.name
+        );
+        assert_eq!(
+            live["capabilities"],
+            json!(contract.capabilities),
+            "{} capabilities",
+            contract.name
+        );
+        assert_eq!(
+            live["annotations"]["readOnlyHint"], contract.annotations.read_only,
+            "{} readOnlyHint",
+            contract.name
+        );
+        assert_eq!(
+            live["annotations"]["idempotentHint"], contract.annotations.idempotent,
+            "{} idempotentHint",
+            contract.name
+        );
+    }
+}
+
+#[test]
 fn health_report_is_callable_through_authorized_mcp_surface() {
     let Some(mut driver) = RawDriver::spawn() else {
         // Binary not built — testkit already printed a skip note.

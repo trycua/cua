@@ -46,7 +46,9 @@ test "${1:-}" = build
 test "$CARGO_TARGET_DIR" = "$EXPECTED_CARGO_TARGET_DIR"
 mkdir -p "$CARGO_TARGET_DIR/release"
 printf 'fresh custom target\n' > "$CARGO_TARGET_DIR/release/cua-driver"
+printf 'fresh cursor theme compiler\n' > "$CARGO_TARGET_DIR/release/cua-cursor-theme"
 chmod +x "$CARGO_TARGET_DIR/release/cua-driver"
+chmod +x "$CARGO_TARGET_DIR/release/cua-cursor-theme"
 """,
     )
     _write_executable(
@@ -88,4 +90,10 @@ esac
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert (custom_target / "release/cua-driver").read_text() == "fresh custom target\n"
+    assert (
+        custom_target / "release/cua-cursor-theme"
+    ).read_text() == "fresh cursor theme compiler\n"
     assert (install_bin / "cua-driver-local").read_text() == "fresh custom target\n"
+    assert (
+        local_home / "packages/current/cua-cursor-theme"
+    ).read_text() == "fresh cursor theme compiler\n"

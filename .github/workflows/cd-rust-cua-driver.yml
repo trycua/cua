@@ -125,7 +125,7 @@ jobs:
             rust-cua-driver-rs-linux-${{ matrix.arch }}-
       - name: Build (release)
         working-directory: libs/cua-driver/rust
-        run: cargo build --locked -p cua-driver -p cua-driver-sdk --release --features cua-driver/portal-input --target ${{ matrix.target }}
+        run: cargo build --locked -p cua-driver -p cursor-theme-cli -p cua-driver-sdk --release --features cua-driver/portal-input --target ${{ matrix.target }}
       - name: Build Electron-compatible Node runtime
         working-directory: libs/cua-driver
         run: |
@@ -142,6 +142,7 @@ jobs:
           STAGE="cua-driver-rs-${VERSION}-${LABEL}"
           mkdir -p "release/${STAGE}"
           cp "target/${TARGET}/release/cua-driver" "release/${STAGE}/"
+          cp "target/${TARGET}/release/cua-cursor-theme" "release/${STAGE}/"
           cp "target/${TARGET}/release/libcua_driver_sdk.so" "release/${STAGE}/"
           cp "target/${TARGET}/release/cua_driver_node_runtime.node" "release/${STAGE}/"
           cp include/cua_driver_abi.h "release/${STAGE}/"
@@ -150,7 +151,7 @@ jobs:
           # Bare runtime tarball: CLI plus the UniFFI library consumed by the
           # Python and Node imported-SDK packages.
           tar -czf "release/${STAGE}-binary.tar.gz" -C "release/${STAGE}" \
-            cua-driver libcua_driver_sdk.so cua_driver_node_runtime.node cua_driver_abi.h
+            cua-driver cua-cursor-theme libcua_driver_sdk.so cua_driver_node_runtime.node cua_driver_abi.h
           ls -lh "release/${STAGE}.tar.gz" "release/${STAGE}-binary.tar.gz"
       - uses: actions/upload-artifact@v4
         with:
@@ -221,7 +222,7 @@ jobs:
         # `cua-driver-uia.exe` is the Windows-only sibling daemon that runs
         # at UIAccess integrity so SendInput / UI Automation can cross UIPI
         # into UWP apps — see crates/cua-driver-uia/ and #1602.
-        run: cargo build --locked -p cua-driver -p cua-driver-uia -p cua-driver-sdk --release --target ${{ matrix.target }}
+        run: cargo build --locked -p cua-driver -p cursor-theme-cli -p cua-driver-uia -p cua-driver-sdk --release --target ${{ matrix.target }}
       - name: Build Electron-compatible Node runtime
         working-directory: libs/cua-driver
         shell: bash
@@ -240,6 +241,7 @@ jobs:
           $stage   = "cua-driver-rs-${version}-${label}"
           New-Item -ItemType Directory -Force -Path "release/$stage" | Out-Null
           Copy-Item "target/$target/release/cua-driver.exe" "release/$stage/"
+          Copy-Item "target/$target/release/cua-cursor-theme.exe" "release/$stage/"
           Copy-Item "target/$target/release/cua-driver-uia.exe" "release/$stage/"
           Copy-Item "target/$target/release/cua_driver_sdk.dll" "release/$stage/"
           Copy-Item "target/$target/release/cua_driver_node_runtime.node" "release/$stage/"
@@ -258,7 +260,7 @@ jobs:
           # to UIAccess integrity on a default-policy machine. The main CLI/MCP
           # binary stays fully functional regardless; uia is opt-in dead-weight
           # until signed.
-          Compress-Archive -Path "release/$stage/cua-driver.exe","release/$stage/cua-driver-uia.exe","release/$stage/cua_driver_sdk.dll","release/$stage/cua_driver_node_runtime.node","release/$stage/cua_driver_abi.h" -DestinationPath "release/$stage-binary.zip" -Force
+          Compress-Archive -Path "release/$stage/cua-driver.exe","release/$stage/cua-cursor-theme.exe","release/$stage/cua-driver-uia.exe","release/$stage/cua_driver_sdk.dll","release/$stage/cua_driver_node_runtime.node","release/$stage/cua_driver_abi.h" -DestinationPath "release/$stage-binary.zip" -Force
           Get-ChildItem "release/$stage*.zip"
       - uses: actions/upload-artifact@v4
         with:
@@ -357,12 +359,12 @@ jobs:
         working-directory: libs/cua-driver/rust
         env:
           MACOSX_DEPLOYMENT_TARGET: "13.0"
-        run: cargo build --locked -p cua-driver -p cua-driver-sdk --release --target aarch64-apple-darwin
+        run: cargo build --locked -p cua-driver -p cursor-theme-cli -p cua-driver-sdk --release --target aarch64-apple-darwin
       - name: Build x86_64
         working-directory: libs/cua-driver/rust
         env:
           MACOSX_DEPLOYMENT_TARGET: "13.0"
-        run: cargo build --locked -p cua-driver -p cua-driver-sdk --release --target x86_64-apple-darwin
+        run: cargo build --locked -p cua-driver -p cursor-theme-cli -p cua-driver-sdk --release --target x86_64-apple-darwin
       - name: Build Electron-compatible Node runtimes
         working-directory: libs/cua-driver
         run: |
@@ -378,15 +380,19 @@ jobs:
         run: |
           ARM64="target/aarch64-apple-darwin/release/cua-driver"
           X86="target/x86_64-apple-darwin/release/cua-driver"
+          THEME_ARM64="target/aarch64-apple-darwin/release/cua-cursor-theme"
+          THEME_X86="target/x86_64-apple-darwin/release/cua-cursor-theme"
           SDK_ARM64="target/aarch64-apple-darwin/release/libcua_driver_sdk.dylib"
           SDK_X86="target/x86_64-apple-darwin/release/libcua_driver_sdk.dylib"
           NODE_ARM64="target/aarch64-apple-darwin/release/cua_driver_node_runtime.node"
           NODE_X86="target/x86_64-apple-darwin/release/cua_driver_node_runtime.node"
           mkdir -p release/universal
           lipo -create "$ARM64" "$X86" -output release/universal/cua-driver
+          lipo -create "$THEME_ARM64" "$THEME_X86" -output release/universal/cua-cursor-theme
           lipo -create "$SDK_ARM64" "$SDK_X86" -output release/universal/libcua_driver_sdk.dylib
           lipo -create "$NODE_ARM64" "$NODE_X86" -output release/universal/cua_driver_node_runtime.node
           lipo -info release/universal/cua-driver
+          lipo -info release/universal/cua-cursor-theme
           lipo -info release/universal/libcua_driver_sdk.dylib
           lipo -info release/universal/cua_driver_node_runtime.node
           test "$(otool -D release/universal/libcua_driver_sdk.dylib | tail -n 1)" = \
@@ -409,8 +415,11 @@ jobs:
             --entitlements scripts/CuaDriver.entitlements \
             --sign "$IDENTITY" release/universal/cua-driver
           codesign --force --timestamp --options runtime \
+            --sign "$IDENTITY" release/universal/cua-cursor-theme
+          codesign --force --timestamp --options runtime \
             --sign "$IDENTITY" release/universal/libcua_driver_sdk.dylib
           codesign --verify --strict --verbose=2 release/universal/cua-driver
+          codesign --verify --strict --verbose=2 release/universal/cua-cursor-theme
           codesign --verify --strict --verbose=2 release/universal/libcua_driver_sdk.dylib
       - name: Assemble CuaDriver.app bundle
         working-directory: libs/cua-driver/rust
@@ -433,7 +442,10 @@ jobs:
           cp -R scripts/CuaDriverBundle/Contents release/CuaDriver.app/Contents
           cp release/universal/cua-driver \
              release/CuaDriver.app/Contents/MacOS/cua-driver
+          cp release/universal/cua-cursor-theme \
+             release/CuaDriver.app/Contents/MacOS/cua-cursor-theme
           chmod +x release/CuaDriver.app/Contents/MacOS/cua-driver
+          chmod +x release/CuaDriver.app/Contents/MacOS/cua-cursor-theme
           # Stamp the release version into Info.plist so the bundle
           # version tracks the tag instead of whatever was last
           # checked in. Without this the in-tree Info.plist's
@@ -496,6 +508,7 @@ jobs:
             # that download by arch still get the universal slice
             # (matches the Swift `cd-swift-cua-driver.yml` convention).
             cp release/universal/cua-driver "release/${STAGE}/"
+            cp release/universal/cua-cursor-theme "release/${STAGE}/"
             cp release/universal/libcua_driver_sdk.dylib "release/${STAGE}/"
             cp release/universal/cua_driver_node_runtime.node "release/${STAGE}/"
             cp include/cua_driver_abi.h "release/${STAGE}/"
@@ -510,7 +523,7 @@ jobs:
           # Bare runtime tarball: universal CLI plus universal UniFFI library.
           # No app bundle: callers of this asset deliberately skip that flow.
           tar -czf "release/cua-driver-rs-${VERSION}-darwin-universal-binary.tar.gz" \
-            -C release/universal cua-driver libcua_driver_sdk.dylib cua_driver_node_runtime.node \
+            -C release/universal cua-driver cua-cursor-theme libcua_driver_sdk.dylib cua_driver_node_runtime.node \
             -C ../../include cua_driver_abi.h
           ls -lh release/*.tar.gz
       - uses: actions/upload-artifact@v4

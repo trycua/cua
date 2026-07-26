@@ -331,7 +331,11 @@ fn linux_cursor_motion_knobs_are_applied() {
         "Linux cursor motion update failed: {response:?}"
     );
     let structured = &response["result"]["structuredContent"];
-    assert_eq!(structured["arc_size"].as_f64(), Some(0.4));
-    assert_eq!(structured["glide_duration_ms"].as_f64(), Some(500.0));
-    assert_eq!(structured["idle_hide_ms"].as_f64(), Some(5000.0));
+    assert_eq!(structured["session"].as_str(), Some("schema-linux"));
+    assert_eq!(structured["motion"]["arc_size"].as_f64(), Some(0.4));
+    assert_eq!(
+        structured["motion"]["glide_duration_ms"].as_f64(),
+        Some(500.0)
+    );
+    assert_eq!(structured["motion"]["idle_hide_ms"].as_f64(), Some(5000.0));
 }

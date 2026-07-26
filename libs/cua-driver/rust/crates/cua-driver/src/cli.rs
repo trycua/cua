@@ -9,7 +9,7 @@
 //!   cua-driver call <tool> [json-args]      → invoke tool, print result
 //!   cua-driver <tool> [json-args]           → shorthand for call (snake_case names)
 //!
-//! Cursor-overlay flags (--cursor-id, --no-overlay, etc.) are consumed by
+//! Cursor-overlay flags (--cursor-theme, --no-overlay, etc.) are consumed by
 //! `CursorConfig::from_args()` and are ignored here.
 
 use std::process;
@@ -165,6 +165,12 @@ pub enum Command {
         subcommand: String,
         flags: Vec<String>,
     },
+    /// Trusted local cursor-theme authoring and installation workflow. The
+    /// actual parser/compiler is a separate short-lived executable so Lottie,
+    /// ZIP, and JSON are not linked into the privileged daemon.
+    CursorTheme {
+        args: Vec<String>,
+    },
     /// Mint a short-lived, single-use approval token for a direct/raw
     /// `browser_prepare` call. This command requires an interactive terminal.
     BrowserApprove {
@@ -189,10 +195,8 @@ pub enum TelemetryCommand {
 /// Flags whose next token is a value (not a subcommand).
 /// We skip both the flag and its value when scanning for the subcommand.
 const VALUE_FLAGS: &[&str] = &[
-    "--cursor-icon",
-    "--cursor-id",
-    "--cursor-palette",
-    "--cursor-shape",
+    "--cursor-theme",
+    "--cursor-reduced-motion",
     "--glide-ms",
     "--dwell-ms",
     "--idle-hide-ms",
@@ -268,6 +272,7 @@ fn finite_command_name_from_args(args: &[String]) -> Option<&'static str> {
         Some("permissions") => Some("permissions"),
         Some("autostart") => Some("autostart"),
         Some("skills") => Some("skills"),
+        Some("cursor-theme") => Some("cursor_theme"),
         Some("browser-approve") => Some("browser_approve"),
         Some("config") => Some("config"),
         Some(_) => Some("call"),
@@ -420,7 +425,7 @@ pub fn parse_command() -> Command {
             env!("CARGO_PKG_VERSION")
         );
         println!("Usage: cua-driver [SUBCOMMAND] [OPTIONS]");
-        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, revoke, status, config, telemetry, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, browser-approve, manifest");
+        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, revoke, status, config, telemetry, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, browser-approve, manifest, cursor-theme");
         println!();
         println!("permissions options (macOS):");
         println!("  cua-driver permissions status   Report Accessibility + Screen Recording status. Read-only (no prompt).");
@@ -535,21 +540,21 @@ pub fn parse_command() -> Command {
         println!("  glide, so it can be easy to miss — do a pixel click or move_cursor first");
         println!("  for a visibly gliding demo. These flags tune the overlay on `serve`/`mcp`:");
         println!("  --no-overlay            Disable the cursor overlay entirely for this daemon.");
-        println!(
-            "  --cursor-id <id>        Name the default cursor instance (default: 'default')."
-        );
-        println!("  --cursor-icon <path>    Use a custom PNG / JPEG / SVG / ICO cursor asset.");
-        println!(
-            "  --cursor-shape <name>   Built-in silhouette: {} ('teardrop' is the default —",
-            cursor_overlay::BuiltinShape::names_help()
-        );
-        println!(
-            "                          embedded cursor-up SVG; 'arrow' is the procedural gradient"
-        );
-        println!("                          diamond). Same vocabulary as MCP `cursor_icon`.");
-        println!("  --cursor-palette <name> Pick a built-in colour palette for the cursor.");
+        println!("  --cursor-theme <id>     Select an installed theme (default: cua.default).");
+        println!("  --cursor-reduced-motion <auto|on|off>");
+        println!("                          Follow the OS setting, force stills, or allow motion.");
         println!("  Set these on `cua-driver serve`; MCP and one-shot CLI processes are clients");
         println!("  and do not own the daemon's overlay configuration or UI runloop.");
+        println!();
+        println!("cursor-theme options (trusted local workflow):");
+        println!("  cua-driver cursor-theme validate <source.lottie>");
+        println!("  cua-driver cursor-theme build <source.lottie> --output <theme.cua-theme>");
+        println!("  cua-driver cursor-theme inspect <theme.cua-theme> [--json]");
+        println!("  cua-driver cursor-theme preview <theme.cua-theme> --output <directory>");
+        println!("  cua-driver cursor-theme install <theme.cua-theme>");
+        println!("  cua-driver cursor-theme list [--json]");
+        println!("  cua-driver cursor-theme uninstall <theme-id>");
+        println!("                                  Theme installation is local-only and is never an agent tool.");
         println!();
         println!("manifest options:");
         println!("  cua-driver manifest             Emit a stable JSON description of this CLI's surface");
@@ -839,6 +844,15 @@ pub fn parse_command() -> Command {
                 }
             }
             Command::Skills { subcommand, flags }
+        }
+        Some("cursor-theme") => {
+            let index = args
+                .iter()
+                .position(|value| value == "cursor-theme")
+                .expect("cursor-theme positional is present");
+            Command::CursorTheme {
+                args: args[index + 1..].to_vec(),
+            }
         }
         Some("browser-approve") => {
             let pid = approval_pid
@@ -2920,7 +2934,9 @@ fn cli_docs_json() -> serde_json::Value {
                 "arguments": no_args,
                 "options": [
                     {"name":"socket","short_name":null,"help":"Select an explicit daemon socket or named-pipe endpoint.","type":"String","default_value":null,"is_optional":true},
-                    {"name":"host-bundle-id","short_name":null,"help":"Advisory host bundle id label echoed in check_permissions output (embedded mode).","type":"String","default_value":null,"is_optional":true}
+                    {"name":"host-bundle-id","short_name":null,"help":"Advisory host bundle id label echoed in check_permissions output (embedded mode).","type":"String","default_value":null,"is_optional":true},
+                    {"name":"cursor-theme","short_name":null,"help":"Select an installed cursor theme id.","type":"String","default_value":"cua.default","is_optional":true},
+                    {"name":"cursor-reduced-motion","short_name":null,"help":"Follow the OS setting, force still frames, or allow animation: auto, on, or off.","type":"String","default_value":"auto","is_optional":true}
                 ],
                 "flags": [
                     {"name":"direct","short_name":null,"help":"Own the runtime in this MCP process; mutually exclusive with --socket.","default_value":false},
@@ -2979,7 +2995,8 @@ fn cli_docs_json() -> serde_json::Value {
                     {"name":"allow-legacy-existing-profile-approval","short_name":null,"help":"Temporary migration flag for the unprotected file-backed existing-profile artifact.","default_value":false},
                     {"name":"approve-session-policy","short_name":null,"help":"Trusted-launcher confirmation that the exact bounded manifest was reviewed.","default_value":false},
                     {"name":"no-permissions-gate","short_name":null,"help":"Skip the macOS first-launch permissions gate.","default_value":false},
-                    {"name":"embedded","short_name":null,"help":"Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1.","default_value":false}
+                    {"name":"embedded","short_name":null,"help":"Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1.","default_value":false},
+                    {"name":"no-overlay","short_name":null,"help":"Disable the agent cursor overlay for this daemon.","default_value":false}
                 ],
                 "subcommands": no_subcommands
             },
@@ -3184,6 +3201,23 @@ fn cli_docs_json() -> serde_json::Value {
                 "options": no_options,
                 "flags": [{"name":"pretty","short_name":"p","help":"Pretty-print JSON.","default_value":false}],
                 "subcommands": no_subcommands
+            },
+            {
+                "name": "cursor-theme",
+                "abstract": "Validate, compile, inspect, preview, install, or remove a local cursor theme.",
+                "discussion": "This is a trusted local authoring workflow. Agent-facing tools may select an installed theme id, but cannot install source or compiled theme data.",
+                "arguments": no_args,
+                "options": no_options,
+                "flags": no_flags,
+                "subcommands": [
+                    {"name":"validate","abstract":"Validate a bounded dotLottie source archive.","discussion":"","arguments":[{"name":"source","help":"Path to the source .lottie archive.","type":"String","is_optional":false}],"options":[],"flags":[{"name":"development","short_name":null,"help":"Allow the reserved com.example development namespace.","default_value":false}],"subcommands":[]},
+                    {"name":"build","abstract":"Compile a validated dotLottie archive into a bounded .cua-theme artifact.","discussion":"","arguments":[{"name":"source","help":"Path to the source .lottie archive.","type":"String","is_optional":false}],"options":[{"name":"output","short_name":null,"help":"Output .cua-theme path.","type":"String","default_value":null,"is_optional":false}],"flags":[{"name":"development","short_name":null,"help":"Allow the reserved com.example development namespace.","default_value":false}],"subcommands":[]},
+                    {"name":"inspect","abstract":"Inspect metadata in a compiled .cua-theme artifact.","discussion":"","arguments":[{"name":"theme","help":"Path to the compiled .cua-theme artifact.","type":"String","is_optional":false}],"options":[],"flags":[{"name":"json","short_name":null,"help":"Emit machine-readable JSON.","default_value":false}],"subcommands":[]},
+                    {"name":"preview","abstract":"Render a compiled theme's representative still frames to a directory.","discussion":"","arguments":[{"name":"theme","help":"Path to the compiled .cua-theme artifact.","type":"String","is_optional":false}],"options":[{"name":"output","short_name":null,"help":"Preview output directory.","type":"String","default_value":null,"is_optional":false}],"flags":[],"subcommands":[]},
+                    {"name":"install","abstract":"Install a compiled theme into the current user's theme store.","discussion":"","arguments":[{"name":"theme","help":"Path to the compiled .cua-theme artifact.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"list","abstract":"List the built-in and installed cursor themes.","discussion":"","arguments":[],"options":[],"flags":[{"name":"json","short_name":null,"help":"Emit machine-readable JSON.","default_value":false}],"subcommands":[]},
+                    {"name":"uninstall","abstract":"Remove a custom theme from the current user's theme store.","discussion":"The built-in cua.default theme cannot be removed.","arguments":[{"name":"theme-id","help":"Installed custom theme id.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]}
+                ]
             },
             {
                 "name": "dump-docs",

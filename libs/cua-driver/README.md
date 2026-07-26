@@ -63,6 +63,8 @@ generated Cua client.
 
 Contributor documentation:
 
+- `docs/cursor-themes.md` documents the default semantic cursor and custom
+  dotLottie authoring contract.
 - `docs/test-matrix.md` maps unit and canonical harness E2E suites.
 - `docs/action-support.md` is the empirical platform behavior ledger.
 - `docs/test-harnesses-guide.md` explains fixture and runner ownership.

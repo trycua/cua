@@ -32,8 +32,10 @@ agent SDK.
 import {
   CaptureScope,
   CuaDriver,
+  CursorReducedMotion,
   EndSessionInput,
   GetDesktopStateInput,
+  SetAgentCursorThemeInput,
   StartSessionInput,
 } from "@trycua/cua-driver"
 
@@ -46,6 +48,13 @@ await driver.startSession(
 )
 
 try {
+  await driver.setAgentCursorTheme(
+    SetAgentCursorThemeInput.new({
+      session: "demo",
+      themeId: "cua.default",
+      reducedMotion: CursorReducedMotion.Auto,
+    }),
+  )
   const desktop = await driver.getDesktopState(
     GetDesktopStateInput.new({ session: "demo" }),
   )
@@ -63,6 +72,12 @@ Desktop calls return a typed `ToolResult` with text,
 images, verification/error metadata, and `structuredJson` / `rawJson` for
 platform-extensible results. Session lifecycle calls return dedicated generated
 records.
+
+The agent cursor is session-owned. Its default theme and custom dotLottie
+authoring workflow are documented in
+[`docs/cursor-themes.md`](../docs/cursor-themes.md). Custom source is compiled
+and installed with the local CLI; SDK and MCP tools select only an installed
+theme ID.
 
 `CuaDriver.connect(socketPath)` remains available while existing applications
 migrate. It exposes the same methods over the installed daemon, but it does not

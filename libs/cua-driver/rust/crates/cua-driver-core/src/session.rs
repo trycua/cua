@@ -79,17 +79,8 @@ pub struct SessionObservationState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CursorStyleCategory {
+pub enum CursorThemeCategory {
     Default,
-    BuiltinArrow,
-    BuiltinTeardrop,
-    CustomIcon,
-    Unknown,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CursorColorSource {
-    AutomaticPalette,
     Custom,
     Unknown,
 }
@@ -100,50 +91,32 @@ pub enum CursorColorSource {
 pub struct CursorOutcomeObservation {
     pub observed: bool,
     pub enabled: bool,
-    pub style: CursorStyleCategory,
-    pub color_source: CursorColorSource,
-    pub label_set: bool,
+    pub theme: CursorThemeCategory,
     pub motion_customized: bool,
     pub active_cursor_count: usize,
 }
 
 /// Convert platform cursor fields to fixed categories without retaining any
-/// raw icon, color, label, identifier, or motion value.
+/// raw theme identifier or motion value.
 pub fn bounded_cursor_outcome(
     observed: bool,
     enabled: bool,
-    icon: Option<&str>,
-    color: Option<&str>,
-    label: Option<&str>,
+    theme_id: Option<&str>,
     motion_customized: bool,
     active_cursor_count: usize,
 ) -> CursorOutcomeObservation {
-    let style = if !observed {
-        CursorStyleCategory::Unknown
+    let theme = if !observed {
+        CursorThemeCategory::Unknown
     } else {
-        match icon.map(str::trim).filter(|value| !value.is_empty()) {
-            None => CursorStyleCategory::Default,
-            Some(value) if value.eq_ignore_ascii_case("arrow") => CursorStyleCategory::BuiltinArrow,
-            Some(value) if value.eq_ignore_ascii_case("teardrop") => {
-                CursorStyleCategory::BuiltinTeardrop
-            }
-            Some(_) => CursorStyleCategory::CustomIcon,
-        }
-    };
-    let color_source = if !observed {
-        CursorColorSource::Unknown
-    } else {
-        match color.map(str::trim).filter(|value| !value.is_empty()) {
-            None | Some("#00FFFF") | Some("#00ffff") => CursorColorSource::AutomaticPalette,
-            Some(_) => CursorColorSource::Custom,
+        match theme_id.map(str::trim).filter(|value| !value.is_empty()) {
+            None | Some("cua.default") => CursorThemeCategory::Default,
+            Some(_) => CursorThemeCategory::Custom,
         }
     };
     CursorOutcomeObservation {
         observed,
         enabled: observed && enabled,
-        style,
-        color_source,
-        label_set: observed && label.is_some_and(|value| !value.trim().is_empty()),
+        theme,
         motion_customized: observed && motion_customized,
         active_cursor_count,
     }
@@ -775,41 +748,21 @@ mod tests {
 
     #[test]
     fn cursor_outcomes_are_fixed_categories_without_raw_values() {
-        let custom = bounded_cursor_outcome(
-            true,
-            true,
-            Some("/private/customer/cursor.svg"),
-            Some("private-brand-color"),
-            Some("private agent label"),
-            true,
-            7,
-        );
-        assert_eq!(custom.style, CursorStyleCategory::CustomIcon);
-        assert_eq!(custom.color_source, CursorColorSource::Custom);
-        assert!(custom.label_set);
+        let custom = bounded_cursor_outcome(true, true, Some("private.customer.theme"), true, 7);
+        assert_eq!(custom.theme, CursorThemeCategory::Custom);
         assert!(custom.motion_customized);
         assert_eq!(custom.active_cursor_count, 7);
         let debug = format!("{custom:?}");
-        for forbidden in ["/private/customer", "private-brand", "private agent"] {
+        for forbidden in ["private.customer.theme"] {
             assert!(
                 !debug.contains(forbidden),
                 "cursor outcome leaked {forbidden}: {debug}"
             );
         }
 
-        let unknown = bounded_cursor_outcome(
-            false,
-            true,
-            Some("arrow"),
-            Some("#00FFFF"),
-            Some("label"),
-            true,
-            0,
-        );
-        assert_eq!(unknown.style, CursorStyleCategory::Unknown);
-        assert_eq!(unknown.color_source, CursorColorSource::Unknown);
+        let unknown = bounded_cursor_outcome(false, true, Some("cua.default"), true, 0);
+        assert_eq!(unknown.theme, CursorThemeCategory::Unknown);
         assert!(!unknown.enabled);
-        assert!(!unknown.label_set);
         assert!(!unknown.motion_customized);
     }
 
@@ -959,7 +912,7 @@ mod tests {
     fn observer_distinguishes_explicit_idle_revival_and_control_cleanup() {
         let probe = probe_observer();
         let _ = set_cursor_outcome_reader(Arc::new(|_| {
-            bounded_cursor_outcome(true, true, Some("arrow"), None, None, false, 2)
+            bounded_cursor_outcome(true, true, Some("cua.default"), false, 2)
         }));
         let explicit = "test-observer-explicit-IJ90";
         begin_tool_call(
@@ -1048,8 +1001,7 @@ mod tests {
             id == explicit
                 && *reason == SessionEndReason::Explicit
                 && cursor.is_some_and(|value| {
-                    value.style == CursorStyleCategory::BuiltinArrow
-                        && value.active_cursor_count == 2
+                    value.theme == CursorThemeCategory::Default && value.active_cursor_count == 2
                 })
         }));
         assert!(ends

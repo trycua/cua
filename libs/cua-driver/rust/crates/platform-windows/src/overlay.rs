@@ -15,7 +15,7 @@
 //! so concurrent MCP sessions clobbered each other last-writer-wins → one
 //! shared cursor. It now keeps a keyed [`RenderMap`] (`IndexMap<CursorKey,
 //! RenderState>`): each declared `session` owns its own cursor with its own
-//! palette, and the ~125 Hz tick composites them all into the single layered
+//! visual state, and the ~125 Hz tick composites them all into the single layered
 //! window. `IndexMap` gives deterministic insertion-ordered iteration = stable
 //! per-session z-order frame to frame. The lifecycle (lazy create, per-key
 //! arrival isolation, `session_end` removal, resurrection tombstone) mirrors
@@ -38,7 +38,7 @@ use std::time::Instant;
 
 use cursor_overlay::{
     CursorConfig, CursorKey, KeyedOverlayCommand, MotionConfig, OverlayCommand, OverlayMsg,
-    Palette, RenderStateCore, ZOrderEnforcer,
+    RenderStateCore, ZOrderEnforcer,
 };
 use indexmap::IndexMap;
 
@@ -96,8 +96,7 @@ struct RenderMap {
     /// timer resolution defaults to 15ms so a hardcoded 8ms would run the
     /// animation at half speed).
     last_tick: Instant,
-    /// Frozen launch-time config used as the template for lazily-created
-    /// cursors (its palette is overridden per-key via `Palette::for_instance`).
+    /// Frozen launch-time config used as the template for lazily-created cursors.
     template: CursorConfig,
     /// Render-side tombstone of permanently-ended session cursor keys. A `Cmd`
     /// for a key in here is dropped WITHOUT get-or-create, so an in-flight
@@ -111,13 +110,11 @@ struct RenderMap {
     last_active: Option<CursorKey>,
 }
 
-/// Build the `RenderState` for a lazily-created cursor key: derive from the
-/// launch template but give each non-default key its own palette so distinct
-/// sessions get distinct colours automatically.
+/// Build the `RenderState` for a lazily-created session cursor from the
+/// process launch template.
 fn render_state_for_key(template: &CursorConfig, key: &str) -> RenderState {
-    let mut rs = RenderState::new(template.clone());
-    rs.core.palette = Palette::for_instance(key);
-    rs
+    let _ = key;
+    RenderState::new(template.clone())
 }
 
 /// Apply one inbound [`OverlayMsg`] to the render map (drain step). Factored
@@ -189,6 +186,38 @@ pub fn init(cfg: CursorConfig) {
             last_active: None,
         });
     });
+    cua_driver_core::cursor_events::install_cursor_event_sink(std::sync::Arc::new(
+        |event: cua_driver_core::cursor_events::CursorEvent| {
+            use cua_driver_core::cursor_events::{CursorEvent, CursorEventPhase};
+            let (session, cmd) = match event {
+                CursorEvent::Action {
+                    session,
+                    phase: CursorEventPhase::Begin,
+                    semantics,
+                } => (
+                    session,
+                    OverlayCommand::BeginAction {
+                        action: semantics.action,
+                        delivery: semantics.delivery,
+                        target: semantics.target,
+                    },
+                ),
+                CursorEvent::Action {
+                    session,
+                    phase: CursorEventPhase::End,
+                    semantics,
+                } => (session, OverlayCommand::EndAction(semantics.action)),
+                CursorEvent::SelectTheme { session, selection } => (
+                    session,
+                    OverlayCommand::SetTheme {
+                        theme_id: selection.theme_id,
+                        reduced_motion: selection.reduced_motion,
+                    },
+                ),
+            };
+            send_command(session, cmd);
+        },
+    ));
 }
 
 /// Send a keyed command from any thread (MCP tool, etc.). Non-blocking; drops
@@ -289,6 +318,25 @@ pub fn current_motion(key: &str) -> MotionConfig {
             })
         })
         .unwrap_or_default()
+}
+
+pub fn current_theme_state(
+    key: &str,
+) -> Option<(
+    String,
+    String,
+    String,
+    Option<String>,
+    cursor_overlay::CursorVisualState,
+)> {
+    let guard = RENDER.lock().ok()?;
+    let map = guard.as_ref()?;
+    let state = map
+        .cursors
+        .get(key)
+        .or_else(|| map.cursors.get("default"))?;
+    let (id, version, profile, fallback) = state.core.active_theme_metadata();
+    Some((id, version, profile, fallback, state.core.visual.clone()))
 }
 
 /// Current screen position of the cursor for `key` (the off-screen sentinel
@@ -1173,15 +1221,18 @@ mod tests {
     }
 
     #[test]
-    fn lazily_created_cursors_get_distinct_palettes() {
+    fn lazily_created_cursors_inherit_the_selected_theme() {
         let mut map = empty_map();
         apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
         apply_msg(&mut map, move_msg("sessB", 20.0, 20.0));
-        let a = &map.cursors["sessA"].core.palette;
-        let b = &map.cursors["sessB"].core.palette;
-        let def = &map.cursors["default"].core.palette;
-        assert_ne!(a.name, def.name);
-        assert_ne!(b.name, def.name);
+        assert_eq!(
+            map.cursors["sessA"].core.cfg.theme_id,
+            map.cursors["default"].core.cfg.theme_id
+        );
+        assert_eq!(
+            map.cursors["sessB"].core.cfg.theme_id,
+            map.cursors["default"].core.cfg.theme_id
+        );
     }
 
     #[test]

@@ -635,6 +635,12 @@ jobs:
           echo "Release files:"
           ls -lh release-upload/
 
+      - name: Validate native release archive payloads
+        run: |
+          python3 .github/scripts/validate_cua_driver_release_artifacts.py \
+            --asset-dir release-upload \
+            --version "${{ steps.version.outputs.version }}"
+
       - name: Generate SHA256 checksums
         run: |
           cd release-upload

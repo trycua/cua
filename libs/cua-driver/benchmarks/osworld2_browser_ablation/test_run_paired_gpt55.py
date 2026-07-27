@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import subprocess
 import tempfile
@@ -159,6 +160,30 @@ class PolicyTests(unittest.TestCase):
         self.assertIn("--no-default-browser-check", command)
         self.assertIn("--disable-search-engine-choice-screen", command)
         self.assertEqual(command.count("--no-first-run"), 1)
+
+    def test_detached_guest_launch_preserves_argv_without_a_shell(self) -> None:
+        command = [
+            "google-chrome",
+            "--remote-debugging-port=1337",
+            "https://example.test/path?a=one&b=two",
+        ]
+        with patch.object(
+            paired.fleet_pilot,
+            "guest_exec",
+            return_value={"returncode": 0},
+        ) as guest_exec:
+            paired.fleet_pilot.guest_launch_detached(
+                command,
+                "/tmp/chrome.log",
+            )
+        launch_command = guest_exec.call_args.args[0]
+        self.assertEqual(launch_command[:2], ["python3", "-c"])
+        self.assertEqual(
+            json.loads(base64.b64decode(launch_command[3])),
+            command,
+        )
+        self.assertEqual(launch_command[4], "/tmp/chrome.log")
+        self.assertEqual(guest_exec.call_args.kwargs, {"timeout": 30})
 
     def test_control_and_treatment_share_native_tools(self) -> None:
         control = {tool["name"] for tool in paired.action_tools("screenshot_ax")}

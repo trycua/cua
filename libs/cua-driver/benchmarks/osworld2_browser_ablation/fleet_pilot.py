@@ -89,6 +89,13 @@ GUEST_HTTP_CODE = (
     "print(json.dumps({'status':status,'headers':h,"
     "'body':base64.b64encode(data).decode('ascii')}))"
 )
+GUEST_DETACHED_LAUNCH_CODE = (
+    "import base64,json,subprocess,sys;"
+    "argv=json.loads(base64.b64decode(sys.argv[1]));"
+    "log=open(sys.argv[2],'ab',buffering=0);"
+    "subprocess.Popen(argv,stdin=subprocess.DEVNULL,stdout=log,stderr=log,"
+    "start_new_session=True,close_fds=True,cwd='/home/user')"
+)
 
 
 class PilotError(RuntimeError):
@@ -649,6 +656,45 @@ def guest_launch(command: list[str] | str, *, shell: bool = False) -> None:
         )
 
 
+def guest_launch_detached(command: list[str], log_path: str) -> None:
+    """Launch an argv-safe guest process beyond the control request lifetime."""
+
+    encoded_command = base64.b64encode(
+        json.dumps(command).encode("utf-8")
+    ).decode("ascii")
+    guest_exec(
+        [
+            "python3",
+            "-c",
+            GUEST_DETACHED_LAUNCH_CODE,
+            encoded_command,
+            log_path,
+        ],
+        timeout=30,
+    )
+
+
+def wait_guest_chrome_cdp(timeout: float = 90) -> None:
+    wait_for(
+        description="detached guest Chrome CDP",
+        timeout=timeout,
+        poll=2,
+        probe=lambda: guest_exec(
+            [
+                "bash",
+                "-lc",
+                (
+                    "if curl -fsS --max-time 5 "
+                    "http://127.0.0.1:1337/json/version >/dev/null; "
+                    "then printf ready; else printf waiting; fi"
+                ),
+            ],
+            timeout=15,
+        ).get("output", "").strip(),
+        ready=lambda value: value == "ready",
+    )
+
+
 class GuestLocalRequests:
     """Route one guest-local origin through the OSWorld control service.
 
@@ -822,6 +868,12 @@ def prepare_browser_task(
                 and command[0] == "google-chrome"
             ):
                 command = isolated_chrome_command(command, guest_chrome_profile)
+                guest_launch_detached(
+                    command,
+                    "/tmp/osworld2-chrome-launch.log",
+                )
+                wait_guest_chrome_cdp()
+                return
             super().launch(command, shell=shell)
 
         def _chrome_open_tabs_setup(self, urls_to_open: list[str]) -> None:

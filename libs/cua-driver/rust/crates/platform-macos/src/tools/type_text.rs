@@ -338,8 +338,9 @@ impl Tool for TypeTextTool {
                 // browser's OWN native chrome (address bar, toolbar) stays trusted.
                 // Probe ONLY when it would otherwise confirm via the AX path, so
                 // native types pay nothing.
-                let ax_echo_surface =
-                    verified && path == PATH_AX && target_in_web_area(pid, element_ptr);
+                let ax_echo_surface = verified
+                    && path_has_untrusted_web_readback(path)
+                    && target_in_web_area(pid, element_ptr);
                 let verified = verified && !ax_echo_surface;
 
                 // `verified:false` means the driver could not confirm the text
@@ -450,6 +451,10 @@ impl Tool for TypeTextTool {
 const PATH_AX: &str = "ax";
 const PATH_KEY_EVENTS: &str = "key_events";
 const PATH_KEY_EVENTS_FG: &str = "key_events_fg";
+
+fn path_has_untrusted_web_readback(path: &str) -> bool {
+    path == PATH_AX
+}
 
 const DELIVERY_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 const DELIVERY_DRAIN_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
@@ -940,6 +945,11 @@ mod tests {
         assert_eq!(PATH_AX, "ax");
         assert_eq!(PATH_KEY_EVENTS, "key_events");
         assert_eq!(PATH_KEY_EVENTS_FG, "key_events_fg");
+    }
+
+    #[test]
+    fn ax_path_has_untrusted_web_readback() {
+        assert!(path_has_untrusted_web_readback(PATH_AX));
     }
 
     #[test]

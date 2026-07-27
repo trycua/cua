@@ -798,7 +798,7 @@ fn command_for_browser(
     } else {
         TEST_BROWSER_WINDOW_SIZE
     };
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[cfg(target_os = "windows")]
     let window_position = if _force_high_device_scale {
         // A scaled inset origin plus Chromium's minimum high-DPI outer width
         // can extend past a small runner even when --window-size is smaller.
@@ -806,6 +806,14 @@ fn command_for_browser(
         (0, 0)
     } else {
         position
+    };
+    #[cfg(target_os = "linux")]
+    // GNOME may horizontally maximize Chromium after applying server-side
+    // frame extents. Anchor this disposable fixture at the display origin so
+    // the full-screen sentinel covers the complete compositor-declared frame.
+    let window_position = {
+        let _ = position;
+        (0, 0)
     };
     #[cfg(target_os = "macos")]
     let window_position = position;

@@ -518,6 +518,11 @@ pub struct DriverHostOptions {
     /// Temporary compatibility hook for daemon-only administrative tools.
     /// Desktop operations must live behind the typed SDK contract instead.
     pub register_host_tools: Option<fn(&mut cua_driver_core::tool::ToolRegistry)>,
+    /// Constructor-only protected consent surface supplied by a trusted Rust
+    /// host. It is never exposed through UniFFI, MCP, CLI arguments, or
+    /// transport metadata.
+    pub protected_consent_provider:
+        Option<Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
 }
 
 /// Runtime that imported the shared UniFFI SDK library. The language package
@@ -839,7 +844,7 @@ impl CuaDriver {
             register_host_tools: options.register_host_tools,
             authorization_ceiling: None,
             compatibility_authorization: None,
-            protected_consent_provider: None,
+            protected_consent_provider: options.protected_consent_provider,
         })
     }
 
@@ -946,7 +951,7 @@ impl CuaDriver {
                     register_host_tools: options.register_host_tools,
                     authorization_ceiling: None,
                     compatibility_authorization: None,
-                    protected_consent_provider: None,
+                    protected_consent_provider: options.protected_consent_provider,
                 },
             )?)),
             client_kind: DaemonClientKind::Unknown,
@@ -995,7 +1000,7 @@ impl CuaDriver {
                     register_host_tools: options.register_host_tools,
                     authorization_ceiling: Some(ceiling),
                     compatibility_authorization: Some((mode, manifest)),
-                    protected_consent_provider: None,
+                    protected_consent_provider: options.protected_consent_provider,
                 },
             )?)),
             client_kind: DaemonClientKind::Unknown,
@@ -1036,6 +1041,7 @@ impl CuaDriver {
                     host.host_bundle_id,
                     host.prepare_desktop_environment,
                     host.register_host_tools,
+                    host.protected_consent_provider,
                 )?,
             )),
             client_kind: DaemonClientKind::Unknown,
@@ -1633,6 +1639,7 @@ mod tests {
             claude_code_compatibility: false,
             prepare_desktop_environment: false,
             register_host_tools: None,
+            protected_consent_provider: None,
         });
         assert!(inventory["tools"]
             .as_array()
@@ -1686,6 +1693,7 @@ mod tests {
             claude_code_compatibility: false,
             prepare_desktop_environment: false,
             register_host_tools: Some(register_slow_host_tool),
+            protected_consent_provider: None,
         })
         .unwrap();
         let action_driver = driver.clone();

@@ -12,6 +12,18 @@
 
 use cua_driver_core::tool::ToolRegistry;
 
+#[cfg(target_os = "linux")]
+pub mod protected_consent;
+
+#[cfg(target_os = "linux")]
+pub fn protected_consent_event(event: &overlay_ui::HelperEvent) -> anyhow::Result<()> {
+    let mut stdout = std::io::stdout().lock();
+    serde_json::to_writer(&mut stdout, event)?;
+    std::io::Write::write_all(&mut stdout, b"\n")?;
+    std::io::Write::flush(&mut stdout)?;
+    Ok(())
+}
+
 pub mod health_report;
 pub mod overlay;
 pub mod pip;

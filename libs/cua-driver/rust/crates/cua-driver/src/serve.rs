@@ -1858,6 +1858,7 @@ mod gate_tests {
                 claude_code_compatibility: false,
                 prepare_desktop_environment: false,
                 register_host_tools: Some(register_probe),
+                protected_consent_provider: None,
             });
         let direct_driver = driver.clone();
         let sdk = crate::sdk_adapter::SdkAdapter::load(driver)

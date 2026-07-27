@@ -954,6 +954,7 @@ dependencies = [
  "futures-util",
  "image",
  "libc",
+ "overlay-ui",
  "pip-preview",
  "platform-linux",
  "platform-macos",
@@ -1392,6 +1393,28 @@ name = "foldhash"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
+
+[[package]]
+name = "fontconfig-parser"
+version = "0.5.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbc773e24e02d4ddd8395fd30dc147524273a83e54e0f312d986ea30de5f5646"
+dependencies = [
+ "roxmltree",
+]
+
+[[package]]
+name = "fontdb"
+version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3a6f9af55fb97ad673fb7a69533eb2f967648a06fa21f8c9bb2cd6d33975716"
+dependencies = [
+ "fontconfig-parser",
+ "log",
+ "slotmap",
+ "tinyvec",
+ "ttf-parser",
+]
 
 [[package]]
 name = "foreign-types"
@@ -2527,6 +2550,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
 
 [[package]]
+name = "overlay-ui"
+version = "0.12.6"
+dependencies = [
+ "cursor-overlay",
+ "image",
+ "resvg",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tiny-skia",
+ "usvg",
+]
+
+[[package]]
 name = "parking"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2666,6 +2703,7 @@ dependencies = [
  "libc",
  "libspa",
  "meval",
+ "overlay-ui",
  "pip-preview",
  "pipewire",
  "reis",
@@ -2710,6 +2748,7 @@ dependencies = [
  "objc2-app-kit",
  "objc2-foundation",
  "objc2-quartz-core",
+ "overlay-ui",
  "pip-preview",
  "screencapturekit",
  "serde",
@@ -2734,6 +2773,7 @@ dependencies = [
  "cursor-overlay",
  "image",
  "indexmap",
+ "overlay-ui",
  "pip-preview",
  "serde",
  "serde_json",

@@ -1,0 +1,16 @@
+[package]
+name = "overlay-ui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+resvg = { version = "0.44", default-features = false }
+tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
+usvg = { version = "0.44", default-features = false, features = ["text", "system-fonts"] }
+
+[dev-dependencies]
+image = { workspace = true }
+cursor-overlay = { path = "../cursor-overlay" }

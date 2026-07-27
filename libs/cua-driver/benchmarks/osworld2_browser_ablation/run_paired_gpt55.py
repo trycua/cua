@@ -16,6 +16,7 @@ import base64
 import hashlib
 import json
 import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -962,6 +963,27 @@ def task_instruction() -> str:
     return str(Task070.instruction)
 
 
+def select_chrome_profile_command(
+    process_listing: str,
+    guest_profile: str,
+) -> list[str]:
+    profile_arg = f"--user-data-dir={guest_profile}"
+    matches: list[list[str]] = []
+    for line in process_listing.splitlines():
+        try:
+            command = shlex.split(line)
+        except ValueError:
+            continue
+        if profile_arg in command:
+            matches.append(command)
+    if len(matches) != 1:
+        raise PairedRunError(
+            "Chrome fresh-profile process count was "
+            f"{len(matches)}; expected exactly one"
+        )
+    return matches[0]
+
+
 def reset_and_setup_task(cache_dir: Path) -> dict[str, Any]:
     # The benchmark VM is disposable and contains no user browser session.
     fleet_pilot.guest_exec(
@@ -1007,21 +1029,20 @@ def reset_and_setup_task(cache_dir: Path) -> dict[str, Any]:
         ready=lambda value: value == "ready",
     )
     time.sleep(5)
-    chrome_command = str(
+    chrome_processes = str(
         fleet_pilot.guest_exec(
             [
                 "bash",
                 "-lc",
-                (
-                    "set -e; pid=$(pgrep -o -x chrome); "
-                    "tr '\\0' '\\n' </proc/$pid/cmdline"
-                ),
+                "ps -ww -C chrome -o args=",
             ],
             timeout=30,
         ).get("output", "")
     ).strip()
-    if f"--user-data-dir={guest_profile}" not in chrome_command.splitlines():
-        raise PairedRunError("Chrome did not use the fresh episode profile")
+    chrome_command = select_chrome_profile_command(
+        chrome_processes,
+        guest_profile,
+    )
     initial_evaluation = evaluate_task(cache_dir)
     initial_teamchat = evaluate_teamchat_summary(cache_dir)
     if initial_teamchat["posted_summary"]:
@@ -1033,7 +1054,7 @@ def reset_and_setup_task(cache_dir: Path) -> dict[str, Any]:
     }
     return {
         "guest_chrome_profile": guest_profile,
-        "chrome_command": chrome_command.splitlines(),
+        "chrome_command": chrome_command,
         "initial_evaluation": initial_evaluation,
         "initial_teamchat": initial_teamchat,
         "cache_file_sha256": cache_hashes,

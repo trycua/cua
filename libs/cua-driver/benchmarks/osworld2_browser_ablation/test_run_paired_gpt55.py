@@ -11,6 +11,35 @@ import run_paired_gpt55 as paired
 
 
 class PolicyTests(unittest.TestCase):
+    def test_fresh_chrome_profile_ignores_unrelated_processes(self) -> None:
+        profile = "/tmp/osworld2-chrome-test"
+        listing = "\n".join(
+            (
+                "[chrome] <defunct>",
+                (
+                    "/opt/google/chrome/chrome --type=renderer "
+                    "--remote-debugging-port=1337"
+                ),
+                (
+                    "/opt/google/chrome/chrome "
+                    f"--user-data-dir={profile} --remote-debugging-port=1337"
+                ),
+            )
+        )
+        command = paired.select_chrome_profile_command(listing, profile)
+        self.assertIn(f"--user-data-dir={profile}", command)
+        self.assertNotIn("--type=renderer", command)
+
+    def test_fresh_chrome_profile_requires_one_browser_process(self) -> None:
+        with self.assertRaisesRegex(
+            paired.PairedRunError,
+            "process count was 0",
+        ):
+            paired.select_chrome_profile_command(
+                "/opt/google/chrome/chrome --type=renderer",
+                "/tmp/missing",
+            )
+
     def test_fleet_state_path_may_live_outside_source_tree(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             work_dir = Path(directory).resolve()

@@ -56,6 +56,7 @@ pub fn render_consent(
 ) -> Result<Pixmap, RenderError> {
     let title = operation_title(&sanitize_label(&card.operation));
     let summary = sanitize_summary(&card.summary);
+    let risk_label = sanitize_label(&card.risk_label);
     let lines = wrap_text(&summary, 50, 2);
     let accept_fill = if state.accept_armed {
         if state.accept_hovered {
@@ -87,12 +88,13 @@ pub fn render_consent(
 <text x="32" y="82" fill="#1C1C1A" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="20" font-weight="600">{title}</text>
 {summary_svg}
 <path d="M34 169v-2.5a4 4 0 018 0v2.5m-9 0h10v8h-10z" fill="none" stroke="#8A8A84" stroke-width="1.2" stroke-linejoin="round"/>
-<text x="51" y="176" fill="#777771" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11.5">Only you can approve this</text>
+<text x="51" y="176" fill="#777771" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11.5">Local desktop confirmation · {risk_label}</text>
 <rect x="32" y="202" width="172" height="44" rx="10" fill="{decline_fill}" stroke="#D6D6D2"/>
 <text x="118" y="229" text-anchor="middle" fill="#2B2B29" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="13.5" font-weight="600">Don’t allow</text>
 <rect x="220" y="202" width="172" height="44" rx="10" fill="{accept_fill}"/>
 <text x="306" y="229" text-anchor="middle" fill="{accept_text}" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="13.5" font-weight="600">Allow once</text>
-</svg>"##
+</svg>"##,
+        risk_label = escape_xml(&risk_label)
     );
     render_svg(&svg, CONSENT_SIZE, scale)
 }

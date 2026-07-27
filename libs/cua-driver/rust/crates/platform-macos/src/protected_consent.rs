@@ -8,9 +8,9 @@ use objc2::runtime::{AnyClass, AnyObject};
 use objc2::{class, msg_send};
 use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize};
 use overlay_ui::{
-    place_near_pointer, render_consent, render_indicator, ConsentInteraction, ConsentVisualState,
-    HelperDecision, HelperEvent, HelperRequest, InteractionOutcome, Point, Rect, ACCEPT_RECT,
-    CONSENT_SIZE, DECLINE_RECT, INDICATOR_SIZE, STOP_RECT,
+    place_near_pointer, render_consent, render_indicator, surface_fits, ConsentInteraction,
+    ConsentVisualState, HelperDecision, HelperEvent, HelperRequest, InteractionOutcome, Point,
+    Rect, ACCEPT_RECT, CONSENT_SIZE, DECLINE_RECT, INDICATOR_SIZE, STOP_RECT,
 };
 
 thread_local! {
@@ -65,21 +65,21 @@ unsafe fn run_appkit(request: HelperRequest) -> anyhow::Result<()> {
         HelperRequest::Consent(_) => CONSENT_SIZE,
         HelperRequest::Indicator(_) => INDICATOR_SIZE,
     };
+    let work_area = Rect {
+        x: 0.0,
+        y: 0.0,
+        width: visible.size.width,
+        height: visible.size.height,
+    };
+    if !surface_fits(work_area, logical_size) {
+        anyhow::bail!("the active display work area is too small for the local confirmation");
+    }
     let pointer = Point {
         x: mouse.x - visible.origin.x,
         y: visible.origin.y + visible.size.height - mouse.y,
     };
     let top_left = match &request {
-        HelperRequest::Consent(_) => place_near_pointer(
-            pointer,
-            Rect {
-                x: 0.0,
-                y: 0.0,
-                width: visible.size.width,
-                height: visible.size.height,
-            },
-            logical_size,
-        ),
+        HelperRequest::Consent(_) => place_near_pointer(pointer, work_area, logical_size),
         HelperRequest::Indicator(_) => Point {
             x: (visible.size.width - logical_size.width - 18.0).max(18.0),
             y: 18.0,
@@ -173,6 +173,11 @@ unsafe fn run_appkit(request: HelperRequest) -> anyhow::Result<()> {
 
     let _: () = msg_send![window, makeKeyAndOrderFront: std::ptr::null::<AnyObject>()];
     let _: () = msg_send![app, activateIgnoringOtherApps: true];
+    let _: () = msg_send![window, display];
+    let visible_now: bool = msg_send![window, isVisible];
+    if !visible_now {
+        anyhow::bail!("the local confirmation window did not become visible");
+    }
     if matches!(
         CONTEXT.with(|slot| slot
             .borrow()

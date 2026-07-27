@@ -4,9 +4,9 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use overlay_ui::{
-    place_near_pointer, render_consent, render_indicator, ConsentInteraction, ConsentVisualState,
-    HelperDecision, HelperEvent, HelperRequest, InteractionOutcome, Point, Rect, ACCEPT_RECT,
-    CONSENT_SIZE, CONTROL_ARM_DELAY, DECLINE_RECT, INDICATOR_SIZE, STOP_RECT,
+    place_near_pointer, render_consent, render_indicator, surface_fits, ConsentInteraction,
+    ConsentVisualState, HelperDecision, HelperEvent, HelperRequest, InteractionOutcome, Point,
+    Rect, ACCEPT_RECT, CONSENT_SIZE, CONTROL_ARM_DELAY, DECLINE_RECT, INDICATOR_SIZE, STOP_RECT,
 };
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::*;
@@ -80,6 +80,9 @@ unsafe fn run_win32(request: HelperRequest) -> anyhow::Result<()> {
         width: logical_size.width * scale as f64,
         height: logical_size.height * scale as f64,
     };
+    if !surface_fits(work_rect, physical_size) {
+        anyhow::bail!("the active display work area is too small for the local confirmation");
+    }
     let origin = match &request {
         HelperRequest::Consent(_) => place_near_pointer(
             Point {
@@ -141,6 +144,10 @@ unsafe fn run_win32(request: HelperRequest) -> anyhow::Result<()> {
     let _ = SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
     redraw();
     ShowWindow(hwnd, SW_SHOW);
+    UpdateWindow(hwnd).ok()?;
+    if !IsWindowVisible(hwnd).as_bool() {
+        anyhow::bail!("the local confirmation window did not become visible");
+    }
     let _ = SetForegroundWindow(hwnd);
     SetTimer(hwnd, 1, CONTROL_ARM_DELAY.as_millis() as u32, None);
     if let Some(delay) = consent_expiry_delay() {

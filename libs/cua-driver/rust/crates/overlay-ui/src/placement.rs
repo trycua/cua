@@ -27,11 +27,23 @@ impl Rect {
     }
 }
 
+const EDGE: f64 = 12.0;
+
+pub fn surface_fits(work_area: Rect, surface: Size) -> bool {
+    work_area.width.is_finite()
+        && work_area.height.is_finite()
+        && surface.width.is_finite()
+        && surface.height.is_finite()
+        && surface.width > 0.0
+        && surface.height > 0.0
+        && work_area.width >= surface.width + EDGE * 2.0
+        && work_area.height >= surface.height + EDGE * 2.0
+}
+
 /// Place a surface close to the physical pointer while keeping both the
 /// pointer and the whole card visible. Coordinates use a top-left origin.
 pub fn place_near_pointer(pointer: Point, work_area: Rect, surface: Size) -> Point {
     const GAP: f64 = 18.0;
-    const EDGE: f64 = 12.0;
 
     let right = pointer.x + GAP;
     let left = pointer.x - GAP - surface.width;
@@ -117,5 +129,19 @@ mod tests {
         );
         assert!(point.x >= work.x + 12.0);
         assert!(point.y >= work.y + 12.0);
+    }
+
+    #[test]
+    fn reports_work_areas_that_cannot_contain_the_surface() {
+        assert!(!surface_fits(
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 320.0,
+                height: 200.0,
+            },
+            CARD
+        ));
+        assert!(surface_fits(WORK, CARD));
     }
 }

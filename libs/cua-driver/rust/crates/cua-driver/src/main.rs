@@ -341,7 +341,7 @@ fn run_mcp_direct(compatibility_mode: bool) -> anyhow::Result<()> {
     cua_driver_core::authorization::validate_startup_authorization()?;
     cua_driver_core::policy::validate_configured_policy()?;
     let cursor = cursor_overlay::CursorConfig::from_args();
-    // A plain stdio MCP process does not provide the certified AppKit
+    // A plain stdio MCP process does not provide the required AppKit
     // main-thread host adapter. Explicit direct mode on macOS must therefore
     // expose facility_unavailable instead of initializing an overlay that can
     // report success without a usable UI owner. Private-worker and app-service

@@ -966,10 +966,11 @@ fn enforce_hard_invariants(
     tool: &str,
     args: &Value,
 ) -> Result<(), crate::policy::AuthorizationError> {
-    // Provider and indicator adapters hosted by the daemon must never become
-    // an ordinary target. Coordinate-only desktop input cannot prove a target
-    // PID and therefore is not a protected-UI route; certified providers must
-    // render outside that surface and independently reject synthetic input.
+    // Provider and indicator adapters hosted by the runtime must never become
+    // an ordinary process-targeted Cua action. This protects the runtime's own
+    // controls from its PID-bound tools. It does not turn an ordinary
+    // same-desktop window into a secure-desktop boundary: coordinate-only
+    // input from Cua or another automation runtime remains a separate threat.
     let process_targeting_tool = matches!(
         tool,
         "click"
@@ -1153,6 +1154,11 @@ pub fn status_json() -> serde_json::Value {
 pub fn status_json_with_provider(
     protected_consent_collector: Option<&'static str>,
 ) -> serde_json::Value {
+    let protected_consent_assurance = match protected_consent_collector {
+        Some("cua_local_desktop_confirmation_v1") => "same_desktop_best_effort",
+        Some(_) => "host_provided",
+        None => "unavailable",
+    };
     let mode = configured_permission_mode();
     let policy = crate::policy::configured_policy();
     let managed_policy = crate::policy::configured_managed_policy();
@@ -1214,6 +1220,7 @@ pub fn status_json_with_provider(
         "effective_not_exposed_risk_enforcement": effective_not_exposed_risk_enforcement,
         "enforcement_adapters": enforcement_adapter_inventory_json(),
         "protected_consent_collector": protected_consent_collector,
+        "protected_consent_assurance": protected_consent_assurance,
         "session_policy_configured": std::env::var_os(crate::session_manifest::SESSION_POLICY_FILE_ENV).is_some(),
         "session_policy_approved_at_startup": env_flag(crate::session_manifest::SESSION_POLICY_APPROVED_ENV),
         "session_policy_valid": session_policy.is_ok(),
@@ -1573,6 +1580,17 @@ mod tests {
         assert_eq!(
             status["enforcement_adapters"],
             enforcement_adapter_inventory_json()
+        );
+        assert_eq!(status["protected_consent_assurance"], "unavailable");
+        assert_eq!(
+            status_json_with_provider(Some("cua_local_desktop_confirmation_v1"))
+                ["protected_consent_assurance"],
+            "same_desktop_best_effort"
+        );
+        assert_eq!(
+            status_json_with_provider(Some("external_host_consent_v1"))
+                ["protected_consent_assurance"],
+            "host_provided"
         );
         assert_eq!(status["effective_session_mode_source"], "process");
         assert_eq!(status["session_mode_delegation_enabled"], false);

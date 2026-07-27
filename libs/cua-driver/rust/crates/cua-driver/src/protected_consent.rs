@@ -1,7 +1,10 @@
-//! Built-in protected consent host for standalone Cua Driver runtimes.
+//! Built-in local-desktop confirmation host for standalone Cua Driver runtimes.
 //!
 //! The surface runs in a separate instance of the signed driver executable.
 //! Its request and result travel only through inherited anonymous pipes.
+//! This improves visibility and prevents tool-argument forgery, but it is not a
+//! secure-desktop boundary: another process that can automate the same desktop
+//! can still activate the prompt.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -91,7 +94,7 @@ struct IndicatorProcess {
 #[async_trait]
 impl ProtectedConsentProvider for NativeProtectedConsentProvider {
     fn provider_id(&self) -> &'static str {
-        "cua_native_overlay_v1"
+        "cua_local_desktop_confirmation_v1"
     }
 
     async fn request_consent(&self, request: &ConsentRequest) -> Result<ProviderDecision, String> {

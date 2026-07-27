@@ -1,6 +1,6 @@
 ---
 title: Permission modes and bounded autonomy
-description: Standard, bounded, and unrestricted startup modes, protected consent, session manifests, and revocation in Cua Driver.
+description: Standard, bounded, and unrestricted startup modes, confirmation providers, session manifests, and revocation in Cua Driver.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -18,9 +18,9 @@ allowed.
 
 | Mode | Startup | Human intervention | Existing logged-in profile |
 | --- | --- | --- | --- |
-| `standard` | Default | Once per exact protected resource or typed action, including user-owned observation/input, file transfer, process termination, persistent configuration, and existing-profile attachment; grants are reused only within their exact scope | Requires a certified protected-consent provider and its persistent Stop indicator |
-| `bounded` | `--permission-mode bounded --session-policy <path> --approve-session-policy` | Once when a trusted launcher reviews and approves the bounded manifest | Allowed only when the manifest names the exact PID/window and a certified indicator provider is available |
-| `unrestricted` | `--dangerously-bypass-approvals` | Once at trusted launch; no runtime Cua approval prompts | May attach without a protected provider after the explicit launch warning |
+| `standard` | Default | Once per exact protected resource or typed action, including user-owned observation/input, file transfer, process termination, persistent configuration, and existing-profile attachment; grants are reused only within their exact scope | Requires an available confirmation provider and its persistent Stop indicator |
+| `bounded` | `--permission-mode bounded --session-policy <path> --approve-session-policy` | Once when a trusted launcher reviews and approves the bounded manifest | Allowed only when the manifest names the exact PID/window and an indicator provider is available |
+| `unrestricted` | `--dangerously-bypass-approvals` | Once at trusted launch; no runtime Cua approval prompts | May attach without a confirmation provider after the explicit launch warning |
 
 `autonomous` remains a compatibility alias for `bounded`; new launchers and
 manifests should use `bounded`. `yolo` remains a configuration alias for
@@ -68,7 +68,7 @@ The current inventory is fail-closed:
 | `browser_unbounded_script` | `active` | Legacy `page` mutations have no exact browser binding and are denied in `standard` and `bounded`; only trusted launch-time acceptance of `unrestricted` can admit them. |
 | `process_control` | `active` | `kill_app` approval binds an OS process fingerprint, which is re-proved immediately before termination to reject PID reuse. |
 | `os_permission_prompt` | `active` | Agent tool calls cannot raise protected OS permission UI in any mode. `check_permissions` is read-only by default and explicit `prompt:true` is refused before platform dispatch. On macOS, the human-run `cua-driver permissions grant` setup command launches the installed app through LaunchServices; macOS owns the actual approval UI. |
-| `driver_configuration` | `active` | Persistent `set_config` changes require an exact protected grant in `standard` and an approved bounded scope in `bounded`. |
+| `driver_configuration` | `active` | Persistent `set_config` changes require an exact confirmed grant in `standard` and an approved bounded scope in `bounded`. |
 | `clipboard`, `devices`, `shell_and_network` | `not_exposed` | Cua Driver does not expose these open-ended capabilities. |
 
 No exposed sensitive route remains `metadata_only`. Compound calls must satisfy
@@ -76,29 +76,43 @@ every adapter they cross: screenshot-to-file needs both observation and exact
 file-output grants, while trajectory replay needs exact file input and desktop
 input grants.
 
-## Protected consent
+## Confirmation providers
 
-A protected provider must return a decision directly to the daemon over an
-authenticated host or OS channel. The request binds the decision to the daemon
-instance, request nonce, generation, mode, policy hashes, sessions, operation,
-expiry, and exact resource. An accepted request becomes live only after the
-provider activates a persistent indicator with a Stop control.
+A confirmation provider returns a decision directly to the runtime instead of
+accepting a Boolean tool argument. The request binds the decision to the
+runtime instance, request nonce, generation, mode, policy hashes, sessions,
+operation, expiry, and exact resource. An accepted request becomes live only
+after the provider activates a persistent indicator with a Stop control.
 
 Ordinary MCP elicitation, MCP tool arguments, inherited standard input, a TTY,
 environment variables, and files do not satisfy this contract. They are
-writable by the calling process. If the runtime has no certified provider,
+writable by the calling process. If the runtime has no provider,
 `standard` and `bounded` refuse protected user-owned resources and typed
 actions—including observation, input, file transfer/output, process control,
 persistent configuration, and existing-profile attachment—before platform
 dispatch when the required host is unavailable.
 
-<Callout type="info">
-  The current standalone CLI/MCP daemon has no certified Codex or Claude host
-  provider. Its protected-consent status therefore reports `unavailable`.
-  Proven driver-owned isolated browser profiles remain prompt-light. A trusted
-  embedding host can install the provider interface in process for user-owned
-  resources.
+<Callout type="warn" title="Same-desktop confirmation is best effort">
+  Interactive standalone CLI and MCP runtimes use Cua's built-in native
+  confirmation card and persistent Stop indicator. This UI is visible,
+  request-bound, and cannot be forged with a Cua tool argument, but it is an
+  ordinary window on the same desktop. Another local automation runtime,
+  malware process, or remote-desktop controller that can operate that desktop
+  can activate it. It is not a secure-desktop, biometric, or forge-resistant
+  human-consent boundary.
 </Callout>
+
+`get_config.authorization.protected_consent_assurance` reports
+`same_desktop_best_effort` for the built-in native provider, `host_provided`
+for an embedding-host provider, or `unavailable`. Headless runtimes without an
+interactive surface report `unavailable` and fail closed where confirmation or
+an indicator is required. Proven driver-owned isolated browser profiles remain
+prompt-light.
+
+An embedding host can install its own provider. The host determines its actual
+assurance—for example, whether the decision originates in a UI, policy engine,
+second device, or stronger OS-controlled surface. Cua reports such a provider
+as `host_provided`; that label is not a certification.
 
 The old file-backed `browser-approve` artifact is disabled by default for
 existing profiles. A trusted launcher can temporarily enable it with
@@ -173,8 +187,8 @@ ask:
 ```
 
 Tools omitted from all three sets are denied. `ask` also denies unattended
-dispatch because an agent cannot accept its own prompt. A future protected
-host adapter may resume such a call after protected approval.
+dispatch because an agent cannot accept its own prompt. A future trusted-host
+adapter may resume such a call after host approval.
 
 For existing-profile preparation, the requested PID and native window must
 match an `existing_profiles` entry. That exact entry also covers observation

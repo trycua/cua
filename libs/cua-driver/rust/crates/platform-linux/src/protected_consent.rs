@@ -8,22 +8,22 @@
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use overlay_ui::{
-    place_near_pointer, render_consent, render_indicator, ConsentInteraction, ConsentVisualState,
-    HelperDecision, HelperEvent, HelperRequest, InteractionOutcome, Point, Rect, ACCEPT_RECT,
-    CONSENT_SIZE, CONTROL_ARM_DELAY, DECLINE_RECT, INDICATOR_SIZE, STOP_RECT,
+    place_near_pointer, render_consent, render_indicator, surface_fits, ConsentInteraction,
+    ConsentVisualState, HelperDecision, HelperEvent, HelperRequest, InteractionOutcome, Point,
+    Rect, ACCEPT_RECT, CONSENT_SIZE, CONTROL_ARM_DELAY, DECLINE_RECT, INDICATOR_SIZE, STOP_RECT,
 };
 use x11rb::connection::Connection;
 use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK, SO};
 use x11rb::protocol::xproto::{
     AtomEnum, ClipOrdering, ColormapAlloc, ConfigureWindowAux, ConnectionExt, CreateGCAux,
-    CreateWindowAux, EventMask, ImageFormat, InputFocus, PropMode, Rectangle, StackMode,
+    CreateWindowAux, EventMask, ImageFormat, InputFocus, MapState, PropMode, Rectangle, StackMode,
     VisualClass, WindowClass,
 };
 use x11rb::protocol::Event;
 use x11rb::wrapper::ConnectionExt as WrapperConnectionExt;
 
 pub fn interactive_surface_available() -> bool {
-    std::env::var_os("DISPLAY").is_some()
+    std::env::var_os("DISPLAY").is_some() && x11rb::connect(None).is_ok()
 }
 
 pub fn run(request: HelperRequest) -> anyhow::Result<()> {
@@ -61,6 +61,9 @@ fn run_x11(request: HelperRequest) -> anyhow::Result<()> {
         width: screen.width_in_pixels as f64,
         height: screen.height_in_pixels as f64,
     };
+    if !surface_fits(work, logical_size) {
+        anyhow::bail!("the active display work area is too small for the local confirmation");
+    }
     let origin = match &request {
         HelperRequest::Consent(_) => place_near_pointer(
             Point {
@@ -109,6 +112,7 @@ fn run_x11(request: HelperRequest) -> anyhow::Result<()> {
                     | EventMask::BUTTON_PRESS
                     | EventMask::BUTTON_RELEASE
                     | EventMask::KEY_PRESS
+                    | EventMask::EXPOSURE
                     | EventMask::STRUCTURE_NOTIFY,
             ),
     )?;
@@ -117,7 +121,12 @@ fn run_x11(request: HelperRequest) -> anyhow::Result<()> {
         window,
         AtomEnum::WM_NAME,
         AtomEnum::STRING,
-        b"Cua protected consent",
+        b"Cua local confirmation",
+    )?;
+    set_window_metadata(
+        &connection,
+        window,
+        matches!(&request, HelperRequest::Indicator(_)),
     )?;
     let gc = connection.generate_id()?;
     connection.create_gc(gc, window, &CreateGCAux::new())?;
@@ -142,6 +151,17 @@ fn run_x11(request: HelperRequest) -> anyhow::Result<()> {
     )?;
     let _ = connection.set_input_focus(InputFocus::PARENT, window, x11rb::CURRENT_TIME);
     connection.flush()?;
+    let visibility_deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if connection.get_window_attributes(window)?.reply()?.map_state == MapState::VIEWABLE {
+            break;
+        }
+        if Instant::now() >= visibility_deadline {
+            anyhow::bail!("the local confirmation window did not become viewable");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    paint(&connection, window, depth, gc, &mode, local_pointer)?;
     crate::protected_consent_event(&HelperEvent::Ready)?;
 
     let shown = Instant::now();
@@ -273,6 +293,60 @@ fn run_x11(request: HelperRequest) -> anyhow::Result<()> {
     connection.destroy_window(window).ok();
     connection.flush().ok();
     crate::protected_consent_event(&outcome.unwrap_or_else(|| fallback_outcome(&mode)))?;
+    Ok(())
+}
+
+fn set_window_metadata(
+    connection: &impl Connection,
+    window: u32,
+    indicator: bool,
+) -> anyhow::Result<()> {
+    let atom = |name: &str| -> anyhow::Result<u32> {
+        Ok(connection
+            .intern_atom(false, name.as_bytes())?
+            .reply()?
+            .atom)
+    };
+    let wm_class = atom("WM_CLASS")?;
+    connection.change_property8(
+        PropMode::REPLACE,
+        window,
+        wm_class,
+        AtomEnum::STRING,
+        b"cua-driver\0CuaDriver\0",
+    )?;
+
+    let cardinal = AtomEnum::CARDINAL;
+    connection.change_property32(
+        PropMode::REPLACE,
+        window,
+        atom("_NET_WM_PID")?,
+        cardinal,
+        &[std::process::id()],
+    )?;
+
+    let window_type = atom("_NET_WM_WINDOW_TYPE")?;
+    let concrete_type = atom(if indicator {
+        "_NET_WM_WINDOW_TYPE_NOTIFICATION"
+    } else {
+        "_NET_WM_WINDOW_TYPE_DIALOG"
+    })?;
+    connection.change_property32(
+        PropMode::REPLACE,
+        window,
+        window_type,
+        AtomEnum::ATOM,
+        &[concrete_type],
+    )?;
+
+    let state = atom("_NET_WM_STATE")?;
+    let states = [
+        atom("_NET_WM_STATE_ABOVE")?,
+        atom("_NET_WM_STATE_STICKY")?,
+        atom("_NET_WM_STATE_SKIP_TASKBAR")?,
+        atom("_NET_WM_STATE_SKIP_PAGER")?,
+    ];
+    connection.change_property32(PropMode::REPLACE, window, state, AtomEnum::ATOM, &states)?;
     Ok(())
 }
 

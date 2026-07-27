@@ -11,7 +11,7 @@ mod render;
 mod sanitize;
 
 pub use interaction::{ConsentInteraction, InteractionOutcome, PointerButton, CONTROL_ARM_DELAY};
-pub use placement::{place_near_pointer, Point, Rect, Size};
+pub use placement::{place_near_pointer, surface_fits, Point, Rect, Size};
 pub use render::{
     render_consent, render_indicator, ConsentVisualState, RenderError, ACCEPT_RECT, CONSENT_SIZE,
     DECLINE_RECT, INDICATOR_SIZE, STOP_RECT,

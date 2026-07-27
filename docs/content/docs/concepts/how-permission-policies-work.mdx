@@ -108,9 +108,10 @@ A policy that allows `screenshot` permits an agent to take an unlimited number o
 The policy is evaluated in the same process as the tool implementation. An
 agent that can replace or inject code into the runtime-owning process can
 bypass it. Local shell access alone does not turn ordinary MCP arguments,
-files, TTY input, or environment values into protected consent. Use a trusted
-host to construct direct runtimes, or a trusted launcher and OS isolation for
-workers and services.
+files, TTY input, or environment values into a trusted confirmation channel.
+The built-in native card is only best-effort same-desktop confirmation. Use a
+trusted host to construct direct runtimes, or a trusted launcher and OS
+isolation for workers and services.
 
 For remote agents connecting through an authenticated service, the policy
 provides a meaningful boundary: the service runtime will not execute a tool

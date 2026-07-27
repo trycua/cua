@@ -22,16 +22,23 @@ profiles.
 with legacy `allow_launch` or `profile` fields. Authorization depends on the
 daemon's immutable [permission mode](/reference/cua-driver/permission-modes):
 
-- `standard` requests exact protected consent from a certified host provider.
+- `standard` requests exact confirmation from the runtime's provider.
 - `bounded` requires the launch-approved manifest to list this PID/window;
   the provider activates its persistent Stop indicator without a second prompt.
 - `unrestricted` attaches without a runtime approval after the trusted launcher
   supplied `--dangerously-bypass-approvals`.
 
 The internal approval marker supplied by an MCP transport does not authorize
-this strategy. The standalone daemon currently has no certified Codex or Claude
-host provider, so `standard` and `bounded` fail closed there. Use an isolated
-profile or an explicitly launched unrestricted daemon.
+this strategy. Interactive standalone daemons use Cua's native confirmation
+card. Headless daemons without a confirmation surface fail closed in
+`standard`, and bounded attachment fails when its required persistent
+indicator cannot be shown.
+
+The native card is same-desktop, best-effort confirmation. It prevents
+tool-argument forgery and clearly presents the exact operation, but another
+process or remote-desktop controller that can automate the same desktop can
+activate it. It is not a secure-desktop or biometric boundary. Use a stronger
+host-provided collector when local hostile automation is in scope.
 
 The old `browser-approve` file artifact is disabled by default. A trusted
 launcher can temporarily enable it with
@@ -111,11 +118,11 @@ by the previous generation.
 | --- | --- |
 | Network exposure | The accepted DevTools endpoint must be loopback-only. |
 | Process binding | The endpoint, native window, and live process fingerprint must agree before every mutation. |
-| Driver authorization | Standard and bounded setup need a request-bound protected provider; a model-supplied Boolean, ordinary MCP approval, TTY input, and files are insufficient. |
-| Revocation | A protected grant cannot become live until its provider activates persistent Stop UI. `cua-driver revoke` and session end provide additional deny-only paths. |
+| Driver authorization | Standard and bounded setup need a request-bound confirmation provider; a model-supplied Boolean, ordinary MCP approval, TTY input, and files are insufficient. The built-in native card has `same_desktop_best_effort` assurance. |
+| Revocation | A grant cannot become live until its provider activates persistent Stop UI. `cua-driver revoke` and session end provide additional deny-only paths. |
 | Capability scope | Targets, tabs, dialogs, frames, and refs are opaque, session-scoped, and invalidated after navigation or connection-generation changes. |
 | Profile handling | Cua Driver does not copy, edit, restart, or terminate the selected existing profile. |
-| Residual local risk | CDP itself is not authenticated. Another process running as the same OS user may connect to an exposed endpoint outside Cua Driver. |
+| Residual local risk | CDP itself is not authenticated. Another process running as the same OS user may connect to an exposed endpoint outside Cua Driver. Another automation runtime with control of the same desktop may also activate the built-in confirmation card. |
 
 An isolated profile is the recommended default. Existing-profile attachment is
 appropriate only when the task requires its authenticated state and the host is

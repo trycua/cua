@@ -135,17 +135,17 @@ impl ProtectedGrant {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ConsentError {
-    #[error("no certified protected-consent provider is available")]
+    #[error("no request-bound confirmation provider is available")]
     Unavailable,
-    #[error("protected consent was declined")]
+    #[error("confirmation was declined")]
     Declined,
-    #[error("protected consent was canceled")]
+    #[error("confirmation was canceled")]
     Canceled,
-    #[error("protected consent provider failed: {0}")]
+    #[error("confirmation provider failed: {0}")]
     Provider(String),
-    #[error("protected consent response did not match the exact request digest")]
+    #[error("confirmation response did not match the exact request digest")]
     DigestMismatch,
-    #[error("protected consent expired before activation")]
+    #[error("confirmation expired before activation")]
     Expired,
     #[error("persistent consent indicator could not be activated: {0}")]
     Indicator(String),

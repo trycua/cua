@@ -245,6 +245,7 @@ def driver_call(
     *,
     timeout: int = 120,
     allow_refusal: bool = False,
+    allow_text_success: bool = False,
 ) -> dict[str, Any]:
     command = [
         "/usr/local/bin/cua-driver",
@@ -280,6 +281,12 @@ def driver_call(
     try:
         value = json.loads(output)
     except json.JSONDecodeError as exc:
+        if allow_text_success:
+            return {
+                "ok": True,
+                "text": " ".join(output.split())[-800:],
+                "returncode": returncode,
+            }
         raise PairedRunError(
             f"Cua Driver {name} returned non-JSON output"
         ) from exc
@@ -846,6 +853,7 @@ def execute_action(
                 **require_native_target(arguments),
             },
             allow_refusal=True,
+            allow_text_success=True,
         )
     elif name == "native_type":
         result = driver_call(
@@ -858,6 +866,7 @@ def execute_action(
                 **require_native_target(arguments),
             },
             allow_refusal=True,
+            allow_text_success=True,
         )
     elif name == "native_hotkey":
         result = driver_call(
@@ -869,6 +878,7 @@ def execute_action(
                 "keys": arguments["keys"],
             },
             allow_refusal=True,
+            allow_text_success=True,
         )
     elif name == "native_scroll":
         delta_y = float(arguments["delta_y"])
@@ -885,6 +895,7 @@ def execute_action(
                 "amount": max(1, min(50, int(abs(delta_y) / 120) or 1)),
             },
             allow_refusal=True,
+            allow_text_success=True,
         )
     elif name in {"browser_click", "browser_type", "browser_scroll"}:
         if browser is None:
@@ -901,6 +912,7 @@ def execute_action(
                 "browser_click",
                 {**common, "input_route": "dom_event"},
                 allow_refusal=True,
+                allow_text_success=True,
             )
         elif name == "browser_type":
             result = driver_call(
@@ -911,6 +923,7 @@ def execute_action(
                     "mode": "insert_text",
                 },
                 allow_refusal=True,
+                allow_text_success=True,
             )
         else:
             result = driver_call(
@@ -922,6 +935,7 @@ def execute_action(
                     "delta_y": arguments["delta_y"],
                 },
                 allow_refusal=True,
+                allow_text_success=True,
             )
     else:
         raise PairedRunError(f"unknown model action: {name}")
@@ -1000,8 +1014,9 @@ def reset_and_setup_task(cache_dir: Path) -> dict[str, Any]:
                 "pkill -KILL -x chrome 2>/dev/null || true; "
                 "pkill -KILL -x google-chrome 2>/dev/null || true; "
                 "pkill -KILL -x socat 2>/dev/null || true; "
-                "if pgrep -x chrome >/dev/null || "
-                "pgrep -x google-chrome >/dev/null; then exit 1; fi"
+                "if ps -C chrome -o stat= 2>/dev/null | "
+                "awk '$1 !~ /^Z/ { live=1 } END { exit live ? 0 : 1 }'; "
+                "then exit 1; fi"
             ),
         ],
         timeout=60,

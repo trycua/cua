@@ -11,6 +11,48 @@ import run_paired_gpt55 as paired
 
 
 class PolicyTests(unittest.TestCase):
+    def test_successful_text_only_mutation_is_normalized(self) -> None:
+        response = SimpleNamespace(
+            status_code=200,
+            json=lambda: {
+                "output": "Clicked element 42",
+                "error": "",
+                "returncode": 0,
+            },
+        )
+        with patch.object(paired.httpx, "post", return_value=response):
+            result = paired.driver_call(
+                "click",
+                {"element_index": 42},
+                allow_text_success=True,
+            )
+        self.assertEqual(
+            result,
+            {
+                "ok": True,
+                "text": "Clicked element 42",
+                "returncode": 0,
+            },
+        )
+
+    def test_text_only_observation_remains_invalid(self) -> None:
+        response = SimpleNamespace(
+            status_code=200,
+            json=lambda: {
+                "output": "not structured",
+                "error": "",
+                "returncode": 0,
+            },
+        )
+        with (
+            patch.object(paired.httpx, "post", return_value=response),
+            self.assertRaisesRegex(
+                paired.PairedRunError,
+                "returned non-JSON output",
+            ),
+        ):
+            paired.driver_call("get_window_state", {})
+
     def test_fresh_chrome_profile_ignores_unrelated_processes(self) -> None:
         profile = "/tmp/osworld2-chrome-test"
         listing = "\n".join(

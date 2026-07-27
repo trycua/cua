@@ -471,6 +471,11 @@ def main() -> int:
         if initial_summary_path.is_file()
         else {}
     )
+    initial_records_by_task = {
+        str(record.get("task_id")): record
+        for record in initial_summary.get("records") or []
+        if isinstance(record, dict)
+    }
     adopted_caps = {
         str(record.get("task_id")): record.get("pair_cap_usd")
         for record in initial_summary.get("records") or []
@@ -480,7 +485,41 @@ def main() -> int:
         task for task in tasks if str(task["task_id"]) not in adopted
     ]
     if not pending:
-        raise PersistentCertificationError("the certification is already complete")
+        persistent_lifecycle = initial_summary.get("persistent_lifecycle")
+        if not isinstance(persistent_lifecycle, dict):
+            raise PersistentCertificationError(
+                "completed certification has no persistent lifecycle evidence"
+            )
+        records = []
+        for task in tasks:
+            task_id = str(task["task_id"])
+            path, result = adopted[task_id]
+            prior_record = initial_records_by_task.get(task_id) or {}
+            records.append(
+                record_for(
+                    task=task,
+                    pair_cap=adopted_caps.get(task_id),
+                    result_path=path,
+                    result=result,
+                    lifecycle=str(
+                        prior_record.get("fleet_lifecycle") or "isolated_vm"
+                    ),
+                    attestation_errors=quarantines.get(task_id),
+                    posthoc_revalidation=revalidations.get(task_id),
+                )
+            )
+        summary = write_summary(
+            args=args,
+            manifest=manifest,
+            tasks=tasks,
+            records=records,
+            infrastructure_attempts=infrastructure_attempts,
+            persistent_lifecycle=persistent_lifecycle,
+            stopped_reason=None,
+            final=True,
+        )
+        print(json.dumps(summary, indent=2, sort_keys=True))
+        return 0 if summary["passed"] else 1
 
     client = OpenAI(
         api_key=paired.require_api_key(args.env_file),

@@ -26,12 +26,9 @@ use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Dwm::{
     DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
 };
-use windows::Win32::Graphics::Gdi::{MonitorFromRect, MONITOR_DEFAULTTONULL};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
 };
-use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
-use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
     IUIAutomationTogglePattern, TreeScope_Children, TreeScope_Subtree,
@@ -636,7 +633,7 @@ unsafe fn window_info_from_uia_element(elem: &IUIAutomationElement) -> Option<Wi
         return None;
     }
 
-    let has_valid_uia_bounds = elem
+    let prefer_win32_bounds = !elem
         .CurrentBoundingRectangle()
         .ok()
         .is_some_and(rect_is_valid);
@@ -661,11 +658,42 @@ unsafe fn window_info_from_uia_element(elem: &IUIAutomationElement) -> Option<Wi
         return None;
     }
 
-    let (x, y, width, height) = if has_valid_uia_bounds {
-        window_bounds(hwnd)
-    } else {
-        fallback_window_bounds(elem, hwnd, thread_id, pid, is_offscreen)?
-    };
+    if prefer_win32_bounds {
+        // The element came from this process's UIA desktop root, which already
+        // constrains it to the caller's desktop and session. For the exceptional
+        // Win32 path, also require an explicitly on-screen, capturable window.
+        if is_offscreen != Some(false)
+            || !IsWindowVisible(hwnd).as_bool()
+            || IsIconic(hwnd).as_bool()
+            || window_is_cloaked(hwnd)
+        {
+            return None;
+        }
+        let uia_pid = elem.CurrentProcessId().ok()?;
+        if uia_pid <= 0 || uia_pid as u32 != pid {
+            return None;
+        }
+    }
+
+    let (x, y, width, height) = window_bounds(hwnd, prefer_win32_bounds)?;
+
+    if prefer_win32_bounds {
+        // Re-read both sides of the identity after geometry lookup so a stale
+        // or reused HWND cannot be accepted as the original UIA window.
+        let mut pid_after = 0u32;
+        let thread_after = GetWindowThreadProcessId(hwnd, Some(&mut pid_after));
+        if !IsWindow(hwnd).as_bool()
+            || elem.CurrentNativeWindowHandle().ok() != Some(hwnd)
+            || elem
+                .CurrentProcessId()
+                .ok()
+                .is_none_or(|candidate| candidate <= 0 || candidate as u32 != pid)
+            || thread_after != thread_id
+            || pid_after != pid
+        {
+            return None;
+        }
+    }
 
     // Title — prefer Win32 GetWindowTextW for parity with the EnumWindows path.
     // UIA's `CurrentName` sometimes returns the AX-friendly label (e.g. the
@@ -700,126 +728,77 @@ fn rect_is_valid(rect: RECT) -> bool {
     rect.right > rect.left && rect.bottom > rect.top
 }
 
-fn accepted_fallback_rect(
-    is_offscreen: Option<bool>,
-    capturable: bool,
-    same_session: bool,
-    stable_identity: bool,
-    rect: Option<RECT>,
-    intersects_monitor: bool,
-) -> Option<RECT> {
-    let rect = rect?;
-    (is_offscreen == Some(false)
-        && capturable
-        && same_session
-        && stable_identity
-        && intersects_monitor
-        && rect_is_valid(rect))
-    .then_some(rect)
+fn window_is_cloaked(hwnd: HWND) -> bool {
+    let mut cloaked = 0u32;
+    unsafe {
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_CLOAKED,
+            &mut cloaked as *mut u32 as *mut _,
+            std::mem::size_of::<u32>() as u32,
+        )
+        .is_err()
+            || cloaked != 0
+    }
 }
 
-/// Use GetWindowRect only for the narrow Chromium-style failure where UIA
-/// reports invalid bounds for an otherwise live, visible top-level window.
-unsafe fn fallback_window_bounds(
-    elem: &IUIAutomationElement,
-    hwnd: HWND,
-    thread_id: u32,
-    pid: u32,
-    is_offscreen: Option<bool>,
-) -> Option<(i32, i32, i32, i32)> {
-    let uia_pid_before = elem.CurrentProcessId().ok()?;
-    if uia_pid_before <= 0 || uia_pid_before as u32 != pid {
-        return None;
+fn select_window_rect(
+    prefer_win32: bool,
+    dwm_rect: Option<RECT>,
+    win32_rect: Option<RECT>,
+) -> Option<RECT> {
+    if prefer_win32 {
+        win32_rect.filter(|rect| rect_is_valid(*rect))
+    } else {
+        dwm_rect
+            .filter(|rect| rect_is_valid(*rect))
+            .or_else(|| win32_rect.filter(|rect| rect_is_valid(*rect)))
     }
-
-    let mut cloaked = 0u32;
-    let not_cloaked = DwmGetWindowAttribute(
-        hwnd,
-        DWMWA_CLOAKED,
-        &mut cloaked as *mut u32 as *mut _,
-        std::mem::size_of::<u32>() as u32,
-    )
-    .is_ok()
-        && cloaked == 0;
-    let capturable = IsWindow(hwnd).as_bool()
-        && GetAncestor(hwnd, GA_ROOT) == hwnd
-        && IsWindowVisible(hwnd).as_bool()
-        && !IsIconic(hwnd).as_bool()
-        && not_cloaked;
-
-    let mut owner_session = 0u32;
-    let mut caller_session = 0u32;
-    let same_session = ProcessIdToSessionId(pid, &mut owner_session).is_ok()
-        && ProcessIdToSessionId(GetCurrentProcessId(), &mut caller_session).is_ok()
-        && owner_session == caller_session;
-    // `elem` is a direct child of this process's UIA desktop root, so desktop
-    // ownership is already established by the caller. Requiring the HWND to
-    // also appear in EnumWindows would defeat this UIA-only enumeration path.
-
-    // cua-driver.exe declares Per-Monitor V2 awareness in its manifest, so
-    // GetWindowRect and UIA BoundingRectangle are both physical screen pixels.
-    // Do not scale this fallback by the monitor DPI.
-    let mut rect = RECT::default();
-    let rect = GetWindowRect(hwnd, &mut rect).ok().map(|()| rect);
-
-    // Re-read identity after GetWindowRect so stale/reused handles fail closed.
-    let hwnd_after = elem.CurrentNativeWindowHandle().ok();
-    let uia_pid_after = elem.CurrentProcessId().ok();
-    let mut pid_after = 0u32;
-    let thread_after = GetWindowThreadProcessId(hwnd, Some(&mut pid_after));
-    let stable_identity = IsWindow(hwnd).as_bool()
-        && hwnd_after == Some(hwnd)
-        && uia_pid_after.is_some_and(|candidate| candidate > 0 && candidate as u32 == pid)
-        && thread_after == thread_id
-        && pid_after == pid;
-    let intersects_monitor =
-        rect.is_some_and(|value| !MonitorFromRect(&value, MONITOR_DEFAULTTONULL).0.is_null());
-
-    let rect = accepted_fallback_rect(
-        is_offscreen,
-        capturable,
-        same_session,
-        stable_identity,
-        rect,
-        intersects_monitor,
-    )?;
-    Some((
-        rect.left,
-        rect.top,
-        rect.right - rect.left,
-        rect.bottom - rect.top,
-    ))
 }
 
 /// Bounds via DWM extended frame (excludes drop-shadow on W11) with
-/// `GetWindowRect` fallback — same logic as the EnumWindows path.
-fn window_bounds(hwnd: HWND) -> (i32, i32, i32, i32) {
+/// `GetWindowRect` fallback. Invalid UIA geometry prefers the latter directly.
+/// The driver is Per-Monitor V2 aware, so both sources use physical pixels.
+fn window_bounds(hwnd: HWND, prefer_win32: bool) -> Option<(i32, i32, i32, i32)> {
     unsafe {
-        let mut rect = RECT::default();
-        let ok = DwmGetWindowAttribute(
+        let mut dwm_rect = RECT::default();
+        let dwm_rect = DwmGetWindowAttribute(
             hwnd,
             DWMWA_EXTENDED_FRAME_BOUNDS,
-            &mut rect as *mut RECT as *mut _,
+            &mut dwm_rect as *mut RECT as *mut _,
             std::mem::size_of::<RECT>() as u32,
-        );
-        if ok.is_err() {
-            let _ = GetWindowRect(hwnd, &mut rect);
-        }
-        (
+        )
+        .ok()
+        .map(|()| dwm_rect);
+
+        // API success does not guarantee usable geometry. This is the actual
+        // source-selection rule: invalid DWM data falls through to Win32 too.
+        let need_win32 = prefer_win32 || dwm_rect.is_none_or(|rect| !rect_is_valid(rect));
+        let mut win32_rect = RECT::default();
+        let win32_rect = need_win32
+            .then(|| {
+                GetWindowRect(hwnd, &mut win32_rect)
+                    .ok()
+                    .map(|()| win32_rect)
+            })
+            .flatten();
+
+        let rect = select_window_rect(prefer_win32, dwm_rect, win32_rect)?;
+        Some((
             rect.left,
             rect.top,
             rect.right - rect.left,
             rect.bottom - rect.top,
-        )
+        ))
     }
 }
 
 #[cfg(test)]
 mod bounds_fallback_tests {
-    use super::accepted_fallback_rect;
+    use super::select_window_rect;
     use windows::Win32::Foundation::RECT;
 
-    fn reported_win32_rect() -> RECT {
+    fn rect() -> RECT {
         RECT {
             left: 200,
             top: 52,
@@ -829,42 +808,27 @@ mod bounds_fallback_tests {
     }
 
     #[test]
-    fn empty_uia_bounds_accept_the_reported_live_edge_window() {
-        let rect = reported_win32_rect();
+    fn invalid_uia_bounds_prefer_the_reported_win32_rect() {
+        let win32 = rect();
+        assert_eq!(select_window_rect(true, None, Some(win32)), Some(win32));
+    }
+
+    #[test]
+    fn normal_windows_keep_valid_dwm_geometry() {
+        let dwm = rect();
+        let mut win32 = dwm;
+        win32.left -= 8;
+        assert_eq!(select_window_rect(false, Some(dwm), Some(win32)), Some(dwm));
+    }
+
+    #[test]
+    fn invalid_dwm_geometry_falls_through_and_invalid_win32_fails_closed() {
+        let empty = RECT::default();
+        let win32 = rect();
         assert_eq!(
-            accepted_fallback_rect(Some(false), true, true, true, Some(rect), true),
-            Some(rect)
+            select_window_rect(false, Some(empty), Some(win32)),
+            Some(win32)
         );
-    }
-
-    #[test]
-    fn offscreen_or_uncapturable_windows_fail_closed() {
-        let rect = Some(reported_win32_rect());
-        assert!(accepted_fallback_rect(Some(true), true, true, true, rect, true).is_none());
-        assert!(accepted_fallback_rect(None, true, true, true, rect, true).is_none());
-        assert!(accepted_fallback_rect(Some(false), false, true, true, rect, true).is_none());
-    }
-
-    #[test]
-    fn wrong_session_or_stale_identity_fails_closed() {
-        let rect = Some(reported_win32_rect());
-        assert!(accepted_fallback_rect(Some(false), true, false, true, rect, true).is_none());
-        assert!(accepted_fallback_rect(Some(false), true, true, false, rect, true).is_none());
-    }
-
-    #[test]
-    fn invalid_or_fully_off_monitor_win32_rect_does_not_enable_fallback() {
-        let mut rect = reported_win32_rect();
-        rect.right = rect.left;
-        assert!(accepted_fallback_rect(Some(false), true, true, true, Some(rect), true).is_none());
-        assert!(accepted_fallback_rect(
-            Some(false),
-            true,
-            true,
-            true,
-            Some(reported_win32_rect()),
-            false
-        )
-        .is_none());
+        assert!(select_window_rect(true, Some(win32), Some(empty)).is_none());
     }
 }

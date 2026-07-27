@@ -81,7 +81,7 @@ def summary(object_: Any) -> str:
 
 
 def function_lines(function: Any, level: int) -> list[str]:
-    lines = [f"{'#' * level} `{function.name}`", "", "```python", signature(function), "```"]
+    lines = [f"{'#' * level} {function.name}", "", "```python", signature(function), "```"]
     if text := summary(function):
         lines.extend(["", text])
     if function.path == "cua_sandbox.sandbox.Sandbox.get_info":
@@ -93,9 +93,9 @@ def export_lines(name: str, member: Any, level: int = 2) -> list[str]:
     object_ = target(member)
     if getattr(object_, "is_function", False):
         lines = function_lines(object_, level)
-        lines[0] = f"{'#' * level} `{name}`"
+        lines[0] = f"{'#' * level} {name}"
         return lines
-    lines = [f"{'#' * level} `{name}`", ""]
+    lines = [f"{'#' * level} {name}", ""]
     if text := summary(object_):
         lines.extend([text, ""])
     if getattr(object_, "is_class", False) and name != "CloudTransport":

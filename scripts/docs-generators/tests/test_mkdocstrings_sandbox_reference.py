@@ -1,4 +1,5 @@
 from __future__ import annotations
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -32,8 +33,9 @@ def test_reference_is_current_and_covers_root_public_exports() -> None:
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+    reference = REFERENCE.read_text()
     for export in exports():
-        assert f"`{export}`" in REFERENCE.read_text()
+        assert re.search(rf"^## {re.escape(export)}$", reference, re.MULTILINE)
 
 
 def test_reference_preserves_public_contract_and_excludes_private_operations() -> None:
@@ -50,3 +52,17 @@ def test_reference_preserves_public_contract_and_excludes_private_operations() -
         assert fragment in reference
     for symbol in ["FleetTransport", "cyclops_sdk", "_ConnectResult", "_create", "raw_operation"]:
         assert symbol not in reference
+
+
+def test_reference_uses_plain_text_headings_for_fumadocs_toc() -> None:
+    headings = [
+        line
+        for line in REFERENCE.read_text().splitlines()
+        if re.match(r"^#{2,6} ", line)
+    ]
+
+    assert headings
+    for heading in headings:
+        title = heading.partition(" ")[2]
+        assert "`" not in title
+        assert not title.rstrip().endswith("#")

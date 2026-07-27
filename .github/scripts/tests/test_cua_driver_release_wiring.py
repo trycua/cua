@@ -430,8 +430,7 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             ".github/workflows/ci-cua-driver-installer-compat.yml"
         )
 
-        self.assertIn("pull_request:\n", workflow)
-        self.assertNotIn("pull_request:\n    paths:", workflow)
+        self.assertIn("workflow_call:\n", workflow)
         self.assertIn("Installer compatibility summary", workflow)
         self.assertIn("ubuntu-latest, macos-26, windows-latest", workflow)
         self.assertIn("repos/$GITHUB_REPOSITORY/releases?per_page=100", workflow)
@@ -439,6 +438,18 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn("libs/cua-driver/scripts/install.ps1", workflow)
         self.assertIn("-NoAutoStart", workflow)
         self.assertIn('CUA_DRIVER_RS_TELEMETRY_ENABLED: "false"', workflow)
+
+        release_metadata = self.read(
+            ".github/workflows/ci-release-metadata.yml"
+        )
+        self.assertIn(
+            "uses: ./.github/workflows/ci-cua-driver-installer-compat.yml",
+            release_metadata,
+        )
+        self.assertIn(
+            "validate:\n    needs: installer-compatibility",
+            release_metadata,
+        )
 
     def test_lume_uses_the_same_draft_finalizer(self) -> None:
         workflow = self.read(".github/workflows/cd-swift-lume.yml")

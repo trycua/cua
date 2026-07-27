@@ -175,8 +175,8 @@ tasks and assets may be reported as OSWorld 2 results.
 ## Canonical paired run
 
 `run_paired_gpt55.py` is the repeatable single-task integration pilot. It
-creates one Fleet VM through `fleet_pilot.py`, runs official asset-free
-Task070 twice with fresh task tenants and Chrome profiles, and compares:
+creates one Fleet VM through `fleet_pilot.py`, runs one selected official task
+twice with fresh task state and Chrome profiles, and compares:
 
 - control: native screenshot + accessibility tree;
 - treatment: the identical native inputs plus CDP `semantic_v2` observations
@@ -195,6 +195,7 @@ CUA_OSWORLD2_WORK_DIR=/path/to/prepared/.work \
   --model gpt-5.5 \
   --reasoning-effort xhigh \
   --max-steps 24 \
+  --task-id 070 \
   --order control-first
 ```
 
@@ -205,5 +206,45 @@ cleanup. Raw screenshots, observations, model responses, action outcomes,
 official scores, latency, usage, estimated cost, and provenance remain in the
 ignored `.work/results` directory.
 
-This one Task070 pair is integration evidence, not a population-level OSWorld
-V2 estimate. The 240-episode matrix above remains the publishable follow-up.
+One pair is integration evidence, not a population-level OSWorld V2 estimate.
+The 240-episode matrix above remains the publishable follow-up.
+
+## Sealed web certification
+
+`run_web_certification.py` executes the ten-task manifest in
+`manifests/web_certification_tranche.json`. It alternates treatment order,
+enforces the shared estimated-cost cap, provisions at most one Fleet VM at a
+time, and records every completed or invalid pair in
+`certification-summary.json`.
+
+When fresh VM allocation is the dominant failure mode,
+`run_persistent_web_certification.py` can continue an existing certification
+directory on one persistent VM. It adopts every valid result and every result
+that already contains a model attempt. It may retry only infrastructure
+attempts that ended before the first model call. For each remaining task, it
+runs the official OSWorld reset before each episode and still uses a fresh
+Chrome profile. The final summary identifies which pairs used isolated VMs and
+which used the persistent lifecycle.
+
+```bash
+CUA_OSWORLD2_WORK_DIR=/path/to/prepared/.work \
+/path/to/prepared/.work/OSWorld-V2/.venv/bin/python \
+  run_persistent_web_certification.py \
+  --manifest manifests/web_certification_tranche.json \
+  --config /path/to/prepared/.work/local.json \
+  --container-disk-image \
+    '<account>.dkr.ecr.<region>.amazonaws.com/osworld-v2-ubuntu-x86@sha256:<digest>' \
+  --env-file /path/to/private/.env.local \
+  --output-dir /path/to/existing/web-certification-run \
+  --model gpt-5.5 \
+  --reasoning-effort xhigh \
+  --max-steps 24 \
+  --cpu-cores 2 \
+  --memory 8Gi
+```
+
+The continuation owns one namespace from start through final cleanup. A batch
+cannot pass unless all ten task records exist, at least 80 percent are valid,
+estimated model cost remains within the manifest cap, and shared Fleet cleanup
+is verified. The selected VM shape is recorded in both Fleet lifecycle evidence
+and per-task provenance.

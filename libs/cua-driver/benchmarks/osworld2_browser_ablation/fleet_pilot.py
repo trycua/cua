@@ -461,6 +461,8 @@ def create_pool(
     namespace: str,
     image: str,
     services: tuple[Service, ...],
+    cpu_cores: int,
+    memory: str,
 ) -> None:
     body = {
         "apiVersion": f"{POOL_GROUP}/{POOL_VERSION}",
@@ -477,8 +479,8 @@ def create_pool(
             "template": {
                 "containerDiskImage": image,
                 "imagePullSecret": "ecr-credentials",
-                "cpuCores": 4,
-                "memory": "8Gi",
+                "cpuCores": cpu_cores,
+                "memory": memory,
                 "probes": {
                     "readinessProbe": {"tcpSocket": {"port": CONTROL_PORT}}
                 },
@@ -1613,6 +1615,8 @@ def main() -> int:
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--container-disk-image")
     parser.add_argument("--aws-region", default=DEFAULT_AWS_REGION)
+    parser.add_argument("--cpu-cores", type=int, default=4)
+    parser.add_argument("--memory", default="8Gi")
     parser.add_argument("--aws-mock-port", type=int, default=DEFAULT_AWS_MOCK_PORT)
     parser.add_argument("--setup-task-082", action="store_true")
     parser.add_argument("--task-id", choices=["070", "073"])
@@ -1632,6 +1636,10 @@ def main() -> int:
         raise PilotError(
             "local config or --container-disk-image must pin the image by digest"
         )
+    if args.cpu_cores <= 0:
+        raise PilotError("--cpu-cores must be positive")
+    if not args.memory.strip():
+        raise PilotError("--memory must be non-empty")
     driver_strategies = sum(
         bool(value)
         for value in (
@@ -1710,7 +1718,14 @@ def main() -> int:
         emit("provision_started", namespace=namespace, replicas=1)
         create_namespace(http(), namespace)
         namespace_created = True
-        create_pool(http(), namespace=namespace, image=image, services=services)
+        create_pool(
+            http(),
+            namespace=namespace,
+            image=image,
+            services=services,
+            cpu_cores=args.cpu_cores,
+            memory=args.memory,
+        )
         pool_created = True
         wait_template(http, namespace)
         status = wait_pool(http, namespace)
@@ -1788,6 +1803,10 @@ def main() -> int:
             "claim": claim,
             "sandbox": sandbox,
             "replicas": 1,
+            "vm_shape": {
+                "cpu_cores": args.cpu_cores,
+                "memory": args.memory,
+            },
             "image_identifier_sha256": image_fingerprint,
             "task_id": task_id,
             "source_sha": (
@@ -1854,6 +1873,10 @@ def main() -> int:
             "schema_version": 1,
             "namespace": namespace,
             "replicas": 1,
+            "vm_shape": {
+                "cpu_cores": args.cpu_cores,
+                "memory": args.memory,
+            },
             "image_identifier_sha256": image_fingerprint,
             "task_id": task_id,
             "source_sha": (

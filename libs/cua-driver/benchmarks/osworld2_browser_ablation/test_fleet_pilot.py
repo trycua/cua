@@ -5,7 +5,7 @@ import hashlib
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import fleet_pilot
 
@@ -60,6 +60,25 @@ class StageLocalFileTests(unittest.TestCase):
                 "must be absolute",
             ):
                 fleet_pilot.stage_local_file_to_guest(source, "relative.bin")
+
+
+class PoolShapeTests(unittest.TestCase):
+    def test_create_pool_uses_explicit_vm_shape(self) -> None:
+        http = Mock()
+        http.post.return_value.status_code = 201
+
+        fleet_pilot.create_pool(
+            http,
+            namespace="shape-test",
+            image="registry/image@sha256:digest",
+            services=(fleet_pilot.Service("control", 5000, 5000),),
+            cpu_cores=2,
+            memory="8Gi",
+        )
+
+        body = http.post.call_args.kwargs["json"]
+        self.assertEqual(body["spec"]["template"]["cpuCores"], 2)
+        self.assertEqual(body["spec"]["template"]["memory"], "8Gi")
 
 
 if __name__ == "__main__":

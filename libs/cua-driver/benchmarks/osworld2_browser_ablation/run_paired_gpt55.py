@@ -1651,6 +1651,9 @@ def start_pilot(
     config: Path,
     log_path: Path,
     container_disk_image: str,
+    *,
+    cpu_cores: int = 4,
+    memory: str = "8Gi",
 ) -> tuple[subprocess.Popen[str], Any]:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     stream = log_path.open("w", encoding="utf-8")
@@ -1662,6 +1665,10 @@ def start_pilot(
             str(config),
             "--container-disk-image",
             container_disk_image,
+            "--cpu-cores",
+            str(cpu_cores),
+            "--memory",
+            memory,
             "--start-image-driver",
         ],
         cwd=ROOT,
@@ -1765,6 +1772,7 @@ def provenance(
             "namespace": live["namespace"],
             "sandbox": live["sandbox"],
             "replicas": live["replicas"],
+            "vm_shape": live.get("vm_shape"),
         },
         "driver": live["driver"],
         "model": {

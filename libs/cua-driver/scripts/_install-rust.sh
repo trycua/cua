@@ -541,6 +541,19 @@ fi
 
 VERSION="${TAG#${TAG_PREFIX}}"
 
+# Releases through 0.12.6 predate semantic cursor themes.
+# Newer releases must contain both packaged copies.
+CURSOR_THEME_REQUIRED_FROM="0.12.7"
+version_is_at_least() {
+    local version="$1" minimum="$2"
+    local v_major v_minor v_patch m_major m_minor m_patch
+    IFS=. read -r v_major v_minor v_patch <<< "$version"
+    IFS=. read -r m_major m_minor m_patch <<< "$minimum"
+    if (( v_major != m_major )); then (( v_major > m_major )); return; fi
+    if (( v_minor != m_minor )); then (( v_minor > m_minor )); return; fi
+    (( v_patch >= m_patch ))
+}
+
 # --- Download bare-binary tarball ---------------------------------------
 
 # Tarball selection:
@@ -600,10 +613,22 @@ if [[ ! -f "$SRC" ]]; then
     ls -la "$TMP_DIR"
     exit 1
 fi
-if [[ ! -f "$SRC_THEME" ]]; then
+THEME_AVAILABLE=1
+if [[ ! -f "$SRC_THEME" ]] || {
+    [[ -n "$SRC_APP" ]] &&
+    [[ ! -f "$SRC_APP/Contents/MacOS/cua-cursor-theme" ]]
+}; then
+    THEME_AVAILABLE=0
+fi
+if [[ "$THEME_AVAILABLE" == "0" ]] && version_is_at_least \
+    "$VERSION" "$CURSOR_THEME_REQUIRED_FROM"; then
     err "expected cua-cursor-theme in tarball but didn't find it"
     ls -la "$TMP_DIR"
     exit 1
+fi
+if [[ "$THEME_AVAILABLE" == "0" ]]; then
+    printf 'warning: release %s predates cua-cursor-theme; installing without custom cursor themes\n' \
+        "$VERSION" >&2
 fi
 
 # --- Install ------------------------------------------------------------
@@ -760,7 +785,9 @@ else
 
     mkdir -p "$VERSIONED_DIR"
     install -m 0755 "$SRC" "$VERSIONED_DIR/$BINARY_NAME"
-    install -m 0755 "$SRC_THEME" "$VERSIONED_DIR/cua-cursor-theme"
+    if [[ "$THEME_AVAILABLE" == "1" ]]; then
+        install -m 0755 "$SRC_THEME" "$VERSIONED_DIR/cua-cursor-theme"
+    fi
     if [[ -d "${SRC_WAYLAND_HELPER:-}" ]]; then
         mkdir -p "$VERSIONED_DIR/wayland-helper"
         cp -R "$SRC_WAYLAND_HELPER/." "$VERSIONED_DIR/wayland-helper/"

@@ -3,13 +3,13 @@
 //! Walks the UI Automation tree from the desktop root and returns one entry
 //! per top-level interactable window. UIA surfaces modern containers (WebView2
 //! hosts, packaged-UWP frames, browser windows whose chrome lives inside a
-//! container HWND) with their real title and bounds â€” which `EnumWindows`
+//! container HWND) with their real title and bounds — which `EnumWindows`
 //! either misses or returns with a misleading parent HWND.
 //!
 //! The result is shape-compatible with `crate::win32::windows::WindowInfo`
 //! (returned as `WindowInfo` directly) so the existing pipeline that consumes
 //! `list_windows` output keeps working unchanged. Each record's `hwnd` is the
-//! UIA element's `NativeWindowHandle` â€” i.e. an honest Win32 HWND that downstream
+//! UIA element's `NativeWindowHandle` — i.e. an honest Win32 HWND that downstream
 //! code can pass to `GetWindowRect`, `PostMessage`, etc.
 
 // We pattern-match against `UIA_*ControlTypeId` constants from the `windows`
@@ -51,12 +51,12 @@ use crate::win32::windows::WindowInfo;
 /// HRESULT for "COM already initialized in another mode on this thread."
 /// Returned by `CoInitializeEx` when something else (a previous call in the
 /// same task, or a library on the same OS thread) picked a different
-/// apartment. Safe to ignore â€” COM is up either way.
+/// apartment. Safe to ignore — COM is up either way.
 const RPC_E_CHANGED_MODE: i32 = -2147417850; // 0x80010106
 
 thread_local! {
     /// Per-thread IUIAutomation instance. UIA / COM objects are
-    /// apartment-bound, so we deliberately do NOT share one across threads â€”
+    /// apartment-bound, so we deliberately do NOT share one across threads —
     /// each OS thread that calls `enumerate_top_level_windows` initializes
     /// COM as STA exactly once (the first time the cell is `None`) and caches
     /// its own IUIAutomation. On failure the cell stays `None`, so the next
@@ -105,7 +105,7 @@ fn get_uia() -> Option<IUIAutomation> {
 /// non-empty title. Windows whose HWND is zero (pure UIA virtual elements,
 /// rare) are skipped because the rest of the driver pipeline keys off HWND.
 ///
-/// Returns an empty vec on any UIA failure â€” callers should treat UIA as a
+/// Returns an empty vec on any UIA failure — callers should treat UIA as a
 /// best-effort source and union with `EnumWindows`.
 pub fn enumerate_top_level_windows() -> Vec<WindowInfo> {
     let uia = match get_uia() {
@@ -158,13 +158,13 @@ pub fn enumerate_top_level_windows() -> Vec<WindowInfo> {
 ///
 /// Why a windowed walk and not desktop-wide `ElementFromPoint`:
 ///
-/// 1. Z-order â€” if the desktop's topmost element at `(sx, sy)` is some
+/// 1. Z-order — if the desktop's topmost element at `(sx, sy)` is some
 ///    other window (a terminal, a chrome window covering the target),
 ///    `ElementFromPoint` returns *that* element, not anything inside
 ///    `hwnd`. The (x, y) caller already knows the intended HWND; we
 ///    should trust it.
 ///
-/// 2. UWP / packaged-app hosting â€” `ApplicationFrameHost.exe` is the
+/// 2. UWP / packaged-app hosting — `ApplicationFrameHost.exe` is the
 ///    outer host process; the actual UWP content lives in a separate
 ///    process (e.g. `CalculatorApp.exe`). `ElementFromPoint` has been
 ///    observed returning the frame's outer Pane (no `InvokePattern`)
@@ -172,7 +172,7 @@ pub fn enumerate_top_level_windows() -> Vec<WindowInfo> {
 ///    search at the frame's UIA element and walking with
 ///    `TreeScope_Subtree` does cross that boundary.
 ///
-/// 3. Vision-mode contract â€” the agent screenshotted a specific window
+/// 3. Vision-mode contract — the agent screenshotted a specific window
 ///    and is addressing pixels of that window. We respect that
 ///    intent: the click goes to that window's tree, period.
 ///
@@ -192,14 +192,14 @@ pub fn enumerate_top_level_windows() -> Vec<WindowInfo> {
 /// `InvokePattern`. Smallest-area approximates "deepest" without
 /// having to track tree depth explicitly.
 /// Returns `true` when the element's control type has a *coord-independent*
-/// primary action â€” i.e. a UIA `Invoke()` on it does something semantically
+/// primary action — i.e. a UIA `Invoke()` on it does something semantically
 /// equivalent to "click the element" regardless of where inside its bounding
 /// rectangle the click was requested.
 ///
 /// Used by the `x, y` click path to decide whether to take the UIA Invoke
 /// route or fall through to PostMessage with the literal coords. The split
 /// matters for canvases, panes, and custom-drawn surfaces where Invoke would
-/// fire `mousedown` at the element centre â€” losing the caller's pixel
+/// fire `mousedown` at the element centre — losing the caller's pixel
 /// precision (see #1621).
 fn is_coord_independent_action(elem: &IUIAutomationElement) -> bool {
     let ct: UIA_CONTROLTYPE_ID = match unsafe { elem.CurrentControlType() } {
@@ -265,10 +265,10 @@ pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
                 continue;
             }
             // Accept elements that support EITHER InvokePattern OR
-            // ExpandCollapsePattern. Qt menu-bar items advertise both â€”
+            // ExpandCollapsePattern. Qt menu-bar items advertise both —
             // Invoke does nothing on them, only Expand opens the submenu.
             // (See FreeCAD finding 2026-05-21: clicking File menu via Invoke
-            // returned âœ… but the menu never opened.)
+            // returned ✅ but the menu never opened.)
             let has_invoke = elem.GetCurrentPattern(UIA_InvokePatternId).is_ok();
             let has_expand = elem
                 .GetCurrentPattern(windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId)
@@ -281,13 +281,13 @@ pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
             // `Invoke()` fires the element's default action at its centre,
             // ignoring the requested (sx, sy). For container surfaces
             // (Pane, Image, Custom, Document, Group, etc.) that means the
-            // caller's pixel precision is silently lost â€” see #1621, where
+            // caller's pixel precision is silently lost — see #1621, where
             // `click(canvas, x=110, y=677)` reported success but actually
             // fired the canvas's `mousedown` at its centre (152, 77).
             // Buttons / MenuItems / Hyperlinks / TabItems / ListItems /
             // CheckBoxes / RadioButtons / SplitButtons / TreeItems all
             // have a single primary action whose location is the element
-            // itself â€” Invoke is the right path for those. Everything
+            // itself — Invoke is the right path for those. Everything
             // else falls through to PostMessage with the literal coords.
             if !is_coord_independent_action(&elem) {
                 continue;
@@ -314,7 +314,7 @@ pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
         // Pattern preference for menu items: when both Invoke AND
         // ExpandCollapse are advertised, the element is almost always a
         // top-level MenuItem whose intended click behaviour is "open the
-        // submenu" â€” Invoke would be a no-op. Prefer ExpandCollapse.Expand
+        // submenu" — Invoke would be a no-op. Prefer ExpandCollapse.Expand
         // in that case. Pure-Invoke leaves (buttons, links, etc.) go
         // through Invoke as before.
         let winner_has_expand = winner
@@ -338,7 +338,7 @@ pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
                         }
                     }
                 }
-                // Expand failed â€” fall through to Invoke as best-effort.
+                // Expand failed — fall through to Invoke as best-effort.
             } else if winner_has_expand && !winner_has_invoke {
                 if let Ok(pat) = winner.GetCurrentPattern(
                     windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId,
@@ -409,7 +409,7 @@ pub fn try_invoke_accelerator_in_window(hwnd: isize, combo: &str) -> anyhow::Res
                     continue;
                 }
             };
-            // Primary match: the UIA AcceleratorKey property â€” the conventional
+            // Primary match: the UIA AcceleratorKey property — the conventional
             // place a WinUI / XAML control advertises its shortcut.
             let mut accelerator: Option<String> =
                 read_current_bstr(&elem, UIA_AcceleratorKeyPropertyId);
@@ -443,7 +443,7 @@ pub fn try_invoke_accelerator_in_window(hwnd: isize, combo: &str) -> anyhow::Res
             // Bold toggle uses Toggle, a list item uses SelectionItem. Try
             // Invoke first (the conventional shortcut handler), then Toggle
             // (Bold/Italic/etc.). The Notepad toolbar in particular has Bold
-            // as a TogglePattern button â€” calling .Invoke on it returns the
+            // as a TogglePattern button — calling .Invoke on it returns the
             // misleading "operation completed successfully (0x00000000)"
             // error because Invoke isn't supported on the element.
             match try_invoke_via_patterns(&elem, hwnd) {
@@ -556,7 +556,7 @@ fn accelerator_modifier_rank(value: &str) -> Option<usize> {
 ///
 /// `host_hwnd` is the top-level HWND containing the element; it gates the
 /// UWP foreground-steal bypass (see `crate::uia::fg_bypass`). Pass `0` if
-/// unknown â€” the bypass becomes a no-op and Invoke/Toggle run unwrapped.
+/// unknown — the bypass becomes a no-op and Invoke/Toggle run unwrapped.
 ///
 /// Returns `Ok(true)` if a pattern was found AND its Invoke/Toggle call
 /// succeeded. `Ok(false)` means the element exposes neither pattern (caller
@@ -566,7 +566,7 @@ unsafe fn try_invoke_via_patterns(
     elem: &IUIAutomationElement,
     host_hwnd: isize,
 ) -> anyhow::Result<bool> {
-    // Invoke first â€” that's what most accelerator-targeted controls advertise.
+    // Invoke first — that's what most accelerator-targeted controls advertise.
     if let Ok(pattern) = elem.GetCurrentPattern(UIA_InvokePatternId) {
         if let Ok(inv) = pattern.cast::<IUIAutomationInvokePattern>() {
             return crate::uia::fg_bypass::run_with_uwp_bypass(host_hwnd, || {
@@ -576,7 +576,7 @@ unsafe fn try_invoke_via_patterns(
             });
         }
     }
-    // Toggle next â€” Bold/Italic/Underline-style toolbar buttons sit here.
+    // Toggle next — Bold/Italic/Underline-style toolbar buttons sit here.
     if let Ok(pattern) = elem.GetCurrentPattern(UIA_TogglePatternId) {
         if let Ok(tog) = pattern.cast::<IUIAutomationTogglePattern>() {
             return crate::uia::fg_bypass::run_with_uwp_bypass(host_hwnd, || {
@@ -590,7 +590,7 @@ unsafe fn try_invoke_via_patterns(
 }
 
 /// Extract a shortcut hint from a UIA element name like `"Bold (Ctrl+B)"`,
-/// `"Italic (Ctrl+I)"`, `"Save (Ctrl+S)"` â€” modern XAML apps (notably modern
+/// `"Italic (Ctrl+I)"`, `"Save (Ctrl+S)"` — modern XAML apps (notably modern
 /// Notepad) don't set `AcceleratorKey` but encode the shortcut in the visible
 /// name. Returns the parenthesized accelerator string if one is present and
 /// contains a modifier-like token; otherwise `None`.
@@ -630,7 +630,7 @@ unsafe fn window_info_from_uia_element(elem: &IUIAutomationElement) -> Option<Wi
 
     // Drop minimized / off-screen windows. UIA's IsOffscreen flag covers
     // both "iconic" and "behind another window such that no part is visible"
-    // â€” for top-level windows it matches the EnumWindows path's intent of
+    // — for top-level windows it matches the EnumWindows path's intent of
     // showing only currently-visible candidates.
     let is_offscreen = elem.CurrentIsOffscreen().ok().map(|flag| flag.as_bool());
     if let Some(true) = is_offscreen {
@@ -673,7 +673,7 @@ unsafe fn window_info_from_uia_element(elem: &IUIAutomationElement) -> Option<Wi
         validated_get_window_rect_fallback(elem, hwnd, thread_id, pid, is_offscreen)?
     };
 
-    // Title â€” prefer Win32 GetWindowTextW for parity with the EnumWindows path.
+    // Title — prefer Win32 GetWindowTextW for parity with the EnumWindows path.
     // UIA's `CurrentName` sometimes returns the AX-friendly label (e.g. the
     // tab title) instead of the OS-level window caption, which would diverge
     // from any caller already keyed on the GetWindowText value.
@@ -878,7 +878,7 @@ fn hwnd_is_on_current_desktop(target: HWND) -> bool {
 }
 
 /// Bounds via DWM extended frame (excludes drop-shadow on W11) with
-/// `GetWindowRect` fallback â€” same logic as the EnumWindows path.
+/// `GetWindowRect` fallback — same logic as the EnumWindows path.
 fn window_bounds(hwnd: HWND) -> Option<Bounds> {
     unsafe {
         let mut rect = RECT::default();

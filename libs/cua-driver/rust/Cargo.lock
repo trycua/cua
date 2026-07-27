@@ -2606,6 +2606,7 @@ checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
 name = "overlay-ui"
 version = "0.12.6"
 dependencies = [
+ "base64",
  "cursor-overlay",
  "image",
  "resvg",

@@ -1,5 +1,6 @@
 use std::sync::{Arc, OnceLock};
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use tiny_skia::{Pixmap, Transform};
 
 use crate::{sanitize_label, sanitize_summary, ConsentCard, IndicatorCard, Rect, Size};
@@ -31,6 +32,8 @@ pub const STOP_RECT: Rect = Rect {
     width: 64.0,
     height: 44.0,
 };
+
+const CUA_DRIVER_MARK_SVG: &str = include_str!("cua-driver-mark.svg");
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ConsentVisualState {
@@ -78,12 +81,13 @@ pub fn render_consent(
         "#F5F5F2"
     };
     let summary_svg = text_lines_svg(&lines, 112.0, 14.0, 19.0, "#5F5F5A");
+    let brand_mark = brand_mark_data_uri();
     let svg = format!(
         r##"<svg xmlns="http://www.w3.org/2000/svg" width="424" height="274" viewBox="0 0 424 274">
 <rect x="10" y="12" width="404" height="252" rx="20" fill="#171716" opacity=".13"/>
 <rect x="6" y="6" width="412" height="256" rx="20" fill="#FBFBF9" stroke="#D5D5D1" stroke-width="1"/>
 <circle cx="34" cy="32" r="10" fill="#1C1C1B"/>
-<path d="M30 32h8M34 28v8" fill="none" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"/>
+<image x="27" y="23.5" width="14" height="17" preserveAspectRatio="xMidYMid meet" href="{brand_mark}"/>
 <text x="52" y="36" fill="#767670" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="12" font-weight="600">Cua Driver</text>
 <text x="32" y="82" fill="#1C1C1A" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="20" font-weight="600">{title}</text>
 {summary_svg}
@@ -107,12 +111,13 @@ pub fn render_indicator(
     let summary = sanitize_summary(&card.summary);
     let label = ellipsize(&summary, 31);
     let stop_fill = if stop_hovered { "#E7E7E3" } else { "#F5F5F2" };
+    let brand_mark = brand_mark_data_uri();
     let svg = format!(
         r##"<svg xmlns="http://www.w3.org/2000/svg" width="380" height="76" viewBox="0 0 380 76">
 <rect x="8" y="9" width="364" height="60" rx="18" fill="#171716" opacity=".12"/>
 <rect x="4" y="4" width="372" height="64" rx="18" fill="#FBFBF9" stroke="#D5D5D1"/>
 <circle cx="28" cy="36" r="9" fill="#1C1C1B"/>
-<circle cx="28" cy="36" r="3" fill="#FFFFFF"/>
+<image x="22" y="28.75" width="12" height="14.5" preserveAspectRatio="xMidYMid meet" href="{brand_mark}"/>
 <text x="48" y="31" fill="#252523" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="12.5" font-weight="600">Cua is driving this session</text>
 <text x="48" y="49" fill="#777771" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="10.5">{label}</text>
 <rect x="296" y="14" width="64" height="44" rx="10" fill="{stop_fill}" stroke="#D6D6D2"/>
@@ -120,6 +125,18 @@ pub fn render_indicator(
 </svg>"##
     );
     render_svg(&svg, INDICATOR_SIZE, scale)
+}
+
+fn brand_mark_data_uri() -> &'static str {
+    static DATA_URI: OnceLock<String> = OnceLock::new();
+    DATA_URI
+        .get_or_init(|| {
+            format!(
+                "data:image/svg+xml;base64,{}",
+                BASE64.encode(CUA_DRIVER_MARK_SVG)
+            )
+        })
+        .as_str()
 }
 
 fn render_svg(svg: &str, size: Size, scale: f32) -> Result<Pixmap, RenderError> {

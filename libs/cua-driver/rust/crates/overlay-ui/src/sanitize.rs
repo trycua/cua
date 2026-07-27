@@ -31,7 +31,10 @@ fn sanitize(input: &str, max_chars: usize, collapse_whitespace: bool) -> String 
                 previous_space = true;
             }
         } else {
-            output.push(ch);
+            output.push(match ch {
+                '—' | '–' => '-',
+                other => other,
+            });
             previous_space = false;
         }
     }
@@ -64,6 +67,15 @@ mod tests {
             sanitize_summary("Chrome\n\u{202e}evil\t profile"),
             "Chrome evil profile"
         );
+    }
+
+    #[test]
+    fn text_uses_plain_hyphens_instead_of_long_dashes() {
+        assert_eq!(
+            sanitize_summary("Chrome — Work – tab"),
+            "Chrome - Work - tab"
+        );
+        assert_eq!(sanitize_label("high—risk"), "high-risk");
     }
 
     #[test]

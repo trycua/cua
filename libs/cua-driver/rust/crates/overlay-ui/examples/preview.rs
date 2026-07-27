@@ -52,7 +52,7 @@ fn main() {
     let indicator = render_indicator(
         &IndicatorCard {
             indicator_id: "preview".to_owned(),
-            summary: "Chrome — Work".to_owned(),
+            summary: "Chrome - Work".to_owned(),
         },
         1.0,
         false,

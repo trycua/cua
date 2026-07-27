@@ -948,8 +948,10 @@ mod tests {
     }
 
     #[test]
-    fn ax_path_has_untrusted_web_readback() {
+    fn ax_backed_paths_have_untrusted_web_readback() {
         assert!(path_has_untrusted_web_readback(PATH_AX));
+        assert!(path_has_untrusted_web_readback(PATH_KEY_EVENTS));
+        assert!(path_has_untrusted_web_readback(PATH_KEY_EVENTS_FG));
     }
 
     #[test]

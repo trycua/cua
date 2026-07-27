@@ -252,10 +252,7 @@ jobs:
       - name: Reject native wheels on Windows
         shell: pwsh
         run: |
-          python -m pip install --no-index --no-deps --find-links dist cua-fleet==${{ needs.prepare.outputs.version }}
-          if ($LASTEXITCODE -eq 0) {
-            throw "Windows unexpectedly resolved a native cua-fleet wheel"
-          }
+          python -c "import subprocess, sys; result = subprocess.run([sys.executable, '-m', 'pip', 'install', '--no-index', '--no-deps', '--find-links', 'dist', 'cua-fleet==${{ needs.prepare.outputs.version }}']); raise SystemExit('Windows unexpectedly resolved a native cua-fleet wheel' if result.returncode == 0 else 0)"
 
   publish:
     needs: [prepare, validate, unsupported-windows]

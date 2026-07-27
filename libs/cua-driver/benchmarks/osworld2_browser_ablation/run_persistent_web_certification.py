@@ -47,6 +47,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-steps", type=int, default=24)
     parser.add_argument("--cpu-cores", type=int, default=2)
     parser.add_argument("--memory", default="8Gi")
+    parser.add_argument(
+        "--quarantine-task",
+        action="append",
+        default=[],
+        help=(
+            "Preserve a model-bearing task result but exclude it from valid "
+            "pairs because post-run attestation found an evaluator defect"
+        ),
+    )
+    parser.add_argument(
+        "--max-new-tasks-per-vm",
+        type=int,
+        help=(
+            "Stop and clean up after this many newly executed task pairs, so "
+            "a later invocation can continue on a fresh VM"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -195,19 +212,26 @@ def record_for(
     result_path: Path,
     result: dict[str, Any],
     lifecycle: str,
+    attestation_errors: list[str] | None = None,
 ) -> dict[str, Any]:
+    attestation_errors = attestation_errors or []
+    pair_valid = result.get("pair_valid") is True and not attestation_errors
     return {
         "task_id": str(task["task_id"]),
         "stratum": task["stratum"],
         "order": task["order"],
         "pair_cap_usd": pair_cap,
-        "runner_exit_code": 0 if result.get("pair_valid") is True else 1,
-        "pair_valid": result.get("pair_valid") is True,
+        "runner_exit_code": 0 if pair_valid else 1,
+        "pair_valid": pair_valid,
         "estimated_model_cost_usd": result_cost(result),
         "result_path": str(result_path),
         "log_path": None,
         "run_error": result.get("run_error"),
-        "pair_validation_errors": result.get("pair_validation_errors") or [],
+        "pair_validation_errors": [
+            *(result.get("pair_validation_errors") or []),
+            *attestation_errors,
+        ],
+        "posthoc_attestation_errors": attestation_errors,
         "fleet_cleanup": result.get("fleet_cleanup"),
         "fleet_lifecycle": lifecycle,
     }
@@ -273,6 +297,13 @@ def main() -> int:
         raise PersistentCertificationError("--cpu-cores must be positive")
     if not args.memory.strip():
         raise PersistentCertificationError("--memory must be non-empty")
+    if (
+        args.max_new_tasks_per_vm is not None
+        and args.max_new_tasks_per_vm <= 0
+    ):
+        raise PersistentCertificationError(
+            "--max-new-tasks-per-vm must be positive"
+        )
     if "@sha256:" not in args.container_disk_image:
         raise PersistentCertificationError(
             "--container-disk-image must pin the image by digest"
@@ -286,6 +317,21 @@ def main() -> int:
         output_dir=args.output_dir,
         tasks=tasks,
     )
+    quarantine_reason = (
+        "post-run attestation found that the evaluator environment omitted "
+        "the official runtime controller; the numeric score is not trusted"
+    )
+    quarantines: dict[str, list[str]] = {}
+    for task_id in args.quarantine_task:
+        if task_id not in {str(task["task_id"]) for task in tasks}:
+            raise PersistentCertificationError(
+                f"cannot quarantine unknown task {task_id}"
+            )
+        if task_id not in adopted:
+            raise PersistentCertificationError(
+                f"cannot quarantine task {task_id} without a model-bearing result"
+            )
+        quarantines[task_id] = [quarantine_reason]
     initial_summary_path = args.output_dir / "certification-summary.json"
     initial_summary = (
         certification.read_json(initial_summary_path)
@@ -355,8 +401,8 @@ def main() -> int:
                 stopped_reason = "estimated model-cost ceiling reached"
                 break
             invalid_count = sum(
-                result.get("pair_valid") is not True
-                for _, result in adopted.values()
+                result.get("pair_valid") is not True or task_id in quarantines
+                for task_id, (_, result) in adopted.items()
             )
             invalid_count += sum(
                 result.get("pair_valid") is not True
@@ -458,6 +504,9 @@ def main() -> int:
                             result_path=path,
                             result=result,
                             lifecycle="isolated_vm",
+                            attestation_errors=quarantines.get(
+                                manifest_task_id
+                            ),
                         )
                     )
                 elif manifest_task_id in new_results:
@@ -469,6 +518,9 @@ def main() -> int:
                             result_path=path,
                             result=result,
                             lifecycle=persistent_lifecycle["mode"],
+                            attestation_errors=quarantines.get(
+                                manifest_task_id
+                            ),
                         )
                     )
             write_summary(
@@ -481,6 +533,13 @@ def main() -> int:
                 stopped_reason=stopped_reason,
                 final=False,
             )
+            if (
+                args.max_new_tasks_per_vm is not None
+                and len(new_results) >= args.max_new_tasks_per_vm
+                and len(adopted) + len(new_results) < len(tasks)
+            ):
+                stopped_reason = "per-VM task limit reached"
+                break
     except Exception as exc:
         lifecycle_error = f"{type(exc).__name__}: {exc}"
         stopped_reason = lifecycle_error
@@ -528,6 +587,7 @@ def main() -> int:
                     result_path=path,
                     result=result,
                     lifecycle="isolated_vm",
+                    attestation_errors=quarantines.get(task_id),
                 )
             )
         elif task_id in new_results:
@@ -541,6 +601,7 @@ def main() -> int:
                     result_path=path,
                     result=result,
                     lifecycle=persistent_lifecycle["mode"],
+                    attestation_errors=quarantines.get(task_id),
                 )
             )
 

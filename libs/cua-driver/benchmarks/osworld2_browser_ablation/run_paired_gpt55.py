@@ -1321,8 +1321,13 @@ def reset_and_setup_task(cache_dir: Path) -> dict[str, Any]:
 
 
 def evaluate_task(cache_dir: Path) -> dict[str, Any]:
+    from desktop_env.controllers.python import PythonController
     from desktop_env.controllers.setup import SetupController
 
+    controller = PythonController(
+        vm_ip="127.0.0.1",
+        server_port=fleet_pilot.CONTROL_PORT,
+    )
     setup_controller = SetupController(
         vm_ip="127.0.0.1",
         server_port=fleet_pilot.CONTROL_PORT,
@@ -1337,6 +1342,7 @@ def evaluate_task(cache_dir: Path) -> dict[str, Any]:
         SimpleNamespace(
             cache_dir=str(cache_dir.resolve()),
             vm_ip="127.0.0.1",
+            controller=controller,
             setup_controller=setup_controller,
             enable_proxy=False,
         )

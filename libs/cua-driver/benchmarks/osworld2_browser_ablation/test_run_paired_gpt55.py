@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
 import run_paired_gpt55 as paired
@@ -548,6 +548,58 @@ class AccountingTests(unittest.TestCase):
             ]
         )
         self.assertEqual(cached["estimated_usd"], 0.05)
+
+
+class EvaluationTests(unittest.TestCase):
+    def test_official_evaluator_receives_runtime_and_setup_controllers(
+        self,
+    ) -> None:
+        class PythonController:
+            def __init__(self, **_):
+                pass
+
+            def get_file(self, _path):
+                return b""
+
+        class SetupController:
+            def __init__(self, **_):
+                pass
+
+            def setup(self, *_args, **_kwargs):
+                return None
+
+        class Task:
+            def evaluate(self, env):
+                self.assert_controller(env)
+                return 0.0
+
+            @staticmethod
+            def assert_controller(env):
+                if not callable(getattr(env.controller, "get_file", None)):
+                    raise AssertionError("runtime controller is missing")
+                if not callable(getattr(env.setup_controller, "setup", None)):
+                    raise AssertionError("setup controller is missing")
+
+        desktop_env = ModuleType("desktop_env")
+        controllers = ModuleType("desktop_env.controllers")
+        python_module = ModuleType("desktop_env.controllers.python")
+        setup_module = ModuleType("desktop_env.controllers.setup")
+        python_module.PythonController = PythonController
+        setup_module.SetupController = SetupController
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(
+                "sys.modules",
+                {
+                    "desktop_env": desktop_env,
+                    "desktop_env.controllers": controllers,
+                    "desktop_env.controllers.python": python_module,
+                    "desktop_env.controllers.setup": setup_module,
+                },
+            ):
+                with patch.object(paired, "load_task_class", return_value=Task):
+                    result = paired.evaluate_task(Path(directory))
+
+        self.assertEqual(result["score"], 0.0)
 
 
 if __name__ == "__main__":

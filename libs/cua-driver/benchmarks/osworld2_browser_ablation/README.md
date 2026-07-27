@@ -240,11 +240,15 @@ CUA_OSWORLD2_WORK_DIR=/path/to/prepared/.work \
   --reasoning-effort xhigh \
   --max-steps 24 \
   --cpu-cores 2 \
-  --memory 8Gi
+  --memory 8Gi \
+  --max-new-tasks-per-vm 1
 ```
 
 The continuation owns one namespace from start through final cleanup. A batch
 cannot pass unless all ten task records exist, at least 80 percent are valid,
 estimated model cost remains within the manifest cap, and shared Fleet cleanup
 is verified. The selected VM shape is recorded in both Fleet lifecycle evidence
-and per-task provenance.
+and per-task provenance. Reinvoke the same command after a per-VM task limit;
+the runner adopts the sealed results and continues with the next task on a new
+VM. This bounds guest-disk growth without deleting benchmark state from a live
+VM.

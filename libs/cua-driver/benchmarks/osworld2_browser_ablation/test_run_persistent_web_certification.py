@@ -78,6 +78,30 @@ class PersistentCertificationTests(unittest.TestCase):
             )
         )
 
+    def test_posthoc_attestation_error_quarantines_a_valid_result(self) -> None:
+        record = persistent.record_for(
+            task=tasks()[0],
+            pair_cap=8.0,
+            result_path=Path("paired-result.json"),
+            result={
+                "pair_valid": True,
+                "episodes": [],
+                "pair_validation_errors": [],
+            },
+            lifecycle="persistent",
+            attestation_errors=["evaluator controller missing"],
+        )
+
+        self.assertFalse(record["pair_valid"])
+        self.assertEqual(
+            record["posthoc_attestation_errors"],
+            ["evaluator controller missing"],
+        )
+        self.assertIn(
+            "evaluator controller missing",
+            record["pair_validation_errors"],
+        )
+
     def test_summary_requires_verified_persistent_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             output_dir = Path(temporary)

@@ -450,6 +450,14 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             "validate:\n    needs: installer-compatibility",
             release_metadata,
         )
+        self.assertIn(
+            "needs: installer-compatibility\n    if: always()",
+            release_metadata,
+        )
+        self.assertIn(
+            'if [[ "$INSTALLER_CERTIFICATION_RESULT" != "success" ]]',
+            release_metadata,
+        )
 
     def test_lume_uses_the_same_draft_finalizer(self) -> None:
         workflow = self.read(".github/workflows/cd-swift-lume.yml")

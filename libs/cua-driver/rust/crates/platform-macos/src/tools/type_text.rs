@@ -338,10 +338,12 @@ impl Tool for TypeTextTool {
                 // chrome (address bar, toolbar) stays trusted. Probe ONLY when a
                 // path with AXValue-only verification would otherwise confirm, so
                 // native types and already-unverified deliveries pay nothing.
-                let untrusted_web_readback = verified
+                let target_is_web_content = verified
                     && path_has_untrusted_web_readback(path)
                     && target_in_web_area(pid, element_ptr);
-                let verified = verified && !untrusted_web_readback;
+                let verification = surface_verification(path, verified, target_is_web_content);
+                let verified = verification.verified;
+                let untrusted_web_readback = verification.untrusted_web_readback;
 
                 // `verified:false` means the driver could not confirm the text
                 // landed (Electron AX echo, unreadable AXValue on Catalyst, or a
@@ -455,6 +457,25 @@ const PATH_KEY_EVENTS_FG: &str = "key_events_fg";
 
 fn path_has_untrusted_web_readback(path: &str) -> bool {
     path == PATH_AX || path == PATH_KEY_EVENTS || path == PATH_KEY_EVENTS_FG
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SurfaceVerification {
+    verified: bool,
+    untrusted_web_readback: bool,
+}
+
+fn surface_verification(
+    path: &str,
+    verified: bool,
+    target_is_web_content: bool,
+) -> SurfaceVerification {
+    let untrusted_web_readback =
+        verified && target_is_web_content && path_has_untrusted_web_readback(path);
+    SurfaceVerification {
+        verified: verified && !untrusted_web_readback,
+        untrusted_web_readback,
+    }
 }
 
 const DELIVERY_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
@@ -949,10 +970,45 @@ mod tests {
     }
 
     #[test]
-    fn ax_backed_paths_have_untrusted_web_readback() {
-        assert!(path_has_untrusted_web_readback(PATH_AX));
-        assert!(path_has_untrusted_web_readback(PATH_KEY_EVENTS));
-        assert!(path_has_untrusted_web_readback(PATH_KEY_EVENTS_FG));
+    fn ax_backed_web_readbacks_are_downgraded() {
+        for path in [PATH_AX, PATH_KEY_EVENTS, PATH_KEY_EVENTS_FG] {
+            assert_eq!(
+                surface_verification(path, true, true),
+                SurfaceVerification {
+                    verified: false,
+                    untrusted_web_readback: true,
+                },
+                "path={path}"
+            );
+        }
+    }
+
+    #[test]
+    fn web_readback_distrust_preserves_native_and_unverified_outcomes() {
+        assert_eq!(
+            surface_verification(PATH_KEY_EVENTS_FG, true, false),
+            SurfaceVerification {
+                verified: true,
+                untrusted_web_readback: false,
+            },
+            "native browser chrome remains eligible for trusted read-back"
+        );
+        assert_eq!(
+            surface_verification(PATH_KEY_EVENTS_FG, false, true),
+            SurfaceVerification {
+                verified: false,
+                untrusted_web_readback: false,
+            },
+            "an already-unverified delivery is not reclassified as a web echo"
+        );
+        assert_eq!(
+            surface_verification("independent_renderer_oracle", true, true),
+            SurfaceVerification {
+                verified: true,
+                untrusted_web_readback: false,
+            },
+            "a future independently verified path must not inherit AXValue distrust"
+        );
     }
 
     #[test]

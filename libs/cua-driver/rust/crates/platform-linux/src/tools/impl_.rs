@@ -1196,6 +1196,24 @@ fn type_text_ax_confirm_result(pid: u32, text_len: usize, route: &str) -> ToolRe
 /// Native GTK/Qt apps never spawn such helpers, so this is conservative (very
 /// low false-positive). The single-process fallback also matches the embedder's
 /// own argv. Reads `/proc`; cheap and only invoked on the rare AT-SPI confirm.
+fn chromium_executable_name(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "chrome"
+            | "google-chrome"
+            | "google-chrome-stable"
+            | "chromium"
+            | "chromium-browser"
+            | "microsoft-edge"
+            | "microsoft-edge-stable"
+            | "msedge"
+            | "brave"
+            | "brave-browser"
+            | "vivaldi"
+            | "opera"
+    )
+}
+
 fn is_chromium_embedder(pid: u32) -> bool {
     fn argv_is_chromium_helper(p: u32) -> bool {
         match fs::read(format!("/proc/{p}/cmdline")) {
@@ -1207,6 +1225,32 @@ fn is_chromium_embedder(pid: u32) -> bool {
     }
     // Single-process / the embedder itself carrying a Chromium switch.
     if argv_is_chromium_helper(pid) {
+        return true;
+    }
+    // Browser helpers can be reparented before this probe runs, so the
+    // descendant fingerprint is not sufficient for a standalone browser.
+    // Match only known Chromium browser executable basenames; do not use a
+    // broad substring match that could classify an unrelated native app.
+    if fs::read_link(format!("/proc/{pid}/exe"))
+        .ok()
+        .and_then(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .is_some_and(|name| chromium_executable_name(&name))
+    {
+        return true;
+    }
+    if fs::read(format!("/proc/{pid}/cmdline"))
+        .ok()
+        .and_then(|raw| {
+            let argv0 = raw.split(|byte| *byte == 0).next()?;
+            std::path::Path::new(std::str::from_utf8(argv0).ok()?)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .is_some_and(|name| chromium_executable_name(&name))
+    {
         return true;
     }
     // Build PPid → children across /proc, then BFS the descendants of `pid`
@@ -7076,7 +7120,9 @@ pub fn build_registry_with_provider(
 
 #[cfg(test)]
 mod click_button_schema_tests {
-    use super::{chromium_background_must_refuse, maps_indicate_gtk, ClickTool};
+    use super::{
+        chromium_background_must_refuse, chromium_executable_name, maps_indicate_gtk, ClickTool,
+    };
     use cua_driver_core::tool::Tool;
 
     /// Surface 5: schema must advertise the three canonical button values and
@@ -7119,6 +7165,28 @@ mod click_button_schema_tests {
         assert!(!chromium_background_must_refuse(false, true, true));
         assert!(!chromium_background_must_refuse(true, false, true));
         assert!(!chromium_background_must_refuse(false, false, false));
+    }
+
+    #[test]
+    fn standalone_chromium_browser_names_are_detected_conservatively() {
+        for name in [
+            "chrome",
+            "google-chrome",
+            "google-chrome-stable",
+            "chromium",
+            "chromium-browser",
+            "microsoft-edge",
+            "msedge",
+            "brave-browser",
+            "vivaldi",
+            "opera",
+        ] {
+            assert!(chromium_executable_name(name), "missed {name}");
+        }
+        assert!(chromium_executable_name("Google-Chrome"));
+        assert!(!chromium_executable_name("chrome-wrapper"));
+        assert!(!chromium_executable_name("my-chromium-app"));
+        assert!(!chromium_executable_name("electron"));
     }
 
     #[test]

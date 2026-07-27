@@ -3461,14 +3461,16 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
         let desktop_crop_before_path = evidence_dir.join("desktop-window-crop-before.png");
         let desktop_crop_after_path = evidence_dir.join("desktop-window-crop-after.png");
         let metrics_path = evidence_dir.join("capture-metrics.json");
-        let session = format!("standalone-browser-permission-{}", fixture.pid);
+        let window_session = format!("standalone-browser-permission-window-{}", fixture.pid);
+        let after_window_session =
+            format!("standalone-browser-permission-window-after-{}", fixture.pid);
         let bounds = browser_window_bounds(&mut fixture.driver, fixture.pid, fixture.window_id);
         let before = fixture.driver.call(
             "get_window_state",
             serde_json::json!({
                 "pid": fixture.pid as i64,
                 "window_id": fixture.window_id,
-                "session": session,
+                "session": window_session,
                 "screenshot_out_file": window_before_path,
             }),
         );
@@ -3478,10 +3480,29 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
             "{}",
             before.raw
         );
+        let escalated = fixture.driver.call(
+            "escalate_session",
+            serde_json::json!({
+                "session": window_session,
+                "reason": "foreground_ineffective",
+                "detail": "browser chrome may be outside window capture",
+            }),
+        );
+        assert!(
+            !escalated.is_error(),
+            "desktop inspection escalation failed: {}",
+            escalated.raw
+        );
+        assert_eq!(
+            escalated.structured()["effective_scope"],
+            "desktop",
+            "{}",
+            escalated.raw
+        );
         let desktop_before = fixture.driver.call(
             "get_desktop_state",
             serde_json::json!({
-                "session": session,
+                "session": window_session,
                 "screenshot_out_file": desktop_before_path,
             }),
         );
@@ -3498,7 +3519,7 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
                 "window_id": fixture.window_id,
                 "element_token": token,
                 "delivery_mode": "foreground",
-                "session": session,
+                "session": after_window_session,
             }),
         );
         assert!(
@@ -3518,7 +3539,7 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
             serde_json::json!({
                 "pid": fixture.pid as i64,
                 "window_id": fixture.window_id,
-                "session": session,
+                "session": after_window_session,
                 "screenshot_out_file": window_after_path,
             }),
         );
@@ -3551,7 +3572,7 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
         let desktop = fixture.driver.call(
             "get_desktop_state",
             serde_json::json!({
-                "session": session,
+                "session": window_session,
                 "screenshot_out_file": desktop_after_path,
             }),
         );

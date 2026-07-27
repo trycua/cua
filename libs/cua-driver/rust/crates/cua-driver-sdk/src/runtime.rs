@@ -214,6 +214,9 @@ impl DriverRuntime {
         );
         cua_driver_core::session::revoke_sessions_with_prefix(&runtime_prefix);
         cua_driver_core::session::forget_ended_sessions_with_prefix(&runtime_prefix);
+        cua_driver_core::session::forget_suspended_runtime_scope(
+            &self.compatibility_context.runtime_scope_key(),
+        );
         cua_driver_core::element_token::global()
             .clear_runtime_scope(&self.compatibility_context.runtime_scope_key());
         let recording = self.registry.recording.clone();
@@ -331,6 +334,7 @@ impl Drop for DriverRuntime {
         let runtime_prefix = format!("__cua_runtime_{runtime_scope}:");
         cua_driver_core::session::revoke_sessions_with_prefix(&runtime_prefix);
         cua_driver_core::session::forget_ended_sessions_with_prefix(&runtime_prefix);
+        cua_driver_core::session::forget_suspended_runtime_scope(&runtime_scope);
         cua_driver_core::element_token::global().clear_runtime_scope(&runtime_scope);
         // Explicit `shutdown()` drains work and finalizes recordings. Drop is
         // runtime-scoped and non-blocking so a retained binding cannot affect

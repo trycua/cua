@@ -717,9 +717,11 @@ impl BrowserEngine {
                 owner_sessions.push(transport_session);
             }
         }
-        for owner in &owner_sessions {
-            self.protected_resource_ownership
-                .mark_driver_owned_pid(owner, prepared_pid);
+        if let Ok(fingerprint) = self.platform.process_fingerprint(prepared_pid).await {
+            for owner in &owner_sessions {
+                self.protected_resource_ownership
+                    .mark_driver_owned_process(owner, fingerprint.clone());
+            }
         }
         self.managed_browsers.lock().unwrap().push(ManagedBrowser {
             child,
@@ -750,6 +752,7 @@ impl BrowserEngine {
     ) -> Result<PrepareOutcome, BrowserRefusal> {
         enum ConsentPath {
             Protected,
+            BoundedManifest,
             LegacyArtifact,
             Unrestricted,
         }
@@ -777,6 +780,30 @@ impl BrowserEngine {
             })?;
         let consent_path = if mode == crate::authorization::PermissionMode::Unrestricted {
             ConsentPath::Unrestricted
+        } else if mode == crate::authorization::PermissionMode::Bounded {
+            let context = crate::tool::current_dispatch_authorization_context().ok_or_else(|| {
+                refusal(
+                    BrowserRefusalCode::BrowserConsentRequired,
+                    "bounded existing-profile attachment requires a live session authorization context",
+                )
+            })?;
+            let manifest = context.bounded_manifest().ok_or_else(|| {
+                refusal(
+                    BrowserRefusalCode::BrowserConsentRequired,
+                    "bounded existing-profile attachment requires an approved session manifest",
+                )
+            })?;
+            manifest
+                .authorize_call(
+                    "browser_prepare",
+                    &serde_json::json!({
+                        "pid": request.pid,
+                        "window_id": window_id,
+                        "strategy": {"kind": "existing_profile"},
+                    }),
+                )
+                .map_err(|message| refusal(BrowserRefusalCode::BrowserConsentRequired, message))?;
+            ConsentPath::BoundedManifest
         } else if self.approval_broker.provider_id().is_some() {
             ConsentPath::Protected
         } else if crate::authorization::legacy_existing_profile_approval_enabled() {

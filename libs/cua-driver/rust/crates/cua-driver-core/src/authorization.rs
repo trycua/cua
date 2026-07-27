@@ -1289,6 +1289,7 @@ pub fn status_json_with_provider(
         .map(|manifest| {
             let (allow, deny, ask) = manifest.counts();
             serde_json::json!({
+                "version": manifest.version(),
                 "sha256": manifest.sha256(),
                 "expires_unix_ms": manifest.expires_unix_ms(),
                 "idle_timeout_seconds": manifest.idle_timeout().as_secs(),

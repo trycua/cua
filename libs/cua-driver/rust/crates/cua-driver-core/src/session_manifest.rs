@@ -28,6 +28,7 @@ pub enum ManifestDecision {
 
 #[derive(Debug, Clone)]
 pub struct SessionManifest {
+    version: u32,
     sha256: String,
     expires_unix_ms: u128,
     idle_timeout: Duration,
@@ -35,19 +36,50 @@ pub struct SessionManifest {
     deny: HashSet<String>,
     ask: HashSet<String>,
     existing_profiles: HashSet<(i64, u64)>,
+    existing_profile_kind: bool,
     browser_origins: HashSet<String>,
+    applications: Vec<ApplicationGrant>,
     desktop_applications: HashSet<i64>,
     desktop_windows: HashSet<(i64, u64)>,
     desktop_display: bool,
     readable_paths: HashSet<String>,
     writable_paths: HashSet<String>,
+    readable_roots: Vec<PathGrant>,
+    writable_roots: Vec<PathGrant>,
     terminable_pids: HashSet<i64>,
     configuration_changes: Vec<(String, serde_json::Value)>,
     last_authorized_dispatch: Arc<Mutex<Instant>>,
     idle_expired: Arc<AtomicBool>,
 }
 
+#[derive(Debug, Clone)]
+struct ApplicationGrant {
+    bundle_id: Option<String>,
+    executable: Option<String>,
+    #[allow(dead_code)]
+    launch: bool,
+    all_windows: bool,
+    terminate: TerminationGrant,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TerminationGrant {
+    Deny,
+    DriverLaunched,
+    Any,
+}
+
+#[derive(Debug, Clone)]
+struct PathGrant {
+    root: PathBuf,
+    recursive: bool,
+}
+
 impl SessionManifest {
+    pub fn version(&self) -> u32 {
+        self.version
+    }
+
     pub fn sha256(&self) -> &str {
         &self.sha256
     }
@@ -98,7 +130,9 @@ impl SessionManifest {
                     .ok_or_else(|| {
                         "bounded existing-profile access requires window_id".to_owned()
                     })?;
-                if !self.existing_profiles.contains(&(pid, window_id)) {
+                if !self.existing_profile_kind
+                    && !self.existing_profiles.contains(&(pid, window_id))
+                {
                     return Err(format!(
                         "browser pid {pid} window {window_id} is outside the bounded session policy"
                     ));
@@ -181,7 +215,28 @@ impl SessionManifest {
                     .pointer("/fingerprint/pid")
                     .and_then(serde_json::Value::as_i64)
                     .ok_or_else(|| "process control did not attest a pid".to_owned())?;
-                if self.terminable_pids.contains(&pid) {
+                let driver_owned = resource
+                    .get("driver_owned")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+                let app_allowed = self.applications.iter().any(|application| {
+                    let identity_matches = application
+                        .executable
+                        .as_deref()
+                        .zip(
+                            resource
+                                .pointer("/fingerprint/executable")
+                                .and_then(serde_json::Value::as_str),
+                        )
+                        .is_some_and(|(allowed, actual)| allowed == actual);
+                    identity_matches
+                        && match application.terminate {
+                            TerminationGrant::Deny => false,
+                            TerminationGrant::DriverLaunched => driver_owned,
+                            TerminationGrant::Any => true,
+                        }
+                });
+                if self.terminable_pids.contains(&pid) || app_allowed {
                     Ok(())
                 } else {
                     Err(format!(
@@ -226,6 +281,7 @@ impl SessionManifest {
             .ok_or_else(|| "window resource did not attest a window_id".to_owned())?;
         if self.desktop_windows.contains(&(pid, window_id))
             || self.existing_profiles.contains(&(pid, window_id))
+            || self.resource_matches_application(resource, true)
         {
             Ok(())
         } else {
@@ -245,6 +301,7 @@ impl SessionManifest {
                 .existing_profiles
                 .iter()
                 .any(|(profile_pid, _)| *profile_pid == pid)
+            || self.resource_matches_application(resource, false)
         {
             Ok(())
         } else {
@@ -252,6 +309,34 @@ impl SessionManifest {
                 "desktop application pid {pid} is outside the bounded session policy"
             ))
         }
+    }
+
+    fn resource_matches_application(
+        &self,
+        resource: &serde_json::Value,
+        require_all_windows: bool,
+    ) -> bool {
+        let bundle_id = resource
+            .get("bundle_id")
+            .and_then(serde_json::Value::as_str);
+        let executable = resource
+            .pointer("/fingerprint/executable")
+            .or_else(|| resource.get("executable"))
+            .or_else(|| resource.get("launch_path"))
+            .and_then(serde_json::Value::as_str);
+        self.applications.iter().any(|application| {
+            (!require_all_windows || application.all_windows)
+                && (application
+                    .bundle_id
+                    .as_deref()
+                    .zip(bundle_id)
+                    .is_some_and(|(allowed, actual)| allowed == actual)
+                    || application
+                        .executable
+                        .as_deref()
+                        .zip(executable)
+                        .is_some_and(|(allowed, actual)| allowed == actual))
+        })
     }
 
     fn authorize_resource_origin(&self, resource: &serde_json::Value) -> Result<(), String> {
@@ -271,17 +356,24 @@ impl SessionManifest {
         kind: &str,
         resource: &serde_json::Value,
     ) -> Result<(), String> {
-        let all_allowed = |values: &serde_json::Value, allowed: &HashSet<String>| {
-            values.as_array().is_some_and(|values| {
-                !values.is_empty()
-                    && values
-                        .iter()
-                        .all(|value| value.as_str().is_some_and(|path| allowed.contains(path)))
-            })
-        };
+        let all_allowed =
+            |values: &serde_json::Value, allowed: &HashSet<String>, roots: &[PathGrant]| {
+                values.as_array().is_some_and(|values| {
+                    !values.is_empty()
+                        && values.iter().all(|value| {
+                            value
+                                .as_str()
+                                .is_some_and(|path| path_allowed(path, allowed, roots))
+                        })
+                })
+            };
         match kind {
             "browser_upload" => {
-                if all_allowed(&resource["canonical_paths"], &self.readable_paths) {
+                if all_allowed(
+                    &resource["canonical_paths"],
+                    &self.readable_paths,
+                    &self.readable_roots,
+                ) {
                     Ok(())
                 } else {
                     Err(
@@ -294,19 +386,25 @@ impl SessionManifest {
                 resource,
                 "canonical_source_directory",
                 &self.readable_paths,
+                &self.readable_roots,
             ),
             "browser_download" => self.authorize_exact_path(
                 resource,
                 "canonical_destination_root",
                 &self.writable_paths,
+                &self.writable_roots,
             ),
-            "screenshot_output" => {
-                self.authorize_exact_path(resource, "canonical_output_path", &self.writable_paths)
-            }
+            "screenshot_output" => self.authorize_exact_path(
+                resource,
+                "canonical_output_path",
+                &self.writable_paths,
+                &self.writable_roots,
+            ),
             "recording_output" | "recording_finalize" => self.authorize_exact_path(
                 resource,
                 "canonical_output_directory",
                 &self.writable_paths,
+                &self.writable_roots,
             ),
             // The exact dependency and confirmation bit are fixed by the
             // typed install_ffmpeg route; the manifest's tool allow is the
@@ -323,12 +421,13 @@ impl SessionManifest {
         resource: &serde_json::Value,
         key: &str,
         allowed: &HashSet<String>,
+        roots: &[PathGrant],
     ) -> Result<(), String> {
         let path = resource
             .get(key)
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| format!("file resource did not attest {key}"))?;
-        if allowed.contains(path) {
+        if path_allowed(path, allowed, roots) {
             Ok(())
         } else {
             Err("the exact path is outside the bounded session policy".to_owned())
@@ -384,6 +483,8 @@ struct RawManifest {
 #[serde(deny_unknown_fields)]
 struct RawResources {
     #[serde(default)]
+    apps: Vec<RawApplicationResource>,
+    #[serde(default)]
     browser: RawBrowserResources,
     #[serde(default)]
     desktop: RawDesktopResources,
@@ -402,7 +503,32 @@ struct RawBrowserResources {
     #[serde(default)]
     existing_profiles: Vec<RawExistingProfile>,
     #[serde(default)]
+    profiles: Vec<RawBrowserProfile>,
+    #[serde(default)]
     origins: Vec<String>,
+}
+
+#[cfg(feature = "yaml")]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawBrowserProfile {
+    kind: String,
+}
+
+#[cfg(feature = "yaml")]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawApplicationResource {
+    #[serde(default)]
+    bundle_id: Option<String>,
+    #[serde(default)]
+    executable: Option<String>,
+    #[serde(default)]
+    launch: bool,
+    #[serde(default)]
+    windows: Option<String>,
+    #[serde(default)]
+    terminate: Option<String>,
 }
 
 #[cfg(feature = "yaml")]
@@ -438,9 +564,21 @@ struct RawDesktopWindow {
 #[serde(deny_unknown_fields)]
 struct RawFileResources {
     #[serde(default)]
-    read: Vec<String>,
+    read: Vec<RawPathResource>,
     #[serde(default)]
-    write: Vec<String>,
+    write: Vec<RawPathResource>,
+}
+
+#[cfg(feature = "yaml")]
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawPathResource {
+    Exact(String),
+    Directory {
+        dir: String,
+        #[serde(default)]
+        recursive: bool,
+    },
 }
 
 #[cfg(feature = "yaml")]
@@ -518,6 +656,7 @@ pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
             ask,
         } = raw;
         let RawResources {
+            apps: raw_applications,
             browser,
             desktop,
             files,
@@ -526,6 +665,7 @@ pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
         } = resources;
         let RawBrowserResources {
             existing_profiles: raw_existing_profiles,
+            profiles: raw_browser_profiles,
             origins: raw_browser_origins,
         } = browser;
         let RawDesktopResources {
@@ -544,9 +684,9 @@ pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
             changes: raw_configuration_changes,
         } = driver_configuration;
 
-        if version != 1 {
+        if !matches!(version, 1 | 2) {
             return Err(format!(
-                "unsupported session policy version {}; expected 1",
+                "unsupported session policy version {}; expected 1 or 2",
                 version
             ));
         }
@@ -598,6 +738,21 @@ pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
                 ));
             }
         }
+        if version == 1 && !raw_browser_profiles.is_empty() {
+            return Err("browser profiles require session policy version 2".to_owned());
+        }
+        let mut existing_profile_kind = false;
+        for profile in raw_browser_profiles {
+            match profile.kind.trim() {
+                "isolated" | "isolated_new" => {}
+                "existing_profile" => existing_profile_kind = true,
+                other => {
+                    return Err(format!(
+                        "unsupported browser profile kind '{other}'; expected isolated or existing_profile"
+                    ))
+                }
+            }
+        }
         let mut browser_origins = HashSet::new();
         for raw_origin in raw_browser_origins {
             let origin = canonical_origin(&raw_origin)?;
@@ -612,6 +767,12 @@ pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
         }
         let desktop_applications =
             validate_positive_pids("desktop applications", raw_desktop_applications)?;
+        if version == 1 && !raw_applications.is_empty() {
+            return Err(
+                "application identity resources require session policy version 2".to_owned(),
+            );
+        }
+        let applications = validate_applications(raw_applications)?;
         let mut desktop_windows = HashSet::new();
         for window in raw_desktop_windows {
             if window.pid <= 0 || window.window_id == 0 {
@@ -624,8 +785,10 @@ pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
                 ));
             }
         }
-        let readable_paths = validate_manifest_paths("files.read", raw_readable_paths)?;
-        let writable_paths = validate_manifest_paths("files.write", raw_writable_paths)?;
+        let (readable_paths, readable_roots) =
+            validate_manifest_path_resources("files.read", raw_readable_paths, version)?;
+        let (writable_paths, writable_roots) =
+            validate_manifest_path_resources("files.write", raw_writable_paths, version)?;
         let terminable_pids = validate_positive_pids("processes.terminate", raw_terminable_pids)?;
         let mut configuration_changes = Vec::new();
         for change in raw_configuration_changes {
@@ -678,9 +841,10 @@ pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
         }
 
         let mut digest = Sha256::new();
-        digest.update(b"cua-driver-session-policy-v1\0");
+        digest.update(format!("cua-driver-session-policy-v{version}\0").as_bytes());
         digest.update(&bytes);
         Ok(SessionManifest {
+            version,
             sha256: format!("{:x}", digest.finalize()),
             expires_unix_ms: now_unix_ms() + expires_after.as_millis(),
             idle_timeout,
@@ -688,12 +852,16 @@ pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
             deny,
             ask,
             existing_profiles,
+            existing_profile_kind,
             browser_origins,
+            applications,
             desktop_applications,
             desktop_windows,
             desktop_display,
             readable_paths,
             writable_paths,
+            readable_roots,
+            writable_roots,
             terminable_pids,
             configuration_changes,
             last_authorized_dispatch: Arc::new(Mutex::new(Instant::now())),
@@ -746,6 +914,112 @@ fn validate_positive_pids(section: &str, pids: Vec<i64>) -> Result<HashSet<i64>,
 }
 
 #[cfg(feature = "yaml")]
+fn validate_applications(
+    applications: Vec<RawApplicationResource>,
+) -> Result<Vec<ApplicationGrant>, String> {
+    let mut validated = Vec::new();
+    for raw in applications {
+        let bundle_id = raw
+            .bundle_id
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+        let executable = raw
+            .executable
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+        if bundle_id.is_some() == executable.is_some() {
+            return Err(
+                "each application resource must declare exactly one of bundle_id or executable"
+                    .to_owned(),
+            );
+        }
+        let executable = executable
+            .map(|path| {
+                let path = Path::new(&path);
+                if !path.is_absolute() {
+                    return Err(
+                        "application executable identities must be canonical absolute paths"
+                            .to_owned(),
+                    );
+                }
+                canonical_manifest_path(path)
+            })
+            .transpose()?;
+        let all_windows = match raw.windows.as_deref().unwrap_or("all") {
+            "all" => true,
+            other => {
+                return Err(format!(
+                    "unsupported application windows scope '{other}'; expected all"
+                ))
+            }
+        };
+        let terminate = match raw.terminate.as_deref().unwrap_or("deny") {
+            "deny" => TerminationGrant::Deny,
+            "driver_launched" => TerminationGrant::DriverLaunched,
+            "any" => TerminationGrant::Any,
+            other => {
+                return Err(format!(
+                    "unsupported application terminate scope '{other}'; expected deny, driver_launched, or any"
+                ))
+            }
+        };
+        if validated.iter().any(|application: &ApplicationGrant| {
+            application.bundle_id == bundle_id && application.executable == executable
+        }) {
+            return Err("application resources repeat an identity".to_owned());
+        }
+        validated.push(ApplicationGrant {
+            bundle_id,
+            executable,
+            launch: raw.launch,
+            all_windows,
+            terminate,
+        });
+    }
+    Ok(validated)
+}
+
+#[cfg(feature = "yaml")]
+fn validate_manifest_path_resources(
+    section: &str,
+    resources: Vec<RawPathResource>,
+    version: u32,
+) -> Result<(HashSet<String>, Vec<PathGrant>), String> {
+    let mut exact = HashSet::new();
+    let mut roots = Vec::new();
+    for resource in resources {
+        match resource {
+            RawPathResource::Exact(path) => {
+                exact.extend(validate_manifest_paths(section, vec![path])?);
+            }
+            RawPathResource::Directory { dir, recursive } => {
+                if version < 2 {
+                    return Err(format!(
+                        "{section} directory roots require session policy version 2"
+                    ));
+                }
+                let canonical = validate_manifest_paths(section, vec![dir])?
+                    .into_iter()
+                    .next()
+                    .expect("one validated path");
+                let root = PathBuf::from(&canonical);
+                if root.exists() && !root.is_dir() {
+                    return Err(format!("{section} directory root must name a directory"));
+                }
+                if roots
+                    .iter()
+                    .any(|grant: &PathGrant| grant.root == root && grant.recursive == recursive)
+                {
+                    return Err(format!("{section} repeats directory root '{canonical}'"));
+                }
+                roots.push(PathGrant { root, recursive });
+            }
+        }
+    }
+    Ok((exact, roots))
+}
+
+#[cfg(feature = "yaml")]
 fn validate_manifest_paths(section: &str, paths: Vec<String>) -> Result<HashSet<String>, String> {
     let mut validated = HashSet::new();
     for raw in paths {
@@ -793,6 +1067,21 @@ fn validate_manifest_paths(section: &str, paths: Vec<String>) -> Result<HashSet<
         }
     }
     Ok(validated)
+}
+
+fn path_allowed(path: &str, exact: &HashSet<String>, roots: &[PathGrant]) -> bool {
+    if exact.contains(path) {
+        return true;
+    }
+    let candidate = Path::new(path);
+    roots.iter().any(|grant| {
+        candidate == grant.root
+            || if grant.recursive {
+                candidate.starts_with(&grant.root)
+            } else {
+                candidate.parent() == Some(grant.root.as_path())
+            }
+    })
 }
 
 #[cfg(feature = "yaml")]
@@ -941,6 +1230,138 @@ ask:
         )
         .unwrap();
         assert_eq!(loaded.decision("get_config"), ManifestDecision::Allow);
+        assert_eq!(loaded.version(), 1);
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn version_two_supports_prelaunch_identities_profile_kinds_and_directory_roots() {
+        let root = tempfile::tempdir().unwrap();
+        let input = root.path().join("input");
+        let output = root.path().join("output");
+        std::fs::create_dir_all(input.join("nested")).unwrap();
+        std::fs::create_dir_all(&output).unwrap();
+        let executable = std::fs::canonicalize(std::env::current_exe().unwrap()).unwrap();
+        let input = std::fs::canonicalize(input).unwrap();
+        let output = std::fs::canonicalize(output).unwrap();
+        let loaded = manifest(&format!(
+            r#"
+version: 2
+mode: bounded
+expires_after: 8h
+idle_timeout: 30m
+resources:
+  apps:
+    - executable: {executable:?}
+      launch: true
+      windows: all
+      terminate: driver_launched
+  browser:
+    profiles:
+      - kind: isolated
+      - kind: existing_profile
+  files:
+    read:
+      - dir: {input:?}
+        recursive: true
+    write:
+      - dir: {output:?}
+        recursive: false
+allow:
+  tools:
+    - browser_prepare
+    - get_window_state
+    - kill_app
+    - browser_set_input_files
+    - get_desktop_state
+"#,
+            executable = executable.to_string_lossy(),
+            input = input.to_string_lossy(),
+            output = output.to_string_lossy(),
+        ))
+        .unwrap();
+
+        assert_eq!(loaded.version(), 2);
+        loaded
+            .authorize_call(
+                "browser_prepare",
+                &serde_json::json!({
+                    "pid": 42,
+                    "window_id": 7,
+                    "strategy": {"kind": "existing_profile"}
+                }),
+            )
+            .unwrap();
+        loaded
+            .authorize_protected_resource(
+                "private_observation",
+                &serde_json::json!({
+                    "kind": "window",
+                    "pid": 42,
+                    "window_id": 7,
+                    "fingerprint": {
+                        "pid": 42,
+                        "start_time": 1,
+                        "executable": executable
+                    }
+                }),
+            )
+            .unwrap();
+        loaded
+            .authorize_protected_resource(
+                "process_control",
+                &serde_json::json!({
+                    "kind": "process_instance",
+                    "driver_owned": true,
+                    "fingerprint": {
+                        "pid": 42,
+                        "start_time": 1,
+                        "executable": executable
+                    }
+                }),
+            )
+            .unwrap();
+        assert!(loaded
+            .authorize_protected_resource(
+                "process_control",
+                &serde_json::json!({
+                    "kind": "process_instance",
+                    "driver_owned": false,
+                    "fingerprint": {
+                        "pid": 42,
+                        "start_time": 1,
+                        "executable": executable
+                    }
+                }),
+            )
+            .is_err());
+        loaded
+            .authorize_protected_resource(
+                "file_transfer_and_output",
+                &serde_json::json!({
+                    "kind": "browser_upload",
+                    "canonical_paths": [input.join("nested").join("fixture.txt")]
+                }),
+            )
+            .unwrap();
+        loaded
+            .authorize_protected_resource(
+                "file_transfer_and_output",
+                &serde_json::json!({
+                    "kind": "screenshot_output",
+                    "canonical_output_path": output.join("capture.png")
+                }),
+            )
+            .unwrap();
+        assert!(loaded
+            .authorize_protected_resource(
+                "file_transfer_and_output",
+                &serde_json::json!({
+                    "kind": "screenshot_output",
+                    "canonical_output_path": output.join("nested").join("capture.png")
+                }),
+            )
+            .is_err());
     }
 
     #[cfg(feature = "yaml")]

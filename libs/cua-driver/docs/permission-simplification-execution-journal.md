@@ -52,6 +52,26 @@
   - `cargo test -p cua-driver-core --lib`: 413 passed.
   - `cargo check -p cua-driver-core --all-targets`: passed.
 
+### Practical bounded mode and terminal revocation
+
+- Added manifest version 2 while keeping version 1 loadable.
+- Added application identity grants, practical directory roots, browser
+  profile kinds, and driver-owned versus foreign termination rules.
+- Made path-root matching component-aware and canonical-path based.
+- Enriched live window and process attestations with application identity
+  before manifest matching.
+- Allowed an existing-profile browser binding directly from a matching
+  bounded manifest, without a consent provider or indicator.
+- Added a direct no-provider bounded dispatch test.
+- Added stable dispatch refusals for ended sessions, revoked authorization
+  contexts, and a terminal runtime revoke-all latch.
+- Made revoke-all reject later calls even when they introduce a new public
+  session label.
+- Verification:
+  - `cargo check -p cua-driver-core --all-targets`: passed.
+  - `cargo check -p cua-driver --all-targets`: passed.
+  - Focused bounded no-provider and terminal-revocation tests: passed.
+
 ## Evidence index
 
 Evidence links and exact-head workflow runs will be added as each environment

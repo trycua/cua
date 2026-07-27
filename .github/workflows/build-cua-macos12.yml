@@ -1,0 +1,51 @@
+name: Build cua-driver for macOS 12 (Monterey)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Tag/branch to build (e.g. cua-driver-rs-v0.12.6)'
+        required: false
+        default: 'cua-driver-rs-v0.12.6'
+
+env:
+  MACOSX_DEPLOYMENT_TARGET: '12.0'
+
+jobs:
+  build-macos12-universal:
+    runs-on: macos-13  # macOS 13 Ventura runner — newest that still works with deployment target 12.0
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.version || 'cua-driver-rs-v0.12.6' }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Build x86_64
+        run: |
+          cargo build --release -p cua-driver --target x86_64-apple-darwin
+
+      - name: Build arm64
+        run: |
+          cargo build --release -p cua-driver --target aarch64-apple-darwin
+
+      - name: Create universal binary
+        run: |
+          mkdir -p dist
+          lipo -create \
+            target/x86_64-apple-darwin/release/cua-driver \
+            target/aarch64-apple-darwin/release/cua-driver \
+            -output dist/cua-driver
+          strip dist/cua-driver
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cua-driver-macos12-universal
+          path: dist/cua-driver
+          compression-level: 0

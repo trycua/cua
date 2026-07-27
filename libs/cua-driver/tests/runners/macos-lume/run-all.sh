@@ -213,7 +213,8 @@ RESTORE_STANDARD_DAEMON=1
 open -n -g /Applications/CuaDriverLocal.app --args \
   serve \
   --permission-mode unrestricted \
-  --dangerously-bypass-approvals
+  --dangerously-bypass-approvals \
+  >/dev/null 2>&1
 UNRESTRICTED_READY=0
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   if "${INSTALLED_BIN}" status --socket "${CUA_E2E_MACOS_DAEMON_SOCKET}" \

@@ -541,12 +541,7 @@ fn row_expects_refusal(row: CatalogRow) -> bool {
     }
     let focus_bound_pointer = matches!(
         row.operation,
-        Operation::PxClick {
-            button: "right",
-            ..
-        } | Operation::PxClick { count: 2, .. }
-            | Operation::Scroll { pixel: true, .. }
-            | Operation::Drag { .. }
+        Operation::PxClick { .. } | Operation::Scroll { pixel: true, .. } | Operation::Drag { .. }
     );
     if DisplayServer::current() == DisplayServer::X11
         && (focus_bound_pointer || matches!(row.operation, Operation::PxTypeText { .. }))

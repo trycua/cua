@@ -91,6 +91,14 @@ else
   export CUA_E2E_COMPOSITOR="${CUA_E2E_COMPOSITOR:-openbox-x11}"
   export CUA_E2E_INPUT_BACKENDS="${CUA_E2E_INPUT_BACKENDS:-atspi,xsend-event,xtest}"
 fi
+CARGO_DRIVER_FEATURE_ARGS=()
+if [[ ",${CUA_E2E_INPUT_BACKENDS}," == *,libei-portal,* ]]; then
+  # GNOME and KDE retain DISPLAY for XWayland while the product route remains
+  # native Wayland. Their representative lanes require the release-shipped
+  # RemoteDesktop/libei adapter, so every cua-driver build/test in this runner
+  # must compile the same portal-input feature instead of falling back to wtype.
+  CARGO_DRIVER_FEATURE_ARGS=(--features portal-input)
+fi
 if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
   export CUA_ATSPI_DEBUG=1
 fi
@@ -106,7 +114,9 @@ command -v ffprobe >/dev/null || { echo "ffprobe is required for E2E trajectory 
 command -v jq >/dev/null || { echo "jq is required for E2E ownership validation" >&2; exit 1; }
 
 if [[ "${BUILD_FIXTURES}" == 1 ]]; then
-  cargo build --release -p cua-driver --manifest-path "${RUST_ROOT}/Cargo.toml"
+  cargo build --release -p cua-driver \
+    "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+    --manifest-path "${RUST_ROOT}/Cargo.toml"
   case "${SUITE}" in
     shared) FIXTURE_TARGETS="${CUA_E2E_HARNESS_FILTER:-electron,tauri}" ;;
     native|capture) FIXTURE_TARGETS="electron,gtk3" ;;
@@ -151,7 +161,9 @@ run_report() {
 
 echo "[PREFLIGHT] Linux desktop, fixture, AX, capture, and video"
 set +e
-(cd "${RUST_ROOT}" && cargo test -p cua-driver --test e2e_environment_preflight_test -- \
+(cd "${RUST_ROOT}" && cargo test -p cua-driver \
+  "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+  --test e2e_environment_preflight_test -- \
   --ignored --exact canonical_e2e_environment_is_ready --nocapture --test-threads=1) \
   2>&1 | tee "${ARTIFACT_DIR}/environment-preflight.log"
 PREFLIGHT_EXIT=${PIPESTATUS[0]}
@@ -179,35 +191,42 @@ run_test() {
 
 if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
   run_test protected-permission-prompt-socket \
-    cargo test -p cua-driver --test permission_prompt_authorization_test -- --test-threads=1
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test permission_prompt_authorization_test -- --test-threads=1
   run_test sdk-runtime-contract \
     cargo test -p cua-driver-sdk --lib -- --test-threads=1
   run_test sdk-runtime-configuration \
     cargo test -p cua-driver-sdk --test runtime_configuration -- --test-threads=1
   run_test private-worker-lifecycle \
-    cargo test -p cua-driver --test private_worker_test -- --test-threads=1
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test private_worker_test -- --test-threads=1
   run_test shared-behavior-matrix \
-    cargo test -p cua-driver --test cross_platform_behavior_test -- \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test cross_platform_behavior_test -- \
       --ignored --exact shared_web_action_matrix_is_state_verified \
       --nocapture --test-threads=1
   run_test embedded-browser-routes \
-    cargo test -p cua-driver --test cross_platform_behavior_test -- \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test cross_platform_behavior_test -- \
       --ignored --exact embedded_browser_routes_are_exact_or_refused \
       --nocapture --test-threads=1
 fi
 
 if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
   run_test gtk3-native-harness \
-    cargo test -p cua-driver --test harness_gtk3_test -- \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test harness_gtk3_test -- \
       --ignored --nocapture --test-threads=1
 fi
 
 if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
   run_test capture-contract \
-    cargo test -p cua-driver --test capture_contract_test -- \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test capture_contract_test -- \
       --ignored --nocapture --test-threads=1
   run_test desktop-scope \
-    cargo test -p cua-driver --test desktop_scope_linux_test -- \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test desktop_scope_linux_test -- \
       --ignored --nocapture --test-threads=1
 fi
 

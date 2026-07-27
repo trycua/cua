@@ -15,6 +15,7 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::HiDpi::GetDpiForSystem;
+use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, VK_ESCAPE};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 static CONTEXT: Mutex<Option<SurfaceContext>> = Mutex::new(None);
@@ -43,7 +44,7 @@ enum SurfaceMode {
 
 pub fn interactive_surface_available() -> bool {
     let mut session = 0u32;
-    unsafe { ProcessIdToSessionId(GetCurrentProcessId(), &mut session).as_bool() && session != 0 }
+    unsafe { ProcessIdToSessionId(GetCurrentProcessId(), &mut session).is_ok() && session != 0 }
 }
 
 pub fn run(request: HelperRequest) -> anyhow::Result<()> {
@@ -67,7 +68,7 @@ unsafe fn run_win32(request: HelperRequest) -> anyhow::Result<()> {
         cbSize: std::mem::size_of::<MONITORINFO>() as u32,
         ..Default::default()
     };
-    GetMonitorInfoW(monitor, &mut info)?;
+    GetMonitorInfoW(monitor, &mut info).ok()?;
     let work = info.rcWork;
     let work_rect = Rect {
         x: work.left as f64,

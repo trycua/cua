@@ -1322,10 +1322,11 @@ def reset_and_setup_task(cache_dir: Path) -> dict[str, Any]:
     }
 
 
-def evaluate_task(cache_dir: Path) -> dict[str, Any]:
+def build_evaluator_env(cache_dir: Path) -> SimpleNamespace:
     from desktop_env.controllers.python import PythonController
     from desktop_env.controllers.setup import SetupController
 
+    cache = str(cache_dir.resolve())
     controller = PythonController(
         vm_ip="127.0.0.1",
         server_port=fleet_pilot.CONTROL_PORT,
@@ -1335,20 +1336,34 @@ def evaluate_task(cache_dir: Path) -> dict[str, Any]:
         server_port=fleet_pilot.CONTROL_PORT,
         chromium_port=fleet_pilot.CDP_PORT,
         vlc_port=fleet_pilot.VLC_PORT,
-        cache_dir=str(cache_dir.resolve()),
+        cache_dir=cache,
         client_password="osworld-public-evaluation",
         screen_width=1920,
         screen_height=1080,
     )
-    raw = load_task_class()().evaluate(
-        SimpleNamespace(
-            cache_dir=str(cache_dir.resolve()),
-            vm_ip="127.0.0.1",
-            controller=controller,
-            setup_controller=setup_controller,
-            enable_proxy=False,
-        )
+    return SimpleNamespace(
+        cache_dir=cache,
+        cache_dir_base=cache,
+        vm_ip="127.0.0.1",
+        server_port=fleet_pilot.CONTROL_PORT,
+        chromium_port=fleet_pilot.CDP_PORT,
+        vnc_port=fleet_pilot.NOVNC_PORT,
+        vlc_port=fleet_pilot.VLC_PORT,
+        controller=controller,
+        setup_controller=setup_controller,
+        client_password="osworld-public-evaluation",
+        screen_width=1920,
+        screen_height=1080,
+        enable_proxy=False,
+        current_use_proxy=False,
+        action_history=[],
+        is_environment_used=True,
+        vm_platform="linux",
     )
+
+
+def evaluate_task(cache_dir: Path) -> dict[str, Any]:
+    raw = load_task_class()().evaluate(build_evaluator_env(cache_dir))
     if isinstance(raw, dict):
         if "score" not in raw:
             raise PairedRunError(f"Task{TASK_ID} evaluator dict omitted score")

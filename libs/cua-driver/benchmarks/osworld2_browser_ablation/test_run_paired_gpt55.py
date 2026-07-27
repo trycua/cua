@@ -579,6 +579,21 @@ class EvaluationTests(unittest.TestCase):
                     raise AssertionError("runtime controller is missing")
                 if not callable(getattr(env.setup_controller, "setup", None)):
                     raise AssertionError("setup controller is missing")
+                expected = {
+                    "server_port": paired.fleet_pilot.CONTROL_PORT,
+                    "chromium_port": paired.fleet_pilot.CDP_PORT,
+                    "vnc_port": paired.fleet_pilot.NOVNC_PORT,
+                    "vlc_port": paired.fleet_pilot.VLC_PORT,
+                    "client_password": "osworld-public-evaluation",
+                    "screen_width": 1920,
+                    "screen_height": 1080,
+                    "vm_platform": "linux",
+                }
+                for name, value in expected.items():
+                    if getattr(env, name, None) != value:
+                        raise AssertionError(
+                            f"evaluator environment omitted {name}"
+                        )
 
         desktop_env = ModuleType("desktop_env")
         controllers = ModuleType("desktop_env.controllers")

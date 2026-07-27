@@ -1138,6 +1138,7 @@ fn spawn_browser_command(
     url: &str,
     position: (i32, i32),
     force_high_device_scale: bool,
+    disable_quiet_notification_prompts: bool,
 ) {
     let mut command = command_for_browser(
         spec,
@@ -1147,6 +1148,12 @@ fn spawn_browser_command(
         position,
         force_high_device_scale,
     );
+    if cfg!(target_os = "windows") && disable_quiet_notification_prompts {
+        // Edge defaults to Chromium's quiet notification UI, which exposes
+        // only an address-bar indicator and no permission surface to compare.
+        // Keep this certification row on the full browser-owned prompt.
+        command.arg("--disable-features=QuietNotificationPrompts");
+    }
     if force_high_device_scale {
         command.arg("--force-device-scale-factor=2");
     }
@@ -1189,6 +1196,7 @@ fn launch_browser_with_driver(
         "about:blank",
         TEST_BROWSER_INITIAL_POSITION,
         label.contains("multi-tab"),
+        label.contains("browser-owned-permission"),
     );
     navigate_initial_page(cdp_port, &server);
     record_browser_provenance(spec, cdp_port);
@@ -3434,7 +3442,9 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
         std::env::consts::OS,
         spec.name
     );
-    execute_case(case(&spec.name, "browser_owned_permission"), |evidence| {
+    let mut spec_case = case(&spec.name, "browser_owned_permission");
+    spec_case.oracles = vec![OracleKind::FixtureState, OracleKind::Pixels];
+    execute_case(spec_case, |evidence| {
         let mut fixture =
             launch_browser_with_html(spec, &scenario, standalone_browser_permission_prompt_html());
         *evidence = recording_evidence(fixture.driver.recording_dir());

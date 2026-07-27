@@ -116,6 +116,7 @@ $ThemeBinaryName = "cua-cursor-theme.exe"
 # ~~~ BAKED_VERSION: auto-updated in the release PR — do not edit ~~~
 $Script:CuaDriverRsBakedVersion = "0.12.6" # x-release-please-version
 # ~~~ END_BAKED_VERSION ~~~
+$CursorThemeRequiredFrom = [version]"0.12.7"
 
 # ---------- Path resolution ------------------------------------------------
 
@@ -1100,9 +1101,13 @@ if (-not $skipDownload) {
         Copy-Item -LiteralPath (Join-Path $stageDir $BinaryName) -Destination (Join-Path $versionedDir $BinaryName) -Force
         $themeStage = Join-Path $stageDir $ThemeBinaryName
         if (-not (Test-Path -LiteralPath $themeStage)) {
-            throw "release archive is missing required $ThemeBinaryName"
+            if ([version]$version -ge $CursorThemeRequiredFrom) {
+                throw "release archive is missing required $ThemeBinaryName"
+            }
+            Write-WarningStep "release $version predates $ThemeBinaryName; installing without custom cursor themes"
+        } else {
+            Copy-Item -LiteralPath $themeStage -Destination (Join-Path $versionedDir $ThemeBinaryName) -Force
         }
-        Copy-Item -LiteralPath $themeStage -Destination (Join-Path $versionedDir $ThemeBinaryName) -Force
         Write-Step "installed $versionedDir\$BinaryName (version $version, target $target)"
         # Optional sibling: the reserved uiAccess worker
         # (cua-driver-uia.exe). It started shipping with

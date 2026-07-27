@@ -375,7 +375,7 @@ fn consent_expired(mode: &SurfaceMode) -> bool {
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO)
         .as_millis();
-    now >= card.expires_unix_ms
+    now >= u128::from(card.expires_unix_ms)
 }
 
 fn fallback_outcome(mode: &SurfaceMode) -> HelperEvent {

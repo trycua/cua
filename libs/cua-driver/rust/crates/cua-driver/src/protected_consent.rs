@@ -95,12 +95,14 @@ impl ProtectedConsentProvider for NativeProtectedConsentProvider {
     }
 
     async fn request_consent(&self, request: &ConsentRequest) -> Result<ProviderDecision, String> {
+        let expires_unix_ms = u64::try_from(request.expires_unix_ms)
+            .map_err(|_| "protected consent expiry exceeds the helper wire range".to_owned())?;
         let card = ConsentCard {
             operation: request.operation.clone(),
             risk_label: format!("{:?}", request.risk_class),
             summary: request.human_summary.clone(),
             request_digest: request.request_digest.clone(),
-            expires_unix_ms: request.expires_unix_ms,
+            expires_unix_ms,
         };
         let expected_digest = request.request_digest.clone();
         tokio::task::spawn_blocking(move || {

@@ -393,7 +393,7 @@ unsafe fn schedule_expiry_timer() {
                     .duration_since(UNIX_EPOCH)
                     .unwrap_or(Duration::ZERO)
                     .as_millis();
-                expires.saturating_sub(now) as f64 / 1000.0
+                u128::from(expires).saturating_sub(now) as f64 / 1000.0
             })
             .unwrap_or(0.1)
             .max(0.1)

@@ -307,9 +307,9 @@ fn consent_expiry_delay() -> Option<Duration> {
             .unwrap_or(Duration::ZERO)
             .as_millis();
         Some(Duration::from_millis(
-            card.expires_unix_ms
+            u128::from(card.expires_unix_ms)
                 .saturating_sub(now)
-                .clamp(100, u64::MAX as u128) as u64,
+                .clamp(100, u128::from(u64::MAX)) as u64,
         ))
     })
 }

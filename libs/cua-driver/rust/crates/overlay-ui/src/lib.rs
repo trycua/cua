@@ -34,7 +34,9 @@ pub struct ConsentCard {
     pub risk_label: String,
     pub summary: String,
     pub request_digest: String,
-    pub expires_unix_ms: u128,
+    /// JSON-private-wire timestamp. Milliseconds since Unix epoch fit in
+    /// `u64`; using `u128` here makes serde_json reject every helper request.
+    pub expires_unix_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,4 +70,23 @@ pub enum HelperDecision {
     Accept,
     Decline,
     Cancel,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn consent_helper_request_round_trips_through_json() {
+        let request = HelperRequest::Consent(ConsentCard {
+            operation: "browser.existing_profile.attach".to_owned(),
+            risk_label: "authenticated session".to_owned(),
+            summary: "Attach to the signed-in profile.".to_owned(),
+            request_digest: "digest".to_owned(),
+            expires_unix_ms: 4_102_444_800_000,
+        });
+        let encoded = serde_json::to_vec(&request).unwrap();
+        let decoded: HelperRequest = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded, request);
+    }
 }

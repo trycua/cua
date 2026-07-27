@@ -102,6 +102,67 @@ class PersistentCertificationTests(unittest.TestCase):
             record["pair_validation_errors"],
         )
 
+    def test_revalidation_requires_matching_hashed_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pair_path = root / "paired-result.json"
+            setup_path = root / "setup-certification.json"
+            evidence_path = root / "revalidation.json"
+            pair_path.write_text(
+                json.dumps({"task_id": "001", "pair_valid": True}),
+                encoding="utf-8",
+            )
+            setup_path.write_text(
+                json.dumps(
+                    {
+                        "setup_valid": True,
+                        "fleet_cleanup": {
+                            "record": {"cleanup_verified": True}
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            evidence_path.write_text(
+                json.dumps(
+                    {
+                        "task_id": "001",
+                        "revalidated": True,
+                        "paired_result": {
+                            "path": str(pair_path),
+                            "sha256": persistent.paired.sha256_file(pair_path),
+                        },
+                        "setup_certification": {
+                            "path": str(setup_path),
+                            "sha256": persistent.paired.sha256_file(setup_path),
+                        },
+                        "corrected_official_baseline_score": 0.0,
+                        "equivalence": "non-interference proved",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            revalidations = persistent.load_revalidations(
+                evidence_paths=[evidence_path],
+                adopted={
+                    "001": (
+                        pair_path,
+                        {"task_id": "001", "pair_valid": True},
+                    )
+                },
+                known_task_ids={"001"},
+            )
+
+        self.assertEqual(
+            revalidations["001"]["corrected_official_baseline_score"],
+            0.0,
+        )
+        self.assertEqual(
+            revalidations["001"]["equivalence"],
+            "non-interference proved",
+        )
+
     def test_summary_requires_verified_persistent_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             output_dir = Path(temporary)

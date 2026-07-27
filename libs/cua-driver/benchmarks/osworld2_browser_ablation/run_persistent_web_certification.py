@@ -57,6 +57,16 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--revalidation-evidence",
+        action="append",
+        type=Path,
+        default=[],
+        help=(
+            "Trust a post-hoc score revalidation only after verifying its "
+            "task, paired-result hash, setup-certification hash, and cleanup"
+        ),
+    )
+    parser.add_argument(
         "--max-new-tasks-per-vm",
         type=int,
         help=(
@@ -213,6 +223,7 @@ def record_for(
     result: dict[str, Any],
     lifecycle: str,
     attestation_errors: list[str] | None = None,
+    posthoc_revalidation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     attestation_errors = attestation_errors or []
     pair_valid = result.get("pair_valid") is True and not attestation_errors
@@ -232,9 +243,82 @@ def record_for(
             *attestation_errors,
         ],
         "posthoc_attestation_errors": attestation_errors,
+        "posthoc_revalidation": posthoc_revalidation,
         "fleet_cleanup": result.get("fleet_cleanup"),
         "fleet_lifecycle": lifecycle,
     }
+
+
+def load_revalidations(
+    *,
+    evidence_paths: list[Path],
+    adopted: dict[str, tuple[Path, dict[str, Any]]],
+    known_task_ids: set[str],
+) -> dict[str, dict[str, Any]]:
+    revalidations: dict[str, dict[str, Any]] = {}
+    for evidence_path in evidence_paths:
+        evidence = certification.read_json(evidence_path)
+        task_id = str(evidence.get("task_id"))
+        if task_id not in known_task_ids:
+            raise PersistentCertificationError(
+                f"{evidence_path} revalidates unknown task {task_id}"
+            )
+        if task_id not in adopted:
+            raise PersistentCertificationError(
+                f"{evidence_path} has no adopted paired result for task {task_id}"
+            )
+        if task_id in revalidations:
+            raise PersistentCertificationError(
+                f"multiple revalidations supplied for task {task_id}"
+            )
+        if evidence.get("revalidated") is not True:
+            raise PersistentCertificationError(
+                f"{evidence_path} is not a successful revalidation"
+            )
+
+        adopted_path, _ = adopted[task_id]
+        paired_evidence = evidence.get("paired_result") or {}
+        if Path(str(paired_evidence.get("path"))).resolve() != adopted_path.resolve():
+            raise PersistentCertificationError(
+                f"{evidence_path} points to a different paired result"
+            )
+        if paired_evidence.get("sha256") != paired.sha256_file(adopted_path):
+            raise PersistentCertificationError(
+                f"{evidence_path} paired-result hash does not match"
+            )
+
+        setup_evidence = evidence.get("setup_certification") or {}
+        setup_path = Path(str(setup_evidence.get("path")))
+        if not setup_path.is_file():
+            raise PersistentCertificationError(
+                f"{evidence_path} setup certification is missing"
+            )
+        if setup_evidence.get("sha256") != paired.sha256_file(setup_path):
+            raise PersistentCertificationError(
+                f"{evidence_path} setup-certification hash does not match"
+            )
+        setup = certification.read_json(setup_path)
+        if not (
+            setup.get("setup_valid") is True
+            and setup.get("fleet_cleanup")
+            and (setup["fleet_cleanup"].get("record") or {}).get(
+                "cleanup_verified"
+            )
+            is True
+        ):
+            raise PersistentCertificationError(
+                f"{evidence_path} setup certification or cleanup is invalid"
+            )
+
+        revalidations[task_id] = {
+            "evidence_path": str(evidence_path.resolve()),
+            "evidence_sha256": paired.sha256_file(evidence_path),
+            "corrected_official_baseline_score": evidence.get(
+                "corrected_official_baseline_score"
+            ),
+            "equivalence": evidence.get("equivalence"),
+        }
+    return revalidations
 
 
 def write_summary(
@@ -317,13 +401,19 @@ def main() -> int:
         output_dir=args.output_dir,
         tasks=tasks,
     )
+    known_task_ids = {str(task["task_id"]) for task in tasks}
+    revalidations = load_revalidations(
+        evidence_paths=args.revalidation_evidence,
+        adopted=adopted,
+        known_task_ids=known_task_ids,
+    )
     quarantine_reason = (
         "post-run attestation found that the evaluator environment omitted "
         "the official runtime controller; the numeric score is not trusted"
     )
     quarantines: dict[str, list[str]] = {}
     for task_id in args.quarantine_task:
-        if task_id not in {str(task["task_id"]) for task in tasks}:
+        if task_id not in known_task_ids:
             raise PersistentCertificationError(
                 f"cannot quarantine unknown task {task_id}"
             )
@@ -332,6 +422,12 @@ def main() -> int:
                 f"cannot quarantine task {task_id} without a model-bearing result"
             )
         quarantines[task_id] = [quarantine_reason]
+    overlap = set(quarantines) & set(revalidations)
+    if overlap:
+        raise PersistentCertificationError(
+            "a task cannot be both quarantined and revalidated: "
+            + ", ".join(sorted(overlap))
+        )
     initial_summary_path = args.output_dir / "certification-summary.json"
     initial_summary = (
         certification.read_json(initial_summary_path)
@@ -507,6 +603,9 @@ def main() -> int:
                             attestation_errors=quarantines.get(
                                 manifest_task_id
                             ),
+                            posthoc_revalidation=revalidations.get(
+                                manifest_task_id
+                            ),
                         )
                     )
                 elif manifest_task_id in new_results:
@@ -519,6 +618,9 @@ def main() -> int:
                             result=result,
                             lifecycle=persistent_lifecycle["mode"],
                             attestation_errors=quarantines.get(
+                                manifest_task_id
+                            ),
+                            posthoc_revalidation=revalidations.get(
                                 manifest_task_id
                             ),
                         )
@@ -588,6 +690,7 @@ def main() -> int:
                     result=result,
                     lifecycle="isolated_vm",
                     attestation_errors=quarantines.get(task_id),
+                    posthoc_revalidation=revalidations.get(task_id),
                 )
             )
         elif task_id in new_results:
@@ -602,6 +705,7 @@ def main() -> int:
                     result=result,
                     lifecycle=persistent_lifecycle["mode"],
                     attestation_errors=quarantines.get(task_id),
+                    posthoc_revalidation=revalidations.get(task_id),
                 )
             )
 

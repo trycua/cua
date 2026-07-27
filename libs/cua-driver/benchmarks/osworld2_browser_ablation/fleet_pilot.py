@@ -21,6 +21,7 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -50,6 +51,7 @@ RESULTS_DIR = WORK_DIR / "results"
 DEFAULT_FLEET_BASE_URL = "https://run.cua.ai"
 DEFAULT_AWS_REGION = "us-west-2"
 POOL_READY_TIMEOUT_SECONDS = 1800
+LOCAL_ASSET_CHUNK_BYTES = 256 * 1024
 
 POOL_GROUP = "cua.ai"
 POOL_VERSION = "v1"
@@ -644,6 +646,100 @@ def guest_exec(
     return payload
 
 
+def stage_local_file_to_guest(
+    local_path: str | Path,
+    guest_path: str,
+) -> dict[str, Any]:
+    """Stage a host-local task asset without one oversized ingress request.
+
+    Fleet ingress rejects sufficiently large multipart uploads with HTTP 413.
+    Local assets therefore travel as bounded base64 chunks through the existing
+    authenticated guest command transport and are installed only after their
+    guest-side size and SHA-256 match the host source.
+    """
+
+    source = Path(local_path).expanduser().resolve()
+    if not source.is_file():
+        raise PilotError("local task asset is not a regular file")
+    if not guest_path.startswith("/") or "\x00" in guest_path:
+        raise PilotError("guest task asset path must be absolute")
+
+    source_size = source.stat().st_size
+    digest = hashlib.sha256()
+    with source.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    source_sha256 = digest.hexdigest()
+    staging_path = f"/tmp/.osworld2-asset-{uuid.uuid4().hex}.part"
+    guest_exec(
+        [
+            "python3",
+            "-c",
+            "import pathlib,sys; pathlib.Path(sys.argv[1]).write_bytes(b'')",
+            staging_path,
+        ],
+        timeout=60,
+    )
+    with source.open("rb") as stream:
+        while chunk := stream.read(LOCAL_ASSET_CHUNK_BYTES):
+            guest_exec(
+                [
+                    "python3",
+                    "-c",
+                    (
+                        "import base64,pathlib,sys;"
+                        "p=pathlib.Path(sys.argv[2]);"
+                        "p.open('ab').write(base64.b64decode(sys.argv[1]))"
+                    ),
+                    base64.b64encode(chunk).decode("ascii"),
+                    staging_path,
+                ],
+                timeout=60,
+            )
+
+    remote_sha256 = str(
+        guest_exec(["sha256sum", staging_path], timeout=120).get("output", "")
+    ).split()
+    remote_size = str(
+        guest_exec(["stat", "-c", "%s", staging_path], timeout=60).get(
+            "output", ""
+        )
+    ).strip()
+    if (
+        not remote_sha256
+        or remote_sha256[0] != source_sha256
+        or remote_size != str(source_size)
+    ):
+        raise PilotError("staged local task asset failed guest attestation")
+    guest_exec(
+        [
+            "python3",
+            "-c",
+            (
+                "import os,pathlib,sys;"
+                "src=pathlib.Path(sys.argv[1]);"
+                "dst=pathlib.Path(sys.argv[2]);"
+                "dst.parent.mkdir(parents=True,exist_ok=True);"
+                "os.replace(src,dst)"
+            ),
+            staging_path,
+            guest_path,
+        ],
+        timeout=60,
+    )
+    emit(
+        "local_asset_staged",
+        destination=guest_path,
+        bytes=source_size,
+        sha256=source_sha256,
+    )
+    return {
+        "destination": guest_path,
+        "bytes": source_size,
+        "sha256": source_sha256,
+    }
+
+
 def guest_launch(command: list[str] | str, *, shell: bool = False) -> None:
     response = httpx.post(
         f"http://127.0.0.1:{CONTROL_PORT}/setup/launch",
@@ -848,6 +944,7 @@ def prepare_browser_task(
     logging.getLogger("desktopenv").setLevel(logging.WARNING)
 
     from desktop_env.controllers.setup import SetupController
+    from desktop_env.file_source import resolve_local_source
 
     module = __import__(
         f"evaluation_examples.task_class.task_{task_id}",
@@ -856,6 +953,26 @@ def prepare_browser_task(
     task_class = getattr(module, f"Task{task_id}")
 
     class FleetSetupController(SetupController):
+        def _download_setup(self, files: list[dict[str, str]]) -> None:
+            remote_files: list[dict[str, str]] = []
+            for item in files:
+                local_source = resolve_local_source(item["url"])
+                if local_source is None:
+                    remote_files.append(item)
+                    continue
+
+                cache_path = Path(self.cache_dir) / (
+                    f"{uuid.uuid5(uuid.NAMESPACE_URL, item['url'])}_"
+                    f"{Path(item['path']).name}"
+                )
+                if not cache_path.exists():
+                    cache_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(local_source, cache_path)
+                stage_local_file_to_guest(local_source, item["path"])
+
+            if remote_files:
+                super()._download_setup(remote_files)
+
         def launch(
             self,
             command: str | list[str],

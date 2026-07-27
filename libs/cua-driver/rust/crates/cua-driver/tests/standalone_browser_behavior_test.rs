@@ -3327,21 +3327,6 @@ fn run_same_title_tabs(spec: &BrowserSpec) {
     );
 }
 
-fn native_element_token_by_label(state: &ToolResponse, label: &str) -> String {
-    state.structured()["elements"]
-        .as_array()
-        .and_then(|elements| {
-            elements.iter().find(|element| {
-                element["label"]
-                    .as_str()
-                    .is_some_and(|candidate| candidate == label)
-            })
-        })
-        .and_then(|element| element["element_token"].as_str())
-        .unwrap_or_else(|| panic!("native element {label:?} missing: {}", state.raw))
-        .to_owned()
-}
-
 fn browser_owned_permission_evidence_dir(spec: &BrowserSpec) -> (PathBuf, PathBuf) {
     let relative = PathBuf::from("capture-evidence").join(format!(
         "{}-{}-browser-owned-permission",
@@ -3464,6 +3449,7 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
         let window_session = format!("standalone-browser-permission-window-{}", fixture.pid);
         let after_window_session =
             format!("standalone-browser-permission-window-after-{}", fixture.pid);
+        let browser_session = format!("standalone-browser-permission-page-{}", fixture.pid);
         let bounds = browser_window_bounds(&mut fixture.driver, fixture.pid, fixture.window_id);
         let before = fixture.driver.call(
             "get_window_state",
@@ -3511,15 +3497,16 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
             "desktop baseline capture failed: {}",
             desktop_before.raw
         );
-        let token = native_element_token_by_label(&before, "Request browser permission");
+        let (target_id, tab_id, snapshot) = bind(&mut fixture, &browser_session);
+        fixture.driver.start_behavior_recording();
         let clicked = fixture.driver.call(
-            "click",
+            "browser_click",
             serde_json::json!({
-                "pid": fixture.pid as i64,
-                "window_id": fixture.window_id,
-                "element_token": token,
-                "delivery_mode": "foreground",
-                "session": after_window_session,
+                "target_id": target_id,
+                "tab_id": tab_id,
+                "ref": ref_by_label(&snapshot, "id=standalone-browser-permission"),
+                "input_route": "dom_event",
+                "session": browser_session,
             }),
         );
         assert!(

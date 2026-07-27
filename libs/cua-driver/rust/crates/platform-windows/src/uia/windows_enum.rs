@@ -42,8 +42,8 @@ use windows::Win32::UI::Accessibility::{
     UIA_PROPERTY_ID,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetAncestor, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
-    GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, GA_ROOT,
+    GetAncestor, GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
+    IsIconic, IsWindow, IsWindowVisible, GA_ROOT,
 };
 
 use crate::win32::windows::WindowInfo;
@@ -628,24 +628,18 @@ unsafe fn window_info_from_uia_element(elem: &IUIAutomationElement) -> Option<Wi
     }
     let hwnd = HWND(raw.0);
 
-    // Drop minimized / off-screen windows. UIA's IsOffscreen flag covers
-    // both "iconic" and "behind another window such that no part is visible"
-    // — for top-level windows it matches the EnumWindows path's intent of
-    // showing only currently-visible candidates.
+    // UIA is authoritative about whether the provider considers the element
+    // off-screen. An unknown value is tolerated for normal UIA geometry, but
+    // the Win32 fallback below requires an explicit `false`.
     let is_offscreen = elem.CurrentIsOffscreen().ok().map(|flag| flag.as_bool());
     if let Some(true) = is_offscreen {
         return None;
     }
 
-    // UIA normally supplies a usable top-level rectangle. Chromium providers
-    // can instead return an empty rectangle for a live, visible
-    // Chrome_WidgetWin_1. Preserve the existing DWM/Win32 geometry path for
-    // healthy providers, but send invalid UIA geometry through the guarded
-    // GetWindowRect fallback below.
-    let uia_bounds_valid = elem
+    let has_valid_uia_bounds = elem
         .CurrentBoundingRectangle()
         .ok()
-        .is_some_and(|rect| bounds_from_rect(rect).is_valid());
+        .is_some_and(rect_is_valid);
 
     if !IsWindow(hwnd).as_bool() {
         return None;
@@ -667,10 +661,10 @@ unsafe fn window_info_from_uia_element(elem: &IUIAutomationElement) -> Option<Wi
         return None;
     }
 
-    let bounds = if uia_bounds_valid {
-        window_bounds(hwnd)?
+    let (x, y, width, height) = if has_valid_uia_bounds {
+        window_bounds(hwnd)
     } else {
-        validated_get_window_rect_fallback(elem, hwnd, thread_id, pid, is_offscreen)?
+        fallback_window_bounds(elem, hwnd, thread_id, pid, is_offscreen)?
     };
 
     // Title — prefer Win32 GetWindowTextW for parity with the EnumWindows path.
@@ -693,193 +687,113 @@ unsafe fn window_info_from_uia_element(elem: &IUIAutomationElement) -> Option<Wi
         hwnd: hwnd.0 as u64,
         pid,
         title,
-        x: bounds.left,
-        y: bounds.top,
-        width: bounds.width(),
-        height: bounds.height(),
+        x,
+        y,
+        width,
+        height,
         is_on_screen: true,
         minimized: false,
     })
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct Bounds {
-    left: i32,
-    top: i32,
-    right: i32,
-    bottom: i32,
+fn rect_is_valid(rect: RECT) -> bool {
+    rect.right > rect.left && rect.bottom > rect.top
 }
 
-impl Bounds {
-    fn is_valid(self) -> bool {
-        self.right > self.left && self.bottom > self.top
-    }
-
-    fn width(self) -> i32 {
-        self.right - self.left
-    }
-
-    fn height(self) -> i32 {
-        self.bottom - self.top
-    }
-}
-
-fn bounds_from_rect(rect: RECT) -> Bounds {
-    Bounds {
-        left: rect.left,
-        top: rect.top,
-        right: rect.right,
-        bottom: rect.bottom,
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-struct FallbackFacts {
+fn accepted_fallback_rect(
     is_offscreen: Option<bool>,
-    is_window_before: bool,
-    is_window_after: bool,
-    is_top_level: bool,
-    is_visible: bool,
-    is_iconic: bool,
-    is_cloaked: Option<bool>,
+    capturable: bool,
     same_session: bool,
-    on_current_desktop: bool,
+    stable_identity: bool,
+    rect: Option<RECT>,
     intersects_monitor: bool,
-    rect_succeeded: bool,
-    hwnd_stable: bool,
-    uia_pid_stable: bool,
-    win32_owner_stable: bool,
-    bounds: Bounds,
-}
-
-fn accept_fallback(facts: FallbackFacts) -> Option<Bounds> {
-    (facts.is_offscreen == Some(false)
-        && facts.is_window_before
-        && facts.is_window_after
-        && facts.is_top_level
-        && facts.is_visible
-        && !facts.is_iconic
-        && facts.is_cloaked == Some(false)
-        && facts.same_session
-        && facts.on_current_desktop
-        && facts.intersects_monitor
-        && facts.rect_succeeded
-        && facts.hwnd_stable
-        && facts.uia_pid_stable
-        && facts.win32_owner_stable
-        && facts.bounds.is_valid())
-    .then_some(facts.bounds)
+) -> Option<RECT> {
+    let rect = rect?;
+    (is_offscreen == Some(false)
+        && capturable
+        && same_session
+        && stable_identity
+        && intersects_monitor
+        && rect_is_valid(rect))
+    .then_some(rect)
 }
 
 /// Use GetWindowRect only for the narrow Chromium-style failure where UIA
 /// reports invalid bounds for an otherwise live, visible top-level window.
-///
-/// This intentionally re-reads both UIA and Win32 identity after geometry:
-/// HWND values are reusable, so a single IsWindow/GetWindowThreadProcessId
-/// check cannot prove that the handle still names the element we started with.
-unsafe fn validated_get_window_rect_fallback(
+unsafe fn fallback_window_bounds(
     elem: &IUIAutomationElement,
     hwnd: HWND,
     thread_id: u32,
     pid: u32,
     is_offscreen: Option<bool>,
-) -> Option<Bounds> {
+) -> Option<(i32, i32, i32, i32)> {
     let uia_pid_before = elem.CurrentProcessId().ok()?;
     if uia_pid_before <= 0 || uia_pid_before as u32 != pid {
         return None;
     }
 
-    let is_window_before = IsWindow(hwnd).as_bool();
-    let is_top_level = GetAncestor(hwnd, GA_ROOT) == hwnd;
-    let is_visible = IsWindowVisible(hwnd).as_bool();
-    let is_iconic = IsIconic(hwnd).as_bool();
-
     let mut cloaked = 0u32;
-    let is_cloaked = DwmGetWindowAttribute(
+    let not_cloaked = DwmGetWindowAttribute(
         hwnd,
         DWMWA_CLOAKED,
         &mut cloaked as *mut u32 as *mut _,
         std::mem::size_of::<u32>() as u32,
     )
-    .ok()
-    .map(|()| cloaked != 0);
+    .is_ok()
+        && cloaked == 0;
+    let capturable = IsWindow(hwnd).as_bool()
+        && GetAncestor(hwnd, GA_ROOT) == hwnd
+        && IsWindowVisible(hwnd).as_bool()
+        && !IsIconic(hwnd).as_bool()
+        && not_cloaked;
 
     let mut owner_session = 0u32;
     let mut caller_session = 0u32;
     let same_session = ProcessIdToSessionId(pid, &mut owner_session).is_ok()
         && ProcessIdToSessionId(GetCurrentProcessId(), &mut caller_session).is_ok()
         && owner_session == caller_session;
-
-    let on_current_desktop = hwnd_is_on_current_desktop(hwnd);
+    // `elem` is a direct child of this process's UIA desktop root, so desktop
+    // ownership is already established by the caller. Requiring the HWND to
+    // also appear in EnumWindows would defeat this UIA-only enumeration path.
 
     // cua-driver.exe declares Per-Monitor V2 awareness in its manifest, so
     // GetWindowRect and UIA BoundingRectangle are both physical screen pixels.
     // Do not scale this fallback by the monitor DPI.
     let mut rect = RECT::default();
-    let rect_succeeded = GetWindowRect(hwnd, &mut rect).is_ok();
-    let bounds = bounds_from_rect(rect);
-    let intersects_monitor = !MonitorFromRect(&rect, MONITOR_DEFAULTTONULL).0.is_null();
+    let rect = GetWindowRect(hwnd, &mut rect).ok().map(|()| rect);
 
     // Re-read identity after GetWindowRect so stale/reused handles fail closed.
     let hwnd_after = elem.CurrentNativeWindowHandle().ok();
     let uia_pid_after = elem.CurrentProcessId().ok();
     let mut pid_after = 0u32;
     let thread_after = GetWindowThreadProcessId(hwnd, Some(&mut pid_after));
+    let stable_identity = IsWindow(hwnd).as_bool()
+        && hwnd_after == Some(hwnd)
+        && uia_pid_after.is_some_and(|candidate| candidate > 0 && candidate as u32 == pid)
+        && thread_after == thread_id
+        && pid_after == pid;
+    let intersects_monitor =
+        rect.is_some_and(|value| !MonitorFromRect(&value, MONITOR_DEFAULTTONULL).0.is_null());
 
-    accept_fallback(FallbackFacts {
+    let rect = accepted_fallback_rect(
         is_offscreen,
-        is_window_before,
-        is_window_after: IsWindow(hwnd).as_bool(),
-        is_top_level,
-        is_visible,
-        is_iconic,
-        is_cloaked,
+        capturable,
         same_session,
-        on_current_desktop,
+        stable_identity,
+        rect,
         intersects_monitor,
-        rect_succeeded,
-        hwnd_stable: hwnd_after.is_some_and(|candidate| candidate == hwnd),
-        uia_pid_stable: uia_pid_after
-            .is_some_and(|candidate| candidate > 0 && candidate as u32 == pid),
-        win32_owner_stable: thread_after == thread_id && pid_after == pid,
-        bounds,
-    })
-}
-
-fn hwnd_is_on_current_desktop(target: HWND) -> bool {
-    struct Probe {
-        target: HWND,
-        found: bool,
-    }
-
-    unsafe extern "system" fn callback(
-        hwnd: HWND,
-        lparam: windows::Win32::Foundation::LPARAM,
-    ) -> windows::Win32::Foundation::BOOL {
-        let probe = &mut *(lparam.0 as *mut Probe);
-        if hwnd == probe.target {
-            probe.found = true;
-            return windows::Win32::Foundation::FALSE;
-        }
-        windows::Win32::Foundation::TRUE
-    }
-
-    let mut probe = Probe {
-        target,
-        found: false,
-    };
-    unsafe {
-        let _ = EnumWindows(
-            Some(callback),
-            windows::Win32::Foundation::LPARAM(&mut probe as *mut Probe as isize),
-        );
-    }
-    probe.found
+    )?;
+    Some((
+        rect.left,
+        rect.top,
+        rect.right - rect.left,
+        rect.bottom - rect.top,
+    ))
 }
 
 /// Bounds via DWM extended frame (excludes drop-shadow on W11) with
 /// `GetWindowRect` fallback — same logic as the EnumWindows path.
-fn window_bounds(hwnd: HWND) -> Option<Bounds> {
+fn window_bounds(hwnd: HWND) -> (i32, i32, i32, i32) {
     unsafe {
         let mut rect = RECT::default();
         let ok = DwmGetWindowAttribute(
@@ -888,112 +802,69 @@ fn window_bounds(hwnd: HWND) -> Option<Bounds> {
             &mut rect as *mut RECT as *mut _,
             std::mem::size_of::<RECT>() as u32,
         );
-        if ok.is_err() || !bounds_from_rect(rect).is_valid() {
-            if GetWindowRect(hwnd, &mut rect).is_err() {
-                return None;
-            }
+        if ok.is_err() {
+            let _ = GetWindowRect(hwnd, &mut rect);
         }
-        bounds_from_rect(rect)
-            .is_valid()
-            .then_some(bounds_from_rect(rect))
+        (
+            rect.left,
+            rect.top,
+            rect.right - rect.left,
+            rect.bottom - rect.top,
+        )
     }
 }
 
 #[cfg(test)]
 mod bounds_fallback_tests {
-    use super::{accept_fallback, Bounds, FallbackFacts};
+    use super::accepted_fallback_rect;
+    use windows::Win32::Foundation::RECT;
 
-    fn edge_empty_uia_fixture() -> FallbackFacts {
-        FallbackFacts {
-            is_offscreen: Some(false),
-            is_window_before: true,
-            is_window_after: true,
-            is_top_level: true,
-            is_visible: true,
-            is_iconic: false,
-            is_cloaked: Some(false),
-            same_session: true,
-            on_current_desktop: true,
-            intersects_monitor: true,
-            rect_succeeded: true,
-            hwnd_stable: true,
-            uia_pid_stable: true,
-            win32_owner_stable: true,
-            bounds: Bounds {
-                left: 200,
-                top: 52,
-                right: 1400,
-                bottom: 852,
-            },
+    fn reported_win32_rect() -> RECT {
+        RECT {
+            left: 200,
+            top: 52,
+            right: 1400,
+            bottom: 852,
         }
     }
 
     #[test]
     fn empty_uia_bounds_accept_the_reported_live_edge_window() {
-        let facts = edge_empty_uia_fixture();
-        assert_eq!(accept_fallback(facts), Some(facts.bounds));
+        let rect = reported_win32_rect();
+        assert_eq!(
+            accepted_fallback_rect(Some(false), true, true, true, Some(rect), true),
+            Some(rect)
+        );
     }
 
     #[test]
-    fn offscreen_minimized_and_cloaked_windows_fail_closed() {
-        let mut facts = edge_empty_uia_fixture();
-        facts.is_offscreen = Some(true);
-        assert_eq!(accept_fallback(facts), None);
-
-        let mut facts = edge_empty_uia_fixture();
-        facts.is_iconic = true;
-        assert_eq!(accept_fallback(facts), None);
-
-        let mut facts = edge_empty_uia_fixture();
-        facts.is_cloaked = Some(true);
-        assert_eq!(accept_fallback(facts), None);
+    fn offscreen_or_uncapturable_windows_fail_closed() {
+        let rect = Some(reported_win32_rect());
+        assert!(accepted_fallback_rect(Some(true), true, true, true, rect, true).is_none());
+        assert!(accepted_fallback_rect(None, true, true, true, rect, true).is_none());
+        assert!(accepted_fallback_rect(Some(false), false, true, true, rect, true).is_none());
     }
 
     #[test]
-    fn unknown_offscreen_or_cloak_state_does_not_enable_fallback() {
-        let mut facts = edge_empty_uia_fixture();
-        facts.is_offscreen = None;
-        assert_eq!(accept_fallback(facts), None);
-
-        let mut facts = edge_empty_uia_fixture();
-        facts.is_cloaked = None;
-        assert_eq!(accept_fallback(facts), None);
-    }
-
-    #[test]
-    fn different_session_or_desktop_does_not_enable_fallback() {
-        let mut facts = edge_empty_uia_fixture();
-        facts.same_session = false;
-        assert_eq!(accept_fallback(facts), None);
-
-        let mut facts = edge_empty_uia_fixture();
-        facts.on_current_desktop = false;
-        assert_eq!(accept_fallback(facts), None);
-    }
-
-    #[test]
-    fn stale_or_reused_hwnd_does_not_enable_fallback() {
-        let mut facts = edge_empty_uia_fixture();
-        facts.hwnd_stable = false;
-        assert_eq!(accept_fallback(facts), None);
-
-        let mut facts = edge_empty_uia_fixture();
-        facts.uia_pid_stable = false;
-        assert_eq!(accept_fallback(facts), None);
-
-        let mut facts = edge_empty_uia_fixture();
-        facts.win32_owner_stable = false;
-        assert_eq!(accept_fallback(facts), None);
+    fn wrong_session_or_stale_identity_fails_closed() {
+        let rect = Some(reported_win32_rect());
+        assert!(accepted_fallback_rect(Some(false), true, false, true, rect, true).is_none());
+        assert!(accepted_fallback_rect(Some(false), true, true, false, rect, true).is_none());
     }
 
     #[test]
     fn invalid_or_fully_off_monitor_win32_rect_does_not_enable_fallback() {
-        let mut facts = edge_empty_uia_fixture();
-        facts.bounds.right = facts.bounds.left;
-        assert_eq!(accept_fallback(facts), None);
-
-        let mut facts = edge_empty_uia_fixture();
-        facts.intersects_monitor = false;
-        assert_eq!(accept_fallback(facts), None);
+        let mut rect = reported_win32_rect();
+        rect.right = rect.left;
+        assert!(accepted_fallback_rect(Some(false), true, true, true, Some(rect), true).is_none());
+        assert!(accepted_fallback_rect(
+            Some(false),
+            true,
+            true,
+            true,
+            Some(reported_win32_rect()),
+            false
+        )
+        .is_none());
     }
 }

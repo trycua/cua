@@ -654,6 +654,22 @@ pub struct RiskAssessment {
     pub operation_sensitive: bool,
 }
 
+fn advertised_enforcement_for(tool: &str) -> RiskEnforcement {
+    let selector_matches = |selector: &&str| {
+        *selector == tool
+            || selector
+                .strip_prefix(tool)
+                .is_some_and(|suffix| suffix.starts_with('['))
+    };
+    if ENFORCEMENT_ADAPTERS.iter().any(|adapter| {
+        adapter.state == RiskEnforcement::Active && adapter.operations.iter().any(selector_matches)
+    }) {
+        RiskEnforcement::Active
+    } else {
+        RiskEnforcement::MetadataOnly
+    }
+}
+
 /// Highest reviewed risk advertised for a tool. Runtime authorization uses
 /// [`classify_tool_call`] so compound tools can narrow to a typed operation.
 pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
@@ -728,7 +744,10 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
     };
     RiskAssessment {
         class,
-        enforcement: RiskEnforcement::MetadataOnly,
+        // Tool discovery cannot see the future arguments of a compound tool.
+        // Advertise the strongest shipped enforcement for any of its typed
+        // operations, then let classify_tool_call narrow the exact request.
+        enforcement: advertised_enforcement_for(tool),
         operation_sensitive: matches!(class, RiskClass::R2 | RiskClass::R3 | RiskClass::R4),
     }
 }
@@ -1275,6 +1294,11 @@ mod tests {
 
     #[test]
     fn existing_profile_is_the_first_actively_enforced_risk_operation() {
+        assert_eq!(
+            advertised_risk_for("browser_prepare").enforcement,
+            RiskEnforcement::Active,
+            "tools/list must advertise that at least one browser_prepare operation is actively enforced"
+        );
         let existing = classify_tool_call(
             "browser_prepare",
             &serde_json::json!({"strategy": {"kind": "existing_profile"}}),

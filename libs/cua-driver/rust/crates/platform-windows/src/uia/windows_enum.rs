@@ -3,13 +3,13 @@
 //! Walks the UI Automation tree from the desktop root and returns one entry
 //! per top-level interactable window. UIA surfaces modern containers (WebView2
 //! hosts, packaged-UWP frames, browser windows whose chrome lives inside a
-//! container HWND) with their real title and bounds — which `EnumWindows`
+//! container HWND) with their real title and bounds â€” which `EnumWindows`
 //! either misses or returns with a misleading parent HWND.
 //!
 //! The result is shape-compatible with `crate::win32::windows::WindowInfo`
 //! (returned as `WindowInfo` directly) so the existing pipeline that consumes
 //! `list_windows` output keeps working unchanged. Each record's `hwnd` is the
-//! UIA element's `NativeWindowHandle` — i.e. an honest Win32 HWND that downstream
+//! UIA element's `NativeWindowHandle` â€” i.e. an honest Win32 HWND that downstream
 //! code can pass to `GetWindowRect`, `PostMessage`, etc.
 
 // We pattern-match against `UIA_*ControlTypeId` constants from the `windows`
@@ -23,10 +23,15 @@ use std::cell::RefCell;
 use anyhow::{bail, Context};
 use windows::core::{Interface, BSTR};
 use windows::Win32::Foundation::{HWND, RECT};
-use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
+use windows::Win32::Graphics::Dwm::{
+    DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
+};
+use windows::Win32::Graphics::Gdi::{MonitorFromRect, MONITOR_DEFAULTTONULL};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
 };
+use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
+use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
     IUIAutomationTogglePattern, TreeScope_Children, TreeScope_Subtree,
@@ -37,7 +42,8 @@ use windows::Win32::UI::Accessibility::{
     UIA_PROPERTY_ID,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
+    EnumWindows, GetAncestor, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
+    GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, GA_ROOT,
 };
 
 use crate::win32::windows::WindowInfo;
@@ -45,12 +51,12 @@ use crate::win32::windows::WindowInfo;
 /// HRESULT for "COM already initialized in another mode on this thread."
 /// Returned by `CoInitializeEx` when something else (a previous call in the
 /// same task, or a library on the same OS thread) picked a different
-/// apartment. Safe to ignore — COM is up either way.
+/// apartment. Safe to ignore â€” COM is up either way.
 const RPC_E_CHANGED_MODE: i32 = -2147417850; // 0x80010106
 
 thread_local! {
     /// Per-thread IUIAutomation instance. UIA / COM objects are
-    /// apartment-bound, so we deliberately do NOT share one across threads —
+    /// apartment-bound, so we deliberately do NOT share one across threads â€”
     /// each OS thread that calls `enumerate_top_level_windows` initializes
     /// COM as STA exactly once (the first time the cell is `None`) and caches
     /// its own IUIAutomation. On failure the cell stays `None`, so the next
@@ -99,7 +105,7 @@ fn get_uia() -> Option<IUIAutomation> {
 /// non-empty title. Windows whose HWND is zero (pure UIA virtual elements,
 /// rare) are skipped because the rest of the driver pipeline keys off HWND.
 ///
-/// Returns an empty vec on any UIA failure — callers should treat UIA as a
+/// Returns an empty vec on any UIA failure â€” callers should treat UIA as a
 /// best-effort source and union with `EnumWindows`.
 pub fn enumerate_top_level_windows() -> Vec<WindowInfo> {
     let uia = match get_uia() {
@@ -152,13 +158,13 @@ pub fn enumerate_top_level_windows() -> Vec<WindowInfo> {
 ///
 /// Why a windowed walk and not desktop-wide `ElementFromPoint`:
 ///
-/// 1. Z-order — if the desktop's topmost element at `(sx, sy)` is some
+/// 1. Z-order â€” if the desktop's topmost element at `(sx, sy)` is some
 ///    other window (a terminal, a chrome window covering the target),
 ///    `ElementFromPoint` returns *that* element, not anything inside
 ///    `hwnd`. The (x, y) caller already knows the intended HWND; we
 ///    should trust it.
 ///
-/// 2. UWP / packaged-app hosting — `ApplicationFrameHost.exe` is the
+/// 2. UWP / packaged-app hosting â€” `ApplicationFrameHost.exe` is the
 ///    outer host process; the actual UWP content lives in a separate
 ///    process (e.g. `CalculatorApp.exe`). `ElementFromPoint` has been
 ///    observed returning the frame's outer Pane (no `InvokePattern`)
@@ -166,7 +172,7 @@ pub fn enumerate_top_level_windows() -> Vec<WindowInfo> {
 ///    search at the frame's UIA element and walking with
 ///    `TreeScope_Subtree` does cross that boundary.
 ///
-/// 3. Vision-mode contract — the agent screenshotted a specific window
+/// 3. Vision-mode contract â€” the agent screenshotted a specific window
 ///    and is addressing pixels of that window. We respect that
 ///    intent: the click goes to that window's tree, period.
 ///
@@ -186,14 +192,14 @@ pub fn enumerate_top_level_windows() -> Vec<WindowInfo> {
 /// `InvokePattern`. Smallest-area approximates "deepest" without
 /// having to track tree depth explicitly.
 /// Returns `true` when the element's control type has a *coord-independent*
-/// primary action — i.e. a UIA `Invoke()` on it does something semantically
+/// primary action â€” i.e. a UIA `Invoke()` on it does something semantically
 /// equivalent to "click the element" regardless of where inside its bounding
 /// rectangle the click was requested.
 ///
 /// Used by the `x, y` click path to decide whether to take the UIA Invoke
 /// route or fall through to PostMessage with the literal coords. The split
 /// matters for canvases, panes, and custom-drawn surfaces where Invoke would
-/// fire `mousedown` at the element centre — losing the caller's pixel
+/// fire `mousedown` at the element centre â€” losing the caller's pixel
 /// precision (see #1621).
 fn is_coord_independent_action(elem: &IUIAutomationElement) -> bool {
     let ct: UIA_CONTROLTYPE_ID = match unsafe { elem.CurrentControlType() } {
@@ -259,10 +265,10 @@ pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
                 continue;
             }
             // Accept elements that support EITHER InvokePattern OR
-            // ExpandCollapsePattern. Qt menu-bar items advertise both —
+            // ExpandCollapsePattern. Qt menu-bar items advertise both â€”
             // Invoke does nothing on them, only Expand opens the submenu.
             // (See FreeCAD finding 2026-05-21: clicking File menu via Invoke
-            // returned ✅ but the menu never opened.)
+            // returned âœ… but the menu never opened.)
             let has_invoke = elem.GetCurrentPattern(UIA_InvokePatternId).is_ok();
             let has_expand = elem
                 .GetCurrentPattern(windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId)
@@ -275,13 +281,13 @@ pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
             // `Invoke()` fires the element's default action at its centre,
             // ignoring the requested (sx, sy). For container surfaces
             // (Pane, Image, Custom, Document, Group, etc.) that means the
-            // caller's pixel precision is silently lost — see #1621, where
+            // caller's pixel precision is silently lost â€” see #1621, where
             // `click(canvas, x=110, y=677)` reported success but actually
             // fired the canvas's `mousedown` at its centre (152, 77).
             // Buttons / MenuItems / Hyperlinks / TabItems / ListItems /
             // CheckBoxes / RadioButtons / SplitButtons / TreeItems all
             // have a single primary action whose location is the element
-            // itself — Invoke is the right path for those. Everything
+            // itself â€” Invoke is the right path for those. Everything
             // else falls through to PostMessage with the literal coords.
             if !is_coord_independent_action(&elem) {
                 continue;
@@ -308,7 +314,7 @@ pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
         // Pattern preference for menu items: when both Invoke AND
         // ExpandCollapse are advertised, the element is almost always a
         // top-level MenuItem whose intended click behaviour is "open the
-        // submenu" — Invoke would be a no-op. Prefer ExpandCollapse.Expand
+        // submenu" â€” Invoke would be a no-op. Prefer ExpandCollapse.Expand
         // in that case. Pure-Invoke leaves (buttons, links, etc.) go
         // through Invoke as before.
         let winner_has_expand = winner
@@ -332,7 +338,7 @@ pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
                         }
                     }
                 }
-                // Expand failed — fall through to Invoke as best-effort.
+                // Expand failed â€” fall through to Invoke as best-effort.
             } else if winner_has_expand && !winner_has_invoke {
                 if let Ok(pat) = winner.GetCurrentPattern(
                     windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId,
@@ -403,7 +409,7 @@ pub fn try_invoke_accelerator_in_window(hwnd: isize, combo: &str) -> anyhow::Res
                     continue;
                 }
             };
-            // Primary match: the UIA AcceleratorKey property — the conventional
+            // Primary match: the UIA AcceleratorKey property â€” the conventional
             // place a WinUI / XAML control advertises its shortcut.
             let mut accelerator: Option<String> =
                 read_current_bstr(&elem, UIA_AcceleratorKeyPropertyId);
@@ -437,7 +443,7 @@ pub fn try_invoke_accelerator_in_window(hwnd: isize, combo: &str) -> anyhow::Res
             // Bold toggle uses Toggle, a list item uses SelectionItem. Try
             // Invoke first (the conventional shortcut handler), then Toggle
             // (Bold/Italic/etc.). The Notepad toolbar in particular has Bold
-            // as a TogglePattern button — calling .Invoke on it returns the
+            // as a TogglePattern button â€” calling .Invoke on it returns the
             // misleading "operation completed successfully (0x00000000)"
             // error because Invoke isn't supported on the element.
             match try_invoke_via_patterns(&elem, hwnd) {
@@ -550,7 +556,7 @@ fn accelerator_modifier_rank(value: &str) -> Option<usize> {
 ///
 /// `host_hwnd` is the top-level HWND containing the element; it gates the
 /// UWP foreground-steal bypass (see `crate::uia::fg_bypass`). Pass `0` if
-/// unknown — the bypass becomes a no-op and Invoke/Toggle run unwrapped.
+/// unknown â€” the bypass becomes a no-op and Invoke/Toggle run unwrapped.
 ///
 /// Returns `Ok(true)` if a pattern was found AND its Invoke/Toggle call
 /// succeeded. `Ok(false)` means the element exposes neither pattern (caller
@@ -560,7 +566,7 @@ unsafe fn try_invoke_via_patterns(
     elem: &IUIAutomationElement,
     host_hwnd: isize,
 ) -> anyhow::Result<bool> {
-    // Invoke first — that's what most accelerator-targeted controls advertise.
+    // Invoke first â€” that's what most accelerator-targeted controls advertise.
     if let Ok(pattern) = elem.GetCurrentPattern(UIA_InvokePatternId) {
         if let Ok(inv) = pattern.cast::<IUIAutomationInvokePattern>() {
             return crate::uia::fg_bypass::run_with_uwp_bypass(host_hwnd, || {
@@ -570,7 +576,7 @@ unsafe fn try_invoke_via_patterns(
             });
         }
     }
-    // Toggle next — Bold/Italic/Underline-style toolbar buttons sit here.
+    // Toggle next â€” Bold/Italic/Underline-style toolbar buttons sit here.
     if let Ok(pattern) = elem.GetCurrentPattern(UIA_TogglePatternId) {
         if let Ok(tog) = pattern.cast::<IUIAutomationTogglePattern>() {
             return crate::uia::fg_bypass::run_with_uwp_bypass(host_hwnd, || {
@@ -584,7 +590,7 @@ unsafe fn try_invoke_via_patterns(
 }
 
 /// Extract a shortcut hint from a UIA element name like `"Bold (Ctrl+B)"`,
-/// `"Italic (Ctrl+I)"`, `"Save (Ctrl+S)"` — modern XAML apps (notably modern
+/// `"Italic (Ctrl+I)"`, `"Save (Ctrl+S)"` â€” modern XAML apps (notably modern
 /// Notepad) don't set `AcceleratorKey` but encode the shortcut in the visible
 /// name. Returns the parenthesized accelerator string if one is present and
 /// contains a modifier-like token; otherwise `None`.
@@ -624,12 +630,31 @@ unsafe fn window_info_from_uia_element(elem: &IUIAutomationElement) -> Option<Wi
 
     // Drop minimized / off-screen windows. UIA's IsOffscreen flag covers
     // both "iconic" and "behind another window such that no part is visible"
-    // — for top-level windows it matches the EnumWindows path's intent of
+    // â€” for top-level windows it matches the EnumWindows path's intent of
     // showing only currently-visible candidates.
-    if let Ok(flag) = elem.CurrentIsOffscreen() {
-        if flag.as_bool() {
-            return None;
-        }
+    let is_offscreen = elem.CurrentIsOffscreen().ok().map(|flag| flag.as_bool());
+    if let Some(true) = is_offscreen {
+        return None;
+    }
+
+    // UIA normally supplies a usable top-level rectangle. Chromium providers
+    // can instead return an empty rectangle for a live, visible
+    // Chrome_WidgetWin_1. Preserve the existing DWM/Win32 geometry path for
+    // healthy providers, but send invalid UIA geometry through the guarded
+    // GetWindowRect fallback below.
+    let uia_bounds_valid = elem
+        .CurrentBoundingRectangle()
+        .ok()
+        .is_some_and(|rect| bounds_from_rect(rect).is_valid());
+
+    if !IsWindow(hwnd).as_bool() {
+        return None;
+    }
+
+    // A UIA desktop child must still resolve to the same top-level HWND.
+    // Reject child/inherited handles before reading any identity or geometry.
+    if GetAncestor(hwnd, GA_ROOT) != hwnd {
+        return None;
     }
 
     // Resolve pid via the standard Win32 path. We deliberately do not trust
@@ -637,12 +662,18 @@ unsafe fn window_info_from_uia_element(elem: &IUIAutomationElement) -> Option<Wi
     // windows by (hwnd, pid) tuples obtained from `GetWindowThreadProcessId`,
     // and we want bit-identical agreement.
     let mut pid: u32 = 0;
-    let _ = GetWindowThreadProcessId(hwnd, Some(&mut pid));
-    if pid == 0 {
+    let thread_id = GetWindowThreadProcessId(hwnd, Some(&mut pid));
+    if thread_id == 0 || pid == 0 {
         return None;
     }
 
-    // Title — prefer Win32 GetWindowTextW for parity with the EnumWindows path.
+    let bounds = if uia_bounds_valid {
+        window_bounds(hwnd)?
+    } else {
+        validated_get_window_rect_fallback(elem, hwnd, thread_id, pid, is_offscreen)?
+    };
+
+    // Title â€” prefer Win32 GetWindowTextW for parity with the EnumWindows path.
     // UIA's `CurrentName` sometimes returns the AX-friendly label (e.g. the
     // tab title) instead of the OS-level window caption, which would diverge
     // from any caller already keyed on the GetWindowText value.
@@ -658,24 +689,197 @@ unsafe fn window_info_from_uia_element(elem: &IUIAutomationElement) -> Option<Wi
         return None;
     }
 
-    let (x, y, w, h) = window_bounds(hwnd);
-
     Some(WindowInfo {
         hwnd: hwnd.0 as u64,
         pid,
         title,
-        x,
-        y,
-        width: w,
-        height: h,
+        x: bounds.left,
+        y: bounds.top,
+        width: bounds.width(),
+        height: bounds.height(),
         is_on_screen: true,
         minimized: false,
     })
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct Bounds {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+}
+
+impl Bounds {
+    fn is_valid(self) -> bool {
+        self.right > self.left && self.bottom > self.top
+    }
+
+    fn width(self) -> i32 {
+        self.right - self.left
+    }
+
+    fn height(self) -> i32 {
+        self.bottom - self.top
+    }
+}
+
+fn bounds_from_rect(rect: RECT) -> Bounds {
+    Bounds {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FallbackFacts {
+    is_offscreen: Option<bool>,
+    is_window_before: bool,
+    is_window_after: bool,
+    is_top_level: bool,
+    is_visible: bool,
+    is_iconic: bool,
+    is_cloaked: Option<bool>,
+    same_session: bool,
+    on_current_desktop: bool,
+    intersects_monitor: bool,
+    rect_succeeded: bool,
+    hwnd_stable: bool,
+    uia_pid_stable: bool,
+    win32_owner_stable: bool,
+    bounds: Bounds,
+}
+
+fn accept_fallback(facts: FallbackFacts) -> Option<Bounds> {
+    (facts.is_offscreen == Some(false)
+        && facts.is_window_before
+        && facts.is_window_after
+        && facts.is_top_level
+        && facts.is_visible
+        && !facts.is_iconic
+        && facts.is_cloaked == Some(false)
+        && facts.same_session
+        && facts.on_current_desktop
+        && facts.intersects_monitor
+        && facts.rect_succeeded
+        && facts.hwnd_stable
+        && facts.uia_pid_stable
+        && facts.win32_owner_stable
+        && facts.bounds.is_valid())
+    .then_some(facts.bounds)
+}
+
+/// Use GetWindowRect only for the narrow Chromium-style failure where UIA
+/// reports invalid bounds for an otherwise live, visible top-level window.
+///
+/// This intentionally re-reads both UIA and Win32 identity after geometry:
+/// HWND values are reusable, so a single IsWindow/GetWindowThreadProcessId
+/// check cannot prove that the handle still names the element we started with.
+unsafe fn validated_get_window_rect_fallback(
+    elem: &IUIAutomationElement,
+    hwnd: HWND,
+    thread_id: u32,
+    pid: u32,
+    is_offscreen: Option<bool>,
+) -> Option<Bounds> {
+    let uia_pid_before = elem.CurrentProcessId().ok()?;
+    if uia_pid_before <= 0 || uia_pid_before as u32 != pid {
+        return None;
+    }
+
+    let is_window_before = IsWindow(hwnd).as_bool();
+    let is_top_level = GetAncestor(hwnd, GA_ROOT) == hwnd;
+    let is_visible = IsWindowVisible(hwnd).as_bool();
+    let is_iconic = IsIconic(hwnd).as_bool();
+
+    let mut cloaked = 0u32;
+    let is_cloaked = DwmGetWindowAttribute(
+        hwnd,
+        DWMWA_CLOAKED,
+        &mut cloaked as *mut u32 as *mut _,
+        std::mem::size_of::<u32>() as u32,
+    )
+    .ok()
+    .map(|()| cloaked != 0);
+
+    let mut owner_session = 0u32;
+    let mut caller_session = 0u32;
+    let same_session = ProcessIdToSessionId(pid, &mut owner_session).is_ok()
+        && ProcessIdToSessionId(GetCurrentProcessId(), &mut caller_session).is_ok()
+        && owner_session == caller_session;
+
+    let on_current_desktop = hwnd_is_on_current_desktop(hwnd);
+
+    // cua-driver.exe declares Per-Monitor V2 awareness in its manifest, so
+    // GetWindowRect and UIA BoundingRectangle are both physical screen pixels.
+    // Do not scale this fallback by the monitor DPI.
+    let mut rect = RECT::default();
+    let rect_succeeded = GetWindowRect(hwnd, &mut rect).is_ok();
+    let bounds = bounds_from_rect(rect);
+    let intersects_monitor = !MonitorFromRect(&rect, MONITOR_DEFAULTTONULL).0.is_null();
+
+    // Re-read identity after GetWindowRect so stale/reused handles fail closed.
+    let hwnd_after = elem.CurrentNativeWindowHandle().ok();
+    let uia_pid_after = elem.CurrentProcessId().ok();
+    let mut pid_after = 0u32;
+    let thread_after = GetWindowThreadProcessId(hwnd, Some(&mut pid_after));
+
+    accept_fallback(FallbackFacts {
+        is_offscreen,
+        is_window_before,
+        is_window_after: IsWindow(hwnd).as_bool(),
+        is_top_level,
+        is_visible,
+        is_iconic,
+        is_cloaked,
+        same_session,
+        on_current_desktop,
+        intersects_monitor,
+        rect_succeeded,
+        hwnd_stable: hwnd_after.is_some_and(|candidate| candidate == hwnd),
+        uia_pid_stable: uia_pid_after
+            .is_some_and(|candidate| candidate > 0 && candidate as u32 == pid),
+        win32_owner_stable: thread_after == thread_id && pid_after == pid,
+        bounds,
+    })
+}
+
+fn hwnd_is_on_current_desktop(target: HWND) -> bool {
+    struct Probe {
+        target: HWND,
+        found: bool,
+    }
+
+    unsafe extern "system" fn callback(
+        hwnd: HWND,
+        lparam: windows::Win32::Foundation::LPARAM,
+    ) -> windows::Win32::Foundation::BOOL {
+        let probe = &mut *(lparam.0 as *mut Probe);
+        if hwnd == probe.target {
+            probe.found = true;
+            return windows::Win32::Foundation::FALSE;
+        }
+        windows::Win32::Foundation::TRUE
+    }
+
+    let mut probe = Probe {
+        target,
+        found: false,
+    };
+    unsafe {
+        let _ = EnumWindows(
+            Some(callback),
+            windows::Win32::Foundation::LPARAM(&mut probe as *mut Probe as isize),
+        );
+    }
+    probe.found
+}
+
 /// Bounds via DWM extended frame (excludes drop-shadow on W11) with
-/// `GetWindowRect` fallback — same logic as the EnumWindows path.
-fn window_bounds(hwnd: HWND) -> (i32, i32, i32, i32) {
+/// `GetWindowRect` fallback â€” same logic as the EnumWindows path.
+fn window_bounds(hwnd: HWND) -> Option<Bounds> {
     unsafe {
         let mut rect = RECT::default();
         let ok = DwmGetWindowAttribute(
@@ -684,14 +888,112 @@ fn window_bounds(hwnd: HWND) -> (i32, i32, i32, i32) {
             &mut rect as *mut RECT as *mut _,
             std::mem::size_of::<RECT>() as u32,
         );
-        if ok.is_err() {
-            let _ = GetWindowRect(hwnd, &mut rect);
+        if ok.is_err() || !bounds_from_rect(rect).is_valid() {
+            if GetWindowRect(hwnd, &mut rect).is_err() {
+                return None;
+            }
         }
-        (
-            rect.left,
-            rect.top,
-            rect.right - rect.left,
-            rect.bottom - rect.top,
-        )
+        bounds_from_rect(rect)
+            .is_valid()
+            .then_some(bounds_from_rect(rect))
+    }
+}
+
+#[cfg(test)]
+mod bounds_fallback_tests {
+    use super::{accept_fallback, Bounds, FallbackFacts};
+
+    fn edge_empty_uia_fixture() -> FallbackFacts {
+        FallbackFacts {
+            is_offscreen: Some(false),
+            is_window_before: true,
+            is_window_after: true,
+            is_top_level: true,
+            is_visible: true,
+            is_iconic: false,
+            is_cloaked: Some(false),
+            same_session: true,
+            on_current_desktop: true,
+            intersects_monitor: true,
+            rect_succeeded: true,
+            hwnd_stable: true,
+            uia_pid_stable: true,
+            win32_owner_stable: true,
+            bounds: Bounds {
+                left: 200,
+                top: 52,
+                right: 1400,
+                bottom: 852,
+            },
+        }
+    }
+
+    #[test]
+    fn empty_uia_bounds_accept_the_reported_live_edge_window() {
+        let facts = edge_empty_uia_fixture();
+        assert_eq!(accept_fallback(facts), Some(facts.bounds));
+    }
+
+    #[test]
+    fn offscreen_minimized_and_cloaked_windows_fail_closed() {
+        let mut facts = edge_empty_uia_fixture();
+        facts.is_offscreen = Some(true);
+        assert_eq!(accept_fallback(facts), None);
+
+        let mut facts = edge_empty_uia_fixture();
+        facts.is_iconic = true;
+        assert_eq!(accept_fallback(facts), None);
+
+        let mut facts = edge_empty_uia_fixture();
+        facts.is_cloaked = Some(true);
+        assert_eq!(accept_fallback(facts), None);
+    }
+
+    #[test]
+    fn unknown_offscreen_or_cloak_state_does_not_enable_fallback() {
+        let mut facts = edge_empty_uia_fixture();
+        facts.is_offscreen = None;
+        assert_eq!(accept_fallback(facts), None);
+
+        let mut facts = edge_empty_uia_fixture();
+        facts.is_cloaked = None;
+        assert_eq!(accept_fallback(facts), None);
+    }
+
+    #[test]
+    fn different_session_or_desktop_does_not_enable_fallback() {
+        let mut facts = edge_empty_uia_fixture();
+        facts.same_session = false;
+        assert_eq!(accept_fallback(facts), None);
+
+        let mut facts = edge_empty_uia_fixture();
+        facts.on_current_desktop = false;
+        assert_eq!(accept_fallback(facts), None);
+    }
+
+    #[test]
+    fn stale_or_reused_hwnd_does_not_enable_fallback() {
+        let mut facts = edge_empty_uia_fixture();
+        facts.hwnd_stable = false;
+        assert_eq!(accept_fallback(facts), None);
+
+        let mut facts = edge_empty_uia_fixture();
+        facts.uia_pid_stable = false;
+        assert_eq!(accept_fallback(facts), None);
+
+        let mut facts = edge_empty_uia_fixture();
+        facts.win32_owner_stable = false;
+        assert_eq!(accept_fallback(facts), None);
+    }
+
+    #[test]
+    fn invalid_or_fully_off_monitor_win32_rect_does_not_enable_fallback() {
+        let mut facts = edge_empty_uia_fixture();
+        facts.bounds.right = facts.bounds.left;
+        assert_eq!(accept_fallback(facts), None);
+
+        let mut facts = edge_empty_uia_fixture();
+        facts.intersects_monitor = false;
+        assert_eq!(accept_fallback(facts), None);
     }
 }

@@ -7,7 +7,7 @@
 //! implementations must authenticate their private channel before adapting it
 //! to this interface.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -18,7 +18,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::authorization::{PermissionMode, RiskClass};
+use crate::authorization::{ModeBehavior, PermissionMode, RiskClass, ENFORCEMENT_ADAPTERS};
 
 const DEFAULT_REQUEST_TTL: Duration = Duration::from_secs(2 * 60);
 
@@ -380,34 +380,75 @@ pub struct ProtectedResourceGrants {
 
 /// Runtime-owned proof that a process was created and remains managed by Cua.
 ///
-/// Tool arguments can select a PID but can never populate this store. The
-/// browser engine records only an attested isolated process that it launched,
-/// and removes that proof with the owning lifecycle session.
+/// Tool arguments can select a PID but can never populate this store. Every
+/// record includes an OS-attested fingerprint so PID reuse cannot inherit
+/// ownership. The caller must re-attest the process at each use.
 #[derive(Default)]
 pub struct ProtectedResourceOwnershipStore {
-    pids_by_session: Mutex<HashMap<String, HashSet<i64>>>,
+    processes_by_session: Mutex<HashMap<String, HashMap<i64, crate::browser::ProcessFingerprint>>>,
 }
 
 impl ProtectedResourceOwnershipStore {
-    pub fn mark_driver_owned_pid(&self, session: &str, pid: i64) {
-        self.pids_by_session
+    pub fn mark_driver_owned_process(
+        &self,
+        session: &str,
+        fingerprint: crate::browser::ProcessFingerprint,
+    ) {
+        self.processes_by_session
             .lock()
             .unwrap()
             .entry(session.to_owned())
             .or_default()
-            .insert(pid);
+            .insert(fingerprint.pid, fingerprint);
+    }
+
+    /// Transitional helper for tests and adapters that have not yet learned a
+    /// complete fingerprint. A PID-only record never validates against a
+    /// platform fingerprint that contains a start time.
+    pub fn mark_driver_owned_pid(&self, session: &str, pid: i64) {
+        self.mark_driver_owned_process(
+            session,
+            crate::browser::ProcessFingerprint {
+                pid,
+                start_time: None,
+                executable: None,
+            },
+        );
     }
 
     pub fn is_driver_owned_pid(&self, session: &str, pid: i64) -> bool {
-        self.pids_by_session
+        self.processes_by_session
             .lock()
             .unwrap()
             .get(session)
-            .is_some_and(|pids| pids.contains(&pid))
+            .is_some_and(|processes| processes.contains_key(&pid))
+    }
+
+    /// Re-prove ownership against a fresh platform fingerprint. Identity drift
+    /// is terminal for the record and removes it immediately.
+    pub fn reprove_driver_owned_process(
+        &self,
+        session: &str,
+        current: &crate::browser::ProcessFingerprint,
+    ) -> bool {
+        let mut sessions = self.processes_by_session.lock().unwrap();
+        let Some(processes) = sessions.get_mut(session) else {
+            return false;
+        };
+        let matches = processes
+            .get(&current.pid)
+            .is_some_and(|recorded| recorded.matches(current));
+        if !matches {
+            processes.remove(&current.pid);
+        }
+        if processes.is_empty() {
+            sessions.remove(session);
+        }
+        matches
     }
 
     pub fn remove_session(&self, session: &str) {
-        self.pids_by_session.lock().unwrap().remove(session);
+        self.processes_by_session.lock().unwrap().remove(session);
     }
 }
 
@@ -432,18 +473,34 @@ impl ProtectedResourceGrants {
         idle_ttl: Duration,
         absolute_ttl: Duration,
     ) -> Result<Option<ResourceGrant>, ConsentError> {
-        if context.mode() == PermissionMode::Unrestricted {
-            return Ok(None);
-        }
-        if context.mode() == PermissionMode::Bounded {
-            let manifest = context.bounded_manifest().ok_or_else(|| {
-                ConsentError::BoundedResource(
-                    "bounded mode has no approved session manifest".to_owned(),
-                )
+        let descriptor = ENFORCEMENT_ADAPTERS
+            .iter()
+            .find(|descriptor| descriptor.id == adapter_id)
+            .ok_or_else(|| {
+                ConsentError::Provider(format!(
+                    "protected resource adapter '{adapter_id}' is not registered"
+                ))
             })?;
-            manifest
-                .authorize_protected_resource(adapter_id, &resource)
-                .map_err(ConsentError::BoundedResource)?;
+        match descriptor.behavior_by_mode.for_mode(context.mode()) {
+            ModeBehavior::Allow => return Ok(None),
+            ModeBehavior::Deny => {
+                return Err(ConsentError::Provider(format!(
+                    "adapter '{adapter_id}' is denied in {} mode",
+                    context.mode().as_str()
+                )))
+            }
+            ModeBehavior::Manifest => {
+                let manifest = context.bounded_manifest().ok_or_else(|| {
+                    ConsentError::BoundedResource(
+                        "bounded mode has no approved session manifest".to_owned(),
+                    )
+                })?;
+                manifest
+                    .authorize_protected_resource(adapter_id, &resource)
+                    .map_err(ConsentError::BoundedResource)?;
+                return Ok(None);
+            }
+            ModeBehavior::RequireGrant => {}
         }
         let resource_digest = digest_resource(adapter_id, &resource);
         let key = resource_grant_key(context, lifecycle_session, adapter_id, &resource_digest);
@@ -737,6 +794,28 @@ mod tests {
     }
 
     #[test]
+    fn process_ownership_requires_the_same_attested_process_instance() {
+        let store = ProtectedResourceOwnershipStore::default();
+        let recorded = crate::browser::ProcessFingerprint {
+            pid: 42,
+            start_time: Some(100),
+            executable: Some("/Applications/Fixture.app/Contents/MacOS/Fixture".to_owned()),
+        };
+        store.mark_driver_owned_process("runtime:session", recorded.clone());
+        assert!(store.reprove_driver_owned_process("runtime:session", &recorded));
+
+        let reused = crate::browser::ProcessFingerprint {
+            start_time: Some(101),
+            ..recorded.clone()
+        };
+        assert!(!store.reprove_driver_owned_process("runtime:session", &reused));
+        assert!(
+            !store.is_driver_owned_pid("runtime:session", 42),
+            "identity drift must remove launch provenance"
+        );
+    }
+
+    #[test]
     fn provider_identity_is_runtime_scoped() {
         let with_provider = crate::tool::ToolRegistry::new_with_protected_consent_provider(Some(
             provider(ConsentAction::Accept),
@@ -754,13 +833,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn exact_resource_grants_are_reused_and_scope_changes_reprompt() {
+    async fn standard_routine_resources_never_request_host_authorization() {
         let provider = provider(ConsentAction::Accept);
         let broker = Arc::new(ApprovalBroker::new(Some(provider.clone())));
         let grants = ProtectedResourceGrants::new(broker);
         let context = authorization_context(PermissionMode::Standard);
 
-        let first = grants
+        assert!(grants
             .authorize(
                 &context,
                 "private_observation",
@@ -773,8 +852,8 @@ mod tests {
             )
             .await
             .unwrap()
-            .unwrap();
-        let reused = grants
+            .is_none());
+        assert!(grants
             .authorize(
                 &context,
                 "private_observation",
@@ -787,33 +866,17 @@ mod tests {
             )
             .await
             .unwrap()
-            .unwrap();
-        assert_eq!(first.protected.id, reused.protected.id);
-        assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
-
-        grants
-            .authorize(
-                &context,
-                "private_observation",
-                RiskClass::R2,
-                Some("public-a"),
-                serde_json::json!({"pid": 42, "window_id": 8}),
-                "Observe app window 8",
-                Duration::from_secs(30),
-                Duration::from_secs(60),
-            )
-            .await
-            .unwrap();
-        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
+            .is_none());
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
-    async fn revocation_is_immediate_and_unrestricted_skips_the_broker() {
+    async fn standard_and_unrestricted_routine_actions_skip_the_broker() {
         let provider = provider(ConsentAction::Accept);
         let broker = Arc::new(ApprovalBroker::new(Some(provider.clone())));
         let grants = ProtectedResourceGrants::new(broker);
         let standard = authorization_context(PermissionMode::Standard);
-        let live = grants
+        assert!(grants
             .authorize(
                 &standard,
                 "desktop_input",
@@ -826,10 +889,9 @@ mod tests {
             )
             .await
             .unwrap()
-            .unwrap();
+            .is_none());
         let revoked = grants.revoke_session(&standard.runtime_session_key("public-a"));
-        assert_eq!(revoked.len(), 1);
-        assert!(!live.is_live());
+        assert!(revoked.is_empty());
 
         let unrestricted = authorization_context(PermissionMode::Unrestricted);
         assert!(grants
@@ -846,7 +908,7 @@ mod tests {
             .await
             .unwrap()
             .is_none());
-        assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]

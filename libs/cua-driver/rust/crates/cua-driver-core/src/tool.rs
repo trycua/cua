@@ -575,6 +575,33 @@ impl ToolRegistry {
         self.protected_resource_ownership.clone()
     }
 
+    async fn snapshot_running_pids(&self) -> Option<std::collections::BTreeSet<i64>> {
+        let tool = self.tools.get("list_apps")?;
+        let result = tool.invoke(serde_json::json!({})).await;
+        if result.is_error == Some(true) {
+            return None;
+        }
+        let apps = result.structured_content?.get("apps")?.as_array()?.clone();
+        Some(
+            apps.into_iter()
+                .filter_map(|app| app.get("pid").and_then(Value::as_i64))
+                .filter(|pid| *pid > 0)
+                .collect(),
+        )
+    }
+
+    async fn attest_process_fingerprint(
+        &self,
+        pid: i64,
+    ) -> Option<crate::browser::ProcessFingerprint> {
+        let tool = self.tools.get("kill_app")?;
+        let scope = tool
+            .protected_resource_scope("process_control", &serde_json::json!({"pid": pid}))
+            .await
+            .ok()??;
+        serde_json::from_value(scope.get("fingerprint")?.clone()).ok()
+    }
+
     /// Content-free authorization status for this exact runtime.
     pub fn authorization_status_json(&self) -> Value {
         crate::authorization::status_json_with_provider(self.approval_broker.provider_id())
@@ -875,6 +902,43 @@ impl ToolRegistry {
         let active_adapters =
             crate::authorization::enforcement_adapters_for_call(resolved_name, &public_args);
         let has_adapter = |id: &str| active_adapters.iter().any(|adapter| adapter.id == id);
+        let current_process_fingerprint = if has_adapter("process_control") {
+            match tool
+                .protected_resource_scope("process_control", &public_args)
+                .await
+            {
+                Ok(Some(scope)) => serde_json::from_value::<crate::browser::ProcessFingerprint>(
+                    scope["fingerprint"].clone(),
+                )
+                .ok(),
+                Ok(None) | Err(_) => None,
+            }
+        } else {
+            None
+        };
+        let runtime_proves_driver_owned = runtime_session
+            .as_deref()
+            .zip(current_process_fingerprint.as_ref())
+            .is_some_and(|(session, fingerprint)| {
+                self.protected_resource_ownership
+                    .reprove_driver_owned_process(session, fingerprint)
+            });
+
+        if context.mode() == crate::authorization::PermissionMode::Standard
+            && has_adapter("process_control")
+            && !runtime_proves_driver_owned
+        {
+            return protected_refusal(
+                "foreign_process_termination_denied",
+                "standard mode may terminate only a process proven to have been launched by this Cua runtime",
+            );
+        }
+        if runtime_proves_driver_owned {
+            if let Some(fingerprint) = current_process_fingerprint.as_ref() {
+                args["_protected_process_fingerprint"] =
+                    serde_json::to_value(fingerprint).unwrap_or(Value::Null);
+            }
+        }
 
         // Raw/legacy page mutations have no exact browser binding. They are
         // not grantable through a model-time confirmation: only a trusted
@@ -910,20 +974,6 @@ impl ToolRegistry {
         // avoids prompting for a call the session policy will refuse, while
         // preserving the public arguments in the grant scope and the private
         // runtime session key in its revocation lifecycle.
-        let runtime_proves_driver_owned = runtime_session
-            .as_deref()
-            .zip(public_args.get("pid").and_then(Value::as_i64))
-            .is_some_and(|(session, pid)| {
-                self.protected_resource_ownership
-                    .is_driver_owned_pid(session, pid)
-                    || public_args
-                        .get("session")
-                        .and_then(Value::as_str)
-                        .is_some_and(|public_session| {
-                            self.protected_resource_ownership
-                                .is_driver_owned_pid(public_session, pid)
-                        })
-            });
         if has_adapter("private_observation")
             && !runtime_proves_driver_owned
             && tool
@@ -1050,7 +1100,10 @@ impl ToolRegistry {
                 return refusal;
             }
         }
-        if has_adapter("process_control") && !runtime_proves_driver_owned {
+        if has_adapter("process_control")
+            && (!runtime_proves_driver_owned
+                || context.mode() == crate::authorization::PermissionMode::Bounded)
+        {
             let approved_scope = match self
                 .authorize_attested_resource(
                     tool.as_ref(),
@@ -1100,6 +1153,11 @@ impl ToolRegistry {
         }
 
         // Capture start time for recording timestamps only after validation.
+        let launch_snapshot = if resolved_name == "launch_app" && runtime_session.is_some() {
+            self.snapshot_running_pids().await
+        } else {
+            None
+        };
         let start_ms = now_ms();
         let cursor_event = crate::cursor_events::begin_tool(resolved_name, &args);
 
@@ -1138,6 +1196,24 @@ impl ToolRegistry {
             .flatten();
 
         let mut result = tool.invoke(args.clone()).await;
+        if resolved_name == "launch_app" && result.is_error != Some(true) {
+            if let (Some(session), Some(before), Some(pid)) = (
+                runtime_session.as_deref(),
+                launch_snapshot.as_ref(),
+                result
+                    .structured_content
+                    .as_ref()
+                    .and_then(|value| value.get("pid"))
+                    .and_then(Value::as_i64),
+            ) {
+                if pid > 0 && !before.contains(&pid) {
+                    if let Some(fingerprint) = self.attest_process_fingerprint(pid).await {
+                        self.protected_resource_ownership
+                            .mark_driver_owned_process(session, fingerprint);
+                    }
+                }
+            }
+        }
         crate::cursor_events::end_tool(cursor_event);
         // Coordinate the physical action itself, not post-action evidence
         // capture or result shaping. Keeping the global desktop lock through
@@ -2259,12 +2335,24 @@ mod runtime_isolation_tests {
         stale_before_dispatch: bool,
     ) -> Arc<super::ToolRegistry> {
         let mut registry = super::ToolRegistry::new_with_protected_consent_provider(provider);
-        registry.register(Box::new(AttestedProbe {
-            hits,
-            scope: serde_json::json!({
+        let scope = if name == "kill_app" {
+            serde_json::json!({
+                "kind": "process_instance",
+                "fingerprint": {
+                    "pid": 424242,
+                    "start_time": 7,
+                    "executable": "/synthetic/fixture"
+                }
+            })
+        } else {
+            serde_json::json!({
                 "kind": "synthetic_attested_resource",
                 "identity": "exact-1",
-            }),
+            })
+        };
+        registry.register(Box::new(AttestedProbe {
+            hits,
+            scope,
             stale_before_dispatch,
             def: super::ToolDef {
                 name: name.to_owned(),
@@ -2383,7 +2471,7 @@ mod runtime_isolation_tests {
     }
 
     #[tokio::test]
-    async fn observation_refuses_before_platform_dispatch_without_a_protected_host() {
+    async fn standard_observation_runs_without_a_protected_host() {
         let hits = Arc::new(AtomicUsize::new(0));
         let registry = observation_registry(None, hits.clone());
         let result = registry
@@ -2394,20 +2482,12 @@ mod runtime_isolation_tests {
             )
             .await;
 
-        assert_eq!(hits.load(Ordering::SeqCst), 0);
-        assert_eq!(result.is_error, Some(true));
-        assert_eq!(
-            result
-                .structured_content
-                .as_ref()
-                .and_then(|value| value.pointer("/refusal/code"))
-                .and_then(serde_json::Value::as_str),
-            Some("protected_consent_required")
-        );
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        assert_ne!(result.is_error, Some(true));
     }
 
     #[tokio::test]
-    async fn observation_reuses_only_the_exact_window_grant() {
+    async fn standard_observation_never_requests_per_window_grants() {
         let hits = Arc::new(AtomicUsize::new(0));
         let provider = Arc::new(AcceptingProvider {
             requests: AtomicUsize::new(0),
@@ -2430,7 +2510,7 @@ mod runtime_isolation_tests {
         }
 
         assert_eq!(hits.load(Ordering::SeqCst), 3);
-        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
@@ -2470,15 +2550,15 @@ mod runtime_isolation_tests {
         assert_eq!(hits.load(Ordering::SeqCst), 1);
         assert_eq!(
             provider.requests.load(Ordering::SeqCst),
-            2,
-            "trajectory recording requires independent observation and exact output grants"
+            0,
+            "routine standard recording is promptless"
         );
     }
 
     #[tokio::test]
-    async fn desktop_input_refuses_before_dispatch_and_scopes_foreground_separately() {
-        let denied_hits = Arc::new(AtomicUsize::new(0));
-        let denied = input_registry(None, denied_hits.clone())
+    async fn standard_desktop_input_is_promptless_across_delivery_modes() {
+        let no_host_hits = Arc::new(AtomicUsize::new(0));
+        let no_host = input_registry(None, no_host_hits.clone())
             .invoke_with_context(
                 "click",
                 serde_json::json!({
@@ -2491,15 +2571,8 @@ mod runtime_isolation_tests {
                 standard_context(),
             )
             .await;
-        assert_eq!(denied_hits.load(Ordering::SeqCst), 0);
-        assert_eq!(
-            denied
-                .structured_content
-                .as_ref()
-                .and_then(|value| value.pointer("/refusal/code"))
-                .and_then(serde_json::Value::as_str),
-            Some("protected_consent_required")
-        );
+        assert_eq!(no_host_hits.load(Ordering::SeqCst), 1);
+        assert_ne!(no_host.is_error, Some(true));
 
         let hits = Arc::new(AtomicUsize::new(0));
         let provider = Arc::new(AcceptingProvider {
@@ -2525,19 +2598,19 @@ mod runtime_isolation_tests {
             assert_ne!(result.is_error, Some(true));
         }
         assert_eq!(hits.load(Ordering::SeqCst), 3);
-        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
-    async fn file_transfer_refuses_before_dispatch_and_reuses_only_the_exact_paths() {
+    async fn standard_file_transfer_is_promptless_and_still_canonicalizes_paths() {
         let files = tempfile::tempdir().unwrap();
         let first = files.path().join("first.txt");
         let second = files.path().join("second.txt");
         std::fs::write(&first, b"first").unwrap();
         std::fs::write(&second, b"second").unwrap();
 
-        let denied_hits = Arc::new(AtomicUsize::new(0));
-        let denied = file_registry(None, denied_hits.clone(), Arc::new(Mutex::new(None)))
+        let no_host_hits = Arc::new(AtomicUsize::new(0));
+        let no_host = file_registry(None, no_host_hits.clone(), Arc::new(Mutex::new(None)))
             .invoke_with_context(
                 "browser_set_input_files",
                 serde_json::json!({
@@ -2550,15 +2623,8 @@ mod runtime_isolation_tests {
                 standard_context(),
             )
             .await;
-        assert_eq!(denied_hits.load(Ordering::SeqCst), 0);
-        assert_eq!(
-            denied
-                .structured_content
-                .as_ref()
-                .and_then(|value| value.pointer("/refusal/code"))
-                .and_then(serde_json::Value::as_str),
-            Some("protected_consent_required")
-        );
+        assert_eq!(no_host_hits.load(Ordering::SeqCst), 1);
+        assert_ne!(no_host.is_error, Some(true));
 
         let hits = Arc::new(AtomicUsize::new(0));
         let last_args = Arc::new(Mutex::new(None));
@@ -2584,7 +2650,7 @@ mod runtime_isolation_tests {
             assert_ne!(result.is_error, Some(true));
         }
         assert_eq!(hits.load(Ordering::SeqCst), 3);
-        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
         let expected = std::fs::canonicalize(second)
             .unwrap()
             .to_string_lossy()
@@ -2680,9 +2746,9 @@ mod runtime_isolation_tests {
     }
 
     #[tokio::test]
-    async fn typed_browser_grants_require_attested_exact_resources() {
-        let denied_hits = Arc::new(AtomicUsize::new(0));
-        let denied = attested_registry("browser_click", None, denied_hits.clone(), false)
+    async fn standard_browser_input_uses_the_existing_binding_without_action_grants() {
+        let no_host_hits = Arc::new(AtomicUsize::new(0));
+        let no_host = attested_registry("browser_click", None, no_host_hits.clone(), false)
             .invoke_with_context(
                 "browser_click",
                 serde_json::json!({
@@ -2693,15 +2759,8 @@ mod runtime_isolation_tests {
                 standard_context(),
             )
             .await;
-        assert_eq!(denied_hits.load(Ordering::SeqCst), 0);
-        assert_eq!(
-            denied
-                .structured_content
-                .as_ref()
-                .and_then(|value| value.pointer("/refusal/code"))
-                .and_then(serde_json::Value::as_str),
-            Some("protected_consent_required")
-        );
+        assert_eq!(no_host_hits.load(Ordering::SeqCst), 1);
+        assert_ne!(no_host.is_error, Some(true));
 
         let hits = Arc::new(AtomicUsize::new(0));
         let provider = Arc::new(AcceptingProvider {
@@ -2725,11 +2784,11 @@ mod runtime_isolation_tests {
             assert_ne!(result.is_error, Some(true));
         }
         assert_eq!(hits.load(Ordering::SeqCst), 2);
-        assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
-    async fn process_identity_is_reproved_after_consent_before_termination() {
+    async fn standard_foreign_process_termination_denies_without_prompting() {
         let hits = Arc::new(AtomicUsize::new(0));
         let provider = Arc::new(AcceptingProvider {
             requests: AtomicUsize::new(0),
@@ -2743,19 +2802,47 @@ mod runtime_isolation_tests {
             )
             .await;
         assert_eq!(hits.load(Ordering::SeqCst), 0);
-        assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
         assert_eq!(
             result
                 .structured_content
                 .as_ref()
                 .and_then(|value| value.pointer("/refusal/code"))
                 .and_then(serde_json::Value::as_str),
-            Some("protected_resource_scope_stale")
+            Some("foreign_process_termination_denied")
         );
     }
 
     #[tokio::test]
-    async fn browser_identity_is_reproved_after_consent_before_input() {
+    async fn standard_owned_process_termination_reproves_the_fingerprint() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let registry = attested_registry("kill_app", None, hits.clone(), false);
+        let context = standard_context();
+        let runtime_session = context.runtime_session_key("process");
+        registry
+            .protected_resource_ownership()
+            .mark_driver_owned_process(
+                &runtime_session,
+                crate::browser::ProcessFingerprint {
+                    pid: 424242,
+                    start_time: Some(7),
+                    executable: Some("/synthetic/fixture".to_owned()),
+                },
+            );
+
+        let result = registry
+            .invoke_with_context(
+                "kill_app",
+                serde_json::json!({"pid": 424242, "session": "process"}),
+                context,
+            )
+            .await;
+        assert_ne!(result.is_error, Some(true));
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn standard_browser_identity_is_reproved_without_repeating_attach_authorization() {
         let hits = Arc::new(AtomicUsize::new(0));
         let provider = Arc::new(AcceptingProvider {
             requests: AtomicUsize::new(0),
@@ -2774,7 +2861,7 @@ mod runtime_isolation_tests {
             )
             .await;
         assert_eq!(hits.load(Ordering::SeqCst), 0);
-        assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
         assert_eq!(
             result
                 .structured_content
@@ -2888,7 +2975,7 @@ mod runtime_isolation_tests {
     }
 
     #[tokio::test]
-    async fn driver_configuration_grants_bind_exact_changes() {
+    async fn standard_agent_adjustable_driver_configuration_is_promptless() {
         let hits = Arc::new(AtomicUsize::new(0));
         let provider = Arc::new(AcceptingProvider {
             requests: AtomicUsize::new(0),
@@ -2910,7 +2997,7 @@ mod runtime_isolation_tests {
             assert_ne!(result.is_error, Some(true));
         }
         assert_eq!(hits.load(Ordering::SeqCst), 3);
-        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
 
         let unknown = registry
             .invoke_with_context(
@@ -2925,7 +3012,7 @@ mod runtime_isolation_tests {
             .await;
         assert_eq!(unknown.is_error, Some(true));
         assert_eq!(hits.load(Ordering::SeqCst), 3);
-        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
     }
 
     #[test]

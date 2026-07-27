@@ -87,6 +87,8 @@ pub struct EnforcementAdapterDescriptor {
     /// Mode-specific truth. `state` remains the standard-mode value for
     /// backward-compatible inventory consumers.
     pub enforcement_by_mode: AdapterEnforcement,
+    /// Runtime behavior selected after hard invariants and policy admission.
+    pub behavior_by_mode: AdapterModeBehavior,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -106,6 +108,44 @@ impl AdapterEnforcement {
     }
 
     pub const fn for_mode(self, mode: PermissionMode) -> RiskEnforcement {
+        match mode {
+            PermissionMode::Standard => self.standard,
+            PermissionMode::Bounded => self.bounded,
+            PermissionMode::Unrestricted => self.unrestricted,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModeBehavior {
+    Allow,
+    Deny,
+    RequireGrant,
+    Manifest,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct AdapterModeBehavior {
+    pub standard: ModeBehavior,
+    pub bounded: ModeBehavior,
+    pub unrestricted: ModeBehavior,
+}
+
+impl AdapterModeBehavior {
+    pub const fn new(
+        standard: ModeBehavior,
+        bounded: ModeBehavior,
+        unrestricted: ModeBehavior,
+    ) -> Self {
+        Self {
+            standard,
+            bounded,
+            unrestricted,
+        }
+    }
+
+    pub const fn for_mode(self, mode: PermissionMode) -> ModeBehavior {
         match mode {
             PermissionMode::Standard => self.standard,
             PermissionMode::Bounded => self.bounded,
@@ -304,6 +344,11 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         provider_requirement:
             "protected_consent_in_standard; protected_indicator_in_bounded; none_in_unrestricted",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
+        behavior_by_mode: AdapterModeBehavior::new(
+            ModeBehavior::RequireGrant,
+            ModeBehavior::Manifest,
+            ModeBehavior::Allow,
+        ),
     },
     EnforcementAdapterDescriptor {
         id: "private_observation",
@@ -321,6 +366,11 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         provider_requirement:
             "protected_consent_in_standard; protected_indicator_in_bounded; none_in_unrestricted",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
+        behavior_by_mode: AdapterModeBehavior::new(
+            ModeBehavior::Allow,
+            ModeBehavior::Manifest,
+            ModeBehavior::Allow,
+        ),
     },
     EnforcementAdapterDescriptor {
         id: "desktop_input",
@@ -338,6 +388,11 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         provider_requirement:
             "protected_consent_in_standard; protected_indicator_in_bounded; none_in_unrestricted",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
+        behavior_by_mode: AdapterModeBehavior::new(
+            ModeBehavior::Allow,
+            ModeBehavior::Manifest,
+            ModeBehavior::Allow,
+        ),
     },
     EnforcementAdapterDescriptor {
         id: "file_transfer_and_output",
@@ -355,6 +410,11 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         provider_requirement:
             "protected_consent_in_standard; protected_indicator_in_bounded; none_in_unrestricted",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
+        behavior_by_mode: AdapterModeBehavior::new(
+            ModeBehavior::Allow,
+            ModeBehavior::Manifest,
+            ModeBehavior::Allow,
+        ),
     },
     EnforcementAdapterDescriptor {
         id: "browser_consequential_action",
@@ -372,6 +432,11 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         provider_requirement:
             "protected_consent_in_standard; protected_indicator_in_bounded; none_in_unrestricted",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
+        behavior_by_mode: AdapterModeBehavior::new(
+            ModeBehavior::Allow,
+            ModeBehavior::Manifest,
+            ModeBehavior::Allow,
+        ),
     },
     EnforcementAdapterDescriptor {
         id: "browser_unbounded_script",
@@ -388,6 +453,11 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         refusal_code: Some("unbounded_operation_requires_unrestricted"),
         provider_requirement: "unrestricted_mode_with_trusted_launch_time_risk_acknowledgement",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
+        behavior_by_mode: AdapterModeBehavior::new(
+            ModeBehavior::Deny,
+            ModeBehavior::Deny,
+            ModeBehavior::Allow,
+        ),
     },
     EnforcementAdapterDescriptor {
         id: "browser_bound_input",
@@ -405,6 +475,11 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         provider_requirement:
             "protected_consent_in_standard; protected_indicator_in_bounded; none_in_unrestricted",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
+        behavior_by_mode: AdapterModeBehavior::new(
+            ModeBehavior::Allow,
+            ModeBehavior::Manifest,
+            ModeBehavior::Allow,
+        ),
     },
     EnforcementAdapterDescriptor {
         id: "process_control",
@@ -422,6 +497,11 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         provider_requirement:
             "protected_consent_in_standard; protected_indicator_in_bounded; none_in_unrestricted",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
+        behavior_by_mode: AdapterModeBehavior::new(
+            ModeBehavior::Deny,
+            ModeBehavior::Manifest,
+            ModeBehavior::Allow,
+        ),
     },
     EnforcementAdapterDescriptor {
         id: "os_permission_prompt",
@@ -438,6 +518,11 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         refusal_code: Some("os_permission_prompt_requires_trusted_host"),
         provider_requirement: "trusted_host_setup_outside_the_agent_tool_path",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
+        behavior_by_mode: AdapterModeBehavior::new(
+            ModeBehavior::Deny,
+            ModeBehavior::Deny,
+            ModeBehavior::Deny,
+        ),
     },
     EnforcementAdapterDescriptor {
         id: "driver_configuration",
@@ -460,6 +545,11 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         provider_requirement:
             "protected_consent_in_standard; protected_indicator_in_bounded; none_in_unrestricted",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
+        behavior_by_mode: AdapterModeBehavior::new(
+            ModeBehavior::Allow,
+            ModeBehavior::Manifest,
+            ModeBehavior::Allow,
+        ),
     },
     EnforcementAdapterDescriptor {
         id: "clipboard",
@@ -476,6 +566,11 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         refusal_code: None,
         provider_requirement: "capability_not_exposed",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::NotExposed),
+        behavior_by_mode: AdapterModeBehavior::new(
+            ModeBehavior::Deny,
+            ModeBehavior::Deny,
+            ModeBehavior::Deny,
+        ),
     },
     EnforcementAdapterDescriptor {
         id: "devices",
@@ -492,6 +587,11 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         refusal_code: None,
         provider_requirement: "capability_not_exposed",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::NotExposed),
+        behavior_by_mode: AdapterModeBehavior::new(
+            ModeBehavior::Deny,
+            ModeBehavior::Deny,
+            ModeBehavior::Deny,
+        ),
     },
     EnforcementAdapterDescriptor {
         id: "shell_and_network",
@@ -508,6 +608,11 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         refusal_code: None,
         provider_requirement: "capability_not_exposed",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::NotExposed),
+        behavior_by_mode: AdapterModeBehavior::new(
+            ModeBehavior::Deny,
+            ModeBehavior::Deny,
+            ModeBehavior::Deny,
+        ),
     },
 ];
 
@@ -1450,6 +1555,53 @@ mod tests {
         assert_eq!(existing.idle_ttl_seconds, Some(30 * 60));
         assert_eq!(existing.absolute_ttl_seconds, Some(8 * 60 * 60));
         assert_eq!(existing.refusal_code, Some("browser_consent_required"));
+    }
+
+    #[test]
+    fn adapter_mode_behavior_matches_the_product_contract() {
+        let behavior = |id: &str, mode| {
+            ENFORCEMENT_ADAPTERS
+                .iter()
+                .find(|adapter| adapter.id == id)
+                .unwrap()
+                .behavior_by_mode
+                .for_mode(mode)
+        };
+
+        for id in [
+            "private_observation",
+            "desktop_input",
+            "file_transfer_and_output",
+            "browser_consequential_action",
+            "browser_bound_input",
+            "driver_configuration",
+        ] {
+            assert_eq!(behavior(id, PermissionMode::Standard), ModeBehavior::Allow);
+            assert_eq!(
+                behavior(id, PermissionMode::Bounded),
+                ModeBehavior::Manifest
+            );
+            assert_eq!(
+                behavior(id, PermissionMode::Unrestricted),
+                ModeBehavior::Allow
+            );
+        }
+        assert_eq!(
+            behavior("browser_prepare.existing_profile", PermissionMode::Standard),
+            ModeBehavior::RequireGrant
+        );
+        assert_eq!(
+            behavior("process_control", PermissionMode::Standard),
+            ModeBehavior::Deny
+        );
+        assert_eq!(
+            behavior("browser_unbounded_script", PermissionMode::Bounded),
+            ModeBehavior::Deny
+        );
+        assert_eq!(
+            behavior("os_permission_prompt", PermissionMode::Unrestricted),
+            ModeBehavior::Deny
+        );
     }
 
     #[test]

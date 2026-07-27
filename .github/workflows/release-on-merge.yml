@@ -93,7 +93,6 @@ jobs:
             ["libs/python/computer/"]="pypi/computer"
             ["libs/python/cua-cloud/"]="pypi/cloud"
             ["libs/python/core/"]="pypi/core"
-            ["libs/python/cua-fleet/"]="pypi/fleet"
             ["libs/python/som/"]="pypi/som"
             ["libs/python/bench-ui/"]="pypi/bench-ui"
             ["libs/cua-bench/"]="pypi/bench"

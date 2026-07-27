@@ -81,6 +81,12 @@ class NativeTarget:
     window_id: int
 
 
+@dataclass(frozen=True)
+class ChromeProcess:
+    pid: int
+    command: list[str]
+
+
 @dataclass
 class BrowserTarget:
     target_id: str
@@ -245,15 +251,16 @@ def driver_call(
     *,
     timeout: int = 120,
     allow_refusal: bool = False,
-    allow_text_success: bool = False,
 ) -> dict[str, Any]:
     command = [
-        "/usr/local/bin/cua-driver",
-        "call",
-        name,
-        json.dumps(arguments, separators=(",", ":")),
+        "env",
+        f"PYTHONPATH={fleet_pilot.GUEST_DRIVER_SDK_ROOT}",
+        "python3",
+        fleet_pilot.GUEST_DRIVER_SDK_CALLER,
         "--socket",
         fleet_pilot.GUEST_DRIVER_SOCKET,
+        name,
+        json.dumps(arguments, separators=(",", ":")),
     ]
     response = httpx.post(
         f"http://127.0.0.1:{fleet_pilot.CONTROL_PORT}/setup/execute",
@@ -279,29 +286,59 @@ def driver_call(
             }
         raise DriverRefusal(name, detail[-800:])
     try:
-        value = json.loads(output)
+        envelope = json.loads(output)
     except json.JSONDecodeError as exc:
-        if allow_text_success:
-            return {
-                "ok": True,
-                "text": " ".join(output.split())[-800:],
-                "returncode": returncode,
-            }
         raise PairedRunError(
-            f"Cua Driver {name} returned non-JSON output"
+            f"Cua Driver Python SDK {name} returned non-JSON output"
         ) from exc
-    if not isinstance(value, dict):
-        raise PairedRunError(f"Cua Driver {name} did not return an object")
-    error = value.get("error")
-    if error:
+    if not isinstance(envelope, dict):
+        raise PairedRunError(f"Cua Driver Python SDK {name} omitted its envelope")
+    if envelope.get("is_error") is True:
+        error_code = str(envelope.get("error_code") or "driver_error")
+        detail = " ".join(str(envelope.get("text") or error_code).split())[-800:]
         if allow_refusal:
             return {
                 "refused": True,
                 "tool": name,
-                "detail": str(error),
+                "detail": detail,
+                "error_code": error_code,
                 "returncode": returncode,
             }
-        raise PairedRunError(f"Cua Driver {name} refused: {error}")
+        raise DriverRefusal(name, f"{error_code}: {detail}")
+
+    structured_json = envelope.get("structured_json")
+    if structured_json is None:
+        value: dict[str, Any] = {
+            "ok": True,
+            "text": str(envelope.get("text") or ""),
+        }
+    elif isinstance(structured_json, str):
+        try:
+            decoded = json.loads(structured_json)
+        except json.JSONDecodeError as exc:
+            raise PairedRunError(
+                f"Cua Driver Python SDK {name} returned invalid structured_json"
+            ) from exc
+        if not isinstance(decoded, dict):
+            raise PairedRunError(
+                f"Cua Driver Python SDK {name} structured_json was not an object"
+            )
+        value = decoded
+    else:
+        raise PairedRunError(
+            f"Cua Driver Python SDK {name} structured_json was not a string"
+        )
+
+    images = envelope.get("images")
+    if isinstance(images, list) and images:
+        first_image = images[0]
+        if isinstance(first_image, dict):
+            screenshot = first_image.get("data_base64")
+            if isinstance(screenshot, str) and screenshot:
+                value["screenshot_png_b64"] = screenshot
+                value["screenshot_mime_type"] = first_image.get("mime_type")
+    value["sdk_verified"] = envelope.get("verified")
+    value["sdk_degraded"] = bool(envelope.get("degraded"))
     return value
 
 
@@ -322,7 +359,7 @@ def end_session(session: str) -> bool:
     return True
 
 
-def discover_chrome_window(session: str) -> NativeTarget:
+def discover_chrome_window(session: str, expected_pid: int) -> NativeTarget:
     del session  # list_windows is process-global read-only discovery.
     windows_state = driver_call("list_windows", {})
     windows = windows_state.get("windows")
@@ -344,6 +381,8 @@ def discover_chrome_window(session: str) -> NativeTarget:
         pid = window.get("pid") or window.get("owner_pid")
         window_id = window.get("window_id") or window.get("id")
         if isinstance(pid, int) and isinstance(window_id, int):
+            if pid != expected_pid:
+                continue
             if window.get("is_on_screen") is False or window.get("on_screen") is False:
                 continue
             bounds = window.get("bounds")
@@ -365,7 +404,9 @@ def discover_chrome_window(session: str) -> NativeTarget:
     for area, target in candidates:
         unique[target] = max(area, unique.get(target, -1))
     if not unique:
-        raise PairedRunError("no visible Chrome window was found")
+        raise PairedRunError(
+            f"no visible Chrome window was found for fresh browser pid {expected_pid}"
+        )
     ranked = sorted(
         ((area, target) for target, area in unique.items()),
         key=lambda item: item[0],
@@ -410,37 +451,85 @@ def native_snapshot(
     return state, screenshot
 
 
-def bind_browser(target: NativeTarget, session: str) -> BrowserTarget:
-    bound = driver_call(
-        "get_browser_state",
-        {
-            "pid": target.pid,
-            "window_id": target.window_id,
-            "session": session,
-        },
-        timeout=180,
-    )
-    if bound.get("status") not in (None, "ok"):
-        raise PairedRunError(f"browser bind status was {bound.get('status')!r}")
-    if bound.get("binding_quality") != "exact":
-        raise PairedRunError("Cua Driver browser binding was not exact")
-    if bound.get("mutation_allowed") is not True:
-        raise PairedRunError("Cua Driver browser binding refused mutation")
-    target_id = bound.get("target_id")
-    tabs = bound.get("tabs")
-    if not isinstance(target_id, str) or not target_id:
-        raise PairedRunError("browser bind omitted target_id")
-    if not isinstance(tabs, list) or not tabs:
-        raise PairedRunError("browser bind omitted tabs")
-    active = [tab for tab in tabs if isinstance(tab, dict) and tab.get("active") is True]
-    if len(active) != 1:
-        raise PairedRunError(
-            f"expected one proven active browser tab, found {len(active)}"
+def native_snapshot_with_recovery(
+    target: NativeTarget,
+    session: str,
+    expected_pid: int,
+) -> tuple[NativeTarget, dict[str, Any], str]:
+    failure: Exception | None = None
+    for attempt in range(3):
+        current = (
+            target
+            if attempt == 0
+            else discover_chrome_window(session, expected_pid)
         )
-    return BrowserTarget(
-        target_id=target_id,
-        tabs=[tab for tab in tabs if isinstance(tab, dict)],
-    )
+        try:
+            state, screenshot = native_snapshot(current, session)
+            return current, state, screenshot
+        except (DriverRefusal, PairedRunError) as exc:
+            failure = exc
+            if attempt < 2:
+                time.sleep(1)
+    assert failure is not None
+    raise failure
+
+
+def bind_browser(
+    target: NativeTarget,
+    session: str,
+    expected_pid: int,
+) -> tuple[NativeTarget, BrowserTarget]:
+    failure: Exception | None = None
+    for attempt in range(12):
+        current = (
+            target
+            if attempt == 0
+            else discover_chrome_window(session, expected_pid)
+        )
+        try:
+            bound = driver_call(
+                "get_browser_state",
+                {
+                    "pid": current.pid,
+                    "window_id": current.window_id,
+                    "session": session,
+                },
+                timeout=180,
+            )
+            if bound.get("status") not in (None, "ok"):
+                raise PairedRunError(
+                    f"browser bind status was {bound.get('status')!r}: "
+                    f"{bound.get('refusal') or bound.get('error') or ''}"
+                )
+            if bound.get("binding_quality") != "exact":
+                raise PairedRunError("Cua Driver browser binding was not exact")
+            if bound.get("mutation_allowed") is not True:
+                raise PairedRunError("Cua Driver browser binding refused mutation")
+            target_id = bound.get("target_id")
+            tabs = bound.get("tabs")
+            if not isinstance(target_id, str) or not target_id:
+                raise PairedRunError("browser bind omitted target_id")
+            if not isinstance(tabs, list) or not tabs:
+                raise PairedRunError("browser bind omitted tabs")
+            active = [
+                tab
+                for tab in tabs
+                if isinstance(tab, dict) and tab.get("active") is True
+            ]
+            if len(active) != 1:
+                raise PairedRunError(
+                    f"expected one proven active browser tab, found {len(active)}"
+                )
+            return current, BrowserTarget(
+                target_id=target_id,
+                tabs=[tab for tab in tabs if isinstance(tab, dict)],
+            )
+        except (DriverRefusal, PairedRunError) as exc:
+            failure = exc
+            if attempt < 11:
+                time.sleep(2)
+    assert failure is not None
+    raise failure
 
 
 def browser_snapshots(
@@ -836,6 +925,7 @@ def execute_action(
     target: NativeTarget,
     browser: BrowserTarget | None,
     session: str,
+    expected_pid: int,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     name = action["name"]
     arguments = action["arguments"]
@@ -853,7 +943,6 @@ def execute_action(
                 **require_native_target(arguments),
             },
             allow_refusal=True,
-            allow_text_success=True,
         )
     elif name == "native_type":
         result = driver_call(
@@ -866,7 +955,6 @@ def execute_action(
                 **require_native_target(arguments),
             },
             allow_refusal=True,
-            allow_text_success=True,
         )
     elif name == "native_hotkey":
         result = driver_call(
@@ -878,7 +966,6 @@ def execute_action(
                 "keys": arguments["keys"],
             },
             allow_refusal=True,
-            allow_text_success=True,
         )
     elif name == "native_scroll":
         delta_y = float(arguments["delta_y"])
@@ -895,7 +982,6 @@ def execute_action(
                 "amount": max(1, min(50, int(abs(delta_y) / 120) or 1)),
             },
             allow_refusal=True,
-            allow_text_success=True,
         )
     elif name in {"browser_click", "browser_type", "browser_scroll"}:
         if browser is None:
@@ -912,7 +998,6 @@ def execute_action(
                 "browser_click",
                 {**common, "input_route": "dom_event"},
                 allow_refusal=True,
-                allow_text_success=True,
             )
         elif name == "browser_type":
             result = driver_call(
@@ -923,7 +1008,6 @@ def execute_action(
                     "mode": "insert_text",
                 },
                 allow_refusal=True,
-                allow_text_success=True,
             )
         else:
             result = driver_call(
@@ -935,7 +1019,6 @@ def execute_action(
                     "delta_y": arguments["delta_y"],
                 },
                 allow_refusal=True,
-                allow_text_success=True,
             )
     else:
         raise PairedRunError(f"unknown model action: {name}")
@@ -943,7 +1026,11 @@ def execute_action(
     # The skill contract requires an immediate post-action verification. Browser
     # mutations get both semantic and native verification because the page may
     # also change the selected native surface.
-    post_native, _ = native_snapshot(target, session)
+    _post_target, post_native, _ = native_snapshot_with_recovery(
+        target,
+        session,
+        expected_pid,
+    )
     post: dict[str, Any] = {
         "native": json_copy_without_images(post_native),
     }
@@ -977,21 +1064,24 @@ def task_instruction() -> str:
     return str(Task070.instruction)
 
 
-def select_chrome_profile_command(
+def select_chrome_profile_process(
     process_listing: str,
     guest_profile: str,
-) -> list[str]:
+) -> ChromeProcess:
     profile_arg = f"--user-data-dir={guest_profile}"
-    matches: list[list[str]] = []
+    matches: list[ChromeProcess] = []
     for line in process_listing.splitlines():
+        fields = line.strip().split(maxsplit=1)
+        if len(fields) != 2 or not fields[0].isdigit():
+            continue
         try:
-            command = shlex.split(line)
+            command = shlex.split(fields[1])
         except ValueError:
             continue
         if profile_arg in command and not any(
             argument.startswith("--type=") for argument in command
         ):
-            matches.append(command)
+            matches.append(ChromeProcess(pid=int(fields[0]), command=command))
     if len(matches) != 1:
         raise PairedRunError(
             "Chrome fresh-profile process count was "
@@ -1051,12 +1141,12 @@ def reset_and_setup_task(cache_dir: Path) -> dict[str, Any]:
             [
                 "bash",
                 "-lc",
-                "ps -ww -C chrome -o args=",
+                "ps -ww -C chrome -o pid=,args=",
             ],
             timeout=30,
         ).get("output", "")
     ).strip()
-    chrome_command = select_chrome_profile_command(
+    chrome_process = select_chrome_profile_process(
         chrome_processes,
         guest_profile,
     )
@@ -1071,7 +1161,8 @@ def reset_and_setup_task(cache_dir: Path) -> dict[str, Any]:
     }
     return {
         "guest_chrome_profile": guest_profile,
-        "chrome_command": chrome_command,
+        "chrome_pid": chrome_process.pid,
+        "chrome_command": chrome_process.command,
         "initial_evaluation": initial_evaluation,
         "initial_teamchat": initial_teamchat,
         "cache_file_sha256": cache_hashes,
@@ -1258,14 +1349,23 @@ def run_episode(
     steps_executed = 0
     start_session(session)
     try:
-        target = discover_chrome_window(session)
-        browser = bind_browser(target, session) if mode == "combined" else None
+        expected_pid = int(reset_evidence["chrome_pid"])
+        target = discover_chrome_window(session, expected_pid)
+        if mode == "combined":
+            target, browser = bind_browser(target, session, expected_pid)
+        else:
+            browser = None
         instruction = task_instruction()
         for step in range(1, max_steps + 1):
             step_dir = episode_dir / "steps" / f"{step:03d}"
-            native, screenshot_b64 = native_snapshot(target, session)
+            target = discover_chrome_window(session, expected_pid)
+            target, native, screenshot_b64 = native_snapshot_with_recovery(
+                target,
+                session,
+                expected_pid,
+            )
             if browser is not None:
-                browser = bind_browser(target, session)
+                target, browser = bind_browser(target, session, expected_pid)
             browser_state = (
                 browser_snapshots(browser, session) if browser is not None else None
             )
@@ -1292,6 +1392,7 @@ def run_episode(
                 target=target,
                 browser=browser,
                 session=session,
+                expected_pid=expected_pid,
             )
             write_json(step_dir / "action-result.json", outcome)
             write_json(step_dir / "post-action-verification.json", post)

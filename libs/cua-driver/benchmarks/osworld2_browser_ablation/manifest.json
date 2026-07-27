@@ -30,7 +30,15 @@
     "release": "cua-driver-rs-v0.12.6",
     "version": "0.12.6",
     "linux_x86_64_archive": "cua-driver-rs-0.12.6-linux-x86_64-binary.tar.gz",
-    "linux_x86_64_archive_sha256": "795b8464a25b036fe1a47d9cd1f560d6b4e2ab58e23630c0de3d9feff4757039"
+    "linux_x86_64_archive_sha256": "795b8464a25b036fe1a47d9cd1f560d6b4e2ab58e23630c0de3d9feff4757039",
+    "python_sdk_linux_x86_64_archive": "cua-driver-rs-0.12.6-linux-x86_64.tar.gz",
+    "python_sdk_linux_x86_64_archive_sha256": "6a8e1d3eaa310b00c236fab4838bf67b5318eff3186fd00e97bb0d50ade13fda",
+    "python_sdk_source_sha256": {
+      "__init__.py": "5cf5a40217e8810bf95993c822dc068de0acd83e443c59dd36253d98dfac85ef",
+      "_native.py": "fff84afcb1cd788f376b88908f79a84d0a40c44c4b4f56acdce6bbb274b8b273",
+      "_native_contract.py": "b1b394237cd5c15aedea8e2534d6cc9798875565bf1ccf8c078d5b694e38e6ba",
+      "wrapper.py": "7e00e214b027f252537c4b69fb21f954355c09390d0aa8a167b61247ef393868"
+    }
   },
   "task_hash_manifest": {
     "path": "manifests/task_hashes.json",

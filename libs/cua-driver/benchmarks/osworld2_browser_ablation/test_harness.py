@@ -121,6 +121,24 @@ class MatrixTests(unittest.TestCase):
         driver = manifest["cua_driver"]
         self.assertEqual(driver["release"], "cua-driver-rs-v0.12.6")
         self.assertEqual(len(driver["linux_x86_64_archive_sha256"]), 64)
+        self.assertEqual(
+            driver["python_sdk_linux_x86_64_archive"],
+            "cua-driver-rs-0.12.6-linux-x86_64.tar.gz",
+        )
+        self.assertEqual(
+            len(driver["python_sdk_linux_x86_64_archive_sha256"]),
+            64,
+        )
+        self.assertEqual(
+            set(driver["python_sdk_source_sha256"]),
+            {"__init__.py", "_native.py", "_native_contract.py", "wrapper.py"},
+        )
+        self.assertTrue(
+            all(
+                len(digest) == 64
+                for digest in driver["python_sdk_source_sha256"].values()
+            )
+        )
 
     def test_default_pilot_matrix_has_240_episodes(self) -> None:
         manifest = harness.read_json_object(harness.DEFAULT_MANIFEST)

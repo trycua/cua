@@ -145,6 +145,11 @@ tool refusals, retries, and categorized failures.
 - Use the image-baked, release-pinned Cua Driver archive. Verify its version,
   archive SHA-256, and `/etc/cua-driver-osworld2-build.json` against
   `manifest.json` before starting the daemon.
+- Invoke tools through the release-matched Python SDK. Until a Linux wheel is
+  published, assemble it only from the full release archive and the exact
+  release-tag Python sources, verify every SHA-256 in `manifest.json`, smoke
+  the SDK against the pinned daemon, and retain that attestation in run
+  provenance.
 - The `0624` image exposes OSWorld control on `5000`, Chrome CDP on `1337`,
   noVNC on `8006`, and VLC on `8080`.
 - Start Cua Driver as the desktop user with the guest display/session bus and

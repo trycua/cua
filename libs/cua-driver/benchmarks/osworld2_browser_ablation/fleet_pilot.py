@@ -65,6 +65,9 @@ NOVNC_PORT = 8006
 VLC_PORT = 8080
 DEFAULT_AWS_MOCK_PORT = 31082
 GUEST_DRIVER_SOCKET = "/home/user/.cache/cua-driver/osworld2-pilot.sock"
+GUEST_DRIVER_SDK_ROOT = "/home/user/.cache/cua-driver-sdk-0.12.6"
+GUEST_DRIVER_SDK_PACKAGE = f"{GUEST_DRIVER_SDK_ROOT}/cua_driver"
+GUEST_DRIVER_SDK_CALLER = f"{GUEST_DRIVER_SDK_ROOT}/driver_sdk_call.py"
 STOP_REQUESTED: threading.Event | None = None
 
 GUEST_HTTP_CODE = (
@@ -1198,6 +1201,7 @@ def start_image_driver() -> dict[str, Any]:
         )
     except json.JSONDecodeError as exc:
         raise PilotError("image Driver doctor report was not valid JSON") from exc
+    sdk = install_image_driver_sdk(manifest)
     emit("driver_ready", release=expected_release, source="container_image")
     return {
         "release": expected_release,
@@ -1207,6 +1211,157 @@ def start_image_driver() -> dict[str, Any]:
         "source": "container_image",
         "status": status,
         "doctor": doctor,
+        "python_sdk": sdk,
+    }
+
+
+def install_image_driver_sdk(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Install and attest the release-matched Python SDK in the disposable guest."""
+
+    driver = manifest["cua_driver"]
+    release = str(driver["release"])
+    archive = str(driver["python_sdk_linux_x86_64_archive"])
+    archive_sha256 = str(driver["python_sdk_linux_x86_64_archive_sha256"])
+    source_hashes = {
+        str(name): str(digest)
+        for name, digest in driver["python_sdk_source_sha256"].items()
+    }
+    expected_sources = {
+        "__init__.py",
+        "_native.py",
+        "_native_contract.py",
+        "wrapper.py",
+    }
+    if set(source_hashes) != expected_sources:
+        raise PilotError("Python SDK source manifest is incomplete")
+    if any(len(digest) != 64 for digest in source_hashes.values()):
+        raise PilotError("Python SDK source manifest contains an invalid checksum")
+
+    caller = ROOT / "driver_sdk_call.py"
+    caller_bytes = caller.read_bytes()
+    caller_sha256 = hashlib.sha256(caller_bytes).hexdigest()
+    archive_path = f"{GUEST_DRIVER_SDK_ROOT}/{archive}"
+    release_url = (
+        f"https://github.com/trycua/cua/releases/download/{release}/{archive}"
+    )
+    guest_exec(
+        ["mkdir", "-p", GUEST_DRIVER_SDK_PACKAGE],
+        timeout=60,
+    )
+    guest_exec(
+        [
+            "curl",
+            "-fL",
+            "--retry",
+            "4",
+            "--retry-all-errors",
+            "-o",
+            archive_path,
+            release_url,
+        ],
+        timeout=600,
+    )
+    archive_check = guest_exec(
+        ["sha256sum", archive_path],
+        timeout=120,
+    ).get("output", "").split()
+    if not archive_check or archive_check[0] != archive_sha256:
+        raise PilotError("Python SDK release archive checksum mismatch")
+
+    archive_member = (
+        f"cua-driver-rs-{driver['version']}-linux-x86_64/"
+        "libcua_driver_sdk.so"
+    )
+    guest_exec(
+        [
+            "tar",
+            "-xzf",
+            archive_path,
+            "-C",
+            GUEST_DRIVER_SDK_PACKAGE,
+            "--strip-components=1",
+            archive_member,
+        ],
+        timeout=180,
+    )
+    source_base = (
+        f"https://raw.githubusercontent.com/trycua/cua/{release}/"
+        "libs/cua-driver/python/src/cua_driver"
+    )
+    for name, expected_sha256 in sorted(source_hashes.items()):
+        destination = f"{GUEST_DRIVER_SDK_PACKAGE}/{name}"
+        guest_exec(
+            [
+                "curl",
+                "-fL",
+                "--retry",
+                "4",
+                "--retry-all-errors",
+                "-o",
+                destination,
+                f"{source_base}/{name}",
+            ],
+            timeout=300,
+        )
+        source_check = guest_exec(
+            ["sha256sum", destination],
+            timeout=60,
+        ).get("output", "").split()
+        if not source_check or source_check[0] != expected_sha256:
+            raise PilotError(f"Python SDK source checksum mismatch for {name}")
+
+    encoded_caller = base64.b64encode(caller_bytes).decode("ascii")
+    guest_exec(
+        [
+            "python3",
+            "-c",
+            (
+                "import base64,pathlib,sys;"
+                "pathlib.Path(sys.argv[2]).write_bytes(base64.b64decode(sys.argv[1]))"
+            ),
+            encoded_caller,
+            GUEST_DRIVER_SDK_CALLER,
+        ],
+        timeout=60,
+    )
+    caller_check = guest_exec(
+        ["sha256sum", GUEST_DRIVER_SDK_CALLER],
+        timeout=60,
+    ).get("output", "").split()
+    if not caller_check or caller_check[0] != caller_sha256:
+        raise PilotError("Python SDK caller checksum mismatch")
+
+    smoke = guest_exec(
+        [
+            "env",
+            f"PYTHONPATH={GUEST_DRIVER_SDK_ROOT}",
+            "python3",
+            GUEST_DRIVER_SDK_CALLER,
+            "--socket",
+            GUEST_DRIVER_SOCKET,
+            "list_windows",
+            "{}",
+        ],
+        timeout=120,
+    )
+    if int(smoke.get("returncode", 1)) != 0:
+        raise PilotError("release-matched Python SDK smoke call failed")
+    try:
+        smoke_value = json.loads(str(smoke.get("output") or ""))
+    except json.JSONDecodeError as exc:
+        raise PilotError("Python SDK smoke call did not return JSON") from exc
+    if smoke_value.get("is_error") is True:
+        raise PilotError("Python SDK smoke call returned a Driver error")
+
+    return {
+        "release": release,
+        "archive": archive,
+        "archive_sha256": archive_sha256,
+        "source_sha256": source_hashes,
+        "caller_sha256": caller_sha256,
+        "library_path": f"{GUEST_DRIVER_SDK_PACKAGE}/libcua_driver_sdk.so",
+        "transport": "CuaDriver.connect(...).call_tool(...)",
+        "smoke_verified": True,
     }
 
 

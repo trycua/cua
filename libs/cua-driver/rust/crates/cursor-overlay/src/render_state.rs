@@ -67,7 +67,7 @@ pub struct RenderStateCore {
     pub pressed: bool,
     /// Semantic action and animation playback state.
     pub visual: CursorVisualState,
-    /// Decoded installed theme. `None` selects the embedded `cua.default`.
+    /// Decoded installed or embedded theme.
     pub theme: Option<Arc<CompiledTheme>>,
     /// Non-fatal launch-time fallback reason, if an installed theme failed.
     pub theme_fallback: Option<String>,
@@ -93,7 +93,7 @@ impl RenderStateCore {
         let (theme, theme_fallback) = match crate::load_installed_theme(&cfg.theme_id) {
             Ok(theme) => (theme, None),
             Err(error) => (
-                None,
+                Some(crate::embedded_default_theme()),
                 Some(format!(
                     "theme `{}` could not be loaded; using {}: {error}",
                     cfg.theme_id,
@@ -679,7 +679,9 @@ pub fn paint_cursor(
     }
 
     if let Some(theme) = core.theme.as_deref() {
-        crate::paint_compiled_theme(
+        let tint = (theme.id == crate::DEFAULT_THEME_ID)
+            .then(|| crate::session_fill_rgba(&core.cfg.cursor_id));
+        crate::paint_compiled_theme_with_tint(
             pm,
             theme,
             &core.visual,
@@ -688,8 +690,12 @@ pub fn paint_cursor(
             heading as f32,
             backing_scale.max(1.0),
             alpha_scale,
+            tint,
         );
     } else {
+        // Defensive fallback for a manually constructed RenderStateCore. The
+        // normal constructor always resolves either the requested theme or the
+        // embedded default.
         crate::theme::paint_default_theme_with_fill(
             pm,
             &core.visual,
@@ -768,13 +774,31 @@ mod backing_scale_tests {
     use super::*;
     use crate::CursorConfig;
 
-    /// Count opaque (alpha > 0) pixels in the pixmap — a proxy for the
-    /// cursor's on-pixmap footprint that's independent of palette / gradient.
     fn visible_pixel_count(pm: &tiny_skia::Pixmap) -> u32 {
         // Count strongly visible coverage, not the halo's feather pixels.
-        // Low-alpha gradient coverage is quantized differently at 1× and 2×
+        // Low-alpha gradient coverage is quantized differently across scales
         // and is not useful evidence for the backing-scale regression.
         pm.data().chunks_exact(4).filter(|px| px[3] > 96).count() as u32
+    }
+
+    fn visible_bounds(pm: &tiny_skia::Pixmap) -> (u32, u32) {
+        let mut min_x = u32::MAX;
+        let mut min_y = u32::MAX;
+        let mut max_x = 0;
+        let mut max_y = 0;
+        for (index, pixel) in pm.data().chunks_exact(4).enumerate() {
+            if pixel[3] <= 96 {
+                continue;
+            }
+            let x = index as u32 % pm.width();
+            let y = index as u32 / pm.width();
+            min_x = min_x.min(x);
+            min_y = min_y.min(y);
+            max_x = max_x.max(x);
+            max_y = max_y.max(y);
+        }
+        assert_ne!(min_x, u32::MAX, "render should have visible pixels");
+        (max_x - min_x + 1, max_y - min_y + 1)
     }
 
     fn render_at(backing_scale: f32, logical_size: u32) -> tiny_skia::Pixmap {
@@ -795,33 +819,51 @@ mod backing_scale_tests {
         pm
     }
 
-    /// Doubling `backing_scale` doubles every linear dimension of the cursor's
-    /// pixel footprint, so the strongly visible pixel count should grow ~4×
-    /// (one factor
-    /// of 2 per axis). Exact equality isn't expected — the embedded SVG
-    /// downscales from a 52-px source, anti-aliased edges round at integer
-    /// boundaries, and the bloom gradient has a soft cutoff — but the ratio
-    /// should sit clearly above 3.0 (well past the ~2.0 ceiling we'd hit if
-    /// only one dimension were scaling). This is the regression guard for
-    /// the retina-blur fix: if a future refactor reverts paint_cursor to
-    /// emitting logical-pixel art into a physical-pixel pixmap, the ratio
-    /// collapses back toward 1.0.
+    /// The compiled artifact contains vector geometry. Skia must rasterize it
+    /// at the destination backing scale, so linear dimensions grow 1:2:3 and
+    /// strongly visible coverage grows approximately with the square.
     #[test]
-    fn backing_scale_two_grows_visible_footprint_roughly_fourfold() {
+    fn compiled_vectors_render_at_one_two_and_three_x() {
         let pm_1x = render_at(1.0, 200);
         let pm_2x = render_at(2.0, 200);
+        let pm_3x = render_at(3.0, 200);
 
         let n_1x = visible_pixel_count(&pm_1x);
         let n_2x = visible_pixel_count(&pm_2x);
+        let n_3x = visible_pixel_count(&pm_3x);
 
         assert!(n_1x > 0, "1× render should paint SOMETHING (got {n_1x})");
         assert!(n_2x > 0, "2× render should paint SOMETHING (got {n_2x})");
+        assert!(n_3x > 0, "3× render should paint SOMETHING (got {n_3x})");
 
-        let ratio = n_2x as f64 / n_1x as f64;
+        let ratio_2x = n_2x as f64 / n_1x as f64;
+        let ratio_3x = n_3x as f64 / n_1x as f64;
         assert!(
-            ratio > 3.0 && ratio < 5.0,
+            ratio_2x > 3.0 && ratio_2x < 5.0,
             "2× backing_scale should produce ~4× more visible pixels: \
-             got n_1x={n_1x}, n_2x={n_2x}, ratio={ratio:.2}"
+             got n_1x={n_1x}, n_2x={n_2x}, ratio={ratio_2x:.2}"
         );
+        assert!(
+            ratio_3x > 7.0 && ratio_3x < 11.0,
+            "3× backing_scale should produce ~9× more visible pixels: \
+             got n_1x={n_1x}, n_3x={n_3x}, ratio={ratio_3x:.2}"
+        );
+
+        let bounds_1x = visible_bounds(&pm_1x);
+        let bounds_2x = visible_bounds(&pm_2x);
+        let bounds_3x = visible_bounds(&pm_3x);
+        for (one, two, three) in [
+            (bounds_1x.0, bounds_2x.0, bounds_3x.0),
+            (bounds_1x.1, bounds_2x.1, bounds_3x.1),
+        ] {
+            assert!(
+                (two as f64 / one as f64 - 2.0).abs() < 0.15,
+                "2× visible bounds should double: {one}, {two}"
+            );
+            assert!(
+                (three as f64 / one as f64 - 3.0).abs() < 0.20,
+                "3× visible bounds should triple: {one}, {three}"
+            );
+        }
     }
 }

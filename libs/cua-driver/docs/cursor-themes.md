@@ -100,10 +100,17 @@ theme.lottie
 
 Every animation must be a transparent 128×128 Lottie animation at 30 fps and
 contain no more than 120 frames. A compiled theme may contain at most 1,000
-frames in total across its actions and modifiers. Profile v1 supports the
-bounded subset accepted by the bundled compiler. Expressions, scripts,
-external URLs, fonts, images, unbounded archives, and unsupported renderer
-features are rejected.
+frames in total across its actions and modifiers. The compiler samples
+animation timing at 30 fps but preserves the artwork as vector paths, ellipses,
+rounded rectangles, solid fills, strokes, and transforms. The overlay then
+rasterizes those commands at the display's live backing scale.
+
+Profile v1 accepts shape layers with static path geometry and animated layer
+position, scale, rotation, opacity, solid color, and stroke width. Shape-layer
+transforms must remain at their identity values; place animation on the layer
+transform instead. Groups, animated path geometry, expressions, scripts,
+external URLs, fonts, images, nested assets, masks, effects, parented layers,
+unbounded archives, and other unsupported Lottie features are rejected.
 
 `manifest.json` must contain every referenced animation ID. A minimal
 `cua/theme.json` has this shape:
@@ -178,15 +185,33 @@ cua-driver cursor-theme uninstall com.example.cursor.studio
 ```
 
 The authoring compiler is a short-lived, unprivileged sidecar. It converts
-Lottie source into bounded, premultiplied RGBA frames. The privileged overlay
-loads only the compiled `.cua-theme` format; it never parses ZIP, JSON, Lottie,
-fonts, expressions, URLs, or arbitrary source paths. Agent-facing tools can
-select an already-installed ID but cannot install a theme or pass inline theme
-data.
+Lottie source into bounded vector frames containing only validated geometry,
+paint, and transforms. The privileged overlay loads only the compiled
+`.cua-theme` format and rasterizes those commands through Skia at the requested
+backing scale. It never parses ZIP, JSON, Lottie, fonts, expressions, URLs, or
+arbitrary source paths. Agent-facing tools can select an already-installed ID
+but cannot install a theme or pass inline theme data.
 
-The embedded default is rendered directly as native vector paths for smaller
-artifacts and lower idle memory. It follows the same semantic and reduced-motion
-contract as compiled Lottie themes.
+The built-in default follows the same path. Its canonical
+`cua.default.lottie` source and reproducible generator are checked into
+`cursor-overlay/assets/`. The resulting bounded `cua.default.cua-theme` is
+embedded in the binary and decoded by the same renderer used for installed
+custom themes. Only the embedded default receives the runtime session-color
+tint and shared float transform. The artifact contains no fixed-resolution
+pixel atlas, so the cursor stays crisp at 1×, 2×, 3×, and fractional display
+scales.
+
+From the Rust workspace, contributors can reproduce both checked-in artifacts:
+
+```bash
+python3 crates/cursor-overlay/assets/build_default_theme.py
+cargo run -p cursor-theme-cli -- build \
+  crates/cursor-overlay/assets/cua.default.lottie \
+  --output crates/cursor-overlay/assets/cua.default.cua-theme
+```
+
+A unit test verifies that the compiled artifact's source hash matches the
+checked-in dotLottie archive.
 
 ## Preview the production renderer
 

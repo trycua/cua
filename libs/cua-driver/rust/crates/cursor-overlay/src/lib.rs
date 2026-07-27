@@ -26,9 +26,11 @@ pub use theme::{
     DEFAULT_THEME_VERSION, THEME_PROFILE,
 };
 pub use theme_artifact::{
-    decode_theme, inspect_artifact, list_installed_themes, load_installed_theme,
-    paint_compiled_theme, resolve_theme_selection, theme_store_root, validate_compiled_theme,
-    CompiledAnimation, CompiledFrame, CompiledTheme,
+    decode_theme, embedded_default_theme, inspect_artifact, list_installed_themes,
+    load_installed_theme, paint_compiled_theme, paint_compiled_theme_with_tint,
+    resolve_theme_selection, theme_store_root, validate_compiled_theme, CompiledAnimation,
+    CompiledDrawCommand, CompiledFrame, CompiledGeometry, CompiledStroke, CompiledTheme,
+    CompiledTransform,
 };
 #[cfg(feature = "theme-authoring")]
 pub use theme_artifact::{encode_theme, install_artifact, uninstall_theme};

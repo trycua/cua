@@ -8,6 +8,7 @@ use tiny_skia::Pixmap;
 const SIZE: u32 = 256;
 const FPS: u32 = 30;
 const DURATION_SECS: u32 = 4;
+const PREVIEW_BACKING_SCALE: f32 = 1.5;
 
 fn main() {
     let output = std::env::args()
@@ -80,7 +81,7 @@ fn export_state(
             SIZE as f32 / 2.0,
             SIZE as f32 / 2.0,
             std::f32::consts::FRAC_PI_4,
-            1.0,
+            PREVIEW_BACKING_SCALE,
             1.0,
         );
         let pixels = unpremultiply_rgba(pixmap.data().to_vec());

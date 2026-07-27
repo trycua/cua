@@ -126,6 +126,21 @@ unsafe fn run_appkit(request: HelperRequest) -> anyhow::Result<()> {
         size: frame.size,
     };
     let view: *mut AnyObject = msg_send![view, initWithFrame: bounds];
+    // `setAcceptsMouseMovedEvents:` only tells the window not to discard
+    // movement events; AppKit still needs a tracking area to route them to a
+    // custom NSView. Without this, the post-arm entry required by
+    // `ConsentInteraction` can never happen and Allow once stays disabled.
+    let tracking_area: *mut AnyObject = msg_send![class!(NSTrackingArea), alloc];
+    let tracking_area: *mut AnyObject = msg_send![tracking_area,
+        initWithRect: bounds
+        options: (0x02u64 | 0x80u64 | 0x200u64)
+        owner: view
+        userInfo: std::ptr::null::<AnyObject>()
+    ];
+    if tracking_area.is_null() {
+        anyhow::bail!("could not create protected consent tracking area");
+    }
+    let _: () = msg_send![view, addTrackingArea: tracking_area];
     let _: () = msg_send![view, setWantsLayer: true];
     let _: () = msg_send![view, setAccessibilityElement: false];
     let _: () = msg_send![window, setContentView: view];

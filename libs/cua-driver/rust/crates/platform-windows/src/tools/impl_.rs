@@ -837,6 +837,13 @@ impl Tool for GetWindowStateTool {
                 element trees. When applied, BOTH the markdown and the structured \
                 elements are truncated identically. Omit both for current default behaviour \
                 (≤5 000 elements, depth ≤25).\n\n\
+                CHROMIUM COVERAGE: a browser-owned permission bubble can be \
+                composited outside the requested native window. Chromium-family \
+                snapshots therefore set structuredContent.desktop_inspection_required: \
+                take a fresh get_desktop_state snapshot, act explicitly in desktop \
+                scope if needed, then verify with another fresh desktop snapshot. \
+                This is separate from page JavaScript dialogs, which remain on \
+                browser_dialog.\n\n\
                 Windows requires no special permissions.".into(),
             input_schema: json!({"type":"object","required":["pid","window_id"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
@@ -1168,6 +1175,11 @@ impl Tool for GetWindowStateTool {
                     )));
                     structured["screenshot_error"] = json!(err);
                 }
+
+                cua_driver_core::window_inspection::mark_browser_chrome_desktop_inspection(
+                    &mut structured,
+                    crate::input::is_chromium_target_window(hwnd),
+                );
 
                 ToolResult {
                     content,

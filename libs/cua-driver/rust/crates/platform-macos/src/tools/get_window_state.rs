@@ -105,6 +105,33 @@ fn def() -> &'static ToolDef {
     })
 }
 
+fn chromium_family_window(pid: i32) -> bool {
+    let identity = format!(
+        "{} {}",
+        crate::apps::get_app_name_for_pid(pid).unwrap_or_default(),
+        crate::apps::bundle_id_for_pid(pid).unwrap_or_default()
+    )
+    .to_ascii_lowercase();
+    identity
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(|token| {
+            matches!(
+                token,
+                "chrome"
+                    | "chromium"
+                    | "electron"
+                    | "brave"
+                    | "edge"
+                    | "vivaldi"
+                    | "opera"
+                    | "arc"
+                    | "thorium"
+                    | "iridium"
+                    | "yandex"
+            )
+        })
+}
+
 #[async_trait]
 impl Tool for GetWindowStateTool {
     fn def(&self) -> &ToolDef {
@@ -554,6 +581,10 @@ impl Tool for GetWindowStateTool {
         if let Some(ref fp) = screenshot_file_path {
             structured["screenshot_file_path"] = serde_json::json!(fp);
         }
+        cua_driver_core::window_inspection::mark_browser_chrome_desktop_inspection(
+            &mut structured,
+            chromium_family_window(pid),
+        );
         ToolResult {
             content,
             is_error: None,

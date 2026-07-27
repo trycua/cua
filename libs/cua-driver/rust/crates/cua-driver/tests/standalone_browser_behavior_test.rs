@@ -104,6 +104,35 @@ fn standalone_browser_completeness_html() -> String {
     )
 }
 
+/// Sanitized fixture for browser-owned permission chrome. The page contains no
+/// origin names, prompt copy, or user choices; it records only lifecycle state.
+/// A fresh Chromium profile should keep the returned promise pending while its
+/// browser-owned notification permission bubble is visible.
+fn standalone_browser_permission_prompt_html() -> String {
+    standalone_fixture_html().replace(
+        "</body>",
+        r#"<fieldset style="position:fixed;left:16px;top:120px;z-index:10000;background:white">
+  <legend>browser-owned permission</legend>
+  <button id="standalone-browser-permission" data-cua-id="standalone-browser-permission"
+          aria-label="Request browser permission">Request browser permission</button>
+  <span id="standalone-browser-permission-state"
+        data-cua-id="standalone-browser-permission-state">permission=idle</span>
+</fieldset>
+<script>
+  document.getElementById('standalone-browser-permission').addEventListener('click', () => {
+    const state = document.getElementById('standalone-browser-permission-state');
+    state.textContent = 'permission=requested';
+    Notification.requestPermission().then(result => {
+      state.textContent = `permission=resolved:${result}`;
+    }, () => {
+      state.textContent = 'permission=error';
+    });
+  });
+</script>
+</body>"#,
+    )
+}
+
 fn standalone_semantic_fixture_html() -> String {
     let hidden = (0..320)
         .map(|index| {
@@ -3297,6 +3326,115 @@ fn run_same_title_tabs(spec: &BrowserSpec) {
     );
 }
 
+fn native_element_token_by_label(state: &ToolResponse, label: &str) -> String {
+    state.structured()["elements"]
+        .as_array()
+        .and_then(|elements| {
+            elements.iter().find(|element| {
+                element["label"]
+                    .as_str()
+                    .is_some_and(|candidate| candidate == label)
+            })
+        })
+        .and_then(|element| element["element_token"].as_str())
+        .unwrap_or_else(|| panic!("native element {label:?} missing: {}", state.raw))
+        .to_owned()
+}
+
+fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
+    let scenario = format!(
+        "{}-{}-standalone-browser-owned-permission",
+        std::env::consts::OS,
+        spec.name
+    );
+    execute_case(case(&spec.name, "browser_owned_permission"), |evidence| {
+        let mut fixture =
+            launch_browser_with_html(spec, &scenario, standalone_browser_permission_prompt_html());
+        *evidence = recording_evidence(fixture.driver.recording_dir());
+        let session = format!("standalone-browser-permission-{}", fixture.pid);
+        let before = fixture.driver.call(
+            "get_window_state",
+            serde_json::json!({
+                "pid": fixture.pid as i64,
+                "window_id": fixture.window_id,
+                "session": session,
+            }),
+        );
+        assert_eq!(
+            before.structured()["desktop_inspection_required"],
+            true,
+            "{}",
+            before.raw
+        );
+        let token = native_element_token_by_label(&before, "Request browser permission");
+        let clicked = fixture.driver.call(
+            "click",
+            serde_json::json!({
+                "pid": fixture.pid as i64,
+                "window_id": fixture.window_id,
+                "element_token": token,
+                "delivery_mode": "foreground",
+                "session": session,
+            }),
+        );
+        assert!(
+            !clicked.is_error(),
+            "permission trigger failed: {}",
+            clicked.raw
+        );
+        wait_for_text(
+            &fixture.server,
+            "standalone-browser-permission-state",
+            "permission=requested",
+        );
+        thread::sleep(Duration::from_millis(250));
+
+        let window = fixture.driver.call(
+            "get_window_state",
+            serde_json::json!({
+                "pid": fixture.pid as i64,
+                "window_id": fixture.window_id,
+                "session": session,
+            }),
+        );
+        assert_eq!(
+            window.structured()["desktop_inspection_required"],
+            true,
+            "{}",
+            window.raw
+        );
+        assert_eq!(
+            window.structured()["desktop_inspection_reason"],
+            "browser_chrome_may_be_outside_window_capture",
+            "{}",
+            window.raw
+        );
+        assert_eq!(
+            window.structured()["browser_chrome_prompt"]["status"],
+            "not_observable_in_window_scope",
+            "{}",
+            window.raw
+        );
+        assert!(
+            !window
+                .raw
+                .to_string()
+                .contains("Notification.requestPermission"),
+            "window contract leaked fixture prompt internals: {}",
+            window.raw
+        );
+        let desktop = fixture
+            .driver
+            .call("get_desktop_state", serde_json::json!({"session": session}));
+        assert!(
+            !desktop.is_error(),
+            "desktop fallback failed: {}",
+            desktop.raw
+        );
+        Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+    });
+}
+
 fn run_dialogs(spec: &BrowserSpec) {
     let scenario = format!("{}-{}-standalone-dialogs", std::env::consts::OS, spec.name);
     let spec_case = if cfg!(target_os = "linux") {
@@ -4006,6 +4144,10 @@ standalone_browser_test!(standalone_browser_frames, run_frame_roundtrip);
 standalone_browser_test!(standalone_browser_multi_tab, run_multi_tab);
 standalone_browser_test!(standalone_browser_same_title_tabs, run_same_title_tabs);
 standalone_browser_test!(standalone_browser_dialogs, run_dialogs);
+standalone_browser_test!(
+    standalone_browser_owned_permission_prompt,
+    run_browser_owned_permission_prompt
+);
 #[cfg(target_os = "linux")]
 standalone_browser_test!(
     standalone_browser_dialog_background_refusal,

@@ -805,6 +805,11 @@ impl Tool for GetWindowStateTool {
                     }
                 }
 
+                cua_driver_core::window_inspection::mark_browser_chrome_desktop_inspection(
+                    &mut structured,
+                    is_chromium_embedder(pid),
+                );
+
                 ToolResult {
                     content,
                     is_error: None,

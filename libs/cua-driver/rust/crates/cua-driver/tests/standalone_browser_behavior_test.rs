@@ -116,7 +116,8 @@ fn standalone_browser_permission_prompt_html() -> String {
   <button id="standalone-browser-permission" data-cua-id="standalone-browser-permission"
           aria-label="Request browser permission">Request browser permission</button>
   <span id="standalone-browser-permission-state"
-        data-cua-id="standalone-browser-permission-state">permission=idle</span>
+        data-cua-id="standalone-browser-permission-state"
+        style="display:none">permission=idle</span>
 </fieldset>
 <script>
   document.getElementById('standalone-browser-permission').addEventListener('click', () => {
@@ -3341,6 +3342,107 @@ fn native_element_token_by_label(state: &ToolResponse, label: &str) -> String {
         .to_owned()
 }
 
+fn browser_owned_permission_evidence_dir(spec: &BrowserSpec) -> (PathBuf, PathBuf) {
+    let relative = PathBuf::from("capture-evidence").join(format!(
+        "{}-{}-browser-owned-permission",
+        std::env::consts::OS,
+        spec.name
+    ));
+    let root = std::env::var_os("CUA_E2E_ARTIFACT_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("cua-driver-browser-evidence"));
+    let absolute = root.join(&relative);
+    std::fs::create_dir_all(&absolute).expect("create browser-owned permission evidence directory");
+    (absolute, relative)
+}
+
+fn browser_window_bounds(driver: &mut McpDriver, pid: u32, window_id: u64) -> (f64, f64, f64, f64) {
+    let windows = driver.call("list_windows", serde_json::json!({"pid": pid as i64}));
+    let bounds = windows.structured()["windows"]
+        .as_array()
+        .and_then(|windows| {
+            windows
+                .iter()
+                .find(|window| window["window_id"].as_u64() == Some(window_id))
+        })
+        .map(|window| &window["bounds"])
+        .unwrap_or_else(|| {
+            panic!(
+                "browser window {window_id} missing while collecting capture evidence: {}",
+                windows.raw
+            )
+        });
+    let value = |name: &str| {
+        bounds[name]
+            .as_f64()
+            .unwrap_or_else(|| panic!("browser window bound {name:?} missing: {}", windows.raw))
+    };
+    (value("x"), value("y"), value("width"), value("height"))
+}
+
+fn load_capture(path: &Path) -> image::RgbaImage {
+    image::open(path)
+        .unwrap_or_else(|error| panic!("decode capture {}: {error}", path.display()))
+        .to_rgba8()
+}
+
+fn desktop_window_crop(
+    desktop_path: &Path,
+    desktop: &ToolResponse,
+    bounds: (f64, f64, f64, f64),
+    output_size: (u32, u32),
+) -> image::RgbaImage {
+    let image = load_capture(desktop_path);
+    let screen_width = desktop.structured()["screen_width"]
+        .as_f64()
+        .expect("desktop screen width");
+    let screen_height = desktop.structured()["screen_height"]
+        .as_f64()
+        .expect("desktop screen height");
+    let scale_x = f64::from(image.width()) / screen_width;
+    let scale_y = f64::from(image.height()) / screen_height;
+    let (x, y, width, height) = bounds;
+    let left = (x * scale_x).round().max(0.0) as u32;
+    let top = (y * scale_y).round().max(0.0) as u32;
+    let width = (width * scale_x)
+        .round()
+        .max(1.0)
+        .min(f64::from(image.width().saturating_sub(left))) as u32;
+    let height = (height * scale_y)
+        .round()
+        .max(1.0)
+        .min(f64::from(image.height().saturating_sub(top))) as u32;
+    assert!(
+        width > 0 && height > 0,
+        "browser window bounds {bounds:?} are outside desktop capture {}x{}",
+        image.width(),
+        image.height()
+    );
+    let crop = image::imageops::crop_imm(&image, left, top, width, height).to_image();
+    image::imageops::resize(
+        &crop,
+        output_size.0,
+        output_size.1,
+        image::imageops::FilterType::Triangle,
+    )
+}
+
+fn changed_pixel_count(before: &image::RgbaImage, after: &image::RgbaImage) -> u64 {
+    assert_eq!(before.dimensions(), after.dimensions());
+    before
+        .pixels()
+        .zip(after.pixels())
+        .filter(|(before, after)| {
+            before
+                .0
+                .iter()
+                .zip(after.0.iter())
+                .take(3)
+                .any(|(before, after)| before.abs_diff(*after) >= 32)
+        })
+        .count() as u64
+}
+
 fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
     let scenario = format!(
         "{}-{}-standalone-browser-owned-permission",
@@ -3351,13 +3453,23 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
         let mut fixture =
             launch_browser_with_html(spec, &scenario, standalone_browser_permission_prompt_html());
         *evidence = recording_evidence(fixture.driver.recording_dir());
+        let (evidence_dir, relative_evidence_dir) = browser_owned_permission_evidence_dir(spec);
+        let window_before_path = evidence_dir.join("window-before.png");
+        let desktop_before_path = evidence_dir.join("desktop-before.png");
+        let window_after_path = evidence_dir.join("window-after.png");
+        let desktop_after_path = evidence_dir.join("desktop-after.png");
+        let desktop_crop_before_path = evidence_dir.join("desktop-window-crop-before.png");
+        let desktop_crop_after_path = evidence_dir.join("desktop-window-crop-after.png");
+        let metrics_path = evidence_dir.join("capture-metrics.json");
         let session = format!("standalone-browser-permission-{}", fixture.pid);
+        let bounds = browser_window_bounds(&mut fixture.driver, fixture.pid, fixture.window_id);
         let before = fixture.driver.call(
             "get_window_state",
             serde_json::json!({
                 "pid": fixture.pid as i64,
                 "window_id": fixture.window_id,
                 "session": session,
+                "screenshot_out_file": window_before_path,
             }),
         );
         assert_eq!(
@@ -3365,6 +3477,18 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
             true,
             "{}",
             before.raw
+        );
+        let desktop_before = fixture.driver.call(
+            "get_desktop_state",
+            serde_json::json!({
+                "session": session,
+                "screenshot_out_file": desktop_before_path,
+            }),
+        );
+        assert!(
+            !desktop_before.is_error(),
+            "desktop baseline capture failed: {}",
+            desktop_before.raw
         );
         let token = native_element_token_by_label(&before, "Request browser permission");
         let clicked = fixture.driver.call(
@@ -3395,6 +3519,7 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
                 "pid": fixture.pid as i64,
                 "window_id": fixture.window_id,
                 "session": session,
+                "screenshot_out_file": window_after_path,
             }),
         );
         assert_eq!(
@@ -3423,15 +3548,92 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
             "window contract leaked fixture prompt internals: {}",
             window.raw
         );
-        let desktop = fixture
-            .driver
-            .call("get_desktop_state", serde_json::json!({"session": session}));
+        let desktop = fixture.driver.call(
+            "get_desktop_state",
+            serde_json::json!({
+                "session": session,
+                "screenshot_out_file": desktop_after_path,
+            }),
+        );
         assert!(
             !desktop.is_error(),
             "desktop fallback failed: {}",
             desktop.raw
         );
-        Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+
+        let window_before = load_capture(&window_before_path);
+        let window_after = load_capture(&window_after_path);
+        assert_eq!(
+            window_before.dimensions(),
+            window_after.dimensions(),
+            "browser window changed size while permission prompt was open"
+        );
+        let output_size = window_before.dimensions();
+        let desktop_crop_before =
+            desktop_window_crop(&desktop_before_path, &desktop_before, bounds, output_size);
+        let desktop_crop_after =
+            desktop_window_crop(&desktop_after_path, &desktop, bounds, output_size);
+        desktop_crop_before
+            .save(&desktop_crop_before_path)
+            .expect("write normalized desktop baseline");
+        desktop_crop_after
+            .save(&desktop_crop_after_path)
+            .expect("write normalized desktop permission capture");
+
+        let desktop_changed_pixels = changed_pixel_count(&desktop_crop_before, &desktop_crop_after);
+        let window_changed_pixels = changed_pixel_count(&window_before, &window_after);
+        let compared_pixels = u64::from(output_size.0) * u64::from(output_size.1);
+        let minimum_prompt_pixels = (compared_pixels / 1_000).max(1_000);
+        let prompt_is_outside_window_capture =
+            window_changed_pixels.saturating_mul(4) < desktop_changed_pixels;
+        let metrics = serde_json::json!({
+            "platform": std::env::consts::OS,
+            "browser": spec.name,
+            "window_bounds": {
+                "x": bounds.0,
+                "y": bounds.1,
+                "width": bounds.2,
+                "height": bounds.3,
+            },
+            "compared_width": output_size.0,
+            "compared_height": output_size.1,
+            "compared_pixels": compared_pixels,
+            "pixel_channel_threshold": 32,
+            "minimum_prompt_pixels": minimum_prompt_pixels,
+            "desktop_changed_pixels": desktop_changed_pixels,
+            "window_changed_pixels": window_changed_pixels,
+            "prompt_is_outside_window_capture": prompt_is_outside_window_capture,
+        });
+        std::fs::write(
+            &metrics_path,
+            serde_json::to_vec_pretty(&metrics).expect("serialize capture metrics"),
+        )
+        .expect("write capture metrics");
+
+        evidence.screenshot = Some(
+            relative_evidence_dir
+                .join("desktop-after.png")
+                .to_string_lossy()
+                .replace('\\', "/"),
+        );
+        evidence.log = Some(
+            relative_evidence_dir
+                .join("capture-metrics.json")
+                .to_string_lossy()
+                .replace('\\', "/"),
+        );
+        assert!(
+            desktop_changed_pixels >= minimum_prompt_pixels,
+            "desktop capture did not show a material permission surface change: {metrics}"
+        );
+        assert!(
+            prompt_is_outside_window_capture,
+            "permission surface was not materially more visible in desktop scope: {metrics}"
+        );
+        Observation::delivered(
+            vec![OracleKind::FixtureState, OracleKind::Pixels],
+            Evidence::default(),
+        )
     });
 }
 

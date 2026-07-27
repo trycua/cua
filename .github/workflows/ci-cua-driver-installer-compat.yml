@@ -1,0 +1,170 @@
+name: "CI: Cua Driver installer compatibility"
+
+on:
+  pull_request:
+  schedule:
+    - cron: "17 9 * * 1"
+  workflow_dispatch:
+    inputs:
+      versions:
+        description: "Comma-separated released versions; blank tests the newest two"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  scope:
+    name: Resolve installer compatibility scope
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.scope.outputs.should_run }}
+      versions: ${{ steps.versions.outputs.versions }}
+    steps:
+      - name: Decide whether installer compatibility is affected
+        id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          SHOULD_RUN=true
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            CHANGED_FILES=$(gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
+              --jq '.[].filename')
+            if ! grep -Eq \
+              '^(\.github/scripts/verify_cua_driver_release_archives\.py|\.github/scripts/tests/test_verify_cua_driver_release_archives\.py|\.github/workflows/(cd-rust-cua-driver|ci-cua-driver-installer-compat)\.yml|libs/cua-driver/scripts/(_install-common|_install-rust|install)\.sh|libs/cua-driver/scripts/install\.ps1|release-please-config\.json)$' \
+              <<< "$CHANGED_FILES"; then
+              SHOULD_RUN=false
+            fi
+          fi
+          echo "should_run=$SHOULD_RUN" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve released versions
+        id: versions
+        if: steps.scope.outputs.should_run == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSIONS: ${{ inputs.versions }}
+        run: |
+          if [[ -n "$INPUT_VERSIONS" ]]; then
+            VERSIONS=$(tr ', ' '\n' <<< "$INPUT_VERSIONS" |
+              sed '/^$/d' |
+              jq -Rsc 'split("\n") | map(select(length > 0)) | unique')
+          else
+            VERSIONS=$(gh api --paginate --slurp \
+              "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+              jq -c '[
+                .[][]
+                | select(.draft == false)
+                | .tag_name
+                | select(startswith("cua-driver-rs-v"))
+                | ltrimstr("cua-driver-rs-v")
+              ][0:2]')
+          fi
+
+          if [[ "$(jq 'length' <<< "$VERSIONS")" -eq 0 ]]; then
+            echo "No published Cua Driver release was found" >&2
+            exit 1
+          fi
+          while IFS= read -r version; do
+            if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Invalid released version: $version" >&2
+              exit 1
+            fi
+          done < <(jq -r '.[]' <<< "$VERSIONS")
+          echo "versions=$VERSIONS" >> "$GITHUB_OUTPUT"
+          echo "Testing released versions: $(jq -r 'join(", ")' <<< "$VERSIONS")"
+
+  install:
+    name: "${{ matrix.os }} / v${{ matrix.version }}"
+    needs: scope
+    if: needs.scope.outputs.should_run == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-26, windows-latest]
+        version: ${{ fromJSON(needs.scope.outputs.versions) }}
+    runs-on: ${{ matrix.os }}
+    env:
+      CUA_DRIVER_RS_VERSION: ${{ matrix.version }}
+      CUA_DRIVER_RS_KEEP_VERSIONS: "0"
+      CUA_DRIVER_RS_TELEMETRY_ENABLED: "false"
+      CUA_TELEMETRY_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux runtime libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libx11-6 libxi6 libxtst6 libxext6 libwayland-client0 libxkbcommon0
+
+      - name: Run the current macOS/Linux installer against the release
+        if: runner.os != 'Windows'
+        env:
+          CUA_DRIVER_RS_HOME: ${{ runner.temp }}/cua-driver-home
+          CUA_DRIVER_RS_INSTALL_DIR: ${{ runner.temp }}/cua-driver-bin
+          CUA_DRIVER_RS_NO_MODIFY_PATH: "1"
+        run: |
+          bash libs/cua-driver/scripts/install.sh --no-modify-path
+          INSTALLED="$CUA_DRIVER_RS_INSTALL_DIR/cua-driver"
+          test -x "$INSTALLED"
+          VERSION_OUTPUT=$("$INSTALLED" --version)
+          echo "$VERSION_OUTPUT"
+          grep -Fq "${CUA_DRIVER_RS_VERSION}" <<< "$VERSION_OUTPUT"
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            test -x /Applications/CuaDriver.app/Contents/MacOS/cua-driver
+            /usr/libexec/PlistBuddy -c Print:CFBundleIdentifier \
+              /Applications/CuaDriver.app/Contents/Info.plist |
+              grep -Fx com.trycua.driver
+          fi
+
+      - name: Run the current Windows installer against the release
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "cua-driver-installer"
+          $env:CUA_DRIVER_RS_HOME = Join-Path $root "home"
+          $env:CUA_DRIVER_RS_INSTALL_DIR = Join-Path $root "bin"
+          & ./libs/cua-driver/scripts/install.ps1 `
+            -Release $env:CUA_DRIVER_RS_VERSION `
+            -NoAutoStart `
+            -NoPathUpdate
+          $binary = Join-Path $env:CUA_DRIVER_RS_INSTALL_DIR "cua-driver.exe"
+          if (-not (Test-Path -LiteralPath $binary)) {
+            throw "installer did not create $binary"
+          }
+          $versionOutput = & $binary --version
+          if ($LASTEXITCODE -ne 0) {
+            throw "installed binary exited with $LASTEXITCODE"
+          }
+          Write-Host $versionOutput
+          if ($versionOutput -notmatch [regex]::Escape($env:CUA_DRIVER_RS_VERSION)) {
+            throw "installed binary version does not match $env:CUA_DRIVER_RS_VERSION"
+          }
+
+  installer-compatibility:
+    name: Installer compatibility summary
+    needs: [scope, install]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report result
+        run: |
+          echo "scope:   ${{ needs.scope.result }}"
+          echo "install: ${{ needs.install.result }}"
+          echo "selected: ${{ needs.scope.outputs.should_run }}"
+          if [[ "${{ needs.scope.result }}" != "success" ]]; then
+            exit 1
+          fi
+          if [[ "${{ needs.scope.outputs.should_run }}" == "true" &&
+                "${{ needs.install.result }}" != "success" ]]; then
+            exit 1
+          fi
+          if [[ "${{ needs.scope.outputs.should_run }}" != "true" ]]; then
+            echo "Installer compatibility is unaffected by this pull request."
+          fi

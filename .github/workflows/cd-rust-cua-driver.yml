@@ -532,6 +532,44 @@ jobs:
           path: libs/cua-driver/rust/release/cua-driver-rs-*-darwin-*.tar.gz
           if-no-files-found: error
 
+  # Verify the exact candidate archives before a release can publish. This is
+  # intentionally separate from the build steps: artifact upload/download is
+  # part of the release boundary, and checking only the staging directories
+  # would miss an incomplete upload or archive member list.
+  verify-release-artifacts:
+    name: release artifact contract
+    needs: [build-linux, build-windows, build-macos-universal]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Keep the verifier available when maintainers recover an older
+          # immutable tag that predates this script. Candidate artifacts still
+          # come from that exact tag; the release control comes from the commit
+          # that defined this workflow run.
+          ref: ${{ github.workflow_sha }}
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download candidate archives
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Verify installer-facing archive contract
+        run: |
+          python3 .github/scripts/verify_cua_driver_release_archives.py \
+            --artifacts artifacts \
+            --version "${{ steps.version.outputs.version }}"
+
   # ── Release ──────────────────────────────────────────────────────────────────
   # Tag pushes build immutable candidate artifacts only. Publishing is an
   # explicit second step after the exact tag SHA passes the interactive E2E
@@ -539,7 +577,8 @@ jobs:
   # GitHub release (and therefore PyPI/npm SDK packages) public before that
   # evidence exists.
   release:
-    needs: [build-linux, build-windows, build-macos-universal]
+    needs:
+      [build-linux, build-windows, build-macos-universal, verify-release-artifacts]
     if: github.event_name == 'workflow_dispatch' && inputs.publish == true
     runs-on: ubuntu-latest
     steps:

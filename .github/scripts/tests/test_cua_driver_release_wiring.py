@@ -410,6 +410,36 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         )
         self.assertIn("} > checksums.txt", workflow)
 
+    def test_driver_release_verifies_archives_before_publish(self) -> None:
+        workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
+
+        self.assertIn("verify-release-artifacts:", workflow)
+        self.assertIn("name: release artifact contract", workflow)
+        self.assertIn("verify_cua_driver_release_archives.py", workflow)
+        self.assertIn("ref: ${{ github.workflow_sha }}", workflow)
+        self.assertIn(
+            "[build-linux, build-windows, build-macos-universal, "
+            "verify-release-artifacts]",
+            workflow,
+        )
+
+    def test_installer_compatibility_runs_current_installers_on_releases(
+        self,
+    ) -> None:
+        workflow = self.read(
+            ".github/workflows/ci-cua-driver-installer-compat.yml"
+        )
+
+        self.assertIn("pull_request:\n", workflow)
+        self.assertNotIn("pull_request:\n    paths:", workflow)
+        self.assertIn("Installer compatibility summary", workflow)
+        self.assertIn("ubuntu-latest, macos-26, windows-latest", workflow)
+        self.assertIn("repos/$GITHUB_REPOSITORY/releases?per_page=100", workflow)
+        self.assertIn("libs/cua-driver/scripts/install.sh", workflow)
+        self.assertIn("libs/cua-driver/scripts/install.ps1", workflow)
+        self.assertIn("-NoAutoStart", workflow)
+        self.assertIn('CUA_DRIVER_RS_TELEMETRY_ENABLED: "false"', workflow)
+
     def test_lume_uses_the_same_draft_finalizer(self) -> None:
         workflow = self.read(".github/workflows/cd-swift-lume.yml")
 

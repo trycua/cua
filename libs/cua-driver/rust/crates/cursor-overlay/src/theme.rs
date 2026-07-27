@@ -592,8 +592,15 @@ fn draw_action_cue(
         }
         CursorAction::Click => {
             let cue_progress = (progress / 0.65).clamp(0.0, 1.0);
-            let opacity = alpha * (1.0 - cue_progress).min(cue_progress * 4.0).clamp(0.0, 1.0);
-            let cue_scale = 0.25 + ease_in_out(cue_progress) * 1.0;
+            let opacity = alpha
+                * (1.0 - cue_progress.powf(1.35))
+                    .min(cue_progress * 5.0)
+                    .clamp(0.0, 1.0);
+            let cue_scale = if reduced {
+                1.2
+            } else {
+                1.1 + ease_in_out(cue_progress) * 0.4
+            };
             let t = Transform::from_translate(-25.0, -25.0)
                 .post_scale(cue_scale, cue_scale)
                 .post_translate(25.0 + 10.0, 25.0 + 3.0)

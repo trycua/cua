@@ -285,8 +285,12 @@ function drawActionCue(cr, action, progress, fillColor) {
     }
     case 'click': {
         const cueProgress = Math.max(0, Math.min(1, progress / 0.65));
-        const opacity = Math.max(0, Math.min(1, Math.min(1 - cueProgress, cueProgress * 4)));
-        cr.translate(10, 3);
+        const opacity = Math.max(0, Math.min(1,
+            Math.min(1 - Math.pow(cueProgress, 1.35), cueProgress * 5)));
+        const cueScale = 1.1 + easeInOut(cueProgress) * 0.4;
+        cr.translate(35, 28);
+        cr.scale(cueScale, cueScale);
+        cr.translate(-25, -25);
         lineCue([[35, 20], [34, 11]], 4, opacity);
         lineCue([[27, 25], [19, 19]], 4, opacity);
         lineCue([[25, 34], [15, 34]], 4, opacity);

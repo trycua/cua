@@ -43,6 +43,7 @@ LIVE_STATE = RESULTS_DIR / "fleet-pilot-live.json"
 DEFAULT_ENV_FILE = WORK_DIR / ".env.local"
 TASK_ID = "070"
 TASK_CLASS = "evaluation_examples.task_class.task_070.Task070"
+CDP_PROHIBITED_TASKS = frozenset({"068", "100", "101"})
 MODES = ("screenshot_ax", "combined")
 SESSION_PREFIX = "osworld2-gpt55"
 MAX_AX_ELEMENTS = 700
@@ -101,6 +102,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default="gpt-5.5")
     parser.add_argument("--reasoning-effort", default="xhigh")
     parser.add_argument("--max-steps", type=int, default=24)
+    parser.add_argument("--task-id", default=TASK_ID)
+    parser.add_argument("--setup-only", action="store_true")
+    parser.add_argument("--max-estimated-cost-usd", type=float)
     parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV_FILE)
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument(
@@ -109,6 +113,29 @@ def parse_args() -> argparse.Namespace:
         default="control-first",
     )
     return parser.parse_args()
+
+
+def configure_task(task_id: str) -> None:
+    global TASK_ID, TASK_CLASS
+    normalized = task_id.strip()
+    if len(normalized) != 3 or not normalized.isdigit():
+        raise PairedRunError("--task-id must be a zero-padded three-digit ID")
+    TASK_ID = normalized
+    TASK_CLASS = (
+        f"evaluation_examples.task_class.task_{TASK_ID}.Task{TASK_ID}"
+    )
+
+
+def load_task_class() -> type[Any]:
+    sys.path.insert(0, str(OSWORLD_DIR))
+    module = __import__(
+        f"evaluation_examples.task_class.task_{TASK_ID}",
+        fromlist=[f"Task{TASK_ID}"],
+    )
+    task_class = getattr(module, f"Task{TASK_ID}", None)
+    if not isinstance(task_class, type):
+        raise PairedRunError(f"official Task{TASK_ID} class is unavailable")
+    return task_class
 
 
 def read_env_file(path: Path) -> dict[str, str]:
@@ -225,24 +252,28 @@ def verify_osworld_provenance() -> dict[str, Any]:
     if task_hash_manifest_sha256 != manifest["task_hash_manifest"]["sha256"]:
         raise PairedRunError("official gated task hash manifest did not match")
     task_hashes = json.loads(task_hash_manifest.read_text(encoding="utf-8"))
-    expected_task = (task_hashes.get("files") or {}).get("task_070.py")
-    task_path = OSWORLD_DIR / "evaluation_examples" / "task_class" / "task_070.py"
+    task_filename = f"task_{TASK_ID}.py"
+    expected_task = (task_hashes.get("files") or {}).get(task_filename)
+    task_path = OSWORLD_DIR / "evaluation_examples" / "task_class" / task_filename
     if not isinstance(expected_task, dict) or not task_path.is_file():
-        raise PairedRunError("official gated Task070 source is missing")
+        raise PairedRunError(f"official gated Task{TASK_ID} source is missing")
     task_sha256 = sha256_file(task_path)
     if (
         task_sha256 != expected_task.get("sha256")
         or task_path.stat().st_size != expected_task.get("size")
     ):
-        raise PairedRunError("official gated Task070 source did not match its manifest")
+        raise PairedRunError(
+            f"official gated Task{TASK_ID} source did not match its manifest"
+        )
     return {
         "checkout": str(OSWORLD_DIR),
         "git_head": head,
         "git_tag": tag,
         "tracked_worktree_clean": True,
         "task_hash_manifest_sha256": task_hash_manifest_sha256,
-        "task_070_sha256": task_sha256,
-        "task_070_size": task_path.stat().st_size,
+        "task_id": TASK_ID,
+        "task_sha256": task_sha256,
+        "task_size": task_path.stat().st_size,
     }
 
 
@@ -420,6 +451,57 @@ def discover_chrome_window(session: str, expected_pid: int) -> NativeTarget:
     return ranked[0][1]
 
 
+def native_windows() -> list[dict[str, Any]]:
+    windows_state = driver_call("list_windows", {})
+    windows = windows_state.get("windows")
+    if not isinstance(windows, list):
+        raise PairedRunError("Cua Driver list_windows omitted windows")
+    result: list[dict[str, Any]] = []
+    seen: set[NativeTarget] = set()
+    for window in windows:
+        if not isinstance(window, dict):
+            continue
+        pid = window.get("pid") or window.get("owner_pid")
+        window_id = window.get("window_id") or window.get("id")
+        if not isinstance(pid, int) or not isinstance(window_id, int):
+            continue
+        target = NativeTarget(pid=pid, window_id=window_id)
+        if target in seen:
+            continue
+        seen.add(target)
+        result.append(
+            {
+                "pid": pid,
+                "window_id": window_id,
+                "title": str(window.get("title") or ""),
+                "app_name": str(
+                    window.get("app_name")
+                    or window.get("owner_name")
+                    or window.get("name")
+                    or ""
+                ),
+                "is_on_screen": window.get(
+                    "is_on_screen",
+                    window.get("on_screen"),
+                ),
+            }
+        )
+    return result
+
+
+def require_listed_window(pid: Any, window_id: Any) -> NativeTarget:
+    if not isinstance(pid, int) or not isinstance(window_id, int):
+        raise PairedRunError("native window selection requires integer IDs")
+    target = NativeTarget(pid=pid, window_id=window_id)
+    listed = {
+        NativeTarget(pid=item["pid"], window_id=item["window_id"])
+        for item in native_windows()
+    }
+    if target not in listed:
+        raise PairedRunError("selected native window is no longer available")
+    return target
+
+
 def native_snapshot(
     target: NativeTarget,
     session: str,
@@ -455,15 +537,18 @@ def native_snapshot(
 def native_snapshot_with_recovery(
     target: NativeTarget,
     session: str,
-    expected_pid: int,
+    chrome_pid: int,
 ) -> tuple[NativeTarget, dict[str, Any], str]:
     failure: Exception | None = None
     for attempt in range(3):
-        current = (
-            target
-            if attempt == 0
-            else discover_chrome_window(session, expected_pid)
-        )
+        current = target
+        if attempt > 0:
+            try:
+                current = require_listed_window(target.pid, target.window_id)
+            except PairedRunError:
+                if target.pid != chrome_pid:
+                    raise
+                current = discover_chrome_window(session, chrome_pid)
         try:
             state, screenshot = native_snapshot(current, session)
             return current, state, screenshot
@@ -591,9 +676,27 @@ def action_tools(mode: str) -> list[dict[str, Any]]:
     tools: list[dict[str, Any]] = [
         {
             "type": "function",
+            "name": "native_switch_window",
+            "description": (
+                "Bring one currently listed native window to the front. Use the "
+                "exact pid and window_id from the current window inventory."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pid": {"type": "integer"},
+                    "window_id": {"type": "integer"},
+                },
+                "required": ["pid", "window_id"],
+                "additionalProperties": False,
+            },
+            "strict": True,
+        },
+        {
+            "type": "function",
             "name": "native_click",
             "description": (
-                "Click the exact current native Chrome window. Prefer a current "
+                "Click the exact current native window. Prefer a current "
                 "accessibility element_index; otherwise use screenshot-local x/y."
             ),
             "parameters": {
@@ -612,7 +715,7 @@ def action_tools(mode: str) -> list[dict[str, Any]]:
             "type": "function",
             "name": "native_type",
             "description": (
-                "Type into the exact current native Chrome window. Prefer a "
+                "Type into the exact current native window. Prefer a "
                 "current editable accessibility element_index; otherwise use x/y."
             ),
             "parameters": {
@@ -632,8 +735,8 @@ def action_tools(mode: str) -> list[dict[str, Any]]:
             "type": "function",
             "name": "native_hotkey",
             "description": (
-                "Send a native key chord to Chrome, for example ctrl+tab. Do not "
-                "use the address bar or a shortcut as a browser navigation API."
+                "Send a native key chord to the exact current native window. Do "
+                "not use the address bar as a browser navigation API."
             ),
             "parameters": {
                 "type": "object",
@@ -652,8 +755,23 @@ def action_tools(mode: str) -> list[dict[str, Any]]:
         },
         {
             "type": "function",
+            "name": "native_key",
+            "description": (
+                "Press one key in the exact current native window, such as "
+                "ENTER, TAB, ESC, or F4."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"key": {"type": "string"}},
+                "required": ["key"],
+                "additionalProperties": False,
+            },
+            "strict": True,
+        },
+        {
+            "type": "function",
             "name": "native_scroll",
-            "description": "Scroll the exact current native Chrome window.",
+            "description": "Scroll the exact current native window.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -811,6 +929,12 @@ Recent action history:
 
 Current native accessibility tree:
 {native.get("tree_markdown", "")}
+
+Current native target:
+{json.dumps(native.get("current_window") or {}, ensure_ascii=False)}
+
+Available native windows:
+{json.dumps(native.get("available_windows") or [], ensure_ascii=False)}
 {browser_text}
 """
 
@@ -927,14 +1051,28 @@ def execute_action(
     browser: BrowserTarget | None,
     session: str,
     expected_pid: int,
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any], NativeTarget]:
     name = action["name"]
     arguments = action["arguments"]
     started = time.monotonic()
     if name == "done":
-        return {"done": True, "reason": arguments["reason"]}, {}
+        return {"done": True, "reason": arguments["reason"]}, {}, target
 
-    if name == "native_click":
+    next_target = target
+    if name == "native_switch_window":
+        next_target = require_listed_window(
+            arguments.get("pid"),
+            arguments.get("window_id"),
+        )
+        result = driver_call(
+            "bring_to_front",
+            {
+                "pid": next_target.pid,
+                "window_id": next_target.window_id,
+            },
+            allow_refusal=True,
+        )
+    elif name == "native_click":
         result = driver_call(
             "click",
             {
@@ -965,6 +1103,17 @@ def execute_action(
                 "window_id": target.window_id,
                 "session": session,
                 "keys": arguments["keys"],
+            },
+            allow_refusal=True,
+        )
+    elif name == "native_key":
+        result = driver_call(
+            "press_key",
+            {
+                "pid": target.pid,
+                "window_id": target.window_id,
+                "session": session,
+                "key": arguments["key"],
             },
             allow_refusal=True,
         )
@@ -1028,7 +1177,7 @@ def execute_action(
     # mutations get both semantic and native verification because the page may
     # also change the selected native surface.
     _post_target, post_native, _ = native_snapshot_with_recovery(
-        target,
+        next_target,
         session,
         expected_pid,
     )
@@ -1054,15 +1203,12 @@ def execute_action(
         "refused": result.get("refused") is True,
         "driver_result": json_copy_without_images(result),
         "action_seconds": time.monotonic() - started,
-    }, post
+    }, post, _post_target
 
 
 def task_instruction() -> str:
-    sys.path.insert(0, str(OSWORLD_DIR))
     os.environ.setdefault("WEBSITE_HOST_SUFFIX", "web.hku.icu")
-    from evaluation_examples.task_class.task_070 import Task070
-
-    return str(Task070.instruction)
+    return str(load_task_class().instruction)
 
 
 def select_chrome_profile_process(
@@ -1152,8 +1298,12 @@ def reset_and_setup_task(cache_dir: Path) -> dict[str, Any]:
         guest_profile,
     )
     initial_evaluation = evaluate_task(cache_dir)
-    initial_teamchat = evaluate_teamchat_summary(cache_dir)
-    if initial_teamchat["posted_summary"]:
+    initial_supplemental = evaluate_supplemental_task_state(cache_dir)
+    if (
+        TASK_ID == "070"
+        and initial_supplemental is not None
+        and initial_supplemental["posted_summary"]
+    ):
         raise PairedRunError("fresh Task070 state already contained an agent summary")
     cache_hashes = {
         path.name: sha256_file(path)
@@ -1165,27 +1315,39 @@ def reset_and_setup_task(cache_dir: Path) -> dict[str, Any]:
         "chrome_pid": chrome_process.pid,
         "chrome_command": chrome_process.command,
         "initial_evaluation": initial_evaluation,
-        "initial_teamchat": initial_teamchat,
+        "initial_supplemental_task_checks": initial_supplemental,
         "cache_file_sha256": cache_hashes,
     }
 
 
 def evaluate_task(cache_dir: Path) -> dict[str, Any]:
-    sys.path.insert(0, str(OSWORLD_DIR))
-    from evaluation_examples.task_class.task_070 import Task070
+    from desktop_env.controllers.setup import SetupController
 
-    raw = Task070().evaluate(
+    setup_controller = SetupController(
+        vm_ip="127.0.0.1",
+        server_port=fleet_pilot.CONTROL_PORT,
+        chromium_port=fleet_pilot.CDP_PORT,
+        vlc_port=fleet_pilot.VLC_PORT,
+        cache_dir=str(cache_dir.resolve()),
+        client_password="osworld-public-evaluation",
+        screen_width=1920,
+        screen_height=1080,
+    )
+    raw = load_task_class()().evaluate(
         SimpleNamespace(
             cache_dir=str(cache_dir.resolve()),
             vm_ip="127.0.0.1",
+            setup_controller=setup_controller,
+            enable_proxy=False,
         )
     )
     if isinstance(raw, dict):
         if "score" not in raw:
-            raise PairedRunError("Task070 evaluator dict omitted score")
+            raise PairedRunError(f"Task{TASK_ID} evaluator dict omitted score")
         if raw.get("evaluation_error"):
             raise PairedRunError(
-                f"Task070 evaluator refused to score: {raw['evaluation_error']}"
+                f"Task{TASK_ID} evaluator refused to score: "
+                f"{raw['evaluation_error']}"
             )
         score = float(raw["score"])
         detail = raw
@@ -1193,7 +1355,9 @@ def evaluate_task(cache_dir: Path) -> dict[str, Any]:
         score = float(raw)
         detail = None
     if not 0.0 <= score <= 1.0:
-        raise PairedRunError(f"Task070 evaluator returned invalid score {score}")
+        raise PairedRunError(
+            f"Task{TASK_ID} evaluator returned invalid score {score}"
+        )
     return {
         "task_id": TASK_ID,
         "task_class": TASK_CLASS,
@@ -1267,6 +1431,14 @@ def evaluate_teamchat_summary(cache_dir: Path) -> dict[str, Any]:
     }
 
 
+def evaluate_supplemental_task_state(
+    cache_dir: Path,
+) -> dict[str, Any] | None:
+    if TASK_ID == "070":
+        return evaluate_teamchat_summary(cache_dir)
+    return None
+
+
 def usage_sum(records: Iterable[dict[str, Any]]) -> dict[str, int]:
     totals = {
         "input_tokens": 0,
@@ -1336,6 +1508,7 @@ def run_episode(
     episode_dir: Path,
     cache_dir: Path,
     reset_evidence: dict[str, Any],
+    cost_ceiling_usd: float | None = None,
 ) -> dict[str, Any]:
     session = f"{SESSION_PREFIX}-{mode}-{uuid.uuid4().hex[:8]}"
     history: list[dict[str, Any]] = []
@@ -1359,14 +1532,21 @@ def run_episode(
         instruction = task_instruction()
         for step in range(1, max_steps + 1):
             step_dir = episode_dir / "steps" / f"{step:03d}"
-            target = discover_chrome_window(session, expected_pid)
             target, native, screenshot_b64 = native_snapshot_with_recovery(
                 target,
                 session,
                 expected_pid,
             )
-            if browser is not None:
+            windows = native_windows()
+            native["current_window"] = {
+                "pid": target.pid,
+                "window_id": target.window_id,
+            }
+            native["available_windows"] = windows
+            if mode == "combined" and target.pid == expected_pid:
                 target, browser = bind_browser(target, session, expected_pid)
+            else:
+                browser = None
             browser_state = (
                 browser_snapshots(browser, session) if browser is not None else None
             )
@@ -1388,7 +1568,15 @@ def run_episode(
             write_json(step_dir / "action.json", action)
             model_records.append(model_record)
             resolved_models.add(str(model_record["resolved_model"]))
-            outcome, post = execute_action(
+            if (
+                cost_ceiling_usd is not None
+                and estimate_standard_cost(model_records)["estimated_usd"]
+                > cost_ceiling_usd
+            ):
+                raise PairedRunError(
+                    "episode crossed its remaining estimated model-cost ceiling"
+                )
+            outcome, post, target = execute_action(
                 action=action,
                 target=target,
                 browser=browser,
@@ -1416,7 +1604,7 @@ def run_episode(
     if failure is None:
         try:
             evaluation = evaluate_task(cache_dir)
-            supplemental_task_checks = evaluate_teamchat_summary(cache_dir)
+            supplemental_task_checks = evaluate_supplemental_task_state(cache_dir)
         except Exception as exc:
             failure = f"{type(exc).__name__}: {exc}"
     result = {
@@ -1559,7 +1747,12 @@ def provenance(
         text=True,
         stdout=subprocess.PIPE,
     ).stdout.strip()
-    task_path = OSWORLD_DIR / "evaluation_examples" / "task_class" / "task_070.py"
+    task_path = (
+        OSWORLD_DIR
+        / "evaluation_examples"
+        / "task_class"
+        / f"task_{TASK_ID}.py"
+    )
     return {
         "created_at_unix": time.time(),
         "benchmark_manifest": manifest,
@@ -1584,6 +1777,7 @@ def provenance(
             "modes": list(MODES),
             "order": args.order,
             "max_steps": args.max_steps,
+            "setup_only": args.setup_only,
             "native_ax_max_elements": MAX_AX_ELEMENTS,
             "native_ax_max_depth": MAX_AX_DEPTH,
             "max_output_tokens": MAX_OUTPUT_TOKENS,
@@ -1640,8 +1834,19 @@ def validate_pair(results: list[dict[str, Any]]) -> list[str]:
 
 def main() -> int:
     args = parse_args()
+    configure_task(args.task_id)
+    if not args.setup_only and TASK_ID in CDP_PROHIBITED_TASKS:
+        raise PairedRunError(
+            f"Task{TASK_ID} explicitly prohibits CDP/developer tools and "
+            "cannot enter the paired treatment"
+        )
     if args.max_steps <= 0:
         raise PairedRunError("--max-steps must be positive")
+    if (
+        args.max_estimated_cost_usd is not None
+        and args.max_estimated_cost_usd <= 0
+    ):
+        raise PairedRunError("--max-estimated-cost-usd must be positive")
     osworld_provenance = verify_osworld_provenance()
     config = fleet_pilot.read_json(args.config)
     image = args.container_disk_image or config.get("container_disk_image")
@@ -1649,11 +1854,20 @@ def main() -> int:
         raise PairedRunError(
             "config or --container-disk-image must pin the image by digest"
         )
-    api_key = require_api_key(args.env_file)
-    client = OpenAI(api_key=api_key, timeout=OPENAI_TIMEOUT_SECONDS)
+    client = (
+        None
+        if args.setup_only
+        else OpenAI(
+            api_key=require_api_key(args.env_file),
+            timeout=OPENAI_TIMEOUT_SECONDS,
+        )
+    )
 
     run_id = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    output_dir = args.output_dir or RESULTS_DIR / f"paired-gpt55-task070-{run_id}"
+    output_dir = (
+        args.output_dir
+        or RESULTS_DIR / f"paired-gpt55-task{TASK_ID}-{run_id}"
+    )
     output_dir.mkdir(parents=True, exist_ok=False)
     started_at = time.time()
     fleet_log_path = output_dir / "fleet-pilot.log"
@@ -1665,6 +1879,7 @@ def main() -> int:
     live: dict[str, Any] | None = None
     cleanup: dict[str, Any] | None = None
     results: list[dict[str, Any]] = []
+    setup_evidence: dict[str, Any] | None = None
     run_error: str | None = None
     try:
         live = wait_for_pilot(process, started_at)
@@ -1677,25 +1892,49 @@ def main() -> int:
                 osworld_provenance=osworld_provenance,
             ),
         )
-        modes = (
-            list(MODES)
-            if args.order == "control-first"
-            else list(reversed(MODES))
-        )
-        for attempt, mode in enumerate(modes, start=1):
-            cache_dir = output_dir / "task-cache" / f"{attempt:02d}-{mode}"
-            reset_evidence = reset_and_setup_task(cache_dir)
-            result = run_episode(
-                client=client,
-                model=args.model,
-                reasoning_effort=args.reasoning_effort,
-                mode=mode,
-                max_steps=args.max_steps,
-                episode_dir=output_dir / "episodes" / f"{attempt:02d}-{mode}",
-                cache_dir=cache_dir,
-                reset_evidence=reset_evidence,
+        if args.setup_only:
+            setup_evidence = reset_and_setup_task(
+                output_dir / "task-cache" / "setup-only"
             )
-            results.append(result)
+        else:
+            assert client is not None
+            modes = (
+                list(MODES)
+                if args.order == "control-first"
+                else list(reversed(MODES))
+            )
+            for attempt, mode in enumerate(modes, start=1):
+                cache_dir = output_dir / "task-cache" / f"{attempt:02d}-{mode}"
+                reset_evidence = reset_and_setup_task(cache_dir)
+                spent = sum(
+                    float(item["cost"]["estimated_usd"])
+                    for item in results
+                )
+                remaining_cost = (
+                    args.max_estimated_cost_usd - spent
+                    if args.max_estimated_cost_usd is not None
+                    else None
+                )
+                if remaining_cost is not None and remaining_cost <= 0:
+                    raise PairedRunError(
+                        "paired run reached its estimated model-cost ceiling"
+                    )
+                result = run_episode(
+                    client=client,
+                    model=args.model,
+                    reasoning_effort=args.reasoning_effort,
+                    mode=mode,
+                    max_steps=args.max_steps,
+                    episode_dir=output_dir / "episodes" / f"{attempt:02d}-{mode}",
+                    cache_dir=cache_dir,
+                    reset_evidence=reset_evidence,
+                    cost_ceiling_usd=remaining_cost,
+                )
+                results.append(result)
+                if "cost ceiling" in str(result.get("agent_failure") or ""):
+                    raise PairedRunError(
+                        "paired run stopped at its estimated model-cost ceiling"
+                    )
     except Exception as exc:
         run_error = f"{type(exc).__name__}: {exc}"
     finally:
@@ -1722,6 +1961,19 @@ def main() -> int:
                 if run_error
                 else f"cleanup verification failed: {cleanup_error}"
             )
+
+    if args.setup_only:
+        setup_result = {
+            "schema_version": 1,
+            "task_id": TASK_ID,
+            "setup_valid": setup_evidence is not None and run_error is None,
+            "setup_evidence": setup_evidence,
+            "fleet_cleanup": cleanup,
+            "run_error": run_error,
+        }
+        write_json(output_dir / "setup-certification.json", setup_result)
+        print(json.dumps(setup_result, indent=2, sort_keys=True))
+        return 0 if setup_result["setup_valid"] else 1
 
     by_mode = {result["mode"]: result for result in results}
     pair_validation_errors = validate_pair(results)

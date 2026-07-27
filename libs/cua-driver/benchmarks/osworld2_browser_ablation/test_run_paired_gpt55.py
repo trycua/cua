@@ -10,9 +10,40 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import run_paired_gpt55 as paired
+import run_web_certification as certification
 
 
 class PolicyTests(unittest.TestCase):
+    def test_certification_manifest_is_sealed_and_excludes_cdp_prohibitions(
+        self,
+    ) -> None:
+        manifest = certification.read_json(certification.DEFAULT_MANIFEST)
+        tasks = manifest["tasks"]
+        self.assertEqual(len(tasks), 10)
+        task_ids = {item["task_id"] for item in tasks}
+        self.assertEqual(len(task_ids), 10)
+        self.assertTrue(task_ids.isdisjoint(paired.CDP_PROHIBITED_TASKS))
+        excluded = {
+            item["task_id"]
+            for item in manifest["paired_treatment_exclusions"]
+        }
+        self.assertEqual(excluded, set(paired.CDP_PROHIBITED_TASKS))
+        self.assertEqual(manifest["max_estimated_model_cost_usd"], 75.0)
+
+    def test_certification_cost_counts_invalid_partial_episodes(self) -> None:
+        self.assertEqual(
+            certification.episode_cost(
+                {
+                    "pair_valid": False,
+                    "episodes": [
+                        {"cost": {"estimated_usd": 1.25}},
+                        {"cost": {"estimated_usd": 0.75}},
+                    ],
+                }
+            ),
+            2.0,
+        )
+
     def test_successful_text_only_mutation_is_normalized(self) -> None:
         envelope = {
             "text": "Clicked element 42",
@@ -128,6 +159,56 @@ class PolicyTests(unittest.TestCase):
                 "/tmp/missing",
             )
 
+    def test_task_configuration_is_zero_padded_and_dynamic(self) -> None:
+        original_id = paired.TASK_ID
+        try:
+            paired.configure_task("073")
+            self.assertEqual(paired.TASK_ID, "073")
+            self.assertEqual(
+                paired.TASK_CLASS,
+                "evaluation_examples.task_class.task_073.Task073",
+            )
+            with self.assertRaisesRegex(
+                paired.PairedRunError,
+                "zero-padded three-digit",
+            ):
+                paired.configure_task("73")
+        finally:
+            paired.configure_task(original_id)
+
+    def test_native_window_inventory_is_sanitized_and_deduplicated(self) -> None:
+        state = {
+            "windows": [
+                {
+                    "pid": 10,
+                    "window_id": 20,
+                    "title": "Document",
+                    "app_name": "Writer",
+                    "bounds": {"x": 1, "y": 2, "width": 3, "height": 4},
+                    "private": "must not escape",
+                },
+                {
+                    "pid": 10,
+                    "window_id": 20,
+                    "title": "duplicate",
+                },
+            ]
+        }
+        with patch.object(paired, "driver_call", return_value=state):
+            windows = paired.native_windows()
+        self.assertEqual(
+            windows,
+            [
+                {
+                    "pid": 10,
+                    "window_id": 20,
+                    "title": "Document",
+                    "app_name": "Writer",
+                    "is_on_screen": None,
+                }
+            ],
+        )
+
     def test_fleet_state_path_may_live_outside_source_tree(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             work_dir = Path(directory).resolve()
@@ -189,9 +270,11 @@ class PolicyTests(unittest.TestCase):
         control = {tool["name"] for tool in paired.action_tools("screenshot_ax")}
         treatment = {tool["name"] for tool in paired.action_tools("combined")}
         native = {
+            "native_switch_window",
             "native_click",
             "native_type",
             "native_hotkey",
+            "native_key",
             "native_scroll",
             "done",
         }
@@ -330,7 +413,7 @@ class PolicyTests(unittest.TestCase):
                 ),
             ),
         ):
-            outcome, _post = paired.execute_action(
+            outcome, _post, next_target = paired.execute_action(
                 action={
                     "name": "native_click",
                     "arguments": {"element_index": 1, "x": None, "y": None},
@@ -341,6 +424,7 @@ class PolicyTests(unittest.TestCase):
                 expected_pid=1,
             )
         self.assertTrue(outcome["refused"])
+        self.assertEqual(next_target, paired.NativeTarget(pid=1, window_id=2))
 
     def test_failed_episode_cannot_form_a_valid_pair(self) -> None:
         def episode(mode: str, failure=None):

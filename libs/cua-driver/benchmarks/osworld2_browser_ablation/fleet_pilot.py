@@ -830,8 +830,8 @@ def prepare_browser_task(
     *,
     guest_chrome_profile: str | None = None,
 ) -> None:
-    if task_id not in {"070", "073"}:
-        raise PilotError(f"unsupported lightweight browser task: {task_id}")
+    if len(task_id) != 3 or not task_id.isdigit():
+        raise PilotError(f"invalid OSWorld browser task ID: {task_id!r}")
     os.environ.setdefault("WEBSITE_HOST_SUFFIX", "web.hku.icu")
     os.environ.setdefault(
         "PROXY_CONFIG_FILE",

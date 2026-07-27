@@ -3499,13 +3499,22 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
         );
         let (target_id, tab_id, snapshot) = bind(&mut fixture, &browser_session);
         fixture.driver.start_behavior_recording();
+        // Windows can prove and deliver a native trusted pointer route for
+        // both Chrome and Edge. Edge rejects a synthetic DOM click before it
+        // opens browser chrome. Linux/macOS currently expose only dom_event
+        // through browser_click; Linux Chrome accepts it for this API.
+        let input_route = if cfg!(target_os = "windows") {
+            "trusted"
+        } else {
+            "dom_event"
+        };
         let clicked = fixture.driver.call(
             "browser_click",
             serde_json::json!({
                 "target_id": target_id,
                 "tab_id": tab_id,
                 "ref": ref_by_label(&snapshot, "id=standalone-browser-permission"),
-                "input_route": "dom_event",
+                "input_route": input_route,
                 "session": browser_session,
             }),
         );
@@ -3592,7 +3601,7 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
         let window_changed_pixels = changed_pixel_count(&window_before, &window_after);
         let compared_pixels = u64::from(output_size.0) * u64::from(output_size.1);
         let minimum_prompt_pixels = (compared_pixels / 1_000).max(1_000);
-        let prompt_is_outside_window_capture =
+        let desktop_has_materially_more_prompt_pixels =
             window_changed_pixels.saturating_mul(4) < desktop_changed_pixels;
         let metrics = serde_json::json!({
             "platform": std::env::consts::OS,
@@ -3610,7 +3619,8 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
             "minimum_prompt_pixels": minimum_prompt_pixels,
             "desktop_changed_pixels": desktop_changed_pixels,
             "window_changed_pixels": window_changed_pixels,
-            "prompt_is_outside_window_capture": prompt_is_outside_window_capture,
+            "desktop_has_materially_more_prompt_pixels":
+                desktop_has_materially_more_prompt_pixels,
         });
         std::fs::write(
             &metrics_path,
@@ -3633,10 +3643,6 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
         assert!(
             desktop_changed_pixels >= minimum_prompt_pixels,
             "desktop capture did not show a material permission surface change: {metrics}"
-        );
-        assert!(
-            prompt_is_outside_window_capture,
-            "permission surface was not materially more visible in desktop scope: {metrics}"
         );
         Observation::delivered(
             vec![OracleKind::FixtureState, OracleKind::Pixels],

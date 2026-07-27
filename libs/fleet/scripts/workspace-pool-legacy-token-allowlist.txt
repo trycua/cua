@@ -1,0 +1,29 @@
+libs/fleet/python-sdk/examples/create_pool_and_list_tools.py	wire JSON discriminator
+libs/fleet/python-sdk/examples/provision_windows_and_drive_with_cua_sdk.py	wire JSON discriminator
+libs/fleet/python-sdk/examples/provision_windows_and_list_mcp_tools.py	wire JSON discriminator
+libs/fleet/python-sdk/examples/sample_agent.py	wire JSON discriminator
+libs/fleet/rbac-e2e/pool_rbac_test.go	CRD write fixture
+libs/fleet/rbac-e2e/testdata/osgym-pool-crd.yaml	CRD kind
+libs/fleet/scripts/check-workspace-pool-legacy-token.sh	guard pattern
+libs/fleet/scripts/test-generate-sdk-bindings.sh	wire serialization fixture
+libs/fleet/sdk-bindings/examples/kotlin/AppControlled.kt	wire response fixture
+libs/fleet/sdk-bindings/examples/ruby/app_controlled.rb	wire response fixture
+libs/fleet/sdk-bindings/examples/swift/AppControlled.swift	wire response fixture
+libs/fleet/sdk-bindings/kotlin/tests/TestAsyncClient.kt	wire response fixture
+libs/fleet/sdk-bindings/python/contract_fixture.py	wire response fixture
+libs/fleet/sdk-bindings/ruby/tests/test_async_client.rb	wire response fixture
+libs/fleet/sdk-bindings/swift/tests/TestAsyncClient.swift	wire response fixture
+libs/fleet/sdk-schema/src/legacy_pool_compat.rs	deprecated Rust aliases
+libs/fleet/sdk-schema/src/workspace_pool.rs	Kubernetes CRD kind
+libs/fleet/sdk/src/pools.rs	Kubernetes JSON discriminator
+libs/fleet/sdk/tests/claim_flow.rs	wire response fixture
+libs/fleet/sdk/tests/pool_flow.rs	wire response fixture
+libs/fleet/sdk/tests/public_api.rs	legacy import compatibility test
+libs/fleet/src/api/cyclops.ts	Kubernetes JSON discriminator and event selector
+libs/fleet/terraform-provider-fleets/cmd/generate-pool-resource/main.go	CRD inspection errors
+libs/fleet/terraform-provider-fleets/internal/client/client_test.go	wire response fixture
+libs/fleet/terraform-provider-fleets/internal/client/pools.go	Kubernetes JSON discriminator
+libs/fleet/sdk-bindings/python/cyclops_sdk/__init__.py	deprecated Python status alias
+libs/fleet/sdk-bindings/ruby/cyclops_sdk.rb	deprecated Ruby status alias
+libs/fleet/sdk-bindings/ruby/cyclops_sdk/schema.rb	deprecated Ruby schema status alias
+libs/fleet/scripts/generate-sdk-bindings.sh	generated Python/Ruby compatibility aliases

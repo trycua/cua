@@ -5,7 +5,10 @@ use cyclops_sdk::{
     CyclopsCredentials, HttpClient, HttpError, HttpHeader, HttpRequest, HttpResponse, Pool,
     ResourceMetadata, Sandbox, SdkError,
 };
-use cyclops_sdk_schema::{ClaimSpec, OSGymSandboxClaimStatus, OSGymWorkspacePoolStatus, PoolSpec};
+use cyclops_sdk_schema::{
+    ClaimSpec, OSGymSandboxClaimStatus, OSGymWorkspacePool as LegacyPool,
+    OSGymWorkspacePoolStatus as LegacyPoolStatus, Pool as SchemaPool, PoolSpec, PoolStatus,
+};
 
 struct RecordingHttpClient;
 
@@ -200,7 +203,7 @@ fn resources_use_canonical_schema_specs_and_statuses() {
     };
     assert_eq!(metadata.namespace, "default");
 
-    fn pool_status(_: Option<OSGymWorkspacePoolStatus>) {}
+    fn pool_status(_: Option<PoolStatus>) {}
     fn claim_status(_: Option<OSGymSandboxClaimStatus>) {}
 
     fn assert_pool_types(pool: Pool) {
@@ -305,4 +308,15 @@ fn status_error_body_is_lossy_and_bounded_to_4096_bytes() {
         }
         _ => panic!("expected a status error"),
     }
+}
+
+#[allow(deprecated)]
+#[test]
+fn legacy_workspace_pool_imports_remain_type_aliases() {
+    fn legacy_pool(_: LegacyPool) {}
+    let _: fn(SchemaPool) = legacy_pool;
+
+    fn canonical_status(_: Option<PoolStatus>) {}
+    let legacy_status: Option<LegacyPoolStatus> = None;
+    canonical_status(legacy_status);
 }

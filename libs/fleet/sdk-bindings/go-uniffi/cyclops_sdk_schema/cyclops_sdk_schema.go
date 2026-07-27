@@ -1189,30 +1189,30 @@ func (_ FfiDestroyerOsGymSandboxWarmPoolStatus) Destroy(value OsGymSandboxWarmPo
 	value.Destroy()
 }
 
-type OsGymWorkspacePoolStatus struct {
+type PoolStatus struct {
 	Phase          *string
 	TotalCount     *uint32
 	AvailableCount *uint32
 	ClaimedCount   *uint32
 }
 
-func (r *OsGymWorkspacePoolStatus) Destroy() {
+func (r *PoolStatus) Destroy() {
 	FfiDestroyerOptionalString{}.Destroy(r.Phase)
 	FfiDestroyerOptionalUint32{}.Destroy(r.TotalCount)
 	FfiDestroyerOptionalUint32{}.Destroy(r.AvailableCount)
 	FfiDestroyerOptionalUint32{}.Destroy(r.ClaimedCount)
 }
 
-type FfiConverterOsGymWorkspacePoolStatus struct{}
+type FfiConverterPoolStatus struct{}
 
-var FfiConverterOsGymWorkspacePoolStatusINSTANCE = FfiConverterOsGymWorkspacePoolStatus{}
+var FfiConverterPoolStatusINSTANCE = FfiConverterPoolStatus{}
 
-func (c FfiConverterOsGymWorkspacePoolStatus) Lift(rb RustBufferI) OsGymWorkspacePoolStatus {
-	return LiftFromRustBuffer[OsGymWorkspacePoolStatus](c, rb)
+func (c FfiConverterPoolStatus) Lift(rb RustBufferI) PoolStatus {
+	return LiftFromRustBuffer[PoolStatus](c, rb)
 }
 
-func (c FfiConverterOsGymWorkspacePoolStatus) Read(reader io.Reader) OsGymWorkspacePoolStatus {
-	return OsGymWorkspacePoolStatus{
+func (c FfiConverterPoolStatus) Read(reader io.Reader) PoolStatus {
+	return PoolStatus{
 		FfiConverterOptionalStringINSTANCE.Read(reader),
 		FfiConverterOptionalUint32INSTANCE.Read(reader),
 		FfiConverterOptionalUint32INSTANCE.Read(reader),
@@ -1220,24 +1220,24 @@ func (c FfiConverterOsGymWorkspacePoolStatus) Read(reader io.Reader) OsGymWorksp
 	}
 }
 
-func (c FfiConverterOsGymWorkspacePoolStatus) Lower(value OsGymWorkspacePoolStatus) C.RustBuffer {
-	return LowerIntoRustBuffer[OsGymWorkspacePoolStatus](c, value)
+func (c FfiConverterPoolStatus) Lower(value PoolStatus) C.RustBuffer {
+	return LowerIntoRustBuffer[PoolStatus](c, value)
 }
 
-func (c FfiConverterOsGymWorkspacePoolStatus) LowerExternal(value OsGymWorkspacePoolStatus) ExternalCRustBuffer {
-	return RustBufferFromC(LowerIntoRustBuffer[OsGymWorkspacePoolStatus](c, value))
+func (c FfiConverterPoolStatus) LowerExternal(value PoolStatus) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[PoolStatus](c, value))
 }
 
-func (c FfiConverterOsGymWorkspacePoolStatus) Write(writer io.Writer, value OsGymWorkspacePoolStatus) {
+func (c FfiConverterPoolStatus) Write(writer io.Writer, value PoolStatus) {
 	FfiConverterOptionalStringINSTANCE.Write(writer, value.Phase)
 	FfiConverterOptionalUint32INSTANCE.Write(writer, value.TotalCount)
 	FfiConverterOptionalUint32INSTANCE.Write(writer, value.AvailableCount)
 	FfiConverterOptionalUint32INSTANCE.Write(writer, value.ClaimedCount)
 }
 
-type FfiDestroyerOsGymWorkspacePoolStatus struct{}
+type FfiDestroyerPoolStatus struct{}
 
-func (_ FfiDestroyerOsGymWorkspacePoolStatus) Destroy(value OsGymWorkspacePoolStatus) {
+func (_ FfiDestroyerPoolStatus) Destroy(value PoolStatus) {
 	value.Destroy()
 }
 
@@ -2866,3 +2866,6 @@ func (_ FfiDestroyerMapStringString) Destroy(mapValue map[string]string) {
 		FfiDestroyerString{}.Destroy(value)
 	}
 }
+
+// Deprecated: use PoolStatus.
+type OsGymWorkspacePoolStatus = PoolStatus

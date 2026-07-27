@@ -20,7 +20,7 @@ narrate every step so you can follow along in the console:
   1. exchange the client_credentials for a bearer token (``TrainClient.from_key``)
   2. create the per-user namespace (``POST /api/namespaces`` — same path the SPA
      uses, so Capsule sets up tenant ownership + RBAC; pool name == namespace)
-  3. create an ``OSGymWorkspacePool`` (``cua.ai/v1``) via the ``/api/k8s``
+  3. create an ``Pool`` (``cua.ai/v1``) via the ``/api/k8s``
      kubectl-proxy — image, replicas, and a service on the chosen port. The
      pool-operator's compat shim projects it into an ``OSGymSandboxTemplate``
      (``<pool>-template``) + ``OSGymSandboxWarmPool`` pair and warms the VMs.
@@ -94,7 +94,7 @@ DEFAULT_BASE_URL = "https://run.cua.ai"
 # 'amazon-feature-gym-uv-seed-openshot-<sha>-base' — Linux, cua-driver MCP on :3000.)
 DEFAULT_IMAGE = "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace:latest"
 
-# OSGymWorkspacePool — the legacy single-object pool CR the cyclops-cs SPA
+# Pool — the legacy single-object pool CR the cyclops-cs SPA
 # creates (cua.ai/v1). The pool-operator compat shim translates it into the
 # native OSGymSandboxTemplate + OSGymSandboxWarmPool pair.
 POOL_GROUP = "cua.ai"
@@ -178,7 +178,7 @@ def create_pool(
     port: int,
     readiness_port: int,
 ) -> None:
-    """Create the OSGymWorkspacePool. Mirrors cyclops-cs api.createPool exactly."""
+    """Create the Pool. Mirrors cyclops-cs api.createPool exactly."""
     template: dict = {
         "containerDiskImage": image,
         "imagePullSecret": "ecr-credentials",

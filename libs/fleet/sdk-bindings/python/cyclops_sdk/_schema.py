@@ -2405,7 +2405,7 @@ class _UniffiFfiConverterTypeOSGymSandboxWarmPoolStatus(_UniffiConverterRustBuff
         _UniffiFfiConverterOptionalString.write(value.selector, buf)
 
 @dataclass
-class OsGymWorkspacePoolStatus:
+class PoolStatus:
     def __init__(self, *, phase:typing.Optional[str], total_count:typing.Optional[int], available_count:typing.Optional[int], claimed_count:typing.Optional[int]):
         self.phase = phase
         self.total_count = total_count
@@ -2416,7 +2416,7 @@ class OsGymWorkspacePoolStatus:
 
 
     def __str__(self):
-        return "OsGymWorkspacePoolStatus(phase={}, total_count={}, available_count={}, claimed_count={})".format(self.phase, self.total_count, self.available_count, self.claimed_count)
+        return "PoolStatus(phase={}, total_count={}, available_count={}, claimed_count={})".format(self.phase, self.total_count, self.available_count, self.claimed_count)
     def __eq__(self, other):
         if self.phase != other.phase:
             return False
@@ -2428,10 +2428,10 @@ class OsGymWorkspacePoolStatus:
             return False
         return True
 
-class _UniffiFfiConverterTypeOSGymWorkspacePoolStatus(_UniffiConverterRustBuffer):
+class _UniffiFfiConverterTypePoolStatus(_UniffiConverterRustBuffer):
     @staticmethod
     def read(buf):
-        return OsGymWorkspacePoolStatus(
+        return PoolStatus(
             phase=_UniffiFfiConverterOptionalString.read(buf),
             total_count=_UniffiFfiConverterOptionalUInt32.read(buf),
             available_count=_UniffiFfiConverterOptionalUInt32.read(buf),
@@ -2737,7 +2737,7 @@ __all__ = [
     "WarmPoolAutoscaling",
     "OsGymSandboxWarmPoolSpec",
     "OsGymSandboxWarmPoolStatus",
-    "OsGymWorkspacePoolStatus",
+    "PoolStatus",
     "PoolTemplate",
     "PoolSpec",
     "PreservedJson",

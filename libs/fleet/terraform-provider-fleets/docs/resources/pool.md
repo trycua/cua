@@ -6,7 +6,7 @@ description: |-
 
 # fleets_pool
 
-Creates an `OSGymWorkspacePool` and its same-named namespace. Destroy removes both. Import IDs are pool names.
+Creates an `Pool` and its same-named namespace. Destroy removes both. Import IDs are pool names.
 
 ```terraform
 resource "fleets_pool" "linux" {

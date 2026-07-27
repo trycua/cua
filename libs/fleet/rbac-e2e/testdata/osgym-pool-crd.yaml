@@ -1,4 +1,4 @@
-# Minimal OSGymWorkspacePool CRD — just enough for the apiserver to serve the
+# Minimal Pool CRD — just enough for the apiserver to serve the
 # resource the RBAC test targets. Schema is irrelevant to authorization (RBAC
 # keys off apiGroup/resource/verb), so this mirrors the e2e fixture
 # (nixos/tenant-rbac/osgym-pool-crd.yaml) and keeps the test self-contained.

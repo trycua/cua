@@ -171,7 +171,7 @@ func macosPoolNeedsAdmin(ctx context.Context, user *auth.User, r *http.Request) 
 	return !isAdmin, nil
 }
 
-// bodyRequestsMacOS reports whether an OSGymWorkspacePool CR body opts into the
+// bodyRequestsMacOS reports whether an Pool CR body opts into the
 // macOS runtime — via spec.template.runtime=macos, or (defence in depth) the
 // macOS-only runtimeClass / nodeSelector that a macOS pod carries.
 func bodyRequestsMacOS(body []byte) bool {

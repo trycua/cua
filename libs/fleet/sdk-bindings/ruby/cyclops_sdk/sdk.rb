@@ -350,7 +350,7 @@ private_constant :UniffiHandleMap
 
     RustBuffer.check_lower_TypeResourceMetadata(v.metadata)
     RustBuffer.check_lower_TypePoolSpec(v.spec)
-    RustBuffer.check_lower_OptionalTypeOSGymWorkspacePoolStatus(v.status)
+    RustBuffer.check_lower_OptionalTypePoolStatus(v.status)
   end
 
   def self.alloc_from_TypePool(v)
@@ -478,24 +478,24 @@ private_constant :UniffiHandleMap
     end
   end
 
-  # The Optional<T> type for TypeOSGymWorkspacePoolStatus.
+  # The Optional<T> type for TypePoolStatus.
 
-  def self.check_lower_OptionalTypeOSGymWorkspacePoolStatus(v)
+  def self.check_lower_OptionalTypePoolStatus(v)
     if not v.nil?
-      RustBuffer.check_lower_TypeOSGymWorkspacePoolStatus(v)
+      RustBuffer.check_lower_TypePoolStatus(v)
     end
   end
 
-  def self.alloc_from_OptionalTypeOSGymWorkspacePoolStatus(v)
+  def self.alloc_from_OptionalTypePoolStatus(v)
     RustBuffer.allocWithBuilder do |builder|
-      builder.write_OptionalTypeOSGymWorkspacePoolStatus(v)
+      builder.write_OptionalTypePoolStatus(v)
       return builder.finalize()
     end
   end
 
-  def consumeIntoOptionalTypeOSGymWorkspacePoolStatus
+  def consumeIntoOptionalTypePoolStatus
     consumeWithStream do |stream|
-      return stream.readOptionalTypeOSGymWorkspacePoolStatus
+      return stream.readOptionalTypePoolStatus
     end
   end
 
@@ -829,7 +829,7 @@ class RustBufferStream
       kind: readString,
       metadata: readTypeResourceMetadata,
       spec: readTypePoolSpec,
-      status: readOptionalTypeOSGymWorkspacePoolStatus
+      status: readOptionalTypePoolStatus
     )
   end
 
@@ -1002,17 +1002,17 @@ class RustBufferStream
     end
   end
 
-  # The Optional<T> type for TypeOSGymWorkspacePoolStatus.
+  # The Optional<T> type for TypePoolStatus.
 
-  def readOptionalTypeOSGymWorkspacePoolStatus
+  def readOptionalTypePoolStatus
     flag = unpack_from 1, 'c'
 
     if flag == 0
       return nil
     elsif flag == 1
-      return readTypeOSGymWorkspacePoolStatus
+      return readTypePoolStatus
     else
-      raise InternalError, 'Unexpected flag byte for OptionalTypeOSGymWorkspacePoolStatus'
+      raise InternalError, 'Unexpected flag byte for OptionalTypePoolStatus'
     end
   end
 
@@ -1289,7 +1289,7 @@ class RustBufferBuilder
     self.write_String(v.kind)
     self.write_TypeResourceMetadata(v.metadata)
     self.write_TypePoolSpec(v.spec)
-    self.write_OptionalTypeOSGymWorkspacePoolStatus(v.status)
+    self.write_OptionalTypePoolStatus(v.status)
   end
 
   # The Record type ResourceMetadata.
@@ -1348,14 +1348,14 @@ class RustBufferBuilder
     end
   end
 
-  # The Optional<T> type for TypeOSGymWorkspacePoolStatus.
+  # The Optional<T> type for TypePoolStatus.
 
-  def write_OptionalTypeOSGymWorkspacePoolStatus(v)
+  def write_OptionalTypePoolStatus(v)
     if v.nil?
       pack_into(1, 'c', 0)
     else
       pack_into(1, 'c', 1)
-      self.write_TypeOSGymWorkspacePoolStatus(v)
+      self.write_TypePoolStatus(v)
     end
   end
 

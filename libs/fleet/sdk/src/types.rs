@@ -1,4 +1,4 @@
-use cyclops_sdk_schema::{ClaimSpec, OSGymSandboxClaimStatus, OSGymWorkspacePoolStatus, PoolSpec};
+use cyclops_sdk_schema::{ClaimSpec, OSGymSandboxClaimStatus, PoolSpec, PoolStatus};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt, sync::Arc};
 
@@ -84,7 +84,7 @@ pub struct ResourceMetadata {
 }
 
 /// UniFFI cannot emit aliases for external record types. Generated bindings use
-/// `OSGymWorkspacePoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
+/// `PoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
 #[derive(Clone, Debug, Serialize, Deserialize, uniffi::Record)]
 #[serde(rename_all = "camelCase")]
 pub struct Pool {
@@ -92,7 +92,7 @@ pub struct Pool {
     pub kind: String,
     pub metadata: ResourceMetadata,
     pub spec: PoolSpec,
-    pub status: Option<OSGymWorkspacePoolStatus>,
+    pub status: Option<PoolStatus>,
 }
 
 impl PartialEq for Pool {

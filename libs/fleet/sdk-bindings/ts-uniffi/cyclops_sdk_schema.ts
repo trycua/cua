@@ -1057,7 +1057,7 @@ const FfiConverterTypeOSGymSandboxWarmPoolStatus = (() => {
     return new FFIConverter();
 })();
 
-export type OsGymWorkspacePoolStatus = {
+export type PoolStatus = {
     phase?: string,
     totalCount?: number,
     availableCount?: number,
@@ -1065,23 +1065,23 @@ export type OsGymWorkspacePoolStatus = {
 }
 
 /**
- * Generated factory for {@link OsGymWorkspacePoolStatus} record objects.
+ * Generated factory for {@link PoolStatus} record objects.
  */
-export const OsGymWorkspacePoolStatus = (() => {
+export const PoolStatus = (() => {
     const defaults = () => ({
     });
     const create = (() => {
-        return uniffiCreateRecord<OsGymWorkspacePoolStatus, ReturnType<typeof defaults>>(defaults);
+        return uniffiCreateRecord<PoolStatus, ReturnType<typeof defaults>>(defaults);
     })();
     return Object.freeze({
         create,
         new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<OsGymWorkspacePoolStatus>,
+        defaults: () => Object.freeze(defaults()) as Partial<PoolStatus>,
     });
 })();
 
-const FfiConverterTypeOSGymWorkspacePoolStatus = (() => {
-    type TypeName = OsGymWorkspacePoolStatus;
+const FfiConverterTypePoolStatus = (() => {
+    type TypeName = PoolStatus;
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             return {
@@ -1474,7 +1474,7 @@ export default Object.freeze({
     FfiConverterTypeOSGymSandboxTemplateSpec,
     FfiConverterTypeOSGymSandboxWarmPoolSpec,
     FfiConverterTypeOSGymSandboxWarmPoolStatus,
-    FfiConverterTypeOSGymWorkspacePoolStatus,
+    FfiConverterTypePoolStatus,
     FfiConverterTypeOidcConfig,
     FfiConverterTypePoolSpec,
     FfiConverterTypePoolTemplate,
@@ -1487,3 +1487,5 @@ export default Object.freeze({
     FfiConverterTypeWarmPoolAutoscaling,
   }
 });
+/** @deprecated Use PoolStatus. */
+export type OsGymWorkspacePoolStatus = PoolStatus;

@@ -27,7 +27,7 @@ Lifecycle (every step narrated in the console):
   1. exchange the client_credentials for a bearer token (``TrainClient.from_key``)
   2. create the per-user namespace (``POST /api/namespaces`` — Capsule tenant
      RBAC; pool name == namespace)
-  3. create an ``OSGymWorkspacePool`` (``cua.ai/v1``) with **one Service per MCP
+  3. create an ``Pool`` (``cua.ai/v1``) with **one Service per MCP
      server**. The pool-operator compat shim projects it into an
      ``OSGymSandboxTemplate`` (``<pool>-template``) + ``OSGymSandboxWarmPool`` pair.
   4. wait for a warm VM, then claim a sandbox (``OSGymSandboxClaim``)
@@ -84,7 +84,7 @@ from cua_train import TrainClient
 DEFAULT_TOKEN_URL = "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token"
 DEFAULT_BASE_URL = "https://run.cua.ai"
 
-# OSGymWorkspacePool — the legacy single-object pool CR the cyclops-cs SPA
+# Pool — the legacy single-object pool CR the cyclops-cs SPA
 # creates (cua.ai/v1). The pool-operator compat shim translates it into the
 # native OSGymSandboxTemplate (<pool>-template) + OSGymSandboxWarmPool pair.
 POOL_GROUP, POOL_VERSION, POOL_PLURAL = "cua.ai", "v1", "osgymworkspacepools"
@@ -259,7 +259,7 @@ class ServiceSpec:
 
 OS_NAME = "windows"
 DEFAULT_IMAGE = "296062593712.dkr.ecr.us-west-2.amazonaws.com/cua-server-windows:latest"
-# KubeVirt VM firmware (OSGymWorkspacePool template field; CRD enum [bios, efi]).
+# KubeVirt VM firmware (Pool template field; CRD enum [bios, efi]).
 #   efi  — GPT/UEFI-only guest images (the dockur-built Windows desktop-workspace);
 #          the operator also flips on Hyper-V enlightenments + clock config for it.
 #   bios — KubeVirt's default; what the Linux workspace images boot with.
@@ -595,7 +595,7 @@ def create_pool(
     poll: float,
     allow_replace: bool = True,
 ) -> None:
-    """Create the OSGymWorkspacePool with MCP and auxiliary services.
+    """Create the Pool with MCP and auxiliary services.
 
     Each service becomes a per-sandbox Service ``<sandbox>-<name>`` (port 80 ->
     targetPort). The MCP services are used by the agent; auxiliary services such

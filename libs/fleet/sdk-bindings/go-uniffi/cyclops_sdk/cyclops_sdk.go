@@ -1877,13 +1877,13 @@ func (_ FfiDestroyerHttpResponse) Destroy(value HttpResponse) {
 }
 
 // UniFFI cannot emit aliases for external record types. Generated bindings use
-// `OSGymWorkspacePoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
+// `PoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
 type Pool struct {
 	ApiVersion string
 	Kind       string
 	Metadata   ResourceMetadata
 	Spec       cyclops_sdk_schema.PoolSpec
-	Status     *cyclops_sdk_schema.OsGymWorkspacePoolStatus
+	Status     *cyclops_sdk_schema.PoolStatus
 }
 
 func (r *Pool) Destroy() {
@@ -1891,7 +1891,7 @@ func (r *Pool) Destroy() {
 	FfiDestroyerString{}.Destroy(r.Kind)
 	FfiDestroyerResourceMetadata{}.Destroy(r.Metadata)
 	cyclops_sdk_schema.FfiDestroyerPoolSpec{}.Destroy(r.Spec)
-	FfiDestroyerOptionalOsGymWorkspacePoolStatus{}.Destroy(r.Status)
+	FfiDestroyerOptionalPoolStatus{}.Destroy(r.Status)
 }
 
 type FfiConverterPool struct{}
@@ -1908,7 +1908,7 @@ func (c FfiConverterPool) Read(reader io.Reader) Pool {
 		FfiConverterStringINSTANCE.Read(reader),
 		FfiConverterResourceMetadataINSTANCE.Read(reader),
 		cyclops_sdk_schema.FfiConverterPoolSpecINSTANCE.Read(reader),
-		FfiConverterOptionalOsGymWorkspacePoolStatusINSTANCE.Read(reader),
+		FfiConverterOptionalPoolStatusINSTANCE.Read(reader),
 	}
 }
 
@@ -1925,7 +1925,7 @@ func (c FfiConverterPool) Write(writer io.Writer, value Pool) {
 	FfiConverterStringINSTANCE.Write(writer, value.Kind)
 	FfiConverterResourceMetadataINSTANCE.Write(writer, value.Metadata)
 	cyclops_sdk_schema.FfiConverterPoolSpecINSTANCE.Write(writer, value.Spec)
-	FfiConverterOptionalOsGymWorkspacePoolStatusINSTANCE.Write(writer, value.Status)
+	FfiConverterOptionalPoolStatusINSTANCE.Write(writer, value.Status)
 }
 
 type FfiDestroyerPool struct{}
@@ -2752,44 +2752,44 @@ func (_ FfiDestroyerOptionalOsGymSandboxClaimStatus) Destroy(value *cyclops_sdk_
 	}
 }
 
-type FfiConverterOptionalOsGymWorkspacePoolStatus struct{}
+type FfiConverterOptionalPoolStatus struct{}
 
-var FfiConverterOptionalOsGymWorkspacePoolStatusINSTANCE = FfiConverterOptionalOsGymWorkspacePoolStatus{}
+var FfiConverterOptionalPoolStatusINSTANCE = FfiConverterOptionalPoolStatus{}
 
-func (c FfiConverterOptionalOsGymWorkspacePoolStatus) Lift(rb RustBufferI) *cyclops_sdk_schema.OsGymWorkspacePoolStatus {
-	return LiftFromRustBuffer[*cyclops_sdk_schema.OsGymWorkspacePoolStatus](c, rb)
+func (c FfiConverterOptionalPoolStatus) Lift(rb RustBufferI) *cyclops_sdk_schema.PoolStatus {
+	return LiftFromRustBuffer[*cyclops_sdk_schema.PoolStatus](c, rb)
 }
 
-func (_ FfiConverterOptionalOsGymWorkspacePoolStatus) Read(reader io.Reader) *cyclops_sdk_schema.OsGymWorkspacePoolStatus {
+func (_ FfiConverterOptionalPoolStatus) Read(reader io.Reader) *cyclops_sdk_schema.PoolStatus {
 	if readInt8(reader) == 0 {
 		return nil
 	}
-	temp := cyclops_sdk_schema.FfiConverterOsGymWorkspacePoolStatusINSTANCE.Read(reader)
+	temp := cyclops_sdk_schema.FfiConverterPoolStatusINSTANCE.Read(reader)
 	return &temp
 }
 
-func (c FfiConverterOptionalOsGymWorkspacePoolStatus) Lower(value *cyclops_sdk_schema.OsGymWorkspacePoolStatus) C.RustBuffer {
-	return LowerIntoRustBuffer[*cyclops_sdk_schema.OsGymWorkspacePoolStatus](c, value)
+func (c FfiConverterOptionalPoolStatus) Lower(value *cyclops_sdk_schema.PoolStatus) C.RustBuffer {
+	return LowerIntoRustBuffer[*cyclops_sdk_schema.PoolStatus](c, value)
 }
 
-func (c FfiConverterOptionalOsGymWorkspacePoolStatus) LowerExternal(value *cyclops_sdk_schema.OsGymWorkspacePoolStatus) ExternalCRustBuffer {
-	return RustBufferFromC(LowerIntoRustBuffer[*cyclops_sdk_schema.OsGymWorkspacePoolStatus](c, value))
+func (c FfiConverterOptionalPoolStatus) LowerExternal(value *cyclops_sdk_schema.PoolStatus) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[*cyclops_sdk_schema.PoolStatus](c, value))
 }
 
-func (_ FfiConverterOptionalOsGymWorkspacePoolStatus) Write(writer io.Writer, value *cyclops_sdk_schema.OsGymWorkspacePoolStatus) {
+func (_ FfiConverterOptionalPoolStatus) Write(writer io.Writer, value *cyclops_sdk_schema.PoolStatus) {
 	if value == nil {
 		writeInt8(writer, 0)
 	} else {
 		writeInt8(writer, 1)
-		cyclops_sdk_schema.FfiConverterOsGymWorkspacePoolStatusINSTANCE.Write(writer, *value)
+		cyclops_sdk_schema.FfiConverterPoolStatusINSTANCE.Write(writer, *value)
 	}
 }
 
-type FfiDestroyerOptionalOsGymWorkspacePoolStatus struct{}
+type FfiDestroyerOptionalPoolStatus struct{}
 
-func (_ FfiDestroyerOptionalOsGymWorkspacePoolStatus) Destroy(value *cyclops_sdk_schema.OsGymWorkspacePoolStatus) {
+func (_ FfiDestroyerOptionalPoolStatus) Destroy(value *cyclops_sdk_schema.PoolStatus) {
 	if value != nil {
-		cyclops_sdk_schema.FfiDestroyerOsGymWorkspacePoolStatus{}.Destroy(*value)
+		cyclops_sdk_schema.FfiDestroyerPoolStatus{}.Destroy(*value)
 	}
 }
 

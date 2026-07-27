@@ -104,7 +104,7 @@ pub struct PoolTemplate {
     plural = "osgymworkspacepools",
     namespaced,
     shortname = "owsp",
-    status = "OSGymWorkspacePoolStatus",
+    status = "PoolStatus",
     printcolumn(name = "Replicas", type_ = "integer", json_path = ".spec.replicas"),
     printcolumn(
         name = "Available",
@@ -179,7 +179,7 @@ fn hash_json_value<H: Hasher>(value: &serde_json::Value, state: &mut H) {
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize, JsonSchema, uniffi::Record)]
 #[serde(rename_all = "camelCase")]
-pub struct OSGymWorkspacePoolStatus {
+pub struct PoolStatus {
     #[schemars(default, schema_with = "string_schema")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub phase: Option<String>,

@@ -1365,11 +1365,11 @@ class _UniffiFfiConverterTypeClaim(_UniffiConverterRustBuffer):
 
 
 
-class _UniffiFfiConverterOptionalTypeOSGymWorkspacePoolStatus(_UniffiConverterRustBuffer):
+class _UniffiFfiConverterOptionalTypePoolStatus(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
         if value is not None:
-            cyclops_sdk._UniffiFfiConverterTypeOSGymWorkspacePoolStatus.check_lower(value)
+            cyclops_sdk._UniffiFfiConverterTypePoolStatus.check_lower(value)
 
     @classmethod
     def write(cls, value, buf):
@@ -1378,7 +1378,7 @@ class _UniffiFfiConverterOptionalTypeOSGymWorkspacePoolStatus(_UniffiConverterRu
             return
 
         buf.write_u8(1)
-        cyclops_sdk._UniffiFfiConverterTypeOSGymWorkspacePoolStatus.write(value, buf)
+        cyclops_sdk._UniffiFfiConverterTypePoolStatus.write(value, buf)
 
     @classmethod
     def read(cls, buf):
@@ -1386,7 +1386,7 @@ class _UniffiFfiConverterOptionalTypeOSGymWorkspacePoolStatus(_UniffiConverterRu
         if flag == 0:
             return None
         elif flag == 1:
-            return cyclops_sdk._UniffiFfiConverterTypeOSGymWorkspacePoolStatus.read(buf)
+            return cyclops_sdk._UniffiFfiConverterTypePoolStatus.read(buf)
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
@@ -1394,9 +1394,9 @@ class _UniffiFfiConverterOptionalTypeOSGymWorkspacePoolStatus(_UniffiConverterRu
 class Pool:
     """
     UniFFI cannot emit aliases for external record types. Generated bindings use
-    `OSGymWorkspacePoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
+    `PoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
 """
-    def __init__(self, *, api_version:str, kind:str, metadata:ResourceMetadata, spec:cyclops_sdk.PoolSpec, status:typing.Optional[cyclops_sdk.OsGymWorkspacePoolStatus]):
+    def __init__(self, *, api_version:str, kind:str, metadata:ResourceMetadata, spec:cyclops_sdk.PoolSpec, status:typing.Optional[cyclops_sdk.PoolStatus]):
         self.api_version = api_version
         self.kind = kind
         self.metadata = metadata
@@ -1429,7 +1429,7 @@ class _UniffiFfiConverterTypePool(_UniffiConverterRustBuffer):
             kind=_UniffiFfiConverterString.read(buf),
             metadata=_UniffiFfiConverterTypeResourceMetadata.read(buf),
             spec=cyclops_sdk._UniffiFfiConverterTypePoolSpec.read(buf),
-            status=_UniffiFfiConverterOptionalTypeOSGymWorkspacePoolStatus.read(buf),
+            status=_UniffiFfiConverterOptionalTypePoolStatus.read(buf),
         )
 
     @staticmethod
@@ -1438,7 +1438,7 @@ class _UniffiFfiConverterTypePool(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.check_lower(value.kind)
         _UniffiFfiConverterTypeResourceMetadata.check_lower(value.metadata)
         cyclops_sdk._UniffiFfiConverterTypePoolSpec.check_lower(value.spec)
-        _UniffiFfiConverterOptionalTypeOSGymWorkspacePoolStatus.check_lower(value.status)
+        _UniffiFfiConverterOptionalTypePoolStatus.check_lower(value.status)
 
     @staticmethod
     def write(value, buf):
@@ -1446,7 +1446,7 @@ class _UniffiFfiConverterTypePool(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.write(value.kind, buf)
         _UniffiFfiConverterTypeResourceMetadata.write(value.metadata, buf)
         cyclops_sdk._UniffiFfiConverterTypePoolSpec.write(value.spec, buf)
-        _UniffiFfiConverterOptionalTypeOSGymWorkspacePoolStatus.write(value.status, buf)
+        _UniffiFfiConverterOptionalTypePoolStatus.write(value.status, buf)
 
 class _UniffiFfiConverterOptionalTypeClaimSpec(_UniffiConverterRustBuffer):
     @classmethod

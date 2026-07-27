@@ -33,10 +33,10 @@ import java.util.concurrent.ConcurrentHashMap
 import ai.cua.cyclops.sdk.schema.ClaimSpec
 import ai.cua.cyclops.sdk.schema.FfiConverterTypeClaimSpec
 import ai.cua.cyclops.sdk.schema.FfiConverterTypeOSGymSandboxClaimStatus
-import ai.cua.cyclops.sdk.schema.FfiConverterTypeOSGymWorkspacePoolStatus
+import ai.cua.cyclops.sdk.schema.FfiConverterTypePoolStatus
 import ai.cua.cyclops.sdk.schema.FfiConverterTypePoolSpec
 import ai.cua.cyclops.sdk.schema.OsGymSandboxClaimStatus
-import ai.cua.cyclops.sdk.schema.OsGymWorkspacePoolStatus
+import ai.cua.cyclops.sdk.schema.PoolStatus
 import ai.cua.cyclops.sdk.schema.PoolSpec
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
@@ -48,7 +48,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import ai.cua.cyclops.sdk.schema.RustBuffer as RustBufferClaimSpec
 import ai.cua.cyclops.sdk.schema.RustBuffer as RustBufferOSGymSandboxClaimStatus
-import ai.cua.cyclops.sdk.schema.RustBuffer as RustBufferOSGymWorkspacePoolStatus
+import ai.cua.cyclops.sdk.schema.RustBuffer as RustBufferPoolStatus
 import ai.cua.cyclops.sdk.schema.RustBuffer as RustBufferPoolSpec
 
 // This is a helper for safely working with byte buffers returned from the Rust code.
@@ -3313,7 +3313,7 @@ public object FfiConverterTypeHttpResponse: FfiConverterRustBuffer<HttpResponse>
 
 /**
  * UniFFI cannot emit aliases for external record types. Generated bindings use
- * `OSGymWorkspacePoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
+ * `PoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
  */
 data class Pool (
     var `apiVersion`: kotlin.String
@@ -3324,7 +3324,7 @@ data class Pool (
     ,
     var `spec`: PoolSpec
     ,
-    var `status`: OsGymWorkspacePoolStatus?
+    var `status`: PoolStatus?
 
 ){
 
@@ -3345,7 +3345,7 @@ public object FfiConverterTypePool: FfiConverterRustBuffer<Pool> {
             FfiConverterString.read(buf),
             FfiConverterTypeResourceMetadata.read(buf),
             FfiConverterTypePoolSpec.read(buf),
-            FfiConverterOptionalTypeOSGymWorkspacePoolStatus.read(buf),
+            FfiConverterOptionalTypePoolStatus.read(buf),
         )
     }
 
@@ -3354,7 +3354,7 @@ public object FfiConverterTypePool: FfiConverterRustBuffer<Pool> {
             FfiConverterString.allocationSize(value.`kind`) +
             FfiConverterTypeResourceMetadata.allocationSize(value.`metadata`) +
             FfiConverterTypePoolSpec.allocationSize(value.`spec`) +
-            FfiConverterOptionalTypeOSGymWorkspacePoolStatus.allocationSize(value.`status`)
+            FfiConverterOptionalTypePoolStatus.allocationSize(value.`status`)
     )
 
     override fun write(value: Pool, buf: ByteBuffer) {
@@ -3362,7 +3362,7 @@ public object FfiConverterTypePool: FfiConverterRustBuffer<Pool> {
             FfiConverterString.write(value.`kind`, buf)
             FfiConverterTypeResourceMetadata.write(value.`metadata`, buf)
             FfiConverterTypePoolSpec.write(value.`spec`, buf)
-            FfiConverterOptionalTypeOSGymWorkspacePoolStatus.write(value.`status`, buf)
+            FfiConverterOptionalTypePoolStatus.write(value.`status`, buf)
     }
 }
 
@@ -3958,28 +3958,28 @@ public object FfiConverterOptionalTypeOSGymSandboxClaimStatus: FfiConverterRustB
 /**
  * @suppress
  */
-public object FfiConverterOptionalTypeOSGymWorkspacePoolStatus: FfiConverterRustBuffer<OsGymWorkspacePoolStatus?> {
-    override fun read(buf: ByteBuffer): OsGymWorkspacePoolStatus? {
+public object FfiConverterOptionalTypePoolStatus: FfiConverterRustBuffer<PoolStatus?> {
+    override fun read(buf: ByteBuffer): PoolStatus? {
         if (buf.get().toInt() == 0) {
             return null
         }
-        return FfiConverterTypeOSGymWorkspacePoolStatus.read(buf)
+        return FfiConverterTypePoolStatus.read(buf)
     }
 
-    override fun allocationSize(value: OsGymWorkspacePoolStatus?): ULong {
+    override fun allocationSize(value: PoolStatus?): ULong {
         if (value == null) {
             return 1UL
         } else {
-            return 1UL + FfiConverterTypeOSGymWorkspacePoolStatus.allocationSize(value)
+            return 1UL + FfiConverterTypePoolStatus.allocationSize(value)
         }
     }
 
-    override fun write(value: OsGymWorkspacePoolStatus?, buf: ByteBuffer) {
+    override fun write(value: PoolStatus?, buf: ByteBuffer) {
         if (value == null) {
             buf.put(0)
         } else {
             buf.put(1)
-            FfiConverterTypeOSGymWorkspacePoolStatus.write(value, buf)
+            FfiConverterTypePoolStatus.write(value, buf)
         }
     }
 }

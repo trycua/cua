@@ -225,7 +225,7 @@ export const api = {
   // Pool CRUD via K8s API (kubectl-proxy sidecar with impersonation).
   // The proxy adds Impersonate-User/Group headers so Capsule enforces
   // tenant RBAC — users can only operate in their own namespaces.
-  // The pool-operator watches OSGymWorkspacePool CRs and creates all
+  // The pool-operator watches Pool CRs and creates all
   // resources (orchestrator, RBAC, namespace, etc.) automatically.
   createPool: async (name: string, values: {
     cpu: number; ram: string; ociImage: string; replicas: number;
@@ -477,7 +477,7 @@ export const api = {
         `${encodeURIComponent(namespace)}/pods/${encodeURIComponent(podName)}`,
     ),
 
-  // K8s events for OSGymWorkspacePool resources — what the pool-operator
+  // K8s events for Pool resources — what the pool-operator
   // emits via kopf for handler outcomes (Normal/Warning, reason, message).
   // Cluster-wide; filtered server-side by involvedObject.kind.
   listOperatorEvents: () =>

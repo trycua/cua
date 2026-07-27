@@ -324,25 +324,25 @@ end
     end
   end
 
-  # The Record type OSGymWorkspacePoolStatus.
+  # The Record type PoolStatus.
 
-  def self.check_lower_TypeOSGymWorkspacePoolStatus(v)
+  def self.check_lower_TypePoolStatus(v)
     RustBuffer.check_lower_Optionalstring(v.phase)
     RustBuffer.check_lower_Optionalu32(v.total_count)
     RustBuffer.check_lower_Optionalu32(v.available_count)
     RustBuffer.check_lower_Optionalu32(v.claimed_count)
   end
 
-  def self.alloc_from_TypeOSGymWorkspacePoolStatus(v)
+  def self.alloc_from_TypePoolStatus(v)
     RustBuffer.allocWithBuilder do |builder|
-      builder.write_TypeOSGymWorkspacePoolStatus(v)
+      builder.write_TypePoolStatus(v)
       return builder.finalize
     end
   end
 
-  def consumeIntoTypeOSGymWorkspacePoolStatus
+  def consumeIntoTypePoolStatus
     consumeWithStream do |stream|
-      return stream.readTypeOSGymWorkspacePoolStatus
+      return stream.readTypePoolStatus
     end
   end
 
@@ -1238,10 +1238,10 @@ class RustBufferStream
     )
   end
 
-  # The Record type OSGymWorkspacePoolStatus.
+  # The Record type PoolStatus.
 
-  def readTypeOSGymWorkspacePoolStatus
-    OSGymWorkspacePoolStatus.new(
+  def readTypePoolStatus
+    PoolStatus.new(
       phase: readOptionalstring,
       total_count: readOptionalu32,
       available_count: readOptionalu32,
@@ -1917,9 +1917,9 @@ class RustBufferBuilder
     self.write_Optionalstring(v.selector)
   end
 
-  # The Record type OSGymWorkspacePoolStatus.
+  # The Record type PoolStatus.
 
-  def write_TypeOSGymWorkspacePoolStatus(v)
+  def write_TypePoolStatus(v)
     self.write_Optionalstring(v.phase)
     self.write_Optionalu32(v.total_count)
     self.write_Optionalu32(v.available_count)
@@ -2942,8 +2942,8 @@ class WarmPoolAutoscaling
   end
 end
 
-  # Record type OSGymWorkspacePoolStatus
-class OSGymWorkspacePoolStatus
+  # Record type PoolStatus
+class PoolStatus
   attr_reader :phase, :total_count, :available_count, :claimed_count
 
   def initialize(phase:, total_count:, available_count:, claimed_count:)
@@ -3126,3 +3126,6 @@ end
 end
 
 end
+
+  # Deprecated: use PoolStatus.
+  OSGymWorkspacePoolStatus = PoolStatus

@@ -1940,18 +1940,18 @@ public func FfiConverterTypeHttpResponse_lower(_ value: HttpResponse) -> RustBuf
 
 /**
  * UniFFI cannot emit aliases for external record types. Generated bindings use
- * `OSGymWorkspacePoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
+ * `PoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
  */
 public struct Pool: Equatable, Hashable {
     public var apiVersion: String
     public var kind: String
     public var metadata: ResourceMetadata
     public var spec: PoolSpec
-    public var status: OsGymWorkspacePoolStatus?
+    public var status: PoolStatus?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(apiVersion: String, kind: String, metadata: ResourceMetadata, spec: PoolSpec, status: OsGymWorkspacePoolStatus?) {
+    public init(apiVersion: String, kind: String, metadata: ResourceMetadata, spec: PoolSpec, status: PoolStatus?) {
         self.apiVersion = apiVersion
         self.kind = kind
         self.metadata = metadata
@@ -1979,7 +1979,7 @@ public struct FfiConverterTypePool: FfiConverterRustBuffer {
                 kind: FfiConverterString.read(from: &buf),
                 metadata: FfiConverterTypeResourceMetadata.read(from: &buf),
                 spec: FfiConverterTypePoolSpec.read(from: &buf),
-                status: FfiConverterOptionTypeOSGymWorkspacePoolStatus.read(from: &buf)
+                status: FfiConverterOptionTypePoolStatus.read(from: &buf)
         )
     }
 
@@ -1988,7 +1988,7 @@ public struct FfiConverterTypePool: FfiConverterRustBuffer {
         FfiConverterString.write(value.kind, into: &buf)
         FfiConverterTypeResourceMetadata.write(value.metadata, into: &buf)
         FfiConverterTypePoolSpec.write(value.spec, into: &buf)
-        FfiConverterOptionTypeOSGymWorkspacePoolStatus.write(value.status, into: &buf)
+        FfiConverterOptionTypePoolStatus.write(value.status, into: &buf)
     }
 }
 
@@ -2522,8 +2522,8 @@ fileprivate struct FfiConverterOptionTypeOSGymSandboxClaimStatus: FfiConverterRu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterOptionTypeOSGymWorkspacePoolStatus: FfiConverterRustBuffer {
-    typealias SwiftType = OsGymWorkspacePoolStatus?
+fileprivate struct FfiConverterOptionTypePoolStatus: FfiConverterRustBuffer {
+    typealias SwiftType = PoolStatus?
 
     public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
         guard let value = value else {
@@ -2531,13 +2531,13 @@ fileprivate struct FfiConverterOptionTypeOSGymWorkspacePoolStatus: FfiConverterR
             return
         }
         writeInt(&buf, Int8(1))
-        FfiConverterTypeOSGymWorkspacePoolStatus.write(value, into: &buf)
+        FfiConverterTypePoolStatus.write(value, into: &buf)
     }
 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
-        case 1: return try FfiConverterTypeOSGymWorkspacePoolStatus.read(from: &buf)
+        case 1: return try FfiConverterTypePoolStatus.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

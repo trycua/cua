@@ -1246,7 +1246,7 @@ public func FfiConverterTypeOSGymSandboxWarmPoolStatus_lower(_ value: OsGymSandb
 }
 
 
-public struct OsGymWorkspacePoolStatus: Equatable, Hashable {
+public struct PoolStatus: Equatable, Hashable {
     public var phase: String?
     public var totalCount: UInt32?
     public var availableCount: UInt32?
@@ -1267,16 +1267,16 @@ public struct OsGymWorkspacePoolStatus: Equatable, Hashable {
 }
 
 #if compiler(>=6)
-extension OsGymWorkspacePoolStatus: Sendable {}
+extension PoolStatus: Sendable {}
 #endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeOSGymWorkspacePoolStatus: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OsGymWorkspacePoolStatus {
+public struct FfiConverterTypePoolStatus: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PoolStatus {
         return
-            try OsGymWorkspacePoolStatus(
+            try PoolStatus(
                 phase: FfiConverterOptionString.read(from: &buf),
                 totalCount: FfiConverterOptionUInt32.read(from: &buf),
                 availableCount: FfiConverterOptionUInt32.read(from: &buf),
@@ -1284,7 +1284,7 @@ public struct FfiConverterTypeOSGymWorkspacePoolStatus: FfiConverterRustBuffer {
         )
     }
 
-    public static func write(_ value: OsGymWorkspacePoolStatus, into buf: inout [UInt8]) {
+    public static func write(_ value: PoolStatus, into buf: inout [UInt8]) {
         FfiConverterOptionString.write(value.phase, into: &buf)
         FfiConverterOptionUInt32.write(value.totalCount, into: &buf)
         FfiConverterOptionUInt32.write(value.availableCount, into: &buf)
@@ -1296,15 +1296,15 @@ public struct FfiConverterTypeOSGymWorkspacePoolStatus: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeOSGymWorkspacePoolStatus_lift(_ buf: RustBuffer) throws -> OsGymWorkspacePoolStatus {
-    return try FfiConverterTypeOSGymWorkspacePoolStatus.lift(buf)
+public func FfiConverterTypePoolStatus_lift(_ buf: RustBuffer) throws -> PoolStatus {
+    return try FfiConverterTypePoolStatus.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeOSGymWorkspacePoolStatus_lower(_ value: OsGymWorkspacePoolStatus) -> RustBuffer {
-    return FfiConverterTypeOSGymWorkspacePoolStatus.lower(value)
+public func FfiConverterTypePoolStatus_lower(_ value: PoolStatus) -> RustBuffer {
+    return FfiConverterTypePoolStatus.lower(value)
 }
 
 

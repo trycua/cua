@@ -184,6 +184,7 @@ module CyclopsSdk
   CyclopsSdkSchema.constants(false).each do |name|
     const_set(name, CyclopsSdkSchema.const_get(name)) unless const_defined?(name, false)
   end
+  OSGymWorkspacePoolStatus = PoolStatus
 RUBY_FACADE_HEADER
   write_ruby_method_array "SCHEMA_CHECK_LOWER_METHODS" "$temporary_output/ruby-check_lower-external" "$facade_file"
   write_ruby_method_array "SCHEMA_READ_METHODS" "$temporary_output/ruby-read-external" "$facade_file"
@@ -253,6 +254,9 @@ from . import _sdk as _sdk_component
 from ._sdk import *
 
 __all__ = [*_schema_component.__all__, *_sdk_component.__all__]
+
+OSGymWorkspacePoolStatus = PoolStatus
+__all__.append("OSGymWorkspacePoolStatus")
 
 del _schema_component
 del _sdk_component

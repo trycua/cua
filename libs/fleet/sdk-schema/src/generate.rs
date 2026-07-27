@@ -1,5 +1,5 @@
 use crate::{
-    OSGymSandbox, OSGymSandboxClaim, OSGymSandboxTemplate, OSGymSandboxWarmPool, OSGymWorkspacePool,
+    OSGymSandbox, OSGymSandboxClaim, OSGymSandboxTemplate, OSGymSandboxWarmPool, Pool,
 };
 use anyhow::{Context, Result, bail};
 use kube::CustomResourceExt;
@@ -13,7 +13,7 @@ pub fn render_crds() -> Result<String> {
         serde_yaml::to_string(&OSGymSandboxTemplate::crd())?,
         serde_yaml::to_string(&OSGymSandboxWarmPool::crd())?,
         serde_yaml::to_string(&OSGymSandboxClaim::crd())?,
-        serde_yaml::to_string(&OSGymWorkspacePool::crd())?,
+        serde_yaml::to_string(&Pool::crd())?,
     ];
 
     Ok(resources.join("---\n"))

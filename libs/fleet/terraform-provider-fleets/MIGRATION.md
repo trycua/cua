@@ -1,7 +1,7 @@
 # Migrating from the Cyclops provider
 
 `trycua/fleets` is the public Terraform Registry provider. The Cloud service
-APIs, OAuth environment variables, and `OSGymWorkspacePool` CRD remain
+APIs, OAuth environment variables, and `Pool` CRD remain
 unchanged.
 
 | Previous surface | Fleets surface | Migration |

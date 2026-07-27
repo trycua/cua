@@ -1826,7 +1826,7 @@ public object FfiConverterTypeOSGymSandboxWarmPoolStatus: FfiConverterRustBuffer
 
 
 
-data class OsGymWorkspacePoolStatus (
+data class PoolStatus (
     var `phase`: kotlin.String?
     ,
     var `totalCount`: kotlin.UInt?
@@ -1847,9 +1847,9 @@ data class OsGymWorkspacePoolStatus (
 /**
  * @suppress
  */
-public object FfiConverterTypeOSGymWorkspacePoolStatus: FfiConverterRustBuffer<OsGymWorkspacePoolStatus> {
-    override fun read(buf: ByteBuffer): OsGymWorkspacePoolStatus {
-        return OsGymWorkspacePoolStatus(
+public object FfiConverterTypePoolStatus: FfiConverterRustBuffer<PoolStatus> {
+    override fun read(buf: ByteBuffer): PoolStatus {
+        return PoolStatus(
             FfiConverterOptionalString.read(buf),
             FfiConverterOptionalUInt.read(buf),
             FfiConverterOptionalUInt.read(buf),
@@ -1857,14 +1857,14 @@ public object FfiConverterTypeOSGymWorkspacePoolStatus: FfiConverterRustBuffer<O
         )
     }
 
-    override fun allocationSize(value: OsGymWorkspacePoolStatus) = (
+    override fun allocationSize(value: PoolStatus) = (
             FfiConverterOptionalString.allocationSize(value.`phase`) +
             FfiConverterOptionalUInt.allocationSize(value.`totalCount`) +
             FfiConverterOptionalUInt.allocationSize(value.`availableCount`) +
             FfiConverterOptionalUInt.allocationSize(value.`claimedCount`)
     )
 
-    override fun write(value: OsGymWorkspacePoolStatus, buf: ByteBuffer) {
+    override fun write(value: PoolStatus, buf: ByteBuffer) {
             FfiConverterOptionalString.write(value.`phase`, buf)
             FfiConverterOptionalUInt.write(value.`totalCount`, buf)
             FfiConverterOptionalUInt.write(value.`availableCount`, buf)

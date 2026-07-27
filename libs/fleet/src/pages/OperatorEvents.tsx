@@ -68,7 +68,7 @@ export function OperatorEvents() {
         <Header
           variant="h1"
           counter={loading ? undefined : `(${events.length})`}
-          description="Kubernetes events emitted by the pool-operator on OSGymWorkspacePool resources."
+          description="Kubernetes events emitted by the pool-operator on Pool resources."
           actions={
             <Button iconName="refresh" onClick={load} disabled={loading} />
           }

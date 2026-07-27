@@ -6,12 +6,12 @@
 import nativeModule from "./cyclops_sdk-ffi";
 import { type UniffiRustFutureContinuationCallback, type UniffiForeignFutureDroppedCallback, type UniffiForeignFutureDroppedCallbackStruct, type UniffiForeignFutureResultRustBuffer, type UniffiForeignFutureCompleterustBuffer, type UniffiVTableCallbackInterfaceCyclopsSdkHttpClient,
 } from "./cyclops_sdk-ffi";
-import { type ClaimSpec, type OsGymSandboxClaimStatus, type OsGymWorkspacePoolStatus, type PoolSpec,
+import { type ClaimSpec, type OsGymSandboxClaimStatus, type PoolStatus, type PoolSpec,
 } from "./cyclops_sdk_schema";
 import { type FfiConverter, type UniffiByteArray, type UniffiGcObject, type UniffiHandle, type UniffiObjectFactory, type UniffiReferenceHolder, type UniffiRustCallStatus, AbstractFfiConverterByteArray, FfiConverterArray, FfiConverterArrayBuffer, FfiConverterInt32, FfiConverterMap, FfiConverterObject, FfiConverterObjectWithCallbacks, FfiConverterOptional, FfiConverterUInt16, FfiConverterUInt32, FfiConverterUInt64, FfiConverterUInt8, RustBuffer, UniffiAbstractObject, UniffiError, UniffiInternalError, UniffiResult, UniffiRustCaller, destructorGuardSymbol, pointerLiteralSymbol, uniffiCreateFfiConverterString, uniffiCreateRecord, uniffiRustCallAsync, uniffiTraitInterfaceCallAsyncWithError, uniffiTypeNameSymbol, variantOrdinalSymbol,
 } from "@ubjs/core";
 import uniffiCyclopsSdkSchemaModule from "./cyclops_sdk_schema";
-const { FfiConverterTypeClaimSpec, FfiConverterTypeOSGymSandboxClaimStatus, FfiConverterTypeOSGymWorkspacePoolStatus, FfiConverterTypePoolSpec } = uniffiCyclopsSdkSchemaModule.converters;
+const { FfiConverterTypeClaimSpec, FfiConverterTypeOSGymSandboxClaimStatus, FfiConverterTypePoolStatus, FfiConverterTypePoolSpec } = uniffiCyclopsSdkSchemaModule.converters;
 const uniffiCaller = new UniffiRustCaller(() => ({ code: 0 }));
 
 const uniffiIsDebug =
@@ -148,14 +148,14 @@ const FfiConverterTypeClaim = (() => {
 
 /**
  * UniFFI cannot emit aliases for external record types. Generated bindings use
- * `OSGymWorkspacePoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
+ * `PoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
  */
 export type Pool = {
     apiVersion: string,
     kind: string,
     metadata: ResourceMetadata,
     spec: PoolSpec,
-    status?: OsGymWorkspacePoolStatus
+    status?: PoolStatus
 }
 
 /**
@@ -183,7 +183,7 @@ const FfiConverterTypePool = (() => {
                 kind: FfiConverterString.read(from), 
                 metadata: FfiConverterTypeResourceMetadata.read(from), 
                 spec: FfiConverterTypePoolSpec.read(from), 
-                status: FfiConverterOptionalTypeOSGymWorkspacePoolStatus.read(from)
+                status: FfiConverterOptionalTypePoolStatus.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -191,14 +191,14 @@ const FfiConverterTypePool = (() => {
             FfiConverterString.write(value.kind, into);
             FfiConverterTypeResourceMetadata.write(value.metadata, into);
             FfiConverterTypePoolSpec.write(value.spec, into);
-            FfiConverterOptionalTypeOSGymWorkspacePoolStatus.write(value.status, into);
+            FfiConverterOptionalTypePoolStatus.write(value.status, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.apiVersion) +
              FfiConverterString.allocationSize(value.kind) +
              FfiConverterTypeResourceMetadata.allocationSize(value.metadata) +
              FfiConverterTypePoolSpec.allocationSize(value.spec) +
-             FfiConverterOptionalTypeOSGymWorkspacePoolStatus.allocationSize(value.status);
+             FfiConverterOptionalTypePoolStatus.allocationSize(value.status);
             
         }
     };
@@ -2016,8 +2016,8 @@ const FfiConverterOptionalMapStringString = new FfiConverterOptional(FfiConverte
 // FfiConverter for OsGymSandboxClaimStatus | undefined
 const FfiConverterOptionalTypeOSGymSandboxClaimStatus = new FfiConverterOptional(FfiConverterTypeOSGymSandboxClaimStatus);
 
-// FfiConverter for OsGymWorkspacePoolStatus | undefined
-const FfiConverterOptionalTypeOSGymWorkspacePoolStatus = new FfiConverterOptional(FfiConverterTypeOSGymWorkspacePoolStatus);
+// FfiConverter for PoolStatus | undefined
+const FfiConverterOptionalTypePoolStatus = new FfiConverterOptional(FfiConverterTypePoolStatus);
 
 // FfiConverter for ClaimSpec | undefined
 const FfiConverterOptionalTypeClaimSpec = new FfiConverterOptional(FfiConverterTypeClaimSpec);

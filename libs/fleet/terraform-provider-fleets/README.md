@@ -1,6 +1,6 @@
 # Terraform Provider for Cua Fleets
 
-This provider manages `OSGymWorkspacePool` resources through the Fleet API. It uses the same user-key OAuth credentials and tenant-scoped authorization as the Fleet Python SDK and dashboard.
+This provider manages `Pool` resources through the Fleet API. It uses the same user-key OAuth credentials and tenant-scoped authorization as the Fleet Python SDK and dashboard.
 
 ## Development
 
@@ -31,7 +31,7 @@ All provider arguments support environment variables:
 
 The Terraform models, schema, CRD-derived descriptions, enum validators, numeric validators, and nested object types are generated deterministically from:
 
-- `clusters/base/osgym/crd.yaml`, the production `OSGymWorkspacePool` CRD
+- `clusters/base/osgym/crd.yaml`, the production `Pool` CRD
 - `internal/provider/generate/pool_mapping.json`, the explicit CRD-to-Terraform shape mapping
 
 From `cyclops-cs/terraform-provider-fleets/`, run:

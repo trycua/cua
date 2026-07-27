@@ -91,7 +91,7 @@ DEFAULT_BASE_URL = "https://run.cua.ai"
 # firmware (see --firmware below).
 DEFAULT_IMAGE = "296062593712.dkr.ecr.us-west-2.amazonaws.com/cua-server-windows:latest"
 
-# OSGymWorkspacePool — the legacy single-object pool CR the cyclops-cs SPA
+# Pool — the legacy single-object pool CR the cyclops-cs SPA
 # creates (cua.ai/v1). The pool-operator compat shim translates it into the
 # native OSGymSandboxTemplate + OSGymSandboxWarmPool pair.
 POOL_GROUP = "cua.ai"
@@ -173,7 +173,7 @@ def create_pool(
     port: int,
     readiness_port: int,
 ) -> None:
-    """Create the OSGymWorkspacePool. Mirrors cyclops-cs api.createPool exactly."""
+    """Create the Pool. Mirrors cyclops-cs api.createPool exactly."""
     template: dict = {
         "containerDiskImage": image,
         "imagePullSecret": "ecr-credentials",

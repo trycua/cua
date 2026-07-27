@@ -30,7 +30,7 @@ Lifecycle (every step is narrated so you can follow along in the console):
   1. exchange the client_credentials for a bearer token (``TrainClient.from_key``)
   2. create the per-user namespace (``POST /api/namespaces`` — same path the SPA
      uses, so Capsule sets up tenant ownership + RBAC; pool name == namespace)
-  3. create an ``OSGymWorkspacePool`` (``cua.ai/v1``) via the ``/api/k8s``
+  3. create an ``Pool`` (``cua.ai/v1``) via the ``/api/k8s``
      kubectl-proxy — the Windows image, **efi firmware**, and a service on :8000.
      The pool-operator's compat shim projects it into an ``OSGymSandboxTemplate``
      + ``OSGymSandboxWarmPool`` pair and warms the VM.
@@ -87,7 +87,7 @@ DEFAULT_BASE_URL = "https://run.cua.ai"
 # image, so the pool MUST boot it with efi firmware (see --firmware below).
 DEFAULT_IMAGE = "296062593712.dkr.ecr.us-west-2.amazonaws.com/cua-server-windows:latest"
 
-# OSGymWorkspacePool — the legacy single-object pool CR the cyclops-cs SPA
+# Pool — the legacy single-object pool CR the cyclops-cs SPA
 # creates (cua.ai/v1). The pool-operator compat shim translates it into the
 # native OSGymSandboxTemplate + OSGymSandboxWarmPool pair.
 POOL_GROUP = "cua.ai"
@@ -171,7 +171,7 @@ def create_pool(
     port: int,
     readiness_port: int,
 ) -> None:
-    """Create the OSGymWorkspacePool. Mirrors cyclops-cs api.createPool exactly."""
+    """Create the Pool. Mirrors cyclops-cs api.createPool exactly."""
     template: dict = {
         "containerDiskImage": image,
         "imagePullSecret": "ecr-credentials",

@@ -5,6 +5,7 @@ mod json;
 mod sandbox;
 mod warmpool;
 mod workspace_pool;
+mod legacy_pool_compat;
 
 pub use claim::{
     ClaimLifecycle, ClaimSpec, OSGymSandboxClaim, OSGymSandboxClaimCondition,
@@ -22,8 +23,7 @@ pub use sandbox::{
 pub use warmpool::{
     OSGymSandboxWarmPool, OSGymSandboxWarmPoolSpec, OSGymSandboxWarmPoolStatus, WarmPoolAutoscaling,
 };
-pub use workspace_pool::{
-    OSGymWorkspacePool, OSGymWorkspacePoolStatus, PoolSpec, PoolTemplate, WorkspacePoolAutoscaling,
-};
+pub use workspace_pool::{PoolSpec, PoolStatus, PoolTemplate, WorkspacePoolAutoscaling};
+pub use legacy_pool_compat::*;
 
 uniffi::setup_scaffolding!("cyclops_sdk_schema");

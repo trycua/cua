@@ -5,22 +5,23 @@ module CyclopsSdk
   CyclopsSdkSchema.constants(false).each do |name|
     const_set(name, CyclopsSdkSchema.const_get(name)) unless const_defined?(name, false)
   end
+  OSGymWorkspacePoolStatus = PoolStatus
   SCHEMA_CHECK_LOWER_METHODS = %i[
     check_lower_TypeClaimSpec
     check_lower_TypeOSGymSandboxClaimStatus
-    check_lower_TypeOSGymWorkspacePoolStatus
+    check_lower_TypePoolStatus
     check_lower_TypePoolSpec
   ].freeze
   SCHEMA_READ_METHODS = %i[
     readTypeClaimSpec
     readTypeOSGymSandboxClaimStatus
-    readTypeOSGymWorkspacePoolStatus
+    readTypePoolStatus
     readTypePoolSpec
   ].freeze
   SCHEMA_WRITE_METHODS = %i[
     write_TypeClaimSpec
     write_TypeOSGymSandboxClaimStatus
-    write_TypeOSGymWorkspacePoolStatus
+    write_TypePoolStatus
     write_TypePoolSpec
   ].freeze
 

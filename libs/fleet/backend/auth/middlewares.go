@@ -229,7 +229,7 @@ func LoadOpa() {
 	_ = flagsData()
 }
 
-// EvalPoolAdmission validates an OSGymWorkspacePool write body before it is
+// EvalPoolAdmission validates an Pool write body before it is
 // forwarded to Kubernetes.
 func EvalPoolAdmission(ctx context.Context, method string, object map[string]any) (bool, error) {
 	res, err := opaPoolAdmissionQuery.Eval(ctx, rego.EvalInput(map[string]any{

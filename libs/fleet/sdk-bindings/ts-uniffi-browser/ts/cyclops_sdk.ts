@@ -16,7 +16,7 @@ import {
 import {
   type ClaimSpec,
   type OsGymSandboxClaimStatus,
-  type OsGymWorkspacePoolStatus,
+  type PoolStatus,
   type PoolSpec,
 } from "./cyclops_sdk_schema";
 import {
@@ -59,7 +59,7 @@ import uniffiCyclopsSdkSchemaModule from "./cyclops_sdk_schema";
 const {
   FfiConverterTypeClaimSpec,
   FfiConverterTypeOSGymSandboxClaimStatus,
-  FfiConverterTypeOSGymWorkspacePoolStatus,
+  FfiConverterTypePoolStatus,
   FfiConverterTypePoolSpec,
 } = uniffiCyclopsSdkSchemaModule.converters;
 // wasm1: wrap the wasm-bindgen namespace once so the codegen call sites can
@@ -213,14 +213,14 @@ const FfiConverterTypeClaim = (() => {
 
 /**
  * UniFFI cannot emit aliases for external record types. Generated bindings use
- * `OSGymWorkspacePoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
+ * `PoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
  */
 export type Pool = {
   apiVersion: string;
   kind: string;
   metadata: ResourceMetadata;
   spec: PoolSpec;
-  status?: OsGymWorkspacePoolStatus;
+  status?: PoolStatus;
 };
 
 /**
@@ -247,7 +247,7 @@ const FfiConverterTypePool = (() => {
         kind: FfiConverterString.read(from),
         metadata: FfiConverterTypeResourceMetadata.read(from),
         spec: FfiConverterTypePoolSpec.read(from),
-        status: FfiConverterOptionalTypeOSGymWorkspacePoolStatus.read(from),
+        status: FfiConverterOptionalTypePoolStatus.read(from),
       };
     }
     write(value: TypeName, into: RustBuffer): void {
@@ -255,7 +255,7 @@ const FfiConverterTypePool = (() => {
       FfiConverterString.write(value.kind, into);
       FfiConverterTypeResourceMetadata.write(value.metadata, into);
       FfiConverterTypePoolSpec.write(value.spec, into);
-      FfiConverterOptionalTypeOSGymWorkspacePoolStatus.write(
+      FfiConverterOptionalTypePoolStatus.write(
         value.status,
         into,
       );
@@ -266,7 +266,7 @@ const FfiConverterTypePool = (() => {
         FfiConverterString.allocationSize(value.kind) +
         FfiConverterTypeResourceMetadata.allocationSize(value.metadata) +
         FfiConverterTypePoolSpec.allocationSize(value.spec) +
-        FfiConverterOptionalTypeOSGymWorkspacePoolStatus.allocationSize(
+        FfiConverterOptionalTypePoolStatus.allocationSize(
           value.status,
         )
       );
@@ -2731,9 +2731,9 @@ const FfiConverterOptionalMapStringString = new FfiConverterOptional(
 const FfiConverterOptionalTypeOSGymSandboxClaimStatus =
   new FfiConverterOptional(FfiConverterTypeOSGymSandboxClaimStatus);
 
-// FfiConverter for OsGymWorkspacePoolStatus | undefined
-const FfiConverterOptionalTypeOSGymWorkspacePoolStatus =
-  new FfiConverterOptional(FfiConverterTypeOSGymWorkspacePoolStatus);
+// FfiConverter for PoolStatus | undefined
+const FfiConverterOptionalTypePoolStatus =
+  new FfiConverterOptional(FfiConverterTypePoolStatus);
 
 // FfiConverter for ClaimSpec | undefined
 const FfiConverterOptionalTypeClaimSpec = new FfiConverterOptional(

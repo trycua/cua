@@ -370,7 +370,7 @@ grep -Fq -- "    readTypePoolSpec" "$bindings_dir/ruby/cyclops_sdk.rb" || fail "
 if grep -Fq -- "OsGym" "$ruby_sdk_source"; then
   fail "Ruby SDK retains cross-crate OsGym helper names"
 fi
-grep -Fq -- "    readTypeOSGymWorkspacePoolStatus" "$bindings_dir/ruby/cyclops_sdk.rb" || fail "Ruby facade does not delegate schema optional readers"
+grep -Fq -- "    readTypePoolStatus" "$bindings_dir/ruby/cyclops_sdk.rb" || fail "Ruby facade does not delegate schema optional readers"
 if grep -Fq -- "return 0 if @handle.nil?" "$ruby_sdk_source"; then
   fail "Ruby callback bindings lower native callbacks to an invalid zero handle"
 fi
@@ -459,5 +459,7 @@ expect_transaction_signal after-new-live TERM "$baseline_hash"
 "$generator"
 assert_tree_unchanged "$baseline_hash" "normal root replacement"
 "$generator" --check
+
+"$workspace_dir/scripts/check-workspace-pool-legacy-token.sh"
 
 printf 'generate-sdk-bindings regression checks passed.\n'

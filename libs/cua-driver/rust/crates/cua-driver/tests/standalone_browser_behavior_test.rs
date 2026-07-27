@@ -1417,6 +1417,24 @@ fn generic_type_text_case(browser: &str) -> CaseSpec {
     )
 }
 
+#[cfg(target_os = "macos")]
+fn web_type_text_verification_case(browser: &str) -> CaseSpec {
+    CaseSpec::delivered(
+        format!(
+            "{}-{browser}-standalone-web-type-text-verification",
+            std::env::consts::OS
+        ),
+        browser,
+        "standalone-chromium",
+        "web_type_text_verification",
+        Targeting::Px,
+        Delivery::Foreground,
+        Scope::Window,
+        DriverRoute::MacosCgEventHid,
+        vec![OracleKind::FixtureState, OracleKind::Protocol],
+    )
+}
+
 fn run_with_background_oracles(
     fixture: &mut BrowserFixture,
     action: impl FnOnce(&mut BrowserFixture) -> Observation,
@@ -1788,6 +1806,50 @@ fn run_native_omnibox_select_all(spec: &BrowserSpec) {
 }
 
 #[cfg(target_os = "macos")]
+fn generic_editor_coordinates(fixture: &mut BrowserFixture) -> (f64, f64) {
+    let state = fixture.driver.call(
+        "get_window_state",
+        serde_json::json!({
+            "pid": fixture.pid as i64,
+            "window_id": fixture.window_id,
+            "capture_mode": "vision",
+        }),
+    );
+    assert!(!state.is_error(), "native browser snapshot: {}", state.raw);
+    let index = element_index_containing(state.tree_text(), "generic-long-editor")
+        .expect("generic long editor must be present in the native AX tree");
+    let elements = state.structured()["elements"]
+        .as_array()
+        .expect("native snapshot elements");
+    let editor_frame = elements
+        .iter()
+        .find(|element| element["element_index"].as_u64() == Some(index))
+        .and_then(|element| element["frame"].as_object())
+        .expect("generic long editor frame");
+    let window_frame = elements
+        .iter()
+        .find(|element| element["role"].as_str() == Some("AXWindow"))
+        .and_then(|element| element["frame"].as_object())
+        .expect("browser AXWindow frame");
+    let window_x = window_frame["x"].as_f64().expect("window x");
+    let window_y = window_frame["y"].as_f64().expect("window y");
+    let window_width = window_frame["w"].as_f64().expect("window width");
+    let scale = state.structured()["screenshot_width"]
+        .as_f64()
+        .expect("screenshot width")
+        / window_width;
+    let x = (editor_frame["x"].as_f64().expect("editor x")
+        + editor_frame["w"].as_f64().expect("editor width") / 2.0
+        - window_x)
+        * scale;
+    let y = (editor_frame["y"].as_f64().expect("editor y")
+        + editor_frame["h"].as_f64().expect("editor height") / 2.0
+        - window_y)
+        * scale;
+    (x, y)
+}
+
+#[cfg(target_os = "macos")]
 fn run_generic_type_text_completion(spec: &BrowserSpec) {
     let scenario = format!(
         "{}-{}-standalone-generic-type-text-completion",
@@ -1799,45 +1861,7 @@ fn run_generic_type_text_completion(spec: &BrowserSpec) {
             launch_browser_with_html(spec, &scenario, standalone_generic_type_text_html());
         *evidence = recording_evidence(fixture.driver.recording_dir());
         run_with_background_oracles(&mut fixture, |fixture| {
-            let state = fixture.driver.call(
-                "get_window_state",
-                serde_json::json!({
-                    "pid": fixture.pid as i64,
-                    "window_id": fixture.window_id,
-                    "capture_mode": "vision",
-                }),
-            );
-            assert!(!state.is_error(), "native browser snapshot: {}", state.raw);
-            let index = element_index_containing(state.tree_text(), "generic-long-editor")
-                .expect("generic long editor must be present in the native AX tree");
-            let elements = state.structured()["elements"]
-                .as_array()
-                .expect("native snapshot elements");
-            let editor_frame = elements
-                .iter()
-                .find(|element| element["element_index"].as_u64() == Some(index))
-                .and_then(|element| element["frame"].as_object())
-                .expect("generic long editor frame");
-            let window_frame = elements
-                .iter()
-                .find(|element| element["role"].as_str() == Some("AXWindow"))
-                .and_then(|element| element["frame"].as_object())
-                .expect("browser AXWindow frame");
-            let window_x = window_frame["x"].as_f64().expect("window x");
-            let window_y = window_frame["y"].as_f64().expect("window y");
-            let window_width = window_frame["w"].as_f64().expect("window width");
-            let scale = state.structured()["screenshot_width"]
-                .as_f64()
-                .expect("screenshot width")
-                / window_width;
-            let x = (editor_frame["x"].as_f64().expect("editor x")
-                + editor_frame["w"].as_f64().expect("editor width") / 2.0
-                - window_x)
-                * scale;
-            let y = (editor_frame["y"].as_f64().expect("editor y")
-                + editor_frame["h"].as_f64().expect("editor height") / 2.0
-                - window_y)
-                * scale;
+            let (x, y) = generic_editor_coordinates(fixture);
 
             let payload = format!("BEGIN-{}-END", "0123456789abcdef".repeat(52));
             let requested_chars = payload.chars().count();
@@ -1892,6 +1916,70 @@ fn run_generic_type_text_completion(spec: &BrowserSpec) {
 
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         })
+    });
+}
+
+#[cfg(target_os = "macos")]
+fn run_web_type_text_verification(spec: &BrowserSpec) {
+    let scenario = format!(
+        "{}-{}-standalone-web-type-text-verification",
+        std::env::consts::OS,
+        spec.name
+    );
+    execute_case(web_type_text_verification_case(&spec.name), |evidence| {
+        let mut fixture =
+            launch_browser_with_html(spec, &scenario, standalone_generic_type_text_html());
+        *evidence = recording_evidence(fixture.driver.recording_dir());
+        let (x, y) = generic_editor_coordinates(&mut fixture);
+        let payload = "cua-web-verification-honesty";
+        let typed = fixture.driver.call(
+            "type_text",
+            serde_json::json!({
+                "pid": fixture.pid as i64,
+                "window_id": fixture.window_id,
+                "x": x,
+                "y": y,
+                "text": payload,
+                "delivery_mode": "foreground",
+            }),
+        );
+        assert!(!typed.is_error(), "web type_text failed: {}", typed.raw);
+        assert_eq!(typed.path(), Some("key_events_fg"), "{}", typed.raw);
+        assert_eq!(typed.verified(), Some(false), "{}", typed.raw);
+        assert_eq!(
+            typed.structured()["effect"],
+            "unverifiable",
+            "{}",
+            typed.raw
+        );
+        assert_eq!(
+            typed.structured()["escalation"]["recommended"],
+            "page",
+            "{}",
+            typed.raw
+        );
+
+        let ws_url = cdp_page_websocket_for_url(fixture.cdp_port, fixture.server.page_url());
+        let value = harness_cdp_call_at_url(
+            &ws_url,
+            "Runtime.evaluate",
+            serde_json::json!({
+                "expression": "document.getElementById('generic-long-editor').innerText",
+                "returnByValue": true,
+            }),
+        )["result"]["value"]
+            .as_str()
+            .expect("generic long editor DOM value")
+            .to_owned();
+        assert_eq!(
+            value, payload,
+            "fixture DOM is the independent delivery oracle"
+        );
+
+        Observation::delivered(
+            vec![OracleKind::FixtureState, OracleKind::Protocol],
+            Evidence::default(),
+        )
     });
 }
 
@@ -3771,6 +3859,11 @@ standalone_browser_test!(
 standalone_browser_test!(
     standalone_browser_generic_type_text_completion,
     run_generic_type_text_completion
+);
+#[cfg(target_os = "macos")]
+standalone_browser_test!(
+    standalone_browser_web_type_text_verification,
+    run_web_type_text_verification
 );
 standalone_browser_test!(standalone_browser_trusted_click, run_trusted_click);
 standalone_browser_test!(

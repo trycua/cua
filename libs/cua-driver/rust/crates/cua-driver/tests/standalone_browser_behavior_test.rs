@@ -3436,6 +3436,55 @@ fn changed_pixel_count(before: &image::RgbaImage, after: &image::RgbaImage) -> u
         .count() as u64
 }
 
+fn browser_chrome_changed_pixel_center(
+    before: &image::RgbaImage,
+    after: &image::RgbaImage,
+    desktop: &ToolResponse,
+    bounds: (f64, f64, f64, f64),
+) -> Option<(f64, f64)> {
+    assert_eq!(before.dimensions(), after.dimensions());
+    let screen_width = desktop.structured()["screen_width"].as_f64()?;
+    let screen_height = desktop.structured()["screen_height"].as_f64()?;
+    let scale_x = f64::from(before.width()) / screen_width;
+    let scale_y = f64::from(before.height()) / screen_height;
+    let left = (bounds.0 * scale_x).round().max(0.0) as u32;
+    let top = (bounds.1 * scale_y).round().max(0.0) as u32;
+    let right = ((bounds.0 + bounds.2) * scale_x)
+        .round()
+        .min(f64::from(before.width())) as u32;
+    // Browser permission indicators live in the top chrome. Limiting the
+    // search excludes any unrelated page repaint below the toolbar.
+    let bottom = ((bounds.1 + bounds.3.min(120.0)) * scale_y)
+        .round()
+        .min(f64::from(before.height())) as u32;
+    let mut changed = 0_u64;
+    let mut x_sum = 0_u64;
+    let mut y_sum = 0_u64;
+    for y in top..bottom {
+        for x in left..right {
+            let before = before.get_pixel(x, y);
+            let after = after.get_pixel(x, y);
+            if before
+                .0
+                .iter()
+                .zip(after.0.iter())
+                .take(3)
+                .any(|(before, after)| before.abs_diff(*after) >= 32)
+            {
+                changed += 1;
+                x_sum += u64::from(x);
+                y_sum += u64::from(y);
+            }
+        }
+    }
+    (changed > 0).then(|| {
+        (
+            (x_sum as f64 / changed as f64) / scale_x,
+            (y_sum as f64 / changed as f64) / scale_y,
+        )
+    })
+}
+
 fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
     let scenario = format!(
         "{}-{}-standalone-browser-owned-permission",
@@ -3575,7 +3624,7 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
             "window contract leaked fixture prompt internals: {}",
             window.raw
         );
-        let desktop = fixture.driver.call(
+        let mut desktop = fixture.driver.call(
             "get_desktop_state",
             serde_json::json!({
                 "session": window_session,
@@ -3589,7 +3638,7 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
         );
 
         let window_before = load_capture(&window_before_path);
-        let window_after = load_capture(&window_after_path);
+        let mut window_after = load_capture(&window_after_path);
         assert_eq!(
             window_before.dimensions(),
             window_after.dimensions(),
@@ -3598,8 +3647,79 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
         let output_size = window_before.dimensions();
         let desktop_crop_before =
             desktop_window_crop(&desktop_before_path, &desktop_before, bounds, output_size);
-        let desktop_crop_after =
+        let mut desktop_crop_after =
             desktop_window_crop(&desktop_after_path, &desktop, bounds, output_size);
+        let compared_pixels = u64::from(output_size.0) * u64::from(output_size.1);
+        let minimum_prompt_pixels = (compared_pixels / 1_000).max(1_000);
+        let initial_desktop_changed_pixels =
+            changed_pixel_count(&desktop_crop_before, &desktop_crop_after);
+        let mut quiet_prompt_expanded = false;
+        let mut quiet_prompt_indicator = None;
+
+        // Edge can collapse the notification request to a quiet indicator in
+        // browser chrome. Expand the region that actually changed, then assess
+        // the resulting browser-owned surface with the same pixel oracle.
+        if cfg!(target_os = "windows")
+            && spec.name == "edge"
+            && initial_desktop_changed_pixels < minimum_prompt_pixels
+        {
+            let full_desktop_before = load_capture(&desktop_before_path);
+            let full_desktop_after = load_capture(&desktop_after_path);
+            let (x, y) = browser_chrome_changed_pixel_center(
+                &full_desktop_before,
+                &full_desktop_after,
+                &desktop,
+                bounds,
+            )
+            .expect("quiet permission indicator did not produce a changed browser chrome region");
+            quiet_prompt_indicator = Some((x, y));
+            let expanded = fixture.driver.call(
+                "click",
+                serde_json::json!({
+                    "session": window_session,
+                    "scope": "desktop",
+                    "x": x,
+                    "y": y,
+                }),
+            );
+            assert!(
+                !expanded.is_error(),
+                "expand quiet permission indicator: {}",
+                expanded.raw
+            );
+            thread::sleep(Duration::from_millis(250));
+            let recaptured_window = fixture.driver.call(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": fixture.pid as i64,
+                    "window_id": fixture.window_id,
+                    "session": after_window_session,
+                    "screenshot_out_file": window_after_path,
+                }),
+            );
+            assert!(
+                !recaptured_window.is_error(),
+                "recapture expanded quiet permission window: {}",
+                recaptured_window.raw
+            );
+            desktop = fixture.driver.call(
+                "get_desktop_state",
+                serde_json::json!({
+                    "session": window_session,
+                    "screenshot_out_file": desktop_after_path,
+                }),
+            );
+            assert!(
+                !desktop.is_error(),
+                "recapture expanded quiet permission desktop: {}",
+                desktop.raw
+            );
+            window_after = load_capture(&window_after_path);
+            desktop_crop_after =
+                desktop_window_crop(&desktop_after_path, &desktop, bounds, output_size);
+            quiet_prompt_expanded = true;
+        }
+
         desktop_crop_before
             .save(&desktop_crop_before_path)
             .expect("write normalized desktop baseline");
@@ -3609,8 +3729,6 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
 
         let desktop_changed_pixels = changed_pixel_count(&desktop_crop_before, &desktop_crop_after);
         let window_changed_pixels = changed_pixel_count(&window_before, &window_after);
-        let compared_pixels = u64::from(output_size.0) * u64::from(output_size.1);
-        let minimum_prompt_pixels = (compared_pixels / 1_000).max(1_000);
         let desktop_has_materially_more_prompt_pixels =
             window_changed_pixels.saturating_mul(4) < desktop_changed_pixels;
         let metrics = serde_json::json!({
@@ -3627,8 +3745,13 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
             "compared_pixels": compared_pixels,
             "pixel_channel_threshold": 32,
             "minimum_prompt_pixels": minimum_prompt_pixels,
+            "initial_desktop_changed_pixels": initial_desktop_changed_pixels,
             "desktop_changed_pixels": desktop_changed_pixels,
             "window_changed_pixels": window_changed_pixels,
+            "quiet_prompt_expanded": quiet_prompt_expanded,
+            "quiet_prompt_indicator": quiet_prompt_indicator.map(|(x, y)| {
+                serde_json::json!({"x": x, "y": y})
+            }),
             "desktop_has_materially_more_prompt_pixels":
                 desktop_has_materially_more_prompt_pixels,
         });

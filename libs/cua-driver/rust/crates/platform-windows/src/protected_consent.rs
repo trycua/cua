@@ -225,7 +225,7 @@ unsafe extern "system" fn window_proc(
             }
             return LRESULT(0);
         }
-        WM_KEYDOWN if wparam.0 as u32 == VK_ESCAPE.0 => {
+        WM_KEYDOWN if wparam.0 as u32 == u32::from(VK_ESCAPE.0) => {
             finish(fallback_outcome());
             return LRESULT(0);
         }

@@ -1,203 +1,121 @@
 ---
 title: Configure run.cua.ai fleets with Terraform
-description: Create Linux and Windows run.cua.ai fleets through the Cyclops Terraform provider.
+description: Create Linux and Windows run.cua.ai fleets with the temporary local Cua Fleets provider installation.
 ---
 
-Use this guide to create a run.cua.ai fleet backed by Cyclops-CS. In the
-control plane, a fleet is a pool of reusable sandboxes. Terraform represents
-that fleet as one `cyclops_pool` resource. Creating the resource creates a
-tenant-scoped `OSGymWorkspacePool` and a namespace with the same name;
-destroying it removes both.
-
-Cyclops-CS is the run.cua.ai control plane. It authenticates the user key,
-proxies the request to Kubernetes with the user's tenant identity, and the pool
-operator reconciles the pool into its sandbox template and warm-pool resources.
-Use a separate pool for each operating system or image configuration.
+Use this guide to create a run.cua.ai fleet backed by the public Cua Fleets
+provider. Terraform represents each fleet as a `fleets_pool` resource. Creating
+a resource creates a tenant-scoped `OSGymWorkspacePool` and a namespace with the
+same name; destroying it removes both.
 
 ## Prerequisites
 
-- Terraform and Go.
-- A checkout of [`trycua/cloud`](https://github.com/trycua/cloud). The provider
-  source lives in `cyclops-cs/terraform-provider-cyclops`.
-- A run.cua.ai **user API key**. Create it in run.cua.ai and save the returned
-  `client_id`, `client_secret`, and `token_url`. The client ID begins with
-  `ukey-`. Pool keys do not have the Kubernetes identity needed to create
-  namespaces or pools.
-- Permission to use the selected container image and image-pull secret. The
-  service rejects images or pull secrets that its admission policy does not
-  allow.
+- A run.cua.ai user key or access token with permission to manage Fleet pools.
+  Keep credentials in environment variables or a secret manager, not in source
+  control.
+- Terraform or OpenTofu and Go on the machine where you build the provider.
+- The temporary local provider installation from the public
+  [terraform-provider-fleets README](https://github.com/trycua/terraform-provider-fleets#temporary-local-installation-until-registry-publication).
 
-## Maintainers: publish the provider
+The provider is not published to the Terraform Registry yet. Follow the public
+README to clone `https://github.com/trycua/terraform-provider-fleets.git`, build
+for your current OS and architecture, and configure its filesystem mirror. That
+flow installs a local binary; it is not Registry resolution. Replace this
+temporary setup with the normal Registry installation after `trycua/fleets` is
+published.
 
-This section is for maintainers only. End users do not build or sign a provider.
-After publication, they keep the `trycua/cyclops` source in `required_providers`
-and run `terraform init` without a filesystem mirror.
-
-Yes, the provider must be released from a public GitHub repository named
-`trycua/terraform-provider-cyclops`. Terraform Registry discovery requires the
-public `terraform-provider-<name>` repository convention. The current provider
-is nested at `cyclops-cs/terraform-provider-cyclops` in `trycua/cloud`; extract
-or maintain a public source mirror in the convention-named repository before
-publishing. Its Go module path already matches that repository.
-
-Before the first release, maintainers must:
-
-1. Move the provider module, generated schema inputs, documentation, tests, and
-   release configuration into `trycua/terraform-provider-cyclops`. Keep the
-   provider address `registry.terraform.io/trycua/cyclops`.
-2. Add a root `terraform-registry-manifest.json` declaring registry manifest
-   version `1` and provider protocol version `6.0`.
-3. Add tag-triggered release automation, such as GoReleaser, that builds the
-   provider binary with its injected version and creates a public GitHub Release.
-4. Give the Terraform Registry organization administrator the public GPG signing
-   key, and store the matching private key and passphrase only in protected
-   release-automation secrets.
-5. Publish a semantic-version tag such as `v0.1.0`; no branch may have the
-   same name. Its finalized public GitHub Release must contain
-   `terraform-provider-cyclops_0.1.0_<os>_<arch>.zip` archives, each with the
-   executable `terraform-provider-cyclops_v0.1.0`, a
-   `terraform-provider-cyclops_0.1.0_manifest.json`,
-   `terraform-provider-cyclops_0.1.0_SHA256SUMS`, and a detached binary GPG
-   signature named `terraform-provider-cyclops_0.1.0_SHA256SUMS.sig`. The
-   signature must sign the checksum file; every archive and the manifest must
-   have a checksum in that file.
-6. Have a Registry organization owner publish the provider, select the public
-   repository and signing key, then verify the Registry webhook and the released
-   version.
-
-The current `trycua/cloud` tree has provider source but no Registry manifest,
-GoReleaser configuration, signing configuration, or provider-release workflow.
-Creating the public repository, configuring organization access, and publishing
-the signing key require owner credentials; this guide does not perform them. See
-[Terraform Registry provider publishing requirements](https://developer.hashicorp.com/terraform/registry/providers/publishing)
-for the current Registry contract.
-
-## Local development fallback
-
-Until that publication path is complete, build the provider locally before
-initializing either example:
+The provider source address remains `trycua/fleets`; do not use a GitHub URL in
+`required_providers.source`. Set the CLI configuration file created by the
+public README before initializing either example:
 
 ```bash
-git clone https://github.com/trycua/cloud.git
-cd cloud
-
-mirror="$PWD/.provider-mirror/registry.terraform.io/trycua/cyclops/0.1.0/linux_amd64"
-mkdir -p "$mirror"
-(cd cyclops-cs/terraform-provider-cyclops && \
-  go build -o "$mirror/terraform-provider-cyclops_v0.1.0" .)
-
-cat > terraform.rc <<EOF_MIRROR
-provider_installation {
-  filesystem_mirror {
-    path    = "$PWD/.provider-mirror"
-    include = ["trycua/cyclops"]
-  }
-  direct {
-    exclude = ["trycua/cyclops"]
-  }
-}
-EOF_MIRROR
-
-export TF_CLI_CONFIG_FILE="$PWD/terraform.rc"
+export TF_CLI_CONFIG_FILE="$HOME/.terraformrc-fleets-local"
 ```
 
-Keep the credentials out of `.tf` files, `.tfvars` files, and version control.
-Configure the provider from environment variables instead:
+For OpenTofu, run the same commands with `tofu` in place of `terraform`.
+
+## Authentication
+
+The provider accepts either `CYCLOPS_ACCESS_TOKEN`, or all three OAuth user-key
+variables: `CYCLOPS_CLIENT_ID`, `CYCLOPS_CLIENT_SECRET`, and
+`CYCLOPS_TOKEN_URL`. Configure the run.cua.ai endpoint separately:
 
 ```bash
-export CYCLOPS_CLIENT_ID='ukey-...'
-export CYCLOPS_CLIENT_SECRET='...'
-export CYCLOPS_TOKEN_URL='https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token'
+export CYCLOPS_ENDPOINT="https://run.cua.ai"
+export CYCLOPS_ACCESS_TOKEN="<your-access-token>"
 ```
-
-For a short-lived workflow, `CYCLOPS_ACCESS_TOKEN` can replace all three
-user-key variables. The provider also supports `CYCLOPS_ENDPOINT`, but the
-examples set the production endpoint explicitly.
 
 ## Create a Linux fleet
 
-Create an empty directory outside the `cloud` checkout, then add the following
-`main.tf`. This Linux image uses BIOS firmware and exposes the CUA Driver MCP
-server on port `3000`. The readiness probe waits for the workspace agent on
-port `5000`.
+Create a new directory, save this as `main.tf`, and choose a unique lowercase
+DNS-label pool name. This example creates a KubeVirt Linux pool and exposes SSH.
 
 ```hcl title="main.tf"
 terraform {
   required_providers {
-    cyclops = {
-      source  = "trycua/cyclops"
-      version = "0.1.0"
+    fleets = {
+      source  = "trycua/fleets"
+      version = "1.0.0"
     }
   }
 }
 
-provider "cyclops" {
+provider "fleets" {
   endpoint = "https://run.cua.ai"
 }
 
-resource "cyclops_pool" "linux" {
+resource "fleets_pool" "linux" {
   name                 = "linux-fleet"
   replicas             = 0
   cpu_cores            = 4
-  memory               = "4Gi"
-  container_disk_image = "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace:latest"
+  memory               = "8Gi"
+  container_disk_image = "296062593712.dkr.ecr.us-west-2.amazonaws.com/osgym-workspace:latest"
   runtime              = "kubevirt"
   firmware             = "bios"
 
-  readiness_probe_json = jsonencode({
-    tcpSocket           = { port = 5000 }
-    initialDelaySeconds = 15
-    periodSeconds       = 5
-    failureThreshold    = 60
-  })
-
   service {
-    name        = "mcp"
-    target_port = 3000
+    name        = "ssh"
+    target_port = 22
     protocol    = "TCP"
   }
 
   autoscaling {
     min_pool_size     = 0
     initial_pool_size = 1
-    max_pool_size     = 10
+    max_pool_size     = 5
   }
 }
 
 output "linux_fleet" {
   value = {
-    name      = cyclops_pool.linux.name
-    namespace = cyclops_pool.linux.namespace
-    phase     = cyclops_pool.linux.phase
+    name      = fleets_pool.linux.name
+    namespace = fleets_pool.linux.namespace
+    phase     = fleets_pool.linux.phase
   }
 }
 ```
 
-`replicas = 0` avoids idle warm capacity. `initial_pool_size` provides a
-one-time warm start, and `max_pool_size` limits claim-driven growth. Set the
-limits for your expected demand and cost boundary.
-
 ## Create a Windows fleet
 
-Use a different pool name for Windows. The Windows computer-server image is a
-GPT/UEFI image, so this example sets `firmware = "efi"`. It waits for the
-computer server on port `8000` and exposes that port as a service.
+Use a distinct name for Windows. The Windows computer-server image requires
+UEFI, so this example sets `firmware = "efi"` and waits for the service on port
+`8000`.
 
 ```hcl title="main.tf"
 terraform {
   required_providers {
-    cyclops = {
-      source  = "trycua/cyclops"
-      version = "0.1.0"
+    fleets = {
+      source  = "trycua/fleets"
+      version = "1.0.0"
     }
   }
 }
 
-provider "cyclops" {
+provider "fleets" {
   endpoint = "https://run.cua.ai"
 }
 
-resource "cyclops_pool" "windows" {
+resource "fleets_pool" "windows" {
   name                 = "windows-fleet"
   replicas             = 0
   cpu_cores            = 4
@@ -229,22 +147,20 @@ resource "cyclops_pool" "windows" {
 
 output "windows_fleet" {
   value = {
-    name      = cyclops_pool.windows.name
-    namespace = cyclops_pool.windows.namespace
-    phase     = cyclops_pool.windows.phase
+    name      = fleets_pool.windows.name
+    namespace = fleets_pool.windows.namespace
+    phase     = fleets_pool.windows.phase
   }
 }
 ```
 
-Windows cold starts include an image pull, a Windows boot, and startup of the
-computer-server task. Keep the longer readiness window unless you have measured
-a safe lower value for your image and fleet.
-
 ## Apply, verify, and destroy
 
-From the directory that contains one example, run:
+With `TF_CLI_CONFIG_FILE` still set, initialize from the local mirror and run
+one example:
 
 ```bash
+rm -rf .terraform .terraform.lock.hcl
 terraform init
 terraform fmt -check
 terraform validate
@@ -253,13 +169,13 @@ terraform apply
 terraform output
 ```
 
-The provider returns `namespace`, `phase`, `total_count`, `available_count`,
-and `claimed_count` for each pool. A ready fleet has available sandboxes when
-the warm pool has finished provisioning. Inspect the pool in run.cua.ai if the
-phase does not progress or no sandboxes become available.
+`terraform init` uses the locally built provider and must not resolve
+`trycua/fleets` from the public Registry. The provider returns `namespace`,
+`phase`, `total_count`, `available_count`, and `claimed_count`. A ready fleet
+has available sandboxes after its warm pool provisions.
 
-Remove the pool and its same-named namespace when the fleet is no longer
-needed:
+Destroy the pool when finished. This deletes both the pool and its same-named
+namespace:
 
 ```bash
 terraform destroy
@@ -268,16 +184,9 @@ terraform destroy
 ## Troubleshooting and security
 
 - Use a lowercase DNS label of at most 63 characters for `name`. Changing it
-  replaces the pool because the name also owns its namespace.
+  replaces the pool because it also owns its namespace.
 - Check the image reference and image-pull-secret policy if creation returns
-  `403`. `image_pull_secret` defaults to `ecr-credentials`; specify another
-  allowed secret only when your deployment requires it.
+  `403`. `image_pull_secret` defaults to `ecr-credentials`.
 - Use `bios` for the Linux workspace image and `efi` for the Windows
   computer-server image. A firmware mismatch prevents the guest from booting.
-- Do not use a per-pool key. Use a `ukey-` user key so Cyclops-CS can apply
-  tenant-scoped Kubernetes authorization.
-- Protect Terraform state and shell history as operational secrets. Prefer
-  exported credential variables or your secret manager over literal provider
-  credentials.
-- `terraform destroy` deletes the pool and its same-named namespace. Release
-  or back up any data that must outlive the fleet before destroying it.
+- Protect Terraform state and shell history as operational secrets.

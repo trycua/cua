@@ -303,7 +303,7 @@ jobs:
             files+=("dist/$wheel")
           done
           TWINE_USERNAME="__token__" TWINE_PASSWORD="$PYPI_TOKEN" \
-            python -m twine upload "${files[@]}"
+            python -m twine upload --verbose "${files[@]}"
 
   create-release:
     needs: [prepare, publish]

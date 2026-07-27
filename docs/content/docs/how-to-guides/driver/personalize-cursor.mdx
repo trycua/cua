@@ -32,6 +32,23 @@ cua-driver get_agent_cursor_state '{"session":"demo"}'
 Use `set_agent_cursor_enabled` to hide or show the session cursor. Use
 `set_agent_cursor_motion` for movement physics and visibility timing only.
 
+## Session name badge
+
+The built-in overlay places the public session name in a compact badge below
+the pointer. The badge follows the cursor, uses the session color, and renders
+with the same display-scale-aware native pipeline as the theme.
+
+Choose a short, recognizable session name when starting the session:
+
+```bash
+cua-driver start_session '{"session":"research"}'
+```
+
+The badge displays `research`. Cua Driver strips control characters, collapses
+whitespace, and shortens labels longer than 28 characters. The label is visual
+identity only. It does not grant authorization, select another session's
+capabilities, or expose Cua's private runtime identifier.
+
 The old `set_agent_cursor_style` operation and its `cursor_id`, shape, color,
 label, size, opacity, image-path, gradient, and bloom styling fields have been
 removed. (`cursor_id` may still appear on input-delivery tools where it names a

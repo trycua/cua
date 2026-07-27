@@ -109,12 +109,17 @@ setting it.
 ## Choosing the agent permission mode
 
 Embedded hosts own their user-facing permission experience, but they must
-select Cua Driver's immutable daemon mode at trusted launch. The choices are:
+select Cua Driver's immutable runtime mode at trusted launch. The choices are:
 
-- `standard`: protected runtime approval for migrated sensitive operations.
-- `bounded`: unattended work inside an approved, exact session manifest.
+- `standard`: promptless routine automation, with explicit host authorization
+  only for residual boundaries such as an existing logged-in Chromium profile.
+- `bounded`: unattended work inside an approved tool and resource manifest.
 - `unrestricted`: no Cua runtime approvals; use only when the host accepts the
   consequences of prompt injection and unintended actions.
+
+Direct SDK hosts may install `DriverAuthorizationHost` for residual
+standard-mode decisions and `DriverActivityObserver` for content-free action
+events. Cua Driver does not render its own authorization modal or banner.
 
 For unrestricted embedding, use the explicit two-part environment contract:
 
@@ -280,7 +285,7 @@ a dialog (the `prompt` argument is ignored) and returns:
 - `screen_recording_capturable` / `direct_capture_status` — embedded
   `check_permissions` is read-only and never runs Tahoe's prompt-capable
   ScreenCaptureKit probe, so these are `null` / `not_checked`. The host owns
-  the consent UX and should verify pixels with an explicit screenshot or
+  the permission UX and should verify pixels with an explicit screenshot or
   capture operation after explaining the prompt.
 - `source.attribution` values:
   - `host` — embedded mode; booleans reflect the host's grant. What you
@@ -292,7 +297,7 @@ a dialog (the `prompt` argument is ignored) and returns:
 
 If a permission is missing, the correct reaction is: **the host requests
 it** (the two API calls above), then re-calls `check_permissions`. The
-driver will never pop its own dialog in embedded mode.
+driver never owns the host's OS permission experience.
 
 Heads-up on grant timing: macOS caches TCC answers per process. If your app
 requests/receives the grants _after_ the driver child is already running,
@@ -514,7 +519,7 @@ eventMessage BEGINSWITH "AttributionChain"'` and trigger the action again.
 **"Screenshots come back black even though `screen_recording: true`."**
 The read-only permission check cannot verify direct ScreenCaptureKit access
 without risking a system dialog. Exercise an explicit screenshot only after
-the host has explained and requested consent. If that fails, the grant may not
+the host has explained the OS permission. If that fails, the grant may not
 belong to the driver's current responsible identity, may have been reset, or
 the driver may have escaped the host's chain (see the previous item). Restart
 the driver child after any grant change — TCC answers are cached per process.

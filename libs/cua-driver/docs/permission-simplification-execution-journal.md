@@ -72,6 +72,68 @@
   - `cargo check -p cua-driver --all-targets`: passed.
   - Focused bounded no-provider and terminal-revocation tests: passed.
 
+### Host integrations, UI removal, and session identity
+
+- Added repeatable `--grant existing-profile` launch configuration to `mcp`
+  and `serve`, including proxy forwarding and restart refusal when an
+  incompatible daemon is already live.
+- Added the public `DriverAuthorizationHost` callback and content-free
+  `DriverActivityObserver` to the Rust, Python, and TypeScript SDK surfaces.
+- Added activity events for authorized actions, authorization refusals,
+  ordinary failures, grant lifecycle, and session lifecycle.
+- Removed the native Cua authorization modal, banner, helper modes, platform
+  consent renderers, and the complete `overlay-ui` crate.
+- Preserved browser-owned Chromium connection prompts and operating-system
+  permission flows.
+- Added a renderer-owned public-session badge below the semantic cursor using
+  bundled Inter artwork, sanitization, stable session color, and live backing
+  scale.
+- Added the badge to macOS, Windows, Linux X11 and layer-shell rendering, plus
+  GNOME Wayland helper API v6.
+- Regenerated Python and TypeScript UniFFI bindings.
+- Verification:
+  - Core, SDK, and cursor unit suites: 482 passed.
+  - `cargo test -p cua-driver` unit suite: 136 passed.
+  - TypeScript package suite: 6 passed.
+  - Python package suite: 28 passed, 3 skipped because no bundled executable
+    was staged for those optional checks.
+  - `cargo fmt --all -- --check`: passed before the final naming cleanup and
+    will be rerun on the review SHA.
+
+### Public contract and migration guidance
+
+- Replaced prompt-heavy standard-mode guidance with the promptless practical
+  default.
+- Added the mode matrix, bounded manifest v2 guide, launch-grant workflow,
+  SDK host callback examples, activity-observer contract, revocation behavior,
+  same-user boundary, session badge, and headless behavior.
+- Updated the generated CLI and MCP references, package READMEs, embedded and
+  browser skills, cursor authoring docs, update guide, and shared post-install
+  hints.
+- Removed the obsolete native consent UI screenshot from the public docs.
+
+### Local review gate
+
+- Verified the generated CLI and MCP reference is current.
+- Verified the generated Python and TypeScript UniFFI bindings are current.
+- Built the complete public documentation site and checked internal links and
+  public-document hygiene.
+- Rebuilt and staged the exact local SDK library before running package tests,
+  so the package tests exercised the current ABI rather than a prior binary.
+- Verification:
+  - `cargo test -p cua-driver`: passed, including 136 binary unit tests and all
+    non-ignored integration tests.
+  - TypeScript typecheck and package suite: 6 passed.
+  - Python package suite: 28 passed and 3 optional executable checks skipped.
+  - Documentation production build: passed with 93 static pages.
+  - Documentation link check: 0 errors.
+  - Documentation hygiene check: passed.
+  - `cargo fmt --all -- --check`: passed.
+  - Focused Clippy checks cover the changed core and cursor crates. A strict
+    all-platform, all-target workspace invocation also reports unrelated
+    existing warnings in host-platform stubs; platform CI remains the
+    authoritative cross-target lint and build check.
+
 ## Evidence index
 
 Evidence links and exact-head workflow runs will be added as each environment

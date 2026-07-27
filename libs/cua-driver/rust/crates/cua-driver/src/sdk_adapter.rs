@@ -352,7 +352,8 @@ mod tests {
             claude_code_compatibility: false,
             prepare_desktop_environment: false,
             register_host_tools: None,
-            protected_consent_provider: None,
+            authorization_host: None,
+            activity_observer: None,
         })
     }
 

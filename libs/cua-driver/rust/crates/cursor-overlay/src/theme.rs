@@ -220,6 +220,7 @@ pub fn paint_default_theme(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn paint_default_theme_with_fill(
     pm: &mut tiny_skia::Pixmap,
     visual: &CursorVisualState,
@@ -409,8 +410,10 @@ mod tests {
 
     #[test]
     fn every_action_inherits_the_same_floating_base_motion() {
-        let mut idle = CursorVisualState::default();
-        idle.elapsed_secs = 0.75;
+        let idle = CursorVisualState {
+            elapsed_secs: 0.75,
+            ..CursorVisualState::default()
+        };
         let expected = shared_float_motion(&idle);
         assert_ne!(expected, (0.0, 0.0, 0.0));
 

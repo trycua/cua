@@ -27,8 +27,6 @@ pub mod permissions;
 #[cfg(target_os = "macos")]
 pub mod pip;
 #[cfg(target_os = "macos")]
-pub mod protected_consent;
-#[cfg(target_os = "macos")]
 pub mod recording_hooks;
 #[cfg(target_os = "macos")]
 pub mod session;
@@ -44,15 +42,6 @@ pub mod window_change_detector;
 pub mod windows;
 
 use cua_driver_core::tool::ToolRegistry;
-
-#[cfg(target_os = "macos")]
-pub fn protected_consent_event(event: &overlay_ui::HelperEvent) -> anyhow::Result<()> {
-    let mut stdout = std::io::stdout().lock();
-    serde_json::to_writer(&mut stdout, event)?;
-    std::io::Write::write_all(&mut stdout, b"\n")?;
-    std::io::Write::flush(&mut stdout)?;
-    Ok(())
-}
 
 /// Register all macOS tools.  For programs that don't restructure `main`
 /// (e.g. test harnesses), the overlay is skipped.

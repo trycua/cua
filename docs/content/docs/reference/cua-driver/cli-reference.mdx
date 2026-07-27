@@ -74,6 +74,7 @@ On Windows and Linux, bare cua-driver mcp owns its runtime directly and shuts it
 | `--host-bundle-id` | String | — | Advisory host bundle id label echoed in check_permissions output (embedded mode). |
 | `--cursor-theme` | String | cua.default | Select an installed cursor theme id. |
 | `--cursor-reduced-motion` | String | auto | Follow the OS setting, force still frames, or allow animation: auto, on, or off. |
+| `--grant` | String | — | Pre-authorize a residual standard-mode boundary for a newly launched runtime. Repeatable; supported value: existing-profile. |
 
 **Flags:**
 
@@ -96,6 +97,7 @@ The daemon owns per-process state such as element-index caches, recording state,
 | `--socket` | String | — | Override the daemon socket or named-pipe path. |
 | `--pid-file` | String | — | Override the pid-file path on Unix targets. |
 | `--permission-mode` | String | standard | Immutable agent authorization mode: standard, bounded, or unrestricted. |
+| `--grant` | String | — | Pre-authorize a residual standard-mode boundary. Repeatable; supported value: existing-profile. |
 | `--session-policy` | String | — | Immutable tool manifest required in bounded mode. |
 | `--host-bundle-id` | String | — | Advisory host bundle id label echoed in check_permissions output (embedded mode). |
 

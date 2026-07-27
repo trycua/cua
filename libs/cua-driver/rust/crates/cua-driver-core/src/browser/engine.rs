@@ -612,7 +612,7 @@ impl BrowserEngine {
                 for grant in engine.existing_profile_grants.remove_session(session_id) {
                     engine.pool.release_claim_marker(&grant.endpoint_ws_url);
                     if let Some(protected) = grant.protected_consent.as_ref() {
-                        protected.indicator.revoke();
+                        protected.revoke();
                     }
                     if let Ok(runtime) = tokio::runtime::Handle::try_current() {
                         let engine = engine.clone();

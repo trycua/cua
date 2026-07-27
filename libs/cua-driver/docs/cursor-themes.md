@@ -16,6 +16,13 @@ uses Cua blue. Named sessions receive a stable fill
 from the built-in session palette, so concurrent agents remain visually
 distinct.
 
+The native renderer places the sanitized public session name in a badge below
+the built-in pointer. The badge follows the cursor and uses the same session
+color, but it is not part of the dotLottie theme artifact. Custom theme authors
+do not need to provide badge artwork or a font. Cua Driver strips control
+characters, collapses whitespace, and shortens labels longer than 28
+characters before rendering the bundled Inter typeface.
+
 The cursor is a visual aid for people watching an agent. It is not a security
 indicator, an authorization prompt, or evidence that a tool call succeeded.
 Authorization is enforced separately.

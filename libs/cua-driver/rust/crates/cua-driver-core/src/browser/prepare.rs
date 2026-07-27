@@ -753,6 +753,7 @@ impl BrowserEngine {
         enum ConsentPath {
             Protected,
             BoundedManifest,
+            LaunchGrant,
             LegacyArtifact,
             Unrestricted,
         }
@@ -804,6 +805,8 @@ impl BrowserEngine {
                 )
                 .map_err(|message| refusal(BrowserRefusalCode::BrowserConsentRequired, message))?;
             ConsentPath::BoundedManifest
+        } else if crate::authorization::launch_grant_enabled("existing_profile") {
+            ConsentPath::LaunchGrant
         } else if self.approval_broker.provider_id().is_some() {
             ConsentPath::Protected
         } else if crate::authorization::legacy_existing_profile_approval_enabled() {
@@ -830,13 +833,13 @@ impl BrowserEngine {
         } else {
             return Err(refusal(
                 BrowserRefusalCode::BrowserConsentRequired,
-                "existing-profile attachment requires an available request-bound confirmation provider in standard/bounded mode; the legacy file-backed artifact is disabled",
+                "existing-profile attachment in standard mode requires --grant existing-profile or an embedding authorization host; bounded mode requires a matching manifest",
             )
             .with_detail(serde_json::json!({
                 "permission_mode": mode.as_str(),
-                "trusted_consent_required": true,
+                "authorization_required": true,
                 "legacy_approval_enabled": false,
-                "protected_consent_collector": self.approval_broker.provider_id(),
+                "authorization_host": self.approval_broker.provider_id(),
             })));
         };
         if request.profile.is_some() || request.allow_launch {
@@ -965,10 +968,10 @@ impl BrowserEngine {
             return Err(error);
         }
 
-        // Consent is collected only after the exact process, native window,
-        // browser product, and endpoint owner have all been proven. This keeps
-        // the human-visible request exact and avoids activating an indicator
-        // for a target that cannot be attached.
+        // Host authorization is requested only after the exact process,
+        // native window, browser product, and endpoint owner have all been
+        // proven. Bounded manifests, launch grants, and unrestricted mode
+        // never enter this callback path.
         let protected_consent = if matches!(consent_path, ConsentPath::Protected) {
             let transport_session = request
                 .transport_session
@@ -993,25 +996,21 @@ impl BrowserEngine {
                 ),
             );
             Some(
-                if mode == crate::authorization::PermissionMode::Bounded {
-                    self.approval_broker
-                        .activate_preapproved(&approval_request)
-                        .await
-                } else {
-                    self.approval_broker.approve(&approval_request).await
-                }
-                .map_err(|error| {
-                    refusal(
-                        BrowserRefusalCode::BrowserConsentRequired,
-                        format!("protected existing-profile consent was not granted: {error}"),
-                    )
-                    .with_detail(serde_json::json!({
-                        "permission_mode": mode.as_str(),
-                        "trusted_consent_required": true,
-                        "provider": self.approval_broker.provider_id(),
-                        "approval_request_id": approval_request.nonce,
-                    }))
-                })?,
+                self.approval_broker
+                    .approve(&approval_request)
+                    .await
+                    .map_err(|error| {
+                        refusal(
+                            BrowserRefusalCode::BrowserConsentRequired,
+                            format!("existing-profile authorization was not granted: {error}"),
+                        )
+                        .with_detail(serde_json::json!({
+                            "permission_mode": mode.as_str(),
+                            "trusted_consent_required": true,
+                            "provider": self.approval_broker.provider_id(),
+                            "approval_request_id": approval_request.nonce,
+                        }))
+                    })?,
             )
         } else {
             None

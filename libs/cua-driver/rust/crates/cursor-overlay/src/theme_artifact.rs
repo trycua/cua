@@ -382,11 +382,11 @@ pub fn theme_store_root() -> Result<PathBuf> {
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
             .ok_or_else(|| anyhow!("HOME is unavailable"))?;
-        return Ok(home
+        Ok(home
             .join("Library")
             .join("Application Support")
             .join("Cua Driver")
-            .join("cursor-themes"));
+            .join("cursor-themes"))
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
@@ -524,11 +524,11 @@ pub fn embedded_default_theme() -> Arc<CompiledTheme> {
     }))
 }
 
-fn animation_frame<'a>(
-    animation: &'a CompiledAnimation,
+fn animation_frame(
+    animation: &CompiledAnimation,
     elapsed_secs: f64,
     reduced_motion: bool,
-) -> Option<&'a CompiledFrame> {
+) -> Option<&CompiledFrame> {
     let index = if reduced_motion {
         usize::from(animation.still_frame)
     } else {
@@ -747,6 +747,7 @@ fn draw_layer(
     draw_frame(target, frame, transform, alpha, tint);
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn paint_compiled_theme(
     target: &mut tiny_skia::Pixmap,
     theme: &CompiledTheme,

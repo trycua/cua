@@ -128,6 +128,9 @@ pub fn init(cfg: CursorConfig) {
         |event: cua_driver_core::cursor_events::CursorEvent| {
             use cua_driver_core::cursor_events::{CursorEvent, CursorEventPhase};
             let (session, cmd) = match event {
+                CursorEvent::SetSessionLabel { session, label } => {
+                    (session, OverlayCommand::SetSessionLabel(label))
+                }
                 CursorEvent::Action {
                     session,
                     phase: CursorEventPhase::Begin,
@@ -214,6 +217,13 @@ pub fn send_command_for(key: CursorKey, cmd: OverlayCommand) {
                             "",
                             "",
                             false,
+                        );
+                    }
+                    cursor_overlay::OverlayCommand::SetSessionLabel(label) => {
+                        crate::wayland::shell_helper::set_session_label(
+                            cursor_overlay::sanitize_session_label(label)
+                                .as_deref()
+                                .unwrap_or(""),
                         );
                     }
                     cursor_overlay::OverlayCommand::SetEnabled(false) => {
@@ -965,6 +975,8 @@ fn x11_compositor_present(conn: &impl x11rb::connection::Connection, screen_num:
 /// independent of the root-window area without clipping antialiasing.
 #[cfg(target_os = "linux")]
 const X11_CURSOR_TILE_MARGIN: f64 = 64.0;
+#[cfg(target_os = "linux")]
+const X11_LABELED_CURSOR_HORIZONTAL_MARGIN: f64 = 96.0;
 
 #[cfg(target_os = "linux")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -993,9 +1005,14 @@ fn cursor_tile_bounds(
 
     let screen_width = i32::try_from(screen_width).ok()?;
     let screen_height = i32::try_from(screen_height).ok()?;
-    let left = (core.pos.0 - X11_CURSOR_TILE_MARGIN).floor() as i32;
+    let horizontal_margin = if core.session_label.is_some() {
+        X11_LABELED_CURSOR_HORIZONTAL_MARGIN
+    } else {
+        X11_CURSOR_TILE_MARGIN
+    };
+    let left = (core.pos.0 - horizontal_margin).floor() as i32;
     let top = (core.pos.1 - X11_CURSOR_TILE_MARGIN).floor() as i32;
-    let right = (core.pos.0 + X11_CURSOR_TILE_MARGIN).ceil() as i32;
+    let right = (core.pos.0 + horizontal_margin).ceil() as i32;
     let bottom = (core.pos.1 + X11_CURSOR_TILE_MARGIN).ceil() as i32;
 
     let left = left.clamp(0, screen_width);
@@ -1609,6 +1626,23 @@ mod tests {
         assert_eq!(tile.bounds.height, 128);
         assert_eq!(tile.pixmap.data().len(), 128 * 128 * 4);
         assert!(tile.pixmap.data().len() < (map.scr_w * map.scr_h * 4) as usize);
+    }
+
+    #[test]
+    fn session_badge_expands_only_the_local_cursor_tile() {
+        let mut map = default_render_map();
+        map.scr_w = 7680;
+        map.scr_h = 2160;
+        let cursor = map.cursors.get_mut("default").unwrap();
+        cursor.core.pos = (4000.0, 1000.0);
+        cursor.core.session_label = Some("research-run".to_owned());
+
+        let tiles = render_x11_tiles(&map);
+
+        assert_eq!(tiles.len(), 1);
+        assert_eq!(tiles[0].bounds.width, 192);
+        assert_eq!(tiles[0].bounds.height, 128);
+        assert!(tiles[0].pixmap.data().len() < (map.scr_w * map.scr_h * 4) as usize);
     }
 
     #[test]

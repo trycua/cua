@@ -20,6 +20,25 @@ language-native MCP facade and have no `/sdk`, `/mcp`, or `/native` public
 suffix. MCP remains implemented by the `cua-driver` executable as the
 runtime-neutral agent boundary.
 
+## Permission modes
+
+`standard` is the promptless default for normal automation. `bounded` admits
+only the tools and resources in a reviewed manifest. `unrestricted` requires
+`--dangerously-bypass-approvals`.
+
+Attaching to an existing logged-in Chromium profile remains explicit:
+
+```bash
+cua-driver mcp --grant existing-profile
+```
+
+An embedding application can instead provide `DriverAuthorizationHost`, and a
+bounded runtime can declare `kind: existing_profile` in its manifest. Cua
+Driver does not render its own authorization modal or banner.
+
+See the hosted [permission mode
+reference](https://cua.ai/docs/reference/cua-driver/permission-modes).
+
 ## Repository Layout
 
 | Path                            | Purpose                                                                |

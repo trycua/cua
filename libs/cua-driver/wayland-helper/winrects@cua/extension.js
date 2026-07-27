@@ -19,6 +19,7 @@ const IFACE = `<node><interface name="org.cua.WinRects">
 <method name="ClickPulse"><arg type="i" direction="in" name="x"/><arg type="i" direction="in" name="y"/></method>
 <method name="SetCursorColor"><arg type="s" direction="in" name="fill_color"/></method>
 <method name="SetCursorState"><arg type="s" direction="in" name="action"/><arg type="s" direction="in" name="delivery"/><arg type="s" direction="in" name="target"/><arg type="b" direction="in" name="active"/></method>
+<method name="SetSessionLabel"><arg type="s" direction="in" name="label"/></method>
 <method name="HideCursor"></method>
 </interface></node>`;
 
@@ -32,6 +33,7 @@ const SCALE = DISPLAY_SIZE / CANVAS_SIZE;
 const FLOAT_DURATION = 4.0;
 const GLOW_SURFACE_SCALE = 3;
 const GLOW_PADDING = 24;
+const BADGE_Y_OFFSET = 34;
 const ACTIONS = new Set([
     'idle', 'observe', 'click', 'drag', 'scroll', 'text',
     'key', 'navigate', 'app', 'transfer', 'record', 'system',
@@ -445,6 +447,7 @@ export default class WinRectsExtension extends Extension {
         this._actionStarted = nowSeconds();
         this._endingAt = null;
         this._fillColor = [94, 192, 232];
+        this._fillColorCss = '#5ec0e8';
         this._glowSurface = createGlowSurface(this._fillColor);
         this._cursor = new St.DrawingArea({
             width: ACTOR_SIZE,
@@ -473,6 +476,35 @@ export default class WinRectsExtension extends Extension {
         });
         this._cursor.set_pivot_point(0.5, 0.5);
         Main.layoutManager.addTopChrome(this._cursor);
+        this._badgeDot = new St.Widget({
+            width: 5,
+            height: 5,
+            style: `background-color: ${this._fillColorCss}; border-radius: 3px;`,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._badgeLabel = new St.Label({
+            text: '',
+            y_align: Clutter.ActorAlign.CENTER,
+            style: 'font-size: 11px; font-weight: 600; color: white;',
+        });
+        this._badge = new St.BoxLayout({
+            visible: false,
+            reactive: false,
+            can_focus: false,
+            style: [
+                'spacing: 6px',
+                'padding: 5px 10px',
+                'background-color: rgba(18, 22, 28, 0.88)',
+                'border: 1px solid rgba(255, 255, 255, 0.36)',
+                'border-radius: 12px',
+                'box-shadow: 0 2px 8px rgba(0, 0, 0, 0.30)',
+            ].join(';'),
+        });
+        this._badge.add_child(this._badgeDot);
+        this._badge.add_child(this._badgeLabel);
+        Main.layoutManager.addTopChrome(this._badge);
+        this._cursorX = null;
+        this._cursorY = null;
         this._frameId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 33, () => {
             if (!this._cursor)
                 return GLib.SOURCE_REMOVE;
@@ -493,6 +525,9 @@ export default class WinRectsExtension extends Extension {
             this._frameId = 0;
         }
         if (this._cursor) { this._cursor.destroy(); this._cursor = null; }
+        if (this._badge) { this._badge.destroy(); this._badge = null; }
+        this._badgeDot = null;
+        this._badgeLabel = null;
         if (this._glowSurface) {
             this._glowSurface.finish();
             this._glowSurface = null;
@@ -500,7 +535,7 @@ export default class WinRectsExtension extends Extension {
         if (this._impl) { this._impl.unexport(); this._impl = null; }
         if (this._nameId) { Gio.bus_unown_name(this._nameId); this._nameId = 0; }
     }
-    GetVersion() { return 5; }
+    GetVersion() { return 6; }
     GetRects() {
         const actors = global.get_window_actors();
         const actorByWindow = new Map();
@@ -578,6 +613,8 @@ export default class WinRectsExtension extends Extension {
     }
     MoveCursor(x, y) {
         if (!this._cursor) return;
+        this._cursorX = x;
+        this._cursorY = y;
         this._cursor.show();
         this._cursor.ease({
             x: x - ACTOR_CENTER,
@@ -585,10 +622,14 @@ export default class WinRectsExtension extends Extension {
             duration: 480,
             mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
         });
+        this._positionBadge(x, y, 480);
     }
     ClickPulse(x, y) {
         if (!this._cursor) return;
+        this._cursorX = x;
+        this._cursorY = y;
         this._cursor.set_position(x - ACTOR_CENTER, y - ACTOR_CENTER);
+        this._positionBadge(x, y, 0);
         this._setCursorState('click', this._delivery, this._target);
         this._cursor.show();
         this._cursor.queue_repaint();
@@ -599,6 +640,11 @@ export default class WinRectsExtension extends Extension {
             return;
         const rgb = Number.parseInt(match[1], 16);
         this._fillColor = [(rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff];
+        this._fillColorCss = `#${match[1].toLowerCase()}`;
+        if (this._badgeDot)
+            this._badgeDot.set_style(
+                `background-color: ${this._fillColorCss}; border-radius: 3px;`
+            );
         if (this._glowSurface)
             this._glowSurface.finish();
         this._glowSurface = createGlowSurface(this._fillColor);
@@ -614,6 +660,36 @@ export default class WinRectsExtension extends Extension {
             this._endingAt = nowSeconds() + 0.4;
         }
     }
+    SetSessionLabel(label) {
+        if (!this._badgeLabel || !this._badge)
+            return;
+        this._badgeLabel.set_text(label);
+        if (label.length === 0 || !this._cursor?.visible) {
+            this._badge.hide();
+            return;
+        }
+        if (this._cursorX !== null && this._cursorY !== null)
+            this._positionBadge(this._cursorX, this._cursorY, 0);
+    }
+    _positionBadge(x, y, duration) {
+        if (!this._badge || !this._badgeLabel ||
+            this._badgeLabel.get_text().length === 0)
+            return;
+        const [, naturalWidth] = this._badge.get_preferred_width(-1);
+        const badgeX = Math.round(x - naturalWidth / 2);
+        const badgeY = Math.round(y + BADGE_Y_OFFSET);
+        this._badge.show();
+        if (duration > 0) {
+            this._badge.ease({
+                x: badgeX,
+                y: badgeY,
+                duration,
+                mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
+            });
+        } else {
+            this._badge.set_position(badgeX, badgeY);
+        }
+    }
     _setCursorState(action, delivery, target) {
         this._action = ACTIONS.has(action) ? action : 'idle';
         this._delivery = delivery ?? '';
@@ -623,5 +699,8 @@ export default class WinRectsExtension extends Extension {
         if (this._cursor)
             this._cursor.queue_repaint();
     }
-    HideCursor() { if (this._cursor) this._cursor.hide(); }
+    HideCursor() {
+        if (this._cursor) this._cursor.hide();
+        if (this._badge) this._badge.hide();
+    }
 }

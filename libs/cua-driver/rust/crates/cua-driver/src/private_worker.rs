@@ -124,7 +124,8 @@ async fn run_async(
             claude_code_compatibility: false,
             prepare_desktop_environment: true,
             register_host_tools: Some(crate::check_update_tool::register_into),
-            protected_consent_provider: crate::protected_consent::native_provider(),
+            authorization_host: None,
+            activity_observer: None,
         },
     ) {
         Ok(driver) => driver,

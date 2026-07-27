@@ -874,13 +874,6 @@ impl ToolRegistry {
             );
         }
 
-        if self.approval_broker.protected_interaction_active() {
-            return permission_denied_result(
-                "a protected human-consent surface is active; Cua observation and input are temporarily suspended"
-                    .to_owned(),
-            );
-        }
-
         // Deprecated alias: `type_text_chars` → `type_text`.  Swift's
         // ToolRegistry.swift keeps the same alias (with stderr warning) for
         // backwards compatibility with hermes-agent builds that still emit
@@ -2074,6 +2067,19 @@ fn namespace_runtime_args(
     let Some(arguments) = args.as_object_mut() else {
         return runtime_prefix;
     };
+    if let Some(public_session) = arguments
+        .get("session")
+        .and_then(Value::as_str)
+        .filter(|value| {
+            !value.is_empty() && *value != "default" && !value.starts_with("__cua_runtime_")
+        })
+        .map(str::to_owned)
+    {
+        arguments.insert(
+            "_public_session_label".to_owned(),
+            Value::String(public_session),
+        );
+    }
     if !arguments.contains_key("_transport_session_id") {
         if let Some(session) = context.transport_session() {
             arguments.insert(
@@ -2148,9 +2154,13 @@ fn restore_public_runtime_value(value: &mut Value, runtime_prefix: &str) -> bool
             *text = text.replace(runtime_prefix, "");
             false
         }
-        Value::Array(values) => values.iter_mut().fold(false, |collision, value| {
-            restore_public_runtime_value(value, runtime_prefix) || collision
-        }),
+        Value::Array(values) => {
+            let mut collision = false;
+            for value in values {
+                collision |= restore_public_runtime_value(value, runtime_prefix);
+            }
+            collision
+        }
         Value::Object(values) => {
             let original = std::mem::take(values);
             let mut collision = false;
@@ -2174,18 +2184,15 @@ mod runtime_isolation_tests {
     };
     use crate::{
         authorization::PermissionMode,
-        consent::{
-            ConsentAction, ConsentRequest, IndicatorLease, ProtectedConsentProvider,
-            ProviderDecision,
-        },
+        consent::{ConsentAction, ConsentRequest, ProtectedConsentProvider, ProviderDecision},
         protocol::ToolResult,
         session_authorization::{SessionAuthorizationRegistry, SessionModeCeiling},
     };
+    use std::io::Write;
     use std::sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
         Arc, Mutex,
     };
-    use std::io::Write;
     use std::time::Duration;
 
     fn standard_context() -> Arc<crate::session_authorization::EffectiveAuthorizationContext> {
@@ -2341,18 +2348,6 @@ mod runtime_isolation_tests {
                 request_digest: request.request_digest.clone(),
             })
         }
-
-        async fn activate_indicator(
-            &self,
-            request: &ConsentRequest,
-        ) -> Result<IndicatorLease, String> {
-            Ok(IndicatorLease::new(
-                format!("indicator-{}", request.generation),
-                Arc::new(AtomicBool::new(false)),
-            ))
-        }
-
-        async fn deactivate_indicator(&self, _indicator_id: &str) {}
     }
 
     fn observation_registry(
@@ -2596,7 +2591,7 @@ mod runtime_isolation_tests {
     async fn bounded_observation_uses_only_the_manifest_without_a_protected_host() {
         let hits = Arc::new(AtomicUsize::new(0));
         let registry = attested_registry("get_window_state", None, hits.clone(), false);
-        let context = bounded_context(&format!(
+        let context = bounded_context(
             r#"
 version: 2
 mode: bounded
@@ -2611,7 +2606,7 @@ resources:
       windows: all
       terminate: deny
 "#,
-        ));
+        );
         let result = registry
             .invoke_with_context(
                 "get_window_state",
@@ -2629,10 +2624,7 @@ resources:
         let ended_hits = Arc::new(AtomicUsize::new(0));
         let ended_registry = observation_registry(None, ended_hits.clone());
         let ended_context = standard_context();
-        let ended_prefix = format!(
-            "__cua_runtime_{}:",
-            ended_context.runtime_scope_key()
-        );
+        let ended_prefix = format!("__cua_runtime_{}:", ended_context.runtime_scope_key());
         let ended_runtime_session = ended_context.runtime_session_key("ended");
         crate::session::end_session(&ended_runtime_session);
         let ended = ended_registry
@@ -3328,6 +3320,7 @@ resources:
         assert_eq!(args["session"], format!("{prefix}shared-session"));
         assert_eq!(args["_session_id"], format!("{prefix}shared-session"));
         assert_eq!(args["cursor_id"], format!("{prefix}shared-cursor"));
+        assert_eq!(args["_public_session_label"], "shared-session");
 
         let mut result = ToolResult::text(format!("{prefix}shared-session")).with_structured(
             serde_json::json!({
@@ -3406,6 +3399,7 @@ resources:
         assert_eq!(args["session"], "default");
         assert_eq!(args["_session_id"], "default");
         assert_eq!(args["cursor_id"], "default");
+        assert!(args.get("_public_session_label").is_none());
     }
 }
 
@@ -3421,13 +3415,12 @@ fn permission_denied_result(message: String) -> ToolResult {
 
 fn protected_consent_refusal(error: crate::consent::ConsentError) -> ToolResult {
     let code = match &error {
-        crate::consent::ConsentError::Unavailable => "protected_consent_required",
-        crate::consent::ConsentError::Declined => "protected_consent_declined",
-        crate::consent::ConsentError::Canceled => "protected_consent_canceled",
-        crate::consent::ConsentError::DigestMismatch => "protected_consent_scope_mismatch",
-        crate::consent::ConsentError::Expired => "protected_consent_expired",
-        crate::consent::ConsentError::Indicator(_) => "protected_indicator_unavailable",
-        crate::consent::ConsentError::Provider(_) => "protected_consent_provider_failed",
+        crate::consent::ConsentError::Unavailable => "authorization_required",
+        crate::consent::ConsentError::Declined => "authorization_declined",
+        crate::consent::ConsentError::Canceled => "authorization_canceled",
+        crate::consent::ConsentError::DigestMismatch => "authorization_scope_mismatch",
+        crate::consent::ConsentError::Expired => "authorization_expired",
+        crate::consent::ConsentError::Provider(_) => "authorization_host_failed",
         crate::consent::ConsentError::BoundedResource(_) => "bounded_resource_outside_manifest",
     };
     let message = error.to_string();

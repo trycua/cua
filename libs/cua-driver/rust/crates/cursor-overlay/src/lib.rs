@@ -11,6 +11,7 @@ pub mod capture_utils;
 pub mod motion;
 pub mod path_planner;
 pub mod render_state;
+pub mod session_badge;
 pub mod theme;
 pub mod theme_artifact;
 pub mod util;
@@ -20,6 +21,7 @@ pub use bezier::CubicBezier;
 pub use motion::{MotionConfig, Spring};
 pub use path_planner::{PathPlanner, PathState, PlannedPath};
 pub use render_state::{paint_cursor, render_frame, FocusRect, RenderStateCore};
+pub use session_badge::{paint_session_badge, sanitize_session_label};
 pub use theme::{
     session_fill_hex, session_fill_rgba, CursorAction, CursorVisualState, DeliveryModifier,
     PlaybackKind, ReducedMotion, TargetModifier, DEFAULT_CURSOR_FILL, DEFAULT_THEME_ID,
@@ -350,6 +352,8 @@ pub enum OverlayCommand {
         theme_id: String,
         reduced_motion: ReducedMotion,
     },
+    /// Set the sanitized public label shown beneath this cursor.
+    SetSessionLabel(String),
     /// Show a focus-highlight rectangle around an AX-targeted element.
     /// `[x, y, width, height]` in screen coordinates (top-left origin).
     /// `None` clears the highlight.

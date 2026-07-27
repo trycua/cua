@@ -178,6 +178,9 @@ pub fn init(cfg: CursorConfig) {
         |event: cua_driver_core::cursor_events::CursorEvent| {
             use cua_driver_core::cursor_events::{CursorEvent, CursorEventPhase};
             let (session, cmd) = match event {
+                CursorEvent::SetSessionLabel { session, label } => {
+                    (session, OverlayCommand::SetSessionLabel(label))
+                }
                 CursorEvent::Action {
                     session,
                     phase: CursorEventPhase::Begin,

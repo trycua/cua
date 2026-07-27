@@ -24,7 +24,6 @@ mod cli;
 mod doctor;
 mod mcp_http;
 mod private_worker;
-mod protected_consent;
 mod proxy;
 mod responsibility;
 mod sdk_adapter;
@@ -51,6 +50,7 @@ fn configure_startup_permission_mode(
     allow_legacy_existing_profile_approval: bool,
     session_policy: Option<&str>,
     approve_session_policy: bool,
+    grants: &[String],
 ) -> anyhow::Result<()> {
     if let Some(mode) = permission_mode {
         std::env::set_var(cua_driver_core::authorization::PERMISSION_MODE_ENV, mode);
@@ -87,6 +87,12 @@ fn configure_startup_permission_mode(
             "1",
         );
     }
+    let mode =
+        cua_driver_core::authorization::configured_permission_mode().map_err(anyhow::Error::msg)?;
+    if !grants.is_empty() && mode != cua_driver_core::authorization::PermissionMode::Standard {
+        anyhow::bail!("--grant is valid only in standard permission mode");
+    }
+    cua_driver_core::authorization::configure_launch_grants(grants).map_err(anyhow::Error::msg)?;
     cua_driver_core::authorization::validate_startup_authorization()?;
     if cua_driver_core::authorization::configured_permission_mode()
         .is_ok_and(|mode| mode == cua_driver_core::authorization::PermissionMode::Unrestricted)
@@ -292,7 +298,8 @@ fn build_driver(
         claude_code_compatibility: compatibility_mode,
         prepare_desktop_environment: true,
         register_host_tools: Some(check_update_tool::register_into),
-        protected_consent_provider: protected_consent::native_provider(),
+        authorization_host: None,
+        activity_observer: None,
     })
 }
 
@@ -325,7 +332,8 @@ fn inspect_tools_without_runtime() -> serde_json::Value {
         claude_code_compatibility: false,
         prepare_desktop_environment: false,
         register_host_tools: Some(check_update_tool::register_into),
-        protected_consent_provider: None,
+        authorization_host: None,
+        activity_observer: None,
     })
 }
 
@@ -429,9 +437,6 @@ mod mcp_runtime_selection_tests {
 
 #[cfg(target_os = "macos")]
 fn main() {
-    if let Some(code) = protected_consent::run_helper_if_requested() {
-        std::process::exit(code);
-    }
     init_logging();
     if let Some(code) = cli::run_permissions_host_request_if_requested() {
         std::process::exit(code);
@@ -511,6 +516,7 @@ fn main() {
             approve_session_policy,
             no_permissions_gate,
             claude_code_compat,
+            grants,
         } => {
             if let Err(error) = configure_startup_permission_mode(
                 permission_mode.as_deref(),
@@ -518,6 +524,7 @@ fn main() {
                 allow_legacy_existing_profile_approval,
                 session_policy.as_deref(),
                 approve_session_policy,
+                &grants,
             ) {
                 eprintln!("cua-driver: authorization startup error: {error}");
                 std::process::exit(64);
@@ -773,6 +780,7 @@ fn main() {
             socket,
             direct,
             claude_code_compat,
+            grants,
         } => {
             let startup_started = std::time::Instant::now();
             // Long-running MCP proxy — kick off the background update check
@@ -780,25 +788,34 @@ fn main() {
             version_check::maybe_announce_update();
             let result = match mcp_uses_direct_runtime(socket.as_deref(), direct) {
                 Ok(true) => {
-                    telemetry::capture_mcp_startup_completed(
-                        "sdk_owned_runtime",
-                        "not_applicable",
-                        true,
-                        startup_started.elapsed(),
-                    );
-                    run_mcp_direct(claude_code_compat)
+                    if let Err(error) =
+                        configure_startup_permission_mode(None, false, false, None, false, &grants)
+                    {
+                        Err(error)
+                    } else {
+                        telemetry::capture_mcp_startup_completed(
+                            "sdk_owned_runtime",
+                            "not_applicable",
+                            true,
+                            startup_started.elapsed(),
+                        );
+                        run_mcp_direct(claude_code_compat)
+                    }
                 }
                 Err(error) => Err(error),
-                Ok(false) => {
-                    cli::run_mcp_via_daemon_proxy(socket, claude_code_compat, |daemon, success| {
+                Ok(false) => cli::run_mcp_via_daemon_proxy(
+                    socket,
+                    claude_code_compat,
+                    &grants,
+                    |daemon, success| {
                         telemetry::capture_mcp_startup_completed(
                             "daemon_proxy",
                             daemon.telemetry_value(),
                             success,
                             startup_started.elapsed(),
                         )
-                    })
-                }
+                    },
+                ),
             };
             if let Err(e) = result {
                 eprintln!("cua-driver-rs: {e}");
@@ -814,9 +831,6 @@ fn main() {
 
 #[cfg(not(target_os = "macos"))]
 fn main() -> anyhow::Result<()> {
-    if let Some(code) = protected_consent::run_helper_if_requested() {
-        std::process::exit(code);
-    }
     init_logging();
     if let Some(generation) = private_worker::requested_generation() {
         return private_worker::run(generation, None);
@@ -883,6 +897,7 @@ fn main() -> anyhow::Result<()> {
             approve_session_policy,
             no_permissions_gate,
             claude_code_compat,
+            grants,
         } => {
             configure_startup_permission_mode(
                 permission_mode.as_deref(),
@@ -890,6 +905,7 @@ fn main() -> anyhow::Result<()> {
                 allow_legacy_existing_profile_approval,
                 session_policy.as_deref(),
                 approve_session_policy,
+                &grants,
             )?;
             responsibility::reexec_disclaimed_if_needed();
             telemetry::capture_start(
@@ -1028,6 +1044,7 @@ fn main() -> anyhow::Result<()> {
             socket,
             direct,
             claude_code_compat,
+            grants,
         } => {
             let startup_started = std::time::Instant::now();
             // Long-running MCP proxy — kick off the background update check
@@ -1035,6 +1052,7 @@ fn main() -> anyhow::Result<()> {
             version_check::maybe_announce_update();
             let result = match mcp_uses_direct_runtime(socket.as_deref(), direct) {
                 Ok(true) => {
+                    configure_startup_permission_mode(None, false, false, None, false, &grants)?;
                     telemetry::capture_mcp_startup_completed(
                         "sdk_owned_runtime",
                         "not_applicable",
@@ -1044,16 +1062,19 @@ fn main() -> anyhow::Result<()> {
                     run_mcp_direct(claude_code_compat)
                 }
                 Err(error) => Err(error),
-                Ok(false) => {
-                    cli::run_mcp_via_daemon_proxy(socket, claude_code_compat, |daemon, success| {
+                Ok(false) => cli::run_mcp_via_daemon_proxy(
+                    socket,
+                    claude_code_compat,
+                    &grants,
+                    |daemon, success| {
                         telemetry::capture_mcp_startup_completed(
                             "daemon_proxy",
                             daemon.telemetry_value(),
                             success,
                             startup_started.elapsed(),
                         )
-                    })
-                }
+                    },
+                ),
             };
             if let Err(e) = result {
                 eprintln!("cua-driver-rs: {e}");

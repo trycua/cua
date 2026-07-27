@@ -79,6 +79,8 @@ pub struct RenderStateCore {
     pub idle_alpha: f64,
     /// Window id the overlay should be pinned above (for z-ordering).
     pub pinned_wid: Option<u64>,
+    /// Sanitized caller-facing label painted below the cursor.
+    pub session_label: Option<String>,
 }
 
 impl RenderStateCore {
@@ -88,8 +90,10 @@ impl RenderStateCore {
     /// first-placement and snap rather than animate.
     pub fn new(cfg: CursorConfig) -> Self {
         let motion = cfg.motion.clone();
-        let mut visual = CursorVisualState::default();
-        visual.reduced_motion = cfg.reduced_motion;
+        let visual = CursorVisualState {
+            reduced_motion: cfg.reduced_motion,
+            ..CursorVisualState::default()
+        };
         let (theme, theme_fallback) = match crate::load_installed_theme(&cfg.theme_id) {
             Ok(theme) => (theme, None),
             Err(error) => (
@@ -119,6 +123,7 @@ impl RenderStateCore {
             idle_secs: 0.0,
             idle_alpha: 1.0,
             pinned_wid: None,
+            session_label: None,
         }
     }
 
@@ -536,6 +541,10 @@ impl RenderStateCore {
                 }
                 true
             }
+            OverlayCommand::SetSessionLabel(label) => {
+                self.session_label = crate::sanitize_session_label(&label);
+                true
+            }
             OverlayCommand::ShowFocusRect(_) => false, // caller-specific
         }
     }
@@ -702,6 +711,18 @@ pub fn paint_cursor(
             px as f32,
             py as f32,
             heading as f32,
+            backing_scale.max(1.0),
+            alpha_scale,
+            crate::session_fill_rgba(&core.cfg.cursor_id),
+        );
+    }
+
+    if let Some(label) = core.session_label.as_deref() {
+        crate::paint_session_badge(
+            pm,
+            label,
+            px as f32,
+            py as f32,
             backing_scale.max(1.0),
             alpha_scale,
             crate::session_fill_rgba(&core.cfg.cursor_id),

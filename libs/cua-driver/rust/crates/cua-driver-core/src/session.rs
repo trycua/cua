@@ -789,12 +789,11 @@ mod tests {
         assert!(custom.motion_customized);
         assert_eq!(custom.active_cursor_count, 7);
         let debug = format!("{custom:?}");
-        for forbidden in ["private.customer.theme"] {
-            assert!(
-                !debug.contains(forbidden),
-                "cursor outcome leaked {forbidden}: {debug}"
-            );
-        }
+        let forbidden = "private.customer.theme";
+        assert!(
+            !debug.contains(forbidden),
+            "cursor outcome leaked {forbidden}: {debug}"
+        );
 
         let unknown = bounded_cursor_outcome(false, true, Some("cua.default"), true, 0);
         assert_eq!(unknown.theme, CursorThemeCategory::Unknown);

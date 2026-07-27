@@ -1,0 +1,195 @@
+---
+title: Write a bounded manifest
+description: Run Cua Driver unattended with an explicit tool and resource boundary.
+---
+
+Use `bounded` mode when an agent should work without runtime prompts but must
+stay inside a reviewed set of applications, browser origins, files, and tools.
+
+## 1. Create the manifest
+
+Save this as `cua-session.yaml` and replace the example paths and origin:
+
+```yaml
+version: 2
+mode: bounded
+expires_after: 8h
+idle_timeout: 30m
+
+allow:
+  tools:
+    - start_session
+    - end_session
+    - launch_app
+    - get_window_state
+    - click
+    - type_text
+    - press_key
+    - browser_prepare
+    - get_browser_state
+    - browser_navigate
+    - browser_click
+    - browser_type
+    - browser_download
+    - kill_app
+
+resources:
+  apps:
+    - executable: /usr/bin/example-editor
+      launch: true
+      windows: all
+      terminate: driver_launched
+
+  browser:
+    profiles:
+      - kind: isolated
+    origins:
+      - https://app.example.com
+
+  files:
+    read:
+      - dir: /data/input
+        recursive: true
+    write:
+      - dir: /data/output
+        recursive: true
+
+  desktop:
+    display: false
+```
+
+On macOS, replace `executable` with the application's `bundle_id`:
+
+```yaml
+resources:
+  apps:
+    - bundle_id: com.example.Editor
+      launch: true
+      windows: all
+      terminate: driver_launched
+```
+
+Windows and Linux application entries use a canonical absolute executable
+path.
+
+## 2. Select browser access
+
+For a driver-owned browser profile:
+
+```yaml
+resources:
+  browser:
+    profiles:
+      - kind: isolated
+```
+
+If the task must use a logged-in Chromium profile, make that choice explicit:
+
+```yaml
+resources:
+  browser:
+    profiles:
+      - kind: existing_profile
+    origins:
+      - https://app.example.com
+```
+
+An existing-profile entry authorizes attachment under bounded mode without a
+Cua modal or host callback. The typed browser tools still validate the live
+top-level origin before input.
+
+## 3. Choose desktop scope
+
+Application entries with `windows: all` authorize observation and input for
+windows belonging to that application.
+
+Keep `desktop.display: false` when the workflow does not need unfiltered
+desktop capture or desktop-coordinate input. Set it to `true` only when the
+agent needs full-display access:
+
+```yaml
+resources:
+  desktop:
+    display: true
+```
+
+## 4. Choose file roots
+
+Directory grants are checked by canonical path component:
+
+```yaml
+resources:
+  files:
+    read:
+      - dir: /data/input
+        recursive: true
+    write:
+      - dir: /data/output
+        recursive: true
+```
+
+`recursive: false` allows direct children only. Existing version 1 manifests
+may still list exact path strings, but version 2 directory roots are more
+practical for unattended output.
+
+## 5. Start Cua Driver
+
+```bash
+cua-driver serve \
+  --permission-mode bounded \
+  --session-policy ./cua-session.yaml \
+  --approve-session-policy
+```
+
+The approval flag confirms that the trusted launcher reviewed this exact file.
+It is not accepted from a tool call.
+
+For MCP, point the client at the running daemon:
+
+```json
+{
+  "mcpServers": {
+    "cua": {
+      "command": "cua-driver",
+      "args": ["mcp", "--socket", "/path/to/cua-driver.sock"]
+    }
+  }
+}
+```
+
+Use the platform's reported default endpoint unless your launcher selected a
+custom `--socket`.
+
+## 6. Test denial before unattended use
+
+Confirm all three cases:
+
+1. An allowed tool against an allowed resource succeeds without a Cua prompt.
+2. An allowed tool against a different app, origin, or path returns
+   `bounded_resource_outside_manifest`.
+3. A tool omitted from `allow.tools` returns `permission_denied`.
+
+Also verify expiry and revocation:
+
+```bash
+cua-driver revoke --session test-run
+cua-driver revoke --all
+```
+
+`revoke --all` suspends the complete runtime generation. Restart the daemon
+before starting a new bounded run.
+
+## Rules to remember
+
+- The manifest only narrows the built-in and configured policy ceilings.
+- Ownership never bypasses the manifest.
+- Unknown tools and missing resources fail closed.
+- Browser origins match exact scheme, host, and port.
+- `terminate: driver_launched` requires a fresh process fingerprint match.
+- `ask.tools` is denied in unattended use because an agent cannot approve its
+  own request.
+- Keep expiry and idle timeouts as short as the task permits.
+
+See [Permission modes](/reference/cua-driver/permission-modes) for the complete
+mode matrix and [Permission policies](/reference/cua-driver/permission-policies)
+for administrator and user policy layers.

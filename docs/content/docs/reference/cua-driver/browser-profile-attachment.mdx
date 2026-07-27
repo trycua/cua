@@ -14,7 +14,7 @@ profiles.
   "pid": 844,
   "window_id": 10725,
   "session": "research-1",
-  "strategy": {"kind": "existing_profile"}
+  "strategy": { "kind": "existing_profile" },
 }
 ```
 
@@ -22,16 +22,25 @@ profiles.
 with legacy `allow_launch` or `profile` fields. Authorization depends on the
 daemon's immutable [permission mode](/reference/cua-driver/permission-modes):
 
-- `standard` requests exact protected consent from a certified host provider.
+- `standard` requests exact confirmation from the runtime's provider.
 - `bounded` requires the launch-approved manifest to list this PID/window;
   the provider activates its persistent Stop indicator without a second prompt.
 - `unrestricted` attaches without a runtime approval after the trusted launcher
   supplied `--dangerously-bypass-approvals`.
 
 The internal approval marker supplied by an MCP transport does not authorize
-this strategy. The standalone daemon currently has no certified Codex or Claude
-host provider, so `standard` and `bounded` fail closed there. Use an isolated
-profile or an explicitly launched unrestricted daemon.
+this strategy. Interactive standalone daemons use Cua's native confirmation
+card. Headless daemons without a confirmation surface fail closed in
+`standard`, and bounded attachment fails when its required persistent
+indicator cannot be shown.
+
+![Cua Driver confirmation card beside its persistent session indicator](/img/cua-driver-consent-ui.jpg)
+
+The native card is same-desktop, best-effort confirmation. It prevents
+tool-argument forgery and clearly presents the exact operation, but another
+process or remote-desktop controller that can automate the same desktop can
+activate it. It is not a secure-desktop or biometric boundary. Use a stronger
+host-provided collector when local hostile automation is in scope.
 
 The old `browser-approve` file artifact is disabled by default. A trusted
 launcher can temporarily enable it with
@@ -43,26 +52,26 @@ and is not protected human consent.
 A successful call returns `action: "attached_existing_profile"` and an
 `attachment` object with:
 
-| Field | Value |
-| --- | --- |
-| `kind` | `existing_profile` |
-| `browser` | `chromium` |
-| `capabilities_invalidated` | `true` |
-| `next_action` | `get_browser_state` |
+| Field                      | Value               |
+| -------------------------- | ------------------- |
+| `kind`                     | `existing_profile`  |
+| `browser`                  | `chromium`          |
+| `capabilities_invalidated` | `true`              |
+| `next_action`              | `get_browser_state` |
 
 `side_effects` reports the bounded setup and consent effects:
 
-| Field | Meaning |
-| --- | --- |
-| `opened_setup_page` | A temporary tab was opened in the approved native window. |
-| `closed_setup_page` | That temporary setup tab was closed successfully. |
-| `focused_setup_address_field` | The temporary tab's address field received in-app focus for exact navigation. |
-| `enabled_remote_debugging` | The exact per-instance Chrome checkbox was toggled from off to on and the same control's resulting state was verified. |
-| `used_bounded_pixel_fallback` | macOS used its setup-page-only pixel route to read or change the checkbox after the web AX subtree was unavailable. |
-| `foregrounded_window` | Setup temporarily foregrounded the exact approved browser window for a bounded local action. |
-| `injected_global_input` | Setup delivered global mouse or keyboard input only after revalidating the approved browser process and window. |
-| `changed_preferences` | Mirrors `enabled_remote_debugging` for the generic prepare contract. |
-| `displayed_consent_prompt` | Chrome displayed its browser-owned connection-consent prompt. |
+| Field                         | Meaning                                                                                                                |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `opened_setup_page`           | A temporary tab was opened in the approved native window.                                                              |
+| `closed_setup_page`           | That temporary setup tab was closed successfully.                                                                      |
+| `focused_setup_address_field` | The temporary tab's address field received in-app focus for exact navigation.                                          |
+| `enabled_remote_debugging`    | The exact per-instance Chrome checkbox was toggled from off to on and the same control's resulting state was verified. |
+| `used_bounded_pixel_fallback` | macOS used its setup-page-only pixel route to read or change the checkbox after the web AX subtree was unavailable.    |
+| `foregrounded_window`         | Setup temporarily foregrounded the exact approved browser window for a bounded local action.                           |
+| `injected_global_input`       | Setup delivered global mouse or keyboard input only after revalidating the approved browser process and window.        |
+| `changed_preferences`         | Mirrors `enabled_remote_debugging` for the generic prepare contract.                                                   |
+| `displayed_consent_prompt`    | Chrome displayed its browser-owned connection-consent prompt.                                                          |
 
 All fields are `false` when the endpoint was already available. The driver does
 not return the profile identity, endpoint address, port, connection generation,
@@ -107,15 +116,15 @@ by the previous generation.
 
 ## Security properties
 
-| Property | Guarantee |
-| --- | --- |
-| Network exposure | The accepted DevTools endpoint must be loopback-only. |
-| Process binding | The endpoint, native window, and live process fingerprint must agree before every mutation. |
-| Driver authorization | Standard and bounded setup need a request-bound protected provider; a model-supplied Boolean, ordinary MCP approval, TTY input, and files are insufficient. |
-| Revocation | A protected grant cannot become live until its provider activates persistent Stop UI. `cua-driver revoke` and session end provide additional deny-only paths. |
-| Capability scope | Targets, tabs, dialogs, frames, and refs are opaque, session-scoped, and invalidated after navigation or connection-generation changes. |
-| Profile handling | Cua Driver does not copy, edit, restart, or terminate the selected existing profile. |
-| Residual local risk | CDP itself is not authenticated. Another process running as the same OS user may connect to an exposed endpoint outside Cua Driver. |
+| Property             | Guarantee                                                                                                                                                                                                                                         |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Network exposure     | The accepted DevTools endpoint must be loopback-only.                                                                                                                                                                                             |
+| Process binding      | The endpoint, native window, and live process fingerprint must agree before every mutation.                                                                                                                                                       |
+| Driver authorization | Standard and bounded setup need a request-bound confirmation provider; a model-supplied Boolean, ordinary MCP approval, TTY input, and files are insufficient. The built-in native card has `same_desktop_best_effort` assurance.                 |
+| Revocation           | A grant cannot become live until its provider activates persistent Stop UI. `cua-driver revoke` and session end provide additional deny-only paths.                                                                                               |
+| Capability scope     | Targets, tabs, dialogs, frames, and refs are opaque, session-scoped, and invalidated after navigation or connection-generation changes.                                                                                                           |
+| Profile handling     | Cua Driver does not copy, edit, restart, or terminate the selected existing profile.                                                                                                                                                              |
+| Residual local risk  | CDP itself is not authenticated. Another process running as the same OS user may connect to an exposed endpoint outside Cua Driver. Another automation runtime with control of the same desktop may also activate the built-in confirmation card. |
 
 An isolated profile is the recommended default. Existing-profile attachment is
 appropriate only when the task requires its authenticated state and the host is
@@ -124,19 +133,19 @@ for why Cua Driver uses CDP and which risks remain outside the driver.
 
 ## Refusals
 
-| Code | Meaning |
-| --- | --- |
-| `browser_consent_required` | No live exact approval exists, or it expired. |
-| `browser_consent_revoked` | The person dismissed or denied the browser prompt. |
-| `browser_requires_setup` | No unique approved browser endpoint is available. |
-| `browser_endpoint_owner_mismatch` | Endpoint ownership or identity changed. |
-| `browser_wrong_target_refused` | The native window, prompt, or browser target is not exact. |
-| `browser_binding_stale` | A connection generation changed; bind again. |
-| `browser_reconnect_exhausted` | The bounded reconnect policy could not establish a proven socket. |
-| `browser_input_incomplete` | Keystroke typing delivered only a reported prefix. |
-| `browser_route_unavailable` | The classified engine or platform has no accepted typed route. For Firefox and Safari, bounded detail identifies the required protocol and current lifecycle limitation. |
-| `browser_input_trust_unavailable` | Trusted input cannot preserve background posture. Bounded detail identifies the explicit `dom_event` alternative when a synthetic ref-targeted action is acceptable. |
-| `browser_origin_outside_scope` | A bounded-mode tab left the manifest's allowed origin set; further mutation pauses. |
+| Code                              | Meaning                                                                                                                                                                  |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `browser_consent_required`        | No live exact approval exists, or it expired.                                                                                                                            |
+| `browser_consent_revoked`         | The person dismissed or denied the browser prompt.                                                                                                                       |
+| `browser_requires_setup`          | No unique approved browser endpoint is available.                                                                                                                        |
+| `browser_endpoint_owner_mismatch` | Endpoint ownership or identity changed.                                                                                                                                  |
+| `browser_wrong_target_refused`    | The native window, prompt, or browser target is not exact.                                                                                                               |
+| `browser_binding_stale`           | A connection generation changed; bind again.                                                                                                                             |
+| `browser_reconnect_exhausted`     | The bounded reconnect policy could not establish a proven socket.                                                                                                        |
+| `browser_input_incomplete`        | Keystroke typing delivered only a reported prefix.                                                                                                                       |
+| `browser_route_unavailable`       | The classified engine or platform has no accepted typed route. For Firefox and Safari, bounded detail identifies the required protocol and current lifecycle limitation. |
+| `browser_input_trust_unavailable` | Trusted input cannot preserve background posture. Bounded detail identifies the explicit `dom_event` alternative when a synthetic ref-targeted action is acceptable.     |
+| `browser_origin_outside_scope`    | A bounded-mode tab left the manifest's allowed origin set; further mutation pauses.                                                                                      |
 
 ## Recording and telemetry
 

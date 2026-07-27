@@ -13,7 +13,7 @@ The importing application owns OS permissions and permission UX. On macOS,
 direct `check_permissions` calls are read-only even when `prompt` is requested;
 relaunch the responsible host after changing TCC grants. Direct macOS runtimes
 also return `facility_unavailable` for agent-cursor overlay operations unless
-the host installs a certified AppKit main-thread adapter. Use a private worker
+the host installs a suitable AppKit main-thread adapter. Use a private worker
 or explicit service when the overlay is required.
 
 ## Install the SDK

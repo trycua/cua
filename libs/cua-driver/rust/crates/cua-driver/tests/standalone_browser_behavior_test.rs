@@ -765,7 +765,11 @@ fn configure_test_browser_sandbox(command: &mut Command) {
 const TEST_BROWSER_WINDOW_SIZE: &str = "900,640";
 #[cfg(target_os = "windows")]
 const TEST_BROWSER_HIGH_DPI_WINDOW_SIZE: &str = "440,300";
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
+const TEST_BROWSER_WINDOW_SIZE: &str = "980,760";
+#[cfg(target_os = "linux")]
+const TEST_BROWSER_HIGH_DPI_WINDOW_SIZE: &str = "420,280";
+#[cfg(target_os = "macos")]
 const TEST_BROWSER_WINDOW_SIZE: &str = "980,760";
 
 #[cfg(target_os = "windows")]
@@ -783,29 +787,37 @@ fn command_for_browser(
 ) -> Command {
     let mut command = Command::new(&spec.executable);
     let output = browser_stderr();
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     let window_size = if _force_high_device_scale {
         // Chromium applies the forced scale to the native window as well as
-        // the page and enforces a scaled minimum outer width. Keep the
-        // resulting physical bounds inside the 1024x768 interactive runner so
-        // the full-desktop sentinel can occlude every sampled point during the
-        // strict background-action proof.
+        // the page and enforces a scaled minimum outer size. Keep the resulting
+        // physical bounds inside the interactive runner so the full-desktop
+        // sentinel can occlude every sampled point during the strict
+        // background-action proof.
         TEST_BROWSER_HIGH_DPI_WINDOW_SIZE
     } else {
         TEST_BROWSER_WINDOW_SIZE
     };
     #[cfg(target_os = "windows")]
     let window_position = if _force_high_device_scale {
-        // A scaled (40,40) origin plus Chromium's minimum high-DPI outer width
-        // can extend past the runner even when --window-size is smaller.
+        // A scaled inset origin plus Chromium's minimum high-DPI outer width
+        // can extend past a small runner even when --window-size is smaller.
         // Anchor this test-owned window at the display origin instead.
         (0, 0)
     } else {
         position
     };
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    // GNOME may horizontally maximize Chromium after applying server-side
+    // frame extents. Anchor this disposable fixture at the display origin so
+    // the full-screen sentinel covers the complete compositor-declared frame.
+    let window_position = {
+        let _ = position;
+        (0, 0)
+    };
+    #[cfg(target_os = "macos")]
     let window_position = position;
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
     let window_size = TEST_BROWSER_WINDOW_SIZE;
     command
         .arg(format!("--remote-debugging-port={cdp_port}"))

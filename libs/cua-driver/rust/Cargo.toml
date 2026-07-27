@@ -13,6 +13,7 @@ members = [
     "crates/platform-linux",
     "crates/cursor-overlay",
     "crates/cursor-theme-cli",
+    "crates/overlay-ui",
     "crates/pip-preview",
 ]
 

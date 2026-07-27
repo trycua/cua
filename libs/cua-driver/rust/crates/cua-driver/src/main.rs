@@ -24,6 +24,7 @@ mod cli;
 mod doctor;
 mod mcp_http;
 mod private_worker;
+mod protected_consent;
 mod proxy;
 mod responsibility;
 mod sdk_adapter;
@@ -291,6 +292,7 @@ fn build_driver(
         claude_code_compatibility: compatibility_mode,
         prepare_desktop_environment: true,
         register_host_tools: Some(check_update_tool::register_into),
+        protected_consent_provider: protected_consent::native_provider(),
     })
 }
 
@@ -323,6 +325,7 @@ fn inspect_tools_without_runtime() -> serde_json::Value {
         claude_code_compatibility: false,
         prepare_desktop_environment: false,
         register_host_tools: Some(check_update_tool::register_into),
+        protected_consent_provider: None,
     })
 }
 
@@ -338,7 +341,7 @@ fn run_mcp_direct(compatibility_mode: bool) -> anyhow::Result<()> {
     cua_driver_core::authorization::validate_startup_authorization()?;
     cua_driver_core::policy::validate_configured_policy()?;
     let cursor = cursor_overlay::CursorConfig::from_args();
-    // A plain stdio MCP process does not provide the certified AppKit
+    // A plain stdio MCP process does not provide the required AppKit
     // main-thread host adapter. Explicit direct mode on macOS must therefore
     // expose facility_unavailable instead of initializing an overlay that can
     // report success without a usable UI owner. Private-worker and app-service
@@ -426,6 +429,9 @@ mod mcp_runtime_selection_tests {
 
 #[cfg(target_os = "macos")]
 fn main() {
+    if let Some(code) = protected_consent::run_helper_if_requested() {
+        std::process::exit(code);
+    }
     init_logging();
     if let Some(code) = cli::run_permissions_host_request_if_requested() {
         std::process::exit(code);
@@ -808,6 +814,9 @@ fn main() {
 
 #[cfg(not(target_os = "macos"))]
 fn main() -> anyhow::Result<()> {
+    if let Some(code) = protected_consent::run_helper_if_requested() {
+        std::process::exit(code);
+    }
     init_logging();
     if let Some(generation) = private_worker::requested_generation() {
         return private_worker::run(generation, None);

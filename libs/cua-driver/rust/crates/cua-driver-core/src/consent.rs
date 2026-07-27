@@ -8,7 +8,7 @@
 //! to this interface.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -21,6 +21,27 @@ use uuid::Uuid;
 use crate::authorization::{PermissionMode, RiskClass};
 
 const DEFAULT_REQUEST_TTL: Duration = Duration::from_secs(2 * 60);
+
+/// Runtime-wide admission guard held only while protected human input is
+/// being collected. The action that requested consent is already suspended
+/// inside its provider; concurrent tool calls fail closed before they can
+/// inspect the prompt or inject input into it.
+struct ProtectedInteractionGuard {
+    depth: Arc<AtomicUsize>,
+}
+
+impl ProtectedInteractionGuard {
+    fn enter(depth: Arc<AtomicUsize>) -> Self {
+        depth.fetch_add(1, Ordering::AcqRel);
+        Self { depth }
+    }
+}
+
+impl Drop for ProtectedInteractionGuard {
+    fn drop(&mut self) {
+        self.depth.fetch_sub(1, Ordering::AcqRel);
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -114,17 +135,17 @@ impl ProtectedGrant {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ConsentError {
-    #[error("no certified protected-consent provider is available")]
+    #[error("no request-bound confirmation provider is available")]
     Unavailable,
-    #[error("protected consent was declined")]
+    #[error("confirmation was declined")]
     Declined,
-    #[error("protected consent was canceled")]
+    #[error("confirmation was canceled")]
     Canceled,
-    #[error("protected consent provider failed: {0}")]
+    #[error("confirmation provider failed: {0}")]
     Provider(String),
-    #[error("protected consent response did not match the exact request digest")]
+    #[error("confirmation response did not match the exact request digest")]
     DigestMismatch,
-    #[error("protected consent expired before activation")]
+    #[error("confirmation expired before activation")]
     Expired,
     #[error("persistent consent indicator could not be activated: {0}")]
     Indicator(String),
@@ -137,6 +158,7 @@ pub struct ApprovalBroker {
     daemon_instance: Arc<str>,
     next_generation: Arc<AtomicU64>,
     provider: Option<Arc<dyn ProtectedConsentProvider>>,
+    protected_interaction_depth: Arc<AtomicUsize>,
 }
 
 impl ApprovalBroker {
@@ -149,6 +171,7 @@ impl ApprovalBroker {
             daemon_instance: Arc::from(Uuid::new_v4().to_string()),
             next_generation: Arc::new(AtomicU64::new(1)),
             provider,
+            protected_interaction_depth: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -156,6 +179,10 @@ impl ApprovalBroker {
         self.provider
             .as_ref()
             .map(|provider| provider.provider_id())
+    }
+
+    pub fn protected_interaction_active(&self) -> bool {
+        self.protected_interaction_depth.load(Ordering::Acquire) != 0
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -225,10 +252,14 @@ impl ApprovalBroker {
         if request.request_digest != digest_request(request) {
             return Err(ConsentError::DigestMismatch);
         }
-        let decision = tokio::time::timeout(remaining(request)?, provider.request_consent(request))
-            .await
-            .map_err(|_| ConsentError::Provider("request timed out".to_owned()))?
-            .map_err(ConsentError::Provider)?;
+        let decision = {
+            let _interaction_guard =
+                ProtectedInteractionGuard::enter(self.protected_interaction_depth.clone());
+            tokio::time::timeout(remaining(request)?, provider.request_consent(request))
+                .await
+                .map_err(|_| ConsentError::Provider("request timed out".to_owned()))?
+                .map_err(ConsentError::Provider)?
+        };
         if decision.request_digest != request.request_digest {
             return Err(ConsentError::DigestMismatch);
         }
@@ -830,6 +861,17 @@ mod tests {
             provider.deactivated.lock().unwrap().as_slice(),
             ["indicator-1"]
         );
+    }
+
+    #[test]
+    fn protected_interaction_guard_is_scoped_to_one_broker() {
+        let first = ApprovalBroker::unavailable();
+        let second = ApprovalBroker::unavailable();
+        let guard = ProtectedInteractionGuard::enter(first.protected_interaction_depth.clone());
+        assert!(first.protected_interaction_active());
+        assert!(!second.protected_interaction_active());
+        drop(guard);
+        assert!(!first.protected_interaction_active());
     }
 
     #[tokio::test]

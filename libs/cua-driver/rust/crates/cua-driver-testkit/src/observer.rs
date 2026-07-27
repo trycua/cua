@@ -1209,8 +1209,7 @@ pub mod linux {
     struct GnomeWindow {
         id: u64,
         pid: u32,
-        #[serde(rename = "title")]
-        _title: String,
+        title: String,
         x: i64,
         y: i64,
         w: i64,
@@ -1297,14 +1296,19 @@ pub mod linux {
     }
 
     fn fully_covers(cover: &GnomeWindow, target: &GnomeWindow) -> bool {
-        target.w > 0
-            && target.h > 0
-            && cover.w > 0
-            && cover.h > 0
-            && cover.x <= target.x
+        let valid_rects = target.w > 0 && target.h > 0 && cover.w > 0 && cover.h > 0;
+        let covers_declared_frame = cover.x <= target.x
             && cover.y <= target.y
             && cover.x.saturating_add(cover.w) >= target.x.saturating_add(target.w)
-            && cover.y.saturating_add(cover.h) >= target.y.saturating_add(target.h)
+            && cover.y.saturating_add(cover.h) >= target.y.saturating_add(target.h);
+        let test_sentinel_covers_visible_frame = cover.title.starts_with("CuaTestHarness Sentinel")
+            && cover.x == 0
+            && cover.y == 0
+            && target.x < cover.w
+            && target.y < cover.h
+            && target.x.saturating_add(target.w) > 0
+            && target.y.saturating_add(target.h) > 0;
+        valid_rects && (covers_declared_frame || test_sentinel_covers_visible_frame)
     }
 
     fn classify_gnome_target(windows: &[GnomeWindow], target: TargetWindow) -> TargetZ {
@@ -1834,6 +1838,28 @@ pub mod linux {
             );
             windows[1].w = 800;
             windows[1].visible = false;
+            assert_eq!(
+                classify_gnome_target(&windows, target),
+                TargetZ::BackgroundVisible
+            );
+        }
+
+        #[test]
+        fn gnome_fullscreen_test_sentinel_covers_the_visible_part_of_an_oversized_target() {
+            let mut windows = parse_gnome_windows(gnome_payload()).expect("GNOME JSON");
+            let target = TargetWindow {
+                pid: 100,
+                native_id: 10,
+            };
+            windows[0].x = 66;
+            windows[0].w = 1020;
+            windows[1].title = "CuaTestHarness Sentinel [cdp=12345]".to_owned();
+            assert_eq!(
+                classify_gnome_target(&windows, target),
+                TargetZ::BackgroundOccluded
+            );
+
+            windows[1].title = "ordinary window".to_owned();
             assert_eq!(
                 classify_gnome_target(&windows, target),
                 TargetZ::BackgroundVisible

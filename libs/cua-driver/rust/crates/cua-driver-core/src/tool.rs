@@ -807,6 +807,13 @@ impl ToolRegistry {
         // caller-forgeable here.
         crate::tool_args::sanitize_reserved_args(&mut args);
 
+        if self.approval_broker.protected_interaction_active() {
+            return permission_denied_result(
+                "a protected human-consent surface is active; Cua observation and input are temporarily suspended"
+                    .to_owned(),
+            );
+        }
+
         // Deprecated alias: `type_text_chars` → `type_text`.  Swift's
         // ToolRegistry.swift keeps the same alias (with stderr warning) for
         // backwards compatibility with hermes-agent builds that still emit
@@ -3702,7 +3709,7 @@ mod capability_tests {
     fn to_list_entry_includes_versioned_risk_metadata() {
         let entry = dummy_def("browser_prepare").to_list_entry();
         assert_eq!(entry["risk"]["class"], "r2");
-        assert_eq!(entry["risk"]["enforcement"], "metadata_only");
+        assert_eq!(entry["risk"]["enforcement"], "active");
         assert_eq!(entry["risk"]["operation_sensitive"], true);
         assert_eq!(entry["risk"]["version"], "1");
     }

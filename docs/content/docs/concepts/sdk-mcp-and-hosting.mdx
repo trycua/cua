@@ -155,7 +155,7 @@ runtime. Use separate private workers or services for crash isolation,
 different trust domains, different OS identities, or independent desktops.
 
 On macOS, the cursor overlay additionally requires an AppKit main-thread UI
-owner. A direct runtime without a certified host adapter returns structured
+owner. A direct runtime without a suitable host adapter returns structured
 `facility_unavailable` results for cursor-overlay operations; it does not
 report success or start hidden AppKit work on an unsafe thread. A private
 worker or service owns the required event loop. A headless service or worker

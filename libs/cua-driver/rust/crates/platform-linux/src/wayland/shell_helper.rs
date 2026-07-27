@@ -283,14 +283,20 @@ fn wait_timeout(mut child: std::process::Child, dur: Duration) -> Option<std::pr
     })
 }
 
-/// Screen origin of the Wayland surface buffer backing `pid`.
+/// Screen origin of the compositor frame backing `pid`.
 ///
-/// GTK's AT-SPI `CoordType::Window` includes client-side shadow extents, while
-/// Mutter's frame rectangle excludes them. The buffer origin preserves those
-/// extents so accessibility frames line up with pixels. Older helpers omit the
-/// buffer fields and fall back to the frame origin.
+/// `screenshot_window_dispatch` crops the Shell stage to this same frame
+/// rectangle, and GTK's AT-SPI `CoordType::Window` coordinates are relative to
+/// that frame. Using Mutter's larger surface-buffer rectangle here shifts
+/// elements up and left by the client-side shadow extents whenever the window
+/// is floating, so pixel actions derived from the returned screenshot miss
+/// their target.
 pub fn window_origin_for_pid(pid: u32) -> Option<(i32, i32)> {
     let raw = gdbus_call("GetRects", &[])?;
+    parse_window_origin(&raw, pid)
+}
+
+fn parse_window_origin(raw: &str, pid: u32) -> Option<(i32, i32)> {
     // gdbus prints a GVariant tuple like `('[{"pid":..,"x":..}]',)`. Pull the
     // JSON array out robustly (first '[' .. last ']') rather than parsing the
     // GVariant wrapper, so an apostrophe in a window title can't break it.
@@ -300,16 +306,8 @@ pub fn window_origin_for_pid(pid: u32) -> Option<(i32, i32)> {
     let arr: Vec<serde_json::Value> = serde_json::from_str(json).ok()?;
     for w in &arr {
         if w.get("pid").and_then(|p| p.as_u64()) == Some(pid as u64) {
-            let x = w
-                .get("buffer_x")
-                .and_then(serde_json::Value::as_i64)
-                .or_else(|| w.get("x").and_then(serde_json::Value::as_i64))?
-                as i32;
-            let y = w
-                .get("buffer_y")
-                .and_then(serde_json::Value::as_i64)
-                .or_else(|| w.get("y").and_then(serde_json::Value::as_i64))?
-                as i32;
+            let x = w.get("x").and_then(serde_json::Value::as_i64)? as i32;
+            let y = w.get("y").and_then(serde_json::Value::as_i64)? as i32;
             return Some((x, y));
         }
     }
@@ -546,6 +544,13 @@ mod tests {
         assert_eq!((windows[0].width, windows[0].height), (958, 736));
         assert!(windows[0].is_on_screen);
         assert_eq!(windows[0].z_index, Some(2));
+    }
+
+    #[test]
+    fn accessibility_origin_matches_the_frame_cropped_screenshot() {
+        let raw = r#"('[{"id":46,"pid":6079,"title":"Floating GTK","x":14,"y":12,"w":560,"h":736,"buffer_x":0,"buffer_y":0}]',)"#;
+
+        assert_eq!(parse_window_origin(raw, 6079), Some((14, 12)));
     }
 
     #[test]

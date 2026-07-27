@@ -447,7 +447,9 @@ fn authenticate_embedded_host_connection(stream: &tokio::net::UnixStream) -> any
 }
 
 fn service_authorization_status(trusted_host_connection: bool) -> serde_json::Value {
-    let mut status = cua_driver_core::authorization::status_json();
+    let provider_id =
+        crate::protected_consent::native_provider().map(|provider| provider.provider_id());
+    let mut status = cua_driver_core::authorization::status_json_with_provider(provider_id);
     if trusted_host_connection {
         let object = status
             .as_object_mut()
@@ -1666,8 +1668,11 @@ pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
                     println!("  managed policy sha256: {hash}");
                 }
                 println!(
-                    "  protected consent collector: {}",
+                    "  confirmation collector: {} ({})",
                     status["protected_consent_collector"]
+                        .as_str()
+                        .unwrap_or("unavailable"),
+                    status["protected_consent_assurance"]
                         .as_str()
                         .unwrap_or("unavailable")
                 );
@@ -1858,6 +1863,7 @@ mod gate_tests {
                 claude_code_compatibility: false,
                 prepare_desktop_environment: false,
                 register_host_tools: Some(register_probe),
+                protected_consent_provider: None,
             });
         let direct_driver = driver.clone();
         let sdk = crate::sdk_adapter::SdkAdapter::load(driver)

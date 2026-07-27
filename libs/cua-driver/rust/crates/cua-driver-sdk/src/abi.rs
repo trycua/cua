@@ -1194,6 +1194,9 @@ impl NativeAbiDriver {
         host_bundle_id: Option<String>,
         prepare_desktop_environment: bool,
         register_host_tools: Option<fn(&mut cua_driver_core::tool::ToolRegistry)>,
+        protected_consent_provider: Option<
+            Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>,
+        >,
     ) -> Result<Self, DriverError> {
         let options: AbiDriverOptions =
             serde_json::from_value(options).map_err(|error| DriverError::Configuration {
@@ -1208,6 +1211,7 @@ impl NativeAbiDriver {
         runtime_options.host_bundle_id = host_bundle_id;
         runtime_options.prepare_desktop_environment = prepare_desktop_environment;
         runtime_options.register_host_tools = register_host_tools;
+        runtime_options.protected_consent_provider = protected_consent_provider;
         Self::create_for_host(runtime_options)
     }
 

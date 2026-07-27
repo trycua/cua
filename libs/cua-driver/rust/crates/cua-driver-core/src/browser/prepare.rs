@@ -803,7 +803,7 @@ impl BrowserEngine {
         } else {
             return Err(refusal(
                 BrowserRefusalCode::BrowserConsentRequired,
-                "existing-profile attachment requires a certified trusted-consent provider in standard/bounded mode; the legacy file-backed artifact is disabled",
+                "existing-profile attachment requires an available request-bound confirmation provider in standard/bounded mode; the legacy file-backed artifact is disabled",
             )
             .with_detail(serde_json::json!({
                 "permission_mode": mode.as_str(),

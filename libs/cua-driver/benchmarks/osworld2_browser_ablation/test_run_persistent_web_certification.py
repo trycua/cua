@@ -78,6 +78,53 @@ class PersistentCertificationTests(unittest.TestCase):
             )
         )
 
+    def test_hashed_resume_result_supersedes_partial_attempt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output_dir = Path(temporary)
+            partial_dir = output_dir / "partial" / "task001"
+            resumed_dir = output_dir / "resumed" / "task001"
+            partial_dir.mkdir(parents=True)
+            resumed_dir.mkdir(parents=True)
+            partial_path = partial_dir / "paired-result.json"
+            resumed_path = resumed_dir / "paired-result.json"
+            partial_path.write_text(
+                json.dumps(
+                    {
+                        "task_id": "001",
+                        "pair_valid": False,
+                        "episodes": [{"steps_executed": 3}],
+                        "run_error": "guest transport failed",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            resumed_path.write_text(
+                json.dumps(
+                    {
+                        "task_id": "001",
+                        "pair_valid": True,
+                        "episodes": [{"steps_executed": 24}],
+                        "supersedes_result": {
+                            "path": str(partial_path),
+                            "sha256": persistent.paired.sha256_file(partial_path),
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            adopted, attempts = persistent.existing_pair_results(
+                output_dir=output_dir,
+                tasks=tasks(),
+            )
+
+        self.assertEqual(adopted["001"][0], resumed_path)
+        self.assertEqual(attempts[0]["result_path"], str(partial_path))
+        self.assertEqual(
+            Path(attempts[0]["superseded_by"]),
+            resumed_path.resolve(),
+        )
+
     def test_posthoc_attestation_error_quarantines_a_valid_result(self) -> None:
         record = persistent.record_for(
             task=tasks()[0],

@@ -191,13 +191,50 @@ def existing_pair_results(
     adopted: dict[str, tuple[Path, dict[str, Any]]] = {}
     infrastructure_attempts: list[dict[str, Any]] = []
     known_task_ids = {str(task["task_id"]) for task in tasks}
-    for result_path in sorted(output_dir.glob("**/paired-result.json")):
-        result = certification.read_json(result_path)
+    candidates = [
+        (result_path, certification.read_json(result_path))
+        for result_path in sorted(output_dir.glob("**/paired-result.json"))
+    ]
+    superseded: dict[Path, Path] = {}
+    for result_path, result in candidates:
+        supersedes = result.get("supersedes_result")
+        if not isinstance(supersedes, dict):
+            continue
+        prior_path = Path(str(supersedes.get("path"))).resolve()
+        if not prior_path.is_relative_to(output_dir.resolve()):
+            raise PersistentCertificationError(
+                f"{result_path} supersedes a result outside the certification"
+            )
+        if not prior_path.is_file():
+            raise PersistentCertificationError(
+                f"{result_path} supersedes a missing result"
+            )
+        if supersedes.get("sha256") != paired.sha256_file(prior_path):
+            raise PersistentCertificationError(
+                f"{result_path} superseded-result hash does not match"
+            )
+        if prior_path in superseded:
+            raise PersistentCertificationError(
+                f"multiple results supersede {prior_path}"
+            )
+        superseded[prior_path] = result_path.resolve()
+
+    for result_path, result in candidates:
         task_id = str(result.get("task_id"))
         if task_id not in known_task_ids:
             raise PersistentCertificationError(
                 f"{result_path} has an unknown task_id"
             )
+        if result_path.resolve() in superseded:
+            infrastructure_attempts.append(
+                {
+                    "task_id": task_id,
+                    "result_path": str(result_path),
+                    "run_error": result.get("run_error"),
+                    "superseded_by": str(superseded[result_path.resolve()]),
+                }
+            )
+            continue
         if result.get("pair_valid") is True or result_has_model_attempt(result):
             if task_id in adopted:
                 raise PersistentCertificationError(

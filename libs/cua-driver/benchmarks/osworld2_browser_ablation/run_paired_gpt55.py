@@ -1521,6 +1521,42 @@ def estimate_standard_cost(records: Iterable[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def load_nonmutating_resume_trace(
+    episode_dir: Path,
+    *,
+    expected_mode: str,
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    result = json.loads((episode_dir / "result.json").read_text(encoding="utf-8"))
+    if (
+        result.get("task_id") != TASK_ID
+        or result.get("mode") != expected_mode
+        or result.get("evaluation") is not None
+        or not result.get("agent_failure")
+    ):
+        raise PairedRunError("partial episode is not eligible for resumption")
+    step_count = int(result.get("steps_executed") or 0)
+    if step_count <= 0:
+        raise PairedRunError("partial episode has no completed steps")
+    history: list[dict[str, Any]] = []
+    model_records: list[dict[str, Any]] = []
+    for step in range(1, step_count + 1):
+        step_dir = episode_dir / "steps" / f"{step:03d}"
+        model = json.loads((step_dir / "model.json").read_text(encoding="utf-8"))
+        action = json.loads((step_dir / "action.json").read_text(encoding="utf-8"))
+        outcome = json.loads(
+            (step_dir / "action-result.json").read_text(encoding="utf-8")
+        )
+        if action.get("name") not in {"native_switch_window", "native_scroll"}:
+            raise PairedRunError(
+                "partial episode contains a state-mutating action"
+            )
+        if outcome.get("done") or outcome.get("refused"):
+            raise PairedRunError("partial episode contains a terminal action")
+        model_records.append(model)
+        history.append({"step": step, "action": action, "outcome": outcome})
+    return result, history, model_records
+
+
 def run_episode(
     *,
     client: OpenAI,
@@ -1532,6 +1568,7 @@ def run_episode(
     cache_dir: Path,
     reset_evidence: dict[str, Any],
     cost_ceiling_usd: float | None = None,
+    resume_from_episode: Path | None = None,
 ) -> dict[str, Any]:
     session = f"{SESSION_PREFIX}-{mode}-{uuid.uuid4().hex[:8]}"
     history: list[dict[str, Any]] = []
@@ -1544,6 +1581,17 @@ def run_episode(
     supplemental_task_checks: dict[str, Any] | None = None
     session_ended = False
     steps_executed = 0
+    resumed_result: dict[str, Any] | None = None
+    if resume_from_episode is not None:
+        resumed_result, history, model_records = load_nonmutating_resume_trace(
+            resume_from_episode,
+            expected_mode=mode,
+        )
+        resolved_models.update(
+            str(item)
+            for item in resumed_result.get("resolved_models") or []
+        )
+        steps_executed = int(resumed_result["steps_executed"])
     start_session(session)
     try:
         expected_pid = int(reset_evidence["chrome_pid"])
@@ -1552,8 +1600,38 @@ def run_episode(
             target, browser = bind_browser(target, session, expected_pid)
         else:
             browser = None
+        replay_records: list[dict[str, Any]] = []
+        for item in history:
+            replay_action = {
+                "name": item["action"]["name"],
+                "arguments": dict(item["action"].get("arguments") or {}),
+            }
+            if replay_action["name"] == "native_switch_window":
+                replay_action["arguments"] = {
+                    "pid": target.pid,
+                    "window_id": target.window_id,
+                }
+            outcome, post, target = execute_action(
+                action=replay_action,
+                target=target,
+                browser=browser,
+                session=session,
+                expected_pid=expected_pid,
+            )
+            if outcome.get("done") or outcome.get("refused"):
+                raise PairedRunError("resume replay did not complete safely")
+            replay_records.append(
+                {
+                    "original_step": item["step"],
+                    "action": replay_action,
+                    "outcome": outcome,
+                    "post_action_verification": post,
+                }
+            )
+        if replay_records:
+            write_json(episode_dir / "resume-replay.json", replay_records)
         instruction = task_instruction()
-        for step in range(1, max_steps + 1):
+        for step in range(steps_executed + 1, max_steps + 1):
             step_dir = episode_dir / "steps" / f"{step:03d}"
             target, native, screenshot_b64 = native_snapshot_with_recovery(
                 target,
@@ -1647,7 +1725,10 @@ def run_episode(
             for item in history
             if (item.get("outcome") or {}).get("refused") is True
         ),
-        "wall_seconds": time.monotonic() - episode_started,
+        "wall_seconds": (
+            time.monotonic() - episode_started
+            + float((resumed_result or {}).get("wall_seconds") or 0.0)
+        ),
         "model_seconds": sum(
             float(record.get("model_seconds") or 0.0) for record in model_records
         ),
@@ -1665,6 +1746,18 @@ def run_episode(
             else None
         ),
         "session_ended": session_ended,
+        "resume_evidence": (
+            {
+                "prior_episode_path": str(resume_from_episode.resolve()),
+                "prior_episode_result_sha256": sha256_file(
+                    resume_from_episode / "result.json"
+                ),
+                "prior_steps_replayed": int(resumed_result["steps_executed"]),
+                "replay_actions_are_nonmutating": True,
+            }
+            if resume_from_episode is not None and resumed_result is not None
+            else None
+        ),
     }
     write_json(episode_dir / "result.json", result)
     return result

@@ -142,6 +142,12 @@ class PolicyTests(unittest.TestCase):
             paired.fleet_pilot.CDP_PORT,
         )
 
+    def test_parent_readiness_budget_exceeds_fleet_warmup_budget(self) -> None:
+        self.assertGreater(
+            paired.PILOT_READY_TIMEOUT_SECONDS,
+            paired.fleet_pilot.POOL_READY_TIMEOUT_SECONDS,
+        )
+
     def test_fresh_profile_suppresses_chrome_first_run_ui(self) -> None:
         command = paired.fleet_pilot.isolated_chrome_command(
             ["google-chrome", "--remote-debugging-port=1337", "https://example.test"],

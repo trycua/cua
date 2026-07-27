@@ -49,6 +49,7 @@ RESULTS_DIR = WORK_DIR / "results"
 
 DEFAULT_FLEET_BASE_URL = "https://run.cua.ai"
 DEFAULT_AWS_REGION = "us-west-2"
+POOL_READY_TIMEOUT_SECONDS = 1800
 
 POOL_GROUP = "cua.ai"
 POOL_VERSION = "v1"
@@ -547,7 +548,7 @@ def wait_pool(http: Callable[[], httpx.Client], namespace: str) -> dict[str, Any
 
     return wait_for(
         description="exactly one warm Fleet VM",
-        timeout=1800,
+        timeout=POOL_READY_TIMEOUT_SECONDS,
         poll=10,
         probe=probe,
         ready=lambda status: int(status.get("totalCount", 0)) == 1

@@ -851,7 +851,7 @@ fn draw_modifiers(
 
     if visual.delivery == Some(DeliveryModifier::Foreground) {
         let mut ring = PathBuilder::new();
-        ring.push_circle(104.0, 96.0, 9.0);
+        ring.push_circle(25.0, 90.0, 9.0);
         if let Some(path) = ring.finish() {
             draw_glowing_path(pm, &path, transform, alpha, 3.0, fill_rgba);
         }
@@ -1084,6 +1084,37 @@ mod tests {
             "unexpected glow pixel: {glow_pixel:?}"
         );
         assert_eq!(pixel(48, 30), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn foreground_and_pixel_modifiers_render_on_opposite_sides() {
+        let mut pixmap = tiny_skia::Pixmap::new(128, 128).unwrap();
+        let visual = CursorVisualState {
+            delivery: Some(DeliveryModifier::Foreground),
+            target: Some(TargetModifier::Pixel),
+            reduced_motion: ReducedMotion::On,
+            ..CursorVisualState::default()
+        };
+        draw_modifiers(
+            &mut pixmap,
+            &visual,
+            Transform::identity(),
+            1.0,
+            [12, 34, 56, 255],
+        );
+
+        let white_pixels = |x_range: std::ops::Range<u32>, y_range: std::ops::Range<u32>| {
+            y_range
+                .flat_map(|y| x_range.clone().map(move |x| (x, y)))
+                .filter(|(x, y)| {
+                    let index = ((y * pixmap.width() + x) * 4) as usize;
+                    pixmap.data()[index..index + 4] == [255, 255, 255, 255]
+                })
+                .count()
+        };
+
+        assert!(white_pixels(13..37, 78..102) > 5);
+        assert!(white_pixels(91..117, 88..114) > 5);
     }
 
     #[test]

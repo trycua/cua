@@ -391,7 +391,7 @@ function drawModifiers(cr, delivery, target, fillColor) {
         strokeCue(2.5, 0.75);
         cr.restore();
     } else if (delivery === 'foreground') {
-        cr.arc(104, 96, 9, 0, Math.PI * 2);
+        cr.arc(25, 90, 9, 0, Math.PI * 2);
         strokeCue(3);
     }
 

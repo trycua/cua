@@ -112,18 +112,19 @@ is safe even for apps that normally foreground on media-load
 | Enumerate an app's windows            | `list_windows({pid})` — or read the `windows` array `launch_app` already returns       | `osascript 'every window of app …'`                         |
 | Click / type / scroll / keys          | `click`, `type_text`, `scroll`, `press_key`, `hotkey`                                  | `osascript`, `cliclick`, raw `CGEvent`, `open <url>`        |
 | Drag / drag-and-drop / marquee select | `drag({pid, from_x, from_y, to_x, to_y})` (pixel-only — macOS AX has no semantic drag) | `cliclick dd:`, `osascript drag`                            |
-| Screenshot                            | `screenshot` or the PNG in `get_window_state`                                          | `screencapture`                                             |
+| Screenshot                            | the PNG in `get_window_state` (window), `get_desktop_state` (full display), or `zoom` (crop) — macOS has **no** `screenshot` tool, removed in #1692 | `screencapture`                                             |
 | Quit an app                           | ask the user first, then `hotkey({pid, keys:["cmd","q"]})`                             | `kill`, `killall`, `pkill`                                  |
+| Deliberately take **and hold** the foreground | `bring_to_front({pid, window_id?})` — steals focus by design and does **not** restore | `osascript 'tell app … to activate'`                        |
 | Hand a file/URL to an app             | `launch_app({bundle_id, urls:[<path>]})`                                               | `open -a <App> <path>`, `open <url>`                        |
 
 ### The narrow carve-out
 
-The **only** legitimate use of `osascript -e 'tell app X to
-activate'` is when the user **explicitly** asked for frontmost
-state ("bring Chrome to the front", "make it frontmost", "I want
-to see X"). Reaching for it because a tool call returned something
-confusing is wrong — that's the skill's classic foot-in-the-door
-failure mode and it steals focus every time.
+When the user **explicitly** asks for frontmost state ("bring Chrome to
+the front", "make it frontmost", "I want to see X"), the tool for it is
+`bring_to_front({pid, window_id?})` — not `osascript`. Reaching for a
+shell activate because a tool call returned something confusing is
+wrong either way: that's the skill's classic foot-in-the-door failure
+mode and it steals focus every time.
 
 When a cua-driver call surprises you, diagnose cua-driver first:
 
@@ -483,24 +484,90 @@ the user requested genuinely requires frontmost (Preview rotate,
 View menu document manipulation, editor commands). If either
 check fails, don't activate.
 
-When both checks pass, the driver has no `activate` tool
-(deliberately — the whole point is backgroundable control), so
-this is the one legitimate `osascript` fallback:
+When both checks pass, use the driver's own foreground rungs rather
+than shelling out:
 
-```bash
-osascript -e 'tell application "<App Name>" to activate'
-```
+- **One menu pick or one shortcut** — put `delivery_mode:"foreground"`
+  on the action itself: `click({pid, window_id, element_index: N,
+  action: "pick", delivery_mode: "foreground"})`, or the same flag on
+  `hotkey` for the shortcut form (`⌘R`, `⌘+`). It briefly fronts the
+  window, acts, then restores the prior frontmost.
+- **The target must stay frontmost across several steps** —
+  `bring_to_front({pid, window_id})`. It returns `activated` plus the
+  path it used (`skylight` when given a `window_id`, `cocoa` otherwise).
+  It deliberately does **not** restore the previous app, which is why
+  `delivery_mode` is the better choice whenever one action will do; call
+  `bring_to_front` on the user's prior app to put things back.
 
 Then re-snapshot — the menu item loses its `DISABLED` tag — and
-`click({action: "pick"})` the item. Alternatively, a `hotkey`
-call delivered to the now-frontmost app works for the shortcut
-form (`⌘R`, `⌘+`, etc.).
+`click({action: "pick"})` the item.
 
 **Always name the focus steal in your response** so the user isn't
 surprised — "Briefly activating Preview to enable Tools → Rotate
 Right" or similar. Don't silently steal focus. You don't need to
 restore the previous frontmost afterwards unless the user asks —
 they can cmd-tab back.
+
+## Menu-bar-only apps (`LSUIElement`, status items, panels, popovers)
+
+An agent app with an `NSStatusItem` and no ordinary window returns
+`list_windows({pid}) -> []` forever, because `list_windows` enumerates
+**layer-0 windows only** (`windows.rs`, the single `kCGWindowLayer`
+filter). A status-bar `NSPanel` sits at level 25 and a popover creates
+another level-25 window, so neither is ever listed. It is easy to read
+that empty array as "cua-driver does not support this app". It is a
+discovery limit, not a capability limit — the whole flow works:
+
+```bash
+# an LSUIElement app is often absent from list_apps too
+PID=$(pgrep -x MyAgentApp)
+
+# AX: pass ANY integer as window_id. The walk is application-rooted, so the
+# status item comes back regardless of which id you name.
+cua-driver get_window_state '{"pid":'$PID',"window_id":1,"include_screenshot":false}'
+#   -> elements: [{element_index: 0, role: "AXMenuBarItem", label: "..."}]
+
+# Drive it: AXShowMenu, re-snapshot, AXPick the item.
+cua-driver right_click     '{"pid":'$PID',"window_id":1,"element_index":0}'
+cua-driver get_window_state '{"pid":'$PID',"window_id":1,"include_screenshot":false}'
+cua-driver click           '{"pid":'$PID',"window_id":1,"element_index":3,"action":"pick"}'
+
+# Pixels need the real CGWindowID, which CGWindowList has and list_windows
+# filters out. Reading it is not a GUI mutation, so it is outside the
+# osascript prohibition above.
+osascript -l JavaScript -e 'ObjC.import("CoreGraphics");ObjC.import("Foundation");
+  function run(a){const p=parseInt(a[0],10);
+  const w=ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll,$.kCGNullWindowID)));
+  return JSON.stringify(w.filter(x=>x.kCGWindowOwnerPID===p).map(x=>({id:x.kCGWindowNumber,layer:x.kCGWindowLayer})));}' $PID
+cua-driver get_window_state '{"pid":'$PID',"window_id":<thatId>,"screenshot_out_file":"/tmp/panel.png","max_elements":1}'
+```
+
+Four things decide whether this works:
+
+- **The AXMenuBar caution above does not apply to status items.** That rule
+  concerns an app's *application menu bar* (File/Edit/View), which the system
+  renders for whichever app is frontmost. An `NSStatusItem` is the app's own
+  menu-bar **extra**: `AXShowMenu` on it presents that item's own menu with no
+  frontmost requirement and no visual mis-attribution.
+- **Give actions their own cache key.** The element cache is keyed
+  `(pid, window_id)` and is replaced by every `get_window_state` on that key,
+  including an `include_screenshot:false` one. A capture loop pointed at the
+  same window as a pending action evicts its indices and the action fails with
+  `Element index N not found in cache` — while the screenshot still looks
+  plausible. Since the AX walk ignores `window_id`, park actions on a sentinel
+  key (`window_id: 1`) and leave real ids free for capture.
+- **`click({action:"pick"})` on an `AXMenuItem` blocks for ~2 s.** Fire it
+  synchronously and every frame you capture afterwards lands after the UI it
+  triggered has finished animating. To capture an entry animation, start the
+  capture loop first and let the pick run concurrently — which is only safe
+  with the separate cache key above.
+- **Check what the app exposes before promising to read text.** A quick
+  read-only oracle: `osascript -e 'tell application "System Events" to tell
+  process "X" to return count of windows'`. If that is `0`, the panel's
+  contents are invisible to every accessibility consumer — cua-driver and
+  VoiceOver alike — and pixels are the only route. That is an app-side
+  accessibility gap rather than a driver limitation, and worth reporting to
+  the app's owner.
 
 ## Browsers on macOS
 

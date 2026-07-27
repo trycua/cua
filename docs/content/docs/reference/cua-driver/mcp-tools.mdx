@@ -134,11 +134,15 @@ Pure read-only.
 
 ### `get_agent_cursor_state`
 
-Return the current state of THIS session's agent cursor: position, config (color, icon, label, size, opacity), enabled flag. Pass cursor_id to inspect a specific instance.
+Return the session cursor's theme, semantic playback, position, visibility, and motion.
 
 **Arguments:**
 
-- `cursor_id` (string, optional): Cursor instance. Default: this session's cursor.
+- `session` (string, required)
+
+```json
+{"session":"example"}
+```
 
 ## Action tools
 
@@ -589,6 +593,8 @@ Declare a session — a named, color-coded identity for THIS agent run. Pass a s
 **Arguments:**
 
 - `capture_scope` (string, optional): Per-session perception/action modality. auto starts window-only and requires explicit escalation before desktop tools; window and desktop are strict. Immutable for the live session.
+- `cursor_theme` (object,null, optional): Optional initial cursor theme. The host applies it before the cursor is
+first made visible, avoiding a flash of the default theme.
 - `session` (string, required): Stable session id for this run (e.g. "research-run-1").
 
 ```json
@@ -609,72 +615,37 @@ End a session declared with `start_session`: removes its agent cursor, stops any
 
 ### `set_agent_cursor_enabled`
 
-Show or hide the agent cursor for a session. A cursor exists only for a DECLARED session: pass `session` (the same id you start_session / drive actions with) and the cursor appears on that session's first action — its color is derived from the id. Without a `session`, actions run cursor-less. Use enabled=false to hide a session's cursor, enabled=true to re-show it. (`cursor_id` is a legacy alias for `session`.)
+Show or hide the agent cursor owned by a session.
 
 **Arguments:**
 
-- `cursor_id` (string, optional): Cursor instance. Default: 'default'.
-- `enabled` (boolean, required): true = show, false = hide.
+- `enabled` (boolean, required)
+- `session` (string, required)
 
 ```json
-{"enabled":false}
+{"enabled":false,"session":"example"}
 ```
 
 ### `set_agent_cursor_motion`
 
-Configure the visual appearance and motion curve of an agent cursor instance.
-
-Appearance (multi-cursor customization):
-- cursor_id: instance name (default='default')
-- cursor_icon: built-in ('arrow' | 'teardrop') or a path to a PNG/JPEG/SVG/ICO file; '' reverts to the default cursor
-- cursor_color: hex color e.g. '#00FFFF' or CSS name
-- cursor_label: short text shown near the cursor
-- cursor_size: dot radius in points (default=16)
-- cursor_opacity: 0.0–1.0 (default=0.85)
-
-Motion curve (Bezier path shape):
-- start_handle: departure control-point fraction [0,1]. Default 0.3
-- end_handle: arrival control-point fraction [0,1]. Default 0.3
-- arc_size: perpendicular deflection as fraction of path length [0,1]. Default 0.25
-- arc_flow: asymmetry [-1,1]; positive bulges toward destination. Default 0.0
-- spring: settle damping [0.3,1.0]; 1.0=no overshoot. Default 0.72
-- glide_duration_ms: fixed flight duration per move [50,5000]; omit for speed-based (the default)
-- dwell_after_click_ms: pause after click ripple [0,5000]. Default 80
-- idle_hide_ms: auto-hide delay [0,60000]; 0=never. Default 20000
+Configure only movement physics and visibility timing for a session cursor.
 
 **Arguments:**
 
-- `arc_flow` (number, optional): Asymmetry bias in [-1, 1]. Default 0.0.
-- `arc_size` (number, optional): Arc deflection as fraction of path length [0, 1]. Default 0.25.
-- `cursor_color` (string, optional): Hex color (e.g. '#00FFFF') or CSS color name.
-- `cursor_icon` (string, optional): Built-in shape ('arrow' | 'teardrop') or a path to a PNG/JPEG/SVG/ICO file. '' reverts to the default cursor.
-- `cursor_id` (string, optional): Cursor instance name. Default: 'default'.
-- `cursor_label` (string, optional): Short label near the cursor dot.
-- `cursor_opacity` (number, optional): Opacity 0.0–1.0. Default: 0.85.
-- `cursor_size` (number, optional): Dot radius in points. Default: 16.
-- `dwell_after_click_ms` (number, optional): Pause after click ripple in ms. Default 80.
-- `end_handle` (number, optional): End-handle fraction in [0, 1]. Default 0.3.
-- `glide_duration_ms` (number, optional): Fixed flight duration per move in ms; omit for speed-based timing (the default).
-- `idle_hide_ms` (number, optional): Auto-hide delay in ms. 0 = never hide. Default 20000.
-- `spring` (number, optional): Settle damping in [0.3, 1.0]. Default 0.72.
-- `start_handle` (number, optional): Start-handle fraction in [0, 1]. Default 0.3.
-- `turn_radius` (number, optional): Minimum turning radius of the glide path in points; smaller = tighter curves. Default 80.
+- `arc_flow` (number,null, optional)
+- `arc_size` (number,null, optional)
+- `dwell_after_click_ms` (number,null, optional)
+- `end_handle` (number,null, optional)
+- `glide_duration_ms` (number,null, optional)
+- `idle_hide_ms` (number,null, optional)
+- `session` (string, required)
+- `spring` (number,null, optional)
+- `start_handle` (number,null, optional)
+- `turn_radius` (number,null, optional)
 
-### `set_agent_cursor_style`
-
-Update the visual style of the agent cursor overlay.
-
-- gradient_colors: array of CSS hex strings (e.g. ["#FF0000","#0000FF"]) used as the arrow fill gradient from tip to tail. Empty array reverts to the default palette colours.
-- bloom_color: hex string for the radial halo/bloom behind the cursor (e.g. "#00FFFF"). Empty string reverts to the default.
-- image_path: path to a PNG, JPEG, SVG, or ICO file to use as the cursor icon instead of the default silhouette. Empty string reverts to the default cursor.
-All parameters are optional; omit any you do not want to change.
-
-**Arguments:**
-
-- `bloom_color` (string, optional): Hex bloom/halo colour (e.g. '#00FFFF'). '' = revert to default.
-- `cursor_id` (string, optional): Cursor instance. Default: 'default'.
-- `gradient_colors` (array of string, optional): CSS hex gradient stops tip→tail. [] = revert to default.
-- `image_path` (string, optional): Path to PNG/JPEG/SVG/ICO cursor image. '' = revert to the default cursor.
+```json
+{"session":"example"}
+```
 
 ## Maintenance tools
 
@@ -754,6 +725,20 @@ Install the ffmpeg binary used by start_recording's video capture (Linux/Windows
 - `confirm` (boolean, optional): Run the install command. Without it, only the planned command is reported.
 
 ## Other tools
+
+### `set_agent_cursor_theme`
+
+Select an already-installed cursor theme for a session.
+
+**Arguments:**
+
+- `reduced_motion` (string, optional)
+- `session` (string, required)
+- `theme_id` (string, required)
+
+```json
+{"session":"example","theme_id":"example"}
+```
 
 ### `get_browser_state`
 

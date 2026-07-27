@@ -112,6 +112,22 @@ explicit escalation before desktop tools are enabled.
 | `press_key`           | `pressKey`          | `PressKeyInput`          |
 | `hotkey`              | `hotkey`            | `HotkeyInput`            |
 
+## Typed cursor methods
+
+| Python                     | TypeScript              | Input                        |
+| -------------------------- | ----------------------- | ---------------------------- |
+| `set_agent_cursor_enabled` | `setAgentCursorEnabled` | `SetAgentCursorEnabledInput` |
+| `set_agent_cursor_motion`  | `setAgentCursorMotion`  | `SetAgentCursorMotionInput`  |
+| `set_agent_cursor_theme`   | `setAgentCursorTheme`   | `SetAgentCursorThemeInput`   |
+| `get_agent_cursor_state`   | `getAgentCursorState`   | `GetAgentCursorStateInput`   |
+
+Every cursor operation is bound to a declared session. `cua.default` is the
+only built-in theme. A trusted local operator may validate, compile, and install
+a custom theme with `cua-driver cursor-theme`; agent-facing tools may select an
+installed theme ID but cannot install source or compiled theme data. See
+[Agent cursor themes](/how-to-guides/driver/personalize-cursor) for the
+semantic profile and authoring workflow.
+
 Use `list_tools_json()` / `listToolsJson()` and `call_tool()` / `callTool()` for
 the generic, platform-extensible tool surface. Its top-level
 `enforcement_adapters` array distinguishes active, metadata-only, and

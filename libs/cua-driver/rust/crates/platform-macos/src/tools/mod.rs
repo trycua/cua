@@ -552,17 +552,13 @@ pub fn register_all(
                     Some(state) => cua_driver_core::session::bounded_cursor_outcome(
                         true,
                         state.config.enabled,
-                        state.config.cursor_icon.as_deref(),
-                        state.config.cursor_color.as_deref(),
-                        state.config.cursor_label.as_deref(),
+                        Some(state.config.theme_id.as_str()),
                         motion_customized,
                         active_cursor_count,
                     ),
                     None => cua_driver_core::session::bounded_cursor_outcome(
                         false,
                         false,
-                        None,
-                        None,
                         None,
                         false,
                         active_cursor_count,
@@ -647,7 +643,7 @@ pub fn register_all(
     registry.register(Box::new(cursor_tools::SetAgentCursorMotionTool::new(
         state.clone(),
     )));
-    registry.register(Box::new(cursor_tools::SetAgentCursorStyleTool::new(
+    registry.register(Box::new(cursor_tools::SetAgentCursorThemeTool::new(
         state.clone(),
     )));
     registry.register(Box::new(cursor_tools::GetAgentCursorStateTool::new(

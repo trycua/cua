@@ -47,6 +47,35 @@ macro_rules! stub_tool {
     };
 }
 
+macro_rules! contract_stub_tool {
+    ($mod_name:ident, $struct_name:ident, $tool_name:literal) => {
+        mod $mod_name {
+            use super::*;
+            pub struct $struct_name;
+            static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+            impl $struct_name {
+                pub fn def_static() -> &'static ToolDef {
+                    DEF.get_or_init(|| {
+                        let contract = cua_driver_contract::tool_contract($tool_name)
+                            .expect("canonical cursor contract exists");
+                        ToolDef::from_contract(&contract)
+                    })
+                }
+            }
+            #[async_trait]
+            impl Tool for $struct_name {
+                fn def(&self) -> &ToolDef {
+                    Self::def_static()
+                }
+                async fn invoke(&self, _args: Value) -> ToolResult {
+                    not_impl($tool_name)
+                }
+            }
+        }
+        pub use $mod_name::$struct_name;
+    };
+}
+
 stub_tool!(
     list_apps_m,
     ListAppsTool,
@@ -174,24 +203,25 @@ stub_tool!(
     serde_json::json!({"type":"object","properties":{},"additionalProperties":false})
 );
 
-stub_tool!(cursor_motion_m, SetAgentCursorMotionTool, "set_agent_cursor_motion",
-    format!("Configure the visual appearance of an agent cursor instance.\n\nExtended cursor customization for multi-cursor use cases:\n- cursor_id: instance name (default='default')\n- cursor_icon: built-in ({}) or a path to a PNG/JPEG/SVG/ICO file; '' reverts to the default cursor\n- cursor_color: hex color e.g. '#00FFFF' or CSS name\n- cursor_label: short text shown near the cursor\n- cursor_size: dot radius in points (default=16)\n- cursor_opacity: 0.0–1.0 (default=0.85)", cursor_overlay::BuiltinShape::names_help()),
-    serde_json::json!({"type":"object","properties":{"cursor_id":{"type":"string"},"cursor_icon":{"type":"string"},"cursor_color":{"type":"string"},"cursor_label":{"type":"string"},"cursor_size":{"type":"number"},"cursor_opacity":{"type":"number"}},"additionalProperties":false}));
-
-stub_tool!(
-    get_cursor_state_m,
-    GetAgentCursorStateTool,
-    "get_agent_cursor_state",
-    "Return the current state of all agent cursor instances.",
-    serde_json::json!({"type":"object","properties":{},"additionalProperties":false})
+contract_stub_tool!(
+    cursor_enabled_v2_m,
+    SetAgentCursorEnabledV2Tool,
+    "set_agent_cursor_enabled"
 );
-
-stub_tool!(
-    set_cursor_style_m,
-    SetAgentCursorStyleTool,
-    "set_agent_cursor_style",
-    "Update the visual style of the agent cursor overlay.",
-    serde_json::json!({"type":"object","properties":{"cursor_id":{"type":"string"},"gradient_colors":{"type":"array","items":{"type":"string"}},"bloom_color":{"type":"string"},"image_path":{"type":"string"}},"additionalProperties":false})
+contract_stub_tool!(
+    cursor_motion_v2_m,
+    SetAgentCursorMotionV2Tool,
+    "set_agent_cursor_motion"
+);
+contract_stub_tool!(
+    get_cursor_state_v2_m,
+    GetAgentCursorStateV2Tool,
+    "get_agent_cursor_state"
+);
+contract_stub_tool!(
+    cursor_theme_m,
+    SetAgentCursorThemeTool,
+    "set_agent_cursor_theme"
 );
 
 stub_tool!(
@@ -272,45 +302,6 @@ mod move_cursor_m {
 }
 pub use move_cursor_m::MoveCursorTool;
 
-mod set_enabled_m {
-    use super::*;
-    pub struct SetAgentCursorEnabledTool;
-    static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
-    impl SetAgentCursorEnabledTool {
-        pub fn def_static() -> &'static ToolDef {
-            DEF.get_or_init(|| ToolDef {
-                name: "set_agent_cursor_enabled".into(),
-                description: "Show or hide the agent cursor overlay.".into(),
-                input_schema: serde_json::json!({"type":"object","required":["enabled"],"properties":{"enabled":{"type":"boolean"},"cursor_id":{"type":"string"}},"additionalProperties":false}),
-                read_only: false, destructive: false, idempotent: true, open_world: false,
-            })
-        }
-    }
-    #[async_trait]
-    impl Tool for SetAgentCursorEnabledTool {
-        fn def(&self) -> &ToolDef {
-            Self::def_static()
-        }
-        async fn invoke(&self, args: Value) -> ToolResult {
-            let enabled = args
-                .get("enabled")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
-            let cursor_id = args
-                .get("cursor_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("default");
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::SetEnabled(enabled));
-            ToolResult::text(format!(
-                "Agent cursor '{}' {}.",
-                cursor_id,
-                if enabled { "enabled" } else { "disabled" }
-            ))
-        }
-    }
-}
-pub use set_enabled_m::SetAgentCursorEnabledTool;
-
 pub fn build_registry() -> cua_driver_core::tool::ToolRegistry {
     let mut r = cua_driver_core::tool::ToolRegistry::new();
     r.register(Box::new(ListAppsTool));
@@ -330,10 +321,10 @@ pub fn build_registry() -> cua_driver_core::tool::ToolRegistry {
     r.register(Box::new(GetScreenSizeTool));
     r.register(Box::new(GetCursorPositionTool));
     r.register(Box::new(MoveCursorTool));
-    r.register(Box::new(SetAgentCursorEnabledTool));
-    r.register(Box::new(SetAgentCursorMotionTool));
-    r.register(Box::new(GetAgentCursorStateTool));
-    r.register(Box::new(SetAgentCursorStyleTool));
+    r.register(Box::new(SetAgentCursorEnabledV2Tool));
+    r.register(Box::new(SetAgentCursorMotionV2Tool));
+    r.register(Box::new(GetAgentCursorStateV2Tool));
+    r.register(Box::new(SetAgentCursorThemeTool));
     r.register(Box::new(CheckPermissionsTool));
     // health_report is cross-platform — the Linux provider here lets
     // non-Linux hosts running the stubbed registry still advertise

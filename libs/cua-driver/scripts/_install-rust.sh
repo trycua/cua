@@ -585,15 +585,22 @@ case "$LABEL" in
     darwin-*)
         STAGE="cua-driver-rs-${VERSION}-darwin-universal"
         SRC="$TMP_DIR/$STAGE/$BINARY_NAME"
+        SRC_THEME="$TMP_DIR/$STAGE/cua-cursor-theme"
         SRC_APP="$TMP_DIR/$STAGE/$APP_NAME"
         ;;
     *)
         SRC="$TMP_DIR/$BINARY_NAME"
+        SRC_THEME="$TMP_DIR/cua-cursor-theme"
         SRC_APP=""
         ;;
 esac
 if [[ ! -f "$SRC" ]]; then
     err "expected $BINARY_NAME in tarball but didn't find it"
+    ls -la "$TMP_DIR"
+    exit 1
+fi
+if [[ ! -f "$SRC_THEME" ]]; then
+    err "expected cua-cursor-theme in tarball but didn't find it"
     ls -la "$TMP_DIR"
     exit 1
 fi
@@ -752,6 +759,7 @@ else
 
     mkdir -p "$VERSIONED_DIR"
     install -m 0755 "$SRC" "$VERSIONED_DIR/$BINARY_NAME"
+    install -m 0755 "$SRC_THEME" "$VERSIONED_DIR/cua-cursor-theme"
     log "installed $VERSIONED_DIR/$BINARY_NAME (version $VERSION, target $TARGET)"
 
     # `ln -sfn` would replace an existing dir-symlink in place but is

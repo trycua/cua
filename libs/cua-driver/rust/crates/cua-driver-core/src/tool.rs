@@ -171,7 +171,7 @@ impl ToolDef {
 ///   `session.capture_scope`, `session.capture_scope.read`,
 ///   `session.capture_scope.escalate`
 /// - `agent_cursor.move`, `agent_cursor.set_enabled`,
-///   `agent_cursor.set_motion`, `agent_cursor.set_style`,
+///   `agent_cursor.set_motion`, `agent_cursor.set_theme`,
 ///   `agent_cursor.state`
 /// - `recording.start`, `recording.stop`, `recording.state`,
 ///   `recording.replay`, `recording.install_dependency`
@@ -288,7 +288,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         // ── agent cursor ─────────────────────────────────────────────
         "set_agent_cursor_enabled" => &["agent_cursor.set_enabled"],
         "set_agent_cursor_motion" => &["agent_cursor.set_motion"],
-        "set_agent_cursor_style" => &["agent_cursor.set_style"],
+        "set_agent_cursor_theme" => &["agent_cursor.set_theme"],
         "get_agent_cursor_state" => &["agent_cursor.state"],
 
         // ── recording / replay ───────────────────────────────────────
@@ -1094,6 +1094,7 @@ impl ToolRegistry {
 
         // Capture start time for recording timestamps only after validation.
         let start_ms = now_ms();
+        let cursor_event = crate::cursor_events::begin_tool(resolved_name, &args);
 
         // Reserve and capture the turn before dispatch so recorded evidence
         // shows the application immediately before the action changed it.
@@ -1130,6 +1131,7 @@ impl ToolRegistry {
             .flatten();
 
         let mut result = tool.invoke(args.clone()).await;
+        crate::cursor_events::end_tool(cursor_event);
         // Coordinate the physical action itself, not post-action evidence
         // capture or result shaping. Keeping the global desktop lock through
         // recording/PiP screenshots would unnecessarily block an unrelated
@@ -3415,7 +3417,7 @@ mod capability_tests {
         // agent cursor
         "set_agent_cursor_enabled",
         "set_agent_cursor_motion",
-        "set_agent_cursor_style",
+        "set_agent_cursor_theme",
         "get_agent_cursor_state",
         // recording / replay
         "start_recording",
@@ -3497,7 +3499,7 @@ mod capability_tests {
         "agent_cursor.move",
         "agent_cursor.set_enabled",
         "agent_cursor.set_motion",
-        "agent_cursor.set_style",
+        "agent_cursor.set_theme",
         "agent_cursor.state",
         // recording
         "recording.start",

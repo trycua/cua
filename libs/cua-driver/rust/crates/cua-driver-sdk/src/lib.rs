@@ -7,9 +7,10 @@
 
 use cua_driver_contract::{
     ClickInput, DragInput, EndSessionInput, EndSessionOutput, EscalateSessionInput,
-    GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput, GetSessionStateInput,
-    HotkeyInput, MoveCursorInput, PressKeyInput, ScrollInput, SessionStateOutput,
-    StartSessionInput, StartSessionOutput, ToolInput, TypeTextInput,
+    GetAgentCursorStateInput, GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput,
+    GetSessionStateInput, HotkeyInput, MoveCursorInput, PressKeyInput, ScrollInput,
+    SessionStateOutput, SetAgentCursorEnabledInput, SetAgentCursorMotionInput,
+    SetAgentCursorThemeInput, StartSessionInput, StartSessionOutput, ToolInput, TypeTextInput,
 };
 use cua_driver_core::daemon::{
     is_daemon_listening, request_daemon_metadata, send_request, socket_path_for_namespace,
@@ -550,6 +551,10 @@ macro_rules! desktop_tool_methods {
             type_text: TypeTextInput,
             press_key: PressKeyInput,
             hotkey: HotkeyInput,
+            set_agent_cursor_enabled: SetAgentCursorEnabledInput,
+            set_agent_cursor_motion: SetAgentCursorMotionInput,
+            set_agent_cursor_theme: SetAgentCursorThemeInput,
+            get_agent_cursor_state: GetAgentCursorStateInput,
         }
     };
 }
@@ -2254,6 +2259,7 @@ mod tests {
             .start_session(StartSessionInput {
                 session: "run-2".into(),
                 capture_scope: Some(cua_driver_contract::CaptureScope::Auto),
+                cursor_theme: None,
             })
             .await
             .unwrap();

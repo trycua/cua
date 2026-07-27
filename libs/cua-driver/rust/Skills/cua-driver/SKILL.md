@@ -165,9 +165,10 @@ must be replaced by a fresh snapshot.
 
 Visual cursor overlay for demos and screen recordings. It is enabled by
 default for declared sessions; anonymous actions remain cursor-less. Toggle with
-`cua-driver set_agent_cursor_enabled '{"enabled":true|false}'` only to
-hide or re-show it. A triangle pointer Bezier-glides to each click
-target, ring-ripples on landing, idle-hides after ~1.5s. Motion knobs:
+`set_agent_cursor_enabled` to hide or re-show it. The embedded
+`cua.default` theme uses an off-white/navy pointer and semantic animations for
+idle, observe, click, drag, scroll, text, key, navigation, app, transfer,
+recording, and system activity. Motion knobs:
 `set_agent_cursor_motion` takes any subset of `start_handle`,
 `end_handle`, `arc_size`, `arc_flow`, `spring` — tuneable at runtime,
 persisted to config.
@@ -175,10 +176,14 @@ persisted to config.
 **Per-session cursors.** Each MCP session automatically owns its own
 cursor, keyed by the session's id (the proxy mints one session id per
 MCP connection and the daemon scopes the cursor, config overrides, and
-recording to it). You normally pass nothing — the session key is wired
-through for you. Pass an explicit `cursor_id` only to _deliberately
-share_ one cursor across sessions. When a session ends (the MCP client
-disconnects) its cursor is removed automatically.
+recording to it). The CLI and SDK contracts take the declared `session`
+explicitly. Cursor-theme controls no longer accept `cursor_id` or the legacy
+shape/color/image fields. Input-delivery tools may still use `cursor_id` to
+name a virtual pointer; it never selects artwork. Select only preinstalled
+themes with `set_agent_cursor_theme`; theme source paths and inline animation
+data are never accepted through an agent tool. Use the trusted local
+`cua-driver cursor-theme` workflow to validate, compile, preview, install,
+list, or remove custom themes.
 
 **Visibility caveat (AX runs).** On a pure accessibility-action run
 (clicking by `element_index`), the first action **seeds the cursor

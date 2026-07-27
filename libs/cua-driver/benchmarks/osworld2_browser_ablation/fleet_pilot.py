@@ -103,6 +103,11 @@ def read_json(path: Path) -> dict[str, Any]:
     return value
 
 
+def work_relative_path(path: Path, work_dir: Path = WORK_DIR) -> str:
+    """Return a stable artifact path without assuming work lives under source."""
+    return str(path.resolve().relative_to(work_dir.resolve()))
+
+
 def load_aws_secret(name: str, region: str) -> dict[str, Any]:
     result: subprocess.CompletedProcess[str] | None = None
     for attempt in range(3):
@@ -1470,7 +1475,7 @@ def main() -> int:
             "pilot_ready",
             task_id=live["task_id"],
             driver=bool(driver_result),
-            state_file=str(state_path.relative_to(ROOT)),
+            state_file=work_relative_path(state_path),
         )
         while not stop_requested.wait(timeout=1):
             pass

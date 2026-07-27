@@ -11,6 +11,15 @@ import run_paired_gpt55 as paired
 
 
 class PolicyTests(unittest.TestCase):
+    def test_fleet_state_path_may_live_outside_source_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            work_dir = Path(directory).resolve()
+            state_path = work_dir / "results" / "fleet-pilot-live.json"
+            self.assertEqual(
+                paired.fleet_pilot.work_relative_path(state_path, work_dir),
+                "results/fleet-pilot-live.json",
+            )
+
     def test_fleet_cdp_bridge_targets_the_pinned_guest_port(self) -> None:
         self.assertEqual(
             paired.fleet_pilot.GUEST_CDP_PORT,

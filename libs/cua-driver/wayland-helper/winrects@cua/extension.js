@@ -77,21 +77,64 @@ function setFill(cr, color, alpha = 1) {
     cr.setSourceRGBA(color[0] / 255, color[1] / 255, color[2] / 255, alpha);
 }
 
-function strokePath(cr, width, alpha = 1) {
-    cr.setLineWidth(width);
+function glowPath(cr, width, alpha, glowColor) {
+    if (!glowColor)
+        return;
+    const layers = 12;
+    const outerExpansion = 13;
+    const innerExpansion = 2.5;
+    const maxOpacity = 0.17;
+    let accumulatedOpacity = 0;
+    for (let layer = 0; layer < layers; layer++) {
+        const progress = (layer + 1) / layers;
+        const expansion = outerExpansion + (innerExpansion - outerExpansion) * progress;
+        const targetOpacity = maxOpacity * Math.max(0, Math.min(1, alpha)) *
+            Math.pow(progress, 1.6);
+        const layerOpacity = (targetOpacity - accumulatedOpacity) /
+            Math.max(0.001, 1 - accumulatedOpacity);
+        accumulatedOpacity = targetOpacity;
+        cr.setLineWidth(width + expansion);
+        cr.setLineCap(Cairo.LineCap.ROUND);
+        cr.setLineJoin(Cairo.LineJoin.ROUND);
+        setFill(cr, glowColor, layerOpacity);
+        cr.strokePreserve();
+    }
+}
+
+function strokePath(cr, width, alpha = 1, glowColor = null) {
+    glowPath(cr, width, alpha, glowColor);
+    cr.setLineWidth(glowColor ? width + 1.5 : width);
     cr.setLineCap(Cairo.LineCap.ROUND);
     cr.setLineJoin(Cairo.LineJoin.ROUND);
     setInk(cr, alpha);
+    if (!glowColor) {
+        cr.stroke();
+        return;
+    }
+    cr.strokePreserve();
+    cr.setLineWidth(Math.max(1.5, width - 1));
+    setFill(cr, glowColor, alpha);
     cr.stroke();
 }
 
-function linePath(cr, points, width = 4, alpha = 1) {
+function fillPath(cr, glowWidth, alpha = 1, glowColor = null) {
+    glowPath(cr, glowWidth, alpha, glowColor);
+    cr.setLineWidth(3);
+    cr.setLineCap(Cairo.LineCap.ROUND);
+    cr.setLineJoin(Cairo.LineJoin.ROUND);
+    setInk(cr, alpha);
+    cr.strokePreserve();
+    setFill(cr, glowColor, alpha);
+    cr.fill();
+}
+
+function linePath(cr, points, width = 4, alpha = 1, glowColor = null) {
     if (points.length === 0)
         return;
     cr.moveTo(points[0][0], points[0][1]);
     for (let i = 1; i < points.length; i++)
         cr.lineTo(points[i][0], points[i][1]);
-    strokePath(cr, width, alpha);
+    strokePath(cr, width, alpha, glowColor);
 }
 
 function roundedRect(cr, x, y, width, height, radius) {
@@ -221,8 +264,12 @@ function drawCursorBody(cr, progress, action, fillColor) {
     cr.restore();
 }
 
-function drawActionCue(cr, action, progress) {
+function drawActionCue(cr, action, progress, fillColor) {
     const wave = triangleWave(progress);
+    const strokeCue = (width, alpha = 1) =>
+        strokePath(cr, width, alpha, fillColor);
+    const lineCue = (points, width = 4, alpha = 1) =>
+        linePath(cr, points, width, alpha, fillColor);
     cr.save();
     switch (action) {
     case 'observe': {
@@ -230,54 +277,54 @@ function drawActionCue(cr, action, progress) {
         cr.translate(8, -10);
         cr.moveTo(38, 28);
         cr.curveTo(27, 29, 20, 38, 20, 49);
-        strokePath(cr, 4, opacity);
+        strokeCue(4, opacity);
         cr.moveTo(42, 19);
         cr.curveTo(23, 19, 11, 33, 11, 51);
-        strokePath(cr, 4, opacity);
+        strokeCue(4, opacity);
         break;
     }
     case 'click': {
         const cueProgress = Math.max(0, Math.min(1, progress / 0.65));
         const opacity = Math.max(0, Math.min(1, Math.min(1 - cueProgress, cueProgress * 4)));
         cr.translate(10, 3);
-        linePath(cr, [[35, 20], [34, 11]], 4, opacity);
-        linePath(cr, [[27, 25], [19, 19]], 4, opacity);
-        linePath(cr, [[25, 34], [15, 34]], 4, opacity);
+        lineCue([[35, 20], [34, 11]], 4, opacity);
+        lineCue([[27, 25], [19, 19]], 4, opacity);
+        lineCue([[25, 34], [15, 34]], 4, opacity);
         break;
     }
     case 'drag': {
         const offset = easeInOut(wave) * 7;
         cr.translate(offset, offset * 0.43);
-        linePath(cr, [[28, 38], [16, 35]], 4, 0.2 + wave * 0.8);
-        linePath(cr, [[26, 48], [12, 45]], 4, 0.2 + wave * 0.8);
+        lineCue([[28, 38], [16, 35]], 4, 0.2 + wave * 0.8);
+        lineCue([[26, 48], [12, 45]], 4, 0.2 + wave * 0.8);
         break;
     }
     case 'scroll': {
         cr.translate(-5, 4 - wave * 8);
-        linePath(cr, [[23, 31], [31, 22], [39, 31]], 4, 0.42 + wave * 0.58);
-        linePath(cr, [[23, 49], [31, 58], [39, 49]], 4, 0.42 + wave * 0.58);
+        lineCue([[23, 31], [31, 22], [39, 31]], 4, 0.42 + wave * 0.58);
+        lineCue([[23, 49], [31, 58], [39, 49]], 4, 0.42 + wave * 0.58);
         break;
     }
     case 'text': {
         const opacity = progress < 0.34 || progress > 0.64 ? 1 : 0.18;
         cr.translate(-4, 0);
-        linePath(cr, [[31, 22], [31, 58]], 4, opacity);
-        linePath(cr, [[24, 22], [38, 22]], 4, opacity);
-        linePath(cr, [[24, 58], [38, 58]], 4, opacity);
+        lineCue([[31, 22], [31, 58]], 4, opacity);
+        lineCue([[24, 22], [38, 22]], 4, opacity);
+        lineCue([[24, 58], [38, 58]], 4, opacity);
         break;
     }
     case 'key': {
         const bounce = Math.sin(progress * Math.PI * 2) * (1 - progress) * 3;
         cr.translate(-9, bounce);
         roundedRect(cr, 14, 25, 28, 28, 6);
-        strokePath(cr, 3.5);
-        linePath(cr, [[23, 32], [23, 46], [23, 39], [33, 32], [24, 39], [34, 46]], 3.5);
+        strokeCue(3.5);
+        lineCue([[23, 32], [23, 46], [23, 39], [33, 32], [24, 39], [34, 46]], 3.5);
         break;
     }
     case 'navigate': {
         cr.translate(-10 + easeInOut(progress) * 9, 0);
-        linePath(cr, [[15, 29], [25, 40], [15, 51]], 4, 0.2 + wave * 0.8);
-        linePath(cr, [[29, 29], [39, 40], [29, 51]], 4, 0.2 + wave * 0.8);
+        lineCue([[15, 29], [25, 40], [15, 51]], 4, 0.2 + wave * 0.8);
+        lineCue([[29, 29], [39, 40], [29, 51]], 4, 0.2 + wave * 0.8);
         break;
     }
     case 'app': {
@@ -287,22 +334,21 @@ function drawActionCue(cr, action, progress) {
         cr.translate(-26, -39);
         for (const [x, y] of [[13, 26], [29, 26], [13, 42], [29, 42]]) {
             roundedRect(cr, x, y, 10, 10, 2);
-            strokePath(cr, 3.5);
+            strokeCue(3.5);
         }
         break;
     }
     case 'transfer':
         cr.translate(-9, 6 - wave * 12);
-        linePath(cr, [[22, 50], [22, 20], [14, 28], [22, 20], [30, 28]], 4, 0.38 + wave * 0.62);
-        linePath(cr, [[37, 28], [37, 58], [29, 50], [37, 58], [45, 50]], 4, 0.38 + wave * 0.62);
+        lineCue([[22, 50], [22, 20], [14, 28], [22, 20], [30, 28]], 4, 0.38 + wave * 0.62);
+        lineCue([[37, 28], [37, 58], [29, 50], [37, 58], [45, 50]], 4, 0.38 + wave * 0.62);
         break;
     case 'record':
         cr.translate(-12, 0);
         cr.arc(29, 39, 17, 0, Math.PI * 2);
-        strokePath(cr, 4);
+        strokeCue(4);
         cr.arc(29, 39, 3.6 + wave * 2.1, 0, Math.PI * 2);
-        setInk(cr, 0.42 + wave * 0.58);
-        cr.fill();
+        fillPath(cr, (3.6 + wave * 2.1) * 1.25, 0.42 + wave * 0.58, fillColor);
         break;
     case 'system': {
         cr.translate(15, 39);
@@ -310,7 +356,7 @@ function drawActionCue(cr, action, progress) {
         cr.translate(-29, -39);
         for (const radius of [12, 4]) {
             cr.arc(29, 39, radius, 0, Math.PI * 2);
-            strokePath(cr, 3.5);
+            strokeCue(3.5);
         }
         for (const points of [
             [[29, 20], [29, 25]], [[29, 53], [29, 58]],
@@ -318,7 +364,7 @@ function drawActionCue(cr, action, progress) {
             [[16, 26], [20, 30]], [[38, 48], [42, 52]],
             [[16, 52], [20, 48]], [[38, 30], [42, 26]],
         ])
-            linePath(cr, points, 3.5);
+            lineCue(points, 3.5);
         break;
     }
     default:
@@ -327,46 +373,50 @@ function drawActionCue(cr, action, progress) {
     cr.restore();
 }
 
-function drawModifiers(cr, delivery, target) {
+function drawModifiers(cr, delivery, target, fillColor) {
+    const strokeCue = (width, alpha = 1) =>
+        strokePath(cr, width, alpha, fillColor);
+    const lineCue = (points, width = 4, alpha = 1) =>
+        linePath(cr, points, width, alpha, fillColor);
     if (delivery === 'background') {
         cr.save();
         cr.setDash([1, 5], 0);
         cr.moveTo(34, 23);
         cr.curveTo(20, 31, 17, 48, 21, 63);
         cr.curveTo(25, 80, 38, 95, 53, 106);
-        strokePath(cr, 2.5, 0.75);
+        strokeCue(2.5, 0.75);
         cr.restore();
     } else if (delivery === 'foreground') {
         cr.arc(104, 96, 9, 0, Math.PI * 2);
-        strokePath(cr, 3);
+        strokeCue(3);
     }
 
     switch (target) {
     case 'ax':
         for (const [x, y] of [[104, 89], [94, 104], [114, 104]]) {
             cr.arc(x, y, 3, 0, Math.PI * 2);
-            strokePath(cr, 2.5);
+            strokeCue(2.5);
         }
-        linePath(cr, [[104, 92], [104, 97], [94, 101], [104, 97], [114, 101]], 2.5);
+        lineCue([[104, 92], [104, 97], [94, 101], [104, 97], [114, 101]], 2.5);
         break;
     case 'pixel':
         cr.save();
         cr.setDash([2, 3], 0);
         cr.rectangle(94, 91, 19, 19);
-        strokePath(cr, 2.5);
+        strokeCue(2.5);
         cr.restore();
         break;
     case 'browser':
         cr.arc(104, 100, 10, 0, Math.PI * 2);
-        strokePath(cr, 2.5);
-        linePath(cr, [[94, 100], [114, 100]], 2.5);
-        linePath(cr, [[104, 90], [100, 100], [104, 110]], 2.5);
-        linePath(cr, [[104, 90], [108, 100], [104, 110]], 2.5);
+        strokeCue(2.5);
+        lineCue([[94, 100], [114, 100]], 2.5);
+        lineCue([[104, 90], [100, 100], [104, 110]], 2.5);
+        lineCue([[104, 90], [108, 100], [104, 110]], 2.5);
         break;
     case 'desktop':
         roundedRect(cr, 93, 90, 21, 15, 2);
-        strokePath(cr, 2.5);
-        linePath(cr, [[103.5, 105], [103.5, 110], [97, 110], [110, 110]], 2.5);
+        strokeCue(2.5);
+        lineCue([[103.5, 105], [103.5, 110], [97, 110], [110, 110]], 2.5);
         break;
     default:
         break;
@@ -402,9 +452,9 @@ export default class WinRectsExtension extends Extension {
             cr.scale(SCALE, SCALE);
             cr.translate(-CANVAS_SIZE / 2, -CANVAS_SIZE / 2);
             drawCursorGlow(cr, progress, this._action, this._glowSurface);
-            drawActionCue(cr, this._action, progress);
+            drawActionCue(cr, this._action, progress, this._fillColor);
             drawCursorBody(cr, progress, this._action, this._fillColor);
-            drawModifiers(cr, this._delivery, this._target);
+            drawModifiers(cr, this._delivery, this._target, this._fillColor);
             cr.restore();
             cr.$dispose();
         });

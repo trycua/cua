@@ -225,6 +225,85 @@ fn draw_path(
     pm.stroke_path(path, &paint, &stroke, transform, None);
 }
 
+fn draw_colored_path(
+    pm: &mut tiny_skia::Pixmap,
+    path: &Path,
+    transform: Transform,
+    alpha: f32,
+    width: f32,
+    fill_rgba: [u8; 4],
+) {
+    let stroke = Stroke {
+        width,
+        line_cap: tiny_skia::LineCap::Round,
+        line_join: tiny_skia::LineJoin::Round,
+        ..Default::default()
+    };
+    let color = Color::from_rgba8(fill_rgba[0], fill_rgba[1], fill_rgba[2], fill_rgba[3]);
+    pm.stroke_path(path, &solid_paint(color, alpha), &stroke, transform, None);
+}
+
+fn draw_cue_glow(
+    pm: &mut tiny_skia::Pixmap,
+    path: &Path,
+    transform: Transform,
+    alpha: f32,
+    width: f32,
+    fill_rgba: [u8; 4],
+) {
+    const LAYERS: usize = 12;
+    const OUTER_EXPANSION: f32 = 13.0;
+    const INNER_EXPANSION: f32 = 2.5;
+    const MAX_OPACITY: f32 = 0.17;
+
+    let color = Color::from_rgba8(fill_rgba[0], fill_rgba[1], fill_rgba[2], fill_rgba[3]);
+    let mut accumulated_opacity = 0.0;
+    for layer in 0..LAYERS {
+        let progress = (layer + 1) as f32 / LAYERS as f32;
+        let expansion = OUTER_EXPANSION + (INNER_EXPANSION - OUTER_EXPANSION) * progress;
+        let target_opacity = MAX_OPACITY * alpha.clamp(0.0, 1.0) * progress.powf(1.6);
+        let layer_opacity =
+            (target_opacity - accumulated_opacity) / (1.0 - accumulated_opacity).max(0.001);
+        accumulated_opacity = target_opacity;
+        if layer_opacity <= 0.0 {
+            continue;
+        }
+        let stroke = Stroke {
+            width: width + expansion,
+            line_cap: tiny_skia::LineCap::Round,
+            line_join: tiny_skia::LineJoin::Round,
+            ..Default::default()
+        };
+        pm.stroke_path(
+            path,
+            &solid_paint(color, layer_opacity),
+            &stroke,
+            transform,
+            None,
+        );
+    }
+}
+
+fn draw_glowing_path(
+    pm: &mut tiny_skia::Pixmap,
+    path: &Path,
+    transform: Transform,
+    alpha: f32,
+    width: f32,
+    fill_rgba: [u8; 4],
+) {
+    draw_cue_glow(pm, path, transform, alpha, width, fill_rgba);
+    draw_path(pm, path, transform, alpha, width + 1.5);
+    draw_colored_path(
+        pm,
+        path,
+        transform,
+        alpha,
+        (width - 1.0).max(1.5),
+        fill_rgba,
+    );
+}
+
 fn line_path(points: &[(f32, f32)]) -> Option<Path> {
     let (&(x, y), rest) = points.split_first()?;
     let mut builder = PathBuilder::new();
@@ -378,9 +457,10 @@ pub fn paint_default_theme_with_fill(
         canvas_transform,
         alpha,
         reduced,
+        fill_rgba,
     );
     draw_cursor_body(pm, body_transform, alpha, fill_rgba);
-    draw_modifiers(pm, visual, canvas_transform, alpha);
+    draw_modifiers(pm, visual, canvas_transform, alpha, fill_rgba);
 }
 
 fn cursor_body_path() -> Option<Path> {
@@ -476,6 +556,7 @@ fn draw_action_cue(
     transform: Transform,
     alpha: f32,
     reduced: bool,
+    fill_rgba: [u8; 4],
 ) {
     let wave = if reduced {
         0.5
@@ -500,13 +581,13 @@ fn draw_action_cue(
             a.move_to(38.0, 28.0);
             a.cubic_to(27.0, 29.0, 20.0, 38.0, 20.0, 49.0);
             if let Some(path) = a.finish() {
-                draw_path(pm, &path, t, opacity, 4.0);
+                draw_glowing_path(pm, &path, t, opacity, 4.0, fill_rgba);
             }
             let mut b = PathBuilder::new();
             b.move_to(42.0, 19.0);
             b.cubic_to(23.0, 19.0, 11.0, 33.0, 11.0, 51.0);
             if let Some(path) = b.finish() {
-                draw_path(pm, &path, t, opacity, 4.0);
+                draw_glowing_path(pm, &path, t, opacity, 4.0, fill_rgba);
             }
         }
         CursorAction::Click => {
@@ -523,7 +604,7 @@ fn draw_action_cue(
                 &[(25.0, 34.0), (15.0, 34.0)][..],
             ] {
                 if let Some(path) = line_path(points) {
-                    draw_path(pm, &path, t, opacity, 4.0);
+                    draw_glowing_path(pm, &path, t, opacity, 4.0, fill_rgba);
                 }
             }
         }
@@ -539,7 +620,7 @@ fn draw_action_cue(
                 &[(26.0, 48.0), (12.0, 45.0)][..],
             ] {
                 if let Some(path) = line_path(points) {
-                    draw_path(pm, &path, t, alpha * (0.2 + wave * 0.8), 4.0);
+                    draw_glowing_path(pm, &path, t, alpha * (0.2 + wave * 0.8), 4.0, fill_rgba);
                 }
             }
         }
@@ -551,7 +632,7 @@ fn draw_action_cue(
                 &[(23.0, 49.0), (31.0, 58.0), (39.0, 49.0)][..],
             ] {
                 if let Some(path) = line_path(points) {
-                    draw_path(pm, &path, t, alpha * (0.42 + wave * 0.58), 4.0);
+                    draw_glowing_path(pm, &path, t, alpha * (0.42 + wave * 0.58), 4.0, fill_rgba);
                 }
             }
         }
@@ -568,7 +649,7 @@ fn draw_action_cue(
                 &[(24.0, 58.0), (38.0, 58.0)][..],
             ] {
                 if let Some(path) = line_path(points) {
-                    draw_path(pm, &path, t, opacity, 4.0);
+                    draw_glowing_path(pm, &path, t, opacity, 4.0, fill_rgba);
                 }
             }
         }
@@ -583,7 +664,7 @@ fn draw_action_cue(
                 if let Some(path) =
                     rounded_rect_path(rect.x(), rect.y(), rect.width(), rect.height(), 6.0)
                 {
-                    draw_path(pm, &path, t, alpha, 3.5);
+                    draw_glowing_path(pm, &path, t, alpha, 3.5, fill_rgba);
                 }
             }
             if let Some(path) = line_path(&[
@@ -594,7 +675,7 @@ fn draw_action_cue(
                 (24.0, 39.0),
                 (34.0, 46.0),
             ]) {
-                draw_path(pm, &path, t, alpha, 3.5);
+                draw_glowing_path(pm, &path, t, alpha, 3.5, fill_rgba);
             }
         }
         CursorAction::Navigate => {
@@ -609,7 +690,7 @@ fn draw_action_cue(
                 &[(29.0, 29.0), (39.0, 40.0), (29.0, 51.0)][..],
             ] {
                 if let Some(path) = line_path(points) {
-                    draw_path(pm, &path, t, alpha * (0.2 + wave * 0.8), 4.0);
+                    draw_glowing_path(pm, &path, t, alpha * (0.2 + wave * 0.8), 4.0, fill_rgba);
                 }
             }
         }
@@ -628,7 +709,7 @@ fn draw_action_cue(
                     if let Some(path) =
                         rounded_rect_path(rect.x(), rect.y(), rect.width(), rect.height(), 2.0)
                     {
-                        draw_path(pm, &path, t, alpha, 3.5);
+                        draw_glowing_path(pm, &path, t, alpha, 3.5, fill_rgba);
                     }
                 }
             }
@@ -653,25 +734,37 @@ fn draw_action_cue(
                 ][..],
             ] {
                 if let Some(path) = line_path(points) {
-                    draw_path(pm, &path, t, alpha * (0.38 + wave * 0.62), 4.0);
+                    draw_glowing_path(pm, &path, t, alpha * (0.38 + wave * 0.62), 4.0, fill_rgba);
                 }
             }
         }
         CursorAction::Record => {
             let t = Transform::from_translate(-12.0, 0.0).post_concat(transform);
-            let (paint, stroke) = cue_stroke(alpha, 4.0);
             let mut ring = PathBuilder::new();
             ring.push_circle(29.0, 39.0, 17.0);
             if let Some(path) = ring.finish() {
-                pm.stroke_path(&path, &paint, &stroke, t, None);
+                draw_glowing_path(pm, &path, t, alpha, 4.0, fill_rgba);
             }
             let radius = if reduced { 5.0 } else { 3.6 + wave * 2.1 };
             let mut dot = PathBuilder::new();
             dot.push_circle(29.0, 39.0, radius);
             if let Some(path) = dot.finish() {
+                draw_cue_glow(
+                    pm,
+                    &path,
+                    t,
+                    alpha * (0.42 + wave * 0.58),
+                    radius * 1.25,
+                    fill_rgba,
+                );
+                let (outline_paint, outline_stroke) = cue_stroke(alpha * (0.42 + wave * 0.58), 3.0);
+                pm.stroke_path(&path, &outline_paint, &outline_stroke, t, None);
                 pm.fill_path(
                     &path,
-                    &solid_paint(ink(), alpha * (0.42 + wave * 0.58)),
+                    &solid_paint(
+                        Color::from_rgba8(fill_rgba[0], fill_rgba[1], fill_rgba[2], fill_rgba[3]),
+                        alpha * (0.42 + wave * 0.58),
+                    ),
                     FillRule::Winding,
                     t,
                     None,
@@ -688,12 +781,11 @@ fn draw_action_cue(
                 .post_rotate(rotation)
                 .post_translate(29.0 - 14.0, 39.0)
                 .post_concat(transform);
-            let (paint, stroke) = cue_stroke(alpha, 3.5);
             for radius in [12.0, 4.0] {
                 let mut circle = PathBuilder::new();
                 circle.push_circle(29.0, 39.0, radius);
                 if let Some(path) = circle.finish() {
-                    pm.stroke_path(&path, &paint, &stroke, t, None);
+                    draw_glowing_path(pm, &path, t, alpha, 3.5, fill_rgba);
                 }
             }
             for points in [
@@ -707,7 +799,7 @@ fn draw_action_cue(
                 &[(38.0, 30.0), (42.0, 26.0)][..],
             ] {
                 if let Some(path) = line_path(points) {
-                    draw_path(pm, &path, t, alpha, 3.5);
+                    draw_glowing_path(pm, &path, t, alpha, 3.5, fill_rgba);
                 }
             }
         }
@@ -719,6 +811,7 @@ fn draw_modifiers(
     visual: &CursorVisualState,
     transform: Transform,
     alpha: f32,
+    fill_rgba: [u8; 4],
 ) {
     if visual.delivery == Some(DeliveryModifier::Background) {
         let mut builder = PathBuilder::new();
@@ -726,29 +819,44 @@ fn draw_modifiers(
         builder.cubic_to(20.0, 31.0, 17.0, 48.0, 21.0, 63.0);
         builder.cubic_to(25.0, 80.0, 38.0, 95.0, 53.0, 106.0);
         if let Some(path) = builder.finish() {
-            let (paint, mut stroke) = cue_stroke(alpha * 0.75, 2.5);
-            stroke.dash = Some(tiny_skia::StrokeDash::new(vec![1.0, 5.0], 0.0).unwrap());
-            pm.stroke_path(&path, &paint, &stroke, transform, None);
+            draw_cue_glow(pm, &path, transform, alpha * 0.75, 2.5, fill_rgba);
+            let dash = tiny_skia::StrokeDash::new(vec![1.0, 5.0], 0.0).unwrap();
+            let (paint, mut outline_stroke) = cue_stroke(alpha * 0.75, 4.0);
+            outline_stroke.dash = Some(dash.clone());
+            pm.stroke_path(&path, &paint, &outline_stroke, transform, None);
+            let mut core_stroke = Stroke {
+                width: 1.5,
+                line_cap: tiny_skia::LineCap::Round,
+                line_join: tiny_skia::LineJoin::Round,
+                ..Default::default()
+            };
+            core_stroke.dash = Some(dash);
+            let color = Color::from_rgba8(fill_rgba[0], fill_rgba[1], fill_rgba[2], fill_rgba[3]);
+            pm.stroke_path(
+                &path,
+                &solid_paint(color, alpha * 0.75),
+                &core_stroke,
+                transform,
+                None,
+            );
         }
     }
 
     if visual.delivery == Some(DeliveryModifier::Foreground) {
-        let (paint, stroke) = cue_stroke(alpha, 3.0);
         let mut ring = PathBuilder::new();
         ring.push_circle(104.0, 96.0, 9.0);
         if let Some(path) = ring.finish() {
-            pm.stroke_path(&path, &paint, &stroke, transform, None);
+            draw_glowing_path(pm, &path, transform, alpha, 3.0, fill_rgba);
         }
     }
 
     match visual.target {
         Some(TargetModifier::Ax) => {
-            let (paint, stroke) = cue_stroke(alpha, 2.5);
             for (x, y) in [(104.0, 89.0), (94.0, 104.0), (114.0, 104.0)] {
                 let mut circle = PathBuilder::new();
                 circle.push_circle(x, y, 3.0);
                 if let Some(path) = circle.finish() {
-                    pm.stroke_path(&path, &paint, &stroke, transform, None);
+                    draw_glowing_path(pm, &path, transform, alpha, 2.5, fill_rgba);
                 }
             }
             if let Some(path) = line_path(&[
@@ -758,23 +866,40 @@ fn draw_modifiers(
                 (104.0, 97.0),
                 (114.0, 101.0),
             ]) {
-                draw_path(pm, &path, transform, alpha, 2.5);
+                draw_glowing_path(pm, &path, transform, alpha, 2.5, fill_rgba);
             }
         }
         Some(TargetModifier::Pixel) => {
             if let Some(rect) = tiny_skia::Rect::from_xywh(94.0, 91.0, 19.0, 19.0) {
                 let path = PathBuilder::from_rect(rect);
-                let (paint, mut stroke) = cue_stroke(alpha, 2.5);
-                stroke.dash = Some(tiny_skia::StrokeDash::new(vec![2.0, 3.0], 0.0).unwrap());
-                pm.stroke_path(&path, &paint, &stroke, transform, None);
+                draw_cue_glow(pm, &path, transform, alpha, 2.5, fill_rgba);
+                let dash = tiny_skia::StrokeDash::new(vec![2.0, 3.0], 0.0).unwrap();
+                let (paint, mut outline_stroke) = cue_stroke(alpha, 4.0);
+                outline_stroke.dash = Some(dash.clone());
+                pm.stroke_path(&path, &paint, &outline_stroke, transform, None);
+                let mut core_stroke = Stroke {
+                    width: 1.5,
+                    line_cap: tiny_skia::LineCap::Round,
+                    line_join: tiny_skia::LineJoin::Round,
+                    ..Default::default()
+                };
+                core_stroke.dash = Some(dash);
+                let color =
+                    Color::from_rgba8(fill_rgba[0], fill_rgba[1], fill_rgba[2], fill_rgba[3]);
+                pm.stroke_path(
+                    &path,
+                    &solid_paint(color, alpha),
+                    &core_stroke,
+                    transform,
+                    None,
+                );
             }
         }
         Some(TargetModifier::Browser) => {
-            let (paint, stroke) = cue_stroke(alpha, 2.5);
             let mut circle = PathBuilder::new();
             circle.push_circle(104.0, 100.0, 10.0);
             if let Some(path) = circle.finish() {
-                pm.stroke_path(&path, &paint, &stroke, transform, None);
+                draw_glowing_path(pm, &path, transform, alpha, 2.5, fill_rgba);
             }
             for points in [
                 &[(94.0, 100.0), (114.0, 100.0)][..],
@@ -782,7 +907,7 @@ fn draw_modifiers(
                 &[(104.0, 90.0), (108.0, 100.0), (104.0, 110.0)][..],
             ] {
                 if let Some(path) = line_path(points) {
-                    draw_path(pm, &path, transform, alpha, 2.5);
+                    draw_glowing_path(pm, &path, transform, alpha, 2.5, fill_rgba);
                 }
             }
         }
@@ -791,7 +916,7 @@ fn draw_modifiers(
                 if let Some(path) =
                     rounded_rect_path(rect.x(), rect.y(), rect.width(), rect.height(), 2.0)
                 {
-                    draw_path(pm, &path, transform, alpha, 2.5);
+                    draw_glowing_path(pm, &path, transform, alpha, 2.5, fill_rgba);
                 }
             }
             if let Some(path) = line_path(&[
@@ -800,7 +925,7 @@ fn draw_modifiers(
                 (97.0, 110.0),
                 (110.0, 110.0),
             ]) {
-                draw_path(pm, &path, transform, alpha, 2.5);
+                draw_glowing_path(pm, &path, transform, alpha, 2.5, fill_rgba);
             }
         }
         None => {}
@@ -919,6 +1044,39 @@ mod tests {
             glow.3 >= body.3 + 4,
             "glow should cover the pointer's bottom edge: body={body:?}, glow={glow:?}"
         );
+    }
+
+    #[test]
+    fn semantic_marks_use_a_tighter_softer_session_glow() {
+        let mut pixmap = tiny_skia::Pixmap::new(96, 96).unwrap();
+        let path = line_path(&[(30.0, 48.0), (66.0, 48.0)]).unwrap();
+        draw_glowing_path(
+            &mut pixmap,
+            &path,
+            Transform::identity(),
+            1.0,
+            4.0,
+            [12, 34, 56, 255],
+        );
+
+        let pixel = |x: u32, y: u32| {
+            let index = ((y * pixmap.width() + x) * 4) as usize;
+            &pixmap.data()[index..index + 4]
+        };
+        assert_eq!(pixel(48, 48), [12, 34, 56, 255]);
+        assert!(
+            pixmap
+                .data()
+                .chunks_exact(4)
+                .any(|sample| sample == [255, 255, 255, 255]),
+            "semantic mark should retain a white outline"
+        );
+        let glow_pixel = pixel(48, 41);
+        assert!(
+            glow_pixel[2] > glow_pixel[0] && glow_pixel[3] > 0 && glow_pixel[3] < 180,
+            "unexpected glow pixel: {glow_pixel:?}"
+        );
+        assert_eq!(pixel(48, 30), [0, 0, 0, 0]);
     }
 
     #[test]

@@ -29,10 +29,10 @@
 //! - `element_index` is the same `usize` already returned in
 //!   `structuredContent.elements[].element_index`. Keeping it in plain
 //!   sight in the token means a server-side log line like
-//!   `element_token=s7a3f:42` is debug-grep-able without a side-table.
+//!   `element_token=s00007a3f:42` is debug-grep-able without a side-table.
 //!
-//! Tokens are 8–12 chars (`"s0001:0"` up to `"sffff:999"`). Well within
-//! the 8–16 char budget the Surface 6 plan called out.
+//! Tokens are 11–15 chars (`"s00000001:0"` up to `"sffffffff:999"`). Still
+//! within the 8–16 char budget the Surface 6 plan called out.
 //!
 //! ## Validity contract
 //!
@@ -116,12 +116,15 @@ impl TokenRegistry {
     /// in its lane, the oldest is evicted and any token that referenced
     /// it becomes stale — that's the contract.
     pub fn register_snapshot(&self, pid: i32, window_id: u32, element_count: usize) -> u32 {
-        // Truncate to the 16-bit space the token format actually
-        // surfaces. The full u32 still increments monotonically — we
-        // just don't widen the on-the-wire token namespace beyond what
-        // the 4-hex-char prefix can carry. Round-trip property:
-        // `resolve(format_token(id, idx))` always finds the entry.
-        let id = mint_snapshot_id() & 0xffff;
+        // Keep the full 32-bit counter. Truncating to 16 bits made the id
+        // space small enough for a live collision: with LRU_CAP_PER_PID = 8
+        // entries per lane, each mint has an 8/65536 chance of matching a
+        // still-resolvable entry, so a session issuing 10k get_window_state
+        // calls expects roughly 1.2 collisions. A collision here resolves a
+        // token to the wrong snapshot, which surfaces as a silent misclick
+        // rather than an error — exactly the failure mode this module's
+        // header warns about.
+        let id = mint_snapshot_id();
         let runtime_scope = current_runtime_scope();
         let mut entries = self.by_runtime_and_pid.lock().unwrap();
         let lane = entries.entry((runtime_scope, pid)).or_default();
@@ -236,7 +239,7 @@ impl Default for TokenRegistry {
 /// (u32 wraps after 4 billion calls, well past any realistic agent run).
 static SNAPSHOT_COUNTER: AtomicU32 = AtomicU32::new(1);
 
-/// Mint a fresh snapshot id. `1`-based so `"s0000:..."` is never a
+/// Mint a fresh snapshot id. `1`-based so `"s00000000:..."` is never a
 /// legitimate token — makes "uninitialised default" bugs in client code
 /// pop on the first call instead of accidentally aliasing a real
 /// snapshot.
@@ -251,15 +254,13 @@ fn mint_snapshot_id() -> u32 {
 /// 4-hex-char snapshot prefix means tokens stay under 12 chars even
 /// with 4-digit indices.
 ///
-/// Snapshot ids are masked to 16 bits by [`TokenRegistry::register_snapshot`]
-/// before storage so the round trip `resolve(format_token(id, idx))`
-/// closes cleanly without truncation drift. Collision chance inside the
-/// 8-entry LRU window is 8/65536 ≈ 0.01%; the registry treats the
-/// `(pid, snapshot_id)` pair as the lookup key so a same-bits collision
-/// across pids never aliases.
+/// Snapshot ids are carried at full 32-bit width. The prefix is 8 hex
+/// chars, so a token reads `s0a1b2c3d:12` — still inside Surface 6's
+/// stated 8-16 character budget and still greppable in logs without a
+/// side table. The registry treats the `(pid, snapshot_id)` pair as the
+/// lookup key, so a same-bits collision across pids never aliases.
 pub fn format_token(snapshot_id: u32, element_index: usize) -> String {
-    let short = snapshot_id & 0xffff;
-    format!("s{short:04x}:{element_index}")
+    format!("s{snapshot_id:08x}:{element_index}")
 }
 
 /// Parse a canonical token string into `(snapshot_id, element_index)`.
@@ -270,7 +271,7 @@ pub fn format_token(snapshot_id: u32, element_index: usize) -> String {
 fn parse_token(token: &str) -> Option<(u32, usize)> {
     let body = token.strip_prefix('s')?;
     let (hex, idx) = body.split_once(':')?;
-    if hex.len() != 4 {
+    if hex.len() != 8 {
         return None;
     }
     let sid = u32::from_str_radix(hex, 16).ok()?;
@@ -414,36 +415,40 @@ mod tests {
 
     #[test]
     fn token_round_trips_through_format_then_parse() {
-        // Use a low-bit id that survives the 16-bit truncation in
-        // format_token, so we can compare format → parse without losing
-        // information.
+        // The full 32-bit id survives the round trip now that neither the
+        // registry nor format_token truncates.
         let token = format_token(0x1234, 42);
-        assert_eq!(token, "s1234:42");
+        assert_eq!(token, "s00001234:42");
         let (sid, idx) = parse_token(&token).expect("parse_token should accept its own output");
         assert_eq!(sid, 0x1234);
         assert_eq!(idx, 42);
     }
 
     #[test]
-    fn token_format_pads_to_four_hex_chars() {
-        // Small ids must still have a 4-char prefix so the parser's
+    fn token_format_pads_to_eight_hex_chars() {
+        // Small ids must still pad to the full 8-char prefix so the parser's
         // length check passes. Surface 6's stated format is "8-16 chars";
-        // we sit comfortably inside that.
+        // `s0a1b2c3d:12` is 12, comfortably inside that.
         let token = format_token(1, 0);
-        assert_eq!(token, "s0001:0");
+        assert_eq!(token, "s00000001:0");
         let token2 = format_token(0, 999);
-        assert_eq!(token2, "s0000:999");
+        assert_eq!(token2, "s00000000:999");
+        // Ids above the old 16-bit ceiling now survive the round trip
+        // instead of aliasing onto a low id.
+        let wide = format_token(0x0001_0001, 3);
+        assert_eq!(wide, "s00010001:3");
+        assert_eq!(parse_token(&wide), Some((0x0001_0001, 3)));
     }
 
     #[test]
     fn parse_rejects_unknown_prefix_or_shape() {
         assert!(parse_token("").is_none());
-        assert!(parse_token("x1234:42").is_none(), "wrong prefix");
-        assert!(parse_token("s1234").is_none(), "missing colon");
-        assert!(parse_token("s12345:42").is_none(), "hex too long");
-        assert!(parse_token("s123:42").is_none(), "hex too short");
-        assert!(parse_token("szzzz:42").is_none(), "non-hex");
-        assert!(parse_token("s1234:abc").is_none(), "non-decimal index");
+        assert!(parse_token("x00001234:42").is_none(), "wrong prefix");
+        assert!(parse_token("s00001234").is_none(), "missing colon");
+        assert!(parse_token("s000012345:42").is_none(), "hex too long");
+        assert!(parse_token("s1234:42").is_none(), "hex too short");
+        assert!(parse_token("szzzzzzzz:42").is_none(), "non-hex");
+        assert!(parse_token("s00001234:abc").is_none(), "non-decimal index");
     }
 
     #[test]

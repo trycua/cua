@@ -104,6 +104,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-steps", type=int, default=24)
     parser.add_argument("--task-id", default=TASK_ID)
     parser.add_argument("--setup-only", action="store_true")
+    parser.add_argument("--cpu-cores", type=int, default=4)
+    parser.add_argument("--memory", default="8Gi")
     parser.add_argument("--max-estimated-cost-usd", type=float)
     parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV_FILE)
     parser.add_argument("--output-dir", type=Path)
@@ -1856,6 +1858,10 @@ def main() -> int:
         )
     if args.max_steps <= 0:
         raise PairedRunError("--max-steps must be positive")
+    if args.cpu_cores <= 0:
+        raise PairedRunError("--cpu-cores must be positive")
+    if not args.memory.strip():
+        raise PairedRunError("--memory must be non-empty")
     if (
         args.max_estimated_cost_usd is not None
         and args.max_estimated_cost_usd <= 0
@@ -1889,6 +1895,8 @@ def main() -> int:
         args.config,
         fleet_log_path,
         image,
+        cpu_cores=args.cpu_cores,
+        memory=args.memory,
     )
     live: dict[str, Any] | None = None
     cleanup: dict[str, Any] | None = None

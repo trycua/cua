@@ -10,7 +10,14 @@ permissions:
   pull-requests: read
 
 jobs:
+  installer-compatibility:
+    uses: ./.github/workflows/ci-cua-driver-installer-compat.yml
+    permissions:
+      contents: read
+      pull-requests: read
+
   validate:
+    needs: installer-compatibility
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

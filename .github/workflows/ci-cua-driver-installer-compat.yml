@@ -1,7 +1,13 @@
 name: "CI: Cua Driver installer compatibility"
 
 on:
-  pull_request:
+  workflow_call:
+    inputs:
+      versions:
+        description: "Comma-separated released versions; blank tests the newest two"
+        required: false
+        type: string
+        default: ""
   schedule:
     - cron: "17 9 * * 1"
   workflow_dispatch:

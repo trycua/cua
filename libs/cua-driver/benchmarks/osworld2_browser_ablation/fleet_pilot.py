@@ -111,6 +111,25 @@ def work_relative_path(path: Path, work_dir: Path = WORK_DIR) -> str:
     return str(path.resolve().relative_to(work_dir.resolve()))
 
 
+def isolated_chrome_command(
+    command: list[str],
+    guest_chrome_profile: str,
+) -> list[str]:
+    """Apply deterministic first-run suppression to one disposable profile."""
+
+    required = (
+        f"--user-data-dir={guest_chrome_profile}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-search-engine-choice-screen",
+    )
+    return [
+        command[0],
+        *(flag for flag in required if flag not in command),
+        *command[1:],
+    ]
+
+
 def load_aws_secret(name: str, region: str) -> dict[str, Any]:
     result: subprocess.CompletedProcess[str] | None = None
     for attempt in range(3):
@@ -800,15 +819,8 @@ def prepare_browser_task(
                 and isinstance(command, list)
                 and command
                 and command[0] == "google-chrome"
-                and not any(
-                    item.startswith("--user-data-dir=") for item in command
-                )
             ):
-                command = [
-                    command[0],
-                    f"--user-data-dir={guest_chrome_profile}",
-                    *command[1:],
-                ]
+                command = isolated_chrome_command(command, guest_chrome_profile)
             super().launch(command, shell=shell)
 
         def _chrome_open_tabs_setup(self, urls_to_open: list[str]) -> None:

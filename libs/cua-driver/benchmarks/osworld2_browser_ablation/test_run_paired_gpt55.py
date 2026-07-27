@@ -142,6 +142,18 @@ class PolicyTests(unittest.TestCase):
             paired.fleet_pilot.CDP_PORT,
         )
 
+    def test_fresh_profile_suppresses_chrome_first_run_ui(self) -> None:
+        command = paired.fleet_pilot.isolated_chrome_command(
+            ["google-chrome", "--remote-debugging-port=1337", "https://example.test"],
+            "/tmp/fresh-profile",
+        )
+        self.assertEqual(command[0], "google-chrome")
+        self.assertIn("--user-data-dir=/tmp/fresh-profile", command)
+        self.assertIn("--no-first-run", command)
+        self.assertIn("--no-default-browser-check", command)
+        self.assertIn("--disable-search-engine-choice-screen", command)
+        self.assertEqual(command.count("--no-first-run"), 1)
+
     def test_control_and_treatment_share_native_tools(self) -> None:
         control = {tool["name"] for tool in paired.action_tools("screenshot_ax")}
         treatment = {tool["name"] for tool in paired.action_tools("combined")}

@@ -8,8 +8,11 @@ silhouette, while the white outline preserves a crisp boundary on light, dark,
 and similarly colored backgrounds. Its semantic action and modifier marks use
 the same session-colored center and white-outline treatment as the pointer,
 plus a tighter, softer glow so they remain legible without competing with it.
-The
-anonymous/default cursor uses Cua blue. Named sessions receive a stable fill
+Every semantic state inherits the same gentle levitation and rotation as the
+idle pointer, with its action-specific motion layered on top. The pointer,
+semantic mark, and active modifiers therefore move as one visual unit.
+Reduced-motion mode removes this shared movement. The anonymous/default cursor
+uses Cua blue. Named sessions receive a stable fill
 from the built-in session palette, so concurrent agents remain visually
 distinct.
 

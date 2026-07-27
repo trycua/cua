@@ -17,6 +17,7 @@ pub const DEFAULT_THEME_VERSION: &str = "1.0.0";
 pub const THEME_PROFILE: &str = "cua-driver-full-v1";
 pub const CANVAS_SIZE: f32 = 128.0;
 pub const DISPLAY_SIZE: f32 = 48.0;
+const FLOAT_DURATION_SECS: f32 = 4.0;
 
 fn ink() -> Color {
     Color::from_rgba8(255, 255, 255, 255)
@@ -366,6 +367,21 @@ fn triangle_wave(t: f32) -> f32 {
     }
 }
 
+fn shared_float_motion(visual: &CursorVisualState) -> (f32, f32, f32) {
+    if visual.reduced_motion == ReducedMotion::On {
+        return (0.0, 0.0, 0.0);
+    }
+
+    let progress =
+        (visual.elapsed_secs as f32).rem_euclid(FLOAT_DURATION_SECS) / FLOAT_DURATION_SECS;
+    let angle = progress * std::f32::consts::TAU;
+    (
+        angle.sin() * 5.0,
+        6.0 * angle.cos() - 5.0,
+        2.5_f32.to_radians() * angle.cos(),
+    )
+}
+
 /// Paint one frame of the embedded Full-v1 theme.
 ///
 /// `anchor_x/y` is the existing overlay's cursor centre. The Lottie canvas is
@@ -404,9 +420,9 @@ pub fn paint_default_theme_with_fill(
 ) {
     let scale = DISPLAY_SIZE * backing_scale / CANVAS_SIZE;
     let base_rotation = heading - std::f32::consts::FRAC_PI_4;
+    let (float_dx, float_dy, float_rotation) = shared_float_motion(visual);
     let mut body_dx = 0.0;
     let mut body_dy = 0.0;
-    let mut body_rotation = 0.0;
     let mut body_scale = 1.0;
 
     let duration = visual.resolved_action.duration_secs() as f32;
@@ -416,12 +432,6 @@ pub fn paint_default_theme_with_fill(
 
     if !reduced {
         match visual.resolved_action {
-            CursorAction::Idle => {
-                let angle = progress * std::f32::consts::TAU;
-                body_dx = angle.sin() * 5.0;
-                body_dy = 6.0 * angle.cos() - 5.0;
-                body_rotation = 2.5_f32.to_radians() * angle.cos();
-            }
             CursorAction::Click => {
                 body_scale = if progress < 0.35 {
                     1.0 - ease_in_out(progress / 0.35) * 0.07
@@ -440,27 +450,30 @@ pub fn paint_default_theme_with_fill(
         }
     }
 
-    let canvas_transform = Transform::from_translate(-64.0, -64.0)
+    let shared_transform = Transform::from_translate(-64.0, -64.0)
         .post_scale(scale, scale)
-        .post_rotate(base_rotation.to_degrees())
-        .post_translate(anchor_x, anchor_y);
+        .post_rotate((base_rotation + float_rotation).to_degrees())
+        .post_translate(anchor_x + float_dx * scale, anchor_y + float_dy * scale);
     let body_transform = Transform::from_translate(-64.0, -64.0)
         .post_scale(scale * body_scale, scale * body_scale)
-        .post_rotate((base_rotation + body_rotation).to_degrees())
-        .post_translate(anchor_x + body_dx * scale, anchor_y + body_dy * scale);
+        .post_rotate((base_rotation + float_rotation).to_degrees())
+        .post_translate(
+            anchor_x + (float_dx + body_dx) * scale,
+            anchor_y + (float_dy + body_dy) * scale,
+        );
 
     draw_cursor_glow(pm, body_transform, alpha, fill_rgba);
     draw_action_cue(
         pm,
         visual.resolved_action,
         progress,
-        canvas_transform,
+        shared_transform,
         alpha,
         reduced,
         fill_rgba,
     );
     draw_cursor_body(pm, body_transform, alpha, fill_rgba);
-    draw_modifiers(pm, visual, canvas_transform, alpha, fill_rgba);
+    draw_modifiers(pm, visual, shared_transform, alpha, fill_rgba);
 }
 
 fn cursor_body_path() -> Option<Path> {
@@ -1115,6 +1128,36 @@ mod tests {
 
         assert!(white_pixels(13..37, 78..102) > 5);
         assert!(white_pixels(91..117, 88..114) > 5);
+    }
+
+    #[test]
+    fn every_action_inherits_the_same_floating_base_motion() {
+        let mut idle = CursorVisualState::default();
+        idle.elapsed_secs = 0.75;
+        let expected = shared_float_motion(&idle);
+        assert_ne!(expected, (0.0, 0.0, 0.0));
+
+        for action in CursorAction::ALL {
+            let mut visual = CursorVisualState::default();
+            visual.begin(action, None, None);
+            visual.elapsed_secs = 0.75;
+            assert_eq!(
+                shared_float_motion(&visual),
+                expected,
+                "{} did not inherit the shared floating motion",
+                action.as_str()
+            );
+        }
+    }
+
+    #[test]
+    fn reduced_motion_disables_shared_floating_motion() {
+        let visual = CursorVisualState {
+            elapsed_secs: 0.75,
+            reduced_motion: ReducedMotion::On,
+            ..CursorVisualState::default()
+        };
+        assert_eq!(shared_float_motion(&visual), (0.0, 0.0, 0.0));
     }
 
     #[test]

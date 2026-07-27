@@ -29,6 +29,7 @@ const DISPLAY_SIZE = 48;
 const ACTOR_SIZE = 112;
 const ACTOR_CENTER = ACTOR_SIZE / 2;
 const SCALE = DISPLAY_SIZE / CANVAS_SIZE;
+const FLOAT_DURATION = 4.0;
 const GLOW_SURFACE_SCALE = 3;
 const GLOW_PADDING = 24;
 const ACTIONS = new Set([
@@ -204,18 +205,23 @@ function createGlowSurface(fillColor) {
     return surface;
 }
 
+function sharedFloatMotion(progress) {
+    const angle = progress * Math.PI * 2;
+    return {
+        dx: Math.sin(angle) * 5,
+        dy: Math.cos(angle) * 6 - 5,
+        rotation: Math.cos(angle) * (2.5 * Math.PI / 180),
+        scale: 1,
+    };
+}
+
 function cursorBodyMotion(progress, action) {
     let dx = 0;
     let dy = 0;
     let rotation = 0;
     let scale = 1;
 
-    if (action === 'idle') {
-        const angle = progress * Math.PI * 2;
-        dx = Math.sin(angle) * 5;
-        dy = Math.cos(angle) * 6 - 5;
-        rotation = Math.cos(angle) * (2.5 * Math.PI / 180);
-    } else if (action === 'click') {
+    if (action === 'click') {
         if (progress < 0.35)
             scale = 1 - easeInOut(progress / 0.35) * 0.07;
         else if (progress < 0.6)
@@ -450,11 +456,14 @@ export default class WinRectsExtension extends Extension {
         this._cursor.connect('repaint', (area) => {
             const cr = area.get_context();
             const duration = ACTION_DURATIONS[this._action] ?? 1.6;
-            const progress = ((nowSeconds() - this._actionStarted) % duration) / duration;
+            const elapsed = nowSeconds() - this._actionStarted;
+            const progress = (elapsed % duration) / duration;
+            const floatProgress = (elapsed % FLOAT_DURATION) / FLOAT_DURATION;
             cr.save();
             cr.translate(ACTOR_CENTER, ACTOR_CENTER);
             cr.scale(SCALE, SCALE);
             cr.translate(-CANVAS_SIZE / 2, -CANVAS_SIZE / 2);
+            applyCursorBodyMotion(cr, sharedFloatMotion(floatProgress));
             drawCursorGlow(cr, progress, this._action, this._glowSurface);
             drawActionCue(cr, this._action, progress, this._fillColor);
             drawCursorBody(cr, progress, this._action, this._fillColor);

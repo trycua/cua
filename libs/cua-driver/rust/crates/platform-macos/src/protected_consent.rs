@@ -133,7 +133,7 @@ unsafe fn run_appkit(request: HelperRequest) -> anyhow::Result<()> {
     let tracking_area: *mut AnyObject = msg_send![class!(NSTrackingArea), alloc];
     let tracking_area: *mut AnyObject = msg_send![tracking_area,
         initWithRect: bounds
-        options: (0x02u64 | 0x80u64 | 0x200u64)
+        options: (0x01u64 | 0x02u64 | 0x80u64 | 0x200u64)
         owner: view
         userInfo: std::ptr::null::<AnyObject>()
     ];
@@ -224,6 +224,10 @@ fn protected_view_class() -> &'static AnyClass {
             );
             builder.add_method(
                 objc2::sel!(mouseMoved:),
+                mouse_moved as extern "C" fn(_, _, _),
+            );
+            builder.add_method(
+                objc2::sel!(mouseEntered:),
                 mouse_moved as extern "C" fn(_, _, _),
             );
             builder.add_method(

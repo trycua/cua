@@ -259,6 +259,15 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             cleanup,
         )
 
+    def test_release_installers_bound_cursor_theme_compatibility(self) -> None:
+        shell = self.read("libs/cua-driver/scripts/_install-rust.sh")
+        self.assertIn('CURSOR_THEME_REQUIRED_FROM="0.12.7"', shell)
+        self.assertIn('"$VERSION" "$CURSOR_THEME_REQUIRED_FROM"', shell)
+
+        powershell = self.read("libs/cua-driver/scripts/install.ps1")
+        self.assertIn('$CursorThemeRequiredFrom = [version]"0.12.7"', powershell)
+        self.assertIn("[version]$version -ge $CursorThemeRequiredFrom", powershell)
+
     def test_local_installer_does_not_clean_release_or_legacy_homes(self) -> None:
         installer = self.read("libs/cua-driver/scripts/_install-local-rust.sh")
 

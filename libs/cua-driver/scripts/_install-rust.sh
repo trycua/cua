@@ -541,10 +541,8 @@ fi
 
 VERSION="${TAG#${TAG_PREFIX}}"
 
-# Semantic cursor themes first ship after the currently published 0.12.6
-# release. Keep historical pins installable, but require the sidecar from
-# every version that can be cut after this compatibility boundary. Release CD
-# independently validates both the top-level sidecar and the app-bundle copy.
+# Releases through 0.12.6 predate semantic cursor themes.
+# Newer releases must contain both packaged copies.
 CURSOR_THEME_REQUIRED_FROM="0.12.7"
 version_is_at_least() {
     local version="$1" minimum="$2"

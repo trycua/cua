@@ -72,6 +72,29 @@ fn pixel_activation_policy(
     }
 }
 
+/// Return the prior foreground pid that should be restored after a raw
+/// background pixel click.
+///
+/// This decision deliberately depends on observed application state rather
+/// than the private focus recipe's return value. The recipe can be unavailable
+/// or partially fail while the raw click still makes the target AppKit-active;
+/// in that case the allow-target suppression lease will not restore it for us.
+fn background_pixel_restore_pid(
+    activation_policy: PixelActivationPolicy,
+    prior_front: Option<i32>,
+    target_pid: i32,
+    observed_front: Option<i32>,
+) -> Option<i32> {
+    if activation_policy == PixelActivationPolicy::AllowTargetWithoutRaise
+        && prior_front != Some(target_pid)
+        && observed_front == Some(target_pid)
+    {
+        prior_front
+    } else {
+        None
+    }
+}
+
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "click".into(),
@@ -866,14 +889,23 @@ impl Tool for ClickTool {
             // The no-raise record can make NSWorkspace report the target as
             // active even though its window never moved in z-order. Once the
             // click has been queued, restore the prior app if the target is
-            // still reported frontmost. Do not overwrite a different app here;
-            // the wildcard suppression lease handles genuine side effects.
-            if focus_without_raise && prior_front != Some(pid) {
+            // still reported frontmost. Base this on observed state, not
+            // `focus_without_raise`: the private recipe can report failure
+            // after partially activating the target, and the raw click can
+            // self-activate even when that recipe is unavailable. Do not
+            // overwrite a different app here; the wildcard suppression lease
+            // handles genuine side effects.
+            if activation_policy == PixelActivationPolicy::AllowTargetWithoutRaise
+                && prior_front != Some(pid)
+            {
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                if apps::frontmost_pid() == Some(pid) {
-                    if let Some(previous_pid) = prior_front {
-                        let _ = apps::activate_pid(previous_pid);
-                    }
+                if let Some(previous_pid) = background_pixel_restore_pid(
+                    activation_policy,
+                    prior_front,
+                    pid,
+                    apps::frontmost_pid(),
+                ) {
+                    let _ = apps::activate_pid(previous_pid);
                 }
             }
 
@@ -1149,6 +1181,44 @@ mod tests {
         assert_eq!(
             pixel_activation_policy("left", true, true),
             PixelActivationPolicy::ForegroundAssist
+        );
+    }
+
+    /// The no-foreground contract must not depend on the private activation
+    /// recipe reporting full success. If that recipe is unavailable or only
+    /// partially succeeds but the target is nevertheless observed frontmost,
+    /// restore the user's prior app.
+    #[test]
+    fn failed_private_activation_still_restores_observed_target_focus() {
+        assert_eq!(
+            background_pixel_restore_pid(
+                PixelActivationPolicy::AllowTargetWithoutRaise,
+                Some(7),
+                42,
+                Some(42),
+            ),
+            Some(7)
+        );
+
+        assert_eq!(
+            background_pixel_restore_pid(
+                PixelActivationPolicy::AllowTargetWithoutRaise,
+                Some(7),
+                42,
+                Some(99),
+            ),
+            None,
+            "do not overwrite an unrelated app that became frontmost"
+        );
+        assert_eq!(
+            background_pixel_restore_pid(
+                PixelActivationPolicy::SuppressTarget,
+                Some(7),
+                42,
+                Some(42),
+            ),
+            None,
+            "strict-suppression paths retain their existing ownership"
         );
     }
 }

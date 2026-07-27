@@ -1089,7 +1089,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "tiny-skia 0.11.4",
+ "tiny-skia",
  "tracing",
  "zstd",
 ]
@@ -1101,11 +1101,11 @@ dependencies = [
  "anyhow",
  "cursor-overlay",
  "image",
- "rasterlottie",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
+ "tiny-skia",
  "zip",
 ]
 
@@ -2613,7 +2613,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
- "tiny-skia 0.11.4",
+ "tiny-skia",
  "usvg",
 ]
 
@@ -2770,7 +2770,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
- "tiny-skia 0.11.4",
+ "tiny-skia",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -2814,7 +2814,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
- "tiny-skia 0.11.4",
+ "tiny-skia",
  "tokio",
  "tokio-tungstenite",
  "tracing",
@@ -2838,7 +2838,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
- "tiny-skia 0.11.4",
+ "tiny-skia",
  "tokio",
  "tracing",
  "windows 0.58.0",
@@ -3040,20 +3040,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
-name = "rasterlottie"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "384686130a2b365f82258f5e444c512e57989addcf2b45e9913c4ef6f0e95a24"
-dependencies = [
- "rustc-hash 2.1.3",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tiny-skia 0.12.0",
- "zip",
-]
-
-[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3195,7 +3181,7 @@ dependencies = [
  "pico-args",
  "rgb",
  "svgtypes",
- "tiny-skia 0.11.4",
+ "tiny-skia",
  "usvg",
 ]
 
@@ -3873,22 +3859,7 @@ dependencies = [
  "cfg-if",
  "log",
  "png 0.17.16",
- "tiny-skia-path 0.11.4",
-]
-
-[[package]]
-name = "tiny-skia"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47ffee5eaaf5527f630fb0e356b90ebdec84d5d18d937c5e440350f88c5a91ea"
-dependencies = [
- "arrayref",
- "arrayvec",
- "bytemuck",
- "cfg-if",
- "log",
- "png 0.18.1",
- "tiny-skia-path 0.12.0",
+ "tiny-skia-path",
 ]
 
 [[package]]
@@ -3896,17 +3867,6 @@ name = "tiny-skia-path"
 version = "0.11.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9c9e7fc0c2e86a30b117d0462aa261b72b7a99b7ebd7deb3a14ceda95c5bdc93"
-dependencies = [
- "arrayref",
- "bytemuck",
- "strict-num",
-]
-
-[[package]]
-name = "tiny-skia-path"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edca365c3faccca67d06593c5980fa6c57687de727a03131735bb85f01fdeeb9"
 dependencies = [
  "arrayref",
  "bytemuck",
@@ -4469,7 +4429,7 @@ dependencies = [
  "siphasher",
  "strict-num",
  "svgtypes",
- "tiny-skia-path 0.11.4",
+ "tiny-skia-path",
  "unicode-bidi",
  "unicode-script",
  "unicode-vo",

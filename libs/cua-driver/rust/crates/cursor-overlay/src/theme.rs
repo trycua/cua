@@ -1,11 +1,11 @@
-//! Canonical cursor-theme semantics and the embedded `cua.default` renderer.
+//! Canonical cursor-theme semantics and `cua.default` runtime parameters.
 //!
-//! The default artwork was authored as Lottie on a 128×128 canvas. Production
-//! rendering uses this bounded vector representation so the privileged overlay
-//! never parses Lottie, ZIP, fonts, scripts, images, or network references.
+//! The default artwork is authored as a checked-in dotLottie archive and
+//! compiled into the bounded artifact embedded by [`crate::theme_artifact`].
+//! This module owns transport-neutral state, session colors, and the shared
+//! runtime float transform. It does not parse Lottie at runtime.
 
 use serde::{Deserialize, Serialize};
-use tiny_skia::{Color, FillRule, Paint, Path, PathBuilder, Stroke, Transform};
 
 pub use cua_driver_contract::{
     CursorAction, CursorDelivery as DeliveryModifier, CursorPlayback as PlaybackKind,
@@ -16,14 +16,65 @@ pub const DEFAULT_THEME_ID: &str = "cua.default";
 pub const DEFAULT_THEME_VERSION: &str = "1.0.0";
 pub const THEME_PROFILE: &str = "cua-driver-full-v1";
 pub const CANVAS_SIZE: f32 = 128.0;
-pub const DISPLAY_SIZE: f32 = 58.0;
+pub const DISPLAY_SIZE: f32 = 48.0;
+const FLOAT_DURATION_SECS: f32 = 4.0;
 
-fn ink() -> Color {
-    Color::from_rgba8(16, 21, 47, 255)
+pub const DEFAULT_CURSOR_FILL: [u8; 4] = [94, 192, 232, 255];
+
+const SESSION_CURSOR_FILLS: &[[u8; 4]] = &[
+    [178, 132, 255, 255],
+    [247, 132, 170, 255],
+    [96, 218, 174, 255],
+    [244, 178, 66, 255],
+    [76, 204, 224, 255],
+    [221, 113, 236, 255],
+    [232, 82, 98, 255],
+    [184, 220, 54, 255],
+    [80, 126, 236, 255],
+];
+
+/// Return the stable fill color for one session-owned cursor.
+///
+/// The anonymous/default cursor keeps the original Cua blue. Named sessions
+/// hash into the former multi-cursor palette so concurrent runs are visually
+/// distinct without accepting an agent-controlled styling argument.
+pub fn session_fill_rgba(session_id: &str) -> [u8; 4] {
+    if session_id.is_empty() || session_id == "default" {
+        return DEFAULT_CURSOR_FILL;
+    }
+
+    SESSION_CURSOR_FILLS[stable_session_index(session_id, SESSION_CURSOR_FILLS.len())]
 }
 
-fn paper() -> Color {
-    Color::from_rgba8(251, 251, 249, 255)
+pub fn session_fill_hex(session_id: &str) -> String {
+    let [r, g, b, _] = session_fill_rgba(session_id);
+    format!("#{r:02X}{g:02X}{b:02X}")
+}
+
+fn stable_session_index(id: &str, count: usize) -> usize {
+    let suffix = id
+        .rfind(['-', '_', '.'])
+        .map(|index| &id[index + 1..])
+        .unwrap_or(id);
+    if let Ok(number) = suffix.parse::<usize>() {
+        if number > 0 {
+            return (number - 1) % count;
+        }
+    }
+    if suffix.len() == 1 {
+        if let Some(character) = suffix.chars().next() {
+            if character.is_ascii_alphabetic() {
+                return (character.to_ascii_lowercase() as usize - b'a' as usize) % count;
+            }
+        }
+    }
+
+    let mut hash: u32 = 2_166_136_261;
+    for character in id.chars() {
+        hash ^= character as u32;
+        hash = hash.wrapping_mul(16_777_619);
+    }
+    hash as usize % count
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -128,105 +179,19 @@ impl CursorVisualState {
     }
 }
 
-fn solid_paint(color: Color, alpha: f32) -> Paint<'static> {
-    Paint {
-        shader: tiny_skia::Shader::SolidColor(
-            Color::from_rgba(
-                color.red(),
-                color.green(),
-                color.blue(),
-                (color.alpha() * alpha).clamp(0.0, 1.0),
-            )
-            .unwrap_or(Color::TRANSPARENT),
-        ),
-        anti_alias: true,
-        ..Default::default()
+pub(crate) fn shared_float_motion(visual: &CursorVisualState) -> (f32, f32, f32) {
+    if visual.reduced_motion == ReducedMotion::On {
+        return (0.0, 0.0, 0.0);
     }
-}
 
-fn cue_stroke(alpha: f32, width: f32) -> (Paint<'static>, Stroke) {
+    let progress =
+        (visual.elapsed_secs as f32).rem_euclid(FLOAT_DURATION_SECS) / FLOAT_DURATION_SECS;
+    let angle = progress * std::f32::consts::TAU;
     (
-        solid_paint(ink(), alpha),
-        Stroke {
-            width,
-            line_cap: tiny_skia::LineCap::Round,
-            line_join: tiny_skia::LineJoin::Round,
-            ..Default::default()
-        },
+        angle.sin() * 5.0,
+        6.0 * angle.cos() - 5.0,
+        2.5_f32.to_radians() * angle.cos(),
     )
-}
-
-fn draw_path(
-    pm: &mut tiny_skia::Pixmap,
-    path: &Path,
-    transform: Transform,
-    alpha: f32,
-    width: f32,
-) {
-    let (paint, stroke) = cue_stroke(alpha, width);
-    pm.stroke_path(path, &paint, &stroke, transform, None);
-}
-
-fn line_path(points: &[(f32, f32)]) -> Option<Path> {
-    let (&(x, y), rest) = points.split_first()?;
-    let mut builder = PathBuilder::new();
-    builder.move_to(x, y);
-    for &(x, y) in rest {
-        builder.line_to(x, y);
-    }
-    builder.finish()
-}
-
-fn rounded_rect_path(x: f32, y: f32, width: f32, height: f32, radius: f32) -> Option<Path> {
-    let r = radius.min(width * 0.5).min(height * 0.5).max(0.0);
-    let k = 0.552_284_8;
-    let mut builder = PathBuilder::new();
-    builder.move_to(x + r, y);
-    builder.line_to(x + width - r, y);
-    builder.cubic_to(
-        x + width - r + r * k,
-        y,
-        x + width,
-        y + r - r * k,
-        x + width,
-        y + r,
-    );
-    builder.line_to(x + width, y + height - r);
-    builder.cubic_to(
-        x + width,
-        y + height - r + r * k,
-        x + width - r + r * k,
-        y + height,
-        x + width - r,
-        y + height,
-    );
-    builder.line_to(x + r, y + height);
-    builder.cubic_to(
-        x + r - r * k,
-        y + height,
-        x,
-        y + height - r + r * k,
-        x,
-        y + height - r,
-    );
-    builder.line_to(x, y + r);
-    builder.cubic_to(x, y + r - r * k, x + r - r * k, y, x + r, y);
-    builder.close();
-    builder.finish()
-}
-
-fn ease_in_out(t: f32) -> f32 {
-    let t = t.clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
-
-fn triangle_wave(t: f32) -> f32 {
-    let t = t.rem_euclid(1.0);
-    if t < 0.5 {
-        t * 2.0
-    } else {
-        (1.0 - t) * 2.0
-    }
 }
 
 /// Paint one frame of the embedded Full-v1 theme.
@@ -243,427 +208,40 @@ pub fn paint_default_theme(
     backing_scale: f32,
     alpha: f32,
 ) {
-    let scale = DISPLAY_SIZE * backing_scale / CANVAS_SIZE;
-    let base_rotation = heading - std::f32::consts::FRAC_PI_4;
-    let mut body_dx = 0.0;
-    let mut body_dy = 0.0;
-    let mut body_rotation = 0.0;
-    let mut body_scale = 1.0;
-
-    let duration = visual.resolved_action.duration_secs() as f32;
-    let local = (visual.elapsed_secs as f32).rem_euclid(duration.max(1.0 / 30.0));
-    let progress = (local / duration.max(1.0 / 30.0)).clamp(0.0, 1.0);
-    let reduced = visual.reduced_motion == ReducedMotion::On;
-
-    if !reduced {
-        match visual.resolved_action {
-            CursorAction::Idle => {
-                let angle = progress * std::f32::consts::TAU;
-                body_dx = angle.sin() * 5.0;
-                body_dy = 6.0 * angle.cos() - 5.0;
-                body_rotation = 2.5_f32.to_radians() * angle.cos();
-            }
-            CursorAction::Click => {
-                body_scale = if progress < 0.35 {
-                    1.0 - ease_in_out(progress / 0.35) * 0.07
-                } else if progress < 0.6 {
-                    0.93 + ease_in_out((progress - 0.35) / 0.25) * 0.10
-                } else {
-                    1.03 - ease_in_out((progress - 0.6) / 0.4) * 0.03
-                };
-            }
-            CursorAction::Drag => {
-                let held = ease_in_out(triangle_wave(progress));
-                body_dx = held * 7.0;
-                body_dy = held * 3.0;
-            }
-            _ => {}
-        }
-    }
-
-    let canvas_transform = Transform::from_translate(-64.0, -64.0)
-        .post_scale(scale, scale)
-        .post_rotate(base_rotation.to_degrees())
-        .post_translate(anchor_x, anchor_y);
-    let body_transform = Transform::from_translate(-64.0, -64.0)
-        .post_scale(scale * body_scale, scale * body_scale)
-        .post_rotate((base_rotation + body_rotation).to_degrees())
-        .post_translate(anchor_x + body_dx * scale, anchor_y + body_dy * scale);
-
-    draw_action_cue(
+    paint_default_theme_with_fill(
         pm,
-        visual.resolved_action,
-        progress,
-        canvas_transform,
+        visual,
+        anchor_x,
+        anchor_y,
+        heading,
+        backing_scale,
         alpha,
-        reduced,
+        DEFAULT_CURSOR_FILL,
     );
-    draw_cursor_body(pm, body_transform, alpha);
-    draw_modifiers(pm, visual, canvas_transform, alpha);
 }
 
-fn draw_cursor_body(pm: &mut tiny_skia::Pixmap, transform: Transform, alpha: f32) {
-    let mut builder = PathBuilder::new();
-    builder.move_to(55.0, 30.0);
-    builder.cubic_to(48.0, 28.0, 42.0, 33.0, 43.0, 41.0);
-    builder.line_to(64.0, 98.0);
-    builder.cubic_to(67.0, 106.0, 73.0, 106.0, 77.0, 99.0);
-    builder.line_to(86.0, 79.0);
-    builder.cubic_to(88.0, 75.0, 91.0, 72.0, 95.0, 70.0);
-    builder.line_to(108.0, 63.0);
-    builder.cubic_to(115.0, 59.0, 114.0, 53.0, 107.0, 50.0);
-    builder.close();
-    let Some(path) = builder.finish() else {
-        return;
-    };
-    pm.fill_path(
-        &path,
-        &solid_paint(paper(), alpha),
-        FillRule::Winding,
-        transform,
-        None,
-    );
-    let (paint, mut stroke) = cue_stroke(alpha, 5.0);
-    stroke.line_join = tiny_skia::LineJoin::Round;
-    pm.stroke_path(&path, &paint, &stroke, transform, None);
-}
-
-fn draw_action_cue(
-    pm: &mut tiny_skia::Pixmap,
-    action: CursorAction,
-    progress: f32,
-    transform: Transform,
-    alpha: f32,
-    reduced: bool,
-) {
-    let wave = if reduced {
-        0.5
-    } else {
-        triangle_wave(progress)
-    };
-    match action {
-        CursorAction::Idle => {}
-        CursorAction::Observe => {
-            let opacity = alpha
-                * if reduced {
-                    1.0
-                } else {
-                    (progress * 7.0).min(1.0)
-                };
-            let scale = if reduced { 1.0 } else { 0.88 + progress * 0.20 };
-            let t = Transform::from_translate(-64.0, -64.0)
-                .post_scale(scale, scale)
-                .post_translate(64.0 + 8.0, 64.0 - 10.0)
-                .post_concat(transform);
-            let mut a = PathBuilder::new();
-            a.move_to(38.0, 28.0);
-            a.cubic_to(27.0, 29.0, 20.0, 38.0, 20.0, 49.0);
-            if let Some(path) = a.finish() {
-                draw_path(pm, &path, t, opacity, 4.0);
-            }
-            let mut b = PathBuilder::new();
-            b.move_to(42.0, 19.0);
-            b.cubic_to(23.0, 19.0, 11.0, 33.0, 11.0, 51.0);
-            if let Some(path) = b.finish() {
-                draw_path(pm, &path, t, opacity, 4.0);
-            }
-        }
-        CursorAction::Click => {
-            let cue_progress = (progress / 0.65).clamp(0.0, 1.0);
-            let opacity = alpha * (1.0 - cue_progress).min(cue_progress * 4.0).clamp(0.0, 1.0);
-            let cue_scale = 0.25 + ease_in_out(cue_progress) * 1.0;
-            let t = Transform::from_translate(-25.0, -25.0)
-                .post_scale(cue_scale, cue_scale)
-                .post_translate(25.0 + 10.0, 25.0 + 3.0)
-                .post_concat(transform);
-            for points in [
-                &[(35.0, 20.0), (34.0, 11.0)][..],
-                &[(27.0, 25.0), (19.0, 19.0)][..],
-                &[(25.0, 34.0), (15.0, 34.0)][..],
-            ] {
-                if let Some(path) = line_path(points) {
-                    draw_path(pm, &path, t, opacity, 4.0);
-                }
-            }
-        }
-        CursorAction::Drag => {
-            let offset = if reduced {
-                0.0
-            } else {
-                ease_in_out(wave) * 7.0
-            };
-            let t = Transform::from_translate(offset, offset * 0.43).post_concat(transform);
-            for points in [
-                &[(28.0, 38.0), (16.0, 35.0)][..],
-                &[(26.0, 48.0), (12.0, 45.0)][..],
-            ] {
-                if let Some(path) = line_path(points) {
-                    draw_path(pm, &path, t, alpha * (0.2 + wave * 0.8), 4.0);
-                }
-            }
-        }
-        CursorAction::Scroll => {
-            let y = if reduced { 0.0 } else { 4.0 - wave * 8.0 };
-            let t = Transform::from_translate(-5.0, y).post_concat(transform);
-            for points in [
-                &[(23.0, 31.0), (31.0, 22.0), (39.0, 31.0)][..],
-                &[(23.0, 49.0), (31.0, 58.0), (39.0, 49.0)][..],
-            ] {
-                if let Some(path) = line_path(points) {
-                    draw_path(pm, &path, t, alpha * (0.42 + wave * 0.58), 4.0);
-                }
-            }
-        }
-        CursorAction::Text => {
-            let opacity = if reduced || progress < 0.34 || progress > 0.64 {
-                alpha
-            } else {
-                alpha * 0.18
-            };
-            let t = Transform::from_translate(-4.0, 0.0).post_concat(transform);
-            for points in [
-                &[(31.0, 22.0), (31.0, 58.0)][..],
-                &[(24.0, 22.0), (38.0, 22.0)][..],
-                &[(24.0, 58.0), (38.0, 58.0)][..],
-            ] {
-                if let Some(path) = line_path(points) {
-                    draw_path(pm, &path, t, opacity, 4.0);
-                }
-            }
-        }
-        CursorAction::Key => {
-            let bounce = if reduced {
-                0.0
-            } else {
-                (progress * std::f32::consts::TAU).sin() * (1.0 - progress) * 3.0
-            };
-            let t = Transform::from_translate(-9.0, bounce).post_concat(transform);
-            if let Some(rect) = tiny_skia::Rect::from_xywh(14.0, 25.0, 28.0, 28.0) {
-                if let Some(path) =
-                    rounded_rect_path(rect.x(), rect.y(), rect.width(), rect.height(), 6.0)
-                {
-                    draw_path(pm, &path, t, alpha, 3.5);
-                }
-            }
-            if let Some(path) = line_path(&[
-                (23.0, 32.0),
-                (23.0, 46.0),
-                (23.0, 39.0),
-                (33.0, 32.0),
-                (24.0, 39.0),
-                (34.0, 46.0),
-            ]) {
-                draw_path(pm, &path, t, alpha, 3.5);
-            }
-        }
-        CursorAction::Navigate => {
-            let x = if reduced {
-                0.0
-            } else {
-                -5.0 + ease_in_out(progress) * 9.0
-            };
-            let t = Transform::from_translate(x - 5.0, 0.0).post_concat(transform);
-            for points in [
-                &[(15.0, 29.0), (25.0, 40.0), (15.0, 51.0)][..],
-                &[(29.0, 29.0), (39.0, 40.0), (29.0, 51.0)][..],
-            ] {
-                if let Some(path) = line_path(points) {
-                    draw_path(pm, &path, t, alpha * (0.2 + wave * 0.8), 4.0);
-                }
-            }
-        }
-        CursorAction::App => {
-            let s = if reduced {
-                1.0
-            } else {
-                0.2 + ease_in_out((progress * 2.0).min(1.0)) * 0.8
-            };
-            let t = Transform::from_translate(-26.0, -39.0)
-                .post_scale(s, s)
-                .post_translate(26.0 - 5.0, 39.0)
-                .post_concat(transform);
-            for (x, y) in [(13.0, 26.0), (29.0, 26.0), (13.0, 42.0), (29.0, 42.0)] {
-                if let Some(rect) = tiny_skia::Rect::from_xywh(x, y, 10.0, 10.0) {
-                    if let Some(path) =
-                        rounded_rect_path(rect.x(), rect.y(), rect.width(), rect.height(), 2.0)
-                    {
-                        draw_path(pm, &path, t, alpha, 3.5);
-                    }
-                }
-            }
-        }
-        CursorAction::Transfer => {
-            let y = if reduced { 0.0 } else { 6.0 - wave * 12.0 };
-            let t = Transform::from_translate(-9.0, y).post_concat(transform);
-            for points in [
-                &[
-                    (22.0, 50.0),
-                    (22.0, 20.0),
-                    (14.0, 28.0),
-                    (22.0, 20.0),
-                    (30.0, 28.0),
-                ][..],
-                &[
-                    (37.0, 28.0),
-                    (37.0, 58.0),
-                    (29.0, 50.0),
-                    (37.0, 58.0),
-                    (45.0, 50.0),
-                ][..],
-            ] {
-                if let Some(path) = line_path(points) {
-                    draw_path(pm, &path, t, alpha * (0.38 + wave * 0.62), 4.0);
-                }
-            }
-        }
-        CursorAction::Record => {
-            let t = Transform::from_translate(-12.0, 0.0).post_concat(transform);
-            let (paint, stroke) = cue_stroke(alpha, 4.0);
-            let mut ring = PathBuilder::new();
-            ring.push_circle(29.0, 39.0, 17.0);
-            if let Some(path) = ring.finish() {
-                pm.stroke_path(&path, &paint, &stroke, t, None);
-            }
-            let radius = if reduced { 5.0 } else { 3.6 + wave * 2.1 };
-            let mut dot = PathBuilder::new();
-            dot.push_circle(29.0, 39.0, radius);
-            if let Some(path) = dot.finish() {
-                pm.fill_path(
-                    &path,
-                    &solid_paint(ink(), alpha * (0.42 + wave * 0.58)),
-                    FillRule::Winding,
-                    t,
-                    None,
-                );
-            }
-        }
-        CursorAction::System => {
-            let rotation = if reduced {
-                0.0
-            } else {
-                ease_in_out(progress) * 68.0 - 18.0
-            };
-            let t = Transform::from_translate(-29.0, -39.0)
-                .post_rotate(rotation)
-                .post_translate(29.0 - 14.0, 39.0)
-                .post_concat(transform);
-            let (paint, stroke) = cue_stroke(alpha, 3.5);
-            for radius in [12.0, 4.0] {
-                let mut circle = PathBuilder::new();
-                circle.push_circle(29.0, 39.0, radius);
-                if let Some(path) = circle.finish() {
-                    pm.stroke_path(&path, &paint, &stroke, t, None);
-                }
-            }
-            for points in [
-                &[(29.0, 20.0), (29.0, 25.0)][..],
-                &[(29.0, 53.0), (29.0, 58.0)][..],
-                &[(10.0, 39.0), (15.0, 39.0)][..],
-                &[(43.0, 39.0), (48.0, 39.0)][..],
-                &[(16.0, 26.0), (20.0, 30.0)][..],
-                &[(38.0, 48.0), (42.0, 52.0)][..],
-                &[(16.0, 52.0), (20.0, 48.0)][..],
-                &[(38.0, 30.0), (42.0, 26.0)][..],
-            ] {
-                if let Some(path) = line_path(points) {
-                    draw_path(pm, &path, t, alpha, 3.5);
-                }
-            }
-        }
-    }
-}
-
-fn draw_modifiers(
+pub fn paint_default_theme_with_fill(
     pm: &mut tiny_skia::Pixmap,
     visual: &CursorVisualState,
-    transform: Transform,
+    anchor_x: f32,
+    anchor_y: f32,
+    heading: f32,
+    backing_scale: f32,
     alpha: f32,
+    fill_rgba: [u8; 4],
 ) {
-    if visual.delivery == Some(DeliveryModifier::Background) {
-        let mut builder = PathBuilder::new();
-        builder.move_to(34.0, 23.0);
-        builder.cubic_to(20.0, 31.0, 17.0, 48.0, 21.0, 63.0);
-        builder.cubic_to(25.0, 80.0, 38.0, 95.0, 53.0, 106.0);
-        if let Some(path) = builder.finish() {
-            let (paint, mut stroke) = cue_stroke(alpha * 0.75, 2.5);
-            stroke.dash = Some(tiny_skia::StrokeDash::new(vec![1.0, 5.0], 0.0).unwrap());
-            pm.stroke_path(&path, &paint, &stroke, transform, None);
-        }
-    }
-
-    if visual.delivery == Some(DeliveryModifier::Foreground) {
-        let (paint, stroke) = cue_stroke(alpha, 3.0);
-        let mut ring = PathBuilder::new();
-        ring.push_circle(104.0, 96.0, 9.0);
-        if let Some(path) = ring.finish() {
-            pm.stroke_path(&path, &paint, &stroke, transform, None);
-        }
-    }
-
-    match visual.target {
-        Some(TargetModifier::Ax) => {
-            let (paint, stroke) = cue_stroke(alpha, 2.5);
-            for (x, y) in [(104.0, 89.0), (94.0, 104.0), (114.0, 104.0)] {
-                let mut circle = PathBuilder::new();
-                circle.push_circle(x, y, 3.0);
-                if let Some(path) = circle.finish() {
-                    pm.stroke_path(&path, &paint, &stroke, transform, None);
-                }
-            }
-            if let Some(path) = line_path(&[
-                (104.0, 92.0),
-                (104.0, 97.0),
-                (94.0, 101.0),
-                (104.0, 97.0),
-                (114.0, 101.0),
-            ]) {
-                draw_path(pm, &path, transform, alpha, 2.5);
-            }
-        }
-        Some(TargetModifier::Pixel) => {
-            if let Some(rect) = tiny_skia::Rect::from_xywh(94.0, 91.0, 19.0, 19.0) {
-                let path = PathBuilder::from_rect(rect);
-                let (paint, mut stroke) = cue_stroke(alpha, 2.5);
-                stroke.dash = Some(tiny_skia::StrokeDash::new(vec![2.0, 3.0], 0.0).unwrap());
-                pm.stroke_path(&path, &paint, &stroke, transform, None);
-            }
-        }
-        Some(TargetModifier::Browser) => {
-            let (paint, stroke) = cue_stroke(alpha, 2.5);
-            let mut circle = PathBuilder::new();
-            circle.push_circle(104.0, 100.0, 10.0);
-            if let Some(path) = circle.finish() {
-                pm.stroke_path(&path, &paint, &stroke, transform, None);
-            }
-            for points in [
-                &[(94.0, 100.0), (114.0, 100.0)][..],
-                &[(104.0, 90.0), (100.0, 100.0), (104.0, 110.0)][..],
-                &[(104.0, 90.0), (108.0, 100.0), (104.0, 110.0)][..],
-            ] {
-                if let Some(path) = line_path(points) {
-                    draw_path(pm, &path, transform, alpha, 2.5);
-                }
-            }
-        }
-        Some(TargetModifier::Desktop) => {
-            if let Some(rect) = tiny_skia::Rect::from_xywh(93.0, 90.0, 21.0, 15.0) {
-                if let Some(path) =
-                    rounded_rect_path(rect.x(), rect.y(), rect.width(), rect.height(), 2.0)
-                {
-                    draw_path(pm, &path, transform, alpha, 2.5);
-                }
-            }
-            if let Some(path) = line_path(&[
-                (103.5, 105.0),
-                (103.5, 110.0),
-                (97.0, 110.0),
-                (110.0, 110.0),
-            ]) {
-                draw_path(pm, &path, transform, alpha, 2.5);
-            }
-        }
-        None => {}
-    }
+    let theme = crate::theme_artifact::embedded_default_theme();
+    crate::theme_artifact::paint_compiled_theme_with_tint(
+        pm,
+        &theme,
+        visual,
+        anchor_x,
+        anchor_y,
+        heading,
+        backing_scale,
+        alpha,
+        Some(fill_rgba),
+    );
 }
 
 #[cfg(test)]
@@ -677,6 +255,186 @@ mod tests {
             assert!(names.insert(action.as_str()));
         }
         assert_eq!(names.len(), 12);
+    }
+
+    #[test]
+    fn default_theme_uses_compact_48_point_footprint() {
+        assert_eq!(DISPLAY_SIZE, 48.0);
+    }
+
+    #[test]
+    fn default_cursor_keeps_original_blue_fill() {
+        assert_eq!(session_fill_rgba("default"), DEFAULT_CURSOR_FILL);
+        assert_eq!(session_fill_hex("default"), "#5EC0E8");
+    }
+
+    #[test]
+    fn named_session_colors_are_stable_and_distinct() {
+        assert_eq!(session_fill_rgba("agent-1"), session_fill_rgba("agent-1"));
+        assert_ne!(session_fill_rgba("agent-1"), session_fill_rgba("agent-2"));
+        assert_ne!(session_fill_rgba("agent-2"), DEFAULT_CURSOR_FILL);
+    }
+
+    #[test]
+    fn default_cursor_uses_parameterized_fill_white_ink_and_matching_glow() {
+        let mut pixmap = tiny_skia::Pixmap::new(256, 256).unwrap();
+        paint_default_theme_with_fill(
+            &mut pixmap,
+            &CursorVisualState::default(),
+            128.0,
+            128.0,
+            std::f32::consts::FRAC_PI_4,
+            2.0,
+            1.0,
+            [12, 34, 56, 255],
+        );
+
+        let pixels = pixmap.data().chunks_exact(4).collect::<Vec<_>>();
+        assert!(pixels.iter().any(|pixel| *pixel == [12, 34, 56, 255]));
+        assert!(pixels.iter().any(|pixel| *pixel == [255, 255, 255, 255]));
+        assert!(pixels.iter().any(|pixel| pixel[2] > pixel[1]
+            && pixel[1] > pixel[0]
+            && pixel[0] > 0
+            && pixel[3] > 16
+            && pixel[3] < 200));
+    }
+
+    #[test]
+    fn matching_glow_surrounds_the_full_pointer_silhouette() {
+        let mut pixmap = tiny_skia::Pixmap::new(256, 256).unwrap();
+        let visual = CursorVisualState {
+            reduced_motion: ReducedMotion::On,
+            ..CursorVisualState::default()
+        };
+        paint_default_theme_with_fill(
+            &mut pixmap,
+            &visual,
+            128.0,
+            128.0,
+            std::f32::consts::FRAC_PI_4,
+            2.0,
+            1.0,
+            [12, 34, 56, 255],
+        );
+
+        let bounds = |predicate: &dyn Fn(&[u8]) -> bool| {
+            let mut result = (u32::MAX, u32::MAX, 0, 0);
+            for (index, pixel) in pixmap.data().chunks_exact(4).enumerate() {
+                if predicate(pixel) {
+                    let x = index as u32 % pixmap.width();
+                    let y = index as u32 / pixmap.width();
+                    result.0 = result.0.min(x);
+                    result.1 = result.1.min(y);
+                    result.2 = result.2.max(x);
+                    result.3 = result.3.max(y);
+                }
+            }
+            result
+        };
+        let body = bounds(&|pixel| pixel == [12, 34, 56, 255]);
+        let glow = bounds(&|pixel| {
+            pixel[2] > pixel[1]
+                && pixel[1] > pixel[0]
+                && pixel[0] > 0
+                && pixel[3] > 8
+                && pixel[3] < 220
+        });
+
+        assert!(
+            glow.0 + 4 <= body.0,
+            "glow should cover the pointer's left edge: body={body:?}, glow={glow:?}"
+        );
+        assert!(
+            glow.1 + 4 <= body.1,
+            "glow should cover the pointer's top edge: body={body:?}, glow={glow:?}"
+        );
+        assert!(
+            glow.2 >= body.2 + 4,
+            "glow should cover the pointer's right edge: body={body:?}, glow={glow:?}"
+        );
+        assert!(
+            glow.3 >= body.3 + 4,
+            "glow should cover the pointer's bottom edge: body={body:?}, glow={glow:?}"
+        );
+    }
+
+    #[test]
+    fn foreground_and_pixel_modifiers_render_on_opposite_sides() {
+        let mut base = tiny_skia::Pixmap::new(128, 128).unwrap();
+        let mut pixmap = tiny_skia::Pixmap::new(128, 128).unwrap();
+        let base_visual = CursorVisualState {
+            reduced_motion: ReducedMotion::On,
+            ..CursorVisualState::default()
+        };
+        let visual = CursorVisualState {
+            delivery: Some(DeliveryModifier::Foreground),
+            target: Some(TargetModifier::Pixel),
+            reduced_motion: ReducedMotion::On,
+            ..CursorVisualState::default()
+        };
+        paint_default_theme_with_fill(
+            &mut base,
+            &base_visual,
+            64.0,
+            64.0,
+            std::f32::consts::FRAC_PI_4,
+            1.0,
+            1.0,
+            [12, 34, 56, 255],
+        );
+        paint_default_theme_with_fill(
+            &mut pixmap,
+            &visual,
+            64.0,
+            64.0,
+            std::f32::consts::FRAC_PI_4,
+            1.0,
+            1.0,
+            [12, 34, 56, 255],
+        );
+
+        let changed_pixels = |x_range: std::ops::Range<u32>| {
+            (0..128)
+                .flat_map(|y| x_range.clone().map(move |x| (x, y)))
+                .filter(|(x, y)| {
+                    let index = ((y * pixmap.width() + x) * 4) as usize;
+                    pixmap.data()[index..index + 4] != base.data()[index..index + 4]
+                })
+                .count()
+        };
+
+        assert!(changed_pixels(0..50) > 5);
+        assert!(changed_pixels(78..128) > 5);
+    }
+
+    #[test]
+    fn every_action_inherits_the_same_floating_base_motion() {
+        let mut idle = CursorVisualState::default();
+        idle.elapsed_secs = 0.75;
+        let expected = shared_float_motion(&idle);
+        assert_ne!(expected, (0.0, 0.0, 0.0));
+
+        for action in CursorAction::ALL {
+            let mut visual = CursorVisualState::default();
+            visual.begin(action, None, None);
+            visual.elapsed_secs = 0.75;
+            assert_eq!(
+                shared_float_motion(&visual),
+                expected,
+                "{} did not inherit the shared floating motion",
+                action.as_str()
+            );
+        }
+    }
+
+    #[test]
+    fn reduced_motion_disables_shared_floating_motion() {
+        let visual = CursorVisualState {
+            elapsed_secs: 0.75,
+            reduced_motion: ReducedMotion::On,
+            ..CursorVisualState::default()
+        };
+        assert_eq!(shared_float_motion(&visual), (0.0, 0.0, 0.0));
     }
 
     #[test]

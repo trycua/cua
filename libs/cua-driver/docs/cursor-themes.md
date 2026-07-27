@@ -1,9 +1,20 @@
 # Agent cursor themes
 
 Cua Driver ships one built-in cursor theme: `cua.default`. It is the default on
-macOS, Windows, and Linux and cannot be removed. The theme uses the approved
-off-white pointer with a navy outline and a small semantic animation that
-describes what the active session is doing.
+macOS, Windows, and Linux and cannot be removed. The theme uses a colored
+pointer with a white outline over a larger, cursor-shaped glow in the same
+session color. The glow softly fades to transparent around the full pointer
+silhouette, while the white outline preserves a crisp boundary on light, dark,
+and similarly colored backgrounds. Its semantic action and modifier marks use
+the same session-colored center and white-outline treatment as the pointer,
+plus a tighter, softer glow so they remain legible without competing with it.
+Every semantic state inherits the same gentle levitation and rotation as the
+idle pointer, with its action-specific motion layered on top. The pointer,
+semantic mark, and active modifiers therefore move as one visual unit.
+Reduced-motion mode removes this shared movement. The anonymous/default cursor
+uses Cua blue. Named sessions receive a stable fill
+from the built-in session palette, so concurrent agents remain visually
+distinct.
 
 The cursor is a visual aid for people watching an agent. It is not a security
 indicator, an authorization prompt, or evidence that a tool call succeeded.
@@ -28,6 +39,10 @@ its `cursor_id`, shape, color, label, size, opacity, image-path, gradient, and
 bloom styling fields are not accepted. Input-delivery tools may still use
 `cursor_id` to name a virtual pointer; it does not select cursor artwork.
 
+The default theme fill is derived from the declared `session` id. There is no
+separate fill-color tool argument. Installed custom themes keep the colors
+compiled into their own artwork.
+
 The same four typed operations are available on `CuaDriver` and
 `CuaDriverSession` in the Python and TypeScript SDKs:
 
@@ -44,20 +59,20 @@ accessibility preference where the platform exposes one.
 
 A full custom theme must provide all twelve action animations:
 
-| Action | Playback |
-| --- | --- |
-| `idle` | resting loop |
-| `observe` | loop |
-| `click` | one shot |
-| `drag` | held |
-| `scroll` | loop |
-| `text` | held |
-| `key` | one shot |
-| `navigate` | one shot |
-| `app` | one shot |
-| `transfer` | loop |
-| `record` | loop |
-| `system` | one shot |
+| Action     | Playback     |
+| ---------- | ------------ |
+| `idle`     | resting loop |
+| `observe`  | loop         |
+| `click`    | one shot     |
+| `drag`     | held         |
+| `scroll`   | loop         |
+| `text`     | held         |
+| `key`      | one shot     |
+| `navigate` | one shot     |
+| `app`      | one shot     |
+| `transfer` | loop         |
+| `record`   | loop         |
+| `system`   | one shot     |
 
 It must also provide six transparent modifier animations. The renderer
 composites at most one delivery modifier and one target modifier over the
@@ -85,10 +100,17 @@ theme.lottie
 
 Every animation must be a transparent 128×128 Lottie animation at 30 fps and
 contain no more than 120 frames. A compiled theme may contain at most 1,000
-frames in total across its actions and modifiers. Profile v1 supports the
-bounded subset accepted by the bundled compiler. Expressions, scripts,
-external URLs, fonts, images, unbounded archives, and unsupported renderer
-features are rejected.
+frames in total across its actions and modifiers. The compiler samples
+animation timing at 30 fps but preserves the artwork as vector paths, ellipses,
+rounded rectangles, solid fills, strokes, and transforms. The overlay then
+rasterizes those commands at the display's live backing scale.
+
+Profile v1 accepts shape layers with static path geometry and animated layer
+position, scale, rotation, opacity, solid color, and stroke width. Shape-layer
+transforms must remain at their identity values; place animation on the layer
+transform instead. Groups, animated path geometry, expressions, scripts,
+external URLs, fonts, images, nested assets, masks, effects, parented layers,
+unbounded archives, and other unsupported Lottie features are rejected.
 
 `manifest.json` must contain every referenced animation ID. A minimal
 `cua/theme.json` has this shape:
@@ -163,12 +185,56 @@ cua-driver cursor-theme uninstall com.example.cursor.studio
 ```
 
 The authoring compiler is a short-lived, unprivileged sidecar. It converts
-Lottie source into bounded, premultiplied RGBA frames. The privileged overlay
-loads only the compiled `.cua-theme` format; it never parses ZIP, JSON, Lottie,
-fonts, expressions, URLs, or arbitrary source paths. Agent-facing tools can
-select an already-installed ID but cannot install a theme or pass inline theme
-data.
+Lottie source into bounded vector frames containing only validated geometry,
+paint, and transforms. The privileged overlay loads only the compiled
+`.cua-theme` format and rasterizes those commands through Skia at the requested
+backing scale. It never parses ZIP, JSON, Lottie, fonts, expressions, URLs, or
+arbitrary source paths. Agent-facing tools can select an already-installed ID
+but cannot install a theme or pass inline theme data.
 
-The embedded default is rendered directly as native vector paths for smaller
-artifacts and lower idle memory. It follows the same semantic and reduced-motion
-contract as compiled Lottie themes.
+The built-in default follows the same path. Its canonical
+`cua.default.lottie` source and reproducible generator are checked into
+`cursor-overlay/assets/`. The resulting bounded `cua.default.cua-theme` is
+embedded in the binary and decoded by the same renderer used for installed
+custom themes. Only the embedded default receives the runtime session-color
+tint and shared float transform. The artifact contains no fixed-resolution
+pixel atlas, so the cursor stays crisp at 1×, 2×, 3×, and fractional display
+scales.
+
+From the Rust workspace, contributors can reproduce both checked-in artifacts:
+
+```bash
+python3 crates/cursor-overlay/assets/build_default_theme.py
+cargo run -p cursor-theme-cli -- build \
+  crates/cursor-overlay/assets/cua.default.lottie \
+  --output crates/cursor-overlay/assets/cua.default.cua-theme
+```
+
+A unit test verifies that the compiled artifact's source hash matches the
+checked-in dotLottie archive.
+
+## Preview the production renderer
+
+Contributors can inspect every built-in state in the static cursor gallery. The
+gallery uses WebM assets generated from `cursor-overlay`, so its pixels and
+timing come from the production renderer rather than a browser reimplementation.
+
+From the repository root:
+
+```bash
+./libs/cua-driver/scripts/cursor-gallery.sh serve
+```
+
+Open `http://127.0.0.1:3001` to pause, replay, change speed, and compare the
+states on light, dark, blue, or mixed backgrounds. The generated WebM files and
+raw frames are ignored by Git.
+
+Regenerate the public documentation GIFs after changing the built-in cursor:
+
+```bash
+./libs/cua-driver/scripts/cursor-gallery.sh export-docs
+```
+
+Commit both GIFs in `docs/public/img/cua-driver/cursor-themes/` with the renderer
+change. The export requires Chrome, Node.js with WebSocket support, Python 3,
+and ffmpeg.

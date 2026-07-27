@@ -15,32 +15,92 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
 };
-use tiny_skia::{PixmapPaint, PixmapRef, Transform};
+use tiny_skia::{Color, FillRule, LineCap, LineJoin, Paint, PathBuilder, Stroke, Transform};
 
-const MAGIC: &[u8; 8] = b"CUATHEM1";
+const MAGIC: &[u8; 8] = b"CUATHEM2";
 const HEADER_LEN: usize = 8 + 2 + 4 + 32;
-const ARTIFACT_VERSION: u16 = 1;
+const ARTIFACT_VERSION: u16 = 2;
 const MAX_COMPRESSED_BYTES: usize = 24 * 1024 * 1024;
-const MAX_DECOMPRESSED_BYTES: usize = 96 * 1024 * 1024;
+const MAX_DECOMPRESSED_BYTES: usize = 24 * 1024 * 1024;
 const MAX_TOTAL_FRAMES: usize = 1_000;
 const MAX_FRAMES_PER_ANIMATION: usize = 120;
+const MAX_COMMANDS_PER_FRAME: usize = 128;
+const MAX_GEOMETRIES_PER_COMMAND: usize = 64;
+const MAX_PATH_POINTS: usize = 512;
 const MAX_TEXT_BYTES: usize = 200;
 const CANVAS: u32 = 128;
 const FPS: u16 = 30;
+const DEFAULT_THEME_BYTES: &[u8] = include_bytes!("../assets/cua.default.cua-theme");
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct CompiledFrame {
-    /// Premultiplied RGBA8 pixels, exactly 128×128.
-    pub pixels: Vec<u8>,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum CompiledGeometry {
+    Path {
+        vertices: Vec<[f32; 2]>,
+        in_tangents: Vec<[f32; 2]>,
+        out_tangents: Vec<[f32; 2]>,
+        closed: bool,
+    },
+    Ellipse {
+        center: [f32; 2],
+        size: [f32; 2],
+    },
+    Rectangle {
+        center: [f32; 2],
+        size: [f32; 2],
+        roundness: f32,
+    },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct CompiledTransform {
+    pub anchor: [f32; 2],
+    pub position: [f32; 2],
+    /// Multipliers, where `[1.0, 1.0]` is the Lottie 100% scale.
+    pub scale: [f32; 2],
+    pub rotation_degrees: f32,
+}
+
+impl Default for CompiledTransform {
+    fn default() -> Self {
+        Self {
+            anchor: [0.0, 0.0],
+            position: [0.0, 0.0],
+            scale: [1.0, 1.0],
+            rotation_degrees: 0.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct CompiledStroke {
+    pub color: [u8; 4],
+    pub width: f32,
+    pub line_cap: u8,
+    pub line_join: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CompiledDrawCommand {
+    pub geometries: Vec<CompiledGeometry>,
+    pub transform: CompiledTransform,
+    pub opacity: f32,
+    pub fill: Option<[u8; 4]>,
+    pub stroke: Option<CompiledStroke>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CompiledFrame {
+    /// Bounded vector commands in the theme's 128×128 coordinate space.
+    pub commands: Vec<CompiledDrawCommand>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CompiledAnimation {
     pub still_frame: u16,
     pub frames: Vec<CompiledFrame>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CompiledTheme {
     pub id: String,
     pub name: String,
@@ -84,6 +144,66 @@ fn valid_theme_id(value: &str) -> bool {
         })
 }
 
+fn bounded_number(value: f32) -> bool {
+    value.is_finite() && value.abs() <= 4096.0
+}
+
+fn validate_geometry(name: &str, frame: usize, geometry: &CompiledGeometry) -> Result<()> {
+    let validate_pair = |label: &str, pair: [f32; 2]| -> Result<()> {
+        if !pair.into_iter().all(bounded_number) {
+            bail!("animation `{name}` frame {frame} has an invalid {label}");
+        }
+        Ok(())
+    };
+    match geometry {
+        CompiledGeometry::Path {
+            vertices,
+            in_tangents,
+            out_tangents,
+            ..
+        } => {
+            if vertices.is_empty()
+                || vertices.len() > MAX_PATH_POINTS
+                || in_tangents.len() != vertices.len()
+                || out_tangents.len() != vertices.len()
+            {
+                bail!("animation `{name}` frame {frame} has an invalid vector path");
+            }
+            for point in vertices
+                .iter()
+                .chain(in_tangents.iter())
+                .chain(out_tangents.iter())
+            {
+                validate_pair("path coordinate", *point)?;
+            }
+        }
+        CompiledGeometry::Ellipse { center, size } => {
+            validate_pair("ellipse center", *center)?;
+            validate_pair("ellipse size", *size)?;
+            if size[0] < 0.0 || size[1] < 0.0 {
+                bail!("animation `{name}` frame {frame} has a negative ellipse size");
+            }
+        }
+        CompiledGeometry::Rectangle {
+            center,
+            size,
+            roundness,
+        } => {
+            validate_pair("rectangle center", *center)?;
+            validate_pair("rectangle size", *size)?;
+            if size[0] < 0.0
+                || size[1] < 0.0
+                || !roundness.is_finite()
+                || *roundness < 0.0
+                || *roundness > 2048.0
+            {
+                bail!("animation `{name}` frame {frame} has invalid rectangle geometry");
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_animation(name: &str, animation: &CompiledAnimation) -> Result<usize> {
     if animation.frames.is_empty() || animation.frames.len() > MAX_FRAMES_PER_ANIMATION {
         bail!("animation `{name}` must contain 1..={MAX_FRAMES_PER_ANIMATION} frames");
@@ -91,13 +211,46 @@ fn validate_animation(name: &str, animation: &CompiledAnimation) -> Result<usize
     if usize::from(animation.still_frame) >= animation.frames.len() {
         bail!("animation `{name}` has an out-of-range still_frame");
     }
-    let expected = (CANVAS * CANVAS * 4) as usize;
     for (index, frame) in animation.frames.iter().enumerate() {
-        if frame.pixels.len() != expected {
-            bail!(
-                "animation `{name}` frame {index} is {} bytes; expected {expected}",
-                frame.pixels.len()
-            );
+        if frame.commands.len() > MAX_COMMANDS_PER_FRAME {
+            bail!("animation `{name}` frame {index} has too many vector commands");
+        }
+        for command in &frame.commands {
+            if command.geometries.is_empty()
+                || command.geometries.len() > MAX_GEOMETRIES_PER_COMMAND
+                || !command.opacity.is_finite()
+                || !(0.0..=1.0).contains(&command.opacity)
+            {
+                bail!("animation `{name}` frame {index} has an invalid vector command");
+            }
+            for pair in [
+                command.transform.anchor,
+                command.transform.position,
+                command.transform.scale,
+            ] {
+                if !pair.into_iter().all(bounded_number) {
+                    bail!("animation `{name}` frame {index} has an invalid transform");
+                }
+            }
+            if !bounded_number(command.transform.rotation_degrees) {
+                bail!("animation `{name}` frame {index} has an invalid rotation");
+            }
+            if command.fill.is_none() && command.stroke.is_none() {
+                bail!("animation `{name}` frame {index} has a command without paint");
+            }
+            if let Some(stroke) = command.stroke {
+                if !stroke.width.is_finite()
+                    || stroke.width <= 0.0
+                    || stroke.width > 512.0
+                    || !(1..=3).contains(&stroke.line_cap)
+                    || !(1..=3).contains(&stroke.line_join)
+                {
+                    bail!("animation `{name}` frame {index} has an invalid stroke");
+                }
+            }
+            for geometry in &command.geometries {
+                validate_geometry(name, index, geometry)?;
+            }
         }
     }
     Ok(animation.frames.len())
@@ -154,7 +307,7 @@ pub fn validate_compiled_theme(theme: &CompiledTheme, full: bool) -> Result<()> 
     Ok(())
 }
 
-#[cfg(feature = "theme-authoring")]
+#[cfg(any(test, feature = "theme-authoring"))]
 pub fn encode_theme(theme: &CompiledTheme) -> Result<Vec<u8>> {
     validate_compiled_theme(theme, theme.profile == crate::THEME_PROFILE)?;
     let payload = postcard::to_allocvec(theme).context("serialize compiled theme")?;
@@ -316,7 +469,7 @@ fn theme_cache() -> &'static Mutex<BTreeMap<String, Arc<CompiledTheme>>> {
 
 pub fn load_installed_theme(id: &str) -> Result<Option<Arc<CompiledTheme>>> {
     if id == crate::DEFAULT_THEME_ID {
-        return Ok(None);
+        return Ok(Some(embedded_default_theme()));
     }
     if let Some(theme) = theme_cache()
         .lock()
@@ -351,6 +504,26 @@ pub fn resolve_theme_selection(id: &str) -> Result<Option<Arc<CompiledTheme>>> {
     load_installed_theme(id)
 }
 
+/// Decode the checked-in default artifact once per process.
+///
+/// The bytes are produced by `assets/build_default_theme.py`, validated by the
+/// same authoring compiler as custom themes, and embedded in the binary. A
+/// corrupt checked-in artifact is a build/test defect rather than a recoverable
+/// user configuration error.
+pub fn embedded_default_theme() -> Arc<CompiledTheme> {
+    static DEFAULT: OnceLock<Arc<CompiledTheme>> = OnceLock::new();
+    Arc::clone(DEFAULT.get_or_init(|| {
+        let theme =
+            decode_theme(DEFAULT_THEME_BYTES).expect("embedded cua.default theme must be valid");
+        assert_eq!(
+            theme.id,
+            crate::DEFAULT_THEME_ID,
+            "embedded default theme id must remain stable"
+        );
+        Arc::new(theme)
+    }))
+}
+
 fn animation_frame<'a>(
     animation: &'a CompiledAnimation,
     elapsed_secs: f64,
@@ -364,6 +537,201 @@ fn animation_frame<'a>(
     animation.frames.get(index)
 }
 
+fn compiled_transform(transform: CompiledTransform) -> Transform {
+    Transform::from_translate(-transform.anchor[0], -transform.anchor[1])
+        .post_scale(transform.scale[0], transform.scale[1])
+        .post_rotate(transform.rotation_degrees)
+        .post_translate(transform.position[0], transform.position[1])
+}
+
+fn append_ellipse(builder: &mut PathBuilder, center: [f32; 2], size: [f32; 2]) {
+    const K: f32 = 0.552_284_8;
+    let rx = size[0] * 0.5;
+    let ry = size[1] * 0.5;
+    let [cx, cy] = center;
+    builder.move_to(cx + rx, cy);
+    builder.cubic_to(cx + rx, cy + ry * K, cx + rx * K, cy + ry, cx, cy + ry);
+    builder.cubic_to(cx - rx * K, cy + ry, cx - rx, cy + ry * K, cx - rx, cy);
+    builder.cubic_to(cx - rx, cy - ry * K, cx - rx * K, cy - ry, cx, cy - ry);
+    builder.cubic_to(cx + rx * K, cy - ry, cx + rx, cy - ry * K, cx + rx, cy);
+    builder.close();
+}
+
+fn append_rectangle(builder: &mut PathBuilder, center: [f32; 2], size: [f32; 2], roundness: f32) {
+    const K: f32 = 0.552_284_8;
+    let width = size[0];
+    let height = size[1];
+    let x = center[0] - width * 0.5;
+    let y = center[1] - height * 0.5;
+    let radius = roundness.min(width * 0.5).min(height * 0.5).max(0.0);
+    builder.move_to(x + radius, y);
+    builder.line_to(x + width - radius, y);
+    builder.cubic_to(
+        x + width - radius + radius * K,
+        y,
+        x + width,
+        y + radius - radius * K,
+        x + width,
+        y + radius,
+    );
+    builder.line_to(x + width, y + height - radius);
+    builder.cubic_to(
+        x + width,
+        y + height - radius + radius * K,
+        x + width - radius + radius * K,
+        y + height,
+        x + width - radius,
+        y + height,
+    );
+    builder.line_to(x + radius, y + height);
+    builder.cubic_to(
+        x + radius - radius * K,
+        y + height,
+        x,
+        y + height - radius + radius * K,
+        x,
+        y + height - radius,
+    );
+    builder.line_to(x, y + radius);
+    builder.cubic_to(
+        x,
+        y + radius - radius * K,
+        x + radius - radius * K,
+        y,
+        x + radius,
+        y,
+    );
+    builder.close();
+}
+
+fn append_geometry(builder: &mut PathBuilder, geometry: &CompiledGeometry) {
+    match geometry {
+        CompiledGeometry::Path {
+            vertices,
+            in_tangents,
+            out_tangents,
+            closed,
+        } => {
+            let Some(first) = vertices.first() else {
+                return;
+            };
+            builder.move_to(first[0], first[1]);
+            let segment_count = if *closed {
+                vertices.len()
+            } else {
+                vertices.len().saturating_sub(1)
+            };
+            for index in 0..segment_count {
+                let next = (index + 1) % vertices.len();
+                let from = vertices[index];
+                let to = vertices[next];
+                let out = out_tangents[index];
+                let incoming = in_tangents[next];
+                if out != [0.0, 0.0] || incoming != [0.0, 0.0] {
+                    builder.cubic_to(
+                        from[0] + out[0],
+                        from[1] + out[1],
+                        to[0] + incoming[0],
+                        to[1] + incoming[1],
+                        to[0],
+                        to[1],
+                    );
+                } else {
+                    builder.line_to(to[0], to[1]);
+                }
+            }
+            if *closed {
+                builder.close();
+            }
+        }
+        CompiledGeometry::Ellipse { center, size } => append_ellipse(builder, *center, *size),
+        CompiledGeometry::Rectangle {
+            center,
+            size,
+            roundness,
+        } => append_rectangle(builder, *center, *size, *roundness),
+    }
+}
+
+fn resolved_color(mut color: [u8; 4], tint: Option<[u8; 4]>) -> [u8; 4] {
+    if color[0..3] == crate::theme::DEFAULT_CURSOR_FILL[0..3] {
+        if let Some(tint) = tint {
+            color[0..3].copy_from_slice(&tint[0..3]);
+        }
+    }
+    color
+}
+
+fn vector_paint(color: [u8; 4], opacity: f32, tint: Option<[u8; 4]>) -> Paint<'static> {
+    let color = resolved_color(color, tint);
+    let alpha = (f32::from(color[3]) / 255.0 * opacity.clamp(0.0, 1.0)).clamp(0.0, 1.0);
+    Paint {
+        shader: tiny_skia::Shader::SolidColor(
+            Color::from_rgba(
+                f32::from(color[0]) / 255.0,
+                f32::from(color[1]) / 255.0,
+                f32::from(color[2]) / 255.0,
+                alpha,
+            )
+            .unwrap_or(Color::TRANSPARENT),
+        ),
+        anti_alias: true,
+        ..Default::default()
+    }
+}
+
+fn draw_frame(
+    target: &mut tiny_skia::Pixmap,
+    frame: &CompiledFrame,
+    outer_transform: Transform,
+    alpha: f32,
+    tint: Option<[u8; 4]>,
+) {
+    for command in &frame.commands {
+        let mut builder = PathBuilder::new();
+        for geometry in &command.geometries {
+            append_geometry(&mut builder, geometry);
+        }
+        let Some(path) = builder.finish() else {
+            continue;
+        };
+        let transform = compiled_transform(command.transform).post_concat(outer_transform);
+        let opacity = command.opacity * alpha;
+        if let Some(fill) = command.fill {
+            target.fill_path(
+                &path,
+                &vector_paint(fill, opacity, tint),
+                FillRule::Winding,
+                transform,
+                None,
+            );
+        }
+        if let Some(stroke) = command.stroke {
+            let stroke_style = Stroke {
+                width: stroke.width,
+                line_cap: match stroke.line_cap {
+                    1 => LineCap::Butt,
+                    3 => LineCap::Square,
+                    _ => LineCap::Round,
+                },
+                line_join: match stroke.line_join {
+                    1 => LineJoin::Miter,
+                    3 => LineJoin::Bevel,
+                    _ => LineJoin::Round,
+                },
+                ..Default::default()
+            };
+            target.stroke_path(
+                &path,
+                &vector_paint(stroke.color, opacity, tint),
+                &stroke_style,
+                transform,
+                None,
+            );
+        }
+    }
+}
+
 fn draw_layer(
     target: &mut tiny_skia::Pixmap,
     animation: &CompiledAnimation,
@@ -371,24 +739,12 @@ fn draw_layer(
     reduced_motion: bool,
     transform: Transform,
     alpha: f32,
+    tint: Option<[u8; 4]>,
 ) {
     let Some(frame) = animation_frame(animation, elapsed_secs, reduced_motion) else {
         return;
     };
-    let Some(source) = PixmapRef::from_bytes(&frame.pixels, CANVAS, CANVAS) else {
-        return;
-    };
-    target.draw_pixmap(
-        0,
-        0,
-        source,
-        &PixmapPaint {
-            opacity: alpha.clamp(0.0, 1.0),
-            ..Default::default()
-        },
-        transform,
-        None,
-    );
+    draw_frame(target, frame, transform, alpha, tint);
 }
 
 pub fn paint_compiled_theme(
@@ -401,11 +757,46 @@ pub fn paint_compiled_theme(
     backing_scale: f32,
     alpha: f32,
 ) {
+    paint_compiled_theme_with_tint(
+        target,
+        theme,
+        visual,
+        anchor_x,
+        anchor_y,
+        heading,
+        backing_scale,
+        alpha,
+        None,
+    );
+}
+
+/// Paint a compiled theme, optionally replacing the embedded default's blue
+/// palette key with a stable per-session fill.
+///
+/// Custom themes pass `None` and retain their authored colors. Only the
+/// checked-in `cua.default` path passes a tint.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_compiled_theme_with_tint(
+    target: &mut tiny_skia::Pixmap,
+    theme: &CompiledTheme,
+    visual: &CursorVisualState,
+    anchor_x: f32,
+    anchor_y: f32,
+    heading: f32,
+    backing_scale: f32,
+    alpha: f32,
+    tint: Option<[u8; 4]>,
+) {
     let scale = crate::theme::DISPLAY_SIZE * backing_scale / crate::theme::CANVAS_SIZE;
+    let (float_dx, float_dy, float_rotation) = if theme.id == crate::DEFAULT_THEME_ID {
+        crate::theme::shared_float_motion(visual)
+    } else {
+        (0.0, 0.0, 0.0)
+    };
     let transform = Transform::from_translate(-64.0, -64.0)
         .post_scale(scale, scale)
-        .post_rotate((heading - std::f32::consts::FRAC_PI_4).to_degrees())
-        .post_translate(anchor_x, anchor_y);
+        .post_rotate((heading - std::f32::consts::FRAC_PI_4 + float_rotation).to_degrees())
+        .post_translate(anchor_x + float_dx * scale, anchor_y + float_dy * scale);
     let reduced = visual.reduced_motion == crate::ReducedMotion::On;
     if let Some(animation) = theme.animation_for_action(visual.resolved_action) {
         draw_layer(
@@ -415,6 +806,7 @@ pub fn paint_compiled_theme(
             reduced,
             transform,
             alpha,
+            tint,
         );
     }
     if let Some(delivery) = visual.delivery {
@@ -430,6 +822,7 @@ pub fn paint_compiled_theme(
                 reduced,
                 transform,
                 alpha,
+                tint,
             );
         }
     }
@@ -448,6 +841,7 @@ pub fn paint_compiled_theme(
                 reduced,
                 transform,
                 alpha,
+                tint,
             );
         }
     }
@@ -474,7 +868,16 @@ mod tests {
 
     fn frame() -> CompiledFrame {
         CompiledFrame {
-            pixels: vec![0; (CANVAS * CANVAS * 4) as usize],
+            commands: vec![CompiledDrawCommand {
+                geometries: vec![CompiledGeometry::Ellipse {
+                    center: [64.0, 64.0],
+                    size: [10.0, 10.0],
+                }],
+                transform: CompiledTransform::default(),
+                opacity: 1.0,
+                fill: Some([94, 192, 232, 255]),
+                stroke: None,
+            }],
         }
     }
 
@@ -520,5 +923,56 @@ mod tests {
         let mut theme = minimal_theme();
         theme.id = "../bad".into();
         assert!(validate_compiled_theme(&theme, false).is_err());
+    }
+
+    #[test]
+    fn embedded_default_is_a_full_compiled_theme() {
+        let theme = embedded_default_theme();
+        assert_eq!(theme.id, crate::DEFAULT_THEME_ID);
+        assert_eq!(theme.actions.len(), CursorAction::ALL.len());
+        assert_eq!(theme.modifiers.len(), 6);
+        assert!(theme
+            .actions
+            .values()
+            .chain(theme.modifiers.values())
+            .flat_map(|animation| &animation.frames)
+            .any(|frame| !frame.commands.is_empty()));
+        validate_compiled_theme(&theme, true).unwrap();
+        assert!(load_installed_theme(crate::DEFAULT_THEME_ID)
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
+    fn embedded_default_is_a_compact_vector_artifact() {
+        assert!(
+            DEFAULT_THEME_BYTES.len() < 100 * 1024,
+            "the default vector artifact should remain compact, got {} bytes",
+            DEFAULT_THEME_BYTES.len()
+        );
+        assert_eq!(
+            &DEFAULT_THEME_BYTES[..MAGIC.len()],
+            MAGIC,
+            "the embedded theme must use the vector artifact version"
+        );
+    }
+
+    #[test]
+    fn embedded_default_was_compiled_from_the_checked_in_lottie() {
+        let source = include_bytes!("../assets/cua.default.lottie");
+        let expected: [u8; 32] = Sha256::digest(source).into();
+        assert_eq!(embedded_default_theme().source_hash, expected);
+    }
+
+    #[test]
+    fn default_tint_preserves_white_and_replaces_blue() {
+        assert_eq!(
+            resolved_color([94, 192, 232, 255], Some([12, 34, 56, 255])),
+            [12, 34, 56, 255]
+        );
+        assert_eq!(
+            resolved_color([255, 255, 255, 255], Some([12, 34, 56, 255])),
+            [255, 255, 255, 255]
+        );
     }
 }

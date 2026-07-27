@@ -14,10 +14,10 @@ path = "src/main.rs"
 anyhow.workspace = true
 cursor-overlay = { path = "../cursor-overlay", features = ["theme-authoring"] }
 image.workspace = true
-rasterlottie = { version = "0.2.1", default-features = false, features = ["dotlottie"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]

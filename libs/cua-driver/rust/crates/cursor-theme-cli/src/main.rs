@@ -3,11 +3,12 @@
 use anyhow::{anyhow, bail, Context, Result};
 use cursor_overlay::{
     encode_theme, inspect_artifact, install_artifact, list_installed_themes, uninstall_theme,
-    validate_compiled_theme, CompiledAnimation, CompiledFrame, CompiledTheme, CursorAction,
-    THEME_PROFILE,
+    validate_compiled_theme, CompiledAnimation, CompiledDrawCommand, CompiledFrame,
+    CompiledGeometry, CompiledStroke, CompiledTheme, CompiledTransform, CursorAction,
+    CursorVisualState, DeliveryModifier, ReducedMotion, TargetModifier, THEME_PROFILE,
 };
-use rasterlottie::{analyze_animation, Animation, RenderConfig, Renderer};
 use serde::Deserialize;
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -407,41 +408,489 @@ fn with_still_frame(
     Ok(animation)
 }
 
+fn number(value: &Value, label: &str) -> Result<f32> {
+    value
+        .as_f64()
+        .map(|value| value as f32)
+        .filter(|value| value.is_finite())
+        .ok_or_else(|| anyhow!("{label} must be a finite number"))
+}
+
+fn numeric_array(value: &Value, label: &str) -> Result<Vec<f32>> {
+    if let Some(values) = value.as_array() {
+        return values
+            .iter()
+            .map(|value| number(value, label))
+            .collect::<Result<Vec<_>>>();
+    }
+    Ok(vec![number(value, label)?])
+}
+
+fn property_key<'a>(property: &'a Value, label: &str) -> Result<&'a Value> {
+    property
+        .get("k")
+        .ok_or_else(|| anyhow!("{label} is missing its value"))
+}
+
+fn handle_component(keyframe: &Value, side: &str, axis: &str, fallback: f32) -> f32 {
+    keyframe
+        .get(side)
+        .and_then(|value| value.get(axis))
+        .and_then(|value| {
+            value
+                .as_f64()
+                .or_else(|| value.as_array()?.first()?.as_f64())
+        })
+        .map(|value| value as f32)
+        .filter(|value| value.is_finite())
+        .unwrap_or(fallback)
+}
+
+fn cubic_coordinate(t: f32, first: f32, second: f32) -> f32 {
+    let one_minus = 1.0 - t;
+    3.0 * one_minus * one_minus * t * first + 3.0 * one_minus * t * t * second + t * t * t
+}
+
+fn eased_progress(progress: f32, current: &Value, next: &Value) -> f32 {
+    if current.get("h").and_then(Value::as_i64) == Some(1) {
+        return 0.0;
+    }
+    let x1 = handle_component(current, "o", "x", 0.0).clamp(0.0, 1.0);
+    let y1 = handle_component(current, "o", "y", 0.0);
+    let x2 = handle_component(next, "i", "x", 1.0).clamp(0.0, 1.0);
+    let y2 = handle_component(next, "i", "y", 1.0);
+    let target = progress.clamp(0.0, 1.0);
+    let mut low = 0.0;
+    let mut high = 1.0;
+    for _ in 0..14 {
+        let middle = (low + high) * 0.5;
+        if cubic_coordinate(middle, x1, x2) < target {
+            low = middle;
+        } else {
+            high = middle;
+        }
+    }
+    cubic_coordinate((low + high) * 0.5, y1, y2).clamp(0.0, 1.0)
+}
+
+fn property_value(property: &Value, frame: f32, label: &str) -> Result<Vec<f32>> {
+    let animated = property.get("a").and_then(Value::as_i64).unwrap_or(0) == 1;
+    let key = property_key(property, label)?;
+    if !animated {
+        return numeric_array(key, label);
+    }
+    let keyframes = key
+        .as_array()
+        .filter(|items| !items.is_empty())
+        .ok_or_else(|| anyhow!("{label} has no keyframes"))?;
+    let first = &keyframes[0];
+    let first_time = first
+        .get("t")
+        .map(|value| number(value, label))
+        .transpose()?
+        .unwrap_or(0.0);
+    if frame <= first_time {
+        return numeric_array(
+            first
+                .get("s")
+                .ok_or_else(|| anyhow!("{label} keyframe has no start value"))?,
+            label,
+        );
+    }
+    for pair in keyframes.windows(2) {
+        let current = &pair[0];
+        let next = &pair[1];
+        let start_time = current
+            .get("t")
+            .map(|value| number(value, label))
+            .transpose()?
+            .unwrap_or(0.0);
+        let end_time = next
+            .get("t")
+            .map(|value| number(value, label))
+            .transpose()?
+            .unwrap_or(start_time);
+        if frame < end_time {
+            let start = numeric_array(
+                current
+                    .get("s")
+                    .ok_or_else(|| anyhow!("{label} keyframe has no start value"))?,
+                label,
+            )?;
+            let end = if let Some(value) = current.get("e") {
+                numeric_array(value, label)?
+            } else {
+                numeric_array(
+                    next.get("s")
+                        .ok_or_else(|| anyhow!("{label} keyframe has no end value"))?,
+                    label,
+                )?
+            };
+            if start.len() != end.len() {
+                bail!("{label} changes dimensionality between keyframes");
+            }
+            let linear = if end_time > start_time {
+                (frame - start_time) / (end_time - start_time)
+            } else {
+                0.0
+            };
+            let progress = eased_progress(linear, current, next);
+            return Ok(start
+                .iter()
+                .zip(end.iter())
+                .map(|(start, end)| start + (end - start) * progress)
+                .collect());
+        }
+    }
+    numeric_array(
+        keyframes
+            .last()
+            .and_then(|value| value.get("s"))
+            .ok_or_else(|| anyhow!("{label} final keyframe has no value"))?,
+        label,
+    )
+}
+
+fn property_scalar(property: &Value, frame: f32, label: &str) -> Result<f32> {
+    property_value(property, frame, label)?
+        .first()
+        .copied()
+        .ok_or_else(|| anyhow!("{label} is empty"))
+}
+
+fn property_pair(property: &Value, frame: f32, label: &str) -> Result<[f32; 2]> {
+    let values = property_value(property, frame, label)?;
+    if values.len() < 2 {
+        bail!("{label} must contain two numbers");
+    }
+    Ok([values[0], values[1]])
+}
+
+fn transform_property(
+    transform: &Value,
+    key: &str,
+    frame: f32,
+    default: [f32; 2],
+    label: &str,
+) -> Result<[f32; 2]> {
+    transform
+        .get(key)
+        .map(|property| property_pair(property, frame, label))
+        .unwrap_or(Ok(default))
+}
+
+fn compile_transform(
+    transform: &Value,
+    frame: f32,
+    label: &str,
+) -> Result<(CompiledTransform, f32)> {
+    let anchor = transform_property(transform, "a", frame, [0.0, 0.0], label)?;
+    let position = transform_property(transform, "p", frame, [0.0, 0.0], label)?;
+    let scale = transform_property(transform, "s", frame, [100.0, 100.0], label)?;
+    let rotation = transform
+        .get("r")
+        .map(|property| property_scalar(property, frame, label))
+        .transpose()?
+        .unwrap_or(0.0);
+    let opacity = transform
+        .get("o")
+        .map(|property| property_scalar(property, frame, label))
+        .transpose()?
+        .unwrap_or(100.0);
+    Ok((
+        CompiledTransform {
+            anchor,
+            position,
+            scale: [scale[0] / 100.0, scale[1] / 100.0],
+            rotation_degrees: rotation,
+        },
+        (opacity / 100.0).clamp(0.0, 1.0),
+    ))
+}
+
+fn color(property: &Value, frame: f32, label: &str) -> Result<[u8; 4]> {
+    let values = property_value(property, frame, label)?;
+    if values.len() < 3 {
+        bail!("{label} must contain at least three channels");
+    }
+    let channel = |index: usize, fallback: f32| {
+        (values
+            .get(index)
+            .copied()
+            .unwrap_or(fallback)
+            .clamp(0.0, 1.0)
+            * 255.0)
+            .round() as u8
+    };
+    Ok([
+        channel(0, 0.0),
+        channel(1, 0.0),
+        channel(2, 0.0),
+        channel(3, 1.0),
+    ])
+}
+
+fn static_pair(property: &Value, label: &str) -> Result<[f32; 2]> {
+    if property.get("a").and_then(Value::as_i64).unwrap_or(0) != 0 {
+        bail!("{label} geometry animation is not supported by the bounded vector profile");
+    }
+    property_pair(property, 0.0, label)
+}
+
+fn compile_geometry(shape: &Value, label: &str) -> Result<CompiledGeometry> {
+    match shape.get("ty").and_then(Value::as_str) {
+        Some("sh") => {
+            let property = shape
+                .get("ks")
+                .ok_or_else(|| anyhow!("{label} path is missing geometry"))?;
+            if property.get("a").and_then(Value::as_i64).unwrap_or(0) != 0 {
+                bail!("{label} path animation is not supported by the bounded vector profile");
+            }
+            let path = property_key(property, label)?;
+            let points = |key: &str| -> Result<Vec<[f32; 2]>> {
+                path.get(key)
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| anyhow!("{label} path is missing `{key}`"))?
+                    .iter()
+                    .map(|value| {
+                        let values = numeric_array(value, label)?;
+                        if values.len() < 2 {
+                            bail!("{label} path coordinate must contain two numbers");
+                        }
+                        Ok([values[0], values[1]])
+                    })
+                    .collect()
+            };
+            Ok(CompiledGeometry::Path {
+                vertices: points("v")?,
+                in_tangents: points("i")?,
+                out_tangents: points("o")?,
+                closed: path.get("c").and_then(Value::as_bool).unwrap_or(false),
+            })
+        }
+        Some("el") => Ok(CompiledGeometry::Ellipse {
+            center: static_pair(
+                shape
+                    .get("p")
+                    .ok_or_else(|| anyhow!("{label} ellipse has no position"))?,
+                label,
+            )?,
+            size: static_pair(
+                shape
+                    .get("s")
+                    .ok_or_else(|| anyhow!("{label} ellipse has no size"))?,
+                label,
+            )?,
+        }),
+        Some("rc") => Ok(CompiledGeometry::Rectangle {
+            center: static_pair(
+                shape
+                    .get("p")
+                    .ok_or_else(|| anyhow!("{label} rectangle has no position"))?,
+                label,
+            )?,
+            size: static_pair(
+                shape
+                    .get("s")
+                    .ok_or_else(|| anyhow!("{label} rectangle has no size"))?,
+                label,
+            )?,
+            roundness: shape
+                .get("r")
+                .map(|property| property_scalar(property, 0.0, label))
+                .transpose()?
+                .unwrap_or(0.0),
+        }),
+        Some(other) => bail!("{label} uses unsupported Lottie shape `{other}`"),
+        None => bail!("{label} shape has no type"),
+    }
+}
+
+enum CompiledStyle {
+    Fill {
+        color: [u8; 4],
+        opacity: f32,
+    },
+    Stroke {
+        stroke: CompiledStroke,
+        opacity: f32,
+    },
+}
+
+fn compile_layer(layer: &Value, frame: f32, id: &str) -> Result<Vec<CompiledDrawCommand>> {
+    let label = format!("animation `{id}`");
+    if layer.get("ty").and_then(Value::as_i64) != Some(4)
+        || layer.get("ddd").and_then(Value::as_i64).unwrap_or(0) != 0
+        || layer.get("parent").is_some()
+        || layer.get("tt").is_some()
+        || layer.get("masksProperties").is_some()
+        || layer.get("ef").is_some()
+    {
+        bail!("{label} uses a layer outside the bounded vector profile");
+    }
+    let in_point = layer
+        .get("ip")
+        .map(|value| number(value, &label))
+        .transpose()?
+        .unwrap_or(0.0);
+    let out_point = layer
+        .get("op")
+        .map(|value| number(value, &label))
+        .transpose()?
+        .unwrap_or(0.0);
+    if frame < in_point || frame >= out_point {
+        return Ok(Vec::new());
+    }
+    let (layer_transform, layer_opacity) = compile_transform(
+        layer
+            .get("ks")
+            .ok_or_else(|| anyhow!("{label} layer has no transform"))?,
+        frame,
+        &label,
+    )?;
+    let shapes = layer
+        .get("shapes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow!("{label} shape layer has no shapes"))?;
+    let mut geometries = Vec::new();
+    let mut styles = Vec::new();
+    for shape in shapes {
+        match shape.get("ty").and_then(Value::as_str) {
+            Some("sh" | "el" | "rc") => geometries.push(compile_geometry(shape, &label)?),
+            Some("fl") => {
+                let fill_color = color(
+                    shape
+                        .get("c")
+                        .ok_or_else(|| anyhow!("{label} fill has no color"))?,
+                    frame,
+                    &label,
+                )?;
+                let opacity = shape
+                    .get("o")
+                    .map(|property| property_scalar(property, frame, &label))
+                    .transpose()?
+                    .unwrap_or(100.0)
+                    / 100.0;
+                styles.push(CompiledStyle::Fill {
+                    color: fill_color,
+                    opacity,
+                });
+            }
+            Some("st") => {
+                let stroke_color = color(
+                    shape
+                        .get("c")
+                        .ok_or_else(|| anyhow!("{label} stroke has no color"))?,
+                    frame,
+                    &label,
+                )?;
+                let opacity = shape
+                    .get("o")
+                    .map(|property| property_scalar(property, frame, &label))
+                    .transpose()?
+                    .unwrap_or(100.0)
+                    / 100.0;
+                let width = property_scalar(
+                    shape
+                        .get("w")
+                        .ok_or_else(|| anyhow!("{label} stroke has no width"))?,
+                    frame,
+                    &label,
+                )?;
+                styles.push(CompiledStyle::Stroke {
+                    stroke: CompiledStroke {
+                        color: stroke_color,
+                        width,
+                        line_cap: shape.get("lc").and_then(Value::as_u64).unwrap_or(2) as u8,
+                        line_join: shape.get("lj").and_then(Value::as_u64).unwrap_or(2) as u8,
+                    },
+                    opacity,
+                });
+            }
+            Some("tr") => {
+                let (shape_transform, shape_opacity) = compile_transform(shape, frame, &label)?;
+                if shape_transform != CompiledTransform::default()
+                    || (shape_opacity - 1.0).abs() > f32::EPSILON
+                {
+                    bail!("{label} uses a non-identity shape transform; move it to the layer transform");
+                }
+            }
+            Some(other) => bail!("{label} uses unsupported Lottie shape `{other}`"),
+            None => bail!("{label} shape has no type"),
+        }
+    }
+    if geometries.is_empty() || styles.is_empty() {
+        bail!("{label} shape layer must contain geometry and paint");
+    }
+    Ok(styles
+        .into_iter()
+        .map(|style| match style {
+            CompiledStyle::Fill { color, opacity } => CompiledDrawCommand {
+                geometries: geometries.clone(),
+                transform: layer_transform,
+                opacity: (layer_opacity * opacity).clamp(0.0, 1.0),
+                fill: Some(color),
+                stroke: None,
+            },
+            CompiledStyle::Stroke { stroke, opacity } => CompiledDrawCommand {
+                geometries: geometries.clone(),
+                transform: layer_transform,
+                opacity: (layer_opacity * opacity).clamp(0.0, 1.0),
+                fill: None,
+                stroke: Some(stroke),
+            },
+        })
+        .collect())
+}
+
 fn compile_animation(bytes: &[u8], id: &str) -> Result<CompiledAnimation> {
     let text =
         std::str::from_utf8(bytes).with_context(|| format!("animation `{id}` is not UTF-8"))?;
-    let animation =
-        Animation::from_json_str(text).with_context(|| format!("parse animation `{id}`"))?;
-    if animation.width != CANVAS
-        || animation.height != CANVAS
-        || (animation.frame_rate - FPS).abs() > f32::EPSILON
-    {
+    let animation: Value =
+        serde_json::from_str(text).with_context(|| format!("parse animation `{id}`"))?;
+    let width = animation.get("w").and_then(Value::as_u64).unwrap_or(0) as u32;
+    let height = animation.get("h").and_then(Value::as_u64).unwrap_or(0) as u32;
+    let frame_rate = animation
+        .get("fr")
+        .map(|value| number(value, id))
+        .transpose()?
+        .unwrap_or(0.0);
+    if width != CANVAS || height != CANVAS || (frame_rate - FPS).abs() > f32::EPSILON {
         bail!("animation `{id}` must be 128×128 at 30 fps");
     }
-    let report = analyze_animation(&animation);
-    if !report.is_supported() {
-        bail!("animation `{id}` uses unsupported Lottie features: {report}");
+    if animation
+        .get("assets")
+        .and_then(Value::as_array)
+        .is_some_and(|assets| !assets.is_empty())
+    {
+        bail!("animation `{id}` cannot contain external or nested assets");
     }
-    let count = animation.duration_frames().ceil() as usize;
+    let in_point = animation
+        .get("ip")
+        .map(|value| number(value, id))
+        .transpose()?
+        .unwrap_or(0.0);
+    let out_point = animation
+        .get("op")
+        .map(|value| number(value, id))
+        .transpose()?
+        .unwrap_or(0.0);
+    let count = (out_point - in_point).ceil() as usize;
     if count == 0 || count > MAX_FRAMES {
         bail!("animation `{id}` must contain 1..={MAX_FRAMES} frames");
     }
-    let renderer = Renderer::default();
+    let layers = animation
+        .get("layers")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow!("animation `{id}` has no layers"))?;
     let mut frames = Vec::with_capacity(count);
     for index in 0..count {
-        let frame = renderer
-            .render_frame(
-                &animation,
-                animation.in_point + index as f32,
-                RenderConfig::default(),
-            )
-            .with_context(|| format!("render animation `{id}` frame {index}"))?;
-        if frame.width != CANVAS || frame.height != CANVAS {
-            bail!("renderer returned an unexpected canvas for `{id}`");
+        let frame_number = in_point + index as f32;
+        let mut commands = Vec::new();
+        for layer in layers.iter().rev() {
+            commands.extend(compile_layer(layer, frame_number, id)?);
         }
-        frames.push(CompiledFrame {
-            pixels: premultiply_rgba(frame.pixels),
-        });
+        frames.push(CompiledFrame { commands });
     }
     Ok(CompiledAnimation {
         still_frame: 0,
@@ -449,25 +898,44 @@ fn compile_animation(bytes: &[u8], id: &str) -> Result<CompiledAnimation> {
     })
 }
 
-fn premultiply_rgba(mut pixels: Vec<u8>) -> Vec<u8> {
-    for pixel in pixels.chunks_exact_mut(4) {
-        let alpha = u16::from(pixel[3]);
-        pixel[0] = ((u16::from(pixel[0]) * alpha + 127) / 255) as u8;
-        pixel[1] = ((u16::from(pixel[1]) * alpha + 127) / 255) as u8;
-        pixel[2] = ((u16::from(pixel[2]) * alpha + 127) / 255) as u8;
-    }
-    pixels
-}
-
 fn preview(theme: &CompiledTheme, output: &Path) -> Result<()> {
     fs::create_dir_all(output).with_context(|| format!("create {}", output.display()))?;
-    for (name, animation) in theme.actions.iter().chain(theme.modifiers.iter()) {
-        let frame = animation
-            .frames
-            .get(usize::from(animation.still_frame))
-            .ok_or_else(|| anyhow!("missing still frame for `{name}`"))?;
-        // The compiled pixels are premultiplied; PNG expects straight RGBA.
-        let pixels = unpremultiply_rgba(frame.pixels.clone());
+    for name in theme.actions.keys().chain(theme.modifiers.keys()) {
+        let mut visual = CursorVisualState {
+            reduced_motion: ReducedMotion::On,
+            ..CursorVisualState::default()
+        };
+        if let Some(action) = CursorAction::ALL
+            .into_iter()
+            .find(|action| action.as_str() == name)
+        {
+            visual.requested_action = action;
+            visual.resolved_action = action;
+        } else {
+            match name.as_str() {
+                "background" => visual.delivery = Some(DeliveryModifier::Background),
+                "foreground" => visual.delivery = Some(DeliveryModifier::Foreground),
+                "ax" => visual.target = Some(TargetModifier::Ax),
+                "pixel" => visual.target = Some(TargetModifier::Pixel),
+                "browser" => visual.target = Some(TargetModifier::Browser),
+                "desktop" => visual.target = Some(TargetModifier::Desktop),
+                _ => bail!("unknown compiled semantic `{name}`"),
+            }
+        }
+        let mut pixmap = tiny_skia::Pixmap::new(CANVAS, CANVAS)
+            .ok_or_else(|| anyhow!("create preview pixmap"))?;
+        cursor_overlay::paint_compiled_theme(
+            &mut pixmap,
+            theme,
+            &visual,
+            CANVAS as f32 * 0.5,
+            CANVAS as f32 * 0.5,
+            std::f32::consts::FRAC_PI_4,
+            CANVAS as f32 / 48.0,
+            1.0,
+        );
+        // tiny-skia stores premultiplied pixels; PNG expects straight RGBA.
+        let pixels = unpremultiply_rgba(pixmap.data().to_vec());
         let path = output.join(format!("{name}.png"));
         image::save_buffer_with_format(
             &path,
@@ -505,13 +973,12 @@ mod tests {
     use zip::{write::SimpleFileOptions, ZipWriter};
 
     #[test]
-    fn premultiplication_round_trip_is_bounded() {
-        let original = vec![200, 100, 50, 128, 0, 0, 0, 0];
-        let round_trip = unpremultiply_rgba(premultiply_rgba(original.clone()));
-        assert!(round_trip[0].abs_diff(original[0]) <= 1);
-        assert!(round_trip[1].abs_diff(original[1]) <= 1);
-        assert!(round_trip[2].abs_diff(original[2]) <= 1);
-        assert_eq!(&round_trip[4..], &[0, 0, 0, 0]);
+    fn preview_unpremultiplication_is_bounded() {
+        let straight = unpremultiply_rgba(vec![100, 50, 25, 128, 0, 0, 0, 0]);
+        assert!(straight[0].abs_diff(199) <= 1);
+        assert!(straight[1].abs_diff(100) <= 1);
+        assert!(straight[2].abs_diff(50) <= 1);
+        assert_eq!(&straight[4..], &[0, 0, 0, 0]);
     }
 
     #[test]
@@ -584,6 +1051,48 @@ mod tests {
         file
     }
 
+    fn vector_animation(extra_layer_fields: &str, ellipse_animated: u8) -> String {
+        format!(
+            r#"{{
+                "v":"5.12.2",
+                "fr":30,
+                "ip":0,
+                "op":1,
+                "w":128,
+                "h":128,
+                "nm":"base",
+                "ddd":0,
+                "assets":[],
+                "layers":[{{
+                    "ty":4,
+                    "ddd":0,
+                    "ip":0,
+                    "op":1,
+                    "ks":{{
+                        "a":{{"a":0,"k":[0,0]}},
+                        "p":{{"a":0,"k":[0,0]}},
+                        "s":{{"a":0,"k":[100,100]}},
+                        "r":{{"a":0,"k":0}},
+                        "o":{{"a":0,"k":100}}
+                    }},
+                    "shapes":[
+                        {{
+                            "ty":"el",
+                            "p":{{"a":0,"k":[64,64]}},
+                            "s":{{"a":{ellipse_animated},"k":[20,20]}}
+                        }},
+                        {{
+                            "ty":"fl",
+                            "c":{{"a":0,"k":[0.3686,0.7529,0.9098,1]}},
+                            "o":{{"a":0,"k":100}}
+                        }}
+                    ]
+                    {extra_layer_fields}
+                }}]
+            }}"#
+        )
+    }
+
     #[test]
     fn compiles_a_bounded_development_theme() {
         let source = source_archive("base", "{}");
@@ -593,6 +1102,33 @@ mod tests {
         assert_eq!(theme.license, "MIT");
         assert_eq!(theme.actions.len(), 2);
         assert!(encode_theme(&theme).is_ok());
+    }
+
+    #[test]
+    fn compiles_supported_geometry_into_vector_commands() {
+        let animation = vector_animation("", 0);
+        let compiled = compile_animation(animation.as_bytes(), "base").unwrap();
+        assert_eq!(compiled.frames.len(), 1);
+        assert_eq!(compiled.frames[0].commands.len(), 1);
+        assert!(matches!(
+            compiled.frames[0].commands[0].geometries[0],
+            CompiledGeometry::Ellipse { .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_animated_geometry_and_masked_layers() {
+        let animated = vector_animation("", 1);
+        assert!(compile_animation(animated.as_bytes(), "base")
+            .unwrap_err()
+            .to_string()
+            .contains("geometry animation is not supported"));
+
+        let masked = vector_animation(r#","masksProperties":[] "#, 0);
+        assert!(compile_animation(masked.as_bytes(), "base")
+            .unwrap_err()
+            .to_string()
+            .contains("outside the bounded vector profile"));
     }
 
     #[test]

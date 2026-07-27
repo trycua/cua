@@ -27,9 +27,9 @@ class PersistentCertificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output_dir = Path(temporary)
             valid_dir = output_dir / "01-task001"
-            invalid_dir = output_dir / "02-task002"
+            invalid_dir = output_dir / "persistent-continuation" / "task002"
             valid_dir.mkdir()
-            invalid_dir.mkdir()
+            invalid_dir.mkdir(parents=True)
             (valid_dir / "paired-result.json").write_text(
                 json.dumps(
                     {

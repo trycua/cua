@@ -163,30 +163,28 @@ def existing_pair_results(
 ) -> tuple[dict[str, tuple[Path, dict[str, Any]]], list[dict[str, Any]]]:
     adopted: dict[str, tuple[Path, dict[str, Any]]] = {}
     infrastructure_attempts: list[dict[str, Any]] = []
-    for index, task in enumerate(tasks, start=1):
-        task_id = str(task["task_id"])
-        pair_dir = output_dir / f"{index:02d}-task{task_id}"
-        candidates = sorted(pair_dir.glob("**/paired-result.json"))
-        for result_path in candidates:
-            result = certification.read_json(result_path)
-            if str(result.get("task_id")) != task_id:
+    known_task_ids = {str(task["task_id"]) for task in tasks}
+    for result_path in sorted(output_dir.glob("**/paired-result.json")):
+        result = certification.read_json(result_path)
+        task_id = str(result.get("task_id"))
+        if task_id not in known_task_ids:
+            raise PersistentCertificationError(
+                f"{result_path} has an unknown task_id"
+            )
+        if result.get("pair_valid") is True or result_has_model_attempt(result):
+            if task_id in adopted:
                 raise PersistentCertificationError(
-                    f"{result_path} has the wrong task_id"
+                    f"multiple model-bearing results exist for task {task_id}"
                 )
-            if result.get("pair_valid") is True or result_has_model_attempt(result):
-                if task_id in adopted:
-                    raise PersistentCertificationError(
-                        f"multiple model-bearing results exist for task {task_id}"
-                    )
-                adopted[task_id] = (result_path, result)
-            else:
-                infrastructure_attempts.append(
-                    {
-                        "task_id": task_id,
-                        "result_path": str(result_path),
-                        "run_error": result.get("run_error"),
-                    }
-                )
+            adopted[task_id] = (result_path, result)
+        else:
+            infrastructure_attempts.append(
+                {
+                    "task_id": task_id,
+                    "result_path": str(result_path),
+                    "run_error": result.get("run_error"),
+                }
+            )
     return adopted, infrastructure_attempts
 
 

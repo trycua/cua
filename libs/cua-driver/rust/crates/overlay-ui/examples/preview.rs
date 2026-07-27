@@ -1,4 +1,4 @@
-use cursor_overlay::{draw_default_arrow, Palette};
+use cursor_overlay::{theme::paint_default_theme, CursorVisualState};
 use overlay_ui::{
     render_consent, render_indicator, ConsentCard, ConsentVisualState, IndicatorCard,
 };
@@ -89,37 +89,13 @@ fn rounded_panel(pixmap: &mut Pixmap, x: f32, y: f32, width: f32, height: f32, r
 }
 
 fn draw_cursor(pixmap: &mut Pixmap, x: f32, y: f32) {
-    let glow = tiny_skia::RadialGradient::new(
-        tiny_skia::Point::from_xy(x, y),
-        tiny_skia::Point::from_xy(x, y),
-        28.0,
-        vec![
-            tiny_skia::GradientStop::new(0.0, Color::from_rgba8(33, 206, 180, 100)),
-            tiny_skia::GradientStop::new(1.0, Color::from_rgba8(33, 206, 180, 0)),
-        ],
-        tiny_skia::SpreadMode::Pad,
-        Transform::identity(),
-    )
-    .expect("cursor glow");
-    if let Some(rect) = Rect::from_xywh(x - 28.0, y - 28.0, 56.0, 56.0) {
-        pixmap.fill_rect(
-            rect,
-            &Paint {
-                shader: glow,
-                anti_alias: true,
-                ..Default::default()
-            },
-            Transform::identity(),
-            None,
-        );
-    }
-    draw_default_arrow(
+    paint_default_theme(
         pixmap,
-        &Palette::for_instance("aqua"),
-        None,
+        &CursorVisualState::default(),
         x,
         y,
-        2.35,
+        std::f32::consts::FRAC_PI_4,
+        1.0,
         1.0,
     );
 }

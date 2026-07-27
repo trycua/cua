@@ -53,10 +53,15 @@ def parse_metadata(data: bytes) -> dict[str, str]:
 
 
 def update_metadata(data: bytes, version: str) -> bytes:
-    lines = data.decode().splitlines(keepends=True)
+    text = data.decode()
+    _, _, description = text.partition("\n\n")
+    lines = text.splitlines(keepends=True)
     found_name = found_version = False
     updated: list[str] = []
     for line in lines:
+        if not description.strip() and line.startswith("Description-Content-Type: "):
+            updated.append("Description-Content-Type: text/plain\n")
+            continue
         if line.startswith("Name: "):
             updated.append(f"Name: {DESTINATION_NAME}\n")
             found_name = True

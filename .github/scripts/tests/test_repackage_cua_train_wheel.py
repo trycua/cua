@@ -31,7 +31,7 @@ def _write_source_wheel(path: Path) -> dict[str, bytes]:
         "cua_train/__init__.py": b"TrainClient = object\n",
         "cyclops_sdk/__init__.py": b"CyclopsClient = object\n",
         "cyclops_sdk/libcyclops_sdk.so": b"native payload",
-        f"{dist_info}/METADATA": b"Metadata-Version: 2.4\nName: cua-train\nVersion: 0.1.1\n\n",
+        f"{dist_info}/METADATA": b"Metadata-Version: 2.4\nName: cua-train\nVersion: 0.1.1\nDescription-Content-Type: text/markdown\n\n",
         f"{dist_info}/WHEEL": b"Wheel-Version: 1.0\nRoot-Is-Purelib: false\nTag: py3-none-manylinux_2_34_x86_64\n",
     }
     record_name = f"{dist_info}/RECORD"
@@ -63,6 +63,7 @@ def test_repack_changes_only_distribution_metadata(tmp_path: Path):
         metadata = archive.read("cua_fleet-0.0.5.dist-info/METADATA").decode()
         assert "Name: cua-fleet" in metadata
         assert "Version: 0.0.5" in metadata
+        assert "Description-Content-Type: text/plain" in metadata
 
 
 def test_repack_rejects_unpinned_source(tmp_path: Path):

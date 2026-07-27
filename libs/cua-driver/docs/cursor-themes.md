@@ -59,20 +59,20 @@ accessibility preference where the platform exposes one.
 
 A full custom theme must provide all twelve action animations:
 
-| Action | Playback |
-| --- | --- |
-| `idle` | resting loop |
-| `observe` | loop |
-| `click` | one shot |
-| `drag` | held |
-| `scroll` | loop |
-| `text` | held |
-| `key` | one shot |
-| `navigate` | one shot |
-| `app` | one shot |
-| `transfer` | loop |
-| `record` | loop |
-| `system` | one shot |
+| Action     | Playback     |
+| ---------- | ------------ |
+| `idle`     | resting loop |
+| `observe`  | loop         |
+| `click`    | one shot     |
+| `drag`     | held         |
+| `scroll`   | loop         |
+| `text`     | held         |
+| `key`      | one shot     |
+| `navigate` | one shot     |
+| `app`      | one shot     |
+| `transfer` | loop         |
+| `record`   | loop         |
+| `system`   | one shot     |
 
 It must also provide six transparent modifier animations. The renderer
 composites at most one delivery modifier and one target modifier over the
@@ -187,3 +187,29 @@ data.
 The embedded default is rendered directly as native vector paths for smaller
 artifacts and lower idle memory. It follows the same semantic and reduced-motion
 contract as compiled Lottie themes.
+
+## Preview the production renderer
+
+Contributors can inspect every built-in state in the static cursor gallery. The
+gallery uses WebM assets generated from `cursor-overlay`, so its pixels and
+timing come from the production renderer rather than a browser reimplementation.
+
+From the repository root:
+
+```bash
+./libs/cua-driver/scripts/cursor-gallery.sh serve
+```
+
+Open `http://127.0.0.1:3001` to pause, replay, change speed, and compare the
+states on light, dark, blue, or mixed backgrounds. The generated WebM files and
+raw frames are ignored by Git.
+
+Regenerate the public documentation GIFs after changing the built-in cursor:
+
+```bash
+./libs/cua-driver/scripts/cursor-gallery.sh export-docs
+```
+
+Commit both GIFs in `docs/public/img/cua-driver/cursor-themes/` with the renderer
+change. The export requires Chrome, Node.js with WebSocket support, Python 3,
+and ffmpeg.

@@ -140,7 +140,7 @@ The Terraform models, schema, CRD-derived descriptions, enum validators, numeric
 - `clusters/base/osgym/crd.yaml`, the production `OSGymWorkspacePool` CRD
 - `internal/provider/generate/pool_mapping.json`, the explicit CRD-to-Terraform shape mapping
 
-From `cyclops-cs/terraform-provider-fleets/`, run:
+Run:
 
 ```bash
 go generate ./...

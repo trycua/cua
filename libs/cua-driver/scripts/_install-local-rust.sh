@@ -258,6 +258,27 @@ if [ -d "$SOURCE_SKILLS" ]; then
     echo "${GREEN}staged skill pack at $STAGED_SKILLS${NORMAL}"
 fi
 
+# Keep an already-installed GNOME helper aligned with the source-built driver.
+# Installing the helper is still opt-in. Once present, however, leaving old
+# compositor artwork behind after install-local creates a misleading
+# cross-platform mismatch.
+if [ "$OS" = "Linux" ]; then
+    SOURCE_WAYLAND_HELPER="$REPO_ROOT/../wayland-helper"
+    if [ -d "$SOURCE_WAYLAND_HELPER/winrects@cua" ]; then
+        STAGED_WAYLAND_HELPER="$VERSIONED_DIR/wayland-helper"
+        mkdir -p "$STAGED_WAYLAND_HELPER"
+        cp -R "$SOURCE_WAYLAND_HELPER/." "$STAGED_WAYLAND_HELPER/"
+
+        INSTALLED_WAYLAND_HELPER="${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/winrects@cua"
+        if [ -d "$INSTALLED_WAYLAND_HELPER" ]; then
+            cp "$SOURCE_WAYLAND_HELPER/winrects@cua/metadata.json" \
+                "$SOURCE_WAYLAND_HELPER/winrects@cua/extension.js" \
+                "$INSTALLED_WAYLAND_HELPER/"
+            echo "${GREEN}updated installed GNOME helper; reload the GNOME session to activate it${NORMAL}"
+        fi
+    fi
+fi
+
 # Atomically point `current` at the new versioned release dir.
 #
 # Previous version used `ln -s … current.new` + `mv -Tf current.new current`

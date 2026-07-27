@@ -21,8 +21,9 @@ pub use motion::{MotionConfig, Spring};
 pub use path_planner::{PathPlanner, PathState, PlannedPath};
 pub use render_state::{paint_cursor, render_frame, FocusRect, RenderStateCore};
 pub use theme::{
-    CursorAction, CursorVisualState, DeliveryModifier, PlaybackKind, ReducedMotion, TargetModifier,
-    DEFAULT_THEME_ID, DEFAULT_THEME_VERSION, THEME_PROFILE,
+    session_fill_hex, session_fill_rgba, CursorAction, CursorVisualState, DeliveryModifier,
+    PlaybackKind, ReducedMotion, TargetModifier, DEFAULT_CURSOR_FILL, DEFAULT_THEME_ID,
+    DEFAULT_THEME_VERSION, THEME_PROFILE,
 };
 pub use theme_artifact::{
     decode_theme, inspect_artifact, list_installed_themes, load_installed_theme,

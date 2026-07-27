@@ -66,8 +66,9 @@ struct RenderMap {
 }
 
 fn render_state_for_key(template: &CursorConfig, key: &str) -> RenderState {
-    let _ = key;
-    RenderState::new(template.clone())
+    let mut config = template.clone();
+    config.cursor_id = key.to_owned();
+    RenderState::new(config)
 }
 
 fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
@@ -178,7 +179,10 @@ pub fn send_command_for(key: CursorKey, cmd: OverlayCommand) {
     #[cfg(target_os = "linux")]
     {
         if crate::wayland::is_wayland() {
-            if crate::wayland::shell_helper::available() {
+            if crate::wayland::shell_helper::semantic_cursor_available() {
+                crate::wayland::shell_helper::set_cursor_color(&cursor_overlay::session_fill_hex(
+                    &key,
+                ));
                 // GNOME has no layer-shell. Drive only the final positioning
                 // commands through the compositor helper; it performs its own
                 // easing and avoids starting a worker that must fail.
@@ -186,12 +190,38 @@ pub fn send_command_for(key: CursorKey, cmd: OverlayCommand) {
                     cursor_overlay::OverlayCommand::ClickPulse { x, y } => {
                         crate::wayland::shell_helper::click_pulse(*x as i32, *y as i32);
                     }
+                    cursor_overlay::OverlayCommand::MoveTo { x, y, .. } => {
+                        crate::wayland::shell_helper::move_cursor(*x as i32, *y as i32);
+                    }
                     cursor_overlay::OverlayCommand::SnapTo { x, y, .. } => {
                         crate::wayland::shell_helper::move_cursor(*x as i32, *y as i32);
                     }
+                    cursor_overlay::OverlayCommand::BeginAction {
+                        action,
+                        delivery,
+                        target,
+                    } => {
+                        crate::wayland::shell_helper::set_cursor_state(
+                            action.as_str(),
+                            delivery.as_ref().map_or("", |value| value.as_str()),
+                            target.as_ref().map_or("", |value| value.as_str()),
+                            true,
+                        );
+                    }
+                    cursor_overlay::OverlayCommand::EndAction(action) => {
+                        crate::wayland::shell_helper::set_cursor_state(
+                            action.as_str(),
+                            "",
+                            "",
+                            false,
+                        );
+                    }
+                    cursor_overlay::OverlayCommand::SetEnabled(false) => {
+                        crate::wayland::shell_helper::hide_cursor();
+                    }
                     _ => {}
                 }
-            } else {
+            } else if !crate::wayland::shell_helper::available() {
                 let _ = crate::wayland::overlay::forward(&msg);
             }
         }
@@ -1150,6 +1180,12 @@ fn bgra_and_visible_shape(
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keyed_render_state_carries_the_session_color_identity() {
+        let state = render_state_for_key(&CursorConfig::default(), "session-blueprint");
+        assert_eq!(state.core.cfg.cursor_id, "session-blueprint");
+    }
 
     fn default_render_map() -> RenderMap {
         let cfg = CursorConfig::default();

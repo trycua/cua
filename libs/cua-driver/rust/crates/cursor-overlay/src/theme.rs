@@ -16,14 +16,72 @@ pub const DEFAULT_THEME_ID: &str = "cua.default";
 pub const DEFAULT_THEME_VERSION: &str = "1.0.0";
 pub const THEME_PROFILE: &str = "cua-driver-full-v1";
 pub const CANVAS_SIZE: f32 = 128.0;
-pub const DISPLAY_SIZE: f32 = 58.0;
+pub const DISPLAY_SIZE: f32 = 48.0;
 
 fn ink() -> Color {
-    Color::from_rgba8(16, 21, 47, 255)
+    Color::from_rgba8(255, 255, 255, 255)
 }
 
-fn paper() -> Color {
-    Color::from_rgba8(251, 251, 249, 255)
+fn outline() -> Color {
+    Color::from_rgba8(255, 255, 255, 255)
+}
+
+pub const DEFAULT_CURSOR_FILL: [u8; 4] = [94, 192, 232, 255];
+
+const SESSION_CURSOR_FILLS: &[[u8; 4]] = &[
+    [178, 132, 255, 255],
+    [247, 132, 170, 255],
+    [96, 218, 174, 255],
+    [244, 178, 66, 255],
+    [76, 204, 224, 255],
+    [221, 113, 236, 255],
+    [232, 82, 98, 255],
+    [184, 220, 54, 255],
+    [80, 126, 236, 255],
+];
+
+/// Return the stable fill color for one session-owned cursor.
+///
+/// The anonymous/default cursor keeps the original Cua blue. Named sessions
+/// hash into the former multi-cursor palette so concurrent runs are visually
+/// distinct without accepting an agent-controlled styling argument.
+pub fn session_fill_rgba(session_id: &str) -> [u8; 4] {
+    if session_id.is_empty() || session_id == "default" {
+        return DEFAULT_CURSOR_FILL;
+    }
+
+    SESSION_CURSOR_FILLS[stable_session_index(session_id, SESSION_CURSOR_FILLS.len())]
+}
+
+pub fn session_fill_hex(session_id: &str) -> String {
+    let [r, g, b, _] = session_fill_rgba(session_id);
+    format!("#{r:02X}{g:02X}{b:02X}")
+}
+
+fn stable_session_index(id: &str, count: usize) -> usize {
+    let suffix = id
+        .rfind(['-', '_', '.'])
+        .map(|index| &id[index + 1..])
+        .unwrap_or(id);
+    if let Ok(number) = suffix.parse::<usize>() {
+        if number > 0 {
+            return (number - 1) % count;
+        }
+    }
+    if suffix.len() == 1 {
+        if let Some(character) = suffix.chars().next() {
+            if character.is_ascii_alphabetic() {
+                return (character.to_ascii_lowercase() as usize - b'a' as usize) % count;
+            }
+        }
+    }
+
+    let mut hash: u32 = 2_166_136_261;
+    for character in id.chars() {
+        hash ^= character as u32;
+        hash = hash.wrapping_mul(16_777_619);
+    }
+    hash as usize % count
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -243,6 +301,28 @@ pub fn paint_default_theme(
     backing_scale: f32,
     alpha: f32,
 ) {
+    paint_default_theme_with_fill(
+        pm,
+        visual,
+        anchor_x,
+        anchor_y,
+        heading,
+        backing_scale,
+        alpha,
+        DEFAULT_CURSOR_FILL,
+    );
+}
+
+pub fn paint_default_theme_with_fill(
+    pm: &mut tiny_skia::Pixmap,
+    visual: &CursorVisualState,
+    anchor_x: f32,
+    anchor_y: f32,
+    heading: f32,
+    backing_scale: f32,
+    alpha: f32,
+    fill_rgba: [u8; 4],
+) {
     let scale = DISPLAY_SIZE * backing_scale / CANVAS_SIZE;
     let base_rotation = heading - std::f32::consts::FRAC_PI_4;
     let mut body_dx = 0.0;
@@ -290,6 +370,7 @@ pub fn paint_default_theme(
         .post_rotate((base_rotation + body_rotation).to_degrees())
         .post_translate(anchor_x + body_dx * scale, anchor_y + body_dy * scale);
 
+    draw_stain(pm, canvas_transform, alpha);
     draw_action_cue(
         pm,
         visual.resolved_action,
@@ -298,11 +379,62 @@ pub fn paint_default_theme(
         alpha,
         reduced,
     );
-    draw_cursor_body(pm, body_transform, alpha);
+    draw_cursor_body(pm, body_transform, alpha, fill_rgba);
     draw_modifiers(pm, visual, canvas_transform, alpha);
 }
 
-fn draw_cursor_body(pm: &mut tiny_skia::Pixmap, transform: Transform, alpha: f32) {
+fn draw_stain(pm: &mut tiny_skia::Pixmap, transform: Transform, alpha: f32) {
+    const LAYERS: usize = 56;
+    const SEGMENTS: usize = 80;
+    const MAX_OPACITY: f32 = 0.30;
+
+    let mut accumulated_opacity = 0.0;
+    for layer in 0..LAYERS {
+        let radius = 1.0 - layer as f32 / LAYERS as f32;
+        let depth = 1.0 - radius;
+        let fade = depth.powf(0.85);
+        let target_opacity = MAX_OPACITY * alpha.clamp(0.0, 1.0) * fade;
+        let layer_opacity =
+            (target_opacity - accumulated_opacity) / (1.0 - accumulated_opacity).max(0.001);
+        accumulated_opacity = target_opacity;
+        if layer_opacity <= 0.0 {
+            continue;
+        }
+
+        let mut builder = PathBuilder::new();
+        for segment in 0..SEGMENTS {
+            let angle = segment as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+            let boundary = 1.0
+                + 0.26 * (3.0 * angle + 0.6).sin()
+                + 0.11 * (5.0 * angle - 1.0).sin()
+                + 0.08 * (2.0 * angle + 0.4).cos();
+            let x = 66.0 + depth * 10.0 + angle.cos() * 110.0 * boundary * radius;
+            let y = 67.0 - depth * 6.0 + angle.sin() * 88.0 * boundary * radius;
+            if segment == 0 {
+                builder.move_to(x, y);
+            } else {
+                builder.line_to(x, y);
+            }
+        }
+        builder.close();
+        if let Some(path) = builder.finish() {
+            pm.fill_path(
+                &path,
+                &solid_paint(Color::BLACK, layer_opacity),
+                FillRule::Winding,
+                transform,
+                None,
+            );
+        }
+    }
+}
+
+fn draw_cursor_body(
+    pm: &mut tiny_skia::Pixmap,
+    transform: Transform,
+    alpha: f32,
+    fill_rgba: [u8; 4],
+) {
     let mut builder = PathBuilder::new();
     builder.move_to(55.0, 30.0);
     builder.cubic_to(48.0, 28.0, 42.0, 33.0, 43.0, 41.0);
@@ -318,12 +450,19 @@ fn draw_cursor_body(pm: &mut tiny_skia::Pixmap, transform: Transform, alpha: f32
     };
     pm.fill_path(
         &path,
-        &solid_paint(paper(), alpha),
+        &solid_paint(
+            Color::from_rgba8(fill_rgba[0], fill_rgba[1], fill_rgba[2], fill_rgba[3]),
+            alpha,
+        ),
         FillRule::Winding,
         transform,
         None,
     );
-    let (paint, mut stroke) = cue_stroke(alpha, 5.0);
+    let paint = solid_paint(outline(), alpha);
+    let mut stroke = Stroke {
+        width: 5.0,
+        ..Default::default()
+    };
     stroke.line_join = tiny_skia::LineJoin::Round;
     pm.stroke_path(&path, &paint, &stroke, transform, None);
 }
@@ -677,6 +816,48 @@ mod tests {
             assert!(names.insert(action.as_str()));
         }
         assert_eq!(names.len(), 12);
+    }
+
+    #[test]
+    fn default_theme_uses_compact_48_point_footprint() {
+        assert_eq!(DISPLAY_SIZE, 48.0);
+    }
+
+    #[test]
+    fn default_cursor_keeps_original_blue_fill() {
+        assert_eq!(session_fill_rgba("default"), DEFAULT_CURSOR_FILL);
+        assert_eq!(session_fill_hex("default"), "#5EC0E8");
+    }
+
+    #[test]
+    fn named_session_colors_are_stable_and_distinct() {
+        assert_eq!(session_fill_rgba("agent-1"), session_fill_rgba("agent-1"));
+        assert_ne!(session_fill_rgba("agent-1"), session_fill_rgba("agent-2"));
+        assert_ne!(session_fill_rgba("agent-2"), DEFAULT_CURSOR_FILL);
+    }
+
+    #[test]
+    fn default_cursor_uses_parameterized_fill_white_ink_and_black_stain() {
+        let mut pixmap = tiny_skia::Pixmap::new(256, 256).unwrap();
+        paint_default_theme_with_fill(
+            &mut pixmap,
+            &CursorVisualState::default(),
+            128.0,
+            128.0,
+            std::f32::consts::FRAC_PI_4,
+            2.0,
+            1.0,
+            [12, 34, 56, 255],
+        );
+
+        let pixels = pixmap.data().chunks_exact(4).collect::<Vec<_>>();
+        assert!(pixels.iter().any(|pixel| *pixel == [12, 34, 56, 255]));
+        assert!(pixels.iter().any(|pixel| *pixel == [255, 255, 255, 255]));
+        assert!(pixels.iter().any(|pixel| pixel[0] == 0
+            && pixel[1] == 0
+            && pixel[2] == 0
+            && pixel[3] > 16
+            && pixel[3] < 200));
     }
 
     #[test]

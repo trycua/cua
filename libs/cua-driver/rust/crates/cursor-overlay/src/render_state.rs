@@ -690,7 +690,7 @@ pub fn paint_cursor(
             alpha_scale,
         );
     } else {
-        crate::theme::paint_default_theme(
+        crate::theme::paint_default_theme_with_fill(
             pm,
             &core.visual,
             px as f32,
@@ -698,6 +698,7 @@ pub fn paint_cursor(
             heading as f32,
             backing_scale.max(1.0),
             alpha_scale,
+            crate::session_fill_rgba(&core.cfg.cursor_id),
         );
     }
 }
@@ -769,8 +770,11 @@ mod backing_scale_tests {
 
     /// Count opaque (alpha > 0) pixels in the pixmap — a proxy for the
     /// cursor's on-pixmap footprint that's independent of palette / gradient.
-    fn opaque_pixel_count(pm: &tiny_skia::Pixmap) -> u32 {
-        pm.data().chunks_exact(4).filter(|px| px[3] > 0).count() as u32
+    fn visible_pixel_count(pm: &tiny_skia::Pixmap) -> u32 {
+        // Count strongly visible coverage, not the halo's feather pixels.
+        // Low-alpha gradient coverage is quantized differently at 1× and 2×
+        // and is not useful evidence for the backing-scale regression.
+        pm.data().chunks_exact(4).filter(|px| px[3] > 96).count() as u32
     }
 
     fn render_at(backing_scale: f32, logical_size: u32) -> tiny_skia::Pixmap {
@@ -792,7 +796,8 @@ mod backing_scale_tests {
     }
 
     /// Doubling `backing_scale` doubles every linear dimension of the cursor's
-    /// pixel footprint, so the opaque-pixel COUNT should grow ~4× (one factor
+    /// pixel footprint, so the strongly visible pixel count should grow ~4×
+    /// (one factor
     /// of 2 per axis). Exact equality isn't expected — the embedded SVG
     /// downscales from a 52-px source, anti-aliased edges round at integer
     /// boundaries, and the bloom gradient has a soft cutoff — but the ratio
@@ -802,12 +807,12 @@ mod backing_scale_tests {
     /// emitting logical-pixel art into a physical-pixel pixmap, the ratio
     /// collapses back toward 1.0.
     #[test]
-    fn backing_scale_two_grows_opaque_footprint_roughly_fourfold() {
+    fn backing_scale_two_grows_visible_footprint_roughly_fourfold() {
         let pm_1x = render_at(1.0, 200);
         let pm_2x = render_at(2.0, 200);
 
-        let n_1x = opaque_pixel_count(&pm_1x);
-        let n_2x = opaque_pixel_count(&pm_2x);
+        let n_1x = visible_pixel_count(&pm_1x);
+        let n_2x = visible_pixel_count(&pm_2x);
 
         assert!(n_1x > 0, "1× render should paint SOMETHING (got {n_1x})");
         assert!(n_2x > 0, "2× render should paint SOMETHING (got {n_2x})");
@@ -815,7 +820,7 @@ mod backing_scale_tests {
         let ratio = n_2x as f64 / n_1x as f64;
         assert!(
             ratio > 3.0 && ratio < 5.0,
-            "2× backing_scale should produce ~4× more opaque pixels — \
+            "2× backing_scale should produce ~4× more visible pixels: \
              got n_1x={n_1x}, n_2x={n_2x}, ratio={ratio:.2}"
         );
     }

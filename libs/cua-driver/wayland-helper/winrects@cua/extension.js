@@ -17,21 +17,348 @@ const IFACE = `<node><interface name="org.cua.WinRects">
 <method name="Activate"><arg type="u" direction="in" name="id"/><arg type="b" direction="out" name="activated"/></method>
 <method name="MoveCursor"><arg type="i" direction="in" name="x"/><arg type="i" direction="in" name="y"/></method>
 <method name="ClickPulse"><arg type="i" direction="in" name="x"/><arg type="i" direction="in" name="y"/></method>
+<method name="SetCursorColor"><arg type="s" direction="in" name="fill_color"/></method>
+<method name="SetCursorState"><arg type="s" direction="in" name="action"/><arg type="s" direction="in" name="delivery"/><arg type="s" direction="in" name="target"/><arg type="b" direction="in" name="active"/></method>
 <method name="HideCursor"></method>
 </interface></node>`;
 
-// The same agent cursor cua-driver renders on every other platform: the
-// procedural gradient arrow from cursor-overlay (verts tip-at-+x, `default_blue`
-// palette). Rotated to point up-left and translated so the tip sits at the
-// actor's (TIPX, TIPY); MoveCursor/ClickPulse place that tip on the target.
-const VERTS = [[14, 0], [-8, -9], [-3, 0], [-8, 9]];
-const ANGLE = Math.PI * 1.25;           // tip points up-left
-const TIPX = 2, TIPY = 2;
-function arrowPoints() {
-    const ca = Math.cos(ANGLE), sa = Math.sin(ANGLE);
-    const rot = VERTS.map(([x, y]) => [ca * x - sa * y, sa * x + ca * y]);
-    const tx = TIPX - rot[0][0], ty = TIPY - rot[0][1];
-    return rot.map(([x, y]) => [x + tx, y + ty]);
+// GNOME cannot host the Rust renderer directly, so this Shell actor mirrors
+// the embedded cua.default vector theme and semantic state vocabulary.
+const CANVAS_SIZE = 128;
+const DISPLAY_SIZE = 48;
+const ACTOR_SIZE = 112;
+const ACTOR_CENTER = ACTOR_SIZE / 2;
+const SCALE = DISPLAY_SIZE / CANVAS_SIZE;
+const STAIN_SURFACE_SCALE = 2;
+const ACTIONS = new Set([
+    'idle', 'observe', 'click', 'drag', 'scroll', 'text',
+    'key', 'navigate', 'app', 'transfer', 'record', 'system',
+]);
+const ONE_SHOT_ACTIONS = new Set(['click', 'key', 'navigate', 'app', 'system']);
+const ACTION_DURATIONS = {
+    idle: 4.0,
+    click: 0.67,
+    observe: 1.6,
+    drag: 1.6,
+    scroll: 1.6,
+    text: 1.6,
+    key: 1.6,
+    navigate: 1.6,
+    app: 1.6,
+    transfer: 1.6,
+    record: 1.6,
+    system: 1.6,
+};
+
+function nowSeconds() {
+    return GLib.get_monotonic_time() / 1_000_000;
+}
+
+function easeInOut(value) {
+    const t = Math.max(0, Math.min(1, value));
+    return t * t * (3 - 2 * t);
+}
+
+function triangleWave(value) {
+    const t = ((value % 1) + 1) % 1;
+    return t < 0.5 ? t * 2 : (1 - t) * 2;
+}
+
+function setInk(cr, alpha = 1) {
+    cr.setSourceRGBA(1, 1, 1, alpha);
+}
+
+function setPaper(cr, alpha = 1) {
+    cr.setSourceRGBA(1, 1, 1, alpha);
+}
+
+function setFill(cr, color, alpha = 1) {
+    cr.setSourceRGBA(color[0] / 255, color[1] / 255, color[2] / 255, alpha);
+}
+
+function strokePath(cr, width, alpha = 1) {
+    cr.setLineWidth(width);
+    cr.setLineCap(Cairo.LineCap.ROUND);
+    cr.setLineJoin(Cairo.LineJoin.ROUND);
+    setInk(cr, alpha);
+    cr.stroke();
+}
+
+function linePath(cr, points, width = 4, alpha = 1) {
+    if (points.length === 0)
+        return;
+    cr.moveTo(points[0][0], points[0][1]);
+    for (let i = 1; i < points.length; i++)
+        cr.lineTo(points[i][0], points[i][1]);
+    strokePath(cr, width, alpha);
+}
+
+function roundedRect(cr, x, y, width, height, radius) {
+    const r = Math.max(0, Math.min(radius, width / 2, height / 2));
+    const k = 0.5522848;
+    cr.moveTo(x + r, y);
+    cr.lineTo(x + width - r, y);
+    cr.curveTo(x + width - r + r * k, y, x + width, y + r - r * k, x + width, y + r);
+    cr.lineTo(x + width, y + height - r);
+    cr.curveTo(x + width, y + height - r + r * k, x + width - r + r * k, y + height, x + width - r, y + height);
+    cr.lineTo(x + r, y + height);
+    cr.curveTo(x + r - r * k, y + height, x, y + height - r + r * k, x, y + height - r);
+    cr.lineTo(x, y + r);
+    cr.curveTo(x, y + r - r * k, x + r - r * k, y, x + r, y);
+    cr.closePath();
+}
+
+function drawStain(cr) {
+    const layers = 56;
+    const segments = 80;
+    const maxOpacity = 0.30;
+    let accumulatedOpacity = 0;
+
+    for (let layer = 0; layer < layers; layer++) {
+        const radius = 1 - layer / layers;
+        const depth = 1 - radius;
+        const fade = Math.pow(depth, 0.85);
+        const targetOpacity = maxOpacity * fade;
+        const layerOpacity =
+            (targetOpacity - accumulatedOpacity) / Math.max(0.001, 1 - accumulatedOpacity);
+        accumulatedOpacity = targetOpacity;
+        if (layerOpacity <= 0)
+            continue;
+
+        for (let segment = 0; segment < segments; segment++) {
+            const angle = segment / segments * Math.PI * 2;
+            const boundary = 1
+                + 0.26 * Math.sin(3 * angle + 0.6)
+                + 0.11 * Math.sin(5 * angle - 1.0)
+                + 0.08 * Math.cos(2 * angle + 0.4);
+            const x = 66 + depth * 10 + Math.cos(angle) * 110 * boundary * radius;
+            const y = 67 - depth * 6 + Math.sin(angle) * 88 * boundary * radius;
+            if (segment === 0)
+                cr.moveTo(x, y);
+            else
+                cr.lineTo(x, y);
+        }
+        cr.closePath();
+        cr.setSourceRGBA(0, 0, 0, layerOpacity);
+        cr.fill();
+    }
+}
+
+function createStainSurface() {
+    const surface = new Cairo.ImageSurface(
+        Cairo.Format.ARGB32,
+        ACTOR_SIZE * STAIN_SURFACE_SCALE,
+        ACTOR_SIZE * STAIN_SURFACE_SCALE
+    );
+    const cr = new Cairo.Context(surface);
+    cr.scale(STAIN_SURFACE_SCALE, STAIN_SURFACE_SCALE);
+    cr.translate(ACTOR_CENTER, ACTOR_CENTER);
+    cr.scale(SCALE, SCALE);
+    cr.translate(-CANVAS_SIZE / 2, -CANVAS_SIZE / 2);
+    drawStain(cr);
+    cr.$dispose();
+    return surface;
+}
+
+function drawCursorBody(cr, progress, action, fillColor) {
+    let dx = 0;
+    let dy = 0;
+    let rotation = 0;
+    let scale = 1;
+
+    if (action === 'idle') {
+        const angle = progress * Math.PI * 2;
+        dx = Math.sin(angle) * 5;
+        dy = Math.cos(angle) * 6 - 5;
+        rotation = Math.cos(angle) * (2.5 * Math.PI / 180);
+    } else if (action === 'click') {
+        if (progress < 0.35)
+            scale = 1 - easeInOut(progress / 0.35) * 0.07;
+        else if (progress < 0.6)
+            scale = 0.93 + easeInOut((progress - 0.35) / 0.25) * 0.10;
+        else
+            scale = 1.03 - easeInOut((progress - 0.6) / 0.4) * 0.03;
+    } else if (action === 'drag') {
+        const held = easeInOut(triangleWave(progress));
+        dx = held * 7;
+        dy = held * 3;
+    }
+
+    cr.save();
+    cr.translate(64 + dx, 64 + dy);
+    cr.rotate(rotation);
+    cr.scale(scale, scale);
+    cr.translate(-64, -64);
+
+    cr.moveTo(55, 30);
+    cr.curveTo(48, 28, 42, 33, 43, 41);
+    cr.lineTo(64, 98);
+    cr.curveTo(67, 106, 73, 106, 77, 99);
+    cr.lineTo(86, 79);
+    cr.curveTo(88, 75, 91, 72, 95, 70);
+    cr.lineTo(108, 63);
+    cr.curveTo(115, 59, 114, 53, 107, 50);
+    cr.closePath();
+    setFill(cr, fillColor);
+    cr.fillPreserve();
+    cr.setLineWidth(5);
+    cr.setLineCap(Cairo.LineCap.ROUND);
+    cr.setLineJoin(Cairo.LineJoin.ROUND);
+    setPaper(cr);
+    cr.stroke();
+    cr.restore();
+}
+
+function drawActionCue(cr, action, progress) {
+    const wave = triangleWave(progress);
+    cr.save();
+    switch (action) {
+    case 'observe': {
+        const opacity = Math.min(1, progress * 7);
+        cr.translate(8, -10);
+        cr.moveTo(38, 28);
+        cr.curveTo(27, 29, 20, 38, 20, 49);
+        strokePath(cr, 4, opacity);
+        cr.moveTo(42, 19);
+        cr.curveTo(23, 19, 11, 33, 11, 51);
+        strokePath(cr, 4, opacity);
+        break;
+    }
+    case 'click': {
+        const cueProgress = Math.max(0, Math.min(1, progress / 0.65));
+        const opacity = Math.max(0, Math.min(1, Math.min(1 - cueProgress, cueProgress * 4)));
+        cr.translate(10, 3);
+        linePath(cr, [[35, 20], [34, 11]], 4, opacity);
+        linePath(cr, [[27, 25], [19, 19]], 4, opacity);
+        linePath(cr, [[25, 34], [15, 34]], 4, opacity);
+        break;
+    }
+    case 'drag': {
+        const offset = easeInOut(wave) * 7;
+        cr.translate(offset, offset * 0.43);
+        linePath(cr, [[28, 38], [16, 35]], 4, 0.2 + wave * 0.8);
+        linePath(cr, [[26, 48], [12, 45]], 4, 0.2 + wave * 0.8);
+        break;
+    }
+    case 'scroll': {
+        cr.translate(-5, 4 - wave * 8);
+        linePath(cr, [[23, 31], [31, 22], [39, 31]], 4, 0.42 + wave * 0.58);
+        linePath(cr, [[23, 49], [31, 58], [39, 49]], 4, 0.42 + wave * 0.58);
+        break;
+    }
+    case 'text': {
+        const opacity = progress < 0.34 || progress > 0.64 ? 1 : 0.18;
+        cr.translate(-4, 0);
+        linePath(cr, [[31, 22], [31, 58]], 4, opacity);
+        linePath(cr, [[24, 22], [38, 22]], 4, opacity);
+        linePath(cr, [[24, 58], [38, 58]], 4, opacity);
+        break;
+    }
+    case 'key': {
+        const bounce = Math.sin(progress * Math.PI * 2) * (1 - progress) * 3;
+        cr.translate(-9, bounce);
+        roundedRect(cr, 14, 25, 28, 28, 6);
+        strokePath(cr, 3.5);
+        linePath(cr, [[23, 32], [23, 46], [23, 39], [33, 32], [24, 39], [34, 46]], 3.5);
+        break;
+    }
+    case 'navigate': {
+        cr.translate(-10 + easeInOut(progress) * 9, 0);
+        linePath(cr, [[15, 29], [25, 40], [15, 51]], 4, 0.2 + wave * 0.8);
+        linePath(cr, [[29, 29], [39, 40], [29, 51]], 4, 0.2 + wave * 0.8);
+        break;
+    }
+    case 'app': {
+        const s = 0.2 + easeInOut(Math.min(1, progress * 2)) * 0.8;
+        cr.translate(21, 39);
+        cr.scale(s, s);
+        cr.translate(-26, -39);
+        for (const [x, y] of [[13, 26], [29, 26], [13, 42], [29, 42]]) {
+            roundedRect(cr, x, y, 10, 10, 2);
+            strokePath(cr, 3.5);
+        }
+        break;
+    }
+    case 'transfer':
+        cr.translate(-9, 6 - wave * 12);
+        linePath(cr, [[22, 50], [22, 20], [14, 28], [22, 20], [30, 28]], 4, 0.38 + wave * 0.62);
+        linePath(cr, [[37, 28], [37, 58], [29, 50], [37, 58], [45, 50]], 4, 0.38 + wave * 0.62);
+        break;
+    case 'record':
+        cr.translate(-12, 0);
+        cr.arc(29, 39, 17, 0, Math.PI * 2);
+        strokePath(cr, 4);
+        cr.arc(29, 39, 3.6 + wave * 2.1, 0, Math.PI * 2);
+        setInk(cr, 0.42 + wave * 0.58);
+        cr.fill();
+        break;
+    case 'system': {
+        cr.translate(15, 39);
+        cr.rotate((easeInOut(progress) * 68 - 18) * Math.PI / 180);
+        cr.translate(-29, -39);
+        for (const radius of [12, 4]) {
+            cr.arc(29, 39, radius, 0, Math.PI * 2);
+            strokePath(cr, 3.5);
+        }
+        for (const points of [
+            [[29, 20], [29, 25]], [[29, 53], [29, 58]],
+            [[10, 39], [15, 39]], [[43, 39], [48, 39]],
+            [[16, 26], [20, 30]], [[38, 48], [42, 52]],
+            [[16, 52], [20, 48]], [[38, 30], [42, 26]],
+        ])
+            linePath(cr, points, 3.5);
+        break;
+    }
+    default:
+        break;
+    }
+    cr.restore();
+}
+
+function drawModifiers(cr, delivery, target) {
+    if (delivery === 'background') {
+        cr.save();
+        cr.setDash([1, 5], 0);
+        cr.moveTo(34, 23);
+        cr.curveTo(20, 31, 17, 48, 21, 63);
+        cr.curveTo(25, 80, 38, 95, 53, 106);
+        strokePath(cr, 2.5, 0.75);
+        cr.restore();
+    } else if (delivery === 'foreground') {
+        cr.arc(104, 96, 9, 0, Math.PI * 2);
+        strokePath(cr, 3);
+    }
+
+    switch (target) {
+    case 'ax':
+        for (const [x, y] of [[104, 89], [94, 104], [114, 104]]) {
+            cr.arc(x, y, 3, 0, Math.PI * 2);
+            strokePath(cr, 2.5);
+        }
+        linePath(cr, [[104, 92], [104, 97], [94, 101], [104, 97], [114, 101]], 2.5);
+        break;
+    case 'pixel':
+        cr.save();
+        cr.setDash([2, 3], 0);
+        cr.rectangle(94, 91, 19, 19);
+        strokePath(cr, 2.5);
+        cr.restore();
+        break;
+    case 'browser':
+        cr.arc(104, 100, 10, 0, Math.PI * 2);
+        strokePath(cr, 2.5);
+        linePath(cr, [[94, 100], [114, 100]], 2.5);
+        linePath(cr, [[104, 90], [100, 100], [104, 110]], 2.5);
+        linePath(cr, [[104, 90], [108, 100], [104, 110]], 2.5);
+        break;
+    case 'desktop':
+        roundedRect(cr, 93, 90, 21, 15, 2);
+        strokePath(cr, 2.5);
+        linePath(cr, [[103.5, 105], [103.5, 110], [97, 110], [110, 110]], 2.5);
+        break;
+    default:
+        break;
+    }
 }
 
 export default class WinRectsExtension extends Extension {
@@ -40,36 +367,69 @@ export default class WinRectsExtension extends Extension {
         this._impl.export(Gio.DBus.session, '/org/cua/WinRects');
         this._nameId = Gio.bus_own_name(Gio.BusType.SESSION, 'org.cua.WinRects',
             Gio.BusNameOwnerFlags.REPLACE, null, null, null);
-        this._cursor = new St.DrawingArea({width: 30, height: 30, visible: false, reactive: false, can_focus: false});
+        this._action = 'idle';
+        this._delivery = '';
+        this._target = '';
+        this._actionStarted = nowSeconds();
+        this._endingAt = null;
+        this._fillColor = [94, 192, 232];
+        this._stainSurface = createStainSurface();
+        this._cursor = new St.DrawingArea({
+            width: ACTOR_SIZE,
+            height: ACTOR_SIZE,
+            visible: false,
+            reactive: false,
+            can_focus: false,
+        });
         this._cursor.connect('repaint', (area) => {
             const cr = area.get_context();
-            const P = arrowPoints();
-            cr.moveTo(P[0][0], P[0][1]);
-            for (let i = 1; i < P.length; i++) cr.lineTo(P[i][0], P[i][1]);
-            cr.closePath();
-            const tail = [(P[1][0] + P[3][0]) / 2, (P[1][1] + P[3][1]) / 2];
-            try {
-                const g = new Cairo.LinearGradient(P[0][0], P[0][1], tail[0], tail[1]);
-                g.addColorStopRGBA(0.00, 219 / 255, 238 / 255, 255 / 255, 0.97);
-                g.addColorStopRGBA(0.53, 94 / 255, 192 / 255, 232 / 255, 0.97);
-                g.addColorStopRGBA(1.00, 84 / 255, 205 / 255, 160 / 255, 0.97);
-                cr.setSource(g);
-            } catch (e) {
-                cr.setSourceRGBA(94 / 255, 192 / 255, 232 / 255, 0.97);
-            }
-            cr.fillPreserve();
-            cr.setLineWidth(1.4); cr.setSourceRGBA(1, 1, 1, 0.95); cr.stroke();
+            const duration = ACTION_DURATIONS[this._action] ?? 1.6;
+            const progress = ((nowSeconds() - this._actionStarted) % duration) / duration;
+            cr.save();
+            cr.scale(1 / STAIN_SURFACE_SCALE, 1 / STAIN_SURFACE_SCALE);
+            cr.setSourceSurface(this._stainSurface, 0, 0);
+            cr.paint();
+            cr.restore();
+            cr.save();
+            cr.translate(ACTOR_CENTER, ACTOR_CENTER);
+            cr.scale(SCALE, SCALE);
+            cr.translate(-CANVAS_SIZE / 2, -CANVAS_SIZE / 2);
+            drawActionCue(cr, this._action, progress);
+            drawCursorBody(cr, progress, this._action, this._fillColor);
+            drawModifiers(cr, this._delivery, this._target);
+            cr.restore();
             cr.$dispose();
         });
-        this._cursor.set_pivot_point(TIPX / 30, TIPY / 30);
+        this._cursor.set_pivot_point(0.5, 0.5);
         Main.layoutManager.addTopChrome(this._cursor);
+        this._frameId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 33, () => {
+            if (!this._cursor)
+                return GLib.SOURCE_REMOVE;
+            const now = nowSeconds();
+            if (this._endingAt !== null && now >= this._endingAt)
+                this._setCursorState('idle', '', '');
+            if (ONE_SHOT_ACTIONS.has(this._action) &&
+                now - this._actionStarted >= ACTION_DURATIONS[this._action])
+                this._setCursorState('idle', '', '');
+            if (this._cursor.visible)
+                this._cursor.queue_repaint();
+            return GLib.SOURCE_CONTINUE;
+        });
     }
     disable() {
+        if (this._frameId) {
+            GLib.source_remove(this._frameId);
+            this._frameId = 0;
+        }
         if (this._cursor) { this._cursor.destroy(); this._cursor = null; }
+        if (this._stainSurface) {
+            this._stainSurface.finish();
+            this._stainSurface = null;
+        }
         if (this._impl) { this._impl.unexport(); this._impl = null; }
         if (this._nameId) { Gio.bus_unown_name(this._nameId); this._nameId = 0; }
     }
-    GetVersion() { return 4; }
+    GetVersion() { return 5; }
     GetRects() {
         const actors = global.get_window_actors();
         const actorByWindow = new Map();
@@ -148,14 +508,46 @@ export default class WinRectsExtension extends Extension {
     MoveCursor(x, y) {
         if (!this._cursor) return;
         this._cursor.show();
-        this._cursor.ease({x: x - TIPX, y: y - TIPY, duration: 480, mode: Clutter.AnimationMode.EASE_OUT_CUBIC});
+        this._cursor.ease({
+            x: x - ACTOR_CENTER,
+            y: y - ACTOR_CENTER,
+            duration: 480,
+            mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
+        });
     }
     ClickPulse(x, y) {
         if (!this._cursor) return;
-        this._cursor.set_position(x - TIPX, y - TIPY);
+        this._cursor.set_position(x - ACTOR_CENTER, y - ACTOR_CENTER);
+        this._setCursorState('click', this._delivery, this._target);
         this._cursor.show();
-        this._cursor.ease({scale_x: 1.5, scale_y: 1.5, duration: 130, mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-            onComplete: () => { if (this._cursor) this._cursor.ease({scale_x: 1, scale_y: 1, duration: 130}); }});
+        this._cursor.queue_repaint();
+    }
+    SetCursorColor(fillColor) {
+        const match = /^#([0-9a-fA-F]{6})$/.exec(fillColor);
+        if (!match)
+            return;
+        const rgb = Number.parseInt(match[1], 16);
+        this._fillColor = [(rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff];
+        if (this._cursor)
+            this._cursor.queue_repaint();
+    }
+    SetCursorState(action, delivery, target, active) {
+        if (!ACTIONS.has(action))
+            return;
+        if (active) {
+            this._setCursorState(action, delivery, target);
+        } else if (this._action === action && !ONE_SHOT_ACTIONS.has(action)) {
+            this._endingAt = nowSeconds() + 0.4;
+        }
+    }
+    _setCursorState(action, delivery, target) {
+        this._action = ACTIONS.has(action) ? action : 'idle';
+        this._delivery = delivery ?? '';
+        this._target = target ?? '';
+        this._actionStarted = nowSeconds();
+        this._endingAt = null;
+        if (this._cursor)
+            this._cursor.queue_repaint();
     }
     HideCursor() { if (this._cursor) this._cursor.hide(); }
 }

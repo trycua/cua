@@ -1,9 +1,14 @@
 # Agent cursor themes
 
 Cua Driver ships one built-in cursor theme: `cua.default`. It is the default on
-macOS, Windows, and Linux and cannot be removed. The theme uses the approved
-off-white pointer with a navy outline and a small semantic animation that
-describes what the active session is doing.
+macOS, Windows, and Linux and cannot be removed. The theme uses a colored
+pointer with a white outline over an irregular black stain that softly fades to
+transparent at its edges. The stain is slightly larger than the pointer so it
+remains visible without enlarging the action artwork. Its semantic action and
+modifier marks are white for reliable contrast on light pages. The
+anonymous/default cursor uses Cua blue. Named sessions receive a stable fill
+from the built-in session palette, so concurrent agents remain visually
+distinct.
 
 The cursor is a visual aid for people watching an agent. It is not a security
 indicator, an authorization prompt, or evidence that a tool call succeeded.
@@ -27,6 +32,10 @@ It does not change artwork. The removed `set_agent_cursor_style` operation and
 its `cursor_id`, shape, color, label, size, opacity, image-path, gradient, and
 bloom styling fields are not accepted. Input-delivery tools may still use
 `cursor_id` to name a virtual pointer; it does not select cursor artwork.
+
+The default theme fill is derived from the declared `session` id. There is no
+separate fill-color tool argument. Installed custom themes keep the colors
+compiled into their own artwork.
 
 The same four typed operations are available on `CuaDriver` and
 `CuaDriverSession` in the Python and TypeScript SDKs:

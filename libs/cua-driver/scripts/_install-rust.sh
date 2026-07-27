@@ -591,6 +591,7 @@ case "$LABEL" in
     *)
         SRC="$TMP_DIR/$BINARY_NAME"
         SRC_THEME="$TMP_DIR/cua-cursor-theme"
+        SRC_WAYLAND_HELPER="$TMP_DIR/wayland-helper"
         SRC_APP=""
         ;;
 esac
@@ -760,6 +761,18 @@ else
     mkdir -p "$VERSIONED_DIR"
     install -m 0755 "$SRC" "$VERSIONED_DIR/$BINARY_NAME"
     install -m 0755 "$SRC_THEME" "$VERSIONED_DIR/cua-cursor-theme"
+    if [[ -d "${SRC_WAYLAND_HELPER:-}" ]]; then
+        mkdir -p "$VERSIONED_DIR/wayland-helper"
+        cp -R "$SRC_WAYLAND_HELPER/." "$VERSIONED_DIR/wayland-helper/"
+
+        INSTALLED_WAYLAND_HELPER="${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/winrects@cua"
+        if [[ -d "$INSTALLED_WAYLAND_HELPER" ]]; then
+            cp "$SRC_WAYLAND_HELPER/winrects@cua/metadata.json" \
+                "$SRC_WAYLAND_HELPER/winrects@cua/extension.js" \
+                "$INSTALLED_WAYLAND_HELPER/"
+            log "updated installed GNOME helper; reload the GNOME session to activate it"
+        fi
+    fi
     log "installed $VERSIONED_DIR/$BINARY_NAME (version $VERSION, target $TARGET)"
 
     # `ln -sfn` would replace an existing dir-symlink in place but is

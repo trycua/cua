@@ -166,7 +166,8 @@ must be replaced by a fresh snapshot.
 Visual cursor overlay for demos and screen recordings. It is enabled by
 default for declared sessions; anonymous actions remain cursor-less. Toggle with
 `set_agent_cursor_enabled` to hide or re-show it. The embedded
-`cua.default` theme uses an off-white/navy pointer and semantic animations for
+`cua.default` theme uses a session-colored pointer and white semantic marks
+over a larger irregular black stain that fades to transparent. It provides animations for
 idle, observe, click, drag, scroll, text, key, navigation, app, transfer,
 recording, and system activity. Motion knobs:
 `set_agent_cursor_motion` takes any subset of `start_handle`,
@@ -179,7 +180,9 @@ MCP connection and the daemon scopes the cursor, config overrides, and
 recording to it). The CLI and SDK contracts take the declared `session`
 explicitly. Cursor-theme controls no longer accept `cursor_id` or the legacy
 shape/color/image fields. Input-delivery tools may still use `cursor_id` to
-name a virtual pointer; it never selects artwork. Select only preinstalled
+name a virtual pointer; it never selects artwork. The default cursor is Cua
+blue, while each named session receives a stable fill from the built-in
+palette. Select only preinstalled
 themes with `set_agent_cursor_theme`; theme source paths and inline animation
 data are never accepted through an agent tool. Use the trusted local
 `cua-driver cursor-theme` workflow to validate, compile, preview, install,

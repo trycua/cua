@@ -104,8 +104,9 @@ struct RenderMap {
 /// Build the `RenderState` for a lazily-created session cursor from the
 /// process launch template.
 fn render_state_for_key(template: &CursorConfig, key: &str) -> RenderState {
-    let _ = key;
-    RenderState::new(template.clone())
+    let mut config = template.clone();
+    config.cursor_id = key.to_owned();
+    RenderState::new(config)
 }
 
 /// Apply one inbound [`OverlayMsg`] to the render map (drain step). Factored
@@ -1090,6 +1091,12 @@ fn pixmap_to_cgimage(pixmap: &tiny_skia::Pixmap) -> Option<usize> {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn keyed_render_state_carries_the_session_color_identity() {
+        let state = render_state_for_key(&CursorConfig::default(), "session-blueprint");
+        assert_eq!(state.core.cfg.cursor_id, "session-blueprint");
+    }
 
     fn window(window_id: u32, pid: i32, z_index: usize) -> crate::windows::WindowInfo {
         crate::windows::WindowInfo {

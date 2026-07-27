@@ -3709,7 +3709,7 @@ mod capability_tests {
     fn to_list_entry_includes_versioned_risk_metadata() {
         let entry = dummy_def("browser_prepare").to_list_entry();
         assert_eq!(entry["risk"]["class"], "r2");
-        assert_eq!(entry["risk"]["enforcement"], "metadata_only");
+        assert_eq!(entry["risk"]["enforcement"], "active");
         assert_eq!(entry["risk"]["operation_sensitive"], true);
         assert_eq!(entry["risk"]["version"], "1");
     }

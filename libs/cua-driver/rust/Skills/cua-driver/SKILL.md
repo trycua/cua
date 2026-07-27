@@ -167,7 +167,9 @@ Visual cursor overlay for demos and screen recordings. It is enabled by
 default for declared sessions; anonymous actions remain cursor-less. Toggle with
 `set_agent_cursor_enabled` to hide or re-show it. The embedded
 `cua.default` theme uses a session-colored pointer and white semantic marks
-over a larger irregular black stain that fades to transparent. It provides animations for
+over a larger, cursor-shaped glow in the same session color. The glow fades to
+transparent around the full silhouette, while the white outline keeps the
+pointer distinct across varied backgrounds. It provides animations for
 idle, observe, click, drag, scroll, text, key, navigation, app, transfer,
 recording, and system activity. Motion knobs:
 `set_agent_cursor_motion` takes any subset of `start_handle`,

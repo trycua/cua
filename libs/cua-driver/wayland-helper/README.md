@@ -26,11 +26,11 @@ It exposes `org.cua.WinRects` on the session bus:
   the agent cursor as a Clutter actor on the compositor stage.
 - `SetCursorState(action,delivery,target,active)` — render the same 12 semantic
   action states and delivery/target modifiers as the cross-platform
-  `cua.default` cursor theme, with white marks over a larger irregular black
-  stain that fades to transparent. This method was added in helper v5.
+  `cua.default` cursor theme, with white marks over a larger cursor-shaped glow
+  in the active session color. This method was added in helper v5.
 - `SetCursorColor(fill_color)` — apply the stable per-session fill selected by
-  cua-driver. The helper validates the `#RRGGBB` value and keeps a white
-  pointer outline.
+  cua-driver. The helper validates the `#RRGGBB` value, updates the matching
+  glow, and keeps a white pointer outline.
 
 It runs in the shell's privileged context, so **no xdg-desktop-portal grant** is
 needed (unlike libei/RemoteDesktop).

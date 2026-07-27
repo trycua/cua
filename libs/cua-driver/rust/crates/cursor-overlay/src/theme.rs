@@ -370,7 +370,7 @@ pub fn paint_default_theme_with_fill(
         .post_rotate((base_rotation + body_rotation).to_degrees())
         .post_translate(anchor_x + body_dx * scale, anchor_y + body_dy * scale);
 
-    draw_stain(pm, canvas_transform, alpha);
+    draw_cursor_glow(pm, body_transform, alpha, fill_rgba);
     draw_action_cue(
         pm,
         visual.resolved_action,
@@ -383,58 +383,7 @@ pub fn paint_default_theme_with_fill(
     draw_modifiers(pm, visual, canvas_transform, alpha);
 }
 
-fn draw_stain(pm: &mut tiny_skia::Pixmap, transform: Transform, alpha: f32) {
-    const LAYERS: usize = 56;
-    const SEGMENTS: usize = 80;
-    const MAX_OPACITY: f32 = 0.30;
-
-    let mut accumulated_opacity = 0.0;
-    for layer in 0..LAYERS {
-        let radius = 1.0 - layer as f32 / LAYERS as f32;
-        let depth = 1.0 - radius;
-        let fade = depth.powf(0.85);
-        let target_opacity = MAX_OPACITY * alpha.clamp(0.0, 1.0) * fade;
-        let layer_opacity =
-            (target_opacity - accumulated_opacity) / (1.0 - accumulated_opacity).max(0.001);
-        accumulated_opacity = target_opacity;
-        if layer_opacity <= 0.0 {
-            continue;
-        }
-
-        let mut builder = PathBuilder::new();
-        for segment in 0..SEGMENTS {
-            let angle = segment as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
-            let boundary = 1.0
-                + 0.26 * (3.0 * angle + 0.6).sin()
-                + 0.11 * (5.0 * angle - 1.0).sin()
-                + 0.08 * (2.0 * angle + 0.4).cos();
-            let x = 66.0 + depth * 10.0 + angle.cos() * 110.0 * boundary * radius;
-            let y = 67.0 - depth * 6.0 + angle.sin() * 88.0 * boundary * radius;
-            if segment == 0 {
-                builder.move_to(x, y);
-            } else {
-                builder.line_to(x, y);
-            }
-        }
-        builder.close();
-        if let Some(path) = builder.finish() {
-            pm.fill_path(
-                &path,
-                &solid_paint(Color::BLACK, layer_opacity),
-                FillRule::Winding,
-                transform,
-                None,
-            );
-        }
-    }
-}
-
-fn draw_cursor_body(
-    pm: &mut tiny_skia::Pixmap,
-    transform: Transform,
-    alpha: f32,
-    fill_rgba: [u8; 4],
-) {
+fn cursor_body_path() -> Option<Path> {
     let mut builder = PathBuilder::new();
     builder.move_to(55.0, 30.0);
     builder.cubic_to(48.0, 28.0, 42.0, 33.0, 43.0, 41.0);
@@ -445,7 +394,60 @@ fn draw_cursor_body(
     builder.line_to(108.0, 63.0);
     builder.cubic_to(115.0, 59.0, 114.0, 53.0, 107.0, 50.0);
     builder.close();
-    let Some(path) = builder.finish() else {
+    builder.finish()
+}
+
+fn draw_cursor_glow(
+    pm: &mut tiny_skia::Pixmap,
+    transform: Transform,
+    alpha: f32,
+    fill_rgba: [u8; 4],
+) {
+    const LAYERS: usize = 36;
+    const OUTER_WIDTH: f32 = 44.0;
+    const INNER_WIDTH: f32 = 7.0;
+    const MAX_OPACITY: f32 = 0.34;
+
+    let Some(path) = cursor_body_path() else {
+        return;
+    };
+    let color = Color::from_rgba8(fill_rgba[0], fill_rgba[1], fill_rgba[2], fill_rgba[3]);
+
+    let mut accumulated_opacity = 0.0;
+    for layer in 0..LAYERS {
+        let progress = (layer + 1) as f32 / LAYERS as f32;
+        let width = OUTER_WIDTH + (INNER_WIDTH - OUTER_WIDTH) * progress;
+        let target_opacity = MAX_OPACITY * alpha.clamp(0.0, 1.0) * progress.powf(1.65);
+        let layer_opacity =
+            (target_opacity - accumulated_opacity) / (1.0 - accumulated_opacity).max(0.001);
+        accumulated_opacity = target_opacity;
+        if layer_opacity <= 0.0 {
+            continue;
+        }
+
+        let stroke = Stroke {
+            width,
+            line_join: tiny_skia::LineJoin::Round,
+            line_cap: tiny_skia::LineCap::Round,
+            ..Default::default()
+        };
+        pm.stroke_path(
+            &path,
+            &solid_paint(color, layer_opacity),
+            &stroke,
+            transform,
+            None,
+        );
+    }
+}
+
+fn draw_cursor_body(
+    pm: &mut tiny_skia::Pixmap,
+    transform: Transform,
+    alpha: f32,
+    fill_rgba: [u8; 4],
+) {
+    let Some(path) = cursor_body_path() else {
         return;
     };
     pm.fill_path(
@@ -837,7 +839,7 @@ mod tests {
     }
 
     #[test]
-    fn default_cursor_uses_parameterized_fill_white_ink_and_black_stain() {
+    fn default_cursor_uses_parameterized_fill_white_ink_and_matching_glow() {
         let mut pixmap = tiny_skia::Pixmap::new(256, 256).unwrap();
         paint_default_theme_with_fill(
             &mut pixmap,
@@ -853,11 +855,70 @@ mod tests {
         let pixels = pixmap.data().chunks_exact(4).collect::<Vec<_>>();
         assert!(pixels.iter().any(|pixel| *pixel == [12, 34, 56, 255]));
         assert!(pixels.iter().any(|pixel| *pixel == [255, 255, 255, 255]));
-        assert!(pixels.iter().any(|pixel| pixel[0] == 0
-            && pixel[1] == 0
-            && pixel[2] == 0
+        assert!(pixels.iter().any(|pixel| pixel[2] > pixel[1]
+            && pixel[1] > pixel[0]
+            && pixel[0] > 0
             && pixel[3] > 16
             && pixel[3] < 200));
+    }
+
+    #[test]
+    fn matching_glow_surrounds_the_full_pointer_silhouette() {
+        let mut pixmap = tiny_skia::Pixmap::new(256, 256).unwrap();
+        let visual = CursorVisualState {
+            reduced_motion: ReducedMotion::On,
+            ..CursorVisualState::default()
+        };
+        paint_default_theme_with_fill(
+            &mut pixmap,
+            &visual,
+            128.0,
+            128.0,
+            std::f32::consts::FRAC_PI_4,
+            2.0,
+            1.0,
+            [12, 34, 56, 255],
+        );
+
+        let bounds = |predicate: &dyn Fn(&[u8]) -> bool| {
+            let mut result = (u32::MAX, u32::MAX, 0, 0);
+            for (index, pixel) in pixmap.data().chunks_exact(4).enumerate() {
+                if predicate(pixel) {
+                    let x = index as u32 % pixmap.width();
+                    let y = index as u32 / pixmap.width();
+                    result.0 = result.0.min(x);
+                    result.1 = result.1.min(y);
+                    result.2 = result.2.max(x);
+                    result.3 = result.3.max(y);
+                }
+            }
+            result
+        };
+        let body = bounds(&|pixel| pixel == [12, 34, 56, 255]);
+        let glow = bounds(&|pixel| {
+            pixel[2] > pixel[1]
+                && pixel[1] > pixel[0]
+                && pixel[0] > 0
+                && pixel[3] > 8
+                && pixel[3] < 220
+        });
+
+        assert!(
+            glow.0 + 4 <= body.0,
+            "glow should cover the pointer's left edge: body={body:?}, glow={glow:?}"
+        );
+        assert!(
+            glow.1 + 4 <= body.1,
+            "glow should cover the pointer's top edge: body={body:?}, glow={glow:?}"
+        );
+        assert!(
+            glow.2 >= body.2 + 4,
+            "glow should cover the pointer's right edge: body={body:?}, glow={glow:?}"
+        );
+        assert!(
+            glow.3 >= body.3 + 4,
+            "glow should cover the pointer's bottom edge: body={body:?}, glow={glow:?}"
+        );
     }
 
     #[test]

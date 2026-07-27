@@ -2,10 +2,11 @@
 
 Cua Driver ships one built-in cursor theme: `cua.default`. It is the default on
 macOS, Windows, and Linux and cannot be removed. The theme uses a colored
-pointer with a white outline over an irregular black stain that softly fades to
-transparent at its edges. The stain is slightly larger than the pointer so it
-remains visible without enlarging the action artwork. Its semantic action and
-modifier marks are white for reliable contrast on light pages. The
+pointer with a white outline over a larger, cursor-shaped glow in the same
+session color. The glow softly fades to transparent around the full pointer
+silhouette, while the white outline preserves a crisp boundary on light, dark,
+and similarly colored backgrounds. Its semantic action and modifier marks are
+white for reliable contrast. The
 anonymous/default cursor uses Cua blue. Named sessions receive a stable fill
 from the built-in session palette, so concurrent agents remain visually
 distinct.

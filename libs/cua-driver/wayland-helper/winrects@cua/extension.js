@@ -29,7 +29,8 @@ const DISPLAY_SIZE = 48;
 const ACTOR_SIZE = 112;
 const ACTOR_CENTER = ACTOR_SIZE / 2;
 const SCALE = DISPLAY_SIZE / CANVAS_SIZE;
-const STAIN_SURFACE_SCALE = 2;
+const GLOW_SURFACE_SCALE = 3;
+const GLOW_PADDING = 24;
 const ACTIONS = new Set([
     'idle', 'observe', 'click', 'drag', 'scroll', 'text',
     'key', 'navigate', 'app', 'transfer', 'record', 'system',
@@ -108,59 +109,59 @@ function roundedRect(cr, x, y, width, height, radius) {
     cr.closePath();
 }
 
-function drawStain(cr) {
-    const layers = 56;
-    const segments = 80;
-    const maxOpacity = 0.30;
+function traceCursorBody(cr) {
+    cr.moveTo(55, 30);
+    cr.curveTo(48, 28, 42, 33, 43, 41);
+    cr.lineTo(64, 98);
+    cr.curveTo(67, 106, 73, 106, 77, 99);
+    cr.lineTo(86, 79);
+    cr.curveTo(88, 75, 91, 72, 95, 70);
+    cr.lineTo(108, 63);
+    cr.curveTo(115, 59, 114, 53, 107, 50);
+    cr.closePath();
+}
+
+function drawCursorGlowShape(cr, fillColor) {
+    const layers = 36;
+    const outerWidth = 44;
+    const innerWidth = 7;
+    const maxOpacity = 0.34;
     let accumulatedOpacity = 0;
 
     for (let layer = 0; layer < layers; layer++) {
-        const radius = 1 - layer / layers;
-        const depth = 1 - radius;
-        const fade = Math.pow(depth, 0.85);
-        const targetOpacity = maxOpacity * fade;
+        const progress = (layer + 1) / layers;
+        const width = outerWidth + (innerWidth - outerWidth) * progress;
+        const targetOpacity = maxOpacity * Math.pow(progress, 1.65);
         const layerOpacity =
             (targetOpacity - accumulatedOpacity) / Math.max(0.001, 1 - accumulatedOpacity);
         accumulatedOpacity = targetOpacity;
         if (layerOpacity <= 0)
             continue;
 
-        for (let segment = 0; segment < segments; segment++) {
-            const angle = segment / segments * Math.PI * 2;
-            const boundary = 1
-                + 0.26 * Math.sin(3 * angle + 0.6)
-                + 0.11 * Math.sin(5 * angle - 1.0)
-                + 0.08 * Math.cos(2 * angle + 0.4);
-            const x = 66 + depth * 10 + Math.cos(angle) * 110 * boundary * radius;
-            const y = 67 - depth * 6 + Math.sin(angle) * 88 * boundary * radius;
-            if (segment === 0)
-                cr.moveTo(x, y);
-            else
-                cr.lineTo(x, y);
-        }
-        cr.closePath();
-        cr.setSourceRGBA(0, 0, 0, layerOpacity);
-        cr.fill();
+        traceCursorBody(cr);
+        cr.setLineWidth(width);
+        cr.setLineCap(Cairo.LineCap.ROUND);
+        cr.setLineJoin(Cairo.LineJoin.ROUND);
+        setFill(cr, fillColor, layerOpacity);
+        cr.stroke();
     }
 }
 
-function createStainSurface() {
+function createGlowSurface(fillColor) {
     const surface = new Cairo.ImageSurface(
         Cairo.Format.ARGB32,
-        ACTOR_SIZE * STAIN_SURFACE_SCALE,
-        ACTOR_SIZE * STAIN_SURFACE_SCALE
+        (CANVAS_SIZE + GLOW_PADDING * 2) * GLOW_SURFACE_SCALE,
+        (CANVAS_SIZE + GLOW_PADDING * 2) * GLOW_SURFACE_SCALE
     );
     const cr = new Cairo.Context(surface);
-    cr.scale(STAIN_SURFACE_SCALE, STAIN_SURFACE_SCALE);
-    cr.translate(ACTOR_CENTER, ACTOR_CENTER);
-    cr.scale(SCALE, SCALE);
-    cr.translate(-CANVAS_SIZE / 2, -CANVAS_SIZE / 2);
-    drawStain(cr);
+    cr.scale(GLOW_SURFACE_SCALE, GLOW_SURFACE_SCALE);
+    cr.translate(GLOW_PADDING, GLOW_PADDING);
+    drawCursorGlowShape(cr, fillColor);
     cr.$dispose();
     return surface;
 }
 
-function drawCursorBody(cr, progress, action, fillColor) {
+function cursorBodyMotion(progress, action) {
     let dx = 0;
     let dy = 0;
     let rotation = 0;
@@ -184,21 +185,32 @@ function drawCursorBody(cr, progress, action, fillColor) {
         dy = held * 3;
     }
 
-    cr.save();
-    cr.translate(64 + dx, 64 + dy);
-    cr.rotate(rotation);
-    cr.scale(scale, scale);
-    cr.translate(-64, -64);
+    return {dx, dy, rotation, scale};
+}
 
-    cr.moveTo(55, 30);
-    cr.curveTo(48, 28, 42, 33, 43, 41);
-    cr.lineTo(64, 98);
-    cr.curveTo(67, 106, 73, 106, 77, 99);
-    cr.lineTo(86, 79);
-    cr.curveTo(88, 75, 91, 72, 95, 70);
-    cr.lineTo(108, 63);
-    cr.curveTo(115, 59, 114, 53, 107, 50);
-    cr.closePath();
+function applyCursorBodyMotion(cr, motion) {
+    cr.translate(64 + motion.dx, 64 + motion.dy);
+    cr.rotate(motion.rotation);
+    cr.scale(motion.scale, motion.scale);
+    cr.translate(-64, -64);
+}
+
+function drawCursorGlow(cr, progress, action, glowSurface) {
+    const motion = cursorBodyMotion(progress, action);
+    cr.save();
+    applyCursorBodyMotion(cr, motion);
+    cr.translate(-GLOW_PADDING, -GLOW_PADDING);
+    cr.scale(1 / GLOW_SURFACE_SCALE, 1 / GLOW_SURFACE_SCALE);
+    cr.setSourceSurface(glowSurface, 0, 0);
+    cr.paint();
+    cr.restore();
+}
+
+function drawCursorBody(cr, progress, action, fillColor) {
+    const motion = cursorBodyMotion(progress, action);
+    cr.save();
+    applyCursorBodyMotion(cr, motion);
+    traceCursorBody(cr);
     setFill(cr, fillColor);
     cr.fillPreserve();
     cr.setLineWidth(5);
@@ -373,7 +385,7 @@ export default class WinRectsExtension extends Extension {
         this._actionStarted = nowSeconds();
         this._endingAt = null;
         this._fillColor = [94, 192, 232];
-        this._stainSurface = createStainSurface();
+        this._glowSurface = createGlowSurface(this._fillColor);
         this._cursor = new St.DrawingArea({
             width: ACTOR_SIZE,
             height: ACTOR_SIZE,
@@ -386,14 +398,10 @@ export default class WinRectsExtension extends Extension {
             const duration = ACTION_DURATIONS[this._action] ?? 1.6;
             const progress = ((nowSeconds() - this._actionStarted) % duration) / duration;
             cr.save();
-            cr.scale(1 / STAIN_SURFACE_SCALE, 1 / STAIN_SURFACE_SCALE);
-            cr.setSourceSurface(this._stainSurface, 0, 0);
-            cr.paint();
-            cr.restore();
-            cr.save();
             cr.translate(ACTOR_CENTER, ACTOR_CENTER);
             cr.scale(SCALE, SCALE);
             cr.translate(-CANVAS_SIZE / 2, -CANVAS_SIZE / 2);
+            drawCursorGlow(cr, progress, this._action, this._glowSurface);
             drawActionCue(cr, this._action, progress);
             drawCursorBody(cr, progress, this._action, this._fillColor);
             drawModifiers(cr, this._delivery, this._target);
@@ -422,9 +430,9 @@ export default class WinRectsExtension extends Extension {
             this._frameId = 0;
         }
         if (this._cursor) { this._cursor.destroy(); this._cursor = null; }
-        if (this._stainSurface) {
-            this._stainSurface.finish();
-            this._stainSurface = null;
+        if (this._glowSurface) {
+            this._glowSurface.finish();
+            this._glowSurface = null;
         }
         if (this._impl) { this._impl.unexport(); this._impl = null; }
         if (this._nameId) { Gio.bus_unown_name(this._nameId); this._nameId = 0; }
@@ -528,6 +536,9 @@ export default class WinRectsExtension extends Extension {
             return;
         const rgb = Number.parseInt(match[1], 16);
         this._fillColor = [(rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff];
+        if (this._glowSurface)
+            this._glowSurface.finish();
+        this._glowSurface = createGlowSurface(this._fillColor);
         if (this._cursor)
             this._cursor.queue_repaint();
     }

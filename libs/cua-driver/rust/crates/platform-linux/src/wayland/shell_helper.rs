@@ -627,8 +627,10 @@ mod tests {
         assert!(EXTENSION_SOURCE.contains("SetCursorState"));
         assert!(EXTENSION_SOURCE.contains("SetCursorColor"));
         assert!(EXTENSION_SOURCE.contains("const DISPLAY_SIZE = 48;"));
-        assert!(EXTENSION_SOURCE.contains("function drawStain"));
-        assert!(EXTENSION_SOURCE.contains("drawStain(cr);"));
+        assert!(EXTENSION_SOURCE.contains("const GLOW_PADDING = 24;"));
+        assert!(EXTENSION_SOURCE.contains("function drawCursorGlowShape"));
+        assert!(EXTENSION_SOURCE.contains("createGlowSurface(this._fillColor)"));
+        assert!(EXTENSION_SOURCE.contains("cr.translate(-GLOW_PADDING, -GLOW_PADDING);"));
         assert!(EXTENSION_METADATA.contains("\"version\":5"));
 
         for action in [

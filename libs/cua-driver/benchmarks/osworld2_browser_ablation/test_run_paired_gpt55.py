@@ -18,7 +18,7 @@ class PolicyTests(unittest.TestCase):
                 "[chrome] <defunct>",
                 (
                     "/opt/google/chrome/chrome --type=renderer "
-                    "--remote-debugging-port=1337"
+                    f"--user-data-dir={profile} --remote-debugging-port=1337"
                 ),
                 (
                     "/opt/google/chrome/chrome "

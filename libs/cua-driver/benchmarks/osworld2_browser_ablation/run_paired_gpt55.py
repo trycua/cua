@@ -974,7 +974,9 @@ def select_chrome_profile_command(
             command = shlex.split(line)
         except ValueError:
             continue
-        if profile_arg in command:
+        if profile_arg in command and not any(
+            argument.startswith("--type=") for argument in command
+        ):
             matches.append(command)
     if len(matches) != 1:
         raise PairedRunError(

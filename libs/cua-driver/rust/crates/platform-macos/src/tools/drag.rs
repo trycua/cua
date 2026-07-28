@@ -49,6 +49,12 @@ fn def() -> &'static ToolDef {
              mouseDragged events linearly interpolated along the path. Increase both for \
              slower, more human drags; decrease for snap gestures.\n\n\
              `modifier` keys (cmd/shift/option/ctrl) are held across the entire gesture.\n\n\
+             macOS delivery: a window-scope drag requires `delivery_mode:\"foreground\"` \
+             together with `window_id`. `delivery_mode` defaults to \"background\" across \
+             the tool surface, and that default is refused here with the structured code \
+             `background_unavailable` — the foreground rung is the only window-scope \
+             press-drag-release this platform offers. `scope:\"desktop\"` is unaffected: it \
+             always posts through the global HID tap and ignores `delivery_mode`.\n\n\
              When `from_zoom` is true, coordinates are in the last zoom image for this \
              pid; the driver maps them back to window coordinates before dispatching."
             .into(),
@@ -93,7 +99,15 @@ fn def() -> &'static ToolDef {
                     "description": "When true, coordinates are in the last zoom image for this pid; driver maps back to window coordinates."
                 },
                 "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "Use desktop with no pid/window_id for native get_desktop_state screenshot coordinates." },
-                "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
+                "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema_with(
+                    "Delivery rung for the press-drag-release gesture. Window scope on macOS \
+                     accepts only \"foreground\": briefly front the target (needs `window_id`), \
+                     run the gesture, then restore the prior frontmost. \"background\" — the \
+                     value an omitted `delivery_mode` resolves to — is refused here with the \
+                     structured code `background_unavailable`; escalate by re-calling with \
+                     \"foreground\" for the drag that needs it. Ignored under `scope:\"desktop\"`, \
+                     which always posts through the global HID tap."
+                )
             },
             "additionalProperties": false
         }),
@@ -166,10 +180,16 @@ impl Tool for DragTool {
         // press-drag-release gesture (the explicit last resort for surfaces
         // that drop background CGEvents), via the same skylight assist click
         // uses. Requires a window_id to have a window to front.
+        //
+        // "background" is what an omitted delivery_mode resolves to, so this
+        // refusal is the path a caller using the documented defaults takes.
+        // The tool description and the delivery_mode blurb both name it, so
+        // the schema stops advertising a default that cannot be delivered.
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
         if !delivery_mode.is_foreground() {
             return ToolResult::error(
-                "Background drag is unavailable on macOS; use delivery_mode:\"foreground\"."
+                "Background drag is unavailable on macOS in window scope; retry with \
+                 delivery_mode:\"foreground\" and a window_id."
                     .to_owned(),
             )
             .with_structured(serde_json::json!({ "code": "background_unavailable" }));
@@ -429,5 +449,84 @@ impl Tool for DragTool {
             Ok(Err(e)) => ToolResult::error(format!("drag failed: {e}")),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }
+    }
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn delivery_mode_property() -> &'static Value {
+        def()
+            .input_schema
+            .get("properties")
+            .and_then(|p| p.get("delivery_mode"))
+            .expect("drag schema exposes delivery_mode")
+    }
+
+    /// MCP introspection pipes the tool description into the model prompt, so
+    /// the window-scope precondition has to live there — not only in the error
+    /// a caller sees after the refusal.
+    #[test]
+    fn description_states_the_window_scope_foreground_requirement() {
+        let description = def().description.to_ascii_lowercase();
+        assert!(
+            description.contains("delivery_mode:\"foreground\""),
+            "description should name the required delivery_mode"
+        );
+        assert!(
+            description.contains("window_id"),
+            "description should name the window_id foreground delivery needs"
+        );
+        assert!(
+            description.contains("background_unavailable"),
+            "description should name the structured refusal code"
+        );
+        assert!(
+            description.contains("desktop"),
+            "description should exempt desktop scope from the requirement"
+        );
+    }
+
+    /// The shared blurb advertises "background" as the default without saying
+    /// that window-scope drag refuses it, which makes the documented default
+    /// fail every call. The drag-specific blurb must state the refusal.
+    #[test]
+    fn delivery_mode_description_states_the_background_refusal() {
+        let description = delivery_mode_property()
+            .get("description")
+            .and_then(Value::as_str)
+            .expect("delivery_mode carries a description")
+            .to_ascii_lowercase();
+        assert!(
+            description.contains("refused"),
+            "delivery_mode blurb should state that background is refused: {description}"
+        );
+        assert!(
+            description.contains("background_unavailable"),
+            "delivery_mode blurb should name the structured refusal code: {description}"
+        );
+        assert!(
+            description.contains("foreground"),
+            "delivery_mode blurb should name the accepted rung: {description}"
+        );
+    }
+
+    /// Narrowing the blurb must not narrow the enum: the cross-platform
+    /// contract test asserts every delivery-mode tool advertises both rungs,
+    /// and callers branch on that enum.
+    #[test]
+    fn delivery_mode_still_advertises_both_rungs() {
+        let values: Vec<&str> = delivery_mode_property()
+            .get("enum")
+            .and_then(Value::as_array)
+            .expect("delivery_mode carries an enum")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(values.contains(&"background"), "{values:?}");
+        assert!(values.contains(&"foreground"), "{values:?}");
     }
 }

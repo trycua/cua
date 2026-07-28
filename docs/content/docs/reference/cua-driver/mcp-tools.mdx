@@ -289,12 +289,14 @@ Use for: marquee/lasso selection, drag-and-drop, resizing via a handle, scrubbin
 
 `modifier` keys (cmd/shift/option/ctrl) are held across the entire gesture.
 
+macOS delivery: a window-scope drag requires `delivery_mode:"foreground"` together with `window_id`. `delivery_mode` defaults to "background" across the tool surface, and that default is refused here with the structured code `background_unavailable` — the foreground rung is the only window-scope press-drag-release this platform offers. `scope:"desktop"` is unaffected: it always posts through the global HID tap and ignores `delivery_mode`.
+
 When `from_zoom` is true, coordinates are in the last zoom image for this pid; the driver maps them back to window coordinates before dispatching.
 
 **Arguments:**
 
 - `button` (string, optional): Mouse button used for the drag. Default: left.
-- `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": inject without fronting or raising the target — no focus steal. "foreground": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with "foreground" only for the action that needs it.
+- `delivery_mode` (string, optional): Delivery rung for the press-drag-release gesture. Window scope on macOS accepts only "foreground": briefly front the target (needs `window_id`), run the gesture, then restore the prior frontmost. "background" — the value an omitted `delivery_mode` resolves to — is refused here with the structured code `background_unavailable`; escalate by re-calling with "foreground" for the drag that needs it. Ignored under `scope:"desktop"`, which always posts through the global HID tap.
 - `duration_ms` (integer, optional): Wall-clock duration of the drag path between mouseDown and mouseUp. Default: 500.
 - `from_x` (number, required): Drag-start X in window-local screenshot pixels. Top-left origin.
 - `from_y` (number, required): Drag-start Y in window-local screenshot pixels. Top-left origin.

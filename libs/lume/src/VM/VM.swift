@@ -500,33 +500,38 @@ class VM {
         await watcher.start()
     }
 
-    private func releaseManualClipboardTransfer(_ watcher: ClipboardWatcher) async {
-        clipboardTransferInProgress = false
-        await watcher.endManualTransfer()
+    private func withManualClipboardTransfer<T>(
+        _ watcher: ClipboardWatcher,
+        operation: () async throws -> T
+    ) async throws -> T {
+        guard !clipboardTransferInProgress else {
+            throw ClipboardSyncError.transferInProgress
+        }
+
+        clipboardTransferInProgress = true
+        defer { clipboardTransferInProgress = false }
+
+        try await watcher.beginManualTransfer()
+        do {
+            let result = try await operation()
+            await watcher.endManualTransfer()
+            return result
+        } catch {
+            await watcher.endManualTransfer()
+            throw error
+        }
     }
 
     private func copyClipboardFromGuest() async throws {
         guard let clipboardWatcher else {
             throw ClipboardSyncError.unavailable
         }
-        guard !clipboardTransferInProgress else {
-            throw ClipboardSyncError.transferInProgress
-        }
-
-        clipboardTransferInProgress = true
-        do {
-            try await clipboardWatcher.beginManualTransfer()
-        } catch {
-            clipboardTransferInProgress = false
-            throw error
-        }
-        do {
+        try await withManualClipboardTransfer(clipboardWatcher) {
             let baseline = try await clipboardWatcher.vmClipboardChangeCount()
             for attempt in 0..<2 {
                 try await sendGuestClipboardShortcut("c")
                 do {
                     try await clipboardWatcher.pullVMClipboardToHost(after: baseline)
-                    await releaseManualClipboardTransfer(clipboardWatcher)
                     return
                 } catch ClipboardSyncError.guestCopyTimedOut where attempt == 0 {
                     Logger.debug(
@@ -536,9 +541,6 @@ class VM {
                     try await Task.sleep(for: .milliseconds(150))
                 }
             }
-        } catch {
-            await releaseManualClipboardTransfer(clipboardWatcher)
-            throw error
         }
     }
 
@@ -546,27 +548,12 @@ class VM {
         guard let clipboardWatcher else {
             throw ClipboardSyncError.unavailable
         }
-        guard !clipboardTransferInProgress else {
-            throw ClipboardSyncError.transferInProgress
-        }
-
-        clipboardTransferInProgress = true
-        do {
-            try await clipboardWatcher.beginManualTransfer()
-        } catch {
-            clipboardTransferInProgress = false
-            throw error
-        }
-        do {
+        try await withManualClipboardTransfer(clipboardWatcher) {
             try await clipboardWatcher.pushHostClipboardToVM()
             // Give the guest pasteboard server a moment to publish the new value
             // before delivering Command-V to the foreground application.
             try await Task.sleep(for: .milliseconds(100))
             try await sendGuestClipboardShortcut("v")
-            await releaseManualClipboardTransfer(clipboardWatcher)
-        } catch {
-            await releaseManualClipboardTransfer(clipboardWatcher)
-            throw error
         }
     }
 

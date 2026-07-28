@@ -130,17 +130,14 @@ async fn private_worker_inherits_the_interactive_linux_display_scope() {
             bounded_manifest_path: None,
         })
         .unwrap();
-    let refused = standard
+    let observed = standard
         .call_tool("list_windows".into(), "{}".into())
         .await
         .unwrap();
     assert!(
-        refused
-            .error_code
-            .as_deref()
-            .is_some_and(|code| code.starts_with("protected_consent_")),
-        "standard worker observation without a protected consent host must fail closed: {}",
-        refused.text
+        !observed.is_error,
+        "routine standard-mode observation must not require an authorization host: {}",
+        observed.text
     );
     standard.close();
 

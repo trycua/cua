@@ -22,19 +22,21 @@ use std::sync::Arc;
 use thiserror::Error;
 
 mod abi;
+mod activity_observer;
+mod authorization_host;
 mod embedded;
-mod protected_host;
 pub mod remote;
 mod runtime;
 mod service_session;
 #[doc(hidden)]
 pub mod worker;
 use abi::{NativeAbiDriver, NativeAbiSession};
-pub use embedded::*;
-pub use protected_host::{
-    ProtectedConsentAction, ProtectedConsentDecision, ProtectedConsentHost,
-    ProtectedConsentHostError, ProtectedConsentRequest,
+pub use activity_observer::{DriverActivityEvent, DriverActivityKind, DriverActivityObserver};
+pub use authorization_host::{
+    DriverAuthorizationAction, DriverAuthorizationDecision, DriverAuthorizationHost,
+    DriverAuthorizationHostError, DriverAuthorizationRequest,
 };
+pub use embedded::*;
 use remote::{DriverEnvelopeChannel, RemoteBoundSession, RemoteDriverClient};
 use runtime::RuntimeOptions;
 use service_session::ServiceSessionClient;
@@ -518,11 +520,12 @@ pub struct DriverHostOptions {
     /// Temporary compatibility hook for daemon-only administrative tools.
     /// Desktop operations must live behind the typed SDK contract instead.
     pub register_host_tools: Option<fn(&mut cua_driver_core::tool::ToolRegistry)>,
-    /// Constructor-only protected consent surface supplied by a trusted Rust
+    /// Constructor-only authorization surface supplied by a trusted Rust
     /// host. It is never exposed through UniFFI, MCP, CLI arguments, or
     /// transport metadata.
-    pub protected_consent_provider:
-        Option<Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
+    pub authorization_host: Option<Arc<dyn DriverAuthorizationHost>>,
+    /// Optional content-free activity callback supplied by a trusted host.
+    pub activity_observer: Option<Arc<dyn DriverActivityObserver>>,
 }
 
 /// Runtime that imported the shared UniFFI SDK library. The language package
@@ -651,23 +654,63 @@ impl CuaDriver {
         }))
     }
 
-    /// Create a configured same-process runtime with protected approval and
-    /// persistent Stop UI supplied by trusted embedding-host code.
+    /// Create a configured same-process runtime with an optional residual
+    /// authorization callback supplied by trusted embedding-host code.
     ///
     /// The callback object is immutable runtime configuration. Applications
     /// must not expose it to an agent or implement it using ordinary MCP
     /// elicitation, model-visible stdio, or an auto-accepting callback.
     #[uniffi::constructor]
-    pub fn create_configured_with_protected_host(
+    pub fn create_configured_with_authorization_host(
         options: ConfiguredDriverOptions,
-        host: Arc<dyn ProtectedConsentHost>,
+        host: Arc<dyn DriverAuthorizationHost>,
     ) -> Result<Arc<Self>, DriverError> {
-        let provider = protected_host::SdkProtectedConsentProvider::new(host);
+        let provider = authorization_host::SdkDriverAuthorizationHost::new(host);
         Ok(Arc::new(Self {
             backend: DriverBackend::Embedded(Arc::new(
-                NativeAbiDriver::create_configured_with_protected_provider(
+                NativeAbiDriver::create_configured_with_authorization_provider(
                     configured_driver_options_json(&options),
                     provider,
+                    None,
+                )?,
+            )),
+            client_kind: DaemonClientKind::Unknown,
+        }))
+    }
+
+    /// Create a configured same-process runtime with a content-free activity
+    /// observer supplied by trusted embedding-host code.
+    #[uniffi::constructor]
+    pub fn create_configured_with_activity_observer(
+        options: ConfiguredDriverOptions,
+        observer: Arc<dyn DriverActivityObserver>,
+    ) -> Result<Arc<Self>, DriverError> {
+        Ok(Arc::new(Self {
+            backend: DriverBackend::Embedded(Arc::new(
+                NativeAbiDriver::create_configured_with_activity_observer(
+                    configured_driver_options_json(&options),
+                    observer,
+                )?,
+            )),
+            client_kind: DaemonClientKind::Unknown,
+        }))
+    }
+
+    /// Create a configured same-process runtime with both residual
+    /// authorization and content-free activity callbacks.
+    #[uniffi::constructor]
+    pub fn create_configured_with_host_integrations(
+        options: ConfiguredDriverOptions,
+        host: Arc<dyn DriverAuthorizationHost>,
+        observer: Arc<dyn DriverActivityObserver>,
+    ) -> Result<Arc<Self>, DriverError> {
+        let provider = authorization_host::SdkDriverAuthorizationHost::new(host);
+        Ok(Arc::new(Self {
+            backend: DriverBackend::Embedded(Arc::new(
+                NativeAbiDriver::create_configured_with_authorization_provider(
+                    configured_driver_options_json(&options),
+                    provider,
+                    Some(observer),
                 )?,
             )),
             client_kind: DaemonClientKind::Unknown,
@@ -676,14 +719,49 @@ impl CuaDriver {
 
     /// Language-package entry point for a configured protected-host runtime.
     #[uniffi::constructor]
-    pub fn create_configured_with_protected_host_and_client_kind(
+    pub fn create_configured_with_authorization_host_and_client_kind(
         options: ConfiguredDriverOptions,
-        host: Arc<dyn ProtectedConsentHost>,
+        host: Arc<dyn DriverAuthorizationHost>,
         client_kind: SdkClientKind,
     ) -> Result<Arc<Self>, DriverError> {
-        let driver = Self::create_configured_with_protected_host(options, host)?;
+        let driver = Self::create_configured_with_authorization_host(options, host)?;
         let DriverBackend::Embedded(runtime) = &driver.backend else {
             unreachable!("protected-host constructor always returns an embedded runtime")
+        };
+        Ok(Arc::new(Self {
+            backend: DriverBackend::Embedded(runtime.clone()),
+            client_kind: client_kind.into(),
+        }))
+    }
+
+    /// Language-package entry point for a configured activity-observer runtime.
+    #[uniffi::constructor]
+    pub fn create_configured_with_activity_observer_and_client_kind(
+        options: ConfiguredDriverOptions,
+        observer: Arc<dyn DriverActivityObserver>,
+        client_kind: SdkClientKind,
+    ) -> Result<Arc<Self>, DriverError> {
+        let driver = Self::create_configured_with_activity_observer(options, observer)?;
+        let DriverBackend::Embedded(runtime) = &driver.backend else {
+            unreachable!("activity-observer constructor always returns an embedded runtime")
+        };
+        Ok(Arc::new(Self {
+            backend: DriverBackend::Embedded(runtime.clone()),
+            client_kind: client_kind.into(),
+        }))
+    }
+
+    /// Language-package entry point for both trusted host callbacks.
+    #[uniffi::constructor]
+    pub fn create_configured_with_host_integrations_and_client_kind(
+        options: ConfiguredDriverOptions,
+        host: Arc<dyn DriverAuthorizationHost>,
+        observer: Arc<dyn DriverActivityObserver>,
+        client_kind: SdkClientKind,
+    ) -> Result<Arc<Self>, DriverError> {
+        let driver = Self::create_configured_with_host_integrations(options, host, observer)?;
+        let DriverBackend::Embedded(runtime) = &driver.backend else {
+            unreachable!("host-integration constructor always returns an embedded runtime")
         };
         Ok(Arc::new(Self {
             backend: DriverBackend::Embedded(runtime.clone()),
@@ -844,7 +922,10 @@ impl CuaDriver {
             register_host_tools: options.register_host_tools,
             authorization_ceiling: None,
             compatibility_authorization: None,
-            protected_consent_provider: options.protected_consent_provider,
+            authorization_host: authorization_host::SdkDriverAuthorizationHost::adapt(
+                options.authorization_host,
+            ),
+            activity_observer: options.activity_observer,
         })
     }
 
@@ -951,7 +1032,10 @@ impl CuaDriver {
                     register_host_tools: options.register_host_tools,
                     authorization_ceiling: None,
                     compatibility_authorization: None,
-                    protected_consent_provider: options.protected_consent_provider,
+                    authorization_host: authorization_host::SdkDriverAuthorizationHost::adapt(
+                        options.authorization_host,
+                    ),
+                    activity_observer: options.activity_observer,
                 },
             )?)),
             client_kind: DaemonClientKind::Unknown,
@@ -1000,7 +1084,10 @@ impl CuaDriver {
                     register_host_tools: options.register_host_tools,
                     authorization_ceiling: Some(ceiling),
                     compatibility_authorization: Some((mode, manifest)),
-                    protected_consent_provider: options.protected_consent_provider,
+                    authorization_host: authorization_host::SdkDriverAuthorizationHost::adapt(
+                        options.authorization_host,
+                    ),
+                    activity_observer: options.activity_observer,
                 },
             )?)),
             client_kind: DaemonClientKind::Unknown,
@@ -1041,7 +1128,8 @@ impl CuaDriver {
                     host.host_bundle_id,
                     host.prepare_desktop_environment,
                     host.register_host_tools,
-                    host.protected_consent_provider,
+                    authorization_host::SdkDriverAuthorizationHost::adapt(host.authorization_host),
+                    host.activity_observer,
                 )?,
             )),
             client_kind: DaemonClientKind::Unknown,
@@ -1567,6 +1655,51 @@ mod tests {
         .unwrap()
     }
 
+    #[derive(Default)]
+    struct RecordingActivityObserver {
+        events: std::sync::Mutex<Vec<DriverActivityEvent>>,
+    }
+
+    impl DriverActivityObserver for RecordingActivityObserver {
+        fn on_activity(&self, event: DriverActivityEvent) {
+            self.events.lock().unwrap().push(event);
+        }
+    }
+
+    #[tokio::test]
+    async fn activity_observer_receives_only_content_free_authorization_metadata() {
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let observer = Arc::new(RecordingActivityObserver::default());
+        let driver = CuaDriver::create_configured_with_activity_observer(
+            ConfiguredDriverOptions {
+                claude_code_compatibility: false,
+                authorization: RuntimeAuthorizationOptions {
+                    allowed_modes: vec![SessionPermissionMode::Standard],
+                    compatibility_mode: SessionPermissionMode::Standard,
+                    compatibility_bounded_manifest_path: None,
+                    unrestricted_acknowledged: false,
+                    max_session_ttl_seconds: 60,
+                    max_idle_ttl_seconds: 30,
+                },
+            },
+            observer.clone(),
+        )
+        .unwrap();
+
+        driver
+            .call_tool("health_report".into(), "{}".into())
+            .await
+            .unwrap();
+
+        let events = observer.events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, DriverActivityKind::AuthorizedAction);
+        assert_eq!(events[0].tool_name, "health_report");
+        assert_eq!(events[0].risk_class, "r0");
+        assert!(events[0].public_session.is_none());
+        assert!(events[0].refusal_code.is_none());
+    }
+
     #[cfg(target_os = "macos")]
     fn configured_unrestricted_driver() -> Arc<CuaDriver> {
         CuaDriver::create_configured(ConfiguredDriverOptions {
@@ -1639,7 +1772,8 @@ mod tests {
             claude_code_compatibility: false,
             prepare_desktop_environment: false,
             register_host_tools: None,
-            protected_consent_provider: None,
+            authorization_host: None,
+            activity_observer: None,
         });
         assert!(inventory["tools"]
             .as_array()
@@ -1693,7 +1827,8 @@ mod tests {
             claude_code_compatibility: false,
             prepare_desktop_environment: false,
             register_host_tools: Some(register_slow_host_tool),
-            protected_consent_provider: None,
+            authorization_host: None,
+            activity_observer: None,
         })
         .unwrap();
         let action_driver = driver.clone();
@@ -1837,16 +1972,9 @@ mod tests {
                 .await
                 .unwrap();
             assert!(
-                standard_windows.is_error
-                    && matches!(
-                        standard_windows.error_code.as_deref(),
-                        Some(
-                            "protected_consent_required" | "protected_consent_provider_failed"
-                        )
-                    ),
-                "a standard direct runtime without usable protected-consent prerequisites must fail closed: code={:?} text={}",
-                standard_windows.error_code,
-                standard_windows.text
+                !standard_windows.is_error,
+                "promptless standard mode could not inspect the GUI: code={:?} text={}",
+                standard_windows.error_code, standard_windows.text
             );
 
             let unrestricted_windows = second_session

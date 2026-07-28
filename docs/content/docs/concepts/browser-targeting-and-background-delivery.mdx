@@ -89,10 +89,10 @@ now belongs to another document.
 ## Why setup is explicit
 
 Browser inspection never enables remote debugging or restarts a browser as a
-side effect. `browser_prepare` is a separate destructive approval boundary. It
+side effect. `browser_prepare` is a separate explicit authorization boundary. It
 may launch another browser with a driver-owned `isolated_new` or
 `isolated_named` profile. For an existing supported Chromium profile, a
-stronger operation-bound approval may instead authorize one exact-window AX,
+stronger operation-bound grant may instead authorize one exact-window AX,
 UIA, or AT-SPI setup of the browser's per-instance remote-debugging switch. The
 route is proven for Chrome and Edge on macOS and Windows and for Chrome in the
 validated Linux X11 and Sway lanes. It never copies profile data, edits profile
@@ -120,17 +120,18 @@ as DevTools or correlated with the exact approved checkbox transition. The
 driver then requires a successful DevTools WebSocket claim before reporting an
 attachment; a bare browser-owned loopback listener is not sufficient.
 
-An MCP host supplies approval through its destructive-tool approval path.
-Direct CLI and raw-socket callers use a short-lived, single-use token minted by
-the interactive `browser-approve` command. A Boolean supplied by the model is
-not treated as user consent.
+For an existing authenticated profile, standard mode requires either the
+trusted launch option `--grant existing-profile` or an authorization callback
+supplied by an embedding host. Bounded mode requires a matching reviewed
+manifest. Unrestricted mode requires launch-time risk acceptance. A Boolean
+supplied by the model and ordinary MCP destructive-tool approval do not
+authorize this boundary.
 
 An existing authenticated profile has a stronger boundary than a
 driver-created isolated profile. Attaching exposes the profile's live pages,
 cookies, and storage to the browser protocol, so ordinary MCP transport
-approval is not enough. The initial existing-profile route requires a separate
-interactive artifact bound to one process, native window, and named driver
-session.
+approval is not enough. The attachment grant is bound to one runtime, process
+fingerprint, native window, and named driver session.
 
 ## The CDP trust boundary
 

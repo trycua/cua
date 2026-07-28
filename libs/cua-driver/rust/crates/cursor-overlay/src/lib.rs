@@ -11,6 +11,7 @@ pub mod capture_utils;
 pub mod motion;
 pub mod path_planner;
 pub mod render_state;
+pub mod session_badge;
 pub mod theme;
 pub mod theme_artifact;
 pub mod util;
@@ -20,14 +21,18 @@ pub use bezier::CubicBezier;
 pub use motion::{MotionConfig, Spring};
 pub use path_planner::{PathPlanner, PathState, PlannedPath};
 pub use render_state::{paint_cursor, render_frame, FocusRect, RenderStateCore};
+pub use session_badge::{paint_session_badge, sanitize_session_label};
 pub use theme::{
-    CursorAction, CursorVisualState, DeliveryModifier, PlaybackKind, ReducedMotion, TargetModifier,
-    DEFAULT_THEME_ID, DEFAULT_THEME_VERSION, THEME_PROFILE,
+    session_fill_hex, session_fill_rgba, CursorAction, CursorVisualState, DeliveryModifier,
+    PlaybackKind, ReducedMotion, TargetModifier, DEFAULT_CURSOR_FILL, DEFAULT_THEME_ID,
+    DEFAULT_THEME_VERSION, THEME_PROFILE,
 };
 pub use theme_artifact::{
-    decode_theme, inspect_artifact, list_installed_themes, load_installed_theme,
-    paint_compiled_theme, resolve_theme_selection, theme_store_root, validate_compiled_theme,
-    CompiledAnimation, CompiledFrame, CompiledTheme,
+    decode_theme, embedded_default_theme, inspect_artifact, list_installed_themes,
+    load_installed_theme, paint_compiled_theme, paint_compiled_theme_with_tint,
+    resolve_theme_selection, theme_store_root, validate_compiled_theme, CompiledAnimation,
+    CompiledDrawCommand, CompiledFrame, CompiledGeometry, CompiledStroke, CompiledTheme,
+    CompiledTransform,
 };
 #[cfg(feature = "theme-authoring")]
 pub use theme_artifact::{encode_theme, install_artifact, uninstall_theme};
@@ -347,6 +352,8 @@ pub enum OverlayCommand {
         theme_id: String,
         reduced_motion: ReducedMotion,
     },
+    /// Set the sanitized public label shown beneath this cursor.
+    SetSessionLabel(String),
     /// Show a focus-highlight rectangle around an AX-targeted element.
     /// `[x, y, width, height]` in screen coordinates (top-left origin).
     /// `None` clears the highlight.

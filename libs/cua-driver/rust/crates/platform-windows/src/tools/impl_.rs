@@ -5499,7 +5499,7 @@ fn winui3_uia_multi_invoke(
 ///    island ignores posted `WM_*BUTTON`, and the pointer injector
 ///    click-activates the frame. So we return the structured
 ///    `background_unavailable` error (the honest result — the caller can retry
-///    with `delivery_mode:"foreground"` or `bring_to_front`) instead of a silent
+///    that action with `delivery_mode:"foreground"`) instead of a silent
 ///    no-op that reports false success.
 ///
 /// Returns `None` for non-WinUI3 targets (caller falls through to its normal
@@ -7780,17 +7780,13 @@ impl Tool for BringToFrontTool {
             name: "bring_to_front".into(),
             description: "Activate `pid`'s window (or `window_id` if specified) -- bring it to \
                 the OS foreground. \n\n\
-                **This deliberately breaks the no-foreground contract.** Use only when an \
-                agent is about to drive a sequence of operations against a target whose input \
-                stack silently drops PostMessage (Chromium DOM content, GTK button widgets) \
-                and the agent wants to pay the foreground cost once instead of per call. \n\n\
-                Pairs with the `delivery_mode` field on input tools:\n\
-                  1. Try `click(..., delivery_mode:\"background\")`. If it returns \
-                     `background_unavailable`, the target needs foreground delivery.\n\
-                  2. Call `bring_to_front(pid)` so the target is foreground.\n\
-                  3. Subsequent input calls with `delivery_mode:\"foreground\"` deliver via \
-                     SendInput WITHOUT visible flashing -- the SetForegroundWindow swap \
-                     inside SendInput is a no-op since target is already foreground.\n\n\
+                **This deliberately breaks the no-foreground contract.** It is not part of \
+                the normal input ladder. For an ordinary `background_unavailable` response, \
+                retry only the refused action with `delivery_mode:\"foreground\"`; the input \
+                tool performs its own activate, act, and restore sequence. Use \
+                `bring_to_front` only for a focus-proxy surface that must remain foreground \
+                across multiple calls, such as an RDP or Windows App session, or when repeated \
+                action-scoped activation prevents the remote surface from accepting input. \n\n\
                 Implementation uses the `AttachThreadInput` trick to bypass Windows' \
                 foreground-lock when the daemon is not at UIAccess integrity. Returns \
                 structured `{previous_fg_hwnd, now_fg_hwnd}` so callers can later restore. \

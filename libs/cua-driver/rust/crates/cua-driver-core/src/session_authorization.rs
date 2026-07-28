@@ -232,6 +232,10 @@ impl EffectiveAuthorizationContext {
         self.public_session.as_deref()
     }
 
+    pub fn is_revoked(&self) -> bool {
+        self.revoked.load(Ordering::Acquire)
+    }
+
     #[doc(hidden)]
     pub fn transport_session(&self) -> Option<&str> {
         self.transport_session.as_deref()

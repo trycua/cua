@@ -6,13 +6,17 @@ description: "Use Cua Driver's semantic default cursor or compile and install a 
 import { Callout } from 'fumadocs-ui/components/callout';
 
 Cua Driver ships one built-in theme, `cua.default`, on macOS, Windows, and
-Linux. It uses an off-white pointer with a navy outline and small animations
-for actions such as observe, click, drag, scroll, type, and navigate.
+Linux. It uses a session-colored pointer with a white outline and matching
+glow. Every state shares the same gentle floating motion, with semantic
+animations layered on top for actions such as observe, click, drag, scroll,
+type, and navigate.
 
 <Callout type="warn" title="Visual aid, not authorization">
 The cursor helps a person follow an agent. It is not a security indicator,
 consent prompt, or proof that an action succeeded.
 </Callout>
+
+![The twelve semantic action animations in the built-in Cua cursor theme](/img/cua-driver/cursor-themes/action-animations.gif)
 
 ## Select a theme for a session
 
@@ -27,6 +31,23 @@ cua-driver get_agent_cursor_state '{"session":"demo"}'
 
 Use `set_agent_cursor_enabled` to hide or show the session cursor. Use
 `set_agent_cursor_motion` for movement physics and visibility timing only.
+
+## Session name badge
+
+The built-in overlay places the public session name in a compact badge below
+the pointer. The badge follows the cursor, uses the session color, and renders
+with the same display-scale-aware native pipeline as the theme.
+
+Choose a short, recognizable session name when starting the session:
+
+```bash
+cua-driver start_session '{"session":"research"}'
+```
+
+The badge displays `research`. Cua Driver strips control characters, collapses
+whitespace, and shortens labels longer than 28 characters. The label is visual
+identity only. It does not grant authorization, select another session's
+capabilities, or expose Cua's private runtime identifier.
 
 The old `set_agent_cursor_style` operation and its `cursor_id`, shape, color,
 label, size, opacity, image-path, gradient, and bloom styling fields have been
@@ -49,7 +70,12 @@ A source theme is a dotLottie archive with:
 - an author and license.
 
 The compiler enforces the complete theme contract, including the semantic
-manifest, animation inventory, frame limits, author, and license.
+manifest, animation inventory, frame limits, bounded vector feature set,
+author, and license. It preserves paths and strokes as vectors, so the native
+renderer can draw them at the current display scale instead of enlarging a
+fixed-resolution image.
+
+![The six delivery and target modifiers supported by Cua cursor themes](/img/cua-driver/cursor-themes/delivery-target-context.gif)
 
 Validate, compile, inspect, and preview the source:
 
@@ -77,12 +103,19 @@ visually distinct design under a separate theme ID.
 
 Theme authoring is a trusted local workflow. The short-lived compiler validates
 the ZIP and Lottie source, rejects unsupported or unbounded content, and emits
-bounded premultiplied RGBA frames.
+bounded vector frames containing validated geometry, paints, and transforms.
 
 The privileged overlay loads only the compiled `.cua-theme` artifact. It never
 parses ZIP, JSON, Lottie, fonts, expressions, URLs, or an arbitrary source
-path. MCP and SDK tools may select an installed ID, but they cannot install
-source or submit inline animation data.
+path. It rasterizes the bounded vector commands through Skia at the display's
+actual backing scale. MCP and SDK tools may select an installed ID, but they
+cannot install source or submit inline animation data.
+
+The built-in `cua.default` theme uses the same compiler and renderer. Cua ships
+its compiled artifact inside the driver, so users do not need to install it.
+The driver applies the stable session color and shared floating motion after
+compositing the default theme's action and modifier layers. Installed custom
+themes keep their authored colors.
 
 Remove a custom theme with:
 

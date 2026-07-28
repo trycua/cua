@@ -272,7 +272,8 @@ fn spawn_driver() -> McpDriver {
 
 #[cfg(not(target_os = "macos"))]
 fn spawn_driver() -> McpDriver {
-    McpDriver::spawn_named(CELL_ID).expect("start source-built driver")
+    McpDriver::spawn_named_with_overlay(CELL_ID)
+        .expect("start source-built driver with native cursor overlay")
 }
 
 #[cfg(target_os = "macos")]

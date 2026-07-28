@@ -39,28 +39,38 @@ impl McpDriver {
     /// Returns `None` (with a skip message) if the binary isn't built — the
     /// caller's test should early-return so an un-built binary skips, not fails.
     pub fn spawn() -> Option<Self> {
-        Self::spawn_internal(&[], &[], None)
+        Self::spawn_internal(&[], &[], None, false)
     }
 
     /// Spawn the driver with a stable recording label for artifact naming.
     pub fn spawn_named(recording_label: &str) -> Option<Self> {
-        Self::spawn_internal(&[], &[], Some(recording_label))
+        Self::spawn_internal(&[], &[], Some(recording_label), false)
+    }
+
+    /// Spawn a named driver with the native cursor overlay enabled.
+    ///
+    /// Most testkit daemons disable the overlay so unrelated behavior tests
+    /// cannot paint over their own pixel oracles. Cursor-specific E2E tests
+    /// opt in through this constructor.
+    pub fn spawn_named_with_overlay(recording_label: &str) -> Option<Self> {
+        Self::spawn_internal(&[], &[], Some(recording_label), true)
     }
 
     /// Spawn a named driver with environment variables scoped to this child.
     pub fn spawn_named_with_env(recording_label: &str, env: &[(&str, &str)]) -> Option<Self> {
-        Self::spawn_internal(env, &[], Some(recording_label))
+        Self::spawn_internal(env, &[], Some(recording_label), false)
     }
 
     /// Spawn the driver with extra environment variables set on the child.
     pub fn spawn_with_env(env: &[(&str, &str)]) -> Option<Self> {
-        Self::spawn_internal(env, &[], None)
+        Self::spawn_internal(env, &[], None, false)
     }
 
     fn spawn_internal(
         env: &[(&str, &str)],
         args: &[&str],
         recording_label: Option<&str>,
+        overlay_enabled: bool,
     ) -> Option<Self> {
         let mut daemon_env = env.to_vec();
         let e2e_unrestricted = std::env::var_os("CUA_E2E_UNRESTRICTED_GUI").is_some();
@@ -87,7 +97,11 @@ impl McpDriver {
         let daemon = if args.is_empty() {
             // Environment that changes tool behavior belongs on the daemon,
             // because the stdio process is now only a transport proxy.
-            Some(TestDaemon::spawn(&bin, &mut reaper, &daemon_env)?)
+            Some(if overlay_enabled {
+                TestDaemon::spawn_with_overlay(&bin, &mut reaper, &daemon_env)?
+            } else {
+                TestDaemon::spawn(&bin, &mut reaper, &daemon_env)?
+            })
         } else {
             None
         };
@@ -181,7 +195,7 @@ impl McpDriver {
             );
             return None;
         }
-        Self::spawn_internal(&[], &["mcp", "--socket", &socket], recording_label)
+        Self::spawn_internal(&[], &["mcp", "--socket", &socket], recording_label, false)
     }
 
     fn initialize(&mut self) {

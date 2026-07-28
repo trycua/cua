@@ -32,8 +32,8 @@ private fun textExpected(
 private fun tokenExpected() = textExpected(
     "POST",
     "https://keycloak.invalid/token",
-    listOf("accept" to "application/json", "content-type" to "application/x-www-form-urlencoded"),
-    "grant_type=client_credentials&client_id=client-id&client_secret=client-secret".encodeToByteArray(),
+    listOf("accept" to "application/json", "content-type" to "application/x-www-form-urlencoded", "authorization" to "Basic Y2xpZW50LWlkOmNsaWVudC1zZWNyZXQ="),
+    "grant_type=client_credentials".encodeToByteArray(),
     200u,
     "{\"access_token\":\"offline-token\",\"expires_in\":3600}",
 )

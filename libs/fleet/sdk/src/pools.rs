@@ -95,7 +95,7 @@ impl CyclopsClient {
         let body = to_json(&pool)?;
         self.send_json(
             "update pool",
-            json_request("PUT", item_url, Some(body)),
+            merge_patch_request(item_url, Some(body)),
             &[200],
         )
         .await
@@ -216,6 +216,12 @@ impl CyclopsClient {
             Err(error) => Err(error),
         }
     }
+}
+
+fn merge_patch_request(url: Url, body: Option<Vec<u8>>) -> HttpRequest {
+    let mut request = json_request("PATCH", url, body);
+    request.headers[1].value = "application/merge-patch+json".into();
+    request
 }
 
 fn json_request(method: &str, url: Url, body: Option<Vec<u8>>) -> HttpRequest {

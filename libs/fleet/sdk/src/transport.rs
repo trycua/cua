@@ -2,6 +2,7 @@ use crate::{
     AccessTokenProviderError, CyclopsConfiguration, CyclopsTokenProviderConfiguration, HttpError,
     HttpHeader, HttpRequest, HttpResponse, SdkError,
 };
+use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Deserialize;
 use std::{
     sync::Arc,
@@ -330,11 +331,8 @@ impl Transport {
         else {
             unreachable!("client-credentials token acquisition requires client credentials")
         };
-        let body = url::form_urlencoded::Serializer::new(String::new())
-            .append_pair("grant_type", "client_credentials")
-            .append_pair("client_id", client_id)
-            .append_pair("client_secret", client_secret)
-            .finish();
+        let credentials = STANDARD.encode(format!("{client_id}:{client_secret}"));
+        let body = "grant_type=client_credentials".as_bytes().to_vec();
         let response = self
             .http_client
             .execute(HttpRequest {
@@ -349,8 +347,12 @@ impl Transport {
                         name: "content-type".into(),
                         value: "application/x-www-form-urlencoded".into(),
                     },
+                    HttpHeader {
+                        name: "authorization".into(),
+                        value: format!("Basic {credentials}"),
+                    },
                 ],
-                body: Some(body.into_bytes()),
+                body: Some(body),
             })
             .await
             .map_err(map_http_error)?;

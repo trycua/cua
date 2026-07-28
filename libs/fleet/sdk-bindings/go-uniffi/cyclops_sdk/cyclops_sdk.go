@@ -360,6 +360,7 @@ func readFloat64(reader io.Reader) float64 {
 
 func init() {
 
+	FfiConverterAccessTokenProviderINSTANCE.register()
 	FfiConverterHttpClientINSTANCE.register()
 	uniffiCheckChecksums()
 }
@@ -476,6 +477,15 @@ func uniffiCheckChecksums() {
 	}
 	{
 		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token()
+		})
+		if checksum != 1180 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk: uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
 			return C.uniffi_cyclops_sdk_checksum_method_httpclient_execute()
 		})
 		if checksum != 38803 {
@@ -490,6 +500,33 @@ func uniffiCheckChecksums() {
 		if checksum != 54404 {
 			// If this happens try cleaning and rebuilding your project
 			panic("cyclops_sdk: uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_browser_with_access_token()
+		})
+		if checksum != 55589 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk: uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_browser_with_access_token: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token()
+		})
+		if checksum != 10148 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk: uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider()
+		})
+		if checksum != 58487 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk: uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider: UniFFI API checksum mismatch")
 		}
 	}
 	{
@@ -574,6 +611,37 @@ func (FfiConverterUint64) Read(reader io.Reader) uint64 {
 type FfiDestroyerUint64 struct{}
 
 func (FfiDestroyerUint64) Destroy(_ uint64) {}
+
+type FfiConverterBool struct{}
+
+var FfiConverterBoolINSTANCE = FfiConverterBool{}
+
+func (FfiConverterBool) Lower(value bool) C.int8_t {
+	if value {
+		return C.int8_t(1)
+	}
+	return C.int8_t(0)
+}
+
+func (FfiConverterBool) Write(writer io.Writer, value bool) {
+	if value {
+		writeInt8(writer, 1)
+	} else {
+		writeInt8(writer, 0)
+	}
+}
+
+func (FfiConverterBool) Lift(value C.int8_t) bool {
+	return value != 0
+}
+
+func (FfiConverterBool) Read(reader io.Reader) bool {
+	return readInt8(reader) != 0
+}
+
+type FfiDestroyerBool struct{}
+
+func (FfiDestroyerBool) Destroy(_ bool) {}
 
 type FfiConverterString struct{}
 
@@ -743,6 +811,256 @@ func (ffiObject *FfiObject) freeRustArcPtr() {
 	})
 }
 
+type AccessTokenProvider interface {
+	GetAccessToken(forceRefresh bool) (string, error)
+}
+type AccessTokenProviderImpl struct {
+	ffiObject FfiObject
+}
+
+func (_self *AccessTokenProviderImpl) GetAccessToken(forceRefresh bool) (string, error) {
+	_pointer := _self.ffiObject.incrementPointer("AccessTokenProvider")
+	defer _self.ffiObject.decrementPointer()
+	res, err := uniffiRustCallAsync[*AccessTokenProviderError](
+		FfiConverterAccessTokenProviderErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) RustBufferI {
+			res := C.ffi_cyclops_sdk_rust_future_complete_rust_buffer(handle, status)
+			return GoRustBuffer{
+				inner: res,
+			}
+		},
+		// liftFn
+		func(ffi RustBufferI) string {
+			return FfiConverterStringINSTANCE.Lift(ffi)
+		},
+		C.uniffi_cyclops_sdk_fn_method_accesstokenprovider_get_access_token(
+			_pointer, FfiConverterBoolINSTANCE.Lower(forceRefresh)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_rust_buffer(handle)
+		},
+	)
+
+	if err == nil {
+		return res, nil
+	}
+
+	return res, err
+}
+func (object *AccessTokenProviderImpl) Destroy() {
+	runtime.SetFinalizer(object, nil)
+	object.ffiObject.destroy()
+}
+
+type FfiConverterAccessTokenProvider struct {
+	handleMap *concurrentHandleMap[AccessTokenProvider]
+}
+
+var FfiConverterAccessTokenProviderINSTANCE = FfiConverterAccessTokenProvider{
+	handleMap: newConcurrentHandleMap[AccessTokenProvider](),
+}
+
+func (c FfiConverterAccessTokenProvider) Lift(handle C.uint64_t) AccessTokenProvider {
+	if uint64(handle)&1 == 0 {
+		// Rust-generated handle (even), construct a new object wrapping the handle
+		result := &AccessTokenProviderImpl{
+			newFfiObject(
+				handle,
+				func(handle C.uint64_t, status *C.RustCallStatus) C.uint64_t {
+					return C.uniffi_cyclops_sdk_fn_clone_accesstokenprovider(handle, status)
+				},
+				func(handle C.uint64_t, status *C.RustCallStatus) {
+					C.uniffi_cyclops_sdk_fn_free_accesstokenprovider(handle, status)
+				},
+			),
+		}
+		runtime.SetFinalizer(result, (*AccessTokenProviderImpl).Destroy)
+		return result
+	} else {
+		// Go-generated handle (odd), retrieve from the handle map
+		val, ok := c.handleMap.tryGet(uint64(handle))
+		if !ok {
+			panic(fmt.Errorf("no callback in handle map: %d", handle))
+		}
+		c.handleMap.remove(uint64(handle))
+		return val
+	}
+}
+
+func (c FfiConverterAccessTokenProvider) Read(reader io.Reader) AccessTokenProvider {
+	return c.Lift(C.uint64_t(readUint64(reader)))
+}
+
+func (c FfiConverterAccessTokenProvider) Lower(value AccessTokenProvider) C.uint64_t {
+	// TODO: this is bad - all synchronization from ObjectRuntime.go is discarded here,
+	// because the handle will be decremented immediately after this function returns,
+	// and someone will be left holding onto a non-locked handle.
+	if val, ok := value.(*AccessTokenProviderImpl); ok {
+		// Rust-backed object, clone the handle
+		handle := val.ffiObject.incrementPointer("AccessTokenProvider")
+		defer val.ffiObject.decrementPointer()
+		return handle
+	} else {
+		// Go-backed object, insert into handle map
+		return C.uint64_t(c.handleMap.insert(value))
+	}
+}
+
+func (c FfiConverterAccessTokenProvider) Write(writer io.Writer, value AccessTokenProvider) {
+	writeUint64(writer, uint64(c.Lower(value)))
+}
+
+func LiftFromExternalAccessTokenProvider(handle uint64) AccessTokenProvider {
+	return FfiConverterAccessTokenProviderINSTANCE.Lift(C.uint64_t(handle))
+}
+
+func LowerToExternalAccessTokenProvider(value AccessTokenProvider) uint64 {
+	return uint64(FfiConverterAccessTokenProviderINSTANCE.Lower(value))
+}
+
+type FfiDestroyerAccessTokenProvider struct{}
+
+func (_ FfiDestroyerAccessTokenProvider) Destroy(value AccessTokenProvider) {
+	if val, ok := value.(*AccessTokenProviderImpl); ok {
+		val.Destroy()
+	}
+}
+
+type uniffiCallbackResult C.int8_t
+
+const (
+	uniffiIdxCallbackFree               uniffiCallbackResult = 0
+	uniffiCallbackResultSuccess         uniffiCallbackResult = 0
+	uniffiCallbackResultError           uniffiCallbackResult = 1
+	uniffiCallbackUnexpectedResultError uniffiCallbackResult = 2
+	uniffiCallbackCancelled             uniffiCallbackResult = 3
+)
+
+type concurrentHandleMap[T any] struct {
+	handles       map[uint64]T
+	currentHandle uint64
+	lock          sync.RWMutex
+}
+
+func newConcurrentHandleMap[T any]() *concurrentHandleMap[T] {
+	return &concurrentHandleMap[T]{
+		handles:       map[uint64]T{},
+		currentHandle: 1,
+	}
+}
+
+func (cm *concurrentHandleMap[T]) insert(obj T) uint64 {
+	cm.lock.Lock()
+	defer cm.lock.Unlock()
+
+	handle := cm.currentHandle
+	cm.currentHandle = cm.currentHandle + 2
+	cm.handles[handle] = obj
+	return handle
+}
+
+func (cm *concurrentHandleMap[T]) remove(handle uint64) {
+	cm.lock.Lock()
+	defer cm.lock.Unlock()
+
+	delete(cm.handles, handle)
+}
+
+func (cm *concurrentHandleMap[T]) tryGet(handle uint64) (T, bool) {
+	cm.lock.RLock()
+	defer cm.lock.RUnlock()
+
+	val, ok := cm.handles[handle]
+	return val, ok
+}
+
+//export cyclops_sdk_transport_cgo_dispatchCallbackInterfaceAccessTokenProviderMethod0
+func cyclops_sdk_transport_cgo_dispatchCallbackInterfaceAccessTokenProviderMethod0(uniffiHandle C.uint64_t, forceRefresh C.int8_t, uniffiFutureCallback C.UniffiForeignFutureCompleteRustBuffer, uniffiCallbackData C.uint64_t, uniffiOutDroppedCallback *C.UniffiForeignFutureDroppedCallbackStruct) {
+	handle := uint64(uniffiHandle)
+	uniffiObj, ok := FfiConverterAccessTokenProviderINSTANCE.handleMap.tryGet(handle)
+	if !ok {
+		panic(fmt.Errorf("no callback in handle map: %d", handle))
+	}
+
+	result := make(chan C.UniffiForeignFutureResultRustBuffer, 1)
+	cancel := make(chan struct{}, 1)
+	guardHandle := cgo.NewHandle(cancel)
+	*uniffiOutDroppedCallback = C.UniffiForeignFutureDroppedCallbackStruct{
+		handle: C.uint64_t(guardHandle),
+		free:   C.UniffiForeignFutureDroppedCallback(C.cyclops_sdk_uniffiFreeGorutine),
+	}
+
+	// Wait for compleation or cancel
+	go func() {
+		select {
+		case <-cancel:
+		case res := <-result:
+			C.call_UniffiForeignFutureCompleteRustBuffer(uniffiFutureCallback, uniffiCallbackData, res)
+		}
+	}()
+
+	// Eval callback asynchroniously
+	go func() {
+		asyncResult := &C.UniffiForeignFutureResultRustBuffer{}
+		uniffiOutReturn := &asyncResult.returnValue
+		callStatus := &asyncResult.callStatus
+		defer func() {
+			result <- *asyncResult
+		}()
+
+		res, err :=
+			uniffiObj.GetAccessToken(
+				FfiConverterBoolINSTANCE.Lift(forceRefresh),
+			)
+
+		if err != nil {
+			var actualError *AccessTokenProviderError
+			if errors.As(err, &actualError) {
+				*callStatus = C.RustCallStatus{
+					code:     C.int8_t(uniffiCallbackResultError),
+					errorBuf: FfiConverterAccessTokenProviderErrorINSTANCE.Lower(actualError),
+				}
+			} else {
+				*callStatus = C.RustCallStatus{
+					code: C.int8_t(uniffiCallbackUnexpectedResultError),
+				}
+			}
+			return
+		}
+
+		*uniffiOutReturn = FfiConverterStringINSTANCE.Lower(res)
+	}()
+}
+
+var UniffiVTableCallbackInterfaceAccessTokenProviderINSTANCE = C.UniffiVTableCallbackInterfaceAccessTokenProvider{
+	uniffiFree:     (C.UniffiCallbackInterfaceFree)(C.cyclops_sdk_transport_cgo_dispatchCallbackInterfaceAccessTokenProviderFree),
+	uniffiClone:    (C.UniffiCallbackInterfaceClone)(C.cyclops_sdk_transport_cgo_dispatchCallbackInterfaceAccessTokenProviderClone),
+	getAccessToken: (C.UniffiCallbackInterfaceAccessTokenProviderMethod0)(C.cyclops_sdk_transport_cgo_dispatchCallbackInterfaceAccessTokenProviderMethod0),
+}
+
+//export cyclops_sdk_transport_cgo_dispatchCallbackInterfaceAccessTokenProviderFree
+func cyclops_sdk_transport_cgo_dispatchCallbackInterfaceAccessTokenProviderFree(handle C.uint64_t) {
+	FfiConverterAccessTokenProviderINSTANCE.handleMap.remove(uint64(handle))
+}
+
+//export cyclops_sdk_transport_cgo_dispatchCallbackInterfaceAccessTokenProviderClone
+func cyclops_sdk_transport_cgo_dispatchCallbackInterfaceAccessTokenProviderClone(handle C.uint64_t) C.uint64_t {
+	val, ok := FfiConverterAccessTokenProviderINSTANCE.handleMap.tryGet(uint64(handle))
+	if !ok {
+		panic(fmt.Errorf("no callback in handle map: %d", handle))
+	}
+	return C.uint64_t(FfiConverterAccessTokenProviderINSTANCE.handleMap.insert(val))
+}
+
+func (c FfiConverterAccessTokenProvider) register() {
+	C.uniffi_cyclops_sdk_fn_init_callback_vtable_accesstokenprovider(&UniffiVTableCallbackInterfaceAccessTokenProviderINSTANCE)
+}
+
 type CyclopsClientInterface interface {
 	CreateClaim(request CreateClaimRequest) (Claim, error)
 	DeleteClaim(claim Claim) error
@@ -763,6 +1081,42 @@ type CyclopsClient struct {
 func CyclopsClientConnect(configuration CyclopsConfiguration, httpClient HttpClient) (*CyclopsClient, error) {
 	_uniffiRV, _uniffiErr := rustCallWithError[*SdkError](FfiConverterSdkError{}, func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
 		return C.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect(FfiConverterCyclopsConfigurationINSTANCE.Lower(configuration), FfiConverterHttpClientINSTANCE.Lower(httpClient), _uniffiStatus)
+	})
+	if _uniffiErr != nil {
+		var _uniffiDefaultValue *CyclopsClient
+		return _uniffiDefaultValue, _uniffiErr
+	} else {
+		return FfiConverterCyclopsClientINSTANCE.Lift(_uniffiRV), nil
+	}
+}
+
+func CyclopsClientConnectBrowserWithAccessToken(configuration CyclopsTokenProviderConfiguration, accessToken string) (*CyclopsClient, error) {
+	_uniffiRV, _uniffiErr := rustCallWithError[*SdkError](FfiConverterSdkError{}, func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_browser_with_access_token(FfiConverterCyclopsTokenProviderConfigurationINSTANCE.Lower(configuration), FfiConverterStringINSTANCE.Lower(accessToken), _uniffiStatus)
+	})
+	if _uniffiErr != nil {
+		var _uniffiDefaultValue *CyclopsClient
+		return _uniffiDefaultValue, _uniffiErr
+	} else {
+		return FfiConverterCyclopsClientINSTANCE.Lift(_uniffiRV), nil
+	}
+}
+
+func CyclopsClientConnectWithAccessToken(configuration CyclopsTokenProviderConfiguration, accessToken string, httpClient HttpClient) (*CyclopsClient, error) {
+	_uniffiRV, _uniffiErr := rustCallWithError[*SdkError](FfiConverterSdkError{}, func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token(FfiConverterCyclopsTokenProviderConfigurationINSTANCE.Lower(configuration), FfiConverterStringINSTANCE.Lower(accessToken), FfiConverterHttpClientINSTANCE.Lower(httpClient), _uniffiStatus)
+	})
+	if _uniffiErr != nil {
+		var _uniffiDefaultValue *CyclopsClient
+		return _uniffiDefaultValue, _uniffiErr
+	} else {
+		return FfiConverterCyclopsClientINSTANCE.Lift(_uniffiRV), nil
+	}
+}
+
+func CyclopsClientConnectWithAccessTokenProvider(configuration CyclopsTokenProviderConfiguration, tokenProvider AccessTokenProvider, httpClient HttpClient) (*CyclopsClient, error) {
+	_uniffiRV, _uniffiErr := rustCallWithError[*SdkError](FfiConverterSdkError{}, func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider(FfiConverterCyclopsTokenProviderConfigurationINSTANCE.Lower(configuration), FfiConverterAccessTokenProviderINSTANCE.Lower(tokenProvider), FfiConverterHttpClientINSTANCE.Lower(httpClient), _uniffiStatus)
 	})
 	if _uniffiErr != nil {
 		var _uniffiDefaultValue *CyclopsClient
@@ -1392,54 +1746,6 @@ func (_ FfiDestroyerHttpClient) Destroy(value HttpClient) {
 	}
 }
 
-type uniffiCallbackResult C.int8_t
-
-const (
-	uniffiIdxCallbackFree               uniffiCallbackResult = 0
-	uniffiCallbackResultSuccess         uniffiCallbackResult = 0
-	uniffiCallbackResultError           uniffiCallbackResult = 1
-	uniffiCallbackUnexpectedResultError uniffiCallbackResult = 2
-	uniffiCallbackCancelled             uniffiCallbackResult = 3
-)
-
-type concurrentHandleMap[T any] struct {
-	handles       map[uint64]T
-	currentHandle uint64
-	lock          sync.RWMutex
-}
-
-func newConcurrentHandleMap[T any]() *concurrentHandleMap[T] {
-	return &concurrentHandleMap[T]{
-		handles:       map[uint64]T{},
-		currentHandle: 1,
-	}
-}
-
-func (cm *concurrentHandleMap[T]) insert(obj T) uint64 {
-	cm.lock.Lock()
-	defer cm.lock.Unlock()
-
-	handle := cm.currentHandle
-	cm.currentHandle = cm.currentHandle + 2
-	cm.handles[handle] = obj
-	return handle
-}
-
-func (cm *concurrentHandleMap[T]) remove(handle uint64) {
-	cm.lock.Lock()
-	defer cm.lock.Unlock()
-
-	delete(cm.handles, handle)
-}
-
-func (cm *concurrentHandleMap[T]) tryGet(handle uint64) (T, bool) {
-	cm.lock.RLock()
-	defer cm.lock.RUnlock()
-
-	val, ok := cm.handles[handle]
-	return val, ok
-}
-
 //export cyclops_sdk_transport_cgo_dispatchCallbackInterfaceHttpClientMethod0
 func cyclops_sdk_transport_cgo_dispatchCallbackInterfaceHttpClientMethod0(uniffiHandle C.uint64_t, request C.RustBuffer, uniffiFutureCallback C.UniffiForeignFutureCompleteRustBuffer, uniffiCallbackData C.uint64_t, uniffiOutDroppedCallback *C.UniffiForeignFutureDroppedCallbackStruct) {
 	handle := uint64(uniffiHandle)
@@ -1729,6 +2035,62 @@ func (c FfiConverterCyclopsConfiguration) Write(writer io.Writer, value CyclopsC
 type FfiDestroyerCyclopsConfiguration struct{}
 
 func (_ FfiDestroyerCyclopsConfiguration) Destroy(value CyclopsConfiguration) {
+	value.Destroy()
+}
+
+type CyclopsTokenProviderConfiguration struct {
+	BaseUrl             string
+	PoolPollIntervalMs  uint64
+	PoolPollLimit       uint32
+	ClaimPollIntervalMs uint64
+	ClaimPollLimit      uint32
+}
+
+func (r *CyclopsTokenProviderConfiguration) Destroy() {
+	FfiDestroyerString{}.Destroy(r.BaseUrl)
+	FfiDestroyerUint64{}.Destroy(r.PoolPollIntervalMs)
+	FfiDestroyerUint32{}.Destroy(r.PoolPollLimit)
+	FfiDestroyerUint64{}.Destroy(r.ClaimPollIntervalMs)
+	FfiDestroyerUint32{}.Destroy(r.ClaimPollLimit)
+}
+
+type FfiConverterCyclopsTokenProviderConfiguration struct{}
+
+var FfiConverterCyclopsTokenProviderConfigurationINSTANCE = FfiConverterCyclopsTokenProviderConfiguration{}
+
+func (c FfiConverterCyclopsTokenProviderConfiguration) Lift(rb RustBufferI) CyclopsTokenProviderConfiguration {
+	return LiftFromRustBuffer[CyclopsTokenProviderConfiguration](c, rb)
+}
+
+func (c FfiConverterCyclopsTokenProviderConfiguration) Read(reader io.Reader) CyclopsTokenProviderConfiguration {
+	return CyclopsTokenProviderConfiguration{
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterUint64INSTANCE.Read(reader),
+		FfiConverterUint32INSTANCE.Read(reader),
+		FfiConverterUint64INSTANCE.Read(reader),
+		FfiConverterUint32INSTANCE.Read(reader),
+	}
+}
+
+func (c FfiConverterCyclopsTokenProviderConfiguration) Lower(value CyclopsTokenProviderConfiguration) C.RustBuffer {
+	return LowerIntoRustBuffer[CyclopsTokenProviderConfiguration](c, value)
+}
+
+func (c FfiConverterCyclopsTokenProviderConfiguration) LowerExternal(value CyclopsTokenProviderConfiguration) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[CyclopsTokenProviderConfiguration](c, value))
+}
+
+func (c FfiConverterCyclopsTokenProviderConfiguration) Write(writer io.Writer, value CyclopsTokenProviderConfiguration) {
+	FfiConverterStringINSTANCE.Write(writer, value.BaseUrl)
+	FfiConverterUint64INSTANCE.Write(writer, value.PoolPollIntervalMs)
+	FfiConverterUint32INSTANCE.Write(writer, value.PoolPollLimit)
+	FfiConverterUint64INSTANCE.Write(writer, value.ClaimPollIntervalMs)
+	FfiConverterUint32INSTANCE.Write(writer, value.ClaimPollLimit)
+}
+
+type FfiDestroyerCyclopsTokenProviderConfiguration struct{}
+
+func (_ FfiDestroyerCyclopsTokenProviderConfiguration) Destroy(value CyclopsTokenProviderConfiguration) {
 	value.Destroy()
 }
 
@@ -2032,6 +2394,112 @@ type FfiDestroyerSandbox struct{}
 
 func (_ FfiDestroyerSandbox) Destroy(value Sandbox) {
 	value.Destroy()
+}
+
+type AccessTokenProviderError struct {
+	err error
+}
+
+// Convenience method to turn *AccessTokenProviderError into error
+// Avoiding treating nil pointer as non nil error interface
+func (err *AccessTokenProviderError) AsError() error {
+	if err == nil {
+		return nil
+	} else {
+		return err
+	}
+}
+
+func (err AccessTokenProviderError) Error() string {
+	return fmt.Sprintf("AccessTokenProviderError: %s", err.err.Error())
+}
+
+func (err AccessTokenProviderError) Unwrap() error {
+	return err.err
+}
+
+// Err* are used for checking error type with `errors.Is`
+var ErrAccessTokenProviderErrorFailed = fmt.Errorf("AccessTokenProviderErrorFailed")
+
+// Variant structs
+type AccessTokenProviderErrorFailed struct {
+	Reason string
+}
+
+func NewAccessTokenProviderErrorFailed(
+	reason string,
+) *AccessTokenProviderError {
+	return &AccessTokenProviderError{err: &AccessTokenProviderErrorFailed{
+		Reason: reason}}
+}
+
+func (e AccessTokenProviderErrorFailed) destroy() {
+	FfiDestroyerString{}.Destroy(e.Reason)
+}
+
+func (err AccessTokenProviderErrorFailed) Error() string {
+	return fmt.Sprint("Failed",
+		": ",
+
+		"Reason=",
+		err.Reason,
+	)
+}
+
+func (self AccessTokenProviderErrorFailed) Is(target error) bool {
+	return target == ErrAccessTokenProviderErrorFailed
+}
+
+type FfiConverterAccessTokenProviderError struct{}
+
+var FfiConverterAccessTokenProviderErrorINSTANCE = FfiConverterAccessTokenProviderError{}
+
+func (c FfiConverterAccessTokenProviderError) Lift(eb RustBufferI) *AccessTokenProviderError {
+	return LiftFromRustBuffer[*AccessTokenProviderError](c, eb)
+}
+
+func (c FfiConverterAccessTokenProviderError) Lower(value *AccessTokenProviderError) C.RustBuffer {
+	return LowerIntoRustBuffer[*AccessTokenProviderError](c, value)
+}
+
+func (c FfiConverterAccessTokenProviderError) LowerExternal(value *AccessTokenProviderError) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[*AccessTokenProviderError](c, value))
+}
+
+func (c FfiConverterAccessTokenProviderError) Read(reader io.Reader) *AccessTokenProviderError {
+	errorID := readUint32(reader)
+
+	switch errorID {
+	case 1:
+		return &AccessTokenProviderError{&AccessTokenProviderErrorFailed{
+			Reason: FfiConverterStringINSTANCE.Read(reader),
+		}}
+	default:
+		panic(fmt.Sprintf("Unknown error code %d in FfiConverterAccessTokenProviderError.Read()", errorID))
+	}
+}
+
+func (c FfiConverterAccessTokenProviderError) Write(writer io.Writer, value *AccessTokenProviderError) {
+	switch variantValue := value.err.(type) {
+	case *AccessTokenProviderErrorFailed:
+		writeInt32(writer, 1)
+		FfiConverterStringINSTANCE.Write(writer, variantValue.Reason)
+	default:
+		_ = variantValue
+		panic(fmt.Sprintf("invalid error value `%v` in FfiConverterAccessTokenProviderError.Write", value))
+	}
+}
+
+type FfiDestroyerAccessTokenProviderError struct{}
+
+func (_ FfiDestroyerAccessTokenProviderError) Destroy(value *AccessTokenProviderError) {
+	switch variantValue := value.err.(type) {
+	case AccessTokenProviderErrorFailed:
+		variantValue.destroy()
+	default:
+		_ = variantValue
+		panic(fmt.Sprintf("invalid error value `%v` in FfiDestroyerAccessTokenProviderError.Destroy", value))
+	}
 }
 
 type HttpError struct {

@@ -72,6 +72,7 @@ require (
 	github.com/oklog/run v1.2.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
+	github.com/trycua/cloud/cyclops-cs/sdk-bindings/go-uniffi v0.0.0
 	github.com/vmihailenco/msgpack v4.0.4+incompatible // indirect
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
@@ -101,3 +102,5 @@ require (
 	sigs.k8s.io/structured-merge-diff/v4 v4.4.1 // indirect
 	sigs.k8s.io/yaml v1.4.0 // indirect
 )
+
+replace github.com/trycua/cloud/cyclops-cs/sdk-bindings/go-uniffi => ../sdk-bindings/go-uniffi

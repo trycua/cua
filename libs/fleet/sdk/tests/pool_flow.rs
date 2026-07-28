@@ -408,7 +408,7 @@ async fn lists_gets_and_updates_typed_pools() {
     let requests = resource_requests(&http).await;
     assert_request(&requests[0], "GET", COLLECTION, None);
     assert_request(&requests[1], "GET", ITEM, None);
-    assert_request(&requests[2], "PUT", ITEM, Some(&json_bytes(&updated)));
+    assert_merge_patch_request(&requests[2], ITEM, Some(&json_bytes(&updated)));
 }
 
 #[tokio::test]
@@ -475,7 +475,7 @@ async fn gets_and_updates_non_lifecycle_pool_resources_without_namespace_cleanup
     let requests = resource_requests(&http).await;
     assert_eq!(requests.len(), 2);
     assert_request(&requests[0], "GET", &other_item, None);
-    assert_request(&requests[1], "PUT", &other_item, Some(&json_bytes(&other)));
+    assert_merge_patch_request(&requests[1], &other_item, Some(&json_bytes(&other)));
 }
 
 #[tokio::test]
@@ -653,6 +653,29 @@ fn response(status: u16, body: &[u8]) -> HttpResponse {
 
 async fn resource_requests(http: &ScriptedHttpClient) -> Vec<cyclops_sdk::HttpRequest> {
     http.requests().await.into_iter().skip(1).collect()
+}
+
+fn assert_merge_patch_request(request: &cyclops_sdk::HttpRequest, url: &str, body: Option<&[u8]>) {
+    assert_eq!(request.method, "PATCH");
+    assert_eq!(request.url, url);
+    assert_eq!(request.body.as_deref(), body);
+    assert_eq!(
+        request.headers,
+        vec![
+            HttpHeader {
+                name: "accept".into(),
+                value: "application/json".into(),
+            },
+            HttpHeader {
+                name: "content-type".into(),
+                value: "application/merge-patch+json".into(),
+            },
+            HttpHeader {
+                name: "authorization".into(),
+                value: "Bearer token-a".into(),
+            },
+        ]
+    );
 }
 
 fn assert_request(

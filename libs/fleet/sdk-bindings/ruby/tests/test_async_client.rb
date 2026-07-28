@@ -17,7 +17,7 @@ def claim_json(bound = false)
 end
 
 def token_expected
-  Expected.new('POST', TOKEN, [['accept', 'application/json'], ['content-type', 'application/x-www-form-urlencoded']], 'grant_type=client_credentials&client_id=client-id&client_secret=client-secret'.b, 200, { access_token: 'offline-token', expires_in: 3600 })
+  Expected.new('POST', TOKEN, [['accept', 'application/json'], ['content-type', 'application/x-www-form-urlencoded'], ['authorization', 'Basic Y2xpZW50LWlkOmNsaWVudC1zZWNyZXQ=']], 'grant_type=client_credentials'.b, 200, { access_token: 'offline-token', expires_in: 3600 })
 end
 
 def service_expected(body, response)

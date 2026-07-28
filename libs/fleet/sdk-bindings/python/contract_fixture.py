@@ -41,7 +41,7 @@ class ScriptedHttpClient(HttpClient):
         assert not self.expected, self.expected
 
 def token_expected():
-    return Expected('POST', TOKEN, [('accept', 'application/json'), ('content-type', 'application/x-www-form-urlencoded')], b'grant_type=client_credentials&client_id=client-id&client_secret=client-secret', 200, {'access_token': 'offline-token', 'expires_in': 3600})
+    return Expected('POST', TOKEN, [('accept', 'application/json'), ('content-type', 'application/x-www-form-urlencoded'), ('authorization', 'Basic Y2xpZW50LWlkOmNsaWVudC1zZWNyZXQ=')], b'grant_type=client_credentials', 200, {'access_token': 'offline-token', 'expires_in': 3600})
 
 def service_expected(body, response):
     return Expected('POST', SERVICE_URL, SERVICE_HEADERS, body, 202, response)

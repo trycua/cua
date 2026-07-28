@@ -207,6 +207,7 @@ name = "cyclops-sdk"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64",
  "camino",
  "cyclops-sdk-schema",
  "futures-timer",

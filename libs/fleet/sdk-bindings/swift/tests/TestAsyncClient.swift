@@ -22,8 +22,9 @@ private func tokenExpected() -> Expected {
         headers: [
             HttpHeader(name: "accept", value: "application/json"),
             HttpHeader(name: "content-type", value: "application/x-www-form-urlencoded"),
+            HttpHeader(name: "authorization", value: "Basic Y2xpZW50LWlkOmNsaWVudC1zZWNyZXQ="),
         ],
-        body: Data("grant_type=client_credentials&client_id=client-id&client_secret=client-secret".utf8),
+        body: Data("grant_type=client_credentials".utf8),
         status: 200,
         response: Data(#"{"access_token":"offline-token","expires_in":3600}"#.utf8)
     )

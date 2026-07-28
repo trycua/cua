@@ -111,6 +111,12 @@ public Registry, and `terraform providers` should list
 ## Development
 
 ```bash
+native="$(../scripts/build-sdk-bindings-native.sh)"
+native_dir="$(dirname "$native")"
+export CGO_CFLAGS="-I../sdk-bindings/go-uniffi/cyclops_sdk -I../sdk-bindings/go-uniffi/cyclops_sdk_schema"
+export CGO_LDFLAGS="-L$native_dir -lcyclops_sdk -Wl,-rpath,$native_dir"
+export LD_LIBRARY_PATH="$native_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
 go test ./...
 go build ./...
 

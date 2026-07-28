@@ -1,8 +1,14 @@
 package provider
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -11,7 +17,12 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
-	"github.com/trycua/terraform-provider-fleets/internal/client"
+	"github.com/trycua/cloud/cyclops-cs/sdk-bindings/go-uniffi/cyclops_sdk"
+)
+
+const (
+	sdkPollIntervalMs uint64 = 5000
+	sdkPollLimit      uint32 = 100
 )
 
 type fleetsProvider struct{ version string }
@@ -58,11 +69,13 @@ func (p *fleetsProvider) Configure(ctx context.Context, req provider.ConfigureRe
 		}
 		return os.Getenv(env)
 	}
-	apiClient, err := client.New(client.Config{
-		Endpoint: value(data.Endpoint, "CYCLOPS_ENDPOINT"), AccessToken: value(data.AccessToken, "CYCLOPS_ACCESS_TOKEN"),
-		ClientID: value(data.ClientID, "CYCLOPS_CLIENT_ID"), ClientSecret: value(data.ClientSecret, "CYCLOPS_CLIENT_SECRET"),
-		TokenURL: value(data.TokenURL, "CYCLOPS_TOKEN_URL"),
-	})
+	apiClient, err := newCyclopsClient(
+		value(data.Endpoint, "CYCLOPS_ENDPOINT"),
+		value(data.AccessToken, "CYCLOPS_ACCESS_TOKEN"),
+		value(data.ClientID, "CYCLOPS_CLIENT_ID"),
+		value(data.ClientSecret, "CYCLOPS_CLIENT_SECRET"),
+		value(data.TokenURL, "CYCLOPS_TOKEN_URL"),
+	)
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid Fleets provider configuration", err.Error())
 		return
@@ -77,7 +90,59 @@ func (p *fleetsProvider) Resources(_ context.Context) []func() resource.Resource
 
 func (p *fleetsProvider) DataSources(_ context.Context) []func() datasource.DataSource { return nil }
 
-var _ provider.Provider = (*fleetsProvider)(nil)
+func newCyclopsClient(endpoint, accessToken, clientID, clientSecret, tokenURL string) (*cyclops_sdk.CyclopsClient, error) {
+	endpoint = strings.TrimRight(strings.TrimSpace(endpoint), "/")
+	if endpoint == "" {
+		return nil, fmt.Errorf("endpoint is required")
+	}
+	client := sdkHTTPClient{client: &http.Client{Timeout: 30 * time.Second}}
+	if accessToken != "" {
+		return cyclops_sdk.CyclopsClientConnectWithAccessToken(cyclops_sdk.CyclopsTokenProviderConfiguration{
+			BaseUrl: endpoint, PoolPollIntervalMs: sdkPollIntervalMs, PoolPollLimit: sdkPollLimit,
+			ClaimPollIntervalMs: sdkPollIntervalMs, ClaimPollLimit: sdkPollLimit,
+		}, accessToken, client)
+	}
+	if clientID == "" || clientSecret == "" || tokenURL == "" {
+		return nil, fmt.Errorf("set access_token or client_id, client_secret, and token_url")
+	}
+	return cyclops_sdk.CyclopsClientConnect(cyclops_sdk.CyclopsConfiguration{
+		BaseUrl: endpoint, TokenUrl: tokenURL, Credentials: cyclops_sdk.NewCyclopsCredentials(clientID, clientSecret),
+		PoolPollIntervalMs: sdkPollIntervalMs, PoolPollLimit: sdkPollLimit,
+		ClaimPollIntervalMs: sdkPollIntervalMs, ClaimPollLimit: sdkPollLimit,
+	}, client)
+}
+
+type sdkHTTPClient struct{ client *http.Client }
+
+func (c sdkHTTPClient) Execute(request cyclops_sdk.HttpRequest) (cyclops_sdk.HttpResponse, error) {
+	var body io.Reader
+	if request.Body != nil {
+		body = bytes.NewReader(*request.Body)
+	}
+	nativeRequest, err := http.NewRequest(request.Method, request.Url, body)
+	if err != nil {
+		return cyclops_sdk.HttpResponse{}, err
+	}
+	for _, header := range request.Headers {
+		nativeRequest.Header.Add(header.Name, header.Value)
+	}
+	nativeResponse, err := c.client.Do(nativeRequest)
+	if err != nil {
+		return cyclops_sdk.HttpResponse{}, err
+	}
+	defer nativeResponse.Body.Close()
+	responseBody, err := io.ReadAll(nativeResponse.Body)
+	if err != nil {
+		return cyclops_sdk.HttpResponse{}, err
+	}
+	headers := make([]cyclops_sdk.HttpHeader, 0, len(nativeResponse.Header))
+	for name, values := range nativeResponse.Header {
+		for _, value := range values {
+			headers = append(headers, cyclops_sdk.HttpHeader{Name: name, Value: value})
+		}
+	}
+	return cyclops_sdk.HttpResponse{Status: uint16(nativeResponse.StatusCode), Headers: headers, Body: responseBody}, nil
+}
 
 func objectValue(ctx context.Context, object types.Object, target any, diagnostics *diag.Diagnostics) bool {
 	if object.IsNull() || object.IsUnknown() {
@@ -86,3 +151,5 @@ func objectValue(ctx context.Context, object types.Object, target any, diagnosti
 	diagnostics.Append(object.As(ctx, target, basetypes.ObjectAsOptions{})...)
 	return !diagnostics.HasError()
 }
+
+var _ provider.Provider = (*fleetsProvider)(nil)

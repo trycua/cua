@@ -15,6 +15,7 @@
     "record-and-render-a-trajectory",
     "keep-running",
     "restrict-tool-access",
+    "write-a-bounded-manifest",
     "personalize-cursor",
     "update",
     "troubleshoot-stale-macos-permissions",

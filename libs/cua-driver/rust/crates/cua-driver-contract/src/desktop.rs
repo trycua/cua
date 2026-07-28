@@ -8,10 +8,11 @@
 //! do not replace the richer platform-owned runtime schemas.
 
 use crate::{
-    ClickInput, ClickOutput, CursorPositionOutput, DesktopActionOutput, DesktopStateOutput,
-    DragInput, GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput, HotkeyInput,
-    MoveCursorInput, MoveCursorOutput, Platform, PressKeyInput, SchemaMode, ScreenSizeOutput,
-    ScrollInput, ToolAnnotations, ToolContract, ToolInput, ToolOutput, TypeTextInput,
+    ClickInput, ClickOutput, CursorAction, CursorPositionOutput, CursorSemantics,
+    DesktopActionOutput, DesktopStateOutput, DragInput, GetCursorPositionInput,
+    GetDesktopStateInput, GetScreenSizeInput, HotkeyInput, MoveCursorInput, MoveCursorOutput,
+    Platform, PressKeyInput, SchemaMode, ScreenSizeOutput, ScrollInput, ToolAnnotations,
+    ToolContract, ToolInput, ToolOutput, TypeTextInput,
 };
 
 const ALL_PLATFORMS: [Platform; 3] = [Platform::Macos, Platform::Windows, Platform::Linux];
@@ -36,6 +37,7 @@ fn contract<I: ToolInput, O: ToolOutput>(
     description: &str,
     capabilities: &[&str],
     annotations: ToolAnnotations,
+    cursor_action: CursorAction,
 ) -> ToolContract {
     assert_eq!(name, I::TOOL_NAME, "typed input is bound to the wrong tool");
     ToolContract {
@@ -46,6 +48,7 @@ fn contract<I: ToolInput, O: ToolOutput>(
         capabilities: capabilities.iter().map(|value| (*value).into()).collect(),
         annotations,
         schema_mode: SchemaMode::PortableSubset,
+        cursor_semantics: Some(CursorSemantics::new(cursor_action)),
         input_schema: I::input_schema(),
         success_output_schema: Some(O::output_schema()),
         output_validator: crate::validate_typed_output::<O>,
@@ -63,6 +66,7 @@ fn get_desktop_state() -> ToolContract {
             idempotent: false,
             open_world: false,
         },
+        CursorAction::Observe,
     )
 }
 
@@ -77,6 +81,7 @@ fn get_screen_size() -> ToolContract {
             idempotent: true,
             open_world: false,
         },
+        CursorAction::Observe,
     )
 }
 
@@ -91,6 +96,7 @@ fn get_cursor_position() -> ToolContract {
             idempotent: true,
             open_world: false,
         },
+        CursorAction::Observe,
     )
 }
 
@@ -105,6 +111,7 @@ fn move_cursor() -> ToolContract {
             idempotent: true,
             open_world: false,
         },
+        CursorAction::Navigate,
     )
 }
 
@@ -123,6 +130,7 @@ fn click() -> ToolContract {
             idempotent: false,
             open_world: true,
         },
+        CursorAction::Click,
     )
 }
 
@@ -137,6 +145,7 @@ fn drag() -> ToolContract {
             idempotent: false,
             open_world: true,
         },
+        CursorAction::Drag,
     )
 }
 
@@ -151,6 +160,7 @@ fn scroll() -> ToolContract {
             idempotent: false,
             open_world: true,
         },
+        CursorAction::Scroll,
     )
 }
 
@@ -169,6 +179,7 @@ fn type_text() -> ToolContract {
             idempotent: false,
             open_world: true,
         },
+        CursorAction::Text,
     )
 }
 
@@ -183,6 +194,7 @@ fn press_key() -> ToolContract {
             idempotent: false,
             open_world: true,
         },
+        CursorAction::Key,
     )
 }
 
@@ -197,5 +209,6 @@ fn hotkey() -> ToolContract {
             idempotent: false,
             open_world: true,
         },
+        CursorAction::Key,
     )
 }

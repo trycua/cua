@@ -180,11 +180,14 @@ pub fn is_available() -> bool {
     post_to_pid_fn().is_some()
 }
 
-/// `true` when all three focus-without-raise SPIs resolved.
+/// `true` when the focus-without-raise SPIs resolved, including either the
+/// modern window-owner PSN lookup or the deprecated pid fallback.
 pub fn is_focus_without_raise_available() -> bool {
-    get_front_process_fn().is_some()
-        && get_process_for_pid_fn().is_some()
-        && post_event_record_to_fn().is_some()
+    let has_psn_lookup = (connection_id_fn().is_some()
+        && get_window_owner_fn().is_some()
+        && get_connection_psn_fn().is_some())
+        || get_process_for_pid_fn().is_some();
+    get_front_process_fn().is_some() && has_psn_lookup && post_event_record_to_fn().is_some()
 }
 
 // ── ObjC runtime helpers ───────────────────────────────────────────────────
@@ -337,7 +340,8 @@ pub fn main_connection_id() -> Option<u32> {
 ///
 /// Recipe:
 /// 1. `_SLPSGetFrontProcess` → capture current front PSN.
-/// 2. `GetProcessForPID(target_pid)` → target PSN.
+/// 2. `SLSGetWindowOwner + SLSGetConnectionPSN` → target PSN, with
+///    `GetProcessForPID(target_pid)` as an older-system fallback.
 /// 3. Post 248-byte defocus record to front PSN (`bytes[0x8a] = 0x02`).
 /// 4. Post 248-byte focus record to target PSN (`bytes[0x8a] = 0x01`,
 ///    `bytes[0x3c..0x3f]` = `target_wid` little-endian).
@@ -356,11 +360,6 @@ pub fn activate_without_raise(target_pid: pid_t, target_wid: u32) -> bool {
         Some(f) => f,
         None => return false,
     };
-    let get_pid_psn = match get_process_for_pid_fn() {
-        Some(f) => f,
-        None => return false,
-    };
-
     // 8-byte PSN buffers (two UInt32s).
     let mut prev_psn = [0u8; 8];
     let mut target_psn = [0u8; 8];
@@ -370,8 +369,7 @@ pub fn activate_without_raise(target_pid: pid_t, target_wid: u32) -> bool {
         return false;
     }
 
-    let ok_target = unsafe { get_pid_psn(target_pid, target_psn.as_mut_ptr() as *mut c_void) } == 0;
-    if !ok_target {
+    if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
         return false;
     }
 

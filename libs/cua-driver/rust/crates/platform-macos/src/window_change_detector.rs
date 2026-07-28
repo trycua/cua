@@ -179,17 +179,32 @@ impl WindowChangeDetector {
     /// Safe to call from any thread — `CGWindowListCopyWindowInfo` is
     /// documented as thread-safe.
     pub fn snapshot(prior_front: Option<i32>) -> Snapshot {
-        Self::capture(prior_front, true)
+        Self::capture(prior_front, true, None)
     }
 
     /// Capture the same before-state without arming reactive focus suppression.
     /// Foreground delivery owns its temporary activation and restoration, so a
     /// wildcard lease would race the target while the action is settling.
     pub fn snapshot_without_suppression(prior_front: Option<i32>) -> Snapshot {
-        Self::capture(prior_front, false)
+        Self::capture(prior_front, false, None)
     }
 
-    fn capture(prior_front: Option<i32>, suppress_focus: bool) -> Snapshot {
+    /// Capture the before-state and suppress cross-app activations while
+    /// allowing one intentional target activation.
+    ///
+    /// The raw background pixel-click path needs this middle ground:
+    /// focus-without-raise makes `allowed_pid` AppKit-active so its event queue
+    /// accepts the click, but a link or hand-off that activates a different app
+    /// must still restore the user's original foreground.
+    pub fn snapshot_allowing_activation(prior_front: Option<i32>, allowed_pid: i32) -> Snapshot {
+        Self::capture(prior_front, true, Some(allowed_pid))
+    }
+
+    fn capture(
+        prior_front: Option<i32>,
+        suppress_focus: bool,
+        allowed_pid: Option<i32>,
+    ) -> Snapshot {
         let window_ids: HashSet<u32> = windows::visible_windows()
             .into_iter()
             .filter(|w| w.layer == 0)
@@ -201,13 +216,20 @@ impl WindowChangeDetector {
         // (any other pid). If there's no frontmost (rare — screensaver,
         // login window), we skip the lease; foreground-change tracking
         // still runs.
-        let lease = prior_front.filter(|_| suppress_focus).map(|restore_to| {
-            focus_steal::begin_suppression(
-                None, // wildcard
-                restore_to,
-                "WindowChangeDetector.snapshot",
-            )
-        });
+        let lease = prior_front
+            .filter(|_| suppress_focus)
+            .map(|restore_to| match allowed_pid {
+                Some(pid) => focus_steal::begin_suppression_allowing(
+                    pid,
+                    restore_to,
+                    "WindowChangeDetector.snapshot_allowing_activation",
+                ),
+                None => focus_steal::begin_suppression(
+                    None, // wildcard
+                    restore_to,
+                    "WindowChangeDetector.snapshot",
+                ),
+            });
 
         Snapshot {
             window_ids,

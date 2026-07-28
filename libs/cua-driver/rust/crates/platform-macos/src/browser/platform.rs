@@ -341,6 +341,7 @@ async fn active_port_endpoint(
         ownership: EndpointOwnershipProof {
             method: EndpointOwnershipMethod::DevtoolsActivePortsFile,
             owner_pid: pid,
+            listener_pid: None,
             detail: Some(
                 "exact default-profile DevToolsActivePort path plus lsof loopback listener owner"
                     .to_owned(),
@@ -592,6 +593,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                     ownership: EndpointOwnershipProof {
                         method: EndpointOwnershipMethod::ListeningSocketPid,
                         owner_pid: pid,
+                        listener_pid: None,
                         detail: Some("lsof loopback listener owner".to_owned()),
                     },
                 }));
@@ -623,6 +625,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                 ownership: EndpointOwnershipProof {
                     method: EndpointOwnershipMethod::ListeningSocketPid,
                     owner_pid: pid,
+                    listener_pid: None,
                     detail: Some("lsof loopback listener owner plus /json/version".to_owned()),
                 },
             }));
@@ -670,6 +673,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
             ownership: EndpointOwnershipProof {
                 method: EndpointOwnershipMethod::ListeningSocketPid,
                 owner_pid: pid,
+                listener_pid: None,
                 detail: Some("lsof owner of exact approved endpoint".to_owned()),
             },
         }))
@@ -723,6 +727,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         .await?;
         let opened_setup_page = handle.opened_setup_page;
         let enabled_remote_debugging = handle.enabled_remote_debugging;
+        let used_bounded_pixel_fallback = handle.used_bounded_pixel_fallback;
         let focused_setup_address_field = handle.focused_setup_address_field;
         let foregrounded_window = handle.foregrounded_window;
         let injected_global_input = handle.injected_global_input;
@@ -774,6 +779,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                         ownership: EndpointOwnershipProof {
                             method: EndpointOwnershipMethod::ListeningSocketPid,
                             owner_pid: request.pid,
+                            listener_pid: None,
                             detail: Some((*detail).to_owned()),
                         },
                     })
@@ -822,6 +828,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
             opened_setup_page,
             closed_setup_page: false,
             enabled_remote_debugging,
+            used_bounded_pixel_fallback,
             focused_setup_address_field,
             foregrounded_window,
             injected_global_input,

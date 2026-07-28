@@ -285,10 +285,30 @@ fn click_at_xy_inner(
     Ok(())
 }
 
-/// Full Chromium-compatible left-click recipe matching Swift's `clickViaAuthSignedPost`.
+/// Prepare a raw background pixel click by making the target AppKit-active
+/// without raising or restacking its window.
 ///
-/// The sequence stays PID/window-routed throughout. It must not make the target
-/// key: changing key-window ownership violates background delivery.
+/// The Swift implementation ran this immediately before the stamped event
+/// stream. The original Rust port retained the SkyLight primitive but omitted
+/// this call while cursor-overlay repinning was incomplete. Callers should
+/// re-pin their overlay after this returns, then post the click sequence.
+///
+/// Returns whether the private focus-without-raise recipe succeeded. Event
+/// posting remains best-effort when the private APIs are unavailable.
+pub fn prepare_background_pixel_click(pid: i32, wid: u32) -> bool {
+    let activated = crate::input::skylight::activate_without_raise(pid as libc::pid_t, wid);
+    // Match Swift's settle interval so AppKit updates its active/key-window
+    // routing before the mouseMoved + primer + target stream arrives.
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    activated
+}
+
+/// Post the stamped event half of the Chromium-compatible left-click recipe
+/// matching Swift's `clickViaAuthSignedPost`.
+///
+/// The sequence stays PID/window-routed throughout. The caller must first run
+/// [`prepare_background_pixel_click`] for background delivery, then re-pin any
+/// cursor overlay before entering this event stream.
 ///  1. Stamped `mouseMoved` at target coords (f0=2, cursor-state primer).
 ///  2. Off-screen primer down/up at (-1, -1) (f0=1/2) — satisfies Chromium's
 ///     user-activation gate without hitting any DOM element.

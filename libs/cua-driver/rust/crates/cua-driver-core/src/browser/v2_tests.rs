@@ -27,7 +27,8 @@ use super::platform::{
 use super::pointer::BrowserPointerTool;
 use super::refusal::BrowserRefusal;
 use super::tools::{
-    BrowserClickTool, BrowserNavigateTool, BrowserPrepareTool, BrowserTypeTool, GetBrowserStateTool,
+    browser_protected_resource_scope, BrowserClickTool, BrowserNavigateTool, BrowserPrepareTool,
+    BrowserTypeTool, GetBrowserStateTool,
 };
 use super::types::{
     BrowserClassification, BrowserEngineFamily, BrowserProduct, EndpointOwnershipMethod,
@@ -45,6 +46,7 @@ struct FixtureState {
     oopif_supported: bool,
     oopif_present: bool,
     emit_rogue_attach: bool,
+    main_url: String,
     main_loader: String,
     iframe_loader: String,
     oopif_loader: String,
@@ -70,6 +72,7 @@ impl Default for FixtureState {
             oopif_supported: true,
             oopif_present: true,
             emit_rogue_attach: false,
+            main_url: "https://fixture.test/".into(),
             main_loader: "L_MAIN_1".into(),
             iframe_loader: "L_IFRAME_1".into(),
             oopif_loader: "L_OOPIF_1".into(),
@@ -442,7 +445,7 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     "frame": {
                         "id": "F_MAIN",
                         "loaderId": st.main_loader.clone(),
-                        "url": "https://fixture.test/",
+                        "url": st.main_url.clone(),
                     },
                     "childFrames": [{
                         "frame": {
@@ -733,6 +736,7 @@ impl BrowserPlatform for FixturePlatform {
             ownership: EndpointOwnershipProof {
                 method: EndpointOwnershipMethod::ListeningSocketPid,
                 owner_pid: pid,
+                listener_pid: None,
                 detail: None,
             },
         }))
@@ -752,6 +756,7 @@ impl BrowserPlatform for FixturePlatform {
             ownership: EndpointOwnershipProof {
                 method: EndpointOwnershipMethod::ListeningSocketPid,
                 owner_pid: pid,
+                listener_pid: None,
                 detail: Some("fixture exact approved endpoint".to_owned()),
             },
         }))
@@ -766,6 +771,7 @@ impl BrowserPlatform for FixturePlatform {
             opened_setup_page: true,
             closed_setup_page: false,
             enabled_remote_debugging: true,
+            used_bounded_pixel_fallback: false,
             focused_setup_address_field: true,
             foregrounded_window: false,
             injected_global_input: false,
@@ -775,6 +781,7 @@ impl BrowserPlatform for FixturePlatform {
                 ownership: EndpointOwnershipProof {
                     method: EndpointOwnershipMethod::ListeningSocketPid,
                     owner_pid: 1,
+                    listener_pid: None,
                     detail: Some("fixture exact setup transition".to_owned()),
                 },
             }),
@@ -901,7 +908,6 @@ async fn existing_profile_only_fixture() -> Fixture {
 
 struct FixtureProtectedProvider {
     consent_seen: AtomicBool,
-    stopped: Arc<AtomicBool>,
 }
 
 #[async_trait]
@@ -920,20 +926,6 @@ impl crate::consent::ProtectedConsentProvider for FixtureProtectedProvider {
             request_digest: request.request_digest.clone(),
         })
     }
-
-    async fn activate_indicator(
-        &self,
-        _request: &crate::consent::ConsentRequest,
-    ) -> Result<crate::consent::IndicatorLease, String> {
-        Ok(crate::consent::IndicatorLease::new(
-            "browser-indicator",
-            self.stopped.clone(),
-        ))
-    }
-
-    async fn deactivate_indicator(&self, _indicator_id: &str) {
-        self.stopped.store(true, Ordering::SeqCst);
-    }
 }
 
 async fn protected_existing_profile_fixture() -> (Fixture, Arc<FixtureProtectedProvider>) {
@@ -942,7 +934,6 @@ async fn protected_existing_profile_fixture() -> (Fixture, Arc<FixtureProtectedP
     let setup_invoked = Arc::new(AtomicBool::new(false));
     let provider = Arc::new(FixtureProtectedProvider {
         consent_seen: AtomicBool::new(false),
-        stopped: Arc::new(AtomicBool::new(false)),
     });
     let engine = BrowserEngine::new_with_protected_consent_provider(
         Arc::new(FixturePlatform {
@@ -1057,7 +1048,7 @@ async fn approved_existing_profile_attach_claims_then_binds_one_generation() {
 }
 
 #[tokio::test]
-async fn protected_provider_accepts_exact_attach_and_stop_revokes_the_grant() {
+async fn protected_provider_accepts_exact_attach_and_session_end_revokes_the_grant() {
     const PROTECTED_SESSION: &str = "protected-provider-v2";
     const PROTECTED_TRANSPORT: &str = "protected-transport-v2";
     let (f, provider) = protected_existing_profile_fixture().await;
@@ -1077,11 +1068,9 @@ async fn protected_provider_accepts_exact_attach_and_stop_revokes_the_grant() {
         structured(&prepare)
     );
     assert!(provider.consent_seen.load(Ordering::SeqCst));
-    assert!(!provider.stopped.load(Ordering::SeqCst));
 
     crate::session::fire_session_end(PROTECTED_TRANSPORT);
     tokio::task::yield_now().await;
-    assert!(provider.stopped.load(Ordering::SeqCst));
 
     let state = GetBrowserStateTool::new(f.engine.clone())
         .invoke(json!({
@@ -1879,6 +1868,50 @@ async fn rogue_attach_announcements_are_contained() {
 }
 
 // ── Mutation routing + frame identity revalidation ──────────────────────────
+
+#[tokio::test]
+async fn protected_browser_scope_reproves_live_origin_and_omits_sensitive_url_text() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let args = json!({
+        "target_id": target,
+        "tab_id": tab,
+        "session": SESSION,
+        "x": 10,
+        "y": 20,
+    });
+
+    let first = browser_protected_resource_scope(&f.engine, &args, "browser_click")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(first["live_origin"], "https://fixture.test");
+    assert!(
+        !first.to_string().contains("secret"),
+        "the resource must not contain a full URL"
+    );
+    let observation = browser_protected_resource_scope(&f.engine, &args, "get_browser_state")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(observation["action_class"], "page_observation");
+    assert_eq!(first["action_class"], "page_input");
+
+    f.state.lock().unwrap().main_url = "https://bank.example/transfer?secret=one-time-token".into();
+    let second = browser_protected_resource_scope(&f.engine, &args, "browser_click")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(second["live_origin"], "https://bank.example");
+    assert_ne!(
+        first, second,
+        "cross-origin navigation must rotate the grant scope"
+    );
+    assert!(
+        !second.to_string().contains("one-time-token"),
+        "query text must never reach the consent resource"
+    );
+}
 
 #[tokio::test]
 async fn click_routes_oopif_refs_through_the_contained_child_session() {

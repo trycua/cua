@@ -1,6 +1,6 @@
 [project]
 name = "cua-fleet"
-version = "0.0.3"
+version = "0.0.4"
 description = "Cua Fleet facade for the Cua Cloud Python SDK"
 readme = "README.md"
 license = "MIT"

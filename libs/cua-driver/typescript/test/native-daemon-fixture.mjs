@@ -11,6 +11,24 @@ const server = net.createServer((connection) => {
     const newline = buffer.indexOf("\n")
     if (newline < 0) return
     const request = JSON.parse(buffer.slice(0, newline))
+    if (request.method === "metadata") {
+      connection.end(
+        `${JSON.stringify({
+          ok: true,
+          result: {
+            driver_version: "0.12.6",
+            contract_version: "0.2.0",
+            tools_list_schema_version: "1",
+            capability_version: "1",
+            mcp_protocol_version: "2025-06-18",
+            pid: process.pid,
+            embedded: false,
+            host_bundle_id: null,
+          },
+        })}\n`,
+      )
+      return
+    }
     process.send?.({ request })
     connection.end(
       `${JSON.stringify({

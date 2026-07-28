@@ -234,7 +234,10 @@ fn forged_legacy_artifact_cannot_authorize_existing_profile_in_standard_mode() {
     assert!(
         response.structured()["refusal"]["message"]
             .as_str()
-            .is_some_and(|message| message.contains("file-backed artifact is disabled")),
+            .is_some_and(|message| {
+                message.contains("--grant existing-profile")
+                    && message.contains("embedding authorization host")
+            }),
         "unexpected refusal: {}",
         response.structured()
     );

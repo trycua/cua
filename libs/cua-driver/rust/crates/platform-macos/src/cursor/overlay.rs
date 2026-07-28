@@ -36,7 +36,7 @@ use std::time::{Duration, Instant};
 
 use cursor_overlay::{
     CursorConfig, CursorKey, FocusRect, KeyedOverlayCommand, MotionConfig, OverlayCommand,
-    OverlayMsg, Palette, RenderStateCore, ZOrderEnforcer,
+    OverlayMsg, RenderStateCore, ZOrderEnforcer,
 };
 use indexmap::IndexMap;
 
@@ -89,8 +89,7 @@ struct RenderMap {
     /// rendered cursor is crisp at native resolution instead of being
     /// bilinear-upsampled by Core Animation from a logical-pixel buffer.
     backing_scale: f64,
-    /// Frozen launch-time config used as the template for lazily-created
-    /// cursors (its palette is overridden per-key via `Palette::for_instance`).
+    /// Frozen launch-time config used as the template for lazily-created cursors.
     template: CursorConfig,
     /// Render-side tombstone of permanently-ended session cursor keys. A `Cmd`
     /// for a key in here is dropped WITHOUT get-or-create, so an in-flight
@@ -102,13 +101,12 @@ struct RenderMap {
     ended: std::collections::HashSet<CursorKey>,
 }
 
-/// Build the `RenderState` for a lazily-created cursor key: derive from the
-/// launch template but give each non-default key its own palette so distinct
-/// sessions get distinct colours automatically.
+/// Build the `RenderState` for a lazily-created session cursor from the
+/// process launch template.
 fn render_state_for_key(template: &CursorConfig, key: &str) -> RenderState {
-    let mut rs = RenderState::new(template.clone());
-    rs.core.palette = Palette::for_instance(key);
-    rs
+    let mut config = template.clone();
+    config.cursor_id = key.to_owned();
+    RenderState::new(config)
 }
 
 /// Apply one inbound [`OverlayMsg`] to the render map (drain step). Factored
@@ -157,20 +155,60 @@ fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
 
 /// Initialise global overlay state (call once, before run_on_main_thread).
 pub fn init(cfg: CursorConfig) {
-    let (tx, rx) = std::sync::mpsc::sync_channel(4096);
-    let _ = CMD_TX.set(tx);
-    *CMD_RX_CELL.lock().unwrap() = Some(rx);
-    *ARRIVAL_TX.lock().unwrap() = Some(HashMap::new());
-    let mut cursors = IndexMap::new();
-    cursors.insert("default".to_owned(), RenderState::new(cfg.clone()));
-    *RENDER.lock().unwrap() = Some(RenderMap {
-        cursors,
-        win_w: 0.0,
-        win_h: 0.0,
-        backing_scale: 1.0, // overwritten in run_appkit() once the NSScreen is known
-        template: cfg,
-        ended: std::collections::HashSet::new(),
+    static INITIALIZED: OnceLock<()> = OnceLock::new();
+    INITIALIZED.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::sync_channel(4096);
+        CMD_TX
+            .set(tx)
+            .expect("cursor overlay sender is initialized exactly once");
+        *CMD_RX_CELL.lock().unwrap() = Some(rx);
+        *ARRIVAL_TX.lock().unwrap() = Some(HashMap::new());
+        let mut cursors = IndexMap::new();
+        cursors.insert("default".to_owned(), RenderState::new(cfg.clone()));
+        *RENDER.lock().unwrap() = Some(RenderMap {
+            cursors,
+            win_w: 0.0,
+            win_h: 0.0,
+            backing_scale: 1.0, // overwritten in run_appkit() once the NSScreen is known
+            template: cfg,
+            ended: std::collections::HashSet::new(),
+        });
     });
+    cua_driver_core::cursor_events::install_cursor_event_sink(std::sync::Arc::new(
+        |event: cua_driver_core::cursor_events::CursorEvent| {
+            use cua_driver_core::cursor_events::{CursorEvent, CursorEventPhase};
+            let (session, cmd) = match event {
+                CursorEvent::SetSessionLabel { session, label } => {
+                    (session, OverlayCommand::SetSessionLabel(label))
+                }
+                CursorEvent::Action {
+                    session,
+                    phase: CursorEventPhase::Begin,
+                    semantics,
+                } => (
+                    session,
+                    OverlayCommand::BeginAction {
+                        action: semantics.action,
+                        delivery: semantics.delivery,
+                        target: semantics.target,
+                    },
+                ),
+                CursorEvent::Action {
+                    session,
+                    phase: CursorEventPhase::End,
+                    semantics,
+                } => (session, OverlayCommand::EndAction(semantics.action)),
+                CursorEvent::SelectTheme { session, selection } => (
+                    session,
+                    OverlayCommand::SetTheme {
+                        theme_id: selection.theme_id,
+                        reduced_motion: selection.reduced_motion,
+                    },
+                ),
+            };
+            send_command(session, cmd);
+        },
+    ));
 }
 
 /// Send a keyed command from any thread (MCP tool, etc.).  Non-blocking; drops
@@ -220,6 +258,26 @@ pub fn current_motion(key: &str) -> MotionConfig {
         .or_else(|| map.cursors.get("default"))
         .map(|rs| rs.core.motion.clone())
         .unwrap_or_default()
+}
+
+/// Return the render-owned theme and semantic playback state for one cursor.
+pub fn current_theme_state(
+    key: &str,
+) -> Option<(
+    String,
+    String,
+    String,
+    Option<String>,
+    cursor_overlay::CursorVisualState,
+)> {
+    let guard = RENDER.lock().unwrap();
+    let map = guard.as_ref()?;
+    let state = map
+        .cursors
+        .get(key)
+        .or_else(|| map.cursors.get("default"))?;
+    let (id, version, profile, fallback) = state.core.active_theme_metadata();
+    Some((id, version, profile, fallback, state.core.visual.clone()))
 }
 
 /// Seed a brand-new (sentinel-positioned) cursor at an on-screen start point
@@ -644,7 +702,7 @@ fn render_loop(
         // `pinned_wid` follows the most-recently-updated cursor: a single
         // NSWindow can occupy only one z-band, so the last-active cursor's
         // target wins. `arrived` collects the keys whose path just ended.
-        let (pinned_wid, arrived, win_w, win_h, had_msg, next_frame_tick_needed) = {
+        let (pinned_wid, raise_unpinned, arrived, win_w, win_h, had_msg, next_frame_tick_needed) = {
             let mut guard = RENDER.lock().unwrap();
             match guard.as_mut() {
                 Some(map) => {
@@ -681,9 +739,15 @@ fn render_loop(
                         .and_then(|k| map.cursors.get(k))
                         .map(|rs| rs.core.pinned_wid)
                         .unwrap_or(last_pinned);
+                    let raise_unpinned = last_key
+                        .as_ref()
+                        .and_then(|k| map.cursors.get(k))
+                        .is_some_and(cursor_is_externally_visible)
+                        && pinned.is_none();
                     let next_frame_tick_needed = render_map_needs_frame_tick(map);
                     (
                         pinned,
+                        raise_unpinned,
                         arrived,
                         map.win_w,
                         map.win_h,
@@ -709,6 +773,13 @@ fn render_loop(
             last_pinned = pinned_wid;
             if pinned_wid.is_some() && (pin_changed || repin_frames >= 60) {
                 MacZOrderEnforcer { win_ptr }.reassert(pinned_wid);
+                repin_frames = 0;
+            } else if raise_unpinned {
+                // A direct move_cursor has no target window to pin against.
+                // Raise the normal-level, click-through overlay without
+                // activating the driver so a later foreground application
+                // cannot cover a standalone session cursor.
+                dispatch_order_front(win_ptr);
                 repin_frames = 0;
             } else if repin_frames >= 60 {
                 repin_frames = 0;
@@ -769,6 +840,14 @@ fn render_loop(
     }
 }
 
+fn cursor_is_externally_visible(state: &RenderState) -> bool {
+    state.core.cfg.enabled
+        && state.core.visible
+        && state.core.pos.0 > -50.0
+        && state.core.pos.1 > -50.0
+        && state.core.idle_alpha >= 0.004
+}
+
 /// Convert a `tiny_skia::Pixmap` to a `CGImage` and set it as the contents
 /// of the given `CALayer` via `dispatch_async(main_queue, ...)`.
 fn dispatch_set_layer_contents(layer_ptr: usize, pixmap: tiny_skia::Pixmap) {
@@ -819,6 +898,41 @@ fn dispatch_set_layer_contents(layer_ptr: usize, pixmap: tiny_skia::Pixmap) {
             main_queue,
             Box::into_raw(payload) as *mut c_void,
             set_contents_cb,
+        );
+    }
+}
+
+/// Raise the normal-level overlay without activating the driver application.
+///
+/// This is used only for an externally visible cursor with no target window.
+/// Target-bound actions continue to use [`dispatch_pin_above`] so background
+/// delivery remains below unrelated foreground applications.
+fn dispatch_order_front(win_ptr: usize) {
+    use std::ffi::c_void;
+
+    #[link(name = "dispatch", kind = "dylib")]
+    extern "C" {
+        static _dispatch_main_q: u8;
+        fn dispatch_async_f(
+            queue: *const c_void,
+            context: *mut c_void,
+            work: unsafe extern "C" fn(*mut c_void),
+        );
+    }
+
+    unsafe extern "C" fn order_front_cb(ctx: *mut c_void) {
+        let win_ptr = *Box::from_raw(ctx as *mut usize);
+        let win = win_ptr as *mut objc2::runtime::AnyObject;
+        let _: () = objc2::msg_send![win, orderFrontRegardless];
+    }
+
+    let payload = Box::new(win_ptr);
+    unsafe {
+        let main_queue = &raw const _dispatch_main_q as *const c_void;
+        dispatch_async_f(
+            main_queue,
+            Box::into_raw(payload) as *mut c_void,
+            order_front_cb,
         );
     }
 }
@@ -910,12 +1024,9 @@ fn dispatch_pin_above(win_ptr: usize, target_wid: u64) {
 /// `orderWindow:relativeTo:` call to the main queue (AppKit must run on
 /// the main thread).
 ///
-/// `target = None` is treated as a no-op here rather than raising to the
-/// front: macOS creates the overlay at `NSNormalWindowLevel` and never
-/// promotes it into an "always-on-top" level the way Windows does with
-/// `HWND_TOPMOST`, so there is no topmost band to escape. Letting the
-/// overlay stay where the user's activations have left it keeps it out
-/// of the way when no agent action is in flight.
+/// `target = None` is treated as a no-op here. Direct unpinned cursor commands
+/// raise the overlay once in the render loop, while this enforcer remains
+/// responsible only for target-relative ordering.
 struct MacZOrderEnforcer {
     win_ptr: usize,
 }
@@ -1037,6 +1148,12 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
+    #[test]
+    fn keyed_render_state_carries_the_session_color_identity() {
+        let state = render_state_for_key(&CursorConfig::default(), "session-blueprint");
+        assert_eq!(state.core.cfg.cursor_id, "session-blueprint");
+    }
+
     fn window(window_id: u32, pid: i32, z_index: usize) -> crate::windows::WindowInfo {
         crate::windows::WindowInfo {
             window_id,
@@ -1154,16 +1271,18 @@ mod tests {
     }
 
     #[test]
-    fn lazily_created_cursors_get_distinct_palettes() {
+    fn lazily_created_cursors_inherit_the_selected_theme() {
         let mut map = empty_map();
         apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
         apply_msg(&mut map, move_msg("sessB", 20.0, 20.0));
-        let a = &map.cursors["sessA"].core.palette;
-        let b = &map.cursors["sessB"].core.palette;
-        let def = &map.cursors["default"].core.palette;
-        // default uses the blue palette; the two sessions derive their own.
-        assert_ne!(a.name, def.name);
-        assert_ne!(b.name, def.name);
+        assert_eq!(
+            map.cursors["sessA"].core.cfg.theme_id,
+            map.cursors["default"].core.cfg.theme_id
+        );
+        assert_eq!(
+            map.cursors["sessB"].core.cfg.theme_id,
+            map.cursors["default"].core.cfg.theme_id
+        );
     }
 
     #[test]
@@ -1283,6 +1402,18 @@ mod tests {
         // should be able to block on rx.recv() instead of repainting at 60fps.
         let map = empty_map();
         assert!(!render_map_needs_frame_tick(&map));
+    }
+
+    #[test]
+    fn only_enabled_on_screen_cursor_is_externally_visible() {
+        let mut map = empty_map();
+        assert!(!cursor_is_externally_visible(&map.cursors["default"]));
+
+        seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
+        assert!(cursor_is_externally_visible(&map.cursors["sessA"]));
+
+        map.cursors.get_mut("sessA").unwrap().core.cfg.enabled = false;
+        assert!(!cursor_is_externally_visible(&map.cursors["sessA"]));
     }
 
     #[test]

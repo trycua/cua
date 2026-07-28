@@ -200,14 +200,19 @@ export CARGO_TARGET_DIR="$BUILD_TARGET_DIR"
 echo "${BOLD}Building cua-driver ($BUILD_CONFIG)...${NORMAL}"
 cd "$REPO_ROOT"
 if [ "$BUILD_CONFIG" = "release" ]; then
-    cargo build --release -p cua-driver
+    cargo build --release -p cua-driver -p cursor-theme-cli
 else
-    cargo build -p cua-driver
+    cargo build -p cua-driver -p cursor-theme-cli
 fi
 
 BUILT_BINARY="$BUILD_TARGET_DIR/$BUILD_CONFIG/cua-driver"
+BUILT_THEME_BINARY="$BUILD_TARGET_DIR/$BUILD_CONFIG/cua-cursor-theme"
 if [ ! -x "$BUILT_BINARY" ]; then
     echo "${RED}Error: build produced no binary at $BUILT_BINARY${NORMAL}"
+    exit 1
+fi
+if [ ! -x "$BUILT_THEME_BINARY" ]; then
+    echo "${RED}Error: build produced no cursor-theme compiler at $BUILT_THEME_BINARY${NORMAL}"
     exit 1
 fi
 echo ""
@@ -217,7 +222,9 @@ echo ""
 echo "${BOLD}Staging into $VERSIONED_DIR${NORMAL}"
 mkdir -p "$VERSIONED_DIR"
 cp "$BUILT_BINARY" "$VERSIONED_DIR/cua-driver-local"
+cp "$BUILT_THEME_BINARY" "$VERSIONED_DIR/cua-cursor-theme"
 chmod +x "$VERSIONED_DIR/cua-driver-local"
+chmod +x "$VERSIONED_DIR/cua-cursor-theme"
 
 # Re-sign with a fresh ad-hoc signature.
 #
@@ -234,6 +241,8 @@ if [ "$OS" = "Darwin" ]; then
     if command -v codesign >/dev/null 2>&1; then
         codesign --force --sign - "$VERSIONED_DIR/cua-driver-local" 2>/dev/null \
             || echo "${YELLOW}warning: codesign --force --sign - failed; first run may fail with SIGKILL on macOS 26+${NORMAL}" >&2
+        codesign --force --sign - "$VERSIONED_DIR/cua-cursor-theme" 2>/dev/null \
+            || echo "${YELLOW}warning: cursor-theme sidecar signing failed${NORMAL}" >&2
     fi
 fi
 
@@ -247,6 +256,27 @@ if [ -d "$SOURCE_SKILLS" ]; then
     mkdir -p "$(dirname "$STAGED_SKILLS")"
     cp -R "$SOURCE_SKILLS" "$STAGED_SKILLS"
     echo "${GREEN}staged skill pack at $STAGED_SKILLS${NORMAL}"
+fi
+
+# Keep an already-installed GNOME helper aligned with the source-built driver.
+# Installing the helper is still opt-in. Once present, however, leaving old
+# compositor artwork behind after install-local creates a misleading
+# cross-platform mismatch.
+if [ "$OS" = "Linux" ]; then
+    SOURCE_WAYLAND_HELPER="$REPO_ROOT/../wayland-helper"
+    if [ -d "$SOURCE_WAYLAND_HELPER/winrects@cua" ]; then
+        STAGED_WAYLAND_HELPER="$VERSIONED_DIR/wayland-helper"
+        mkdir -p "$STAGED_WAYLAND_HELPER"
+        cp -R "$SOURCE_WAYLAND_HELPER/." "$STAGED_WAYLAND_HELPER/"
+
+        INSTALLED_WAYLAND_HELPER="${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/winrects@cua"
+        if [ -d "$INSTALLED_WAYLAND_HELPER" ]; then
+            cp "$SOURCE_WAYLAND_HELPER/winrects@cua/metadata.json" \
+                "$SOURCE_WAYLAND_HELPER/winrects@cua/extension.js" \
+                "$INSTALLED_WAYLAND_HELPER/"
+            echo "${GREEN}updated installed GNOME helper; reload the GNOME session to activate it${NORMAL}"
+        fi
+    fi
 fi
 
 # Atomically point `current` at the new versioned release dir.
@@ -301,7 +331,9 @@ if [ "$OS" = "Darwin" ]; then
     mkdir -p "$APP_STAGE/Contents/MacOS"
     cp -R "$SKELETON/Contents/." "$APP_STAGE/Contents/"
     cp "$VERSIONED_DIR/cua-driver-local" "$APP_STAGE/Contents/MacOS/cua-driver-local"
+    cp "$VERSIONED_DIR/cua-cursor-theme" "$APP_STAGE/Contents/MacOS/cua-cursor-theme"
     chmod +x "$APP_STAGE/Contents/MacOS/cua-driver-local"
+    chmod +x "$APP_STAGE/Contents/MacOS/cua-cursor-theme"
     rm -f "$APP_STAGE/Contents/MacOS/.gitkeep"
     # Stamp the local build version so the bundle reports something sane.
     if command -v plutil >/dev/null 2>&1; then

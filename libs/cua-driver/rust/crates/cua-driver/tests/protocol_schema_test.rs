@@ -255,7 +255,7 @@ fn tools_list_schema_shape() {
 }
 
 #[test]
-fn legacy_page_mutation_flag_is_read_by_the_spawned_daemon() {
+fn legacy_page_mutation_requires_unrestricted_launch_and_operator_opt_in() {
     let args = serde_json::json!({
         "action": "enable_javascript_apple_events",
         "user_has_confirmed_enabling": false
@@ -266,16 +266,18 @@ fn legacy_page_mutation_flag_is_read_by_the_spawned_daemon() {
         let response = driver.call("page", args.clone());
         assert!(response.is_error(), "mutation must refuse by default");
         assert!(
-            response
-                .text()
-                .contains("CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1"),
-            "default refusal must name the operator gate: {}",
+            response.text().contains("requires unrestricted mode"),
+            "default refusal must name the trusted launch gate: {}",
             response.text()
         );
     }
 
-    let mut driver = McpDriver::spawn_with_env(&[("CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS", "1")])
-        .expect("spawn source-built driver with daemon-scoped compatibility flag");
+    let mut driver = McpDriver::spawn_with_env(&[
+        ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
+        ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
+        ("CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS", "1"),
+    ])
+    .expect("spawn source-built driver with unrestricted legacy compatibility enabled");
     let response = driver.call("page", args);
     assert!(
         response.is_error(),
@@ -329,7 +331,11 @@ fn linux_cursor_motion_knobs_are_applied() {
         "Linux cursor motion update failed: {response:?}"
     );
     let structured = &response["result"]["structuredContent"];
-    assert_eq!(structured["arc_size"].as_f64(), Some(0.4));
-    assert_eq!(structured["glide_duration_ms"].as_f64(), Some(500.0));
-    assert_eq!(structured["idle_hide_ms"].as_f64(), Some(5000.0));
+    assert_eq!(structured["session"].as_str(), Some("schema-linux"));
+    assert_eq!(structured["motion"]["arc_size"].as_f64(), Some(0.4));
+    assert_eq!(
+        structured["motion"]["glide_duration_ms"].as_f64(),
+        Some(500.0)
+    );
+    assert_eq!(structured["motion"]["idle_hide_ms"].as_f64(), Some(5000.0));
 }

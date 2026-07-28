@@ -386,12 +386,7 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
             ("used_config_write", Value::Bool(false)),
             ("cursor_outcome_observed", Value::Bool(true)),
             ("cursor_overlay_enabled_at_end", Value::Bool(true)),
-            ("cursor_style", Value::String("default".into())),
-            (
-                "cursor_color_source",
-                Value::String("automatic_palette".into()),
-            ),
-            ("cursor_label_set", Value::Bool(false)),
+            ("cursor_theme", Value::String("default".into())),
             ("cursor_motion_customized", Value::Bool(false)),
             ("multi_cursor_bucket", Value::String("1".into())),
             ("observed_multiple_transports", Value::Bool(false)),
@@ -588,7 +583,7 @@ impl AgentSessionState {
             tool_name,
             "set_agent_cursor_enabled"
                 | "set_agent_cursor_motion"
-                | "set_agent_cursor_style"
+                | "set_agent_cursor_theme"
                 | "get_agent_cursor_state"
         );
         self.used_recording |= matches!(
@@ -603,7 +598,7 @@ impl AgentSessionState {
         reason: cua_driver_core::session::SessionEndReason,
         cursor: Option<cua_driver_core::session::CursorOutcomeObservation>,
     ) -> Map<String, Value> {
-        use cua_driver_core::session::{CursorColorSource, CursorStyleCategory, SessionEndReason};
+        use cua_driver_core::session::{CursorThemeCategory, SessionEndReason};
         let end_reason = match reason {
             SessionEndReason::Explicit => "explicit",
             SessionEndReason::IdleTimeout => "idle_timeout",
@@ -613,23 +608,14 @@ impl AgentSessionState {
         let cursor = cursor.unwrap_or(cua_driver_core::session::CursorOutcomeObservation {
             observed: false,
             enabled: false,
-            style: CursorStyleCategory::Unknown,
-            color_source: CursorColorSource::Unknown,
-            label_set: false,
+            theme: CursorThemeCategory::Unknown,
             motion_customized: false,
             active_cursor_count: 0,
         });
-        let cursor_style = match cursor.style {
-            CursorStyleCategory::Default => "default",
-            CursorStyleCategory::BuiltinArrow => "builtin_arrow",
-            CursorStyleCategory::BuiltinTeardrop => "builtin_teardrop",
-            CursorStyleCategory::CustomIcon => "custom_icon",
-            CursorStyleCategory::Unknown => "unknown",
-        };
-        let cursor_color_source = match cursor.color_source {
-            CursorColorSource::AutomaticPalette => "automatic_palette",
-            CursorColorSource::Custom => "custom",
-            CursorColorSource::Unknown => "unknown",
+        let cursor_theme = match cursor.theme {
+            CursorThemeCategory::Default => "default",
+            CursorThemeCategory::Custom => "custom",
+            CursorThemeCategory::Unknown => "unknown",
         };
         bounded_properties(&[
             ("end_reason", Value::String(end_reason.into())),
@@ -665,12 +651,7 @@ impl AgentSessionState {
             ("used_config_write", Value::Bool(self.used_config_write)),
             ("cursor_outcome_observed", Value::Bool(cursor.observed)),
             ("cursor_overlay_enabled_at_end", Value::Bool(cursor.enabled)),
-            ("cursor_style", Value::String(cursor_style.into())),
-            (
-                "cursor_color_source",
-                Value::String(cursor_color_source.into()),
-            ),
-            ("cursor_label_set", Value::Bool(cursor.label_set)),
+            ("cursor_theme", Value::String(cursor_theme.into())),
             (
                 "cursor_motion_customized",
                 Value::Bool(cursor.motion_customized),
@@ -3351,9 +3332,7 @@ mod tests {
             Some(cua_driver_core::session::CursorOutcomeObservation {
                 observed: true,
                 enabled: true,
-                style: cua_driver_core::session::CursorStyleCategory::CustomIcon,
-                color_source: cua_driver_core::session::CursorColorSource::Custom,
-                label_set: true,
+                theme: cua_driver_core::session::CursorThemeCategory::Custom,
                 motion_customized: true,
                 active_cursor_count: 3,
             }),
@@ -3367,9 +3346,7 @@ mod tests {
         assert_eq!(properties["used_page"], true);
         assert_eq!(properties["used_browser"], false);
         assert_eq!(properties["browser_refusal_count_bucket"], "0");
-        assert_eq!(properties["cursor_style"], "custom_icon");
-        assert_eq!(properties["cursor_color_source"], "custom");
-        assert_eq!(properties["cursor_label_set"], true);
+        assert_eq!(properties["cursor_theme"], "custom");
         assert_eq!(properties["cursor_motion_customized"], true);
         assert_eq!(properties["multi_cursor_bucket"], "3_5");
         assert_eq!(properties["observed_multiple_transports"], true);

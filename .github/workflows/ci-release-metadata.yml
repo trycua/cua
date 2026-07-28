@@ -10,9 +10,26 @@ permissions:
   pull-requests: read
 
 jobs:
+  installer-compatibility:
+    uses: ./.github/workflows/ci-cua-driver-installer-compat.yml
+    permissions:
+      contents: read
+      pull-requests: read
+
   validate:
+    needs: installer-compatibility
+    if: always()
     runs-on: ubuntu-latest
     steps:
+      - name: Require successful installer certification
+        env:
+          INSTALLER_CERTIFICATION_RESULT: ${{ needs.installer-compatibility.result }}
+        run: |
+          if [[ "$INSTALLER_CERTIFICATION_RESULT" != "success" ]]; then
+            echo "Installer certification result: $INSTALLER_CERTIFICATION_RESULT" >&2
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0

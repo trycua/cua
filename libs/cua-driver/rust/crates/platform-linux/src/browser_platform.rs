@@ -302,6 +302,7 @@ fn active_port_endpoint(pid: i64) -> Result<Option<OwnedEndpoint>, BrowserRefusa
         ownership: EndpointOwnershipProof {
             method: EndpointOwnershipMethod::DevtoolsActivePortsFile,
             owner_pid: pid,
+            listener_pid: None,
             detail: Some(
                 "exact /proc argv profile port file plus loopback socket inode owner".to_owned(),
             ),
@@ -659,6 +660,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                     ownership: EndpointOwnershipProof {
                         method: EndpointOwnershipMethod::ListeningSocketPid,
                         owner_pid: pid,
+                        listener_pid: None,
                         detail: Some("/proc socket inode owner".to_owned()),
                     },
                 }));
@@ -696,6 +698,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 ownership: EndpointOwnershipProof {
                     method: EndpointOwnershipMethod::ListeningSocketPid,
                     owner_pid: pid,
+                    listener_pid: None,
                     detail: Some("/proc owner plus /json/version".to_owned()),
                 },
             })),
@@ -734,6 +737,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
             ownership: EndpointOwnershipProof {
                 method: EndpointOwnershipMethod::ListeningSocketPid,
                 owner_pid: pid,
+                listener_pid: None,
                 detail: Some("/proc owner of exact approved endpoint".to_owned()),
             },
         }))
@@ -858,6 +862,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                         ownership: EndpointOwnershipProof {
                             method: EndpointOwnershipMethod::ListeningSocketPid,
                             owner_pid: request.pid,
+                            listener_pid: None,
                             detail: Some((*detail).to_owned()),
                         },
                     })
@@ -905,6 +910,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
             opened_setup_page,
             closed_setup_page: false,
             enabled_remote_debugging,
+            used_bounded_pixel_fallback: false,
             focused_setup_address_field,
             foregrounded_window,
             injected_global_input,

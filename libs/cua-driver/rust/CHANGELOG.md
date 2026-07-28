@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.13.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.13.0...cua-driver-rs-v0.13.1) (2026-07-28)
+## [0.13.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.6...cua-driver-rs-v0.13.1) (2026-07-28)
 
 
 ### ⚠ BREAKING CHANGES

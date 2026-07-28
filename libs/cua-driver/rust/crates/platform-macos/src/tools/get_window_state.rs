@@ -58,8 +58,8 @@ fn def() -> &'static ToolDef {
             surface's elements under your window_id. Before exposing a screenshot, \
             its raw dimensions are validated as a coherent 1x/2x representation of \
             the requested WindowServer bounds. `px_frame_mismatch` or \
-            `px_capture_unavailable` refuses an unprovable pixel frame instead of \
-            guessing a transform.\n\n\
+            `px_capture_unavailable` omits an unprovable screenshot/pixel frame \
+            instead of guessing a transform; the truthful AX payload remains available.\n\n\
             Optional `query` filters the tree_markdown to matching lines plus their ancestor \
             chain (case-insensitive substring). The element_index values are unchanged — \
             filtering only trims the rendered Markdown.\n\n\
@@ -266,6 +266,7 @@ impl Tool for GetWindowStateTool {
         // Returns the encoded/file capture, delivered dimensions, optional
         // downscale source width, the WindowServer bounds it was validated
         // against, and the raw capture's backing scale.
+        let mut screenshot_frame_error = None;
         let screenshot = if should_capture {
             let out_file = screenshot_out_file.clone();
             let res = tokio::task::spawn_blocking(move || -> Result<
@@ -360,7 +361,12 @@ impl Tool for GetWindowStateTool {
                     Some((b64, file_path, w, h, bounds, scale))
                 }
                 Ok(Err(e)) => {
-                    return super::px_frame::refusal(&e);
+                    tracing::warn!(
+                        "Screenshot frame could not be verified for window {window_id}: {e:?}"
+                    );
+                    self.state.resize_registry.clear_ratio(pid, window_id);
+                    screenshot_frame_error = Some(e);
+                    None
                 }
                 Err(e) => {
                     tracing::warn!("Screenshot task error for window {window_id}: {e}");
@@ -540,6 +546,10 @@ impl Tool for GetWindowStateTool {
             });
             structured["screenshot_scale"] = serde_json::json!(scale);
             structured["screenshot_frame_valid"] = serde_json::json!(true);
+        }
+        if let Some(error) = screenshot_frame_error {
+            structured["screenshot_frame_valid"] = serde_json::json!(false);
+            structured["screenshot_error"] = super::px_frame::error_structured(&error);
         }
         if let Some(ref fp) = screenshot_file_path {
             structured["screenshot_file_path"] = serde_json::json!(fp);

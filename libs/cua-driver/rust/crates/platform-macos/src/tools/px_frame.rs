@@ -134,22 +134,12 @@ pub fn refusal(error: &PxFrameError) -> ToolResult {
              screen-absolute would act on whatever is behind the closed window. Call \
              list_windows for a current window_id, then re-snapshot with get_window_state."
         ))
-        .with_structured(serde_json::json!({
-            "code": "px_window_not_found",
-            "window_id": window_id,
-            "suggestion": "refusing to interpret window-local pixels as screen-absolute; \
-                           call list_windows for a current window_id"
-        })),
+        .with_structured(error_structured(error)),
         PxFrameError::CaptureUnavailable { window_id, reason } => ToolResult::error(format!(
             "window_id {window_id}'s current capture is unavailable ({reason}), so its \
                  pixel coordinate frame cannot be verified. Refusing to dispatch."
         ))
-        .with_structured(serde_json::json!({
-            "code": "px_capture_unavailable",
-            "window_id": window_id,
-            "reason": reason,
-            "suggestion": "re-snapshot the window after capture permission/state recovers"
-        })),
+        .with_structured(error_structured(error)),
         PxFrameError::FrameMismatch {
             window_id,
             bounds_width,
@@ -164,7 +154,37 @@ pub fn refusal(error: &PxFrameError) -> ToolResult {
              (scale_x={scale_x:.4}, scale_y={scale_y:.4}). These are not one coherent \
              1x/2x frame. Refusing to dispatch."
         ))
-        .with_structured(serde_json::json!({
+        .with_structured(error_structured(error)),
+    }
+}
+
+/// Structured form shared by action refusals and a successful state snapshot
+/// whose optional screenshot could not be proven. The latter must keep its AX
+/// payload rather than turning a capture problem into a total perception
+/// failure.
+pub fn error_structured(error: &PxFrameError) -> serde_json::Value {
+    match error {
+        PxFrameError::WindowNotFound { window_id } => serde_json::json!({
+            "code": "px_window_not_found",
+            "window_id": window_id,
+            "suggestion": "refusing to interpret window-local pixels as screen-absolute; \
+                           call list_windows for a current window_id"
+        }),
+        PxFrameError::CaptureUnavailable { window_id, reason } => serde_json::json!({
+            "code": "px_capture_unavailable",
+            "window_id": window_id,
+            "reason": reason,
+            "suggestion": "re-snapshot the window after capture permission/state recovers"
+        }),
+        PxFrameError::FrameMismatch {
+            window_id,
+            bounds_width,
+            bounds_height,
+            capture_width,
+            capture_height,
+            scale_x,
+            scale_y,
+        } => serde_json::json!({
             "code": "px_frame_mismatch",
             "window_id": window_id,
             "window_bounds": {
@@ -179,7 +199,7 @@ pub fn refusal(error: &PxFrameError) -> ToolResult {
             "scale_y": scale_y,
             "suggestion": "re-list and re-snapshot the exact window; do not reuse coordinates \
                            from a different surface"
-        })),
+        }),
     }
 }
 

@@ -574,15 +574,21 @@ class VM {
             }
         }
 
-        let vmDetails = details
-        guard vmDetails.status == "running" else {
+        guard virtualizationService?.state == .running else {
             throw SSHError.vmNotRunning(vmDirContext.name)
         }
-        guard let ipAddress = vmDetails.ipAddress, !ipAddress.isEmpty else {
+        guard let macAddress = vmDirContext.config.macAddress else {
             throw SSHError.noIPAddress(vmDirContext.name)
         }
-        guard vmDetails.sshAvailable == true else {
-            throw SSHError.sshNotAvailable(vmDirContext.name)
+        let ipAddress = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(
+                    returning: DHCPLeaseParser.getIPAddress(forMAC: macAddress)
+                )
+            }
+        }
+        guard let ipAddress, !ipAddress.isEmpty else {
+            throw SSHError.noIPAddress(vmDirContext.name)
         }
 
         let client = SystemSSHClient(
@@ -591,9 +597,7 @@ class VM {
             user: "lume",
             password: "lume"
         )
-        try await Task.detached(priority: .userInitiated) {
-            try client.copyToRemoteDesktop(urls)
-        }.value
+        try await client.copyToRemoteDesktop(urls)
 
         Logger.info(
             "Copied dropped items to VM Desktop",

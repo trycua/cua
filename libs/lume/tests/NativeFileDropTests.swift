@@ -33,11 +33,15 @@ func nativeFileDropExtractsLocalURLs() throws {
 @Test("SCP safely checks guest Desktop names before transfer")
 func scpDesktopPreparationCommand() {
   let client = SystemSSHClient(host: "192.168.64.24")
-  let command = client.desktopPreparationCommand(itemNames: ["Report's.txt"])
+  let command = client.desktopPreparationCommand(
+    itemNames: ["Report's.txt"],
+    stagingDirectory: ".lume-drop-test"
+  )
 
-  #expect(command.hasPrefix("mkdir -p \"$HOME/Desktop\""))
+  #expect(command.hasPrefix("set -e; mkdir -p \"$HOME/Desktop\""))
   #expect(command.contains(#""$HOME/Desktop/"'Report'\''s.txt'"#))
   #expect(command.contains("exit 73"))
+  #expect(command.hasSuffix("mkdir \"$HOME/.lume-drop-test\""))
 }
 
 @Test("SCP keeps dropped paths as distinct arguments and targets the guest Desktop")
@@ -53,12 +57,17 @@ func scpFileDropArguments() throws {
     "/tmp/--looks-like-an-option",
   ]
 
-  let arguments = client.scpArguments(sourcePaths: sourcePaths)
+  let arguments = client.scpArguments(
+    sourcePaths: sourcePaths,
+    destinationDirectory: "Desktop"
+  )
   let separator = try #require(arguments.firstIndex(of: "--"))
 
   #expect(arguments.contains("-r"))
   #expect(arguments.contains("-P"))
   #expect(arguments.contains("2222"))
+  #expect(arguments.contains("ServerAliveInterval=15"))
+  #expect(arguments.contains("ServerAliveCountMax=4"))
   #expect(Array(arguments[(separator + 1)..<(arguments.count - 1)]) == sourcePaths)
   #expect(arguments.last == "lume@192.168.64.24:Desktop/")
 }
@@ -66,22 +75,25 @@ func scpFileDropArguments() throws {
 @Test("SCP omits a port override for standard SSH")
 func scpFileDropDefaultPortArguments() {
   let client = SystemSSHClient(host: "192.168.64.24")
-  let arguments = client.scpArguments(sourcePaths: ["/tmp/example.txt"])
+  let arguments = client.scpArguments(
+    sourcePaths: ["/tmp/example.txt"],
+    destinationDirectory: "Desktop"
+  )
 
   #expect(!arguments.contains("-P"))
 }
 
 @Test("SCP rejects an empty file drop before launching a process")
-func scpRejectsEmptyFileDrop() {
+func scpRejectsEmptyFileDrop() async {
   let client = SystemSSHClient(host: "192.168.64.24")
 
-  #expect(throws: SSHError.self) {
-    try client.copyToRemoteDesktop([])
+  await #expect(throws: RemoteDesktopCopyError.self) {
+    try await client.copyToRemoteDesktop([])
   }
 }
 
 @Test("SCP rejects duplicate destination names before connecting")
-func scpRejectsDuplicateDestinationNames() throws {
+func scpRejectsDuplicateDestinationNames() async throws {
   let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
   let first = root.appendingPathComponent("first/Same.txt")
   let second = root.appendingPathComponent("second/Same.txt")
@@ -99,15 +111,110 @@ func scpRejectsDuplicateDestinationNames() throws {
 
   let client = SystemSSHClient(host: "invalid.invalid")
   do {
-    try client.copyToRemoteDesktop([first, second])
+    try await client.copyToRemoteDesktop([first, second])
     Issue.record("Expected duplicate destination names to be rejected")
-  } catch let error as SSHError {
-    guard case .commandFailed(_, let message) = error else {
-      Issue.record("Unexpected SSH error: \(error)")
-      return
-    }
-    #expect(message == "Dropped items must have unique names")
+  } catch let error as RemoteDesktopCopyError {
+    #expect(error.localizedDescription == "Dropped items must have unique names")
   } catch {
     Issue.record("Unexpected error: \(error)")
   }
+}
+
+@Test("A pre-cancelled file copy cannot launch a process")
+func scpCancellationIsObservable() {
+  let controller = CopyProcessController()
+  controller.cancel()
+
+  #expect(throws: CancellationError.self) {
+    try controller.register(Process())
+  }
+}
+
+@Test("File-copy errors are ready for user-facing overlays")
+func scpFileCopyErrorDescriptions() {
+  #expect(
+    RemoteDesktopCopyError.destinationExists.localizedDescription
+      == "An item with the same name already exists on the VM Desktop"
+  )
+  #expect(RemoteDesktopCopyError.timedOut.localizedDescription == "File copy timed out")
+}
+
+@Test("SCP commits staged items to the Desktop with fail-fast shell semantics")
+func scpDesktopCommitCommand() {
+  let client = SystemSSHClient(host: "192.168.64.24")
+  let command = client.desktopCommitCommand(
+    itemNames: ["Report's.txt"],
+    stagingDirectory: ".lume-drop-1234"
+  )
+
+  #expect(command.hasPrefix("set -e; "))
+  #expect(command.contains(#""$HOME/.lume-drop-1234/"'Report'\''s.txt'"#))
+  #expect(command.contains("mv -n"))
+  #expect(command.contains("exit 73"))
+  #expect(command.contains("trap rollback EXIT"))
+  #expect(command.hasSuffix("trap - EXIT"))
+}
+
+@Test("One staging directory is threaded through prepare, transfer, and commit")
+func scpStagingDirectoryConsistency() {
+  let client = SystemSSHClient(host: "192.168.64.24")
+  let stagingDirectory = ".lume-drop-fixed"
+  let preparation = client.desktopPreparationCommand(
+    itemNames: ["example.txt"],
+    stagingDirectory: stagingDirectory
+  )
+  let transfer = client.scpArguments(
+    sourcePaths: ["/tmp/example.txt"],
+    destinationDirectory: stagingDirectory
+  )
+  let commit = client.desktopCommitCommand(
+    itemNames: ["example.txt"],
+    stagingDirectory: stagingDirectory
+  )
+
+  #expect(preparation.contains(stagingDirectory))
+  #expect(transfer.last == "lume@192.168.64.24:\(stagingDirectory)/")
+  #expect(commit.contains(stagingDirectory))
+}
+
+@Test("A late Desktop collision rolls every staged item back")
+func scpDesktopCommitRollsBackOnCollision() throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  let desktop = root.appendingPathComponent("Desktop")
+  let stagingDirectory = ".lume-drop-rollback"
+  let staging = root.appendingPathComponent(stagingDirectory)
+  try FileManager.default.createDirectory(at: desktop, withIntermediateDirectories: true)
+  try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+
+  try Data("first".utf8).write(to: staging.appendingPathComponent("first.txt"))
+  try Data("second".utf8).write(to: staging.appendingPathComponent("second.txt"))
+  try Data("existing".utf8).write(to: desktop.appendingPathComponent("second.txt"))
+
+  let client = SystemSSHClient(host: "192.168.64.24")
+  let process = Process()
+  process.executableURL = URL(fileURLWithPath: "/bin/sh")
+  process.arguments = [
+    "-c",
+    client.desktopCommitCommand(
+      itemNames: ["first.txt", "second.txt"],
+      stagingDirectory: stagingDirectory
+    ),
+  ]
+  var environment = ProcessInfo.processInfo.environment
+  environment["HOME"] = root.path
+  process.environment = environment
+  process.standardOutput = FileHandle.nullDevice
+  process.standardError = FileHandle.nullDevice
+  try process.run()
+  process.waitUntilExit()
+
+  #expect(process.terminationStatus == 73)
+  #expect(FileManager.default.fileExists(atPath: staging.appendingPathComponent("first.txt").path))
+  #expect(FileManager.default.fileExists(atPath: staging.appendingPathComponent("second.txt").path))
+  #expect(!FileManager.default.fileExists(atPath: desktop.appendingPathComponent("first.txt").path))
+  #expect(
+    try String(contentsOf: desktop.appendingPathComponent("second.txt"), encoding: .utf8)
+      == "existing"
+  )
 }

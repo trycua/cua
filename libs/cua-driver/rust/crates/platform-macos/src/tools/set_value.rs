@@ -182,9 +182,21 @@ impl Tool for SetValueTool {
         let changes = snapshot.detect_async().await;
 
         match result {
-            Ok(Ok(mut msg)) => {
+            Ok(Ok(outcome)) => {
+                let mut msg = outcome.detail;
                 msg.push_str(&changes.result_suffix());
-                ToolResult::text(msg)
+                let mut structured = serde_json::Map::new();
+                if let Some(verified) = outcome.verified {
+                    structured.insert("verified".into(), serde_json::Value::Bool(verified));
+                }
+                if let Some(changed) = outcome.changed {
+                    structured.insert("changed".into(), serde_json::Value::Bool(changed));
+                }
+                if structured.is_empty() {
+                    ToolResult::text(msg)
+                } else {
+                    ToolResult::text(msg).with_structured(serde_json::Value::Object(structured))
+                }
             }
             Ok(Err(e)) => ToolResult::error(format!("set_value failed: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -194,19 +206,43 @@ impl Tool for SetValueTool {
 
 // ── Blocking implementation (runs on spawn_blocking thread) ─────────────────
 
+/// Outcome of a `set_value` write.
+///
+/// `verified` is `None` for paths that do not perform a value read-back (the
+/// AXPopUpButton path drives menu items rather than writing AXValue), and
+/// `Some(false)` when a read-back ran but could not confirm the write. A
+/// successful `AXUIElementSetAttributeValue` return code is not by itself
+/// evidence that the value landed: web content behind an AXWebArea accepts the
+/// write and echoes it back through AXValue while the renderer never observes
+/// it — the same trap `type_text` already documents.
+struct SetValueOutcome {
+    detail: String,
+    verified: Option<bool>,
+    /// `Some(false)` when the element already held the requested value, so the
+    /// write was a no-op. Lets callers distinguish "idempotent" from "applied".
+    changed: Option<bool>,
+}
+
 fn set_value_blocking(
     element_ptr: usize,
     element_index: usize,
     pid: i32,
     value: &str,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<SetValueOutcome> {
     let element = element_ptr as AXUIElementRef;
 
     let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
 
     if role == "AXPopUpButton" {
         let element_title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
-        select_popup_option(element, element_index, pid, value, &element_title)
+        // Menu-item selection, not an AXValue write — no read-back to report.
+        select_popup_option(element, element_index, pid, value, &element_title).map(|detail| {
+            SetValueOutcome {
+                detail,
+                verified: None,
+                changed: None,
+            }
+        })
     } else {
         // Default path: write AXValue directly. Numeric controls (AXSlider /
         // AXStepper) reject a CFString with -25201 and need a CFNumber; text
@@ -217,6 +253,9 @@ fn set_value_blocking(
         // write with -25200 yet exposes a readable AXValue + increment/decrement
         // actions).
         let numeric_target = value.trim().parse::<f64>().ok();
+        // Read the value before writing so an unchanged field can be reported as
+        // idempotent rather than silently indistinguishable from a fresh write.
+        let before = unsafe { copy_string_attr(element, "AXValue") };
         let err = match numeric_target {
             Some(n) => {
                 let e = unsafe { set_number_attr(element, "AXValue", n) };
@@ -229,14 +268,32 @@ fn set_value_blocking(
             None => unsafe { set_string_attr(element, "AXValue", value) },
         };
         if err == kAXErrorSuccess {
-            Ok(format!("✅ Set AXValue on [{element_index}] {role}."))
+            let after = unsafe { copy_string_attr(element, "AXValue") };
+            let (verified, changed) = classify_write(before.as_deref(), after.as_deref(), value);
+            let suffix = match (verified, changed) {
+                (Some(true), Some(false)) => " Value already matched; write was idempotent.",
+                (Some(true), _) => "",
+                (Some(false), _) => " Read-back did not confirm the value; verify via screenshot.",
+                (None, _) => " Value is not readable through AX; could not confirm.",
+            };
+            Ok(SetValueOutcome {
+                detail: format!("✅ Set AXValue on [{element_index}] {role}.{suffix}"),
+                verified,
+                changed,
+            })
         } else if let Some(target) = numeric_target {
             // Both direct writes failed for a numeric target — fall back to
             // stepping the control via AXIncrement / AXDecrement actions.
             if step_to_value(element, target) {
-                Ok(format!(
-                    "✅ Set AXValue on [{element_index}] {role} via AXIncrement/AXDecrement stepping."
-                ))
+                let after = unsafe { copy_string_attr(element, "AXValue") };
+                let (verified, changed) = classify_write(None, after.as_deref(), value);
+                Ok(SetValueOutcome {
+                    detail: format!(
+                        "✅ Set AXValue on [{element_index}] {role} via AXIncrement/AXDecrement stepping."
+                    ),
+                    verified,
+                    changed,
+                })
             } else {
                 anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
             }
@@ -244,6 +301,43 @@ fn set_value_blocking(
             anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
         }
     }
+}
+
+/// Decide what a post-write AXValue read proves.
+///
+/// Returns `(verified, changed)`:
+/// - `verified = None` when AXValue is not readable at all, so the write can be
+///   neither confirmed nor denied.
+/// - `verified = Some(true)` when the read-back equals the requested value.
+///   Numeric controls are compared numerically so `"25"` matches a slider that
+///   reports `"25.0"`.
+/// - `changed = Some(false)` when the read-back equals what was there before,
+///   i.e. the element's value did not move. Combined with `verified` this
+///   separates "already had the requested value" (verified + unchanged) from
+///   "the write did not take" (unverified + unchanged).
+fn classify_write(
+    before: Option<&str>,
+    after: Option<&str>,
+    requested: &str,
+) -> (Option<bool>, Option<bool>) {
+    let Some(after) = after else {
+        return (None, None);
+    };
+    let matches = |observed: &str, expected: &str| -> bool {
+        if observed == expected {
+            return true;
+        }
+        match (
+            observed.trim().parse::<f64>(),
+            expected.trim().parse::<f64>(),
+        ) {
+            (Ok(a), Ok(b)) => (a - b).abs() < f64::EPSILON,
+            _ => false,
+        }
+    };
+    let verified = matches(after, requested);
+    let changed = before.map(|before| !matches(after, before));
+    (Some(verified), changed)
 }
 
 // ── AXIncrement / AXDecrement stepping fallback ──────────────────────────────
@@ -496,5 +590,59 @@ fn hex_digit(n: u8) -> char {
         0..=9 => (b'0' + n) as char,
         10..=15 => (b'A' + n - 10) as char,
         _ => '0',
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::classify_write;
+
+    #[test]
+    fn unreadable_value_reports_neither_verified_nor_changed() {
+        // AXValue is not exposed: the write can be neither confirmed nor denied,
+        // so the tool must not claim success on the return code alone.
+        assert_eq!(classify_write(Some("old"), None, "new"), (None, None));
+    }
+
+    #[test]
+    fn matching_read_back_verifies_the_write() {
+        assert_eq!(
+            classify_write(Some("old"), Some("new"), "new"),
+            (Some(true), Some(true))
+        );
+    }
+
+    #[test]
+    fn echoed_but_wrong_value_fails_verification() {
+        // Web content behind an AXWebArea accepts the write and echoes a value
+        // the renderer never took. A success return code must not be reported
+        // as a verified write.
+        assert_eq!(
+            classify_write(Some("old"), Some("old"), "new"),
+            (Some(false), Some(false))
+        );
+    }
+
+    #[test]
+    fn idempotent_write_is_verified_but_unchanged() {
+        assert_eq!(
+            classify_write(Some("same"), Some("same"), "same"),
+            (Some(true), Some(false))
+        );
+    }
+
+    #[test]
+    fn numeric_controls_compare_numerically() {
+        // AXSlider reports "25.0" for a requested "25".
+        assert_eq!(
+            classify_write(Some("10"), Some("25.0"), "25"),
+            (Some(true), Some(true))
+        );
+    }
+
+    #[test]
+    fn missing_before_still_verifies_after() {
+        // The stepping fallback has no usable pre-read; verification still applies.
+        assert_eq!(classify_write(None, Some("25.0"), "25"), (Some(true), None));
     }
 }

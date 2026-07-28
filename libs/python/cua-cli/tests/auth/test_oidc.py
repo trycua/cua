@@ -34,6 +34,7 @@ def test_rejects_unsafe_discovery_and_device_verification_urls() -> None:
     }
     for endpoint, unsafe_url in (
         ("token_endpoint", "http://auth.cua.ai/token"),
+        ("token_endpoint", "https://user:pass@auth.cua.ai/token"),
         ("device_authorization_endpoint", "/device/code"),
         ("revocation_endpoint", "javascript:alert(1)"),
     ):

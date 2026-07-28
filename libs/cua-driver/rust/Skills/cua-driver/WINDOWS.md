@@ -299,17 +299,17 @@ Windows-relevant notes:
   overloaded for AUMIDs); macOS takes `bundle_id` / `urls`. `name` is the
   portable fallback. See the AUMID section below.
 
-**Chromium pixel-click foreground polling restore.** `click({pid, x, y})`
-on a Chromium target falls through to `send_click_synthesized`
-(SendInput + brief foreground swap) because Chromium's input thread filters by
-  queue-origin and PostMessage-delivered clicks don't fire DOM events. The
-  synchronous restore inside `send_click_synthesized` covers the
-  immediate swap; an additional polling guard (same shape as `launch_app`'s
-  `FocusRestoreGuard`) catches the **asynchronous** Chromium re-activation
-  that can happen as the renderer's input handler processes the click
-  (focus().activate() / WebContents::Activate() — 100-500 ms later). The
-  guard is gated on `GetWindowThreadProcessId(fg_now) == pid` so user
-  Alt-Tabs are respected.
+**Chromium pixel-click foreground restore is best-effort.** Supported
+`delivery_mode:"background"` paths do not request target activation. An
+explicit foreground pixel click uses `send_click_synthesized_active_mods`
+because Chromium's input thread filters by queue origin and
+PostMessage-delivered clicks do not fire DOM events. After injection, the tool
+schedules `restore_foreground_polling_best_effort` to catch both the immediate
+activation and any later renderer re-activation. That polling guard is
+asynchronous and best-effort, so the tool response is not proof that the
+previous foreground has already been restored. The guard changes focus only
+while `GetWindowThreadProcessId(fg_now) == pid`, so it does not undo a user
+Alt-Tab.
 
 ## Defaults — always prefer cua-driver over shell shims
 

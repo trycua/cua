@@ -501,7 +501,7 @@ class VM {
         await watcher.start()
     }
 
-    private func withManualClipboardTransfer<T>(
+    private func withManualClipboardTransfer<T: Sendable>(
         _ watcher: ClipboardWatcher,
         operation: () async throws -> T
     ) async throws -> T {

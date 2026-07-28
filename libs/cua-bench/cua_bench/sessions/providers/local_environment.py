@@ -30,6 +30,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
+from ...platforms import CONTAINER_PLATFORMS, PLATFORMS
+
 if TYPE_CHECKING:
     import aiohttp
 
@@ -64,49 +66,7 @@ class EnvironmentInfo:
 # Container prefix for environments started by this provider
 CONTAINER_PREFIX = "cua-bench-env-"
 
-# Platform configurations
-PLATFORM_CONFIGS = {
-    "linux-docker": {
-        "image": "trycua/cua-xfce:latest",
-        "internal_vnc_port": 6901,
-        "internal_api_port": 8000,
-        "requires_kvm": False,
-        "image_marker": None,
-        "os_type": "linux",
-        "boot_timeout": 60,  # Fast, no VM boot
-        "use_overlays": False,  # Stateless container
-    },
-    "linux-qemu": {
-        "image": "trycua/cua-qemu-linux:latest",
-        "internal_vnc_port": 8006,
-        "internal_api_port": 5000,
-        "requires_kvm": True,
-        "image_marker": "linux.boot",
-        "os_type": "linux",
-        "boot_timeout": 120,  # QEMU VM boot
-        "use_overlays": True,  # Enable QCOW2 overlays for fast reset
-    },
-    "windows-qemu": {
-        "image": "trycua/cua-qemu-windows:latest",
-        "internal_vnc_port": 8006,
-        "internal_api_port": 5000,
-        "requires_kvm": True,
-        "image_marker": "windows.boot",
-        "os_type": "windows",
-        "boot_timeout": 180,  # Windows is slow to boot
-        "use_overlays": True,  # Enable QCOW2 overlays for fast reset
-    },
-    "android-qemu": {
-        "image": "trycua/cua-qemu-android:latest",
-        "internal_vnc_port": 8006,
-        "internal_api_port": 5000,
-        "requires_kvm": True,
-        "image_marker": "android.boot",
-        "os_type": "android",
-        "boot_timeout": 120,  # Android VM boot
-        "use_overlays": True,  # Enable QCOW2 overlays for fast reset
-    },
-}
+PLATFORM_CONFIGS = {name: PLATFORMS[name] for name in CONTAINER_PLATFORMS}
 
 
 # =============================================================================

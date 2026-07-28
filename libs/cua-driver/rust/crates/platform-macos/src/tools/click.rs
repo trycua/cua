@@ -969,6 +969,12 @@ fn perform_ax_click(
     let ax_action = map_action(action_str);
     let element = element_ptr as AXUIElementRef;
 
+    // Check the live value immediately before dispatch. Foreground assist can
+    // enable menu items that were disabled in the cached snapshot, while a
+    // background transition can disable them after that snapshot. macOS may
+    // otherwise return success for a disabled action that did nothing.
+    crate::input::ax_actions::ensure_ax_action_enabled(element_ptr, ax_action)?;
+
     // Capture advertised actions BEFORE dispatching so we can detect silent no-ops
     // (AX returns success even when the element doesn't advertise the action).
     let advertised = unsafe { copy_action_names(element) };

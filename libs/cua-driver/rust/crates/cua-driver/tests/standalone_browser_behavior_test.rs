@@ -3728,6 +3728,77 @@ fn settle_between_browser_rows() {
     thread::sleep(Duration::from_secs(2));
 }
 
+fn run_type_replace(spec: &BrowserSpec) {
+    let scenario = format!(
+        "{}-{}-standalone-type-replace",
+        std::env::consts::OS,
+        spec.name
+    );
+    execute_case(case(&spec.name, "browser_type_replace"), |evidence| {
+        let mut fixture = launch_browser(spec, &scenario);
+        *evidence = recording_evidence(fixture.driver.recording_dir());
+        run_with_background_oracles(&mut fixture, |fixture| {
+            let session = format!("standalone-type-replace-{}", fixture.pid);
+            let (target, tab, snapshot) = bind(fixture, &session);
+            let input_ref = ref_by_label(&snapshot, "id=txt-input");
+
+            let mut type_text = |text: &str, replace: Option<bool>, mode: Option<&str>| {
+                let mut args = serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "ref": input_ref,
+                    "text": text,
+                    "session": session,
+                });
+                if let Some(replace) = replace {
+                    args["replace"] = serde_json::json!(replace);
+                }
+                if let Some(mode) = mode {
+                    args["mode"] = serde_json::json!(mode);
+                }
+                let response = fixture.driver.call("browser_type", args);
+                assert_eq!(response.structured()["status"], "ok", "{}", response.raw);
+                response
+            };
+
+            // The default must keep appending. This is the control: without it
+            // a passing replace case could simply mean the tool always sets.
+            type_text("first", None, None);
+            wait_for_value(&fixture.server, "txt-input", "first");
+            type_text("second", None, None);
+            wait_for_value(&fixture.server, "txt-input", "firstsecond");
+
+            // replace=true sets the field instead of extending it, and reports
+            // how much it displaced so the caller need not re-read the page.
+            let replaced = type_text("third", Some(true), None);
+            wait_for_value(&fixture.server, "txt-input", "third");
+            assert_eq!(replaced.structured()["replace"], true, "{}", replaced.raw);
+            assert_eq!(
+                replaced.structured()["replaced_chars"],
+                11,
+                "replaced_chars must count the displaced text: {}",
+                replaced.raw
+            );
+
+            // The trusted keystroke path replaces through the same selection.
+            type_text("fourth", Some(true), Some("keystrokes"));
+            wait_for_value(&fixture.server, "txt-input", "fourth");
+
+            // Empty text with replace=true is the only way to clear a field.
+            let cleared = type_text("", Some(true), None);
+            wait_for_value(&fixture.server, "txt-input", "");
+            assert_eq!(
+                cleared.structured()["replaced_chars"],
+                6,
+                "clearing must report what it removed: {}",
+                cleared.raw
+            );
+
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        })
+    });
+}
+
 fn run_browser_scenario(run: fn(&BrowserSpec)) {
     let _guard = STANDALONE_BROWSER_TEST_LOCK
         .lock()
@@ -3774,6 +3845,7 @@ macro_rules! standalone_browser_test {
 standalone_browser_test!(standalone_browser_roundtrip, run_roundtrip);
 standalone_browser_test!(standalone_browser_semantic_state, run_semantic_state);
 standalone_browser_test!(standalone_browser_background_type, run_background_type);
+standalone_browser_test!(standalone_browser_type_replace, run_type_replace);
 #[cfg(target_os = "macos")]
 standalone_browser_test!(
     standalone_browser_native_omnibox_select_all,

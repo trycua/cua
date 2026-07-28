@@ -715,24 +715,30 @@ static Z_ORDER: OnceLock<WinZOrderEnforcer> = OnceLock::new();
 // IDLE→ACTIVE flip and released on ACTIVE→IDLE instead of being held for the
 // daemon's whole lifetime (the old behaviour leaked it: `timeBeginPeriod` at
 // thread start with no `timeEndPeriod` anywhere).
-/// Tracks whether we currently hold a `timeBeginPeriod(1)` request, so the
-/// begin/end calls stay balanced no matter which thread flips the cadence.
-static TIMER_RES_RAISED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+/// Tracks whether we currently hold a `timeBeginPeriod(1)` request. The lock
+/// covers both the state transition and the WinMM call: an atomic swap alone
+/// permits `timeEndPeriod` on one thread to overtake a delayed
+/// `timeBeginPeriod` on another, leaving the process raised while the flag
+/// says it is not.
+static TIMER_RES_RAISED: Mutex<bool> = Mutex::new(false);
 
 #[cfg(target_os = "windows")]
 fn set_timer_resolution_raised(raise: bool) {
-    use std::sync::atomic::Ordering::Relaxed;
     use windows::Win32::Media::{timeBeginPeriod, timeEndPeriod};
-    if TIMER_RES_RAISED.swap(raise, Relaxed) != raise {
-        unsafe {
-            if raise {
-                let _ = timeBeginPeriod(1);
-            } else {
-                let _ = timeEndPeriod(1);
-            }
+    let mut raised = TIMER_RES_RAISED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if *raised == raise {
+        return;
+    }
+    unsafe {
+        if raise {
+            let _ = timeBeginPeriod(1);
+        } else {
+            let _ = timeEndPeriod(1);
         }
     }
+    *raised = raise;
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -788,11 +794,13 @@ impl DirtyRect {
     }
 }
 
-/// Conservative half-extent of everything `paint_cursor` can draw around the
-/// cursor anchor at backing_scale 1.0: bloom ≤ 34 px, click ring ≤ ~37 px,
-/// arrow/teardrop ≤ ~20 px, plus anti-aliasing margin.
+/// Conservative half-extent for the checked-in theme plus the session badge.
+/// The badge is up to 176 px wide and clamps independently at display edges,
+/// so a cursor at an edge can have badge pixels almost 176 px to one side.
+/// Custom themes use a full-surface dirty rect because their bounded artifact
+/// coordinates can legitimately extend beyond this default-theme envelope.
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-const CURSOR_PAD: i32 = 64;
+const CURSOR_PAD: i32 = 192;
 
 #[cfg(target_os = "windows")]
 struct WinSurface {
@@ -874,8 +882,7 @@ impl WinSurface {
         // SAFETY: `bits` points at a live DIB section of exactly w*h*4 bytes;
         // the DIB outlives `self` (freed only in Drop) and only this (overlay)
         // thread touches it.
-        let dst =
-            unsafe { std::slice::from_raw_parts_mut(self.bits, w * self.h as usize * 4) };
+        let dst = unsafe { std::slice::from_raw_parts_mut(self.bits, w * self.h as usize * 4) };
         for y in r.y0..r.y1 {
             let row = (y as usize * w + r.x0 as usize) * 4;
             let row_end = (y as usize * w + r.x1 as usize) * 4;
@@ -912,9 +919,9 @@ thread_local! {
     /// the stale cursor pixels the DWM is still displaying.
     static PREV_DIRTY: std::cell::Cell<Option<DirtyRect>> =
         const { std::cell::Cell::new(None) };
-    /// The very first `UpdateLayeredWindowIndirect` must push the full
-    /// surface to establish the layered window's backing store; after that,
-    /// dirty rects suffice (even across surface recreations).
+    /// The first `UpdateLayeredWindowIndirect` for each newly-created surface
+    /// must push the full surface to establish the layered-window backing
+    /// store. Surface recreation and idle teardown reset this flag.
     static FIRST_PRESENT: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
 }
 
@@ -926,12 +933,13 @@ fn composite_dirty(map: &RenderMap) -> Option<DirtyRect> {
     let (w, h) = (map.virt_w.max(1), map.virt_h.max(1));
     SURFACE.with(|cell| {
         let mut slot = cell.borrow_mut();
-        if slot.as_ref().map(|s| (s.w, s.h)) != Some((w, h)) {
+        if slot.as_ref().map(|s| (s.virt_x, s.virt_y, s.w, s.h))
+            != Some((map.virt_x, map.virt_y, w, h))
+        {
             *slot = unsafe { WinSurface::create(map.virt_x, map.virt_y, w, h) };
+            FIRST_PRESENT.with(|first| first.set(true));
         }
         let surf = slot.as_mut()?;
-        surf.virt_x = map.virt_x;
-        surf.virt_y = map.virt_y;
 
         // Union of every cursor that will produce pixels this frame
         // (mirrors paint_cursor's own visibility early-return).
@@ -942,13 +950,27 @@ fn composite_dirty(map: &RenderMap) -> Option<DirtyRect> {
             }
             let cx = (rs.core.pos.0 - map.virt_x as f64).round() as i32;
             let cy = (rs.core.pos.1 - map.virt_y as f64).round() as i32;
-            let r = DirtyRect {
-                x0: cx - CURSOR_PAD,
-                y0: cy - CURSOR_PAD,
-                x1: cx + CURSOR_PAD,
-                y1: cy + CURSOR_PAD,
-            }
-            .clamped(w, h);
+            let custom_theme = rs
+                .core
+                .theme
+                .as_deref()
+                .is_some_and(|theme| theme.id != cursor_overlay::DEFAULT_THEME_ID);
+            let r = if custom_theme {
+                Some(DirtyRect {
+                    x0: 0,
+                    y0: 0,
+                    x1: w,
+                    y1: h,
+                })
+            } else {
+                DirtyRect {
+                    x0: cx - CURSOR_PAD,
+                    y0: cy - CURSOR_PAD,
+                    x1: cx + CURSOR_PAD,
+                    y1: cy + CURSOR_PAD,
+                }
+                .clamped(w, h)
+            };
             current = DirtyRect::union(current, r);
         }
 
@@ -1297,6 +1319,7 @@ unsafe extern "system" fn wnd_proc(
                     SURFACE.with(|cell| {
                         cell.borrow_mut().take();
                     });
+                    FIRST_PRESENT.with(|first| first.set(true));
                 }
             }
 
@@ -1469,6 +1492,14 @@ mod tests {
                 end_heading_radians: 0.0,
             },
         })
+    }
+
+    #[test]
+    fn default_dirty_envelope_covers_edge_clamped_session_badges() {
+        assert!(
+            CURSOR_PAD as f32 >= cursor_overlay::session_badge::BADGE_MAX_WIDTH + 8.0,
+            "a cursor at a display edge can have the entire badge on one side"
+        );
     }
 
     #[test]

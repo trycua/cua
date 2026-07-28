@@ -32,10 +32,13 @@ from .docker_utils import (
 # Configuration
 # =============================================================================
 
+DEFAULT_LINUX_DOCKER_IMAGE = "trycua/cua-xfce:latest"
+DEFAULT_DAYTONA_SNAPSHOT = "nikri/kicad-snorkel:20260316b"
+
 # Environment type configurations
 ENV_CONFIGS = {
     "linux-docker": {
-        "image": "nikri/kicad-snorkel:20260316b",
+        "image": DEFAULT_LINUX_DOCKER_IMAGE,
         "internal_vnc_port": 6901,
         "internal_api_port": 8000,
         "requires_kvm": False,
@@ -67,6 +70,18 @@ ENV_CONFIGS = {
         "use_overlays": True,  # Protect golden QCOW2 disk
     },
 }
+
+
+def resolve_environment_container_image(
+    env_type: str,
+    golden_name: Optional[str],
+    config: dict,
+) -> str:
+    """Resolve the runtime image without conflating Docker images and QEMU disks."""
+    if not config["requires_kvm"] and golden_name and golden_name != env_type:
+        return golden_name
+    return config["image"]
+
 
 # Default agent image
 DEFAULT_AGENT_IMAGE = "cua-bench:latest"
@@ -297,7 +312,11 @@ class TaskRunner:
             "network": network_name,
             "env_container": env_container_name if not is_simulated else None,
             "agent_container": agent_container_name,
-            "env_image": config.get("image") if not is_simulated else None,
+            "env_image": (
+                resolve_environment_container_image(env_type, golden_name, config)
+                if not is_simulated
+                else None
+            ),
             "agent_image": self.agent_image,
             "remove_images": remove_images_after,
             "overlay_path": overlay_path,
@@ -518,7 +537,7 @@ class TaskRunner:
             "network": network_name,
             "env_container": env_container_name,
             "agent_container": None,  # No agent in interactive mode
-            "env_image": config["image"],
+            "env_image": resolve_environment_container_image(env_type, golden_name, config),
             "agent_image": None,
             "remove_images": False,
             "overlay_path": overlay_path,
@@ -678,8 +697,9 @@ class TaskRunner:
             devices.append("/dev/kvm")
 
         # Start container
+        container_image = resolve_environment_container_image(env_type, golden_name, config)
         return await start_container(
-            image=config["image"],
+            image=container_image,
             name=container_name,
             network=network_name,
             hostname=self.env_hostname,
@@ -1003,9 +1023,11 @@ class TaskRunner:
 
         harness = DaytonaHarness()
 
-        # Resolve env-type name → actual Docker image
+        # Daytona expects a snapshot name, not a Docker image.  Platform names
+        # therefore retain the provider-specific default, while an explicit
+        # --image value is treated as the requested Daytona snapshot.
         _raw = golden_name or env_type or ""
-        env_image = ENV_CONFIGS.get(_raw, {}).get("image") or _raw or "nikri/kicad-snorkel:20260316b"
+        env_image = _raw if _raw and _raw not in ENV_CONFIGS else DEFAULT_DAYTONA_SNAPSHOT
 
         # API keys and env vars to bake into the sandbox at creation time
         # (avoids passing secrets via process.exec env which triggers abuse detection)

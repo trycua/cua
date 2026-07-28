@@ -509,9 +509,17 @@ async fn collect_visited_bounded<'a>(
                     if let Some(Ok(ap)) = call(proxies.action()).await {
                         let n = call(ap.n_actions()).await.and_then(|r| r.ok()).unwrap_or(0);
                         for i in 0..n {
-                            if let Some(Ok(an)) = call(ap.get_name(i)).await {
-                                actions.push(an);
-                            }
+                            // Preserve the AT-SPI action index even when an
+                            // individual name lookup fails. `do_action` takes
+                            // this original index, so compacting the vector
+                            // could otherwise actuate a different action than
+                            // the name we selected.
+                            actions.push(
+                                call(ap.get_name(i))
+                                    .await
+                                    .and_then(|result| result.ok())
+                                    .unwrap_or_default(),
+                            );
                         }
                     }
                 }
@@ -1238,7 +1246,6 @@ const ACTIVATION_VERBS: &[&str] = &[
     "toggle",
     "open",
     "jump",
-    "do default",
     "dodefault",
 ];
 
@@ -1248,12 +1255,15 @@ const ACTIVATION_VERBS: &[&str] = &[
 /// first is `buffer.delete-line`, so actuating "action 0" there deletes a line
 /// of the user's document instead of placing a caret.
 fn is_activation_action(name: &str) -> bool {
-    let verb = name
+    let verb: String = name
         .rsplit('.')
         .next()
         .unwrap_or(name)
         .trim()
-        .to_ascii_lowercase();
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect();
     ACTIVATION_VERBS.contains(&verb.as_str())
 }
 
@@ -1291,11 +1301,9 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
             // reporting an ordinary click. An element that advertises no
             // activation at all is a no-op the caller must escalate past —
             // not an invitation to fire whatever happens to be first.
-            let chosen = activation_index(&target.actions);
-            if chosen.is_none() {
-                return Ok((String::new(), true));
-            }
-            let chosen = chosen.unwrap_or(0);
+            let chosen = activation_index(&target.actions).ok_or_else(|| {
+                anyhow!("element {idx} does not advertise a safe activation action")
+            })?;
 
             let ap = target
                 .acc
@@ -1535,6 +1543,9 @@ pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Optio
                 return Ok(None);
             };
             let target = &visited[idx];
+            let Some(chosen) = activation_index(&target.actions) else {
+                return Ok(None);
+            };
             let ap = target
                 .acc
                 .proxies()
@@ -1543,10 +1554,10 @@ pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Optio
                 .action()
                 .await
                 .map_err(|e| anyhow!("Action unavailable: {e}"))?;
-            ap.do_action(0)
+            ap.do_action(chosen as i32)
                 .await
                 .map_err(|e| anyhow!("doAction failed: {e}"))?;
-            Ok(Some(target.actions.first().cloned().unwrap_or_default()))
+            Ok(target.actions.get(chosen).cloned())
         },
         || Ok(None),
     )
@@ -1644,6 +1655,9 @@ pub fn perform_action_at_screen_point(
                 return Ok(None);
             };
             let target = action_nodes[idx];
+            let Some(chosen) = activation_index(&target.actions) else {
+                return Ok(None);
+            };
             let ap = target
                 .acc
                 .proxies()
@@ -1652,10 +1666,10 @@ pub fn perform_action_at_screen_point(
                 .action()
                 .await
                 .map_err(|e| anyhow!("Action unavailable: {e}"))?;
-            ap.do_action(0)
+            ap.do_action(chosen as i32)
                 .await
                 .map_err(|e| anyhow!("doAction failed: {e}"))?;
-            Ok(Some(target.actions.first().cloned().unwrap_or_default()))
+            Ok(target.actions.get(chosen).cloned())
         },
         || Ok(None),
     )
@@ -2446,7 +2460,14 @@ mod coord_tests {
 
     #[test]
     fn plain_activation_names_are_recognised() {
-        for name in ["click", "activate", "press", "Toggle", "do default"] {
+        for name in [
+            "click",
+            "activate",
+            "press",
+            "Toggle",
+            "do default",
+            "do-default",
+        ] {
             assert!(is_activation_action(name), "{name} should activate");
         }
     }
@@ -2505,5 +2526,13 @@ mod coord_tests {
         // Position is not meaning: the activation may sit anywhere.
         let mixed = vec!["clipboard.copy".to_owned(), "activate".to_owned()];
         assert_eq!(activation_index(&mixed), Some(1));
+        // Failed action-name lookups are retained as empty placeholders so
+        // the selected vector position is still the original AT-SPI index.
+        let sparse = vec![
+            String::new(),
+            "buffer.delete-line".to_owned(),
+            "activate".to_owned(),
+        ];
+        assert_eq!(activation_index(&sparse), Some(2));
     }
 }

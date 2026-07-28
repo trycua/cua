@@ -49,6 +49,10 @@ pub struct TopLevelCandidate {
     /// AXSubrole for top-level windows. Dialog-like windows must not inherit
     /// the application's menu bar into their window-scoped snapshot.
     pub subrole: Option<String>,
+    /// Stable AppKit AX identifier, when exposed. Tahoe's Open/Save panels
+    /// report `AXStandardWindow` rather than a dialog subrole, but identify
+    /// themselves as `open-panel` / `save-panel`.
+    pub identifier: Option<String>,
     /// `_AXUIElementGetWindow` result, when the SPI resolved one. Only read
     /// for `AXWindow` roles.
     pub ax_window_id: Option<u32>,
@@ -59,6 +63,7 @@ impl TopLevelCandidate {
         Self {
             role: role.into(),
             subrole: None,
+            identifier: None,
             ax_window_id,
         }
     }
@@ -68,12 +73,21 @@ impl TopLevelCandidate {
         self
     }
 
+    pub fn with_identifier(mut self, identifier: impl Into<String>) -> Self {
+        self.identifier = Some(identifier.into());
+        self
+    }
+
     fn is_dialog_like(&self) -> bool {
         self.role == "AXSheet"
             || self
                 .subrole
                 .as_deref()
                 .is_some_and(|s| matches!(s, "AXDialog" | "AXSystemDialog" | "AXSheet"))
+            || self
+                .identifier
+                .as_deref()
+                .is_some_and(|id| matches!(id, "open-panel" | "save-panel"))
     }
 }
 
@@ -202,6 +216,24 @@ mod tests {
         let d = decide_window_scope(&candidates, 22, never_called);
         assert_eq!(d.scope, WindowScope::Matched);
         assert_eq!(d.walk, vec![2], "dialog snapshot must not carry AXMenuBar");
+    }
+
+    #[test]
+    fn matched_appkit_file_panel_excludes_the_application_menu_bar() {
+        let candidates = [
+            TopLevelCandidate::new("AXMenuBar", None),
+            TopLevelCandidate::new("AXWindow", Some(11)).with_subrole("AXStandardWindow"),
+            TopLevelCandidate::new("AXWindow", Some(22))
+                .with_subrole("AXStandardWindow")
+                .with_identifier("open-panel"),
+        ];
+        let d = decide_window_scope(&candidates, 22, never_called);
+        assert_eq!(d.scope, WindowScope::Matched);
+        assert_eq!(
+            d.walk,
+            vec![2],
+            "AppKit file-panel snapshot must not carry AXMenuBar"
+        );
     }
 
     /// Issue #2237's headline defect: an id nothing claims used to fall through

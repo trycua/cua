@@ -262,6 +262,7 @@ pub fn walk_tree_bounded(
                     set_messaging_timeout(child);
                     let role = copy_string_attr(child, "AXRole").unwrap_or_default();
                     let subrole = copy_string_attr(child, "AXSubrole");
+                    let identifier = copy_string_attr(child, "AXIdentifier");
                     // Match AX window element → CGWindowID via private SPI.
                     // Only windows carry one, so skip the round-trip elsewhere.
                     let ax_window_id = if role == "AXWindow" {
@@ -272,6 +273,7 @@ pub fn walk_tree_bounded(
                     TopLevelCandidate {
                         role,
                         subrole,
+                        identifier,
                         ax_window_id,
                     }
                 })

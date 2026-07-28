@@ -52,9 +52,9 @@ and Windows surface:
 **`bring_to_front`** (X11): persistent `_NET_ACTIVE_WINDOW` activation (the
 `wmctrl -a` equivalent), kept active. It is not the normal response to
 `background_unavailable`; retry that action directly with
-`delivery_mode:"foreground"`. Reserve `bring_to_front` for a known focus-proxy
-surface, such as a remote desktop client, that must stay active across several
-interactions.
+`delivery_mode:"foreground"`, the per-action foreground request. Reserve
+`bring_to_front` for a known focus-proxy surface, such as a remote desktop
+client, that must stay active across several interactions.
 
 **Read-back / `verified`** — `type_text` reports `{verified}`: the AT-SPI
 `EditableText.insertText` path (`path:"ax"`) is the **driver-verifiable** rung

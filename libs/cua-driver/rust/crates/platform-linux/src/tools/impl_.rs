@@ -6744,8 +6744,9 @@ impl Tool for BringToFrontTool {
             description:
                 "Persistently activate a window so it stays foreground across interactions. \
                  For a generic `background_unavailable` response, retry the same action \
-                 directly with `delivery_mode:\"foreground\"`; that activation is scoped to \
-                 one action and restores the previous foreground. Use `bring_to_front` only \
+                 directly with `delivery_mode:\"foreground\"`; that is the per-action \
+                 foreground request rather than a request for persistent activation. Use \
+                 `bring_to_front` only \
                  when a known focus-proxy surface, such as a remote desktop client, must \
                  remain active across multiple interactions. \
                  X11: EWMH _NET_ACTIVE_WINDOW activation (the `wmctrl -a` equivalent, \

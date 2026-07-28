@@ -7782,8 +7782,9 @@ impl Tool for BringToFrontTool {
                 the OS foreground. \n\n\
                 **This deliberately breaks the no-foreground contract and keeps the target \
                 foreground.** For a generic `background_unavailable` response, retry the same \
-                action directly with `delivery_mode:\"foreground\"`; that activation is scoped \
-                to one action and restores the previous foreground. Use `bring_to_front` only \
+                action directly with `delivery_mode:\"foreground\"`; that is the per-action \
+                foreground request rather than a request for persistent activation. Use \
+                `bring_to_front` only \
                 when a known focus-proxy surface, such as a remote desktop client, must stay \
                 foreground across multiple interactions. Subsequent input calls still use \
                 `delivery_mode:\"foreground\"` for SendInput.\n\n\

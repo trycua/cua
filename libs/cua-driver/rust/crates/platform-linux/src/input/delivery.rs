@@ -79,11 +79,11 @@ pub fn delivery_mode_schema() -> Value {
          Wayland's security model has no per-window background targeting, so a \
          specific non-focused window cannot be aimed at; when no libei backend \
          is available the tool returns a structured background_unavailable \
-         error. 'foreground' is the explicit escalation: activate the target \
-         (X11 _NET_ACTIVE_WINDOW; Wayland compositor activate), inject, then \
-         restore the prior active window — a brief focus swap unless the \
-         target was already active. Retry a refused action directly with \
-         'foreground'. Use bring_to_front only for a known focus-proxy surface \
+         error. 'foreground' is the explicit per-action escalation: request \
+         target activation (X11 _NET_ACTIVE_WINDOW; Wayland compositor \
+         activate), then inject. Retry a refused action directly with \
+         'foreground'; unlike bring_to_front, it does not request persistent \
+         activation. Use bring_to_front only for a known focus-proxy surface \
          that must stay foreground across interactions. Matches the macOS / \
          Windows delivery_mode surface.",
     );
@@ -216,6 +216,7 @@ mod tests {
             .as_str()
             .expect("delivery_mode description");
         assert!(description.contains("Retry a refused action directly with 'foreground'"));
+        assert!(description.contains("does not request persistent activation"));
         assert!(description.contains("known focus-proxy surface"));
         assert!(!description.contains("Call bring_to_front first"));
     }

@@ -117,9 +117,10 @@ pub fn delivery_mode_schema() -> Value {
          raised. For targets whose input stack silently drops posted events \
          (Chromium/Electron content, GTK buttons, VCL/LibreOffice accelerators) \
          the tool returns a structured background_unavailable error rather than \
-         fronting. 'foreground' is the explicit escalation: a brief \
-         SetForegroundWindow swap + SendInput, restoring the prior foreground \
-         afterward. Retry a refused action directly with 'foreground'. Use \
+         fronting. 'foreground' is the explicit per-action escalation through \
+         SetForegroundWindow + SendInput. Retry a refused action directly with \
+         'foreground'; unlike bring_to_front, it does not request persistent \
+         activation. Use \
          bring_to_front only for a known focus-proxy surface that must stay \
          foreground across interactions. \
          IMPORTANT: 'background' is not a hint to weigh — it is the mandatory \
@@ -456,11 +457,12 @@ mod tests {
     }
 
     #[test]
-    fn delivery_mode_schema_separates_scoped_and_persistent_foreground() {
+    fn delivery_mode_schema_separates_per_action_and_persistent_foreground() {
         let description = delivery_mode_schema()["description"]
             .as_str()
             .expect("delivery_mode description");
         assert!(description.contains("Retry a refused action directly with 'foreground'"));
+        assert!(description.contains("does not request persistent activation"));
         assert!(description.contains("known focus-proxy surface"));
         assert!(!description.contains("call bring_to_front first"));
     }

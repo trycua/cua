@@ -31,7 +31,7 @@ strict no-foreground:
 | `delivery_mode`          | Behavior on Windows                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `"background"` (DEFAULT) | Never fronts and **never raises/restacks** the target — macOS-aligned (mirrors CGEvent-to-pid). **Pixel clicks**: a UIA hit-test at the point first (accessibility-channel Invoke — works on UWP / WinUI3 / Win11 packaged apps, no flash); if that misses, coordinate-injected pen/touch, **but only when the target is the _visible_ window at that point**; PostMessage for plain Win32. It returns a structured `background_unavailable` error — rather than raising or fronting — when the target is **occluded** at the point, or the event kind is known-dropped (Chromium DOM mouse + key-combos, GTK buttons, VCL/LibreOffice accelerators, terminal / WPF text with no `element_index`). **No foreground swap and no z-order raise, ever.** |
-| `"foreground"`           | SendInput with brief `SetForegroundWindow(target)` → restore. The explicit, agent-chosen rung where fronting IS allowed — required to reach occluded targets, Chromium DOM content, GTK buttons, VCL accelerators, WPF drag, terminals, and canvas / custom-drawn surfaces with no UIA peer. Implemented for **every** input tool — `type_text` (SendInput Unicode via `send_text_synthesized`) and `scroll` (SendInput wheel via `send_wheel_synthesized`) included. Flashes the target visible unless `bring_to_front` was called first.                                                                                                                                                                                                            |
+| `"foreground"`           | SendInput with action-scoped `SetForegroundWindow(target)` → act → restore. The explicit, agent-chosen rung where fronting IS allowed — required to reach occluded targets, Chromium DOM content, GTK buttons, VCL accelerators, WPF drag, terminals, and canvas / custom-drawn surfaces with no UIA peer. Implemented for **every** input tool — `type_text` (SendInput Unicode via `send_text_synthesized`) and `scroll` (SendInput wheel via `send_wheel_synthesized`) included. The target stays foreground only for that action.                                                                                                                                                                           |
 
 > **macOS is the source of truth — `background` never alters the screen.**
 > Earlier Windows builds "cheated" in background with three tricks that this
@@ -62,9 +62,9 @@ PostMessage** (UWP Calculator, Win11 Notepad, WinUI3 apps, etc.). cua-driver
 turns the pixel coord into a UIA Invoke at that point and delivers
 through the accessibility channel — no flash, no focus steal. Only
 escalate to `delivery_mode:"foreground"` when you actually see a
-`background_unavailable` structured error, and only with the
-`bring_to_front` flow described below so the agent pays the flash cost
-once instead of per-call.
+`background_unavailable` structured error. Retry that same action directly;
+the foreground swap is scoped to the action and restores the previous
+foreground before returning.
 
 Empirical: pixel-clicks via `delivery_mode:"background"` against the UWP
 Calculator on Win11 (Number-pad buttons + operators) consistently
@@ -84,7 +84,7 @@ costlier path; only use it for surfaces with no UIA peer.
     "target_class": "Chrome_WidgetWin_1",
     "event_kind": "mouse_click",
     "escalation": { "recommended": "foreground", "reason": "occluded / known-dropped event kind" },
-    "suggestion": "Either call bring_to_front then retry with delivery_mode:\"foreground\", or accept the foreground swap by setting delivery_mode:\"foreground\" directly."
+    "suggestion": "Retry this action with delivery_mode:\"foreground\"."
   }
 }
 ```
@@ -95,16 +95,16 @@ recommendation is `"foreground"` — the dropped event needs the fronting
 rung. (Contrast macOS / X11, where a background px click can still land
 in the background, so there the hint is `px`.)
 
-The recommended flow when an agent gets that error:
+The recommended flow when an agent gets that error is one step:
 
-1. `bring_to_front(pid)` — activates the target ONCE (visible flicker).
-2. Subsequent input calls with `delivery_mode:"foreground"` deliver via
-   SendInput WITHOUT a per-call flash (the SetForegroundWindow swap
-   inside SendInput is a no-op because the target is already frontmost).
-3. When done, leave the target as the user's foreground or call
-   `hotkey({pid: original_fg_pid, keys: ["alt","tab"]})` to put their
-   prior window back. **There is no "restore" tool** — you brought
-   the target forward deliberately; restoring is your responsibility.
+1. Retry the same action with `delivery_mode:"foreground"`.
+
+`bring_to_front` is a separate persistent-activation tool, not the normal next
+rung. Use it only when a known focus-proxy surface, such as a remote desktop
+client, must stay foreground across several interactions. In that special
+case, subsequent input calls still use `delivery_mode:"foreground"`; the
+target remains foreground when the sequence ends, so restoring the user's
+previous window is the caller's responsibility.
 
 The `bring_to_front` tool uses an `AttachThreadInput` trick to _attempt_
 the foreground swap even when the daemon isn't at UIAccess integrity (the
@@ -275,8 +275,8 @@ neither carries live keyboard state — so a `modifier` (Ctrl/Shift/etc.)
 passed alongside a `delivery_mode:"background"` click **is not honored**
 on Windows. The `modifier` _param_ is part of the shared schema and is
 accepted everywhere; it only takes effect on the SendInput rung, i.e. a
-`delivery_mode:"foreground"` (or `bring_to_front`-then-foreground) click,
-where SendInput sets real modifier state. If you need a modifier-click on
+`delivery_mode:"foreground"` click, where SendInput sets real modifier state.
+If you need a modifier-click on
 Windows, escalate that one action to `foreground`.
 
 ### Cross-platform schema residuals (Windows)
@@ -779,8 +779,8 @@ typed browser tools yet.
     failure signal, verify via screenshot if it matters.
     Escalate to `delivery_mode:"foreground"` for both (SendInput Unicode /
     accelerator). **But** foreground needs the swap to actually land — if the
-    daemon lacks UIAccess and `bring_to_front` returns `landed_on_target:false`
-    (or it reverts before the next call), you can't drive it by input at all:
+    daemon lacks UIAccess and the action-scoped foreground swap is rejected,
+    you can't drive it by input at all:
     produce the artifact and `launch_app` it (build the `.xlsx` / `.docx` and
     open it) rather than typing into the GUI.
 - **Edge / Chrome shows tab switching even though I used pid-scoped

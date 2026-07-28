@@ -234,61 +234,26 @@ impl Tool for DragTool {
                     ))
                 }
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+        } else if let Some(ratio) = self.state.resize_registry.ratio(pid, window_id) {
             from_x *= ratio;
             from_y *= ratio;
             to_x *= ratio;
             to_y *= ratio;
         }
 
-        // Translate window-local screenshot pixels → screen coordinates.
-        // Also compute window-local logical coords for CGEventSetWindowLocation.
+        // Translate window-local screenshot pixels → screen coordinates, and
+        // window-local logical coords for CGEventSetWindowLocation. Both ends of
+        // the drag resolve against ONE frame, so a window that closed mid-call
+        // refuses rather than dragging across the desktop behind it.
         let (from_sx, from_sy, from_lx, from_ly, to_sx, to_sy, to_lx, to_ly) =
             if let Some(wid) = window_id {
-                let result = tokio::task::spawn_blocking(move || {
-                    let bounds = crate::windows::window_bounds_by_id(wid);
-                    let scale: f64 = if let Some(ref b) = bounds {
-                        if let Ok(png) = crate::capture::screenshot_window_bytes(wid) {
-                            if png.len() >= 24 {
-                                let pw =
-                                    u32::from_be_bytes([png[16], png[17], png[18], png[19]]) as f64;
-                                let lw = b.width;
-                                if lw > 0.0 && pw > lw {
-                                    pw / lw
-                                } else {
-                                    1.0
-                                }
-                            } else {
-                                1.0
-                            }
-                        } else {
-                            1.0
-                        }
-                    } else {
-                        1.0
-                    };
-                    (bounds, scale)
-                })
-                .await
-                .unwrap_or((None, 1.0));
-
-                if let (Some(b), scale) = result {
-                    let flx = from_x / scale;
-                    let fly = from_y / scale;
-                    let tlx = to_x / scale;
-                    let tly = to_y / scale;
-                    (
-                        b.x + flx,
-                        b.y + fly,
-                        flx,
-                        fly,
-                        b.x + tlx,
-                        b.y + tly,
-                        tlx,
-                        tly,
-                    )
-                } else {
-                    (from_x, from_y, from_x, from_y, to_x, to_y, to_x, to_y)
+                match super::px_frame::resolve_or_refuse(wid).await {
+                    Ok(frame) => {
+                        let (fsx, fsy, flx, fly) = frame.to_screen(from_x, from_y);
+                        let (tsx, tsy, tlx, tly) = frame.to_screen(to_x, to_y);
+                        (fsx, fsy, flx, fly, tsx, tsy, tlx, tly)
+                    }
+                    Err(refusal) => return refusal,
                 }
             } else {
                 (from_x, from_y, from_x, from_y, to_x, to_y, to_x, to_y)

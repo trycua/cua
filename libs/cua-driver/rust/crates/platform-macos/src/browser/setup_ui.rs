@@ -1723,6 +1723,7 @@ mod tests {
             tree_markdown: String::new(),
             nodes,
             truncated: false,
+            window_scope: Some(crate::ax::WindowScope::Matched),
         }
     }
 
@@ -1850,6 +1851,7 @@ mod tests {
             tree_markdown: String::new(),
             nodes: Vec::new(),
             truncated: true,
+            window_scope: Some(crate::ax::WindowScope::Matched),
         };
         assert!(
             exact_pixel_setup_checkbox(0, &truncated, 0, chrome(), false)

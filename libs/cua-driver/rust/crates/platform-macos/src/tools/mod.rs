@@ -30,6 +30,7 @@ pub(crate) mod get_screen_size;
 mod health_report;
 mod move_cursor;
 mod page;
+pub(crate) mod px_frame;
 mod set_config;
 mod type_text_chars;
 mod zoom;
@@ -247,13 +248,19 @@ impl ZoomRegistry {
     }
 }
 
-/// Tracks the per-pid ratio applied by `max_image_dimension` downscaling.
+/// Tracks the per-(pid, window_id) ratio applied by `max_image_dimension`
+/// downscaling.
 ///
 /// `ratio = original_dim / resized_dim` — multiply resized image coordinates
 /// by this to recover original (native) window-local pixel coordinates.
 /// Mirrors Swift's `ImageResizeRegistry`.
+///
+/// Keyed per window, matching the element cache and the element-token
+/// registry. A pid-only key leaked the ratio recorded while snapshotting
+/// window A into pixel clicks aimed at window B of the same pid, sending them
+/// off-target (issue #2237).
 pub struct ResizeRegistry {
-    inner: std::sync::Mutex<HashMap<i32, f64>>,
+    inner: std::sync::Mutex<HashMap<(i32, u32), f64>>,
 }
 
 impl Default for ResizeRegistry {
@@ -269,19 +276,39 @@ impl ResizeRegistry {
         }
     }
 
-    /// Record that pid's screenshot was downscaled by `ratio`.
-    pub fn set_ratio(&self, pid: i32, ratio: f64) {
-        self.inner.lock().unwrap().insert(pid, ratio);
+    /// Record that (pid, window_id)'s screenshot was downscaled by `ratio`.
+    pub fn set_ratio(&self, pid: i32, window_id: u32, ratio: f64) {
+        self.inner.lock().unwrap().insert((pid, window_id), ratio);
     }
 
-    /// Remove the ratio entry (no active downscale).
-    pub fn clear_ratio(&self, pid: i32) {
-        self.inner.lock().unwrap().remove(&pid);
+    /// Remove the ratio entry for one window (no active downscale).
+    pub fn clear_ratio(&self, pid: i32, window_id: u32) {
+        self.inner.lock().unwrap().remove(&(pid, window_id));
     }
 
-    /// Returns the most recent ratio, or `None` if no downscale happened.
-    pub fn ratio(&self, pid: i32) -> Option<f64> {
-        self.inner.lock().unwrap().get(&pid).copied()
+    /// The ratio for a window, or `None` if no downscale happened.
+    ///
+    /// `window_id: None` is the screen-scope (legacy) path: it returns a ratio
+    /// only when every window recorded for `pid` agrees on one, so a
+    /// window-less caller can never inherit some other window's scale. That
+    /// preserves today's behaviour for the single-window case without guessing
+    /// across windows.
+    pub fn ratio(&self, pid: i32, window_id: Option<u32>) -> Option<f64> {
+        let inner = self.inner.lock().unwrap();
+        match window_id {
+            Some(wid) => inner.get(&(pid, wid)).copied(),
+            None => {
+                let mut agreed: Option<f64> = None;
+                for (_, ratio) in inner.iter().filter(|((p, _), _)| *p == pid) {
+                    match agreed {
+                        None => agreed = Some(*ratio),
+                        Some(seen) if (seen - *ratio).abs() < 1e-9 => {}
+                        Some(_) => return None,
+                    }
+                }
+                agreed
+            }
+        }
     }
 }
 
@@ -735,6 +762,75 @@ mod session_config_guard_tests {
         reg.set(sid, overrides(800));
         let dim = reg.effective_max_image_dimension(Some(sid), &global);
         assert_eq!(dim, 800, "live session override must apply");
+    }
+}
+
+#[cfg(test)]
+mod resize_registry_tests {
+    use super::ResizeRegistry;
+
+    /// Issue #2237: the registry was keyed by pid alone, so the downscale
+    /// ratio recorded while snapshotting one window was applied to pixel
+    /// clicks aimed at another window of the same app.
+    #[test]
+    fn resize_ratio_is_keyed_per_window() {
+        let reg = ResizeRegistry::new();
+        reg.set_ratio(800, 11, 2.0);
+        reg.set_ratio(800, 22, 1.25);
+        assert_eq!(reg.ratio(800, Some(11)), Some(2.0));
+        assert_eq!(reg.ratio(800, Some(22)), Some(1.25));
+    }
+
+    #[test]
+    fn undownscaled_window_reports_no_ratio() {
+        let reg = ResizeRegistry::new();
+        reg.set_ratio(800, 11, 2.0);
+        assert_eq!(
+            reg.ratio(800, Some(22)),
+            None,
+            "window 22 was never downscaled; it must not inherit window 11's ratio"
+        );
+    }
+
+    #[test]
+    fn clearing_one_window_keeps_the_other() {
+        let reg = ResizeRegistry::new();
+        reg.set_ratio(800, 11, 2.0);
+        reg.set_ratio(800, 22, 1.25);
+        reg.clear_ratio(800, 11);
+        assert_eq!(reg.ratio(800, Some(11)), None);
+        assert_eq!(reg.ratio(800, Some(22)), Some(1.25));
+    }
+
+    #[test]
+    fn distinct_pids_with_the_same_window_id_do_not_collide() {
+        let reg = ResizeRegistry::new();
+        reg.set_ratio(800, 11, 2.0);
+        reg.set_ratio(900, 11, 3.0);
+        assert_eq!(reg.ratio(800, Some(11)), Some(2.0));
+        assert_eq!(reg.ratio(900, Some(11)), Some(3.0));
+    }
+
+    /// Screen-scope callers pass no window_id. One window (the common case)
+    /// keeps working; disagreeing windows refuse to guess.
+    #[test]
+    fn screen_scope_lookup_only_answers_when_windows_agree() {
+        let reg = ResizeRegistry::new();
+        assert_eq!(reg.ratio(800, None), None, "nothing recorded yet");
+        reg.set_ratio(800, 11, 2.0);
+        assert_eq!(
+            reg.ratio(800, None),
+            Some(2.0),
+            "single window is unambiguous"
+        );
+        reg.set_ratio(800, 22, 2.0);
+        assert_eq!(reg.ratio(800, None), Some(2.0), "agreeing windows answer");
+        reg.set_ratio(800, 33, 1.25);
+        assert_eq!(
+            reg.ratio(800, None),
+            None,
+            "disagreeing windows must not pick one arbitrarily"
+        );
     }
 }
 

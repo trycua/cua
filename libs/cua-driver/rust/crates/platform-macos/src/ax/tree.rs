@@ -11,6 +11,7 @@
 //! - Tree is walked depth-first; element_index is assigned in DFS order.
 
 use super::bindings::*;
+use super::window_scope::{decide_window_scope, TopLevelCandidate, WindowScope};
 use core_foundation::base::{CFEqual, CFRelease, CFRetain, CFTypeRef};
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
@@ -132,6 +133,15 @@ pub struct TreeWalkResult {
     pub nodes: Vec<AXNode>,
     /// True when the walk was cut short by the MAX_ELEMENTS cap.
     pub truncated: bool,
+    /// Whether the requested `window_id` actually resolved to an AX surface,
+    /// and if not, why. `None` when no `window_id` was requested.
+    ///
+    /// Issue #2237: without this, an unresolvable id was indistinguishable
+    /// from a clean snapshot — callers had no way to tell that the tree they
+    /// were handed belonged to a different surface. Any variant other than
+    /// [`WindowScope::Matched`] comes with an EMPTY walk, so `nodes` never
+    /// describes a window other than the requested one.
+    pub window_scope: Option<WindowScope>,
 }
 
 /// Walk the AX tree of `pid`, optionally filtered to a specific window.
@@ -181,6 +191,7 @@ pub fn walk_tree_bounded(
     // Set to true only when walk_element actually stops early due to the cap —
     // avoids a false-positive when the tree naturally ends on exactly the cap.
     let mut truncated = false;
+    let mut window_scope: Option<WindowScope> = None;
 
     unsafe {
         let app_elem = AXUIElementCreateApplication(pid);
@@ -189,6 +200,9 @@ pub fn walk_tree_bounded(
                 tree_markdown: String::new(),
                 nodes,
                 truncated: false,
+                // No application AX element at all, so a requested window
+                // certainly did not resolve.
+                window_scope: window_id.map(|_| WindowScope::AxUnresolved { ax_window_count: 0 }),
             };
         }
         set_messaging_timeout(app_elem);
@@ -236,21 +250,44 @@ pub fn walk_tree_bounded(
             }
         }
 
-        // Filter: keep non-window children (menu bar) + the target window.
+        // Scope: keep non-window children (menu bar) + the target window —
+        // but ONLY once the target window has actually been identified. When
+        // nothing claims the requested id, `decide_window_scope` reports why
+        // and walks nothing; it must never fall back to "everything that isn't
+        // a window", which is how issue #2237 returned menu bars as panels.
         let walk_these: Vec<AXUIElementRef> = if let Some(wid) = window_id {
-            top_level
+            let candidates: Vec<TopLevelCandidate> = top_level
                 .iter()
-                .copied()
-                .filter(|&child| {
+                .map(|&child| {
                     set_messaging_timeout(child);
                     let role = copy_string_attr(child, "AXRole").unwrap_or_default();
-                    if role != "AXWindow" {
-                        return true; // always keep menu bar and other non-window items
-                    }
+                    let subrole = copy_string_attr(child, "AXSubrole");
+                    let identifier = copy_string_attr(child, "AXIdentifier");
                     // Match AX window element → CGWindowID via private SPI.
-                    ax_get_window_id(child) == Some(wid)
+                    // Only windows carry one, so skip the round-trip elsewhere.
+                    let ax_window_id = if role == "AXWindow" {
+                        ax_get_window_id(child)
+                    } else {
+                        None
+                    };
+                    TopLevelCandidate {
+                        role,
+                        subrole,
+                        identifier,
+                        ax_window_id,
+                    }
                 })
-                .collect()
+                .collect();
+            let decision = decide_window_scope(&candidates, wid, || {
+                crate::windows::resolve_window_owner(pid, wid)
+            });
+            let walk = decision
+                .walk
+                .iter()
+                .map(|&index| top_level[index])
+                .collect();
+            window_scope = Some(decision.scope);
+            walk
         } else {
             top_level.to_vec()
         };
@@ -300,6 +337,7 @@ pub fn walk_tree_bounded(
         tree_markdown,
         nodes,
         truncated: truncated_flag,
+        window_scope,
     }
 }
 

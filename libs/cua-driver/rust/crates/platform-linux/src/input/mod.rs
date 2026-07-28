@@ -315,12 +315,39 @@ fn is_xvfb_process_running() -> bool {
 /// NOTE: this only rules out the servers known to lack uinput→X-slave hotplug.
 /// A `true` result means "worth attempting"; the per-action call still fails
 /// gracefully (and the caller falls back) if the slave never binds.
+fn real_pointer_capabilities_available(
+    server_supported: bool,
+    xvfb: bool,
+    uinput_accessible: bool,
+) -> bool {
+    server_supported && !xvfb && uinput_accessible
+}
+
+fn uinput_accessible() -> bool {
+    fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/uinput")
+        .is_ok()
+}
+
 pub fn real_pointer_input_available() -> bool {
+    // `ensure_master_pointer` creates an XI2 master before attaching the
+    // uinput slave. If this process cannot open /dev/uinput, attempting that
+    // path on every click/scroll would create and abandon an XInput master
+    // pair until Xorg terminates the client with BadAlloc. Skip MPX entirely
+    // when the required device is inaccessible.
+    if !uinput_accessible() {
+        return false;
+    }
     let Ok(display) = open_display() else {
         return false;
     };
-    let supported =
-        supports_parallel_pointer_injection(display).is_ok() && !is_xvfb_process_running();
+    let supported = real_pointer_capabilities_available(
+        supports_parallel_pointer_injection(display).is_ok(),
+        is_xvfb_process_running(),
+        true,
+    );
     unsafe { x11::xlib::XCloseDisplay(display) };
     supported
 }
@@ -340,6 +367,12 @@ fn ensure_master_pointer(cursor_id: &str) -> Result<MasterPointerIds> {
     }
 
     let base = master_pointer_name(cursor_id);
+    let device_name = slave_pointer_name(&base);
+    // Acquire the non-X resource before mutating the XInput hierarchy. The
+    // inexpensive availability probe above handles the normal permission
+    // denial; this ordering also prevents a race or late open failure from
+    // leaking a newly created master pair.
+    let uinput_device = create_uinput_pointer(&device_name)?;
     let mut change = x11::xinput2::XIAnyHierarchyChangeInfo::default();
     let name = CString::new(base.clone())?;
     unsafe {
@@ -380,8 +413,6 @@ fn ensure_master_pointer(cursor_id: &str) -> Result<MasterPointerIds> {
     let keyboard_id = keyboard_id
         .ok_or_else(|| anyhow!("failed to locate created master keyboard for '{cursor_id}'"))?;
 
-    let device_name = slave_pointer_name(&base);
-    let uinput_device = create_uinput_pointer(&device_name)?;
     let slave_pointer_id = wait_for_slave_pointer_id(display, &device_name)?;
     attach_slave_to_master(display, slave_pointer_id, pointer_id)?;
     set_flat_pointer_accel(display, slave_pointer_id);
@@ -2563,7 +2594,17 @@ exit 0"#,
 
 #[cfg(test)]
 mod path_tests {
-    use super::{path_cumulative, point_on_path, sample_function};
+    use super::{
+        path_cumulative, point_on_path, real_pointer_capabilities_available, sample_function,
+    };
+
+    #[test]
+    fn real_pointer_capabilities_require_uinput_access() {
+        assert!(real_pointer_capabilities_available(true, false, true));
+        assert!(!real_pointer_capabilities_available(true, false, false));
+        assert!(!real_pointer_capabilities_available(false, false, true));
+        assert!(!real_pointer_capabilities_available(true, true, true));
+    }
 
     #[test]
     fn sample_linear_function() {

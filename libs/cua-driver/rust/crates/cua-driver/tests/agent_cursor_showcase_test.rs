@@ -87,8 +87,7 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
             serde_json::json!({
                 "session": SESSION,
                 "x": center_x - 180.0,
-                "y": center_y - 80.0,
-                "scope": "desktop"
+                "y": center_y - 80.0
             }),
         );
         settle(900);

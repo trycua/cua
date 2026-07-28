@@ -12,6 +12,7 @@ publish = false
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
+async-trait = "0.1"
 cua-driver-contract = { path = "../cua-driver-contract" }
 cua-driver-core = { path = "../cua-driver-core", default-features = false }
 serde = { workspace = true }

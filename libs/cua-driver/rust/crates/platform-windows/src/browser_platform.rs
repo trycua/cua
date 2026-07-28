@@ -1,14 +1,18 @@
 //! Windows identity and endpoint evidence for the first-class browser tools.
 
+use std::collections::HashMap;
 use std::future::Future;
+use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use cua_driver_core::browser::existing_profile_setup_descriptor;
 use cua_driver_core::browser::platform::{
-    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, ExistingProfileSetupOutcome,
-    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
+    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
+    BrowserVisualActionKind, ExistingProfileSetupOutcome, ExistingProfileSetupRequest,
+    PrepareAction, PrepareOutcome, PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
@@ -18,15 +22,78 @@ use cua_driver_core::browser::types::{
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use windows::Win32::Foundation::{CloseHandle, FILETIME, HWND, RECT};
+use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
 use windows::Win32::System::Threading::{
     GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
     PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
-use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GetWindowRect, GA_ROOT};
+
+#[derive(Clone)]
+pub struct WindowsBrowserPlatform {
+    cursor_registry: Arc<cursor_overlay::CursorRegistry>,
+    browser_cursors: Arc<Mutex<BrowserCursorTracker>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BrowserCursorBinding {
+    window_id: u64,
+    cdp_target_id: String,
+}
 
 #[derive(Debug, Default)]
-pub struct WindowsBrowserPlatform;
+struct BrowserCursorTracker {
+    bindings: HashMap<String, BrowserCursorBinding>,
+}
+
+impl BrowserCursorTracker {
+    fn update(
+        &mut self,
+        session: &str,
+        window_id: u64,
+        cdp_target_id: &str,
+        tab_is_active: bool,
+    ) -> Vec<(String, bool)> {
+        self.bindings.insert(
+            session.to_owned(),
+            BrowserCursorBinding {
+                window_id,
+                cdp_target_id: cdp_target_id.to_owned(),
+            },
+        );
+
+        if !tab_is_active {
+            return vec![(session.to_owned(), false)];
+        }
+
+        self.bindings
+            .iter()
+            .filter(|(_, binding)| binding.window_id == window_id)
+            .map(|(key, binding)| {
+                (
+                    key.clone(),
+                    key == session && binding.cdp_target_id == cdp_target_id,
+                )
+            })
+            .collect()
+    }
+}
+
+impl WindowsBrowserPlatform {
+    pub fn new(cursor_registry: Arc<cursor_overlay::CursorRegistry>) -> Self {
+        Self {
+            cursor_registry,
+            browser_cursors: Arc::new(Mutex::new(BrowserCursorTracker::default())),
+        }
+    }
+}
+
+impl Default for WindowsBrowserPlatform {
+    fn default() -> Self {
+        Self::new(Arc::new(cursor_overlay::CursorRegistry::new()))
+    }
+}
 
 fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
     BrowserRefusal::new(code, message)
@@ -66,6 +133,83 @@ fn browser_product(name: &str) -> BrowserProduct {
         "firefox" => BrowserProduct::Firefox,
         _ => BrowserProduct::Other,
     }
+}
+
+fn allows_embedded_descendant_endpoint(executable_path: &str) -> bool {
+    let executable = executable_path
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(executable_path);
+    browser_product(executable) == BrowserProduct::Other && !is_chromium(executable)
+}
+
+fn is_embedded_webview_runtime(executable_path: &str) -> bool {
+    executable_path
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(executable_path)
+        .eq_ignore_ascii_case("msedgewebview2.exe")
+}
+
+fn listener_process_belongs_to_root_lifetime(root_started: u64, listener_started: u64) -> bool {
+    listener_started >= root_started
+}
+
+#[derive(Debug)]
+struct LifetimeScopedProcessTree {
+    pids: Vec<u32>,
+    started_at: HashMap<u32, u64>,
+}
+
+fn lifetime_scoped_descendants_from_processes(
+    root_pid: u32,
+    processes: &[crate::win32::ProcessInfo],
+    mut started_at: impl FnMut(u32) -> Option<u64>,
+) -> Option<LifetimeScopedProcessTree> {
+    let root_started = started_at(root_pid)?;
+    let mut pids = vec![root_pid];
+    let mut starts = HashMap::from([(root_pid, root_started)]);
+    let mut frontier = vec![root_pid];
+    while let Some(parent_pid) = frontier.pop() {
+        let parent_started = starts[&parent_pid];
+        for process in processes {
+            if process.parent_pid != parent_pid || starts.contains_key(&process.pid) {
+                continue;
+            }
+            let Some(child_started) = started_at(process.pid) else {
+                continue;
+            };
+            // Toolhelp parent ids are not lifetime-scoped. Validate every
+            // parent -> child edge so pid reuse anywhere in the transitive
+            // tree cannot graft an older unrelated process onto this root.
+            if !listener_process_belongs_to_root_lifetime(parent_started, child_started) {
+                continue;
+            }
+            pids.push(process.pid);
+            starts.insert(process.pid, child_started);
+            frontier.push(process.pid);
+        }
+    }
+    Some(LifetimeScopedProcessTree {
+        pids,
+        started_at: starts,
+    })
+}
+
+fn retain_identity_matched_listeners(
+    observed: Vec<(u16, u32)>,
+    expected_starts: &HashMap<u32, u64>,
+    mut current_started_at: impl FnMut(u32) -> Option<u64>,
+) -> Vec<(u16, u32)> {
+    observed
+        .into_iter()
+        .filter(|(_port, owner_pid)| {
+            expected_starts
+                .get(owner_pid)
+                .zip(current_started_at(*owner_pid))
+                .is_some_and(|(expected, current)| *expected == current)
+        })
+        .collect()
 }
 
 fn websocket_port_and_suffix<'a>(url: &'a str, prefix: &str) -> Option<(u16, &'a str)> {
@@ -147,33 +291,78 @@ fn cdp_comparable_window_bounds(window_id: u64) -> Result<Rect, BrowserRefusal> 
     ))
 }
 
-fn parse_netstat_loopback_ports(text: &str, pid: u32) -> Vec<u16> {
-    let mut ports = text
+fn overlay_window_and_scale(window_id: u64) -> Option<(u64, f64)> {
+    let hwnd = HWND(window_id as *mut _);
+    if hwnd.0.is_null() {
+        return None;
+    }
+    let root = unsafe { GetAncestor(hwnd, GA_ROOT) };
+    let overlay_window = if root.0.is_null() {
+        window_id
+    } else {
+        root.0 as u64
+    };
+    let dpi = unsafe { GetDpiForWindow(hwnd) };
+    let scale = if dpi == 0 { 1.0 } else { f64::from(dpi) / 96.0 };
+    Some((overlay_window, scale))
+}
+
+fn parse_netstat_loopback_listeners(text: &str, allowed_pids: &[u32]) -> Vec<(u16, u32)> {
+    let mut listeners = text
         .lines()
         .filter_map(|line| {
             let fields = line.split_whitespace().collect::<Vec<_>>();
             if fields.len() < 5
                 || !fields[0].eq_ignore_ascii_case("TCP")
                 || !fields[3].eq_ignore_ascii_case("LISTENING")
-                || fields[4].parse::<u32>().ok() != Some(pid)
             {
+                return None;
+            }
+            let owner_pid = fields[4].parse::<u32>().ok()?;
+            if !allowed_pids.contains(&owner_pid) {
                 return None;
             }
             let local = fields[1];
             let (host, port) = local.rsplit_once(':')?;
             let host = host.trim_matches(['[', ']']);
             matches!(host, "127.0.0.1" | "::1" | "localhost")
-                .then(|| port.parse::<u16>().ok())
+                .then(|| port.parse::<u16>().ok().map(|port| (port, owner_pid)))
                 .flatten()
         })
+        .collect::<Vec<_>>();
+    listeners.sort_unstable();
+    listeners.dedup();
+    listeners
+}
+
+#[cfg(test)]
+fn parse_netstat_loopback_ports(text: &str, allowed_pids: &[u32]) -> Vec<u16> {
+    let mut ports = parse_netstat_loopback_listeners(text, allowed_pids)
+        .into_iter()
+        .map(|(port, _owner_pid)| port)
         .collect::<Vec<_>>();
     ports.sort_unstable();
     ports.dedup();
     ports
 }
 
-async fn loopback_ports_for_pid(pid: u32) -> Result<Vec<u16>, BrowserRefusal> {
-    let output = tokio::process::Command::new("netstat.exe")
+fn system_netstat_path() -> Result<PathBuf, BrowserRefusal> {
+    let mut buffer = [0u16; 32768];
+    let length = unsafe { GetSystemDirectoryW(Some(&mut buffer)) } as usize;
+    if length == 0 || length >= buffer.len() {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            "could not resolve the trusted Windows system directory",
+        ));
+    }
+    Ok(PathBuf::from(String::from_utf16_lossy(&buffer[..length])).join("netstat.exe"))
+}
+
+async fn netstat_loopback_listeners(
+    allowed_pids: &[u32],
+) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
+    let netstat = system_netstat_path()?;
+    let output = tokio::process::Command::new(netstat)
         .args(["-ano", "-p", "tcp"])
         .stdin(Stdio::null())
         .stderr(Stdio::null())
@@ -185,10 +374,130 @@ async fn loopback_ports_for_pid(pid: u32) -> Result<Vec<u16>, BrowserRefusal> {
                 format!("could not inspect browser listeners: {error}"),
             )
         })?;
-    Ok(parse_netstat_loopback_ports(
+    Ok(parse_netstat_loopback_listeners(
         &String::from_utf8_lossy(&output.stdout),
-        pid,
+        allowed_pids,
     ))
+}
+
+async fn raw_loopback_listeners_for_process_tree(
+    root_pid: u32,
+) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
+    let allowed_pids =
+        tokio::task::spawn_blocking(move || crate::win32::list_descendants(root_pid))
+            .await
+            .map_err(|error| {
+                refusal(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("could not inspect browser process tree: {error}"),
+                )
+            })?;
+    let observed = netstat_loopback_listeners(&allowed_pids).await?;
+    tokio::task::spawn_blocking(move || {
+        observed
+            .into_iter()
+            .filter(|(_port, owner_pid)| process_identity(*owner_pid).is_ok())
+            .collect::<Vec<_>>()
+    })
+    .await
+    .map_err(|error| {
+        refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("could not inspect spawned browser listener identities: {error}"),
+        )
+    })
+}
+
+async fn loopback_listeners_for_process_tree(
+    root_pid: u32,
+) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
+    let tree = tokio::task::spawn_blocking(move || {
+        let processes = crate::win32::list_processes();
+        lifetime_scoped_descendants_from_processes(root_pid, &processes, |pid| {
+            process_identity(pid).ok().map(|identity| identity.0)
+        })
+    })
+    .await
+    .map_err(|error| {
+        refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("could not inspect browser process lifetimes: {error}"),
+        )
+    })?
+    .ok_or_else(|| {
+        refusal(
+            BrowserRefusalCode::BrowserBindingStale,
+            format!("browser process {root_pid} is no longer available"),
+        )
+    })?;
+
+    let observed = netstat_loopback_listeners(&tree.pids).await?;
+    let expected_starts = tree.started_at;
+    tokio::task::spawn_blocking(move || {
+        retain_identity_matched_listeners(observed, &expected_starts, |pid| {
+            process_identity(pid).ok().map(|identity| identity.0)
+        })
+    })
+    .await
+    .map_err(|error| {
+        refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("could not reprove browser listener identities: {error}"),
+        )
+    })
+}
+
+async fn loopback_listeners_for_exact_pid(pid: u32) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
+    let expected_started =
+        tokio::task::spawn_blocking(move || process_identity(pid).map(|identity| identity.0))
+            .await
+            .map_err(|error| {
+                refusal(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("could not inspect browser process identity: {error}"),
+                )
+            })??;
+    let observed = netstat_loopback_listeners(&[pid]).await?;
+    tokio::task::spawn_blocking(move || {
+        retain_identity_matched_listeners(
+            observed,
+            &HashMap::from([(pid, expected_started)]),
+            |candidate_pid| {
+                process_identity(candidate_pid)
+                    .ok()
+                    .map(|identity| identity.0)
+            },
+        )
+    })
+    .await
+    .map_err(|error| {
+        refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("could not reprove browser process identity: {error}"),
+        )
+    })
+}
+
+async fn loopback_ports_for_exact_pid(pid: u32) -> Result<Vec<u16>, BrowserRefusal> {
+    let mut ports = loopback_listeners_for_exact_pid(pid)
+        .await?
+        .into_iter()
+        .map(|(port, _owner_pid)| port)
+        .collect::<Vec<_>>();
+    ports.sort_unstable();
+    ports.dedup();
+    Ok(ports)
+}
+
+async fn unfiltered_loopback_ports_for_exact_pid(pid: u32) -> Result<Vec<u16>, BrowserRefusal> {
+    let mut ports = netstat_loopback_listeners(&[pid])
+        .await?
+        .into_iter()
+        .map(|(port, _owner_pid)| port)
+        .collect::<Vec<_>>();
+    ports.sort_unstable();
+    ports.dedup();
+    Ok(ports)
 }
 
 async fn browser_websocket_url(port: u16) -> Option<String> {
@@ -238,24 +547,37 @@ async fn browser_websocket_url(port: u16) -> Option<String> {
 const ENDPOINT_DISCOVERY_ATTEMPTS: usize = 4;
 const ENDPOINT_DISCOVERY_RETRY_DELAY: Duration = Duration::from_millis(100);
 
-async fn browser_endpoints_once(pid: u32) -> Result<Vec<(u16, String)>, BrowserRefusal> {
+async fn browser_endpoints_once(pid: u32) -> Result<Vec<(u16, String, u32)>, BrowserRefusal> {
     let mut endpoints = Vec::new();
-    for port in loopback_ports_for_pid(pid).await? {
+    for (port, owner_pid) in loopback_listeners_for_exact_pid(pid).await? {
         if let Some(ws_url) = browser_websocket_url(port).await {
-            endpoints.push((port, ws_url));
+            // Re-read both the socket owner and process identity after the
+            // HTTP probe so pid recycling during discovery cannot become
+            // exact ownership evidence.
+            let reproved = loopback_listeners_for_exact_pid(pid).await?;
+            if reproved.contains(&(port, owner_pid)) {
+                endpoints.push((port, ws_url, owner_pid));
+            } else {
+                tracing::debug!(
+                    browser_pid = pid,
+                    listener_pid = owner_pid,
+                    port,
+                    "discarding browser endpoint whose listener ownership changed during discovery"
+                );
+            }
         }
     }
     Ok(endpoints)
 }
 
-async fn retry_empty_endpoint_discovery<F, Fut>(
+async fn retry_empty_endpoint_discovery<T, F, Fut>(
     attempts: usize,
     delay: Duration,
     mut probe: F,
-) -> Result<Vec<(u16, String)>, BrowserRefusal>
+) -> Result<Vec<T>, BrowserRefusal>
 where
     F: FnMut() -> Fut,
-    Fut: Future<Output = Result<Vec<(u16, String)>, BrowserRefusal>>,
+    Fut: Future<Output = Result<Vec<T>, BrowserRefusal>>,
 {
     let attempts = attempts.max(1);
     for attempt in 0..attempts {
@@ -268,13 +590,188 @@ where
     unreachable!("the bounded endpoint-discovery loop always returns")
 }
 
-async fn browser_endpoints_for_pid(pid: u32) -> Result<Vec<(u16, String)>, BrowserRefusal> {
+async fn exact_browser_endpoints_for_pid(
+    pid: u32,
+) -> Result<Vec<(u16, String, u32)>, BrowserRefusal> {
     retry_empty_endpoint_discovery(
         ENDPOINT_DISCOVERY_ATTEMPTS,
         ENDPOINT_DISCOVERY_RETRY_DELAY,
         || browser_endpoints_once(pid),
     )
     .await
+}
+
+async fn root_can_use_embedded_descendant_endpoint(pid: u32) -> Result<bool, BrowserRefusal> {
+    tokio::task::spawn_blocking(move || {
+        let (_started, executable) = process_identity(pid)?;
+        Ok(executable.is_some_and(|path| allows_embedded_descendant_endpoint(&path)))
+    })
+    .await
+    .map_err(|error| {
+        refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("could not classify browser process identity: {error}"),
+        )
+    })?
+}
+
+async fn embedded_browser_endpoints_once(
+    pid: u32,
+) -> Result<Vec<(u16, String, u32)>, BrowserRefusal> {
+    let mut endpoints = Vec::new();
+    for (port, listener_pid) in loopback_listeners_for_process_tree(pid).await? {
+        let is_webview_runtime = tokio::task::spawn_blocking(move || {
+            process_identity(listener_pid)
+                .ok()
+                .and_then(|identity| identity.1)
+                .is_some_and(|path| is_embedded_webview_runtime(&path))
+        })
+        .await
+        .map_err(|error| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not classify embedded browser listener: {error}"),
+            )
+        })?;
+        if !is_webview_runtime {
+            continue;
+        }
+        if let Some(ws_url) = browser_websocket_url(port).await {
+            let reproved = loopback_listeners_for_process_tree(pid).await?;
+            if reproved.contains(&(port, listener_pid)) {
+                endpoints.push((port, ws_url, listener_pid));
+            }
+        }
+    }
+    Ok(endpoints)
+}
+
+async fn browser_endpoints_for_pid(pid: u32) -> Result<Vec<(u16, String, u32)>, BrowserRefusal> {
+    let exact = exact_browser_endpoints_for_pid(pid).await?;
+    if !exact.is_empty() || !root_can_use_embedded_descendant_endpoint(pid).await? {
+        return Ok(exact);
+    }
+    // Native embedded hosts such as Tauri/WPF own the window while a
+    // WebView2 child owns DevTools. Standalone Chromium/Electron executables
+    // never enter this fallback: their endpoint must be owned by the exact
+    // approved pid.
+    retry_empty_endpoint_discovery(
+        ENDPOINT_DISCOVERY_ATTEMPTS,
+        ENDPOINT_DISCOVERY_RETRY_DELAY,
+        || embedded_browser_endpoints_once(pid),
+    )
+    .await
+}
+
+async fn loopback_listeners_for_spawned_tree(
+    root_pid: u32,
+) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
+    match loopback_listeners_for_process_tree(root_pid).await {
+        Ok(listeners) => Ok(listeners),
+        // Edge on Windows ARM can transfer the browser role to a descendant
+        // and let its launcher exit. This fallback is used only while core
+        // attests the exact private-profile DevTools URL it just read from
+        // DevToolsActivePort; ordinary and existing-profile discovery never
+        // accept descendant-owned endpoints.
+        Err(error) if error.code == BrowserRefusalCode::BrowserBindingStale => {
+            raw_loopback_listeners_for_process_tree(root_pid).await
+        }
+        Err(error) => Err(error),
+    }
+}
+
+async fn spawned_browser_endpoints_once(
+    root_pid: u32,
+    expected_ws_url: &str,
+) -> Result<Vec<(u16, String, u32)>, BrowserRefusal> {
+    let Some(expected_port) = literal_loopback_websocket_port(expected_ws_url) else {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+            "the driver-spawned browser endpoint is not loopback-only",
+        ));
+    };
+    let mut endpoints = Vec::new();
+    for (port, listener_pid) in loopback_listeners_for_spawned_tree(root_pid)
+        .await?
+        .into_iter()
+        .filter(|(port, _listener_pid)| *port == expected_port)
+    {
+        if browser_websocket_url(port).await.as_deref() != Some(expected_ws_url) {
+            continue;
+        }
+        let reproved = loopback_listeners_for_spawned_tree(root_pid).await?;
+        if reproved.contains(&(port, listener_pid)) {
+            endpoints.push((port, expected_ws_url.to_owned(), listener_pid));
+        }
+    }
+    Ok(endpoints)
+}
+
+async fn spawned_browser_endpoints_for_pid(
+    root_pid: u32,
+    expected_ws_url: &str,
+) -> Result<Vec<(u16, String, u32)>, BrowserRefusal> {
+    retry_empty_endpoint_discovery(
+        ENDPOINT_DISCOVERY_ATTEMPTS,
+        ENDPOINT_DISCOVERY_RETRY_DELAY,
+        || spawned_browser_endpoints_once(root_pid, expected_ws_url),
+    )
+    .await
+}
+
+fn owned_endpoint_from_listener(
+    root_pid: i64,
+    port: u16,
+    ws_url: String,
+    listener_pid: u32,
+    context: &str,
+) -> OwnedEndpoint {
+    OwnedEndpoint {
+        ws_url,
+        http_port: Some(port),
+        ownership: EndpointOwnershipProof {
+            method: EndpointOwnershipMethod::ListeningSocketPid,
+            // The discovery route proved listener_pid under its documented
+            // ownership scope. Core authorizes and fingerprints root_pid;
+            // retain the exact socket owner separately for audit evidence and
+            // the narrow Windows launcher-handoff promotion path.
+            owner_pid: root_pid,
+            listener_pid: Some(i64::from(listener_pid)),
+            detail: Some(format!(
+                "{context}; exact loopback listener pid {listener_pid}"
+            )),
+        },
+    }
+}
+
+fn select_unique_owned_endpoint(
+    root_pid: i64,
+    discovered: Vec<(u16, String, u32)>,
+    context: &str,
+) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+    match discovered.as_slice() {
+        [] => Ok(None),
+        [(port, ws_url, listener_pid)] => Ok(Some(owned_endpoint_from_listener(
+            root_pid,
+            *port,
+            ws_url.clone(),
+            *listener_pid,
+            context,
+        ))),
+        _ => Err(refusal(
+            BrowserRefusalCode::BrowserBindingAmbiguous,
+            "multiple browser-level DevTools endpoints satisfy the approved ownership scope",
+        )
+        .with_detail(serde_json::json!({
+            "candidates": discovered
+                .iter()
+                .map(|(port, _ws_url, listener_pid)| serde_json::json!({
+                    "port": port,
+                    "listener_pid": listener_pid,
+                }))
+                .collect::<Vec<_>>(),
+        }))),
+    }
 }
 
 async fn loopback_port_is_owned_with_retry(
@@ -285,7 +782,7 @@ async fn loopback_port_is_owned_with_retry(
         ENDPOINT_DISCOVERY_ATTEMPTS,
         ENDPOINT_DISCOVERY_RETRY_DELAY,
         expected_port,
-        || loopback_ports_for_pid(pid),
+        || loopback_ports_for_exact_pid(pid),
     )
     .await
 }
@@ -314,6 +811,78 @@ where
 
 #[async_trait]
 impl BrowserPlatform for WindowsBrowserPlatform {
+    async fn visualize_browser_action(&self, action: BrowserVisualAction) {
+        if action.session.is_empty()
+            || action.cdp_target_id.is_empty()
+            || cua_driver_core::session::is_session_ended(&action.session)
+        {
+            return;
+        }
+
+        let visibility_updates = self.browser_cursors.lock().unwrap().update(
+            &action.session,
+            action.window_id,
+            &action.cdp_target_id,
+            action.tab_is_active,
+        );
+        let cursor_enabled = self
+            .cursor_registry
+            .get_or_create(&action.session)
+            .config
+            .enabled;
+        for (key, visible) in visibility_updates {
+            let enabled = if key == action.session {
+                visible && cursor_enabled
+            } else {
+                visible
+                    && self
+                        .cursor_registry
+                        .get(&key)
+                        .is_some_and(|state| state.config.enabled)
+            };
+            crate::overlay::send_command(key, cursor_overlay::OverlayCommand::SetEnabled(enabled));
+        }
+        if !action.tab_is_active || !cursor_enabled {
+            return;
+        }
+        let (Some(screen_x), Some(screen_y)) = (action.screen_x, action.screen_y) else {
+            return;
+        };
+        if !screen_x.is_finite() || !screen_y.is_finite() {
+            return;
+        }
+        let Some((overlay_window, scale)) = overlay_window_and_scale(action.window_id) else {
+            return;
+        };
+        let screen_x = screen_x * scale;
+        let screen_y = screen_y * scale;
+
+        crate::overlay::send_command(
+            action.session.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(overlay_window),
+        );
+        crate::overlay::animate_cursor_to(action.session.clone(), screen_x, screen_y).await;
+        self.cursor_registry
+            .update_position(&action.session, screen_x, screen_y);
+
+        if matches!(
+            action.kind,
+            BrowserVisualActionKind::Click
+                | BrowserVisualActionKind::Type
+                | BrowserVisualActionKind::RightClick
+                | BrowserVisualActionKind::DoubleClick
+                | BrowserVisualActionKind::Drag
+        ) {
+            crate::overlay::send_command(
+                action.session,
+                cursor_overlay::OverlayCommand::ClickPulse {
+                    x: screen_x,
+                    y: screen_y,
+                },
+            );
+        }
+    }
+
     async fn classify_browser(&self, pid: i64) -> Result<BrowserClassification, BrowserRefusal> {
         let pid_u32 = u32::try_from(pid).map_err(|_| {
             refusal(
@@ -436,19 +1005,29 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 format!("pid {pid} is outside the Windows process-id range"),
             )
         })?;
-        Ok(browser_endpoints_for_pid(pid_u32)
-            .await?
-            .into_iter()
-            .next()
-            .map(|(port, ws_url)| OwnedEndpoint {
-                ws_url,
-                http_port: Some(port),
-                ownership: EndpointOwnershipProof {
-                    method: EndpointOwnershipMethod::ListeningSocketPid,
-                    owner_pid: pid,
-                    detail: Some("netstat listener owner pid".to_owned()),
-                },
-            }))
+        select_unique_owned_endpoint(
+            pid,
+            browser_endpoints_for_pid(pid_u32).await?,
+            "listener owned by the exact approved browser pid or its classified embedded webview tree",
+        )
+    }
+
+    async fn discover_spawned_endpoint(
+        &self,
+        pid: i64,
+        expected_ws_url: &str,
+    ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        let pid_u32 = u32::try_from(pid).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                format!("pid {pid} is outside the Windows process-id range"),
+            )
+        })?;
+        select_unique_owned_endpoint(
+            pid,
+            spawned_browser_endpoints_for_pid(pid_u32, expected_ws_url).await?,
+            "exact private-profile endpoint owned by the driver-spawned browser tree",
+        )
     }
 
     async fn discover_existing_profile_endpoint(
@@ -461,23 +1040,11 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 format!("pid {pid} is outside the Windows process-id range"),
             )
         })?;
-        let discovered = browser_endpoints_for_pid(pid_u32).await?;
-        match discovered.as_slice() {
-            [] => Ok(None),
-            [(port, ws_url)] => Ok(Some(OwnedEndpoint {
-                ws_url: ws_url.clone(),
-                http_port: Some(*port),
-                ownership: EndpointOwnershipProof {
-                    method: EndpointOwnershipMethod::ListeningSocketPid,
-                    owner_pid: pid,
-                    detail: Some("Windows listener owner plus /json/version".to_owned()),
-                },
-            })),
-            _ => Err(refusal(
-                BrowserRefusalCode::BrowserBindingAmbiguous,
-                "multiple browser-level DevTools endpoints are owned by the approved process",
-            )),
-        }
+        select_unique_owned_endpoint(
+            pid,
+            exact_browser_endpoints_for_pid(pid_u32).await?,
+            "Windows exact browser-pid listener plus /json/version",
+        )
     }
 
     async fn reprove_existing_profile_endpoint(
@@ -509,7 +1076,8 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             ownership: EndpointOwnershipProof {
                 method: EndpointOwnershipMethod::ListeningSocketPid,
                 owner_pid: pid,
-                detail: Some("Windows owner of exact approved endpoint".to_owned()),
+                listener_pid: None,
+                detail: Some("Windows exact browser-pid owner of approved endpoint".to_owned()),
             },
         }))
     }
@@ -534,7 +1102,10 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             )
         })?;
         let hwnd = request.window_id;
-        let listeners_before = loopback_ports_for_pid(pid_u32).await?;
+        // The subtraction baseline must remain a conservative superset: a
+        // transient identity-reproof failure must not make an old exact-pid
+        // listener appear newly created after the approved setup action.
+        let listeners_before = unfiltered_loopback_ports_for_exact_pid(pid_u32).await?;
         let handle =
             tokio::task::spawn_blocking(move || crate::browser_setup_ui::enable(hwnd, descriptor))
                 .await
@@ -555,14 +1126,18 @@ impl BrowserPlatform for WindowsBrowserPlatform {
 
         let deadline = std::time::Instant::now() + Duration::from_secs(6);
         let endpoint_result = loop {
-            let ports = match loopback_ports_for_pid(pid_u32).await {
+            let ports = match loopback_ports_for_exact_pid(pid_u32).await {
                 Ok(ports) => ports,
                 Err(error) => break Err(error),
             };
             let mut endpoints = Vec::new();
             for port in &ports {
                 if let Some(ws_url) = browser_websocket_url(*port).await {
-                    endpoints.push((*port, ws_url, "Windows owner plus /json/version"));
+                    endpoints.push((
+                        *port,
+                        ws_url,
+                        "Windows exact browser-pid owner plus /json/version",
+                    ));
                 }
             }
             if endpoints.is_empty() {
@@ -575,13 +1150,13 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                     endpoints.push((
                         *port,
                         format!("ws://127.0.0.1:{port}/devtools/browser"),
-                        "new PID-owned listener correlated with exact approved setup",
+                        "new exact browser-pid listener correlated with approved setup",
                     ));
                 } else if correlated.len() > 1 {
                     break Err(refusal(
                         BrowserRefusalCode::BrowserBindingAmbiguous,
                         format!(
-                            "{} exposed multiple newly correlated PID-owned listeners",
+                            "{} exposed multiple newly correlated exact-pid listeners",
                             descriptor.product_name
                         ),
                     ));
@@ -595,6 +1170,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                         ownership: EndpointOwnershipProof {
                             method: EndpointOwnershipMethod::ListeningSocketPid,
                             owner_pid: request.pid,
+                            listener_pid: None,
                             detail: Some((*detail).to_owned()),
                         },
                     })
@@ -606,7 +1182,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                     break Err(refusal(
                         BrowserRefusalCode::BrowserRequiresSetup,
                         format!(
-                            "{} did not expose a uniquely PID-owned loopback endpoint after the exact setup action",
+                            "{} did not expose a uniquely exact-pid-owned loopback endpoint after the exact setup action",
                             descriptor.product_name
                         ),
                     ))
@@ -615,7 +1191,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                     break Err(refusal(
                         BrowserRefusalCode::BrowserBindingAmbiguous,
                         format!(
-                            "{} exposed multiple PID-owned endpoint candidates after the exact setup action",
+                            "{} exposed multiple exact-pid-owned endpoint candidates after the exact setup action",
                             descriptor.product_name
                         ),
                     ))
@@ -642,6 +1218,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             opened_setup_page,
             closed_setup_page: false,
             enabled_remote_debugging,
+            used_bounded_pixel_fallback: false,
             focused_setup_address_field,
             foregrounded_window,
             injected_global_input,
@@ -740,13 +1317,135 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn netstat_parser_requires_loopback_listening_and_exact_pid() {
+    fn browser_cursor_tracker_shows_only_the_active_tabs_session_per_window() {
+        let mut tracker = BrowserCursorTracker::default();
+        assert_eq!(
+            tracker.update("tab-a", 101, "target-a", false),
+            vec![("tab-a".to_owned(), false)]
+        );
+        assert_eq!(
+            tracker.update("tab-b", 101, "target-b", false),
+            vec![("tab-b".to_owned(), false)]
+        );
+
+        let mut updates = tracker.update("tab-a", 101, "target-a", true);
+        updates.sort();
+        assert_eq!(
+            updates,
+            vec![("tab-a".to_owned(), true), ("tab-b".to_owned(), false)]
+        );
+
+        let mut updates = tracker.update("tab-b", 101, "target-b", true);
+        updates.sort();
+        assert_eq!(
+            updates,
+            vec![("tab-a".to_owned(), false), ("tab-b".to_owned(), true)]
+        );
+    }
+
+    #[test]
+    fn netstat_parser_requires_loopback_listening_and_browser_process_tree() {
         let input = "\
   TCP    127.0.0.1:9222       0.0.0.0:0       LISTENING       42\n\
-  TCP    0.0.0.0:9333         0.0.0.0:0       LISTENING       42\n\
-  TCP    [::1]:9444           [::]:0          LISTENING       42\n\
+  TCP    0.0.0.0:9333         0.0.0.0:0       LISTENING       43\n\
+  TCP    [::1]:9444           [::]:0          LISTENING       43\n\
   TCP    127.0.0.1:9555       0.0.0.0:0       LISTENING       7\n";
-        assert_eq!(parse_netstat_loopback_ports(input, 42), vec![9222, 9444]);
+        assert_eq!(
+            parse_netstat_loopback_ports(input, &[42, 43]),
+            vec![9222, 9444]
+        );
+    }
+
+    #[test]
+    fn netstat_parser_rejects_unrelated_process_trees() {
+        let input = "\
+  TCP    127.0.0.1:9222       0.0.0.0:0       LISTENING       42\n\
+  TCP    127.0.0.1:9555       0.0.0.0:0       LISTENING       99\n";
+        assert_eq!(parse_netstat_loopback_ports(input, &[42, 43]), vec![9222]);
+    }
+
+    #[test]
+    fn netstat_parser_preserves_the_exact_listener_owner() {
+        let input = "\
+  TCP    127.0.0.1:9222       0.0.0.0:0       LISTENING       43\n\
+  TCP    127.0.0.1:9555       0.0.0.0:0       LISTENING       99\n";
+        assert_eq!(
+            parse_netstat_loopback_listeners(input, &[42, 43]),
+            vec![(9222, 43)]
+        );
+    }
+
+    #[test]
+    fn process_tree_endpoint_uses_the_authorized_root_and_retains_listener_evidence() {
+        let endpoint = owned_endpoint_from_listener(
+            42,
+            9222,
+            "ws://127.0.0.1:9222/devtools/browser/id".to_owned(),
+            43,
+            "verified process tree",
+        );
+
+        assert_eq!(endpoint.ownership.owner_pid, 42);
+        assert_eq!(endpoint.ownership.listener_pid, Some(43));
+        assert_eq!(endpoint.http_port, Some(9222));
+        assert!(endpoint
+            .ownership
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("exact loopback listener pid 43")));
+    }
+
+    #[test]
+    fn owned_endpoint_selection_requires_exactly_one_lifetime_matched_listener() {
+        assert!(
+            select_unique_owned_endpoint(42, Vec::new(), "verified process tree")
+                .expect("empty discovery is not an error")
+                .is_none()
+        );
+
+        let selected = select_unique_owned_endpoint(
+            42,
+            vec![(
+                9222,
+                "ws://127.0.0.1:9222/devtools/browser/edge".to_owned(),
+                43,
+            )],
+            "verified process tree",
+        )
+        .expect("one lifetime-matched listener")
+        .expect("selected endpoint");
+        assert_eq!(selected.http_port, Some(9222));
+        assert_eq!(selected.ownership.listener_pid, Some(43));
+
+        let ambiguous = select_unique_owned_endpoint(
+            42,
+            vec![
+                (
+                    9222,
+                    "ws://127.0.0.1:9222/devtools/browser/a".to_owned(),
+                    43,
+                ),
+                (
+                    9333,
+                    "ws://127.0.0.1:9333/devtools/browser/b".to_owned(),
+                    44,
+                ),
+            ],
+            "verified process tree",
+        )
+        .expect_err("multiple lifetime-matched listeners must be refused");
+        assert_eq!(ambiguous.code, BrowserRefusalCode::BrowserBindingAmbiguous);
+        let candidates = ambiguous
+            .detail
+            .as_ref()
+            .and_then(|detail| detail.get("candidates"))
+            .and_then(serde_json::Value::as_array)
+            .expect("candidate detail");
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0]["port"], 9222);
+        assert_eq!(candidates[0]["listener_pid"], 43);
+        assert_eq!(candidates[1]["port"], 9333);
+        assert_eq!(candidates[1]["listener_pid"], 44);
     }
 
     #[test]
@@ -756,6 +1455,124 @@ mod tests {
         assert!(!is_chromium("firefox.exe"));
         assert!(!is_chromium("Operator.exe"));
         assert!(!is_chromium("Knowledge.exe"));
+    }
+
+    #[test]
+    fn only_native_embedded_hosts_may_use_descendant_owned_devtools() {
+        assert!(allows_embedded_descendant_endpoint(
+            r"D:\fixtures\CuaTestHarness.Tauri.exe"
+        ));
+        assert!(allows_embedded_descendant_endpoint(
+            r"D:\fixtures\CuaTestHarness.WebView.exe"
+        ));
+        assert!(!allows_embedded_descendant_endpoint(
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+        ));
+        assert!(!allows_embedded_descendant_endpoint(
+            r"D:\fixtures\CuaTestHarness.Electron.exe"
+        ));
+        assert!(is_embedded_webview_runtime(
+            r"C:\Program Files (x86)\Microsoft\EdgeWebView\Application\msedgewebview2.exe"
+        ));
+        assert!(!is_embedded_webview_runtime(
+            r"D:\fixtures\CuaTestHarness.Electron.exe"
+        ));
+    }
+
+    #[test]
+    fn endpoint_listener_cannot_predate_the_authorized_browser_root() {
+        assert!(listener_process_belongs_to_root_lifetime(100, 100));
+        assert!(listener_process_belongs_to_root_lifetime(100, 101));
+        assert!(!listener_process_belongs_to_root_lifetime(100, 99));
+    }
+
+    #[test]
+    fn lifetime_scoped_tree_validates_every_parent_child_edge() {
+        let processes = vec![
+            crate::win32::ProcessInfo {
+                pid: 42,
+                parent_pid: 1,
+                name: "msedge.exe".to_owned(),
+            },
+            crate::win32::ProcessInfo {
+                pid: 43,
+                parent_pid: 42,
+                name: "msedge.exe".to_owned(),
+            },
+            crate::win32::ProcessInfo {
+                pid: 44,
+                parent_pid: 43,
+                name: "CuaTestHarness.Electron.exe".to_owned(),
+            },
+            crate::win32::ProcessInfo {
+                pid: 45,
+                parent_pid: 42,
+                name: "msedge.exe".to_owned(),
+            },
+        ];
+        let starts = HashMap::from([
+            (42, 100),
+            // This pid was reused by a real child of the new browser root.
+            (43, 300),
+            // This unrelated process names pid 43 as its parent but predates
+            // that incarnation, so validating only against root 42 is unsafe.
+            (44, 200),
+            (45, 400),
+        ]);
+
+        let tree = lifetime_scoped_descendants_from_processes(42, &processes, |pid| {
+            starts.get(&pid).copied()
+        })
+        .expect("live root");
+        assert_eq!(tree.pids, vec![42, 43, 45]);
+        assert!(!tree.pids.contains(&44));
+    }
+
+    #[test]
+    fn lifetime_scoped_tree_drops_unidentifiable_processes_and_their_children() {
+        let processes = vec![
+            crate::win32::ProcessInfo {
+                pid: 42,
+                parent_pid: 1,
+                name: "chrome.exe".to_owned(),
+            },
+            crate::win32::ProcessInfo {
+                pid: 43,
+                parent_pid: 42,
+                name: "chrome.exe".to_owned(),
+            },
+            crate::win32::ProcessInfo {
+                pid: 44,
+                parent_pid: 43,
+                name: "chrome.exe".to_owned(),
+            },
+        ];
+        let starts = HashMap::from([(42, 100), (44, 300)]);
+
+        let tree = lifetime_scoped_descendants_from_processes(42, &processes, |pid| {
+            starts.get(&pid).copied()
+        })
+        .expect("live root");
+        assert_eq!(tree.pids, vec![42]);
+    }
+
+    #[test]
+    fn listener_identity_reproof_drops_recycled_and_vanished_pids() {
+        let observed = vec![(9222, 42), (9333, 43), (9444, 44)];
+        let expected = HashMap::from([(42, 100), (43, 200), (44, 300)]);
+        let current = HashMap::from([
+            (42, 100),
+            // pid 43 was recycled between the socket snapshot and reproof.
+            (43, 201),
+            // pid 44 vanished and is intentionally absent.
+        ]);
+
+        assert_eq!(
+            retain_identity_matched_listeners(observed, &expected, |pid| {
+                current.get(&pid).copied()
+            }),
+            vec![(9222, 42)]
+        );
     }
 
     #[test]
@@ -833,6 +1650,7 @@ mod tests {
                     Ok(vec![(
                         9222,
                         "ws://127.0.0.1:9222/devtools/browser/proven".to_owned(),
+                        43,
                     )])
                 }
             }
@@ -846,6 +1664,7 @@ mod tests {
             vec![(
                 9222,
                 "ws://127.0.0.1:9222/devtools/browser/proven".to_owned(),
+                43,
             )]
         );
     }

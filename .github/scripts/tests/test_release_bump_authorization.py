@@ -21,6 +21,7 @@ class TestReleaseBumpAuthorization(unittest.TestCase):
         self.assertIn('TRIGGERING_ACTOR: ${{ github.triggering_actor }}', workflow)
         self.assertIn(
             '"f-trycua:f-trycua"|'
+            '"r33drichards:r33drichards"|'
             '"cua-release-bot[bot]:cua-release-bot[bot]")',
             workflow,
         )
@@ -52,6 +53,45 @@ class TestReleaseBumpAuthorization(unittest.TestCase):
             'label_was_applied_by_release_owner "$release_label"', workflow
         )
         self.assertIn("No owner-authorized release labels found", workflow)
+
+    def test_release_comments_cannot_authorize_or_render_release_checkboxes(
+        self,
+    ) -> None:
+        auto_release = (
+            REPO_ROOT / ".github/workflows/release-on-merge.yml"
+        ).read_text()
+        reminder = (
+            REPO_ROOT / ".github/workflows/ci-release-reminder.yml"
+        ).read_text()
+
+        auto_release_trigger = auto_release.split("permissions:", 1)[0]
+        self.assertIn("pull_request:\n    types: [closed]", auto_release_trigger)
+        self.assertNotIn("issue_comment", auto_release_trigger)
+        self.assertNotIn("pull_request_review_comment", auto_release_trigger)
+        self.assertNotIn("github.event.pull_request.body", auto_release)
+        self.assertNotIn("/comments", auto_release)
+        self.assertIn(
+            "Release authorization comes only from audited label events",
+            auto_release,
+        )
+
+        reminder_trigger = reminder.split("jobs:", 1)[0]
+        self.assertNotIn("issue_comment", reminder_trigger)
+        self.assertNotIn("pull_request_review_comment", reminder_trigger)
+        self.assertNotIn("- [x]", reminder)
+        self.assertNotIn("- [X]", reminder)
+        self.assertNotIn("- [ ]", reminder)
+        self.assertIn("This comment is status-only", reminder)
+        self.assertIn(
+            "Only owner-applied \\`release:<service>\\` labels can do that",
+            reminder,
+        )
+        self.assertIn(
+            "Ask the release owner to apply \\`release:<service>\\` labels",
+            reminder,
+        )
+        self.assertIn("EXISTING_COMMENT_IDS=$(gh api --paginate", reminder)
+        self.assertNotIn("| head -1", reminder)
 
 
 if __name__ == "__main__":

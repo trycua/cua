@@ -18,7 +18,6 @@ from cua_sandbox.image import Image
 from cua_sandbox.transport.cyclops_http_client import CyclopsHttpClient
 from cua_sandbox.transport.fleet import FleetTransport
 from cyclops_sdk import (
-    ClaimSpec,
     CreateClaimRequest,
     CreatePoolRequest,
     CyclopsClient,
@@ -29,7 +28,6 @@ from cyclops_sdk import (
     PoolTemplate,
     PreservedJson,
     SandboxService,
-    SandboxTemplateRef,
     ServiceProtocol,
 )
 
@@ -220,17 +218,7 @@ class FleetCloudTransport(FleetTransport):
                         self._claim = await self._sdk.get_claim(self._pool)
                     else:
                         self._claim = await self._sdk.create_claim(
-                            CreateClaimRequest(
-                                pool=self._pool,
-                                spec=ClaimSpec(
-                                    sandbox_template_ref=SandboxTemplateRef(
-                                        name=self._pool.metadata.name
-                                    ),
-                                    warmpool=None,
-                                    bind_deadline=600,
-                                    lifecycle=None,
-                                ),
-                            )
+                            CreateClaimRequest(pool=self._pool, spec=None)
                         )
                 bound = await self._sdk.wait_claim(self._claim)
                 await self._sdk.wait_service_ready(bound, "server", self._time_to_start)

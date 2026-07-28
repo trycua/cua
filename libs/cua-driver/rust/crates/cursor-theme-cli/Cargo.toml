@@ -1,0 +1,24 @@
+[package]
+name = "cursor-theme-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "cua-cursor-theme"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+cursor-overlay = { path = "../cursor-overlay", features = ["theme-authoring"] }
+image.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile = "3"

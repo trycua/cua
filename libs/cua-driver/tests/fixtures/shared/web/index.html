@@ -72,6 +72,8 @@
              aria-label="txt-input" placeholder="type here"
              autocapitalize="off" autocorrect="off" spellcheck="false" />
       <span class="mirror" id="lbl-input-mirror" data-cua-id="lbl-input-mirror">mirror=</span>
+      <input type="number" id="number-input" data-cua-id="number-input"
+             aria-label="number-input" value="42" />
     </div>
   </fieldset>
 
@@ -220,7 +222,7 @@
   });
 
   $('keyboard-input').addEventListener('keydown', e => {
-    if (e.ctrlKey && e.shiftKey && e.code === 'Digit7') {
+    if (e.ctrlKey && e.shiftKey && e.code === 'KeyH') {
       $('keyboard-status').textContent = 'key_state=hotkey';
     } else if (e.key === 'Enter') {
       const value = $('keyboard-input').value;

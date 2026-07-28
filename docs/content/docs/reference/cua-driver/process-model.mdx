@@ -3,12 +3,15 @@ title: "Process model"
 description: "How Cua Driver maps one typed surface onto same-process SDK and daemon-backed execution."
 ---
 
-Cua Driver has two execution families around one typed driver surface: list
+Cua Driver has three local execution families around one typed driver surface: list
 windows, read accessibility, capture the screen, click, type, record,
 configure, and report state.
 
 - `CuaDriver.create()` runs the Rust driver in the importing Python,
   TypeScript, or Rust process. It requires no daemon, executable, or IPC.
+- `CuaDriver.create_private_worker()` /
+  `CuaDriver.createPrivateWorker()` directly supervises one child runtime over
+  inherited pipes. The child has no listener, discovery, or reconnect path.
 - `cua-driver serve` runs the same SDK contract in a long-lived daemon. MCP
   stdio, one-shot CLI calls, and `CuaDriver.connect()` send requests to it.
 
@@ -18,14 +21,29 @@ parallel desktop implementation. See
 
 ## Daemon-backed process roles
 
-The MCP stdio proxy is *client-owned*. The parent process starts `cua-driver mcp`, keeps stdin and stdout connected, and sends MCP tool calls over that transport. The proxy forwards every call to the daemon.
+The MCP stdio process is *client-owned*. The parent starts `cua-driver mcp`,
+keeps stdin and stdout connected, and sends MCP tool calls over that transport.
+On Windows and Linux it owns the runtime directly unless `--socket` is
+specified. On macOS it proxies to the permission-owning app daemon unless the
+caller explicitly passes `--direct` and accepts the spawning host's TCC
+attribution. `--direct` and `--socket` are mutually exclusive.
 
-The daemon shape is *machine-owned*. A single `cua-driver serve` process listens on a local IPC endpoint, such as a Unix socket or named pipe, and keeps driver state in memory while it lives.
+The daemon shape is *machine-owned*. A single `cua-driver serve` process
+listens on a local IPC endpoint, such as a mode-`0600` Unix socket or
+same-user-authenticated named pipe, and keeps driver state in memory while it
+lives.
 
 The one-shot CLI adapter is *call-owned*. `cua-driver call <tool>` connects to the daemon, prints one result, and exits. If the daemon is unavailable, the command fails instead of executing the tool in the CLI process.
 
-These are transport roles around a daemon-owned instance of the same typed
-runtime that applications can create in process.
+Finite inspection commands—`list-tools`, `describe`, and `dump-docs`—read the
+canonical SDK tool inventory without creating an action-capable runtime. They
+therefore remain available in non-interactive environments such as Windows
+Session 0. Desktop-owning entry points (`serve`, direct MCP, and
+`CuaDriver.create()`) still refuse before accepting actions when no interactive
+desktop is attached.
+
+These are transport roles around the same typed runtime that applications can
+create in process or in a directly supervised private worker.
 
 ## Why a daemon proxy exists
 
@@ -65,9 +83,34 @@ The daemon belongs in the interactive user session instead. It may be kept there
 
 ## Session identity and shared state
 
-A daemon drives one physical machine. Multiple MCP clients can connect at the same time, but they still share the same screen, keyboard, pointer, accessibility tree, and recording machinery. Session identity does not make concurrent control independent. Two agents clicking at once still contend for the same desktop.
+A daemon drives one physical machine. Multiple MCP clients can connect at the
+same time, and a trusted SDK host may create multiple direct runtimes, but they
+still share the same screen, keyboard, pointer, accessibility tree, and OS
+focus. Session or runtime identity does not create an independent desktop.
+Native pointer, keyboard, value-setting, and focus calls are admitted one at a
+time inside a process so their input delivery does not overlap. Post-action
+recording and PiP capture happen after that admission is released and may
+observe later desktop activity. Application lifecycle operations and
+browser/CDP mutations are not covered by the input gate. Higher-level sequences
+can still interleave unless the host schedules them; in particular, do not
+split a button-down/drag/up gesture across independently scheduled runtime
+calls.
+
+On Windows and Linux, bare MCP processes each own a separate runtime. To
+deliberately share one daemon across several MCP clients, start the daemon and
+give every client the same explicit `cua-driver mcp --socket <endpoint>`
+command. Do not rely on ambient daemon discovery.
 
 Session identity solves a narrower state problem. When a proxy starts, it mints a session identity and stamps forwarded calls with it. The daemon uses that identity to scope mutable state to one client lifetime. Recording ownership, per-session config overrides, and the agent-cursor overlay are all keyed by session.
+
+For same-process SDK runtimes, Cua adds a private runtime generation behind the
+public session label. Two runtimes may therefore both use `research-1` without
+sharing capture scope, tombstones, cursor ownership, recording teardown,
+browser refs, or element tokens. The private generation is never serialized
+and is not a credential or same-process security boundary.
+
+`default` is the reserved anonymous fallback, not an isolated session label.
+Concurrent hosts should always declare an explicit session.
 
 <VideoDemo
   className="my-8"
@@ -91,4 +134,11 @@ construct a fresh tool registry or continue with partial state.
 
 For a same-process SDK runtime, the importing application owns the equivalent
 lifetime. End every session, await `shutdown()`, and release the generated
-binding handle during orderly teardown.
+binding handle during orderly teardown. Shutting down one direct runtime does
+not stop or revoke another direct runtime in the same process.
+
+Before each daemon-backed SDK action, the client reads the daemon metadata and
+verifies contract, tool-schema, capability, and MCP
+protocol versions. Incompatible processes refuse before platform dispatch.
+Remote Driver carriers perform the equivalent capability-range negotiation
+and must support request cancellation.

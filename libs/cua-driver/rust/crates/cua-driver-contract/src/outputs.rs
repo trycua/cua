@@ -105,6 +105,82 @@ impl ToolOutput for EndSessionOutput {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+pub struct CursorMotionOutput {
+    pub start_handle: f64,
+    pub end_handle: f64,
+    pub arc_size: f64,
+    pub arc_flow: f64,
+    pub spring: f64,
+    pub glide_duration_ms: f64,
+    pub dwell_after_click_ms: f64,
+    pub idle_hide_ms: f64,
+    pub turn_radius: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+pub struct CursorThemeOutput {
+    pub id: String,
+    pub version: String,
+    pub profile: String,
+    pub reduced_motion: crate::CursorReducedMotion,
+    #[schemars(required, schema_with = "nullable_string_schema")]
+    pub fallback: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+pub struct CursorVisualOutput {
+    pub requested_action: crate::CursorAction,
+    pub resolved_action: crate::CursorAction,
+    pub modifiers: Vec<String>,
+    pub phase: String,
+    pub frame: u64,
+    pub preempted_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+pub struct CursorPointOutput {
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+pub struct SetAgentCursorEnabledOutput {
+    pub session: String,
+    pub enabled: bool,
+}
+
+impl ToolOutput for SetAgentCursorEnabledOutput {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+pub struct SetAgentCursorMotionOutput {
+    pub session: String,
+    pub motion: CursorMotionOutput,
+}
+
+impl ToolOutput for SetAgentCursorMotionOutput {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+pub struct SetAgentCursorThemeOutput {
+    pub session: String,
+    pub theme: CursorThemeOutput,
+}
+
+impl ToolOutput for SetAgentCursorThemeOutput {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+pub struct GetAgentCursorStateOutput {
+    pub session: String,
+    pub enabled: bool,
+    #[schemars(required)]
+    pub position: Option<CursorPointOutput>,
+    pub theme: CursorThemeOutput,
+    pub visual_state: CursorVisualOutput,
+    pub motion: CursorMotionOutput,
+}
+
+impl ToolOutput for GetAgentCursorStateOutput {}
+
 fn inactive_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
     schemars::json_schema!({ "const": false })
 }

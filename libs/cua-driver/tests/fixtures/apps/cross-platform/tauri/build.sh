@@ -59,6 +59,13 @@ if [ "$platform" = "Darwin" ]; then
 </plist>
 PLIST
   xattr -cr "$bundle" 2>/dev/null || true
+  # Cargo's Mach-O is linker-signed, but copying it into a hand-built bundle
+  # leaves the bundle without a valid CodeResources envelope. In the macOS E2E
+  # VM this Tauri bundle produced a blank window and errSecCSUnsigned (-67062)
+  # while launching its sandboxed content process. An ad-hoc deep signature is
+  # sufficient for this disposable test fixture; the driver under test retains
+  # its separate stable signing identity.
+  codesign --force --deep --sign - "$bundle"
   echo "[OK]    Staged: $bundle"
 else
   srcBin="$tauriDir/src-tauri/target/release/cua-test-harness-tauri"

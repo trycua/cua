@@ -24,13 +24,14 @@
 //!   omitted from the snapshot — never guessed.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, Mutex, Weak};
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::session::register_session_end_hook;
+use crate::session::register_scoped_session_end_hook;
 
 use super::binding::{
     cardinality_exact_candidate, correlate, selected_tab_target_id, BindingOutcome,
@@ -77,9 +78,11 @@ pub struct BrowserEngine {
     pub(crate) pool: CdpPool,
     pub(crate) managed_browsers: ManagedBrowsers,
     pub(crate) existing_profile_grants: ExistingProfileGrants,
-    pub(crate) approval_broker: crate::consent::ApprovalBroker,
+    pub(crate) approval_broker: Arc<crate::consent::ApprovalBroker>,
+    pub(crate) protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
     mutation_gates: MutationGates,
     reconnect_gates: ReconnectGates,
+    session_end_hook: Mutex<Option<crate::session::SessionEndHookRegistration>>,
 }
 
 fn refuse(code: BrowserRefusalCode, msg: impl Into<String>) -> BrowserRefusal {
@@ -99,6 +102,32 @@ fn authorize_live_browser_origin(
     manifest
         .authorize_browser_url(live_url)
         .map_err(|error| refuse(BrowserRefusalCode::BrowserOriginOutsideScope, error))
+}
+
+fn protected_live_origin_scope(raw: &str) -> Result<String, BrowserRefusal> {
+    if raw.trim() == "about:blank" {
+        return Ok("about:blank".to_owned());
+    }
+    let parsed = url::Url::parse(raw).map_err(|_| {
+        refuse(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "the live top-level browser URL is invalid",
+        )
+    })?;
+    let origin = parsed.origin().ascii_serialization();
+    if origin != "null" {
+        return Ok(origin);
+    }
+
+    // Opaque origins (for example file: and data:) cannot safely share one
+    // generic "null" grant. Bind them to a one-way document digest without
+    // sending the full path/query/fragment to the consent provider.
+    let digest = Sha256::digest(raw.as_bytes());
+    let digest = digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    Ok(format!("{}:sha256:{digest}", parsed.scheme()))
 }
 
 fn route_err(context: &str, err: impl std::fmt::Display) -> BrowserRefusal {
@@ -524,7 +553,11 @@ impl BrowserEngine {
     /// capability store. Platform crates call this once and register
     /// the five tools via `register_browser_tools`.
     pub fn new(platform: Arc<dyn BrowserPlatform>) -> Arc<Self> {
-        Self::new_with_protected_consent_provider(platform, None)
+        Self::new_with_runtime_services(
+            platform,
+            Arc::new(crate::consent::ApprovalBroker::unavailable()),
+            Arc::new(crate::consent::ProtectedResourceOwnershipStore::default()),
+        )
     }
 
     /// Create an engine with a provider installed by a trusted embedding host
@@ -534,25 +567,52 @@ impl BrowserEngine {
         platform: Arc<dyn BrowserPlatform>,
         provider: Option<Arc<dyn crate::consent::ProtectedConsentProvider>>,
     ) -> Arc<Self> {
+        Self::new_with_runtime_services(
+            platform,
+            Arc::new(crate::consent::ApprovalBroker::new(provider)),
+            Arc::new(crate::consent::ProtectedResourceOwnershipStore::default()),
+        )
+    }
+
+    /// Create an engine using the runtime-owned broker shared by every
+    /// protected resource adapter.
+    pub fn new_with_approval_broker(
+        platform: Arc<dyn BrowserPlatform>,
+        approval_broker: Arc<crate::consent::ApprovalBroker>,
+    ) -> Arc<Self> {
+        Self::new_with_runtime_services(
+            platform,
+            approval_broker,
+            Arc::new(crate::consent::ProtectedResourceOwnershipStore::default()),
+        )
+    }
+
+    pub fn new_with_runtime_services(
+        platform: Arc<dyn BrowserPlatform>,
+        approval_broker: Arc<crate::consent::ApprovalBroker>,
+        protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
+    ) -> Arc<Self> {
         let engine = Arc::new(Self {
             platform,
             store: BrowserStore::new(),
             pool: CdpPool::new(),
             managed_browsers: Default::default(),
             existing_profile_grants: ExistingProfileGrants::new(),
-            approval_broker: crate::consent::ApprovalBroker::new(provider),
+            approval_broker,
+            protected_resource_ownership,
             mutation_gates: MutationGates::new(),
             reconnect_gates: ReconnectGates::new(),
+            session_end_hook: Mutex::new(None),
         });
         let weak: Weak<Self> = Arc::downgrade(&engine);
-        register_session_end_hook(move |session_id| {
+        let registration = register_scoped_session_end_hook(move |session_id| {
             if let Some(engine) = weak.upgrade() {
                 engine.store.remove_session(session_id);
                 engine.cleanup_prepared_session(session_id);
                 for grant in engine.existing_profile_grants.remove_session(session_id) {
                     engine.pool.release_claim_marker(&grant.endpoint_ws_url);
                     if let Some(protected) = grant.protected_consent.as_ref() {
-                        protected.indicator.revoke();
+                        protected.revoke();
                     }
                     if let Ok(runtime) = tokio::runtime::Handle::try_current() {
                         let engine = engine.clone();
@@ -569,6 +629,7 @@ impl BrowserEngine {
                 }
             }
         });
+        *engine.session_end_hook.lock().unwrap() = Some(registration);
         engine
     }
 
@@ -1363,35 +1424,28 @@ impl BrowserEngine {
         }
 
         let cdp_session = self.attach(&conn, &tab.cdp_target_id).await?;
-        if crate::authorization::configured_permission_mode()
-            .is_ok_and(|mode| mode == crate::authorization::PermissionMode::Bounded)
-        {
-            let frame_tree = conn
-                .call(Some(&cdp_session), "Page.getFrameTree", json!({}))
-                .await
-                .map_err(|error| {
-                    route_err(
-                        "could not prove the live browser origin before bounded-mode input",
-                        error,
-                    )
-                })?;
-            let live_url = frame_tree
-                .pointer("/frameTree/frame/url")
-                .and_then(Value::as_str)
+        let dispatch_context = crate::tool::current_dispatch_authorization_context();
+        let dispatch_mode = dispatch_context
+            .as_ref()
+            .map(|context| context.mode())
+            .map(Ok)
+            .unwrap_or_else(crate::authorization::configured_permission_mode);
+        if dispatch_mode.is_ok_and(|mode| mode == crate::authorization::PermissionMode::Bounded) {
+            let live_url = self.live_top_level_url(&conn, &cdp_session).await?;
+            // A browser mutation admitted for a delegated bounded session
+            // must use that exact session's manifest. Falling back to the
+            // process compatibility manifest would let a missing task-local
+            // context borrow unrelated authority.
+            let manifest = dispatch_context
+                .as_deref()
                 .ok_or_else(|| {
                     refuse(
                         BrowserRefusalCode::BrowserOriginOutsideScope,
-                        "the live top-level browser origin could not be proven",
+                        "the bounded browser authorization context is unavailable",
                     )
-                })?;
-            let manifest =
-                crate::session_manifest::configured_session_manifest().map_err(|error| {
-                    refuse(
-                        BrowserRefusalCode::BrowserOriginOutsideScope,
-                        format!("the bounded session policy is unavailable: {error}"),
-                    )
-                })?;
-            authorize_live_browser_origin(manifest, live_url)?;
+                })?
+                .bounded_manifest();
+            authorize_live_browser_origin(manifest, &live_url)?;
         }
         Ok(ValidatedTab {
             conn,
@@ -1400,6 +1454,46 @@ impl BrowserEngine {
             native,
             cdp_session,
         })
+    }
+
+    async fn live_top_level_url(
+        &self,
+        conn: &CdpConnection,
+        cdp_session: &str,
+    ) -> Result<String, BrowserRefusal> {
+        let frame_tree = conn
+            .call(Some(cdp_session), "Page.getFrameTree", json!({}))
+            .await
+            .map_err(|error| {
+                route_err("could not prove the live top-level browser document", error)
+            })?;
+        frame_tree
+            .pointer("/frameTree/frame/url")
+            .and_then(Value::as_str)
+            .filter(|url| !url.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                refuse(
+                    BrowserRefusalCode::BrowserOriginOutsideScope,
+                    "the live top-level browser origin could not be proven",
+                )
+            })
+    }
+
+    pub(crate) async fn attest_protected_tab(
+        &self,
+        session: &str,
+        target_id: &str,
+        tab_id: &str,
+    ) -> Result<(ValidatedTab, String), BrowserRefusal> {
+        let validated = self
+            .revalidate_for_mutation(session, target_id, Some(tab_id))
+            .await?;
+        let live_url = self
+            .live_top_level_url(&validated.conn, &validated.cdp_session)
+            .await?;
+        let live_origin = protected_live_origin_scope(&live_url)?;
+        Ok((validated, live_origin))
     }
 
     /// Animate platform-owned browser feedback without coupling it to input

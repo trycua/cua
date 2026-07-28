@@ -5,18 +5,22 @@ authors:
   - Cua maintainers
   - "@r33drichards"
 created: 2026-07-22
-last_updated: 2026-07-22
-status: review
+last_updated: 2026-07-24
+status: superseded
 discussion: https://github.com/trycua/cua/issues/2447
 implementation:
   - https://github.com/trycua/cua/pull/2461
   - https://github.com/trycua/cua/pull/2467
   - https://github.com/trycua/cua/pull/2468
 supersedes:
-superseded_by:
+superseded_by: 2549
 ---
 
 # RFC 2447: CUA Driver: Native Core and MCP Adapter
+
+> **Superseded by [RFC 2549](2549-cua-driver-sdk-owned-runtime.md).**
+> RFC 2549 carries forward the typed-contract and native-ABI decisions while
+> replacing the runtime-ownership and process-topology guidance.
 
 ## Summary
 

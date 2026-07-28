@@ -1,75 +1,78 @@
-import importlib.util
-import tempfile
+import tomllib
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-BUILD_HOOK_PATH = PROJECT_ROOT / "hatch_build.py"
-
-
-def load_build_hook():
-    spec = importlib.util.spec_from_file_location("cua_sandbox_hatch_build", BUILD_HOOK_PATH)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.CustomBuildHook
+PYPROJECT_PATH = PROJECT_ROOT / "pyproject.toml"
+LOCK_PATH = PROJECT_ROOT / "uv.lock"
+FLEET_IMPORTS = (
+    PROJECT_ROOT / "cua_sandbox" / "transport" / "cyclops_http_client.py",
+    PROJECT_ROOT / "cua_sandbox" / "transport" / "fleet.py",
+    PROJECT_ROOT / "cua_sandbox" / "transport" / "fleet_cloud.py",
+)
 
 
 class CyclopsSdkPackagingTests(unittest.TestCase):
-    def test_build_hook_stages_mirrored_cyclops_sdk(self):
-        CustomBuildHook = load_build_hook()
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            temporary_root = Path(temporary_directory)
-            repository_root = temporary_root / "repository"
-            mirror_root = repository_root / "libs" / "fleet"
-            binding_root = mirror_root / "sdk-bindings" / "python" / "cyclops_sdk"
-            binding_root.mkdir(parents=True)
-            native_library = temporary_root / "native" / "debug" / "libcyclops_sdk.so"
-            calls = []
+    def test_declares_published_fleet_without_a_direct_train_dependency(self):
+        with PYPROJECT_PATH.open("rb") as pyproject_file:
+            project = tomllib.load(pyproject_file)
 
-            def fake_run(command, check):
-                calls.append((command, check))
-                native_library.parent.mkdir(parents=True)
-                native_library.touch()
+        dependencies = project["project"]["dependencies"]
+        self.assertIn("cua-fleet==0.0.4", dependencies)
+        self.assertFalse(any(dependency.startswith("cua-train") for dependency in dependencies))
+        self.assertNotIn("cua-fleet", project["tool"]["uv"]["sources"])
+        self.assertNotIn("cua-train", project["tool"]["uv"]["sources"])
+        self.assertEqual(
+            project["tool"]["uv"]["index"][0],
+            {
+                "name": "cua-wheels",
+                "url": "https://wheels.cua.ai/simple",
+            },
+        )
 
-            with (
-                patch("platform.system", return_value="Linux"),
-                patch("subprocess.run", fake_run),
-                patch.object(CustomBuildHook, "repository_root", repository_root),
-                patch.object(CustomBuildHook, "native_target_dir", temporary_root / "native"),
-            ):
-                hook = object.__new__(CustomBuildHook)
-                build_data = {"force_include": {}}
-                hook.initialize("0.1.0", build_data)
+    def test_lock_keeps_train_only_as_a_fleet_transitive_dependency(self):
+        with LOCK_PATH.open("rb") as lock_file:
+            lock = tomllib.load(lock_file)
 
-            self.assertEqual(
-                calls,
-                [
-                    (
-                        [
-                            "cargo",
-                            "build",
-                            "--locked",
-                            "--manifest-path",
-                            str(mirror_root / "Cargo.toml"),
-                            "--package",
-                            "cyclops-sdk",
-                            "--target-dir",
-                            str(temporary_root / "native"),
-                        ],
-                        True,
-                    )
-                ],
-            )
-            self.assertEqual(
-                build_data["force_include"],
-                {
-                    str(binding_root): "cyclops_sdk",
-                    str(native_library): "cyclops_sdk/libcyclops_sdk.so",
-                },
-            )
-            self.assertTrue(build_data["infer_tag"])
+        packages = {package["name"]: package for package in lock["package"]}
+        sandbox_dependencies = {
+            dependency["name"] for dependency in packages["cua-sandbox"]["dependencies"]
+        }
+        sandbox_requires_dist = {
+            requirement["name"]
+            for requirement in packages["cua-sandbox"]["metadata"]["requires-dist"]
+        }
+        fleet_dependencies = {
+            dependency["name"] for dependency in packages["cua-fleet"]["dependencies"]
+        }
+        self.assertIn("cua-fleet", sandbox_dependencies)
+        self.assertNotIn("cua-train", sandbox_dependencies)
+        self.assertIn("cua-fleet", sandbox_requires_dist)
+        self.assertNotIn("cua-train", sandbox_requires_dist)
+        self.assertEqual(packages["cua-fleet"]["version"], "0.0.4")
+        self.assertEqual(packages["cua-fleet"]["source"], {"registry": "https://pypi.org/simple"})
+        self.assertIn("cua-train", fleet_dependencies)
+        self.assertEqual(fleet_dependencies, {"cua-train"})
+        self.assertEqual(packages["cua-train"]["version"], "0.1.1")
+        self.assertEqual(
+            packages["cua-train"]["source"],
+            {"registry": "https://wheels.cua.ai/simple"},
+        )
+
+    def test_package_does_not_copy_the_binding_from_the_checkout(self):
+        self.assertFalse((PROJECT_ROOT / "hatch_build.py").exists())
+        with PYPROJECT_PATH.open("rb") as pyproject_file:
+            project = tomllib.load(pyproject_file)
+        self.assertNotIn("hooks", project.get("tool", {}).get("hatch", {}).get("build", {}))
+
+    def test_fleet_runtime_keeps_binding_imports_direct(self):
+        for source_path in FLEET_IMPORTS:
+            source = source_path.read_text()
+            self.assertIn("from cyclops_sdk import", source)
+            self.assertNotIn("from cua_train", source)
+            self.assertNotIn("sys.path", source)
+            self.assertNotIn("site.addsitedir", source)
+            self.assertNotIn("ctypes.CDLL", source)
 
 
 if __name__ == "__main__":

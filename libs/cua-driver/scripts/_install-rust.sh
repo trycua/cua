@@ -512,7 +512,7 @@ done
 # the baked line hasn't been updated yet (dev / pre-release checkouts).
 #
 # ~~~ BAKED_VERSION: auto-updated in the release PR — do not edit ~~~
-CUA_DRIVER_RS_BAKED_VERSION="0.12.3" # x-release-please-version
+CUA_DRIVER_RS_BAKED_VERSION="0.12.6" # x-release-please-version
 # ~~~ END_BAKED_VERSION ~~~
 
 if [[ -n "${CUA_DRIVER_RS_VERSION:-}" ]]; then
@@ -540,6 +540,19 @@ else
 fi
 
 VERSION="${TAG#${TAG_PREFIX}}"
+
+# Releases through 0.12.6 predate semantic cursor themes.
+# Newer releases must contain both packaged copies.
+CURSOR_THEME_REQUIRED_FROM="0.12.7"
+version_is_at_least() {
+    local version="$1" minimum="$2"
+    local v_major v_minor v_patch m_major m_minor m_patch
+    IFS=. read -r v_major v_minor v_patch <<< "$version"
+    IFS=. read -r m_major m_minor m_patch <<< "$minimum"
+    if (( v_major != m_major )); then (( v_major > m_major )); return; fi
+    if (( v_minor != m_minor )); then (( v_minor > m_minor )); return; fi
+    (( v_patch >= m_patch ))
+}
 
 # --- Download bare-binary tarball ---------------------------------------
 
@@ -585,10 +598,13 @@ case "$LABEL" in
     darwin-*)
         STAGE="cua-driver-rs-${VERSION}-darwin-universal"
         SRC="$TMP_DIR/$STAGE/$BINARY_NAME"
+        SRC_THEME="$TMP_DIR/$STAGE/cua-cursor-theme"
         SRC_APP="$TMP_DIR/$STAGE/$APP_NAME"
         ;;
     *)
         SRC="$TMP_DIR/$BINARY_NAME"
+        SRC_THEME="$TMP_DIR/cua-cursor-theme"
+        SRC_WAYLAND_HELPER="$TMP_DIR/wayland-helper"
         SRC_APP=""
         ;;
 esac
@@ -596,6 +612,23 @@ if [[ ! -f "$SRC" ]]; then
     err "expected $BINARY_NAME in tarball but didn't find it"
     ls -la "$TMP_DIR"
     exit 1
+fi
+THEME_AVAILABLE=1
+if [[ ! -f "$SRC_THEME" ]] || {
+    [[ -n "$SRC_APP" ]] &&
+    [[ ! -f "$SRC_APP/Contents/MacOS/cua-cursor-theme" ]]
+}; then
+    THEME_AVAILABLE=0
+fi
+if [[ "$THEME_AVAILABLE" == "0" ]] && version_is_at_least \
+    "$VERSION" "$CURSOR_THEME_REQUIRED_FROM"; then
+    err "expected cua-cursor-theme in tarball but didn't find it"
+    ls -la "$TMP_DIR"
+    exit 1
+fi
+if [[ "$THEME_AVAILABLE" == "0" ]]; then
+    printf 'warning: release %s predates cua-cursor-theme; installing without custom cursor themes\n' \
+        "$VERSION" >&2
 fi
 
 # --- Install ------------------------------------------------------------
@@ -752,6 +785,21 @@ else
 
     mkdir -p "$VERSIONED_DIR"
     install -m 0755 "$SRC" "$VERSIONED_DIR/$BINARY_NAME"
+    if [[ "$THEME_AVAILABLE" == "1" ]]; then
+        install -m 0755 "$SRC_THEME" "$VERSIONED_DIR/cua-cursor-theme"
+    fi
+    if [[ -d "${SRC_WAYLAND_HELPER:-}" ]]; then
+        mkdir -p "$VERSIONED_DIR/wayland-helper"
+        cp -R "$SRC_WAYLAND_HELPER/." "$VERSIONED_DIR/wayland-helper/"
+
+        INSTALLED_WAYLAND_HELPER="${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/winrects@cua"
+        if [[ -d "$INSTALLED_WAYLAND_HELPER" ]]; then
+            cp "$SRC_WAYLAND_HELPER/winrects@cua/metadata.json" \
+                "$SRC_WAYLAND_HELPER/winrects@cua/extension.js" \
+                "$INSTALLED_WAYLAND_HELPER/"
+            log "updated installed GNOME helper; reload the GNOME session to activate it"
+        fi
+    fi
     log "installed $VERSIONED_DIR/$BINARY_NAME (version $VERSION, target $TARGET)"
 
     # `ln -sfn` would replace an existing dir-symlink in place but is

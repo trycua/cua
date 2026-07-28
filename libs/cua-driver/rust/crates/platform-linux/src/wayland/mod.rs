@@ -14,6 +14,7 @@ pub mod ext_screencopy;
 pub mod ext_toplevel;
 pub mod overlay;
 pub mod persistent_vptr;
+pub(crate) mod portal;
 pub mod portal_screenshot;
 pub mod shell_helper;
 pub mod sway_ipc;
@@ -1178,6 +1179,7 @@ pub fn activate_window_for_input_target(
             )
         })?;
         inject_send(&[format!("f {pid}")])?;
+        remember_inject_focused_target(pid, window_id);
         std::thread::sleep(std::time::Duration::from_millis(60));
         return Ok(());
     }
@@ -1454,6 +1456,9 @@ pub fn scroll_at(
 
 /// Scroll at a desktop-absolute point without activating a named toplevel.
 pub fn scroll_desktop(x: i32, y: i32, direction: &str, amount: u32) -> anyhow::Result<()> {
+    if is_inject_mode() {
+        return inject_scroll_desktop(x, y, direction, amount);
+    }
     let direction = direction.to_string();
     with_libei_fallback(
         || scroll_vptr(None, Some((x, y)), &direction, amount),
@@ -1575,6 +1580,7 @@ pub fn drag(
     to_x: i32,
     to_y: i32,
     steps: u32,
+    duration_ms: u64,
     button: u8,
 ) -> anyhow::Result<()> {
     with_libei_fallback(
@@ -1582,7 +1588,7 @@ pub fn drag(
         || {
             libei_wait_pointer_ready()?;
             activate_window_for_input(window_id)?;
-            libei_drag(from_x, from_y, to_x, to_y, steps, button)
+            libei_drag(from_x, from_y, to_x, to_y, steps, duration_ms, button)
         },
     )
 }
@@ -1594,13 +1600,14 @@ pub fn drag_desktop(
     to_x: i32,
     to_y: i32,
     steps: u32,
+    duration_ms: u64,
     button: u8,
 ) -> anyhow::Result<()> {
     with_libei_fallback(
         || drag_vptr(None, from_x, from_y, to_x, to_y, steps, button),
         || {
             libei_wait_pointer_ready()?;
-            libei_drag(from_x, from_y, to_x, to_y, steps, button)
+            libei_drag(from_x, from_y, to_x, to_y, steps, duration_ms, button)
         },
     )
 }
@@ -1771,6 +1778,10 @@ pub fn press_key(window_id: u64, key: &str) -> anyhow::Result<()> {
 
 /// Press one key while an outer exact-container focus guard is active.
 pub fn press_key_focused(key: &str) -> anyhow::Result<()> {
+    if is_inject_mode() {
+        let (pid, window_id) = inject_focused_target()?;
+        return inject_press_key(pid, window_id, key);
+    }
     let keysym = key_to_keysym(key);
     let result = std::process::Command::new("wtype")
         .args(["-k", "Shift_L", "-k", &keysym])
@@ -1830,6 +1841,10 @@ pub fn hotkey(window_id: u64, keys: &[String]) -> anyhow::Result<()> {
 
 /// Send a chord while an outer exact-container focus guard is active.
 pub fn hotkey_focused(keys: &[String]) -> anyhow::Result<()> {
+    if is_inject_mode() {
+        let (pid, window_id) = inject_focused_target()?;
+        return inject_hotkey(pid, window_id, keys);
+    }
     let (mods, final_key) = partition_modifiers(keys)?;
     if let Ok(()) = virtual_keyboard::hotkey(&mods, &final_key) {
         return Ok(());
@@ -2012,6 +2027,7 @@ fn libei_drag(
     _to_x: i32,
     _to_y: i32,
     _steps: u32,
+    _duration_ms: u64,
     _button: u8,
 ) -> anyhow::Result<()> {
     unreachable!("libei fallback compiled out (no portal-input feature)")
@@ -2102,6 +2118,7 @@ fn libei_drag(
     to_x: i32,
     to_y: i32,
     steps: u32,
+    duration_ms: u64,
     button: u8,
 ) -> anyhow::Result<()> {
     // ei_button exposes separate Press/Released states, so the libei worker can
@@ -2120,6 +2137,7 @@ fn libei_drag(
         cx(to_x) as f64,
         cy(to_y) as f64,
         steps,
+        duration_ms,
         btn,
     )?;
     record_synth_cursor(cx(to_x), cy(to_y));
@@ -2302,6 +2320,65 @@ pub fn inject_socket_path() -> Option<String> {
 /// socket (focus-free / multi-cursor) rather than wtype / virtual-pointer.
 pub fn is_inject_mode() -> bool {
     inject_socket_path().is_some()
+}
+
+static INJECT_FOCUSED_TARGET: OnceLock<Mutex<Option<(u32, u64)>>> = OnceLock::new();
+
+fn remember_inject_focused_target(pid: u32, window_id: u64) {
+    let target = INJECT_FOCUSED_TARGET.get_or_init(|| Mutex::new(None));
+    if let Ok(mut target) = target.lock() {
+        *target = Some((pid, window_id));
+    }
+}
+
+fn inject_focused_target() -> anyhow::Result<(u32, u64)> {
+    INJECT_FOCUSED_TARGET
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()
+        .and_then(|target| *target)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "foreground_unavailable: cua-compositor has no verified foreground target; \
+                 call bring_to_front before desktop keyboard input"
+            )
+        })
+}
+
+fn inject_scroll_desktop(x: i32, y: i32, direction: &str, amount: u32) -> anyhow::Result<()> {
+    let windows = crate::atspi::list_windows(None);
+    let target = windows
+        .iter()
+        .filter(|window| {
+            window.is_on_screen
+                && x >= window.x
+                && y >= window.y
+                && x < window.x.saturating_add(window.width as i32)
+                && y < window.y.saturating_add(window.height as i32)
+        })
+        .max_by_key(|window| window.z_index.unwrap_or_default())
+        .or_else(|| {
+            let (pid, _) = inject_focused_target().ok()?;
+            windows.iter().find(|window| window.pid == Some(pid))
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "foreground_unavailable: no cua-compositor window contains desktop point ({x},{y})"
+            )
+        })?;
+    let pid = target.pid.ok_or_else(|| {
+        anyhow::anyhow!(
+            "foreground_unavailable: desktop point ({x},{y}) resolved to a window without a pid"
+        )
+    })?;
+    inject_scroll(
+        pid,
+        target.xid,
+        f64::from(x.saturating_sub(target.x)),
+        f64::from(y.saturating_sub(target.y)),
+        direction,
+        amount,
+    )
 }
 
 /// Reject any character the nested compositor cannot type before it reaches the

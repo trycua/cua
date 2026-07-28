@@ -13,10 +13,17 @@
 
 use cua_driver_testkit::RawDriver;
 
+fn spawn_unrestricted() -> Option<RawDriver> {
+    RawDriver::spawn_with_env(&[
+        ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
+        ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
+    ])
+}
+
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn tools_call_list_apps() {
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -63,7 +70,7 @@ fn tools_call_list_apps() {
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn get_config_and_check_permissions() {
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -84,7 +91,7 @@ fn get_config_and_check_permissions() {
 
     d.send(&serde_json::json!({
         "jsonrpc":"2.0","id":3,"method":"tools/call",
-        "params":{"name":"check_permissions","arguments":{}}
+        "params":{"name":"check_permissions","arguments":{"prompt":false}}
     }));
     let resp = d.recv();
     assert!(!resp["result"]["isError"].as_bool().unwrap_or(false));
@@ -142,7 +149,7 @@ fn get_config_and_check_permissions() {
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn get_accessibility_tree() {
     //! get_accessibility_tree returns a lightweight process+window snapshot.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -185,7 +192,7 @@ fn get_accessibility_tree() {
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn list_windows_structured_content() {
     //! Verify list_windows returns structuredContent.windows array with expected fields.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -224,7 +231,7 @@ fn list_windows_structured_content() {
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn get_screen_size_and_cursor_position() {
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -278,7 +285,7 @@ fn get_window_state_returns_both_with_opt_out() {
     //! Perception is mode-agnostic: get_window_state returns BOTH the tree AND a
     //! screenshot by default (the deprecated `capture_mode` arg is ignored), and
     //! `include_screenshot:false` is the opt-out that returns the tree only.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -395,7 +402,7 @@ fn get_window_state_returns_both_with_opt_out() {
 fn scroll_tool() {
     //! scroll with direction=down, by=line, amount=1 against the first available window.
     //! Verifies the tool is accepted and returns content, not a protocol error.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -444,7 +451,7 @@ fn scroll_tool() {
 fn type_text_tool() {
     //! Opens TextEdit (or reuses it if already running) and types a short string via type_text.
     //! Skips gracefully if TextEdit is not available or has no window.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -510,7 +517,7 @@ fn type_text_tool() {
 #[cfg(target_os = "windows")]
 fn type_text_notepad() {
     //! Launch Notepad, type a short string via type_text. Skips if Notepad unavailable.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -579,7 +586,7 @@ fn type_text_chars_tool() {
     //! Verify type_text_chars with delay_ms is accepted without error (dry-run via TextEdit or
     //! a pid that accepts WM_CHAR). We just verify the tool responds with a non-error.
     //! Skips gracefully if no visible TextEdit window.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -631,7 +638,7 @@ fn type_text_chars_tool() {
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn hotkey_keys_array() {
     //! Verify hotkey accepts a keys array without a protocol error.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -681,7 +688,7 @@ fn hotkey_keys_array() {
 fn press_key_harmless() {
     //! press_key with a harmless key (F24 — virtually no app responds to it) sent to the
     //! first available window. Just verifies the tool doesn't return a protocol error.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -722,7 +729,7 @@ fn press_key_harmless() {
 fn click_pixel_path() {
     //! click at window-local (5, 5) — title bar area, safe to click without disrupting UI.
     //! Verifies the pixel-coordinate path for click works without a protocol error.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -760,7 +767,7 @@ fn click_pixel_path() {
 #[test]
 #[cfg(target_os = "windows")]
 fn double_click_and_right_click() {
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -813,7 +820,7 @@ fn double_click_and_right_click() {
 #[cfg(target_os = "macos")]
 fn double_click_and_right_click_pixel_path() {
     //! double_click and right_click at title-bar coords — verifies both tools accept pixel path.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -875,7 +882,7 @@ fn double_click_and_right_click_pixel_path() {
 fn set_value_via_element_index() {
     //! get_window_state on TextEdit → find a text-area element → set_value on it.
     //! Skips gracefully if TextEdit is not available.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 

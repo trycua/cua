@@ -6,6 +6,7 @@
 //! These types are transport-free. The contract generator derives JSON Schema
 //! from them, and live Rust handlers deserialize the same types before acting.
 
+use crate::CursorThemeSelection;
 use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
@@ -87,6 +88,10 @@ fn drag_steps_schema(_: &mut SchemaGenerator) -> Schema {
 
 fn scroll_amount_schema(_: &mut SchemaGenerator) -> Schema {
     json_schema!({ "type": "integer", "minimum": 1, "maximum": 50 })
+}
+
+fn cursor_theme_id_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({ "type": "string", "minLength": 1, "maxLength": 200 })
 }
 
 fn escalation_detail_schema(_: &mut SchemaGenerator) -> Schema {
@@ -248,6 +253,10 @@ pub struct StartSessionInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "capture_scope_schema")]
     pub capture_scope: Option<CaptureScope>,
+    /// Optional initial cursor theme. The host applies it before the cursor is
+    /// first made visible, avoiding a flash of the default theme.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_theme: Option<CursorThemeSelection>,
 }
 
 impl ToolInput for StartSessionInput {
@@ -281,6 +290,60 @@ impl ToolInput for GetSessionStateInput {
 pub struct EndSessionInput {
     /// The session id to end.
     pub session: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SetAgentCursorEnabledInput {
+    pub session: String,
+    pub enabled: bool,
+}
+
+impl ToolInput for SetAgentCursorEnabledInput {
+    const TOOL_NAME: &'static str = "set_agent_cursor_enabled";
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SetAgentCursorMotionInput {
+    pub session: String,
+    pub start_handle: Option<f64>,
+    pub end_handle: Option<f64>,
+    pub arc_size: Option<f64>,
+    pub arc_flow: Option<f64>,
+    pub spring: Option<f64>,
+    pub glide_duration_ms: Option<f64>,
+    pub dwell_after_click_ms: Option<f64>,
+    pub idle_hide_ms: Option<f64>,
+    pub turn_radius: Option<f64>,
+}
+
+impl ToolInput for SetAgentCursorMotionInput {
+    const TOOL_NAME: &'static str = "set_agent_cursor_motion";
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SetAgentCursorThemeInput {
+    pub session: String,
+    #[schemars(schema_with = "cursor_theme_id_schema")]
+    pub theme_id: String,
+    #[serde(default)]
+    pub reduced_motion: crate::CursorReducedMotion,
+}
+
+impl ToolInput for SetAgentCursorThemeInput {
+    const TOOL_NAME: &'static str = "set_agent_cursor_theme";
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GetAgentCursorStateInput {
+    pub session: String,
+}
+
+impl ToolInput for GetAgentCursorStateInput {
+    const TOOL_NAME: &'static str = "get_agent_cursor_state";
 }
 
 impl ToolInput for EndSessionInput {

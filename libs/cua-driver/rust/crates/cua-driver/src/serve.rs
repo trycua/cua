@@ -1,6 +1,7 @@
-//! Unix-socket daemon server and client for `cua-driver serve`/`stop`/`status`.
+//! Local daemon server and client for `cua-driver serve`/`stop`/`status`.
 //!
-//! Protocol: line-delimited JSON over a Unix domain socket.
+//! Protocol: line-delimited JSON over a Unix domain socket or Windows named
+//! pipe.
 //!
 //! Request shapes:
 //!   {"method":"call","name":"<tool>","args":{...}}
@@ -15,7 +16,10 @@
 //! The socket file is at:
 //!   macOS  — ~/Library/Caches/cua-driver/cua-driver.sock
 //!   Linux  — ~/.cache/cua-driver/cua-driver.sock
-//!   Windows — \\.\pipe\cua-driver  (TODO: use named pipe; stubs only for now)
+//!   Windows — \\.\pipe\cua-driver
+//!
+//! Source-installed local builds use the corresponding `cua-driver-local`
+//! namespace on every platform.
 
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
@@ -66,9 +70,9 @@ fn inject_browser_approvals(tool_name: &str, args: &mut serde_json::Value, sessi
 /// reads the explicit `session`/`cursor_id` arg only, so a cursor appears
 /// exactly when a run declares its session (explicit-required).
 ///
-/// Also refreshes the idle-TTL clock for an explicit session (the minted
-/// fallback is reaped by EOF, not TTL). Returns the effective `_session_id` for
-/// the resurrection guard.
+/// The registry refreshes the runtime-private idle-TTL key after authorization;
+/// this transport helper only returns the effective `_session_id` for the
+/// resurrection guard.
 fn apply_session_identity(args: &mut serde_json::Value, minted: &Option<String>) -> Option<String> {
     let explicit = args
         .as_object()
@@ -88,9 +92,6 @@ fn apply_session_identity(args: &mut serde_json::Value, minted: &Option<String>)
                 serde_json::Value::String(id),
             );
         }
-    }
-    if let Some(sess) = &explicit {
-        cua_driver_core::session::touch_session(sess);
     }
     args.as_object()
         .and_then(|o| o.get("_session_id"))
@@ -113,14 +114,12 @@ pub fn default_socket_path() -> String {
     socket_path_for_namespace(crate::bundle::state_namespace())
 }
 
-/// On Windows, returns the named-pipe path of the uiAccess-elevated worker
-/// (`cua-driver-uia.exe`). The main CLI/MCP binary can prefer this pipe over the
-/// regular daemon pipe for the one path that genuinely needs UIAccess integrity:
-/// **synthetic input (SendInput / pixel clicks) into AppContainer (UWP) windows**,
-/// which UIPI blocks from a Medium-IL process. The element-action path (UIA
-/// Invoke / ValuePattern driven by `element_index`) does NOT need the worker — it
-/// drives real UWP apps (verified: Calculator num5Button 0→5) as-is from the
-/// Medium-IL daemon. See #1602 / the `cua-driver-uia` crate for the worker side.
+/// On Windows, returns the reserved named-pipe path of the uiAccess-elevated
+/// worker (`cua-driver-uia.exe`). Public CLI, MCP, and SDK clients never connect
+/// to this endpoint. It remains available only for a future daemon-internal
+/// forwarding path that authenticates the exact parent process. Until that path
+/// exists, elevated/AppContainer pixel input uses an interactively launched
+/// High-IL daemon. See #1602 / the `cua-driver-uia` crate for the worker side.
 #[cfg(target_os = "windows")]
 pub fn default_uia_pipe_path() -> String {
     if crate::bundle::is_local_installation() {
@@ -249,8 +248,7 @@ async fn invoke_daemon_tool(
     });
 
     if let Some(sid) = &effective_session {
-        if !is_session_lifecycle_tool(&tool_name) && cua_driver_core::session::is_session_ended(sid)
-        {
+        if !is_session_lifecycle_tool(&tool_name) && sdk.is_session_ended(sid) {
             observe_daemon_error(observation, 1);
             return DaemonResponse::err(
                 format!(
@@ -315,7 +313,7 @@ async fn invoke_daemon_tool(
                 }
             },
         };
-        cua_driver_core::session::begin_tool_call(&tool_name, &args, true, transport, client_kind)
+        sdk.begin_tool_call(&tool_name, &args, transport, client_kind)
     });
 
     let result_value = match sdk.invoke_raw(&tool_name, args).await {
@@ -369,14 +367,11 @@ fn remove_owned_socket(socket_path: &str, identity: SocketIdentity) {
 }
 
 #[cfg(unix)]
-fn secure_embedded_socket(socket_path: &str, embedded: bool) -> anyhow::Result<()> {
-    if !embedded {
-        return Ok(());
-    }
+fn secure_local_socket(socket_path: &str) -> anyhow::Result<()> {
     use std::os::unix::fs::PermissionsExt as _;
     let permissions = std::fs::Permissions::from_mode(0o600);
     std::fs::set_permissions(socket_path, permissions)
-        .map_err(|e| anyhow::anyhow!("secure embedded daemon socket {socket_path}: {e}"))
+        .map_err(|e| anyhow::anyhow!("secure local daemon socket {socket_path}: {e}"))
 }
 
 #[cfg(unix)]
@@ -415,6 +410,86 @@ async fn wait_for_parent_stdin_eof() {
     }
 }
 
+#[cfg(unix)]
+fn authenticate_unix_peer(stream: &tokio::net::UnixStream) -> anyhow::Result<()> {
+    let credentials = stream
+        .peer_cred()
+        .map_err(|error| anyhow::anyhow!("read Unix peer credentials: {error}"))?;
+    let expected_uid = unsafe { libc::geteuid() };
+    authenticate_unix_uid(expected_uid, credentials.uid())
+}
+
+#[cfg(unix)]
+fn authenticate_unix_uid(expected_uid: u32, actual_uid: u32) -> anyhow::Result<()> {
+    if actual_uid != expected_uid {
+        anyhow::bail!("reject Unix peer uid {actual_uid} for runtime owned by uid {expected_uid}");
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn authenticate_embedded_host_connection(stream: &tokio::net::UnixStream) -> anyhow::Result<()> {
+    if !cua_driver_core::embedded_mode() {
+        anyhow::bail!("trusted service sessions are disabled for a standalone shared daemon");
+    }
+    let peer_pid = stream
+        .peer_cred()
+        .map_err(|error| anyhow::anyhow!("read trusted host peer credentials: {error}"))?
+        .pid()
+        .ok_or_else(|| anyhow::anyhow!("trusted host peer PID is unavailable"))?;
+    let expected_parent = unsafe { libc::getppid() };
+    if peer_pid != expected_parent {
+        anyhow::bail!(
+            "trusted service session peer pid {peer_pid} does not match embedded host pid {expected_parent}"
+        );
+    }
+    Ok(())
+}
+
+fn service_authorization_status(trusted_host_connection: bool) -> serde_json::Value {
+    let mut status = cua_driver_core::authorization::status_json_with_provider(None);
+    if trusted_host_connection {
+        let object = status
+            .as_object_mut()
+            .expect("authorization status is always an object");
+        object.insert(
+            "session_mode_delegation_enabled".into(),
+            serde_json::Value::Bool(true),
+        );
+        object.insert(
+            "session_mode_delegation_ready".into(),
+            serde_json::Value::Bool(true),
+        );
+        object.insert(
+            "session_mode_delegation_blocker".into(),
+            serde_json::Value::Null,
+        );
+        object.insert(
+            "session_mode_binding".into(),
+            serde_json::Value::String("authenticated_embedded_host_connection".into()),
+        );
+    }
+    status
+}
+
+#[cfg(all(test, unix))]
+mod peer_authentication_tests {
+    use super::{authenticate_unix_peer, authenticate_unix_uid};
+
+    #[tokio::test]
+    async fn same_user_unix_peer_is_accepted() {
+        let (left, right) = tokio::net::UnixStream::pair().expect("Unix stream pair");
+        authenticate_unix_peer(&left).expect("left peer must be current user");
+        authenticate_unix_peer(&right).expect("right peer must be current user");
+    }
+
+    #[test]
+    fn foreign_unix_uid_is_rejected_before_request_parsing() {
+        let error = authenticate_unix_uid(501, 502).unwrap_err();
+        assert!(error.to_string().contains("reject Unix peer uid 502"));
+    }
+}
+
 /// Run the daemon server. Binds `socket_path`, writes `pid_file_path`,
 /// accepts connections, and serves requests until `{"method":"shutdown"}`.
 ///
@@ -442,7 +517,7 @@ pub async fn run_serve(
 
     let listener =
         UnixListener::bind(socket_path).map_err(|e| anyhow::anyhow!("bind {socket_path}: {e}"))?;
-    secure_embedded_socket(socket_path, embedded)?;
+    secure_local_socket(socket_path)?;
     let bound_socket = socket_identity(socket_path)?;
 
     eprintln!("Cua Driver daemon listening on {socket_path}");
@@ -469,14 +544,20 @@ pub async fn run_serve(
 
     // Idle-session and recording maintenance is owned by the SDK runtime so
     // direct embedded applications and daemon-backed clients behave alike.
-    if let Some(port) = crate::mcp_http::configured_port() {
-        crate::mcp_http::spawn(sdk.clone(), port);
+    if let Some(port) = crate::mcp_http::configured_port()? {
+        crate::mcp_http::spawn(sdk.clone(), port)?;
     }
 
     loop {
         tokio::select! {
             result = listener.accept() => {
                 let (stream, _) = result?;
+                if let Err(error) = authenticate_unix_peer(&stream) {
+                    tracing::warn!("service connection rejected before request parsing: {error}");
+                    continue;
+                }
+                let trusted_host_connection =
+                    authenticate_embedded_host_connection(&stream).is_ok();
                 let reg = sdk.clone();
                 let shutdown_tx2 = shutdown_tx.clone();
 
@@ -491,6 +572,9 @@ pub async fn run_serve(
                     // connection EOFs (graceful proxy exit OR kill -9, both
                     // kernel-guaranteed), the post-loop block reaps the session.
                     let mut control_session_id: Option<String> = None;
+                    let mut trusted_session: Option<
+                        std::sync::Arc<cua_driver_sdk::CuaDriverSession>,
+                    > = None;
 
                     while let Ok(Some(line)) = lines.next_line().await {
                         let req: DaemonRequest = match serde_json::from_str(&line) {
@@ -560,9 +644,10 @@ pub async fn run_serve(
                                 }
                             }
                             "authorization_status" => {
-                                let resp = DaemonResponse::ok(
-                                    cua_driver_core::authorization::status_json()
-                                );
+                                let resp =
+                                    DaemonResponse::ok(service_authorization_status(
+                                        trusted_host_connection,
+                                    ));
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
@@ -575,7 +660,7 @@ pub async fn run_serve(
                                     .and_then(serde_json::Value::as_str)
                                     .filter(|value| !value.is_empty());
                                 let result: Result<serde_json::Value, String> = if all && session.is_none() {
-                                    let count = cua_driver_core::session::revoke_all_sessions();
+                                    let count = reg.revoke_all_sessions().await;
                                     Ok(serde_json::json!({"revoked": count, "scope": "all"}))
                                 } else if !all {
                                     match session {
@@ -600,6 +685,77 @@ pub async fn run_serve(
                             }
                             "call" => {
                                 let resp = invoke_daemon_tool(&reg, req).await;
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                            }
+                            "trusted_session_begin" => {
+                                let resp = if !trusted_host_connection {
+                                    DaemonResponse::err(
+                                        "trusted service sessions require the original authenticated embedded host connection",
+                                        77,
+                                    )
+                                } else if trusted_session.is_some() {
+                                    DaemonResponse::err(
+                                        "this accepted connection already owns a trusted session",
+                                        65,
+                                    )
+                                } else {
+                                    let options = req.args
+                                        .ok_or_else(|| "trusted_session_begin omitted options".to_owned())
+                                        .and_then(|value| {
+                                            serde_json::from_value(value)
+                                                .map_err(|error| format!("invalid trusted session options: {error}"))
+                                        });
+                                    match options.and_then(|options| reg.create_trusted_session(options)) {
+                                        Ok(session) => {
+                                            trusted_session = Some(session);
+                                            DaemonResponse::ok(serde_json::json!({
+                                                "bound": true,
+                                                "connection_bound": true,
+                                            }))
+                                        }
+                                        Err(error) => DaemonResponse::err(error, 77),
+                                    }
+                                };
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                            }
+                            "trusted_session_call" => {
+                                let resp = match trusted_session.as_ref() {
+                                    Some(session) => {
+                                        let name = req.name.unwrap_or_default();
+                                        let arguments = req.args.unwrap_or_else(|| {
+                                            serde_json::Value::Object(serde_json::Map::new())
+                                        });
+                                        match session.call_tool(name, arguments.to_string()).await {
+                                            Ok(result) => match serde_json::from_str(&result.raw_json) {
+                                                Ok(value) => DaemonResponse::ok(value),
+                                                Err(error) => DaemonResponse::err(
+                                                    format!("trusted session returned invalid result: {error}"),
+                                                    70,
+                                                ),
+                                            },
+                                            Err(error) => DaemonResponse::err(error.to_string(), 77),
+                                        }
+                                    }
+                                    None => DaemonResponse::err(
+                                        "this accepted connection has no trusted session binding",
+                                        77,
+                                    ),
+                                };
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                            }
+                            "trusted_session_end" => {
+                                if let Some(session) = trusted_session.take() {
+                                    session.close();
+                                }
+                                let resp = DaemonResponse::ok(
+                                    serde_json::json!({"closed": true})
+                                );
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
@@ -672,6 +828,9 @@ pub async fn run_serve(
                             tracing::warn!("control-session cleanup failed: {error}");
                         }
                     }
+                    if let Some(session) = trusted_session {
+                        session.close();
+                    }
                 });
             }
             _ = &mut shutdown_rx => {
@@ -695,123 +854,6 @@ pub async fn run_serve(
         .map_err(|error| anyhow::anyhow!("shut down SDK runtime: {error}"))?;
 
     Ok(())
-}
-
-/// On Windows, optionally spawn the sibling uiAccess'd worker
-/// (`cua-driver-uia.exe`) via ShellExecute if it lives next to the main binary
-/// AND we're at Medium IL AND the binary is opt-in via env var.
-///
-/// History: the uia worker was the original answer to "send synthetic input
-/// (SendInput / pixel clicks) into UWP / AppContainer windows from a Medium-IL
-/// daemon" — UIPI blocks that cross-integrity input, so the worker carries
-/// `uiAccess="true"` in its manifest and was meant to be Authenticode-signed
-/// (EV cert per #1602) so Windows AIS would elevate it to UIAccess integrity at
-/// launch.
-///
-/// IMPORTANT (verified): the worker is NOT required to automate real UWP apps in
-/// general. The element-action path — UIA Invoke / ValuePattern driven by
-/// `element_index` — drives AppContainer apps as-is from the Medium-IL daemon
-/// (Calculator num5Button 0→5, no worker). Only the pixel / SendInput path needs
-/// the worker, and only against AppContainer (UWP) targets.
-///
-/// With #1630 the canonical answer for that input path became "register the
-/// autostart task at RunLevel=Highest so the main daemon is already at High IL",
-/// which obviates the worker entirely for the vast majority of users.
-///
-/// Current behavior:
-///
-/// 1. If the main daemon is already at High IL (the RunLevel=Highest path),
-///    skip the worker — it's redundant and, more importantly, attempting to
-///    ShellExecute an unsigned uiAccess'd PE pops a Windows error dialog
-///    ("A referral was returned from the server" = AIS refusing to elevate
-///    an unsigned uiAccess binary). That dialog blocks the daemon's startup
-///    and confuses users.
-///
-/// 2. If the main daemon is at Medium IL (older installs without the
-///    Highest task), AND `CUA_DRIVER_RS_SPAWN_UIA_WORKER=1` is set (opt-in),
-///    AND a uiAccess'd worker is installed, spawn it. This path is kept for
-///    the future EV-cert flow where the worker IS properly signed.
-///
-/// 3. Otherwise: skip silently. The main daemon still serves requests, and
-///    element_index UWP automation (UIA Invoke / ValuePattern) works without the
-///    worker. Only pixel / SendInput into AppContainer (UWP) windows needs the
-///    elevated path — re-run with the Highest autostart task or (when shipped)
-///    the signed uia worker. See #1602.
-#[cfg(target_os = "windows")]
-fn maybe_spawn_uia_worker() {
-    // Skip when at High IL — main daemon already has the privileges the
-    // worker was supposed to provide.
-    if is_self_at_high_il() {
-        tracing::debug!("uia spawn skipped: main daemon already at High IL");
-        return;
-    }
-
-    // Opt-in for the future EV-cert flow. Default-off until the worker is
-    // actually signed and tested.
-    if !crate::bundle::is_env_truthy("CUA_DRIVER_RS_SPAWN_UIA_WORKER") {
-        tracing::debug!(
-            "uia spawn skipped: CUA_DRIVER_RS_SPAWN_UIA_WORKER not set (opt-in only \
-             until the worker is EV-signed; see #1602)"
-        );
-        return;
-    }
-
-    let current = match std::env::current_exe() {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::debug!("uia spawn skipped: current_exe failed: {e}");
-            return;
-        }
-    };
-    let uia = match current.parent() {
-        Some(dir) => dir.join(crate::bundle::uia_executable_name()),
-        None => return,
-    };
-    if !uia.exists() {
-        tracing::debug!("uia spawn skipped: {} not present", uia.display());
-        return;
-    }
-    let uia_str = uia.display().to_string();
-    let cmd =
-        format!("(New-Object -ComObject Shell.Application).ShellExecute('{uia_str}','','','',0)");
-    match std::process::Command::new("powershell.exe")
-        .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &cmd])
-        .spawn()
-    {
-        Ok(_child) => {
-            eprintln!("cua-driver: spawned uiAccess worker via {}", uia.display());
-        }
-        Err(e) => {
-            tracing::warn!("uia spawn failed: {e}");
-        }
-    }
-}
-
-/// Returns true when the current process is at High IL (admin token). Checked
-/// via a one-shot PowerShell call to `WindowsPrincipal.IsInRole(Administrator)`
-/// — the standard managed equivalent of OpenProcessToken + GetTokenInformation.
-///
-/// Done via PowerShell instead of the windows-crate Win32 API because cua-driver
-/// doesn't depend on the `windows` crate directly (only platform-windows does),
-/// and `serve.rs` runs only once at daemon start so the ~50ms PowerShell-spawn
-/// cost is acceptable.
-#[cfg(target_os = "windows")]
-fn is_self_at_high_il() -> bool {
-    let out = std::process::Command::new("powershell.exe")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "([System.Security.Principal.WindowsPrincipal][System.Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)",
-        ])
-        .output();
-    match out {
-        Ok(o) => {
-            let s = String::from_utf8_lossy(&o.stdout);
-            s.trim().eq_ignore_ascii_case("True")
-        }
-        Err(_) => false,
-    }
 }
 
 #[cfg(target_os = "windows")]
@@ -930,22 +972,131 @@ unsafe fn current_user_sid_string() -> Option<String> {
     (!sid.is_empty()).then_some(sid)
 }
 
+#[cfg(target_os = "windows")]
+unsafe fn named_pipe_client_process_id(pipe: *mut std::ffi::c_void) -> Option<u32> {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetNamedPipeClientProcessId(
+            pipe: *mut std::ffi::c_void,
+            client_process_id: *mut u32,
+        ) -> i32;
+    }
+    let mut client_process_id = 0_u32;
+    (GetNamedPipeClientProcessId(pipe, &mut client_process_id) != 0 && client_process_id != 0)
+        .then_some(client_process_id)
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn named_pipe_client_sid(pipe: *mut std::ffi::c_void) -> Option<String> {
+    #[repr(C)]
+    struct SidAndAttributes {
+        sid: *mut std::ffi::c_void,
+        attributes: u32,
+    }
+    #[repr(C)]
+    struct TokenUserRaw {
+        user: SidAndAttributes,
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn OpenProcess(
+            desired_access: u32,
+            inherit_handle: i32,
+            process_id: u32,
+        ) -> *mut std::ffi::c_void;
+        fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+        fn LocalFree(memory: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+    }
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn OpenProcessToken(
+            process: *mut std::ffi::c_void,
+            desired_access: u32,
+            token: *mut *mut std::ffi::c_void,
+        ) -> i32;
+        fn GetTokenInformation(
+            token: *mut std::ffi::c_void,
+            information_class: u32,
+            information: *mut std::ffi::c_void,
+            information_length: u32,
+            return_length: *mut u32,
+        ) -> i32;
+        fn ConvertSidToStringSidW(sid: *mut std::ffi::c_void, string_sid: *mut *mut u16) -> i32;
+    }
+
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const TOKEN_QUERY: u32 = 0x0008;
+    const TOKEN_USER_CLASS: u32 = 1;
+    let client_process_id = named_pipe_client_process_id(pipe)?;
+    let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, client_process_id);
+    if process.is_null() {
+        return None;
+    }
+    let mut token = std::ptr::null_mut();
+    let opened = OpenProcessToken(process, TOKEN_QUERY, &mut token);
+    let _ = CloseHandle(process);
+    if opened == 0 || token.is_null() {
+        return None;
+    }
+    let mut required = 0_u32;
+    let _ = GetTokenInformation(
+        token,
+        TOKEN_USER_CLASS,
+        std::ptr::null_mut(),
+        0,
+        &mut required,
+    );
+    if required == 0 {
+        let _ = CloseHandle(token);
+        return None;
+    }
+    let mut buffer = vec![0_u8; required as usize];
+    let ok = GetTokenInformation(
+        token,
+        TOKEN_USER_CLASS,
+        buffer.as_mut_ptr().cast(),
+        required,
+        &mut required,
+    );
+    let _ = CloseHandle(token);
+    if ok == 0 {
+        return None;
+    }
+    let token_user = std::ptr::read_unaligned(buffer.as_ptr().cast::<TokenUserRaw>());
+    let mut string_sid = std::ptr::null_mut();
+    if ConvertSidToStringSidW(token_user.user.sid, &mut string_sid) == 0 || string_sid.is_null() {
+        return None;
+    }
+    let length = (0..)
+        .find(|&index| *string_sid.add(index) == 0)
+        .unwrap_or(0);
+    let sid = String::from_utf16_lossy(std::slice::from_raw_parts(string_sid, length));
+    let _ = LocalFree(string_sid.cast());
+    (!sid.is_empty()).then_some(sid)
+}
+
+#[cfg(target_os = "windows")]
+fn named_pipe_sid_is_authorized(expected: Option<&str>, actual: Option<&str>) -> bool {
+    matches!((expected, actual), (Some(expected), Some(actual)) if expected.eq_ignore_ascii_case(actual))
+}
+
+#[cfg(target_os = "windows")]
+fn named_pipe_host_pid_is_authorized(expected: Option<u32>, actual: Option<u32>) -> bool {
+    matches!((expected, actual), (Some(expected), Some(actual)) if expected == actual)
+}
+
 /// Build the named-pipe ACL for one daemon mode.
 ///
-/// Standalone preserves the existing cross-integrity Everyone descriptor used
-/// by elevated installs. Embedded mode is private to the current user while
-/// retaining the low mandatory label needed when host and daemon integrity
-/// levels differ.
+/// Both service and embedded modes are private to the current user while
+/// retaining the low mandatory label needed when host and runtime integrity
+/// levels differ. Every accepted instance is additionally checked against the
+/// connected client's process token before request parsing.
 #[cfg(target_os = "windows")]
 unsafe fn build_pipe_security_attrs(
-    embedded: bool,
+    _embedded: bool,
 ) -> Option<(SecurityAttributesRaw, *mut std::ffi::c_void)> {
-    if embedded {
-        let sid = current_user_sid_string()?;
-        security_attrs_from_sddl(&format!("D:P(A;;GA;;;{sid})S:(ML;;NW;;;LW)"))
-    } else {
-        security_attrs_from_sddl("D:(A;OICI;GA;;;WD)S:(ML;;NW;;;LW)")
-    }
+    let sid = current_user_sid_string()?;
+    security_attrs_from_sddl(&format!("D:P(A;;GA;;;{sid})S:(ML;;NW;;;LW)"))
 }
 
 #[cfg(target_os = "windows")]
@@ -962,6 +1113,7 @@ pub async fn run_serve(
     socket_path: &str,
     pid_file_path: Option<&str>,
 ) -> anyhow::Result<()> {
+    use std::os::windows::io::AsRawHandle as _;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::windows::named_pipe::ServerOptions;
 
@@ -969,21 +1121,14 @@ pub async fn run_serve(
 
     eprintln!("Cua Driver daemon listening on {socket_path}");
 
-    // Build the mode-specific descriptor once and reuse it for every pipe
-    // instance. Embedded mode fails closed if its current-user-only ACL cannot
-    // be created; a default or Everyone ACL would violate the private-endpoint
-    // contract promised by the host SDK.
+    // Build the current-user descriptor once and reuse it for every pipe
+    // instance. Both service and embedded mode fail closed if the ACL cannot
+    // be created; an Everyone ACL would expose the desktop-action endpoint to
+    // unrelated local principals.
     let embedded = cua_driver_core::embedded_mode();
     let security_attrs = unsafe { build_pipe_security_attrs(embedded) };
     if security_attrs.is_none() {
-        if embedded {
-            anyhow::bail!("failed to build current-user security descriptor for embedded pipe");
-        }
-        eprintln!(
-            "cua-driver: failed to build cross-IL SECURITY_ATTRIBUTES; pipe will be \
-             High-IL exclusive. CLI and MCP clients from Medium-IL processes \
-             will be unable to reach the daemon."
-        );
+        anyhow::bail!("failed to build current-user security descriptor for named pipe");
     }
     // Hold the SD pointer alive for the lifetime of run_serve. We never
     // free it — the daemon process exit reclaims it.
@@ -991,10 +1136,6 @@ pub async fn run_serve(
         Some((attrs, _sd_ptr)) => attrs as *const _ as *mut _,
         None => std::ptr::null_mut(),
     };
-
-    // Spawn the sibling uiAccess'd worker if it's installed. Best-effort —
-    // the main daemon still serves requests even if the worker fails to start.
-    maybe_spawn_uia_worker();
 
     // Write PID file.
     if let Some(pid_path) = pid_file_path {
@@ -1016,15 +1157,14 @@ pub async fn run_serve(
     tokio::pin!(parent_liveness);
 
     // Idle-session and recording maintenance is owned by the SDK runtime.
-    if let Some(port) = crate::mcp_http::configured_port() {
-        crate::mcp_http::spawn(sdk.clone(), port);
+    if let Some(port) = crate::mcp_http::configured_port()? {
+        crate::mcp_http::spawn(sdk.clone(), port)?;
     }
 
     let mut first_pipe = true;
     loop {
-        // Standalone daemons use the cross-IL descriptor when available;
-        // embedded daemons use the current-user descriptor and reserve the
-        // pipe name with their first instance.
+        // All daemons use the current-user descriptor. Embedded daemons also
+        // reserve the pipe name with their first instance.
         let first_pipe_instance = embedded && first_pipe;
         let server = if sec_attrs_ptr.is_null() {
             ServerOptions::new()
@@ -1044,6 +1184,30 @@ pub async fn run_serve(
         tokio::select! {
             result = server.connect() => {
                 result.map_err(|e| anyhow::anyhow!("named pipe connect: {e}"))?;
+                let expected_sid = unsafe { current_user_sid_string() };
+                let client_process_id =
+                    unsafe { named_pipe_client_process_id(server.as_raw_handle().cast()) };
+                let client_sid = unsafe {
+                    named_pipe_client_sid(server.as_raw_handle().cast())
+                };
+                if !named_pipe_sid_is_authorized(
+                    expected_sid.as_deref(),
+                    client_sid.as_deref(),
+                ) {
+                    tracing::warn!(
+                        "service named-pipe connection rejected before request parsing"
+                    );
+                    let _ = server.disconnect();
+                    continue;
+                }
+                let expected_host_process_id = std::env::var("CUA_DRIVER_EMBEDDED_HOST_PID")
+                    .ok()
+                    .and_then(|value| value.parse::<u32>().ok());
+                let trusted_host_connection = embedded
+                    && named_pipe_host_pid_is_authorized(
+                        expected_host_process_id,
+                        client_process_id,
+                    );
 
                 let reg = sdk.clone();
                 let shutdown_tx2 = shutdown_tx.clone();
@@ -1058,6 +1222,9 @@ pub async fn run_serve(
                     // ERROR_BROKEN_PIPE on the next read, ending the while-let
                     // loop equally reliably.
                     let mut control_session_id: Option<String> = None;
+                    let mut trusted_session: Option<
+                        std::sync::Arc<cua_driver_sdk::CuaDriverSession>,
+                    > = None;
 
                     while let Ok(Some(line)) = lines.next_line().await {
                         let req: DaemonRequest = match serde_json::from_str(&line) {
@@ -1108,9 +1275,10 @@ pub async fn run_serve(
                                 ).await;
                             }
                             "authorization_status" => {
-                                let resp = DaemonResponse::ok(
-                                    cua_driver_core::authorization::status_json()
-                                );
+                                let resp =
+                                    DaemonResponse::ok(service_authorization_status(
+                                        trusted_host_connection,
+                                    ));
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
@@ -1123,7 +1291,7 @@ pub async fn run_serve(
                                     .and_then(serde_json::Value::as_str)
                                     .filter(|value| !value.is_empty());
                                 let result: Result<serde_json::Value, String> = if all && session.is_none() {
-                                    let count = cua_driver_core::session::revoke_all_sessions();
+                                    let count = reg.revoke_all_sessions().await;
                                     Ok(serde_json::json!({"revoked": count, "scope": "all"}))
                                 } else if !all {
                                     match session {
@@ -1148,6 +1316,77 @@ pub async fn run_serve(
                             }
                             "call" => {
                                 let resp = invoke_daemon_tool(&reg, req).await;
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                            }
+                            "trusted_session_begin" => {
+                                let resp = if !trusted_host_connection {
+                                    DaemonResponse::err(
+                                        "trusted service sessions require the original authenticated embedded host connection",
+                                        77,
+                                    )
+                                } else if trusted_session.is_some() {
+                                    DaemonResponse::err(
+                                        "this accepted connection already owns a trusted session",
+                                        65,
+                                    )
+                                } else {
+                                    let options = req.args
+                                        .ok_or_else(|| "trusted_session_begin omitted options".to_owned())
+                                        .and_then(|value| {
+                                            serde_json::from_value(value)
+                                                .map_err(|error| format!("invalid trusted session options: {error}"))
+                                        });
+                                    match options.and_then(|options| reg.create_trusted_session(options)) {
+                                        Ok(session) => {
+                                            trusted_session = Some(session);
+                                            DaemonResponse::ok(serde_json::json!({
+                                                "bound": true,
+                                                "connection_bound": true,
+                                            }))
+                                        }
+                                        Err(error) => DaemonResponse::err(error, 77),
+                                    }
+                                };
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                            }
+                            "trusted_session_call" => {
+                                let resp = match trusted_session.as_ref() {
+                                    Some(session) => {
+                                        let name = req.name.unwrap_or_default();
+                                        let arguments = req.args.unwrap_or_else(|| {
+                                            serde_json::Value::Object(serde_json::Map::new())
+                                        });
+                                        match session.call_tool(name, arguments.to_string()).await {
+                                            Ok(result) => match serde_json::from_str(&result.raw_json) {
+                                                Ok(value) => DaemonResponse::ok(value),
+                                                Err(error) => DaemonResponse::err(
+                                                    format!("trusted session returned invalid result: {error}"),
+                                                    70,
+                                                ),
+                                            },
+                                            Err(error) => DaemonResponse::err(error.to_string(), 77),
+                                        }
+                                    }
+                                    None => DaemonResponse::err(
+                                        "this accepted connection has no trusted session binding",
+                                        77,
+                                    ),
+                                };
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                            }
+                            "trusted_session_end" => {
+                                if let Some(session) = trusted_session.take() {
+                                    session.close();
+                                }
+                                let resp = DaemonResponse::ok(
+                                    serde_json::json!({"closed": true})
+                                );
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
@@ -1207,6 +1446,9 @@ pub async fn run_serve(
                             tracing::warn!("control-session cleanup failed: {error}");
                         }
                     }
+                    if let Some(session) = trusted_session {
+                        session.close();
+                    }
                 });
             }
             _ = &mut shutdown_rx => {
@@ -1227,6 +1469,34 @@ pub async fn run_serve(
         .await
         .map_err(|error| anyhow::anyhow!("shut down SDK runtime: {error}"))?;
     Ok(())
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod named_pipe_authentication_tests {
+    use super::{named_pipe_host_pid_is_authorized, named_pipe_sid_is_authorized};
+
+    #[test]
+    fn missing_or_foreign_sid_is_rejected_before_request_parsing() {
+        assert!(!named_pipe_sid_is_authorized(None, Some("S-1-5-21-1")));
+        assert!(!named_pipe_sid_is_authorized(Some("S-1-5-21-1"), None));
+        assert!(!named_pipe_sid_is_authorized(
+            Some("S-1-5-21-1"),
+            Some("S-1-5-21-2")
+        ));
+        assert!(named_pipe_sid_is_authorized(
+            Some("S-1-5-21-1"),
+            Some("s-1-5-21-1")
+        ));
+    }
+
+    #[test]
+    fn missing_or_foreign_host_pid_cannot_bind_trusted_authority() {
+        assert!(!named_pipe_host_pid_is_authorized(None, Some(42)));
+        assert!(!named_pipe_host_pid_is_authorized(Some(42), None));
+        assert!(!named_pipe_host_pid_is_authorized(None, None));
+        assert!(!named_pipe_host_pid_is_authorized(Some(42), Some(43)));
+        assert!(named_pipe_host_pid_is_authorized(Some(42), Some(42)));
+    }
 }
 
 #[cfg(not(any(unix, target_os = "windows")))]
@@ -1396,8 +1666,11 @@ pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
                     println!("  managed policy sha256: {hash}");
                 }
                 println!(
-                    "  protected consent collector: {}",
-                    status["protected_consent_collector"]
+                    "  authorization host: {} ({})",
+                    status["authorization_host"]
+                        .as_str()
+                        .unwrap_or("unavailable"),
+                    status["authorization_host_assurance"]
                         .as_str()
                         .unwrap_or("unavailable")
                 );
@@ -1471,23 +1744,17 @@ pub fn run_revoke_cmd(socket_path: &str, session: Option<&str>, all: bool) {
 
 #[cfg(all(test, unix))]
 mod socket_tests {
-    use super::{remove_owned_socket, secure_embedded_socket, socket_identity};
+    use super::{remove_owned_socket, secure_local_socket, socket_identity};
     use std::os::unix::fs::PermissionsExt as _;
 
     #[test]
-    fn only_embedded_sockets_are_forced_private() {
+    fn every_local_service_socket_is_forced_private() {
         let directory = tempfile::tempdir().unwrap();
         let socket = directory.path().join("driver.sock");
         let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
         std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o770)).unwrap();
 
-        secure_embedded_socket(socket.to_str().unwrap(), false).unwrap();
-        assert_eq!(
-            std::fs::metadata(&socket).unwrap().permissions().mode() & 0o777,
-            0o770
-        );
-
-        secure_embedded_socket(socket.to_str().unwrap(), true).unwrap();
+        secure_local_socket(socket.to_str().unwrap()).unwrap();
         assert_eq!(
             std::fs::metadata(&socket).unwrap().permissions().mode() & 0o777,
             0o600
@@ -1579,7 +1846,8 @@ mod gate_tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn ended_session_call_is_gated_live_and_anon_pass() {
+    async fn ended_session_and_runtime_revocation_are_gated() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
         PROBE_INVOCATIONS.store(0, Ordering::SeqCst);
 
         let driver =
@@ -1588,9 +1856,13 @@ mod gate_tests {
                     enabled: false,
                     ..cursor_overlay::CursorConfig::default()
                 },
+                host_owns_permission_ux: false,
+                host_bundle_id: None,
                 claude_code_compatibility: false,
                 prepare_desktop_environment: false,
                 register_host_tools: Some(register_probe),
+                authorization_host: None,
+                activity_observer: None,
             });
         let direct_driver = driver.clone();
         let sdk = crate::sdk_adapter::SdkAdapter::load(driver)
@@ -1722,17 +1994,64 @@ mod gate_tests {
             "revived-session call must invoke the tool again"
         );
 
-        // 4. Anonymous call (no session id) still passes — no false positive.
+        // 3d. Bulk revocation must update the adapter-local public tombstone
+        // mirror as well as the runtime-private core tracker.
+        let socket3d = socket.clone();
+        let revoke_all = DaemonRequest {
+            method: "revoke_authorization".into(),
+            name: None,
+            args: Some(serde_json::json!({"all": true})),
+            session_id: None,
+            observation_origin: None,
+            client_kind: None,
+        };
+        let resp = tokio::task::spawn_blocking(move || send_request(&socket3d, &revoke_all))
+            .await
+            .unwrap()
+            .expect("revoke-all response");
+        assert!(resp.ok, "revoke-all should ack ok");
+
+        let socket3e = socket.clone();
+        let s3e = sid.to_owned();
+        let resp =
+            tokio::task::spawn_blocking(move || send_request(&socket3e, &call_req(Some(&s3e))))
+                .await
+                .unwrap()
+                .expect("bulk-revoked call response");
+        assert!(
+            !resp.ok,
+            "bulk-revoked session call must preserve the loud legacy transport refusal"
+        );
+        assert_eq!(
+            PROBE_INVOCATIONS.load(Ordering::SeqCst),
+            2,
+            "bulk-revoked session call must not invoke the tool"
+        );
+
+        // 4. Runtime-wide revocation is terminal for every later dispatch,
+        // including anonymous calls that do not carry a public session label.
         let socket4 = socket.clone();
         let resp = tokio::task::spawn_blocking(move || send_request(&socket4, &call_req(None)))
             .await
             .unwrap()
             .expect("anon call response");
-        assert!(resp.ok, "anonymous call should succeed");
+        assert!(
+            resp.ok,
+            "tool-level authorization refusals remain successful daemon envelopes"
+        );
+        let result = resp.result.expect("anonymous refusal result");
+        assert_eq!(result.get("isError"), Some(&serde_json::Value::Bool(true)));
+        assert_eq!(
+            result.pointer("/structuredContent/refusal/code"),
+            Some(&serde_json::Value::String(
+                "authorization_suspended".to_owned()
+            )),
+            "anonymous calls must not bypass a terminal runtime revocation"
+        );
         assert_eq!(
             PROBE_INVOCATIONS.load(Ordering::SeqCst),
-            3,
-            "anonymous (no session id) call must still invoke the tool"
+            2,
+            "runtime-wide revocation must stop anonymous dispatch"
         );
 
         // Tear down the daemon.
@@ -1792,6 +2111,29 @@ mod telemetry_routing_tests {
 
         let current = serde_json::to_value(request(Some(ToolObservationOrigin::McpProxy))).unwrap();
         assert_eq!(current["observation_origin"], "mcp_proxy");
+    }
+}
+
+#[cfg(test)]
+mod service_authorization_status_tests {
+    use super::service_authorization_status;
+
+    #[test]
+    fn only_an_embedded_authenticated_service_reports_binding_ready() {
+        let standalone = service_authorization_status(false);
+        assert_eq!(standalone["session_mode_delegation_ready"], false);
+
+        let embedded = service_authorization_status(true);
+        assert_eq!(embedded["session_mode_delegation_enabled"], true);
+        assert_eq!(embedded["session_mode_delegation_ready"], true);
+        assert_eq!(
+            embedded["session_mode_delegation_blocker"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            embedded["session_mode_binding"],
+            "authenticated_embedded_host_connection"
+        );
     }
 }
 

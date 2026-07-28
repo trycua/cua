@@ -2780,6 +2780,51 @@ pub struct PressKeyTool {
 }
 static PRESS_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+/// Turn a modified `press_key` request into the chord an underlying keyboard
+/// path expects when it takes a single key and no separate modifier list.
+///
+/// Returns `None` when there is nothing to promote, so the caller keeps the
+/// plain single-key route. Dropping the modifiers instead is not a silent
+/// no-op: the bare key still reaches the app and is typed as a character.
+fn press_key_chord(mods: &[String], key: &str) -> Option<Vec<String>> {
+    if mods.is_empty() {
+        return None;
+    }
+    let mut chord = mods.to_vec();
+    chord.push(key.to_owned());
+    Some(chord)
+}
+
+#[cfg(test)]
+mod press_key_tests {
+    use super::press_key_chord;
+
+    #[test]
+    fn unmodified_press_stays_on_the_single_key_route() {
+        assert_eq!(press_key_chord(&[], "return"), None);
+    }
+
+    #[test]
+    fn modifiers_are_promoted_to_a_chord_in_order() {
+        assert_eq!(
+            press_key_chord(&["ctrl".to_owned()], "s"),
+            Some(vec!["ctrl".to_owned(), "s".to_owned()])
+        );
+        assert_eq!(
+            press_key_chord(&["ctrl".to_owned(), "shift".to_owned()], "t"),
+            Some(vec!["ctrl".to_owned(), "shift".to_owned(), "t".to_owned()])
+        );
+    }
+
+    #[test]
+    fn the_requested_key_is_last_so_partition_modifiers_can_find_it() {
+        // `wayland::hotkey` splits the array with `partition_modifiers`, which
+        // takes the last non-modifier as the key. Appending keeps that true.
+        let chord = press_key_chord(&["ctrl".to_owned()], "s").expect("chord");
+        assert_eq!(chord.last().map(String::as_str), Some("s"));
+    }
+}
+
 #[async_trait]
 impl Tool for PressKeyTool {
     fn def(&self) -> &ToolDef {
@@ -2925,17 +2970,20 @@ impl Tool for PressKeyTool {
             {
                 return error;
             }
-            let result = if mods.is_empty() {
-                let key_w = key.clone();
-                tokio::task::spawn_blocking(move || {
-                    crate::wayland::inject_press_key(pid, xid, &key_w)
-                })
-                .await
-            } else {
-                let mut chord = mods.clone();
-                chord.push(key.clone());
-                tokio::task::spawn_blocking(move || crate::wayland::inject_hotkey(pid, xid, &chord))
+            let result = match press_key_chord(&mods, &key) {
+                None => {
+                    let key_w = key.clone();
+                    tokio::task::spawn_blocking(move || {
+                        crate::wayland::inject_press_key(pid, xid, &key_w)
+                    })
                     .await
+                }
+                Some(chord) => {
+                    tokio::task::spawn_blocking(move || {
+                        crate::wayland::inject_hotkey(pid, xid, &chord)
+                    })
+                    .await
+                }
             };
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
@@ -2992,10 +3040,20 @@ impl Tool for PressKeyTool {
         };
 
         // Native Wayland: send the key to the focused surface via virtual-keyboard.
+        // `wayland::press_key` carries no modifier list, so a modified request has
+        // to become a chord here — otherwise the modifiers are dropped and the
+        // bare key is typed as a character (Ctrl+S inserts a literal "s").
         if crate::wayland::wayland_input_enabled() {
-            let key_w = key.clone();
-            let result =
-                tokio::task::spawn_blocking(move || crate::wayland::press_key(xid, &key_w)).await;
+            let result = match press_key_chord(&mods, &key) {
+                None => {
+                    let key_w = key.clone();
+                    tokio::task::spawn_blocking(move || crate::wayland::press_key(xid, &key_w))
+                        .await
+                }
+                Some(chord) => {
+                    tokio::task::spawn_blocking(move || crate::wayland::hotkey(xid, &chord)).await
+                }
+            };
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Pressed key '{key}' (via Wayland virtual-keyboard)."
@@ -4372,6 +4430,7 @@ impl Tool for DragTool {
                         to_x.round() as i32,
                         to_y.round() as i32,
                         steps as u32,
+                        duration_ms,
                         button,
                     )
                 } else {
@@ -4535,7 +4594,7 @@ impl Tool for DragTool {
                     (to_x.round() as i32, to_y.round() as i32),
                 ));
                 tokio::task::spawn_blocking(move || {
-                    crate::wayland::drag(xid, fxi, fyi, txi, tyi, steps_u32, button)
+                    crate::wayland::drag(xid, fxi, fyi, txi, tyi, steps_u32, duration_ms, button)
                 })
                 .await
             };
@@ -5872,404 +5931,230 @@ impl Tool for MoveCursorTool {
 
 // ── set_agent_cursor_enabled ──────────────────────────────────────────────────
 
-pub struct SetAgentCursorEnabledTool {
+pub struct SetAgentCursorEnabledV2Tool {
     state: Arc<ToolState>,
 }
 
-static SCE_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+static CURSOR_ENABLED_V2_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 #[async_trait]
-impl Tool for SetAgentCursorEnabledTool {
+impl Tool for SetAgentCursorEnabledV2Tool {
     fn def(&self) -> &ToolDef {
-        SCE_DEF.get_or_init(|| ToolDef {
-            name: "set_agent_cursor_enabled".into(),
-            description: "Show or hide the agent cursor overlay.".into(),
-            input_schema: json!({"type":"object","required":["enabled"],"properties":{
-                "enabled":{"type":"boolean"},"session":{"type":"string"},"cursor_id":{"type":"string"}
-            },"additionalProperties":false}),
-            read_only: false, destructive: false, idempotent: true, open_world: false,
-        })
+        CURSOR_ENABLED_V2_DEF.get_or_init(|| canonical_cursor_def("set_agent_cursor_enabled"))
     }
+
     async fn invoke(&self, args: Value) -> ToolResult {
-        use cua_driver_core::tool_args::ArgsExt;
-        let enabled = match args.require_bool("enabled") {
-            Ok(v) => v,
-            Err(e) => return e,
+        let enabled = match args.get("enabled").and_then(Value::as_bool) {
+            Some(value) => value,
+            None => return ToolResult::error("Missing required boolean field `enabled`."),
         };
-        let cursor_id = resolve_cursor_key(&args);
-        self.state.cursor_registry.set_enabled(&cursor_id, enabled);
+        let session = resolve_cursor_key(&args);
+        self.state.cursor_registry.set_enabled(&session, enabled);
         crate::overlay::send_command_for(
-            cursor_id.clone(),
+            session.clone(),
             cursor_overlay::OverlayCommand::SetEnabled(enabled),
         );
         ToolResult::text(format!(
-            "Agent cursor '{cursor_id}' {}.",
+            "Agent cursor for session '{session}' {}.",
             if enabled { "enabled" } else { "disabled" }
         ))
+        .with_structured(json!({"session":session,"enabled":enabled}))
     }
 }
 
-// ── set_agent_cursor_motion ───────────────────────────────────────────────────
+pub struct SetAgentCursorMotionV2Tool;
 
-pub struct SetAgentCursorMotionTool {
-    state: Arc<ToolState>,
+static CURSOR_MOTION_V2_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+fn cursor_number(value: Option<&Value>) -> Option<f64> {
+    value.and_then(|value| {
+        value
+            .as_f64()
+            .or_else(|| value.as_i64().map(|integer| integer as f64))
+    })
 }
-
-static CURSOR_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 #[async_trait]
-impl Tool for SetAgentCursorMotionTool {
+impl Tool for SetAgentCursorMotionV2Tool {
     fn def(&self) -> &ToolDef {
-        CURSOR_DEF.get_or_init(|| ToolDef {
-            name: "set_agent_cursor_motion".into(),
-            description: format!("Configure the visual appearance and motion curve of an agent cursor instance.\n\n\
-                - cursor_id: instance name (default='default')\n\
-                - cursor_icon: built-in ({}) or a path to a PNG/JPEG/SVG/ICO file; '' reverts to the default cursor\n\
-                - cursor_color: hex color e.g. '#00FFFF' or CSS name\n\
-                - cursor_label: short text shown near the cursor\n\
-                - cursor_size: dot radius in points (default=16)\n\
-                - cursor_opacity: 0.0–1.0 (default=0.85)\n\n\
-                Motion curve (Bezier):\n\
-                - arc_size: perpendicular deflection as fraction of path length [0,1]. Default 0.25\n\
-                - spring: settle damping [0.3,1.0]; 1.0=no overshoot. Default 0.72\n\
-                - glide_duration_ms: fixed flight duration per move [50,5000]; omit for speed-based\n\
-                - dwell_after_click_ms: pause after click ripple [0,5000]. Default 80\n\
-                - idle_hide_ms: auto-hide delay [0,60000]; 0=never. Default 20000",
-                cursor_overlay::BuiltinShape::names_help()),
-            input_schema: json!({
-                "type":"object","properties":{
-                    "session":{"type":"string"},
-                    "cursor_id":{"type":"string"},
-                    "cursor_icon":{"type":"string"},
-                    "cursor_color":{"type":"string"},
-                    "cursor_label":{"type":"string"},
-                    "cursor_size":{"type":"number"},
-                    "cursor_opacity":{"type":"number"},
-                    "start_handle":{"type":"number","description":"Start-handle fraction [0,1]. Default 0.3."},
-                    "end_handle":{"type":"number","description":"End-handle fraction [0,1]. Default 0.3."},
-                    "arc_size":{"type":"number","description":"Arc deflection as fraction of path length [0,1]. Default 0.25."},
-                    "arc_flow":{"type":"number","description":"Asymmetry bias [-1,1]. Default 0.0."},
-                    "spring":{"type":"number","description":"Settle damping [0.3,1.0]. Default 0.72."},
-                    "glide_duration_ms":{"type":"number","minimum":50,"maximum":5000},
-                    "dwell_after_click_ms":{"type":"number","minimum":0,"maximum":5000},
-                    "idle_hide_ms":{"type":"number","minimum":0,"maximum":60000},
-                    "turn_radius":{"type":"number","minimum":1,"maximum":1000}
-                },"additionalProperties":false
-            }),
-            read_only: false, destructive: false, idempotent: true, open_world: false,
-        })
+        CURSOR_MOTION_V2_DEF.get_or_init(|| canonical_cursor_def("set_agent_cursor_motion"))
     }
+
     async fn invoke(&self, args: Value) -> ToolResult {
-        fn num(value: Option<&Value>) -> Option<f64> {
-            value.and_then(|value| {
-                value
-                    .as_f64()
-                    .or_else(|| value.as_i64().map(|integer| integer as f64))
-            })
-        }
-
-        let cursor_id = resolve_cursor_key(&args);
-        // Resolve `cursor_icon` (built-in name or image path — same vocabulary as
-        // the CLI flags) to a shape override and dispatch it, so the overlay
-        // actually changes instead of just recording the string.
-        let mut shape_cmd: Option<cursor_overlay::OverlayCommand> = None;
-        if let Some(icon) = args.opt_str("cursor_icon") {
-            let icon_owned = icon.clone();
-            match tokio::task::spawn_blocking(move || {
-                cursor_overlay::resolve_cursor_icon(&icon_owned)
-            })
-            .await
-            {
-                Ok(Ok(resolution)) => {
-                    shape_cmd = Some(cursor_overlay::OverlayCommand::from_cursor_icon(resolution))
-                }
-                Ok(Err(e)) => return ToolResult::error(format!("Invalid cursor_icon: {e}")),
-                Err(e) => return ToolResult::error(format!("Task error: {e}")),
-            }
-        }
-        self.state.cursor_registry.update_config(&cursor_id, |cfg| {
-            if let Some(v) = args.opt_str("cursor_icon") {
-                cfg.cursor_icon = Some(v);
-            }
-            if let Some(v) = args.opt_str("cursor_color") {
-                cfg.cursor_color = Some(v);
-            }
-            if let Some(v) = args.opt_str("cursor_label") {
-                cfg.cursor_label = Some(v);
-            }
-            if let Some(v) = args.opt_f64("cursor_size") {
-                cfg.cursor_size = Some(v);
-            }
-            if let Some(v) = args.opt_f64("cursor_opacity") {
-                cfg.cursor_opacity = Some(v.clamp(0.0, 1.0));
-            }
-        });
-        if let Some(cmd) = shape_cmd {
-            crate::overlay::send_command_for(cursor_id.clone(), cmd);
-        }
-
-        let motion = crate::overlay::current_motion_for(&cursor_id).with_overrides(
-            num(args.get("start_handle")),
-            num(args.get("end_handle")),
-            num(args.get("arc_size")),
-            num(args.get("arc_flow")),
-            num(args.get("spring")),
-            num(args.get("glide_duration_ms")),
-            num(args.get("dwell_after_click_ms")),
-            num(args.get("idle_hide_ms")),
+        let session = resolve_cursor_key(&args);
+        let current = crate::overlay::current_motion_for(&session);
+        let motion = current.with_overrides(
+            cursor_number(args.get("start_handle")),
+            cursor_number(args.get("end_handle")),
+            cursor_number(args.get("arc_size")),
+            cursor_number(args.get("arc_flow")),
+            cursor_number(args.get("spring")),
+            cursor_number(args.get("glide_duration_ms")),
+            cursor_number(args.get("dwell_after_click_ms")),
+            cursor_number(args.get("idle_hide_ms")),
             None,
-            num(args.get("turn_radius")),
+            cursor_number(args.get("turn_radius")),
         );
         crate::overlay::send_command_for(
-            cursor_id.clone(),
+            session.clone(),
             cursor_overlay::OverlayCommand::SetMotion(motion.clone()),
         );
-
         ToolResult::text(format!(
-            "Cursor '{cursor_id}' config updated. Motion: arc={:.2} spring={:.2} glide={}ms dwell={}ms idle={}ms",
-            motion.arc_size,
-            motion.spring,
-            motion.glide_duration_ms as u32,
-            motion.dwell_after_click_ms as u32,
-            motion.idle_hide_ms as u32,
+            "Agent cursor motion updated for session '{session}'."
         ))
-        .with_structured(json!({
-            "cursor_id": cursor_id,
-            "start_handle": motion.start_handle,
-            "end_handle": motion.end_handle,
-            "arc_size": motion.arc_size,
-            "arc_flow": motion.arc_flow,
-            "spring": motion.spring,
-            "glide_duration_ms": motion.glide_duration_ms,
-            "dwell_after_click_ms": motion.dwell_after_click_ms,
-            "idle_hide_ms": motion.idle_hide_ms,
-            "turn_radius": motion.turn_radius,
-        }))
+        .with_structured(json!({"session":session,"motion":{
+            "start_handle":motion.start_handle,
+            "end_handle":motion.end_handle,
+            "arc_size":motion.arc_size,
+            "arc_flow":motion.arc_flow,
+            "spring":motion.spring,
+            "glide_duration_ms":motion.glide_duration_ms,
+            "dwell_after_click_ms":motion.dwell_after_click_ms,
+            "idle_hide_ms":motion.idle_hide_ms,
+            "turn_radius":motion.turn_radius
+        }}))
     }
 }
 
-// ── get_agent_cursor_state ────────────────────────────────────────────────────
-
-pub struct GetAgentCursorStateTool {
+pub struct SetAgentCursorThemeTool {
     state: Arc<ToolState>,
 }
 
-static GCSTATE_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+static CURSOR_THEME_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+fn cursor_reduced_motion(value: Option<&str>) -> cursor_overlay::ReducedMotion {
+    match value {
+        Some("on") => cursor_overlay::ReducedMotion::On,
+        Some("off") => cursor_overlay::ReducedMotion::Off,
+        _ => cursor_overlay::ReducedMotion::Auto,
+    }
+}
 
 #[async_trait]
-impl Tool for GetAgentCursorStateTool {
+impl Tool for SetAgentCursorThemeTool {
     fn def(&self) -> &ToolDef {
-        GCSTATE_DEF.get_or_init(|| ToolDef {
-            name: "get_agent_cursor_state".into(),
-            description: "Return the current state of all agent cursor instances.".into(),
-            input_schema: json!({"type":"object","properties":{"session":{"type":"string"},"cursor_id":{"type":"string"}},"additionalProperties":false}),
-            read_only: true, destructive: false, idempotent: true, open_world: false,
-        })
+        CURSOR_THEME_DEF.get_or_init(|| canonical_cursor_def("set_agent_cursor_theme"))
     }
+
     async fn invoke(&self, args: Value) -> ToolResult {
-        let cursor_id = resolve_cursor_key(&args);
-        let states = if args.get("session").is_some() || args.get("cursor_id").is_some() {
-            vec![self.state.cursor_registry.get_or_create(&cursor_id)]
-        } else {
-            self.state.cursor_registry.all_states()
+        let Some(theme_id) = args.get("theme_id").and_then(Value::as_str) else {
+            return ToolResult::error("Missing required string field `theme_id`.");
         };
-        let json = serde_json::to_value(&states).unwrap_or_default();
-        ToolResult::text(format!("{} cursor instance(s).", states.len()))
-            .with_structured(json!({ "cursors": json }))
-    }
-}
-
-// ── set_agent_cursor_style ────────────────────────────────────────────────────
-
-pub struct SetAgentCursorStyleTool {
-    state: Arc<ToolState>,
-}
-
-static STYLE_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
-
-#[async_trait]
-impl Tool for SetAgentCursorStyleTool {
-    fn def(&self) -> &ToolDef {
-        STYLE_DEF.get_or_init(|| ToolDef {
-            name: "set_agent_cursor_style".into(),
-            description:
-                "Update the visual style of the agent cursor overlay.\n\n\
-                 - gradient_colors: array of CSS hex strings (e.g. [\"#FF0000\",\"#0000FF\"]) \
-                   used as the arrow fill gradient from tip to tail. Empty array reverts to \
-                   the default palette colours.\n\
-                 - bloom_color: hex string for the radial halo/bloom behind the cursor \
-                   (e.g. \"#00FFFF\"). Empty string reverts to the default.\n\
-                 - image_path: path to a PNG, JPEG, SVG, or ICO file to use as the cursor \
-                   icon instead of the default silhouette. Empty string reverts to the \
-                   default cursor.\n\
-                 All parameters are optional; omit any you do not want to change."
-                .into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "session": {
-                        "type": "string",
-                        "description": "Optional multi-cursor session id; takes precedence over cursor_id."
-                    },
-                    "cursor_id": {
-                        "type": "string",
-                        "description": "Cursor instance. Default: 'default'."
-                    },
-                    "gradient_colors": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "CSS hex gradient stops tip→tail. [] = revert to default."
-                    },
-                    "bloom_color": {
-                        "type": "string",
-                        "description": "Hex bloom/halo colour (e.g. '#00FFFF'). '' = revert to default."
-                    },
-                    "image_path": {
-                        "type": "string",
-                        "description": "Path to PNG/JPEG/SVG/ICO cursor image. '' = revert to the default cursor."
-                    }
-                },
-                "additionalProperties": false
-            }),
-            read_only: false, destructive: false, idempotent: true, open_world: false,
-        })
-    }
-
-    async fn invoke(&self, args: Value) -> ToolResult {
-        let cursor_id = resolve_cursor_key(&args);
-
-        // image_path
-        let image_path = args.get("image_path").and_then(|v| v.as_str());
-        let shape_cmd: Option<cursor_overlay::OverlayCommand> = if let Some(path) = image_path {
-            if path.is_empty() {
-                Some(cursor_overlay::OverlayCommand::SetShape(None))
-            } else {
-                let path_owned = path.to_owned();
-                match tokio::task::spawn_blocking(move || {
-                    cursor_overlay::CursorShape::load(&path_owned)
-                })
-                .await
-                {
-                    Ok(Ok(shape)) => {
-                        let path_for_cfg = path.to_owned();
-                        self.state.cursor_registry.update_config(&cursor_id, |cfg| {
-                            cfg.cursor_icon = Some(path_for_cfg);
-                        });
-                        Some(cursor_overlay::OverlayCommand::SetShape(Some(shape)))
-                    }
-                    Ok(Err(e)) => {
-                        return ToolResult::error(format!("Failed to load image_path: {e}"))
-                    }
-                    Err(e) => return ToolResult::error(format!("Task error: {e}")),
-                }
+        let session = resolve_cursor_key(&args);
+        let resolved_theme = match cursor_overlay::resolve_theme_selection(theme_id) {
+            Ok(theme) => theme,
+            Err(error) => {
+                return ToolResult::error(format!(
+                    "Cursor theme '{theme_id}' cannot be selected: {error}"
+                ));
             }
-        } else {
-            None
         };
-
-        // gradient_colors
-        let gradient_colors: Vec<[u8; 4]> =
-            if let Some(arr) = args.get("gradient_colors").and_then(|v| v.as_array()) {
-                let mut out = vec![];
-                for v in arr {
-                    if let Some(hex) = v.as_str() {
-                        match parse_hex_color(hex) {
-                            Some(c) => out.push(c),
-                            None => return ToolResult::error(format!("Invalid hex color: {hex}")),
-                        }
-                    }
-                }
-                out
-            } else {
-                vec![]
-            };
-
-        // bloom_color
-        let bloom_color: Option<Option<[u8; 4]>> =
-            if let Some(hex) = args.get("bloom_color").and_then(|v| v.as_str()) {
-                if hex.is_empty() {
-                    Some(None)
-                } else {
-                    match parse_hex_color(hex) {
-                        Some(c) => Some(Some(c)),
-                        None => return ToolResult::error(format!("Invalid bloom_color: {hex}")),
-                    }
-                }
-            } else {
-                None
-            };
-
-        // Dispatch to overlay
-        if let Some(cmd) = shape_cmd {
-            crate::overlay::send_command_for(cursor_id.clone(), cmd);
-        }
-        let gradient_provided = args.get("gradient_colors").is_some();
-        let bloom_provided = args.get("bloom_color").is_some();
-        if gradient_provided || bloom_provided {
-            crate::overlay::send_command_for(
-                cursor_id.clone(),
-                cursor_overlay::OverlayCommand::SetGradient {
-                    gradient_colors,
-                    bloom_color: bloom_color.flatten(),
-                },
-            );
-        }
-
-        let grad_str = args
-            .get("gradient_colors")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                let strs: Vec<String> = arr
-                    .iter()
-                    .filter_map(|v| v.as_str().map(str::to_owned))
-                    .collect();
-                format!("[{}]", strs.join(", "))
-            })
-            .unwrap_or_else(|| "(unchanged)".into());
-        let bloom_str = args
-            .get("bloom_color")
-            .and_then(|v| v.as_str())
-            .map(|s| {
-                if s.is_empty() {
-                    "(reverted)".to_owned()
-                } else {
-                    s.to_owned()
-                }
-            })
-            .unwrap_or_else(|| "(unchanged)".into());
-        let img_str = image_path
-            .map(|s| {
-                if s.is_empty() {
-                    "(reverted to default)".to_owned()
-                } else {
-                    s.to_owned()
-                }
-            })
-            .unwrap_or_else(|| "(unchanged)".into());
-
+        let (version, profile) = resolved_theme
+            .as_deref()
+            .map(|theme| (theme.version.as_str(), theme.profile.as_str()))
+            .unwrap_or((
+                cursor_overlay::DEFAULT_THEME_VERSION,
+                cursor_overlay::THEME_PROFILE,
+            ));
+        let reduced_motion =
+            cursor_reduced_motion(args.get("reduced_motion").and_then(Value::as_str));
+        self.state
+            .cursor_registry
+            .update_config(&session, |config| {
+                config.theme_id = theme_id.to_owned();
+                config.reduced_motion = reduced_motion;
+            });
+        crate::overlay::send_command_for(
+            session.clone(),
+            cursor_overlay::OverlayCommand::SetTheme {
+                theme_id: theme_id.to_owned(),
+                reduced_motion,
+            },
+        );
         ToolResult::text(format!(
-            "cursor style: gradient_colors={grad_str} bloom_color={bloom_str} image_path={img_str}"
+            "Agent cursor theme for session '{session}' set to '{theme_id}'."
         ))
+        .with_structured(json!({"session":session,"theme":{
+            "id":theme_id,
+            "version":version,
+            "profile":profile,
+            "reduced_motion":reduced_motion,
+            "fallback":null
+        }}))
     }
 }
 
-fn parse_hex_color(hex: &str) -> Option<[u8; 4]> {
-    let s = hex.trim_start_matches('#');
-    match s.len() {
-        6 => {
-            let r = u8::from_str_radix(&s[0..2], 16).ok()?;
-            let g = u8::from_str_radix(&s[2..4], 16).ok()?;
-            let b = u8::from_str_radix(&s[4..6], 16).ok()?;
-            Some([r, g, b, 255])
-        }
-        3 => {
-            let r = u8::from_str_radix(&s[0..1].repeat(2), 16).ok()?;
-            let g = u8::from_str_radix(&s[1..2].repeat(2), 16).ok()?;
-            let b = u8::from_str_radix(&s[2..3].repeat(2), 16).ok()?;
-            Some([r, g, b, 255])
-        }
-        _ => None,
+pub struct GetAgentCursorStateV2Tool;
+
+static CURSOR_STATE_V2_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+#[async_trait]
+impl Tool for GetAgentCursorStateV2Tool {
+    fn def(&self) -> &ToolDef {
+        CURSOR_STATE_V2_DEF.get_or_init(|| canonical_cursor_def("get_agent_cursor_state"))
     }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        let session = resolve_cursor_key(&args);
+        let enabled = crate::overlay::is_enabled_for(&session);
+        let motion = crate::overlay::current_motion_for(&session);
+        let (theme_id, version, profile, fallback, visual) =
+            crate::overlay::current_theme_state_for(&session).unwrap_or_else(|| {
+                (
+                    cursor_overlay::DEFAULT_THEME_ID.into(),
+                    cursor_overlay::DEFAULT_THEME_VERSION.into(),
+                    cursor_overlay::THEME_PROFILE.into(),
+                    None,
+                    cursor_overlay::CursorVisualState::default(),
+                )
+            });
+        let modifiers: Vec<&str> = [
+            visual.delivery.map(|value| value.as_str()),
+            visual.target.map(|value| value.as_str()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        ToolResult::text(format!("Agent cursor state for session '{session}'.")).with_structured(
+            json!({
+                "session":session,
+                "enabled":enabled,
+                "position":null,
+                "theme":{
+                    "id":theme_id,
+                    "version":version,
+                    "profile":profile,
+                    "reduced_motion":visual.reduced_motion,
+                    "fallback":fallback
+                },
+                "visual_state":{
+                    "requested_action":visual.requested_action,
+                    "resolved_action":visual.resolved_action,
+                    "modifiers":modifiers,
+                    "phase":visual.phase(),
+                    "frame":visual.frame(),
+                    "preempted_count":visual.preempted_count
+                },
+                "motion":{
+                    "start_handle":motion.start_handle,
+                    "end_handle":motion.end_handle,
+                    "arc_size":motion.arc_size,
+                    "arc_flow":motion.arc_flow,
+                    "spring":motion.spring,
+                    "glide_duration_ms":motion.glide_duration_ms,
+                    "dwell_after_click_ms":motion.dwell_after_click_ms,
+                    "idle_hide_ms":motion.idle_hide_ms,
+                    "turn_radius":motion.turn_radius
+                }
+            }),
+        )
+    }
+}
+
+fn canonical_cursor_def(name: &str) -> ToolDef {
+    let contract = cua_driver_contract::tool_contract(name)
+        .unwrap_or_else(|| panic!("missing canonical cursor contract for {name}"));
+    ToolDef::from_contract(&contract)
 }
 
 // ── check_permissions ─────────────────────────────────────────────────────────
@@ -6828,7 +6713,46 @@ impl Tool for KillAppTool {
         })
     }
 
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        if adapter_id != "process_control" {
+            return Ok(None);
+        }
+        use cua_driver_core::browser::platform::BrowserPlatform;
+        let pid = args
+            .get("pid")
+            .and_then(Value::as_i64)
+            .filter(|pid| *pid > 0)
+            .ok_or_else(|| "kill_app requires a positive integer pid".to_owned())?;
+        let fingerprint = crate::browser_platform::LinuxBrowserPlatform
+            .process_fingerprint(pid)
+            .await
+            .map_err(|error| error.message)?;
+        Ok(Some(json!({
+            "kind": "process_instance",
+            "fingerprint": fingerprint,
+        })))
+    }
+
     async fn invoke(&self, args: Value) -> ToolResult {
+        if let Some(expected) = args.get("_protected_process_fingerprint") {
+            let current = match self
+                .protected_resource_scope("process_control", &args)
+                .await
+            {
+                Ok(Some(scope)) => scope["fingerprint"].clone(),
+                Ok(None) => Value::Null,
+                Err(message) => return kill_app_stale_process_refusal(message),
+            };
+            if current != *expected {
+                return kill_app_stale_process_refusal(
+                    "the process identity changed at the termination boundary".to_owned(),
+                );
+            }
+        }
         let pid_i = match args.get("pid").and_then(|v| v.as_i64()) {
             Some(p) if p > 0 && p <= i32::MAX as i64 => p as i32,
             Some(_) => {
@@ -6854,6 +6778,16 @@ impl Tool for KillAppTool {
     }
 }
 
+fn kill_app_stale_process_refusal(message: String) -> ToolResult {
+    ToolResult::error(message.clone()).with_structured(json!({
+        "status": "refused",
+        "refusal": {
+            "code": "protected_resource_scope_stale",
+            "message": message,
+        }
+    }))
+}
+
 // ── bring_to_front (Linux) ───────────────────────────────────────────────────
 
 pub struct BringToFrontTool;
@@ -6867,10 +6801,16 @@ impl Tool for BringToFrontTool {
             name: "bring_to_front".into(),
             description:
                 "Persistently activate a window so subsequent input lands on it. \
+                 This deliberately breaks the no-foreground contract and is not part \
+                 of the normal input ladder. For an ordinary `background_unavailable` \
+                 response, retry only the refused action with \
+                 `delivery_mode:\"foreground\"`; the input tool performs its own \
+                 activate, act, and restore sequence. Use `bring_to_front` only for a \
+                 focus-proxy surface that must remain foreground across multiple calls, \
+                 such as a remote desktop session, or when repeated action-scoped \
+                 activation prevents the remote surface from accepting input. \
                  X11: EWMH _NET_ACTIVE_WINDOW activation (the `wmctrl -a` equivalent, \
-                 proper timestamp handling to beat focus-stealing prevention) — call \
-                 it before `delivery_mode:\"foreground\"` input to avoid a per-call \
-                 flash, or to escalate when background injection didn't land. \
+                 with proper timestamp handling to beat focus-stealing prevention). \
                  Wayland: activates through a target-addressable compositor adapter \
                  (wlroots foreign-toplevel or the GNOME Shell helper) and refuses \
                  when the compositor offers no safe adapter. Matches the macOS / \
@@ -6958,10 +6898,17 @@ impl Tool for BringToFrontTool {
 // ── registry ─────────────────────────────────────────────────────────────────
 
 pub fn build_registry(compat: bool) -> ToolRegistry {
+    build_registry_with_provider(compat, None)
+}
+
+pub fn build_registry_with_provider(
+    compat: bool,
+    provider: Option<std::sync::Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
+) -> ToolRegistry {
     let state = ToolState::new();
-    {
+    let cursor_outcome_reader = {
         let cursor_registry = state.cursor_registry.clone();
-        let _ = cua_driver_core::session::set_cursor_outcome_reader(std::sync::Arc::new(
+        cua_driver_core::session::register_scoped_cursor_outcome_reader(std::sync::Arc::new(
             move |session_id| {
                 let state = cursor_registry.get(session_id);
                 let motion_customized = state.is_some()
@@ -6977,9 +6924,7 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
                     Some(state) => cua_driver_core::session::bounded_cursor_outcome(
                         true,
                         state.config.enabled,
-                        state.config.cursor_icon.as_deref(),
-                        state.config.cursor_color.as_deref(),
-                        state.config.cursor_label.as_deref(),
+                        Some(state.config.theme_id.as_str()),
                         motion_customized,
                         active_cursor_count,
                     ),
@@ -6987,19 +6932,17 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
                         false,
                         false,
                         None,
-                        None,
-                        None,
                         false,
                         active_cursor_count,
                     ),
                 }
             },
-        ));
-    }
-    {
+        ))
+    };
+    let session_end_hook = {
         let cursor_registry = state.cursor_registry.clone();
         let state_for_session_end = state.clone();
-        cua_driver_core::session::register_session_end_hook(move |session_id| {
+        cua_driver_core::session::register_scoped_session_end_hook(move |session_id| {
             cursor_registry.remove(session_id);
             crate::overlay::remove_cursor(session_id.to_owned());
             state_for_session_end
@@ -7008,9 +6951,25 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
                 .unwrap()
                 .remove(session_id);
             crate::input::forget_master_pointer(session_id);
+        })
+    };
+    let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
+    r.retain_cursor_outcome_reader(cursor_outcome_reader);
+    r.retain_session_end_hook(session_end_hook);
+    if let Some(runtime_scope) = cua_driver_core::tool::current_dispatch_runtime_scope() {
+        let prefix = format!("__cua_runtime_{runtime_scope}:");
+        let cursor_registry = state.cursor_registry.clone();
+        r.retain_runtime_cleanup(move || {
+            for cursor in cursor_registry
+                .all_states()
+                .into_iter()
+                .filter(|cursor| cursor.config.cursor_id.starts_with(&prefix))
+            {
+                cursor_registry.remove(&cursor.config.cursor_id);
+                crate::overlay::remove_cursor(cursor.config.cursor_id);
+            }
         });
     }
-    let mut r = ToolRegistry::new();
     r.register(Box::new(ListAppsTool));
     r.register(Box::new(ListWindowsTool));
     r.register(Box::new(GetWindowStateTool {
@@ -7064,16 +7023,12 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(MoveCursorTool {
         state: state.clone(),
     }));
-    r.register(Box::new(SetAgentCursorEnabledTool {
+    r.register(Box::new(SetAgentCursorEnabledV2Tool {
         state: state.clone(),
     }));
-    r.register(Box::new(SetAgentCursorMotionTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(GetAgentCursorStateTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(SetAgentCursorStyleTool {
+    r.register(Box::new(SetAgentCursorMotionV2Tool));
+    r.register(Box::new(GetAgentCursorStateV2Tool));
+    r.register(Box::new(SetAgentCursorThemeTool {
         state: state.clone(),
     }));
     r.register(Box::new(CheckPermissionsTool));
@@ -7103,9 +7058,11 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(cua_driver_core::page::PageTool::new(Arc::new(
         super::page::LinuxPageBackend::new(),
     ))));
-    let browser_engine = cua_driver_core::browser::BrowserEngine::new(Arc::new(
-        crate::browser_platform::LinuxBrowserPlatform,
-    ));
+    let browser_engine = cua_driver_core::browser::BrowserEngine::new_with_runtime_services(
+        Arc::new(crate::browser_platform::LinuxBrowserPlatform),
+        r.approval_broker(),
+        r.protected_resource_ownership(),
+    );
     cua_driver_core::browser::register_browser_tools(&browser_engine, &mut r);
     r.register_recording_tools();
     r.register_session_tools();

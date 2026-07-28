@@ -106,6 +106,13 @@ pub fn clear_session(session: &str) {
     scopes().lock().unwrap().remove(session);
 }
 
+pub fn clear_sessions_with_prefix(prefix: &str) -> usize {
+    let mut registry = scopes().lock().unwrap();
+    let before = registry.len();
+    registry.retain(|session, _| !session.starts_with(prefix));
+    before - registry.len()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EscalateError {
     Ended,

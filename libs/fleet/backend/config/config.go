@@ -156,7 +156,7 @@ func LoadConfig() (*Configuration, error) {
 			Realm:             realm,
 			AdminClientID:     viper.GetString("kc.admin-client-id"),
 			AdminClientSecret: viper.GetString("kc.admin-client-secret"),
-			TokenURL:          realmPath + "/protocol/openid-connect/token",
+			TokenURL:          issuer + "/protocol/openid-connect/token",
 
 			WorkloadRealm:             viper.GetString("kc.workload-realm"),
 			WorkloadAdminClientID:     viper.GetString("kc.workload-admin-client-id"),

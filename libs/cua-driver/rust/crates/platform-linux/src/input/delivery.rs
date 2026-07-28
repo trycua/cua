@@ -82,8 +82,10 @@ pub fn delivery_mode_schema() -> Value {
          error. 'foreground' is the explicit escalation: activate the target \
          (X11 _NET_ACTIVE_WINDOW; Wayland compositor activate), inject, then \
          restore the prior active window — a brief focus swap unless the \
-         target was already active. Call bring_to_front first to avoid the \
-         flash. Matches the macOS / Windows delivery_mode surface.",
+         target was already active. Retry a refused action directly with \
+         'foreground'. Use bring_to_front only for a known focus-proxy surface \
+         that must stay foreground across interactions. Matches the macOS / \
+         Windows delivery_mode surface.",
     );
     v["default"] = serde_json::json!("background");
     v
@@ -210,6 +212,12 @@ mod tests {
             .collect();
         assert_eq!(en, vec!["background", "foreground"]);
         assert_eq!(s["default"], "background");
+        let description = s["description"]
+            .as_str()
+            .expect("delivery_mode description");
+        assert!(description.contains("Retry a refused action directly with 'foreground'"));
+        assert!(description.contains("known focus-proxy surface"));
+        assert!(!description.contains("Call bring_to_front first"));
     }
 
     #[test]

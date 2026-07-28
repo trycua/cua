@@ -119,7 +119,9 @@ pub fn delivery_mode_schema() -> Value {
          the tool returns a structured background_unavailable error rather than \
          fronting. 'foreground' is the explicit escalation: a brief \
          SetForegroundWindow swap + SendInput, restoring the prior foreground \
-         afterward (call bring_to_front first to avoid the flash). \
+         afterward. Retry a refused action directly with 'foreground'. Use \
+         bring_to_front only for a known focus-proxy surface that must stay \
+         foreground across interactions. \
          IMPORTANT: 'background' is not a hint to weigh — it is the mandatory \
          first attempt. Do NOT pass 'foreground' preemptively because a target \
          'looks like' GTK/Chromium/Electron; the DRIVER decides when background \
@@ -451,6 +453,16 @@ mod tests {
             DeliveryMode::from_args(&serde_json::json!({"delivery_mode": null})),
             DeliveryMode::Background
         );
+    }
+
+    #[test]
+    fn delivery_mode_schema_separates_scoped_and_persistent_foreground() {
+        let description = delivery_mode_schema()["description"]
+            .as_str()
+            .expect("delivery_mode description");
+        assert!(description.contains("Retry a refused action directly with 'foreground'"));
+        assert!(description.contains("known focus-proxy surface"));
+        assert!(!description.contains("call bring_to_front first"));
     }
 
     #[test]

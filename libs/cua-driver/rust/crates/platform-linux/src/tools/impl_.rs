@@ -6742,11 +6742,14 @@ impl Tool for BringToFrontTool {
         BTF_DEF.get_or_init(|| ToolDef {
             name: "bring_to_front".into(),
             description:
-                "Persistently activate a window so subsequent input lands on it. \
+                "Persistently activate a window so it stays foreground across interactions. \
+                 For a generic `background_unavailable` response, retry the same action \
+                 directly with `delivery_mode:\"foreground\"`; that activation is scoped to \
+                 one action and restores the previous foreground. Use `bring_to_front` only \
+                 when a known focus-proxy surface, such as a remote desktop client, must \
+                 remain active across multiple interactions. \
                  X11: EWMH _NET_ACTIVE_WINDOW activation (the `wmctrl -a` equivalent, \
-                 proper timestamp handling to beat focus-stealing prevention) — call \
-                 it before `delivery_mode:\"foreground\"` input to avoid a per-call \
-                 flash, or to escalate when background injection didn't land. \
+                 with proper timestamp handling to beat focus-stealing prevention). \
                  Wayland: activates through a target-addressable compositor adapter \
                  (wlroots foreign-toplevel or the GNOME Shell helper) and refuses \
                  when the compositor offers no safe adapter. Matches the macOS / \

@@ -7780,17 +7780,13 @@ impl Tool for BringToFrontTool {
             name: "bring_to_front".into(),
             description: "Activate `pid`'s window (or `window_id` if specified) -- bring it to \
                 the OS foreground. \n\n\
-                **This deliberately breaks the no-foreground contract.** Use only when an \
-                agent is about to drive a sequence of operations against a target whose input \
-                stack silently drops PostMessage (Chromium DOM content, GTK button widgets) \
-                and the agent wants to pay the foreground cost once instead of per call. \n\n\
-                Pairs with the `delivery_mode` field on input tools:\n\
-                  1. Try `click(..., delivery_mode:\"background\")`. If it returns \
-                     `background_unavailable`, the target needs foreground delivery.\n\
-                  2. Call `bring_to_front(pid)` so the target is foreground.\n\
-                  3. Subsequent input calls with `delivery_mode:\"foreground\"` deliver via \
-                     SendInput WITHOUT visible flashing -- the SetForegroundWindow swap \
-                     inside SendInput is a no-op since target is already foreground.\n\n\
+                **This deliberately breaks the no-foreground contract and keeps the target \
+                foreground.** For a generic `background_unavailable` response, retry the same \
+                action directly with `delivery_mode:\"foreground\"`; that activation is scoped \
+                to one action and restores the previous foreground. Use `bring_to_front` only \
+                when a known focus-proxy surface, such as a remote desktop client, must stay \
+                foreground across multiple interactions. Subsequent input calls still use \
+                `delivery_mode:\"foreground\"` for SendInput.\n\n\
                 Implementation uses the `AttachThreadInput` trick to bypass Windows' \
                 foreground-lock when the daemon is not at UIAccess integrity. Returns \
                 structured `{previous_fg_hwnd, now_fg_hwnd}` so callers can later restore. \

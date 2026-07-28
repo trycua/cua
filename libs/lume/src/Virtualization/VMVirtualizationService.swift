@@ -276,7 +276,10 @@ class BaseVirtualizationService: VMVirtualizationService {
         return network
     }
 
-    static func createDirectorySharingDevices(sharedDirectories: [SharedDirectory]?)
+    static func createDirectorySharingDevices(
+        sharedDirectories: [SharedDirectory]?,
+        withLiveUpdatePlaceholder: Bool = false
+    )
         -> [VZDirectorySharingDeviceConfiguration]
     {
         let grouped = Dictionary(grouping: sharedDirectories ?? [], by: \.tag)
@@ -285,7 +288,7 @@ class BaseVirtualizationService: VMVirtualizationService {
             let device = VZVirtioFileSystemDeviceConfiguration(tag: tag)
             device.share = createDirectoryShare(
                 directories,
-                withLiveUpdatePlaceholder: tag == automountTag
+                withLiveUpdatePlaceholder: withLiveUpdatePlaceholder && tag == automountTag
             )
             return device
         }
@@ -464,7 +467,9 @@ final class DarwinVirtualizationService: BaseVirtualizationService {
         // Directory sharing. Keep a populated macOS automount device available so
         // the native toolbar can replace its share while the VM is running.
         var directorySharingDevices = createDirectorySharingDevices(
-            sharedDirectories: config.sharedDirectories)
+            sharedDirectories: config.sharedDirectories,
+            withLiveUpdatePlaceholder: true
+        )
         let automountTag = VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag
         if !directorySharingDevices.contains(where: {
             ($0 as? VZVirtioFileSystemDeviceConfiguration)?.tag == automountTag

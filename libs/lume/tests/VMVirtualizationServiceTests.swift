@@ -81,7 +81,8 @@ func testSharedDirectoryGrouping() throws {
     ]
 
     let devices = BaseVirtualizationService.createDirectorySharingDevices(
-        sharedDirectories: sharedDirectories
+        sharedDirectories: sharedDirectories,
+        withLiveUpdatePlaceholder: true
     )
     let device = try #require(devices.first as? VZVirtioFileSystemDeviceConfiguration)
     let share = try #require(device.share as? VZMultipleDirectoryShare)
@@ -99,6 +100,7 @@ func testSharedDirectoryGrouping() throws {
 @MainActor
 @Test("Only live macOS automount shares receive the placeholder")
 func testLiveSharePlaceholderScope() throws {
+    let tag = VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag
     let automountShare = try #require(
         BaseVirtualizationService.createDirectoryShare(
             [],
@@ -111,4 +113,15 @@ func testLiveSharePlaceholderScope() throws {
 
     #expect(Swift.Set(automountShare.directories.keys) == [".lume-live-share"])
     #expect(regularShare.directories.isEmpty)
+
+    let regularDevices = BaseVirtualizationService.createDirectorySharingDevices(
+        sharedDirectories: [
+            SharedDirectory(hostPath: "/tmp/regular", tag: tag, readOnly: false)
+        ]
+    )
+    let regularDevice = try #require(
+        regularDevices.first as? VZVirtioFileSystemDeviceConfiguration
+    )
+    let regularDeviceShare = try #require(regularDevice.share as? VZMultipleDirectoryShare)
+    #expect(regularDeviceShare.directories[".lume-live-share"] == nil)
 }

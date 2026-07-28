@@ -660,8 +660,9 @@ def merge_contributors(items: Iterable[Mapping[str, Any]]) -> list[dict[str, Any
     by_login: dict[str, dict[str, Any]] = {}
     for item in items:
         login = str(item["login"])
+        key = login.lower()
         existing = by_login.setdefault(
-            login,
+            key,
             {"login": login, "roles": set(), "external": bool(item.get("external", True))},
         )
         existing["roles"].add(str(item["role"]))
@@ -960,21 +961,30 @@ def build_manifest(
 
 
 def _thanks(change: Mapping[str, Any]) -> str:
-    external = [
-        item
-        for item in change.get("contributors", [])
-        if item.get("external") and item.get("role") in {"author", "coauthor"}
-    ]
-    reporters = [
-        item
-        for item in change.get("contributors", [])
-        if item.get("external") and item.get("role") == "reporter"
-    ]
+    external: dict[str, Mapping[str, Any]] = {}
+    reporters: dict[str, Mapping[str, Any]] = {}
+    for item in change.get("contributors", []):
+        if not item.get("external"):
+            continue
+        login = str(item["login"])
+        key = login.lower()
+        if item.get("role") in {"author", "coauthor"}:
+            external.setdefault(key, item)
+        elif item.get("role") == "reporter":
+            reporters.setdefault(key, item)
+    for key in external:
+        reporters.pop(key, None)
+
     parts: list[str] = []
     if external:
-        parts.append("Thanks " + ", ".join(f"@{item['login']}" for item in external))
+        parts.append(
+            "Thanks " + ", ".join(f"@{item['login']}" for item in external.values())
+        )
     if reporters:
-        parts.append("reported by " + ", ".join(f"@{item['login']}" for item in reporters))
+        parts.append(
+            "reported by "
+            + ", ".join(f"@{item['login']}" for item in reporters.values())
+        )
     return "; ".join(parts)
 
 

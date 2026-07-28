@@ -16,6 +16,7 @@ from release_attribution import (
     changelog_references_change,
     linked_issue_numbers,
     login_from_email,
+    merge_contributors,
     release_bump,
     release_entries,
     render_body,
@@ -124,6 +125,54 @@ def test_login_from_noreply_and_override():
     )
     assert login_from_email("person@example.com", {"person@example.com": "person"}) == "person"
     assert login_from_email("person@example.com", {}) is None
+
+
+def test_release_notes_dedupe_contributors_across_roles_and_login_case():
+    contributors = [
+        {"login": "ngnichtel", "role": "author", "external": True},
+        {"login": "ngnichtel", "role": "coauthor", "external": True},
+        {"login": "goldenfish123321", "role": "coauthor", "external": True},
+        {"login": "GoldenFish123321", "role": "reporter", "external": True},
+    ]
+    assert merge_contributors(contributors) == [
+        {
+            "login": "goldenfish123321",
+            "roles": ["coauthor", "reporter"],
+            "external": True,
+        },
+        {
+            "login": "ngnichtel",
+            "roles": ["author", "coauthor"],
+            "external": True,
+        },
+    ]
+
+    manifest = {
+        "displayName": "Cua Driver",
+        "version": "0.13.1",
+        "repository": "trycua/cua",
+        "tag": "cua-driver-rs-v0.13.1",
+        "compareUrl": (
+            "https://github.com/trycua/cua/compare/"
+            "cua-driver-rs-v0.12.6...cua-driver-rs-v0.13.1"
+        ),
+        "visualRequested": False,
+        "changes": [
+            {
+                "type": "fix",
+                "summary": "preserve contributor credit",
+                "pr": 2559,
+                "contributors": contributors,
+            }
+        ],
+        "contributors": merge_contributors(contributors),
+    }
+    body = render_body(manifest)
+    assert "Thanks @ngnichtel, @goldenfish123321." in body
+    assert "reported by @GoldenFish123321" not in body
+    assert body.count("@ngnichtel") == 2
+    assert body.count("@goldenfish123321") == 2
+    assert "@GoldenFish123321" not in body
 
 
 def test_cross_repository_references_are_not_resolved_in_cua():

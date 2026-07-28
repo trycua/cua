@@ -208,6 +208,7 @@ impl Tool for TypeTextTool {
         // px-click would.
         let px = args.get("x").and_then(|v| v.as_f64());
         let py = args.get("y").and_then(|v| v.as_f64());
+        let used_pixel_focus = px.is_some() && py.is_some();
         if let (Some(cx), Some(cy)) = (px, py) {
             if element_index.is_some() {
                 return ToolResult::error(
@@ -344,6 +345,8 @@ impl Tool for TypeTextTool {
                 let verification = surface_verification(path, verified, target_is_web_content);
                 let verified = verification.verified;
                 let untrusted_web_readback = verification.untrusted_web_readback;
+                let electron_web_content = untrusted_web_readback
+                    && crate::browser::electron_js::ElectronJs::is_electron(pid);
 
                 // `verified:false` means the driver could not confirm the text
                 // landed (Electron AX echo, unreadable AXValue on Catalyst, or a
@@ -353,15 +356,20 @@ impl Tool for TypeTextTool {
                 let (mark, note) = if verified {
                     ("✅ Inserted", String::new())
                 } else if untrusted_web_readback {
+                    let next_step = if electron_web_content && used_pixel_focus {
+                        "The pixel-focus rung already ran, so do not repeat it; verify the \
+                         result via the screenshot."
+                    } else {
+                        "For a browser tab use the `page` tool (it drives the DOM); for an \
+                         embedded web view, re-type with the px form (x,y)."
+                    };
                     (
                         "📨 Sent (unverified)",
-                        " — web-content surface (Chromium / WebKit / Electron): \
-                      AXValue read-back is not independent proof that the \
-                      renderer/DOM observed the input. Verify \
-                      via the screenshot. For a browser tab use the `page` tool (it \
-                      drives the DOM); for an embedded web view, re-type with the px \
-                      form (x,y)."
-                            .to_string(),
+                        format!(
+                            " — web-content surface (Chromium / WebKit / Electron): \
+                             AXValue read-back is not independent proof that the \
+                             renderer/DOM observed the input. {next_step}"
+                        ),
                     )
                 } else if path == PATH_KEY_EVENTS_FG {
                     (
@@ -401,35 +409,37 @@ impl Tool for TypeTextTool {
                         // an embedded web view (Electron, no CDP) → the element px
                         // action. It's a renderer/DOM-focus problem, never a
                         // foreground one.
-                        let (recommended, reason) =
-                            if crate::browser::electron_js::ElectronJs::is_electron(pid) {
-                                (
+                        let escalation =
+                            match web_readback_next_rung(electron_web_content, used_pixel_focus) {
+                                Some("px") => Some((
                                     "px",
                                     "Electron web view — AXValue read-back cannot prove \
-                                  that the renderer observed the input. Confirm via the \
-                                  screenshot; if it didn't land, re-type with the \
-                                  element px action (x,y to pixel-focus the field, then \
-                                  type).",
-                                )
-                            } else {
-                                (
+                                 that the renderer observed the input. Confirm via the \
+                                 screenshot; if it didn't land, re-type with the \
+                                 element px action (x,y to pixel-focus the field, then \
+                                 type).",
+                                )),
+                                Some("page") => Some((
                                     "page",
                                     "Browser web content — AXValue read-back cannot prove \
-                                  that the DOM observed the input (and AX type_text on a \
-                                  contenteditable is racy). Drive the tab's DOM with the \
-                                  `page` tool: execute_javascript + el.value/innerText for a \
-                                  plain input; for a rich-text contenteditable \
-                                  (Draft.js/Lexical/Slate-style editors can silently discard \
-                                  a one-shot DOM write on their next render) try insert_text \
-                                  first (one CDP call, cheap), then type_keystrokes if that \
-                                  also gets discarded (real per-character keyboard events, \
-                                  slower but most durable). Or confirm via the screenshot.",
-                                )
+                                 that the DOM observed the input (and AX type_text on a \
+                                 contenteditable is racy). Drive the tab's DOM with the \
+                                 `page` tool: execute_javascript + el.value/innerText for a \
+                                 plain input; for a rich-text contenteditable \
+                                 (Draft.js/Lexical/Slate-style editors can silently discard \
+                                 a one-shot DOM write on their next render) try insert_text \
+                                 first (one CDP call, cheap), then type_keystrokes if that \
+                                 also gets discarded (real per-character keyboard events, \
+                                 slower but most durable). Or confirm via the screenshot.",
+                                )),
+                                _ => None,
                             };
-                        s["escalation"] = serde_json::json!({
-                            "recommended": recommended,
-                            "reason": reason,
-                        });
+                        if let Some((recommended, reason)) = escalation {
+                            s["escalation"] = serde_json::json!({
+                                "recommended": recommended,
+                                "reason": reason,
+                            });
+                        }
                     } else if !verified && path != PATH_KEY_EVENTS_FG {
                         s["escalation"] = serde_json::json!({
                             "recommended": "foreground",
@@ -475,6 +485,14 @@ fn surface_verification(
     SurfaceVerification {
         verified: verified && !untrusted_web_readback,
         untrusted_web_readback,
+    }
+}
+
+fn web_readback_next_rung(is_electron: bool, used_pixel_focus: bool) -> Option<&'static str> {
+    match (is_electron, used_pixel_focus) {
+        (true, true) => None,
+        (true, false) => Some("px"),
+        (false, _) => Some("page"),
     }
 }
 
@@ -1009,6 +1027,14 @@ mod tests {
             },
             "a future independently verified path must not inherit AXValue distrust"
         );
+    }
+
+    #[test]
+    fn web_readback_escalation_never_recommends_the_completed_pixel_rung() {
+        assert_eq!(web_readback_next_rung(true, false), Some("px"));
+        assert_eq!(web_readback_next_rung(true, true), None);
+        assert_eq!(web_readback_next_rung(false, false), Some("page"));
+        assert_eq!(web_readback_next_rung(false, true), Some("page"));
     }
 
     #[test]

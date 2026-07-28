@@ -950,6 +950,87 @@ pub fn move_cursor_desktop(x: i32, y: i32) -> Result<()> {
         .map_err(|error| anyhow::anyhow!("SetCursorPos({x}, {y}) failed: {error}"))
 }
 
+/// Classify a `WM_NCHITTEST` result into the non-client regions where a
+/// posted-message drag can NEVER work: the OS handles caption and border
+/// drags with its interactive move/resize modal loop
+/// (`WM_NCLBUTTONDOWN` → `DefWindowProc` → `WM_SYSCOMMAND SC_MOVE/SC_SIZE`),
+/// which only real pointer input off the system input queue can drive.
+/// Posted `WM_MOUSEMOVE` streams are simply discarded, so background
+/// delivery must refuse with `background_unavailable` instead of reporting
+/// a success that moved nothing.
+pub fn classify_nc_move_resize_hit(hit: isize) -> Option<&'static str> {
+    // Constant values per winuser.h; kept as literals because the windows
+    // crate exposes hit-test codes as u32 while SendMessage returns LRESULT.
+    match hit {
+        2 => Some("caption / title bar"), // HTCAPTION
+        4 => Some("size box"),            // HTGROWBOX / HTSIZE
+        10..=17 => Some("resize border"), // HTLEFT..HTBOTTOMRIGHT
+        _ => None,
+    }
+}
+
+/// Screen-coordinate `WM_NCHITTEST` against the drag target's top-level
+/// window. Returns the human-readable region name when the point falls on a
+/// caption / resize border (the regions a posted drag cannot actuate), else
+/// `None`. Uses `SendMessageTimeoutW(SMTO_ABORTIFHUNG)` so a hung target
+/// cannot wedge the daemon; timeouts fail open (`None`) — the posted drag
+/// then proceeds exactly as before this check existed.
+pub fn non_client_move_resize_hit(root: u64, sx: i32, sy: i32) -> Option<&'static str> {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SendMessageTimeoutW, SMTO_ABORTIFHUNG, WM_NCHITTEST,
+    };
+    if root == 0 {
+        return None;
+    }
+    let hwnd = HWND(root as *mut _);
+    // Hit-test the top-level frame: the caption belongs to the root window
+    // even when the caller resolved a child HWND as the drag target.
+    let top = unsafe { GetAncestor(hwnd, GA_ROOT) };
+    let top = if top.0.is_null() { hwnd } else { top };
+    // WM_NCHITTEST takes SCREEN coordinates packed in LPARAM (signed 16-bit
+    // each — correct for any virtual-desktop position within ±32767).
+    let lp = LPARAM((((sy as i16 as u16 as u32) << 16) | (sx as i16 as u16 as u32)) as isize);
+    let mut result: usize = 0;
+    let ok = unsafe {
+        SendMessageTimeoutW(
+            top,
+            WM_NCHITTEST,
+            WPARAM(0),
+            lp,
+            SMTO_ABORTIFHUNG,
+            200, // ms — a live window answers this in microseconds
+            Some(&mut result),
+        )
+    };
+    if ok.0 == 0 {
+        return None; // timed out / hung target: fail open, post as before
+    }
+    classify_nc_move_resize_hit(result as isize)
+}
+
+#[cfg(test)]
+mod nc_hit_tests {
+    use super::classify_nc_move_resize_hit;
+
+    #[test]
+    fn caption_and_borders_refuse_posted_drags_client_area_does_not() {
+        assert_eq!(
+            classify_nc_move_resize_hit(2), // HTCAPTION
+            Some("caption / title bar")
+        );
+        assert_eq!(classify_nc_move_resize_hit(4), Some("size box")); // HTGROWBOX
+        for border in 10..=17 {
+            // HTLEFT..HTBOTTOMRIGHT
+            assert_eq!(classify_nc_move_resize_hit(border), Some("resize border"));
+        }
+        assert_eq!(classify_nc_move_resize_hit(1), None); // HTCLIENT
+        assert_eq!(classify_nc_move_resize_hit(0), None); // HTNOWHERE
+        assert_eq!(classify_nc_move_resize_hit(3), None); // HTSYSMENU (click, not drag-move)
+        assert_eq!(classify_nc_move_resize_hit(-1), None); // HTERROR
+        assert_eq!(classify_nc_move_resize_hit(18), None); // HTBORDER (non-resizable edge)
+    }
+}
+
 #[cfg(test)]
 mod wheel_tests {
     use super::{posted_press_message, wheel_mouse_data, WHEEL_DELTA};

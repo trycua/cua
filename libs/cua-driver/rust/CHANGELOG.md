@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.13.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.6...cua-driver-rs-v0.13.0) (2026-07-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cua-driver:** simplify permissions and add session identity ([#2616](https://github.com/trycua/cua/issues/2616))
+* **cua-driver:** ship semantic cursor themes
+
+### Features
+
+* **cua-driver:** add local consent UI and complete Wayland certification ([#2597](https://github.com/trycua/cua/issues/2597)) ([e9852cb](https://github.com/trycua/cua/commit/e9852cb68494e9f521c7734206f638773dbc3299))
+* **cua-driver:** browser_type can replace a field's content, not only append ([#2624](https://github.com/trycua/cua/issues/2624)) ([eb0b5a0](https://github.com/trycua/cua/commit/eb0b5a0c72cd1203e1dcaab768cdf37c33868302))
+* **cua-driver:** centralize protected resource grants per runtime ([#2577](https://github.com/trycua/cua/issues/2577)) ([dfb3781](https://github.com/trycua/cua/commit/dfb3781460f04f9b523871b2f478233a59e5d364))
+* **cua-driver:** enforce consequential and privileged actions ([#2585](https://github.com/trycua/cua/issues/2585)) ([df368a7](https://github.com/trycua/cua/commit/df368a7698a07ec9ba7e10952d483457c22841ff))
+* **cua-driver:** enforce desktop input grants ([#2580](https://github.com/trycua/cua/issues/2580)) ([2b5e938](https://github.com/trycua/cua/commit/2b5e938d7014ccdced5abe6d1c4d493063f67b56))
+* **cua-driver:** enforce exact file transfer grants ([#2581](https://github.com/trycua/cua/issues/2581)) ([3f74894](https://github.com/trycua/cua/commit/3f748946ecc176d2d7a71add246c5647acca2be3))
+* **cua-driver:** enforce private observation grants ([#2579](https://github.com/trycua/cua/issues/2579)) ([6052381](https://github.com/trycua/cua/commit/6052381e97446cca3338221eb888c49e57356890))
+* **cua-driver:** expose trusted protected-consent hosts ([#2578](https://github.com/trycua/cua/issues/2578)) ([fd4069e](https://github.com/trycua/cua/commit/fd4069ec6de49e9fa499e3057e874b9dae1d9665))
+* **cua-driver:** implement SDK-owned runtime RFC ([#2561](https://github.com/trycua/cua/issues/2561)) ([1760f25](https://github.com/trycua/cua/commit/1760f253d3c4d76618a8c97a04f2c100ffc491ac))
+* **cua-driver:** make permission adapter inventory mode-aware ([#2576](https://github.com/trycua/cua/issues/2576)) ([83a2f6f](https://github.com/trycua/cua/commit/83a2f6fad7b2f3349be40433e343cd8f934495eb))
+* **cua-driver:** make SDK-owned runtime the default ([#2545](https://github.com/trycua/cua/issues/2545)) ([a62e821](https://github.com/trycua/cua/commit/a62e8219255f15f6ed747c03337198d6fe32912f))
+* **cua-driver:** ship semantic cursor themes ([e06e922](https://github.com/trycua/cua/commit/e06e9229ba65529f1594b11a6834cc2738117045))
+* **cua-driver:** ship vector semantic cursor themes ([#2603](https://github.com/trycua/cua/issues/2603)) ([e2c52d5](https://github.com/trycua/cua/commit/e2c52d50ba331798a3da4871fdad3bbcdd399633))
+* **cua-driver:** simplify permissions and add session identity ([#2616](https://github.com/trycua/cua/issues/2616)) ([8dac16e](https://github.com/trycua/cua/commit/8dac16e2c22a24687983e0e169a4dc2329e6cadb))
+* **cua-driver:** support multiple direct runtimes per process ([#2575](https://github.com/trycua/cua/issues/2575)) ([5f786b0](https://github.com/trycua/cua/commit/5f786b058162bc69caacaa00c05f6fcca85d9d3d))
+
+
+### Bug Fixes
+
+* **cua-driver:** accept letter keys on Windows ([#2551](https://github.com/trycua/cua/issues/2551)) ([506a4ed](https://github.com/trycua/cua/commit/506a4ede22dfe791b3630640bc0c24e0f03c6d96))
+* **cua-driver:** activate Chromium checkboxes safely on Linux ([#2633](https://github.com/trycua/cua/issues/2633)) ([1f16242](https://github.com/trycua/cua/commit/1f16242750df58b6af4b7b44f4f3a317a66a4bb1))
+* **cua-driver:** avoid leaking XInput masters without uinput ([36e8d5a](https://github.com/trycua/cua/commit/36e8d5ad480096d0e5b576912674bdc3b9a89267))
+* **cua-driver:** carry full 32-bit snapshot generation in element tokens ([#2608](https://github.com/trycua/cua/issues/2608)) ([fcac692](https://github.com/trycua/cua/commit/fcac692b6d6531a32f3ebc5d7a9ba675d90ec86a))
+* **cua-driver:** clarify foreground escalation guidance ([b4f6ffc](https://github.com/trycua/cua/commit/b4f6ffca79b4f746e28b30eaa041c534704ee372))
+* **cua-driver:** declare WinRects support for GNOME Shell 49 and 50 ([#2565](https://github.com/trycua/cua/issues/2565)) ([776dadd](https://github.com/trycua/cua/commit/776daddcbc7dba345343f0e0f709bd9c486ec087))
+* **cua-driver:** keep press_key modifiers on native Wayland ([#2573](https://github.com/trycua/cua/issues/2573)) ([669c917](https://github.com/trycua/cua/commit/669c9177895c4998aa2d393f01e262d506384eb0))
+* **cua-driver:** pick the AT-SPI action by name, not by position ([#2574](https://github.com/trycua/cua/issues/2574)) ([ee77164](https://github.com/trycua/cua/commit/ee77164b285d9ba313bdd7da03b32449722d8ce4))
+* **cua-driver:** prefer foreground delivery in refusal guidance ([#2623](https://github.com/trycua/cua/issues/2623)) ([6d97684](https://github.com/trycua/cua/commit/6d97684fc4beebbb4ea3d658fa49817f9b7cd0f8))
+* **cua-driver:** preserve Windows autostart path quoting ([cf07c2c](https://github.com/trycua/cua/commit/cf07c2c9ef7b17808d4152d91bb6c5ee22b733ab))
+* **cua-driver:** recover invalid Windows bounds ([#2601](https://github.com/trycua/cua/issues/2601)) ([0026845](https://github.com/trycua/cua/commit/0026845a096fd5a960e6f97742fbaedb054998be))
+* **cua-driver:** redial Chrome after native consent ([#2635](https://github.com/trycua/cua/issues/2635)) ([fdebc59](https://github.com/trycua/cua/commit/fdebc59791ae2a8c6bc25f29770dc21f3c5faea7))
+* **cua-driver:** refuse disabled macOS AX actions ([#2637](https://github.com/trycua/cua/issues/2637)) ([8f9c2df](https://github.com/trycua/cua/commit/8f9c2dfd422a14a29fa49870e26f790c0c0ef211))
+* **cua-driver:** reject browser-origin MCP HTTP requests ([#2378](https://github.com/trycua/cua/issues/2378)) ([fccac48](https://github.com/trycua/cua/commit/fccac4852e7d1141ab0b03202c9093d5e826d448))
+* **cua-driver:** restore macOS background pixel clicks ([1fbcacf](https://github.com/trycua/cua/commit/1fbcacf6f5ecdec31414a364c3c4450dfce82e70))
+* **cua-driver:** restore v0.12.5 and v0.12.6 installs ([#2598](https://github.com/trycua/cua/issues/2598)) ([fc17069](https://github.com/trycua/cua/commit/fc17069b69786f81ae0ff50eefeabe328b06dc4b))
+* **cua-driver:** verify set_value writes with an AXValue read-back ([#2621](https://github.com/trycua/cua/issues/2621)) ([e143b95](https://github.com/trycua/cua/commit/e143b9565069aa35c9ff21fec171858d8a264b06))
+
 ## [0.12.6](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.5...cua-driver-rs-v0.12.6) (2026-07-24)
 
 

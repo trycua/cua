@@ -1972,16 +1972,9 @@ mod tests {
                 .await
                 .unwrap();
             assert!(
-                standard_windows.is_error
-                    && matches!(
-                        standard_windows.error_code.as_deref(),
-                        Some(
-                            "authorization_required" | "authorization_host_failed"
-                        )
-                    ),
-                "a standard direct runtime without usable protected-consent prerequisites must fail closed: code={:?} text={}",
-                standard_windows.error_code,
-                standard_windows.text
+                !standard_windows.is_error,
+                "promptless standard mode could not inspect the GUI: code={:?} text={}",
+                standard_windows.error_code, standard_windows.text
             );
 
             let unrestricted_windows = second_session

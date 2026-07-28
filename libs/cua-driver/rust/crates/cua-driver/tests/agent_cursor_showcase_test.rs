@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use base64::Engine as _;
 use cua_driver_testkit::e2e::{
     execute_case, recording_evidence, CaseSpec, Delivery, DriverRoute, Evidence, Observation,
     OracleKind, Scope, Targeting,
@@ -35,25 +36,14 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
             "start_session",
             serde_json::json!({
                 "session": SESSION,
-                "capture_scope": "desktop"
+                "capture_scope": "auto"
             }),
         );
 
-        let baseline_png = capture_desktop_png();
+        let (baseline_png, width, height) = capture_desktop_png(&mut driver);
         let baseline = image::load_from_memory(&baseline_png)
             .expect("decode baseline desktop screenshot")
             .to_rgba8();
-        let screen = driver.call("get_screen_size", serde_json::json!({}));
-        let (width, height) = if screen.is_error() {
-            (f64::from(baseline.width()), f64::from(baseline.height()))
-        } else {
-            (
-                screen.structured()["width"].as_f64().expect("screen width"),
-                screen.structured()["height"]
-                    .as_f64()
-                    .expect("screen height"),
-            )
-        };
         assert!(
             width >= 640.0 && height >= 480.0,
             "showcase requires a normal desktop, got {width}x{height}"
@@ -92,7 +82,12 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
         );
         settle(900);
 
-        let cursor_png = capture_desktop_png();
+        let (cursor_png, cursor_width, cursor_height) = capture_desktop_png(&mut driver);
+        assert_eq!(
+            (width, height),
+            (cursor_width, cursor_height),
+            "logical desktop dimensions changed while checking the cursor overlay"
+        );
         let cursor_frame = image::load_from_memory(&cursor_png)
             .expect("decode cursor desktop screenshot")
             .to_rgba8();
@@ -110,6 +105,16 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
             .join("cursor-oracle.png");
         std::fs::write(&screenshot_path, cursor_png).expect("write cursor oracle screenshot");
         evidence.screenshot = Some(screenshot_path.display().to_string());
+
+        call_ok(
+            &mut driver,
+            "escalate_session",
+            serde_json::json!({
+                "session": SESSION,
+                "reason": "foreground_ineffective",
+                "detail": "cursor showcase switches from overlay positioning to desktop actions"
+            }),
+        );
 
         call_ok(
             &mut driver,
@@ -219,19 +224,36 @@ fn assert_cursor_pixels_changed(
     );
 }
 
-#[cfg(target_os = "linux")]
-fn capture_desktop_png() -> Vec<u8> {
-    platform_linux::capture::screenshot_display_bytes().expect("capture Linux desktop")
-}
-
-#[cfg(target_os = "macos")]
-fn capture_desktop_png() -> Vec<u8> {
-    platform_macos::capture::screenshot_display_bytes().expect("capture macOS desktop")
-}
-
-#[cfg(target_os = "windows")]
-fn capture_desktop_png() -> Vec<u8> {
-    platform_windows::capture::screenshot_display_bytes().expect("capture Windows desktop")
+fn capture_desktop_png(driver: &mut McpDriver) -> (Vec<u8>, f64, f64) {
+    let response = driver.call("get_desktop_state", serde_json::json!({}));
+    assert!(
+        !response.is_error(),
+        "driver-owned desktop capture failed: {}",
+        response.text()
+    );
+    let image_base64 = response.raw["result"]["content"]
+        .as_array()
+        .and_then(|content| {
+            content.iter().find_map(|item| {
+                (item["type"].as_str() == Some("image")
+                    && item["mimeType"].as_str() == Some("image/png"))
+                .then(|| item["data"].as_str())
+                .flatten()
+            })
+        })
+        .expect("driver-owned desktop capture returned no PNG image");
+    let png = base64::engine::general_purpose::STANDARD
+        .decode(image_base64)
+        .expect("decode driver-owned desktop screenshot");
+    let width = response.structured()["screen_width"]
+        .as_f64()
+        .or_else(|| response.structured()["screenshot_width"].as_f64())
+        .expect("desktop capture returned no logical width");
+    let height = response.structured()["screen_height"]
+        .as_f64()
+        .or_else(|| response.structured()["screenshot_height"].as_f64())
+        .expect("desktop capture returned no logical height");
+    (png, width, height)
 }
 
 fn call_ok(driver: &mut McpDriver, tool: &str, arguments: serde_json::Value) {

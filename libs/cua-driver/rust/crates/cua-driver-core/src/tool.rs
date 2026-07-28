@@ -1350,12 +1350,31 @@ impl ToolRegistry {
         if context.mode() == crate::authorization::PermissionMode::Unrestricted {
             return Ok(());
         }
+        let browser_target = args.get("target_id").and_then(Value::as_str);
+        let browser_tab = args.get("tab_id").and_then(Value::as_str);
+        if context.mode() == crate::authorization::PermissionMode::Standard {
+            // Standard observation is promptless, but browser observations
+            // still have to attest their live target before dispatch.
+            if browser_target.is_some()
+                && tool
+                    .protected_resource_scope("private_observation", args)
+                    .await
+                    .map_err(crate::consent::ConsentError::Provider)?
+                    .is_none()
+            {
+                return Err(crate::consent::ConsentError::Provider(
+                    "browser observation did not attest a live top-level origin".to_owned(),
+                ));
+            }
+            // Whole-display scope discovery is X11-specific on Linux. It is
+            // not a grant boundary in standard mode and must not turn routine
+            // promptless operation into a pure-Wayland failure.
+            return Ok(());
+        }
         let browser_scope = tool
             .protected_resource_scope("private_observation", args)
             .await
             .map_err(crate::consent::ConsentError::Provider)?;
-        let browser_target = args.get("target_id").and_then(Value::as_str);
-        let browser_tab = args.get("tab_id").and_then(Value::as_str);
         let (mut resource, summary) = if let Some(resource) = browser_scope {
             let target_id = browser_target.unwrap_or("unknown");
             (
@@ -1481,7 +1500,14 @@ impl ToolRegistry {
         context: &crate::session_authorization::EffectiveAuthorizationContext,
         lifecycle_session: Option<&str>,
     ) -> Result<(), crate::consent::ConsentError> {
-        if context.mode() == crate::authorization::PermissionMode::Unrestricted {
+        if matches!(
+            context.mode(),
+            crate::authorization::PermissionMode::Standard
+                | crate::authorization::PermissionMode::Unrestricted
+        ) {
+            // Standard and unrestricted input do not need a protected grant.
+            // Bounded mode continues below so the exact resource can be
+            // checked against its approved manifest.
             return Ok(());
         }
         let delivery_mode = if tool_name == "bring_to_front" {
@@ -2691,8 +2717,20 @@ resources:
                 .await;
             assert_ne!(result.is_error, Some(true));
         }
+        let display_wide = registry
+            .invoke_with_context(
+                "get_window_state",
+                serde_json::json!({"session": "review"}),
+                context,
+            )
+            .await;
+        assert_ne!(
+            display_wide.is_error,
+            Some(true),
+            "standard display-wide observation must not require get_screen_size"
+        );
 
-        assert_eq!(hits.load(Ordering::SeqCst), 3);
+        assert_eq!(hits.load(Ordering::SeqCst), 4);
         assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
     }
 
@@ -2756,6 +2794,24 @@ resources:
             .await;
         assert_eq!(no_host_hits.load(Ordering::SeqCst), 1);
         assert_ne!(no_host.is_error, Some(true));
+        let display_wide_hits = Arc::new(AtomicUsize::new(0));
+        let display_wide = input_registry(None, display_wide_hits.clone())
+            .invoke_with_context(
+                "click",
+                serde_json::json!({
+                    "session": "control",
+                    "x": 10,
+                    "y": 20
+                }),
+                standard_context(),
+            )
+            .await;
+        assert_eq!(display_wide_hits.load(Ordering::SeqCst), 1);
+        assert_ne!(
+            display_wide.is_error,
+            Some(true),
+            "standard display-wide input must not require get_screen_size"
+        );
 
         let hits = Arc::new(AtomicUsize::new(0));
         let provider = Arc::new(AcceptingProvider {

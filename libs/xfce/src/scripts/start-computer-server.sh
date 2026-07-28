@@ -10,4 +10,4 @@ echo "X server is ready"
 
 # Start computer-server from the venv
 export DISPLAY=:1
-/opt/venv/bin/python3 -m computer_server --port ${API_PORT:-8000}
+/opt/venv/bin/python3 -m computer_server --host 0.0.0.0 --port ${API_PORT:-8000}

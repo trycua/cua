@@ -33,7 +33,10 @@ fn def() -> &'static ToolDef {
             PREFERRED CONSUMERS read `structuredContent.elements` (one entry per \
             indexed row with `element_index`, `role`, `label`, `value` (the \
             element's text/AXValue when present — use it to verify what a field \
-            holds), `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown \
+            holds), `actions` (the AX actions this element exposes, e.g. \
+            AXPress/AXShowMenu — pass one of these to `perform_action` rather \
+            than guessing a name; omitted for non-actionable rows), \
+            `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown \
             `tree_markdown` stays available \
             and unchanged in shape for existing text-parsing callers — but new \
             fields will only be added to the structured side.\n\n\
@@ -471,6 +474,15 @@ pub(crate) fn build_elements_array_with_token(
             if let Some(parent) = node.parent_element_index {
                 entry["parent_index"] = serde_json::json!(parent);
             }
+            // The AX actions this element actually exposes (AXPress, AXShowMenu,
+            // AXIncrement, …). The walk already collects them; without emitting
+            // them a caller has to guess an action name for `perform_action`,
+            // and a wrong guess is indistinguishable from an element that
+            // simply refused. Omitted when empty so rows for non-actionable
+            // nodes stay small.
+            if !node.actions.is_empty() {
+                entry["actions"] = serde_json::json!(node.actions);
+            }
             Some(entry)
         })
         .collect()
@@ -736,6 +748,33 @@ mod tests {
     /// Surface 6: every element entry must carry a non-empty
     /// `element_token` alongside its integer `element_index`. The
     /// integer field stays unchanged — the token is purely additive.
+    #[test]
+    fn build_elements_array_emits_exposed_actions() {
+        let reg = cua_driver_core::element_token::global();
+        let pid = 0x6abc_0002_i32;
+        let sid = reg.register_snapshot(pid, /* window_id = */ 11, 2);
+        let mut pressable = node(Some(0), "AXButton", Some("Go"), 1, None, None);
+        pressable.actions = vec!["AXPress".to_string(), "AXShowMenu".to_string()];
+        let inert = node(Some(1), "AXStaticText", Some("Label"), 1, None, None);
+
+        let entries = build_elements_array_with_token(&[pressable, inert], sid);
+        assert_eq!(entries.len(), 2);
+
+        let actions = entries[0]
+            .get("actions")
+            .and_then(|v| v.as_array())
+            .expect("an actionable element must expose its AX actions");
+        let names: Vec<&str> = actions.iter().filter_map(|v| v.as_str()).collect();
+        assert_eq!(names, vec!["AXPress", "AXShowMenu"]);
+
+        // Rows for non-actionable nodes stay small: the key is omitted rather
+        // than emitted as an empty array.
+        assert!(
+            entries[1].get("actions").is_none(),
+            "element with no AX actions must not carry an empty actions key"
+        );
+    }
+
     #[test]
     fn build_elements_array_with_token_emits_element_token_per_row() {
         let reg = cua_driver_core::element_token::global();

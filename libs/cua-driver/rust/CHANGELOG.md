@@ -2,6 +2,11 @@
 
 ## [0.13.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.6...cua-driver-rs-v0.13.0) (2026-07-28)
 
+> **Retracted:** 0.13.0 was published unintentionally and is not supported.
+> Do not use this release. Distribution artifacts are being withdrawn; package
+> registries permanently reserve published version numbers, so 0.13.0 will not
+> be republished.
+
 
 ### ⚠ BREAKING CHANGES
 

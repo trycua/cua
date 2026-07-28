@@ -116,9 +116,12 @@ impl Tool for StopDemonstrationTool {
         })
     }
 
-    async fn invoke(&self, _args: Value) -> ToolResult {
+    async fn invoke(&self, args: Value) -> ToolResult {
+        use crate::tool_args::ArgsExt;
+
+        let requester = args.opt_str("_session_id");
         let manager = self.manager.clone();
-        match tokio::task::spawn_blocking(move || manager.stop()).await {
+        match tokio::task::spawn_blocking(move || manager.stop(requester.as_deref())).await {
             Ok(Ok(Some(result))) => {
                 let summary = &result.artifacts.summary;
                 let warning = (!summary.complete).then(|| {

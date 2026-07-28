@@ -53,8 +53,8 @@ impl DemonstrationManager {
         Ok(output_dir)
     }
 
-    pub fn stop(&self) -> anyhow::Result<Option<DemonstrationResult>> {
-        self.take_if(|_| true)
+    pub fn stop(&self, requester: Option<&str>) -> anyhow::Result<Option<DemonstrationResult>> {
+        self.take_if(|session| requester_can_stop(session.owner.as_deref(), requester))
             .map(|session| session.finish("requested"))
             .transpose()
     }
@@ -79,6 +79,10 @@ impl DemonstrationManager {
             None
         }
     }
+}
+
+fn requester_can_stop(owner: Option<&str>, requester: Option<&str>) -> bool {
+    requester.is_none() || owner == requester
 }
 
 impl Default for DemonstrationManager {
@@ -271,8 +275,17 @@ mod tests {
     #[test]
     fn stopping_an_inactive_manager_is_a_noop() {
         let manager = DemonstrationManager::new();
-        assert!(manager.stop().unwrap().is_none());
+        assert!(manager.stop(None).unwrap().is_none());
         assert!(manager.stop_owner("missing").unwrap().is_none());
+    }
+
+    #[test]
+    fn manual_stop_is_scoped_to_the_owning_session() {
+        assert!(requester_can_stop(Some("session-a"), Some("session-a")));
+        assert!(!requester_can_stop(Some("session-a"), Some("session-b")));
+        assert!(!requester_can_stop(None, Some("session-a")));
+        assert!(requester_can_stop(Some("session-a"), None));
+        assert!(requester_can_stop(None, None));
     }
 
     #[test]

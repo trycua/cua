@@ -48,6 +48,7 @@ mod platform {
     use super::*;
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
     use windows::Win32::UI::WindowsAndMessaging::DefWindowProcW;
 
     /// Trivial window procedure — the border never handles messages itself
@@ -61,13 +62,14 @@ mod platform {
         DefWindowProcW(hwnd, msg, w, l)
     }
     use windows::Win32::Graphics::Gdi::{
-        CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, ReleaseDC,
-        SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, BLENDFUNCTION, DIB_RGB_COLORS, HBITMAP,
-        HDC, HGDIOBJ,
+        CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, GetMonitorInfoW,
+        MonitorFromWindow, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
+        BLENDFUNCTION, DIB_RGB_COLORS, HBITMAP, HDC, HGDIOBJ, MONITORINFO,
+        MONITOR_DEFAULTTONEAREST,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DestroyWindow, GetAncestor, GetForegroundWindow, GetWindowRect,
-        GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, RegisterClassW,
+        GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed, RegisterClassW,
         SetWindowPos, ShowWindow, UpdateLayeredWindow, GA_ROOT, HWND_TOPMOST, SWP_NOACTIVATE,
         SWP_NOSIZE, SW_HIDE, SW_SHOWNOACTIVATE, ULW_ALPHA, WNDCLASSW, WS_EX_LAYERED,
         WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
@@ -180,11 +182,27 @@ mod platform {
                     let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                 }
 
-                let mut rect = RECT::default();
-                if unsafe { GetWindowRect(target, &mut rect) }.is_err() {
+                let Some(mut rect) = visible_frame_rect(target) else {
                     health.clear();
                     std::thread::sleep(std::time::Duration::from_millis(TARGET_FPS_MS));
                     continue;
+                };
+                // A maximized Win32 window commonly reports its invisible resize
+                // frame outside the monitor work area (for example -8,-8 on the
+                // primary display). Drawing the inner recording edge at that
+                // off-screen frame clips the top and side indicators completely.
+                // Clamp only maximized targets so the notification stays visible
+                // without changing the geometry of deliberately off-screen normal
+                // windows.
+                if unsafe { IsZoomed(target).as_bool() } {
+                    let monitor = unsafe { MonitorFromWindow(target, MONITOR_DEFAULTTONEAREST) };
+                    let mut monitor_info = MONITORINFO {
+                        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                        ..Default::default()
+                    };
+                    if unsafe { GetMonitorInfoW(monitor, &mut monitor_info).as_bool() } {
+                        rect = intersect_rect(rect, monitor_info.rcWork);
+                    }
                 }
 
                 let tx = rect.left - GLOW;
@@ -228,6 +246,93 @@ mod platform {
             let _ = DestroyWindow(hwnd);
         }
         result
+    }
+
+    fn intersect_rect(rect: RECT, bounds: RECT) -> RECT {
+        RECT {
+            left: rect.left.max(bounds.left),
+            top: rect.top.max(bounds.top),
+            right: rect.right.min(bounds.right),
+            bottom: rect.bottom.min(bounds.bottom),
+        }
+    }
+
+    /// Return the visible frame, excluding the invisible resize margins that
+    /// `GetWindowRect` includes on modern Windows. Fall back to those legacy
+    /// bounds when DWM composition is unavailable.
+    fn visible_frame_rect(target: HWND) -> Option<RECT> {
+        let mut rect = RECT::default();
+        let dwm_result = unsafe {
+            DwmGetWindowAttribute(
+                target,
+                DWMWA_EXTENDED_FRAME_BOUNDS,
+                (&mut rect as *mut RECT).cast(),
+                std::mem::size_of::<RECT>() as u32,
+            )
+        };
+        if dwm_result.is_ok() && rect_has_area(rect) {
+            return Some(rect);
+        }
+
+        if unsafe { GetWindowRect(target, &mut rect) }.is_ok() && rect_has_area(rect) {
+            Some(rect)
+        } else {
+            None
+        }
+    }
+
+    fn rect_has_area(rect: RECT) -> bool {
+        rect.right > rect.left && rect.bottom > rect.top
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn maximized_resize_frame_clamps_to_visible_work_area() {
+            let reported = RECT {
+                left: -8,
+                top: -8,
+                right: 1288,
+                bottom: 776,
+            };
+            let work_area = RECT {
+                left: 0,
+                top: 0,
+                right: 1280,
+                bottom: 768,
+            };
+
+            let visible = intersect_rect(reported, work_area);
+
+            assert_eq!(visible.left, 0);
+            assert_eq!(visible.top, 0);
+            assert_eq!(visible.right, 1280);
+            assert_eq!(visible.bottom, 768);
+        }
+
+        #[test]
+        fn visible_frame_requires_positive_area() {
+            assert!(rect_has_area(RECT {
+                left: 100,
+                top: 50,
+                right: 900,
+                bottom: 650,
+            }));
+            assert!(!rect_has_area(RECT {
+                left: 100,
+                top: 50,
+                right: 100,
+                bottom: 650,
+            }));
+            assert!(!rect_has_area(RECT {
+                left: 100,
+                top: 650,
+                right: 900,
+                bottom: 50,
+            }));
+        }
     }
 
     /// A 32-bit premultiplied-BGRA DIB section + memory DC for layered paint.

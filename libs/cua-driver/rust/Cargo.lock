@@ -1240,7 +1240,6 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "tracing",
- "ureq",
  "url",
  "uuid",
  "windows 0.58.0",

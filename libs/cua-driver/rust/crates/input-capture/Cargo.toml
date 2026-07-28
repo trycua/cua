@@ -22,5 +22,6 @@ windows = { version = "0.58", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_System_Threading",
     "Win32_System_LibraryLoader",
+    "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
 ] }

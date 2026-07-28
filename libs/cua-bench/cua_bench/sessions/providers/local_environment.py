@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
-from ...platforms import CONTAINER_PLATFORMS, PLATFORMS
+from ...platforms import CONTAINER_PLATFORMS, PLATFORMS, resolve_container_image
 
 if TYPE_CHECKING:
     import aiohttp
@@ -298,6 +298,7 @@ class LocalEnvironmentProvider:
         image_name = image_name or platform
 
         # Validate image exists (for QEMU types)
+        image_path: Optional[Path] = None
         if config["image_marker"]:
             image_path = get_image_path(image_name)
             marker_path = image_path / config["image_marker"]
@@ -327,7 +328,7 @@ class LocalEnvironmentProvider:
             vnc_port = find_free_port(8000, 9000)
 
         # Pull Docker image if needed
-        docker_image = config["image"]
+        docker_image = resolve_container_image(platform, image_name)
         if not check_image_exists(docker_image):
             pull_image(docker_image)
 
@@ -336,6 +337,7 @@ class LocalEnvironmentProvider:
             platform=platform,
             config=config,
             container_name=container_name,
+            docker_image=docker_image,
             image_path=image_path,
             worker_path=worker_path,
             api_port=api_port,
@@ -375,6 +377,7 @@ class LocalEnvironmentProvider:
         platform: str,
         config: dict,
         container_name: str,
+        docker_image: str,
         image_path: Optional[Path],
         worker_path: Optional[Path],
         api_port: int,
@@ -388,6 +391,7 @@ class LocalEnvironmentProvider:
             platform: Platform type
             config: Platform configuration from PLATFORM_CONFIGS
             container_name: Name for the container
+            docker_image: Resolved container image to run
             image_path: Path to image (QEMU types only)
             worker_path: Path to worker overlay directory (QEMU types with overlays)
             api_port: Host port for API
@@ -398,7 +402,6 @@ class LocalEnvironmentProvider:
         Returns:
             Docker command as list of strings
         """
-        docker_image = config["image"]
         internal_api = config["internal_api_port"]
         internal_vnc = config["internal_vnc_port"]
 

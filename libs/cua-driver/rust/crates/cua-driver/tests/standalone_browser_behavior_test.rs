@@ -3519,12 +3519,35 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
                 "screenshot_out_file": window_before_path,
             }),
         );
-        assert_eq!(
-            before.structured()["desktop_inspection_required"],
-            true,
-            "{}",
-            before.raw
-        );
+        if cfg!(target_os = "linux") {
+            assert!(
+                before.structured()["capture_coverage"]["browser_chrome"].is_null(),
+                "Linux window capture already includes the browser-owned prompt surface: {}",
+                before.raw
+            );
+        } else {
+            assert_eq!(
+                before.structured()["capture_coverage"]["browser_chrome"]["status"],
+                "not_observable_in_window_scope",
+                "{}",
+                before.raw
+            );
+            assert_eq!(
+                before.structured()["capture_coverage"]["recovery"]["when"],
+                "verified_window_action_ineffective",
+                "{}",
+                before.raw
+            );
+            assert_eq!(
+                before.structured()["capture_coverage"]["recovery"]["escalate"],
+                serde_json::json!({
+                    "tool": "escalate_session",
+                    "reason": "foreground_ineffective",
+                }),
+                "{}",
+                before.raw
+            );
+        }
         let escalated = fixture.driver.call(
             "escalate_session",
             serde_json::json!({
@@ -3598,24 +3621,20 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
                 "screenshot_out_file": window_after_path,
             }),
         );
-        assert_eq!(
-            window.structured()["desktop_inspection_required"],
-            true,
-            "{}",
-            window.raw
-        );
-        assert_eq!(
-            window.structured()["desktop_inspection_reason"],
-            "browser_chrome_may_be_outside_window_capture",
-            "{}",
-            window.raw
-        );
-        assert_eq!(
-            window.structured()["browser_chrome_prompt"]["status"],
-            "not_observable_in_window_scope",
-            "{}",
-            window.raw
-        );
+        if cfg!(target_os = "linux") {
+            assert!(
+                window.structured()["capture_coverage"]["browser_chrome"].is_null(),
+                "Linux window capture already includes the browser-owned prompt surface: {}",
+                window.raw
+            );
+        } else {
+            assert_eq!(
+                window.structured()["capture_coverage"]["browser_chrome"]["status"],
+                "not_observable_in_window_scope",
+                "{}",
+                window.raw
+            );
+        }
         assert!(
             !window
                 .raw
@@ -3729,8 +3748,10 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
 
         let desktop_changed_pixels = changed_pixel_count(&desktop_crop_before, &desktop_crop_after);
         let window_changed_pixels = changed_pixel_count(&window_before, &window_after);
-        let desktop_has_materially_more_prompt_pixels =
-            window_changed_pixels.saturating_mul(4) < desktop_changed_pixels;
+        let minimum_desktop_to_window_ratio = 2_u64;
+        let desktop_has_materially_more_prompt_pixels = window_changed_pixels
+            .saturating_mul(minimum_desktop_to_window_ratio)
+            < desktop_changed_pixels;
         let metrics = serde_json::json!({
             "platform": std::env::consts::OS,
             "browser": spec.name,
@@ -3748,6 +3769,7 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
             "initial_desktop_changed_pixels": initial_desktop_changed_pixels,
             "desktop_changed_pixels": desktop_changed_pixels,
             "window_changed_pixels": window_changed_pixels,
+            "minimum_desktop_to_window_ratio": minimum_desktop_to_window_ratio,
             "quiet_prompt_expanded": quiet_prompt_expanded,
             "quiet_prompt_indicator": quiet_prompt_indicator.map(|(x, y)| {
                 serde_json::json!({"x": x, "y": y})
@@ -3777,6 +3799,21 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
             desktop_changed_pixels >= minimum_prompt_pixels,
             "desktop capture did not show a material permission surface change: {metrics}"
         );
+        if cfg!(target_os = "linux") {
+            assert!(
+                window_changed_pixels >= minimum_prompt_pixels,
+                "Linux window capture omitted the material permission surface change: {metrics}"
+            );
+            assert!(
+                !desktop_has_materially_more_prompt_pixels,
+                "Linux desktop capture unexpectedly contained materially more permission UI than window capture: {metrics}"
+            );
+        } else {
+            assert!(
+                desktop_has_materially_more_prompt_pixels,
+                "window capture omitted too little of the permission surface to justify desktop fallback: {metrics}"
+            );
+        }
         Observation::delivered(
             vec![OracleKind::FixtureState, OracleKind::Pixels],
             Evidence::default(),

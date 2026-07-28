@@ -839,9 +839,10 @@ impl Tool for GetWindowStateTool {
                 (≤5 000 elements, depth ≤25).\n\n\
                 CHROMIUM COVERAGE: a browser-owned permission bubble can be \
                 composited outside the requested native window. Chromium-family \
-                snapshots therefore set structuredContent.desktop_inspection_required: \
-                take a fresh get_desktop_state snapshot, act explicitly in desktop \
-                scope if needed, then verify with another fresh desktop snapshot. \
+                snapshots therefore describe this limit in structuredContent.capture_coverage. \
+                After a verified ineffective window action, call escalate_session, take a \
+                fresh get_desktop_state snapshot, act explicitly in desktop scope if needed, \
+                then verify with another fresh desktop snapshot. \
                 This is separate from page JavaScript dialogs, which remain on \
                 browser_dialog.\n\n\
                 Windows requires no special permissions.".into(),
@@ -1176,9 +1177,9 @@ impl Tool for GetWindowStateTool {
                     structured["screenshot_error"] = json!(err);
                 }
 
-                cua_driver_core::window_inspection::mark_browser_chrome_desktop_inspection(
+                cua_driver_core::window_inspection::mark_browser_chrome_capture_coverage(
                     &mut structured,
-                    crate::input::is_chromium_target_window(hwnd),
+                    is_standalone_chromium_browser_process(pid),
                 );
 
                 ToolResult {
@@ -1273,6 +1274,13 @@ fn is_chromium_browser_target(target: &str) -> bool {
             | "browser" // Yandex Browser's exe is browser.exe
             | "arc"
     )
+}
+
+fn is_standalone_chromium_browser_process(pid: u32) -> bool {
+    crate::win32::list_processes()
+        .into_iter()
+        .find(|process| process.pid == pid)
+        .is_some_and(|process| is_chromium_browser_target(&process.name))
 }
 
 /// Anti-throttling flags injected on hidden Chromium launches (#1620).

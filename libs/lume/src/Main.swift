@@ -113,7 +113,7 @@ extension Lume {
         showsNativeDisplayAtLaunch: Bool
     )? {
         let args = Array(CommandLine.arguments.dropFirst())
-        guard args.first == "run" else { return nil }
+        guard args.first == "run", !args.contains("--detach") else { return nil }
 
         let noDisplay = args.contains("--no-display") || args.contains("-d")
         let usesNativeDisplay = !noDisplay

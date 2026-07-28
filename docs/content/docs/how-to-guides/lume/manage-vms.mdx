@@ -25,10 +25,18 @@ SSH availability when the VM is running.
 
 ## Run, attach to, and stop a VM
 
-Run Tahoe without automatically opening a viewer:
+Run Tahoe without automatically opening a viewer. The owning process remains
+attached to the terminal by default:
 
 ```bash
 lume run macos-tahoe
+```
+
+Use `--detach` to run it in the background. Lume prints its PID and writes logs
+to `~/Library/Logs/lume/macos-tahoe.log` by default:
+
+```bash
+lume run macos-tahoe --detach
 ```
 
 VNC remains active in the background. From another terminal, attach the

@@ -158,6 +158,22 @@ impl Tool for SetValueTool {
                 }
             };
         let element_ptr = element_guard.as_ptr();
+        let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
+        let center_ptr = element_ptr as usize;
+        if let Ok(Some((screen_x, screen_y))) = tokio::task::spawn_blocking(move || unsafe {
+            crate::ax::bindings::element_screen_center(center_ptr as AXUIElementRef)
+        })
+        .await
+        {
+            crate::cursor::overlay::send_command(
+                cursor_key.clone(),
+                cursor_overlay::OverlayCommand::PinAbove(window_id as u64),
+            );
+            crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y).await;
+            self.state
+                .cursor_registry
+                .update_position(&cursor_key, screen_x, screen_y);
+        }
         // An AXValue read-back is not ground truth for web content. Chromium,
         // WebKit, and Electron can echo the write through accessibility while
         // the renderer never observes it. Reuse type_text's bounded ancestor

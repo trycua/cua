@@ -1531,10 +1531,6 @@ fn held_target_mismatch(
     }
 }
 
-async fn overlay_glide_to(sx: f64, sy: f64) {
-    overlay_glide_to_for("default", sx, sy).await;
-}
-
 fn overlay_snap_to_for(cursor_id: &str, sx: f64, sy: f64, heading: Option<f64>) {
     crate::overlay::send_command_for(
         cursor_id.to_owned(),
@@ -2326,6 +2322,22 @@ impl Tool for TypeTextTool {
             );
         }
 
+        let cursor_id = resolve_cursor_key(&args);
+        if let Some(idx) = resolved_elem_idx {
+            crate::overlay::send_command_for(
+                cursor_id.clone(),
+                cursor_overlay::OverlayCommand::PinAbove(xid),
+            );
+            if let Ok(Ok((screen_x, screen_y))) =
+                tokio::task::spawn_blocking(move || element_screen_center(pid, idx)).await
+            {
+                overlay_glide_to_for(&cursor_id, screen_x, screen_y).await;
+                self.state
+                    .cursor_registry
+                    .update_position(&cursor_id, screen_x, screen_y);
+            }
+        }
+
         let text_len = text.chars().count();
         // Native toolkit editables have a stronger focus-free route than raw
         // compositor keyboard injection. Keep Chromium/WebKit on real key events
@@ -2548,21 +2560,6 @@ impl Tool for TypeTextTool {
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
-        }
-        // Pulse the agent cursor onto the field being typed into (when an
-        // element_index OR element_token is supplied — token resolution
-        // already ran above so `resolved_elem_idx` covers both).
-        if let Some(idx) = resolved_elem_idx {
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
-            if let Ok(Ok((sx, sy))) =
-                tokio::task::spawn_blocking(move || element_screen_center(pid, idx)).await
-            {
-                overlay_glide_to(sx, sy).await;
-                crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
-                    x: sx,
-                    y: sy,
-                });
-            }
         }
         // Foreground means the caller explicitly permits activation. Chromium
         // and WebKitGTK can acknowledge an accessibility write without
@@ -3489,6 +3486,7 @@ impl Tool for SetValueTool {
                 "set_value requires element_index or element_token to address the target element.",
             ),
         };
+        let cursor_id = resolve_cursor_key(&args);
         let value_for_task = value.clone();
         // Pulse the agent cursor onto the target element before writing, so a
         // value write gets the same visual feedback as a click — the viewer can
@@ -3499,13 +3497,12 @@ impl Tool for SetValueTool {
         {
             let window_id = args.u64_or("window_id", 0);
             if window_id != 0 {
-                crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(window_id));
+                crate::overlay::send_command_for(
+                    cursor_id.clone(),
+                    cursor_overlay::OverlayCommand::PinAbove(window_id),
+                );
             }
-            overlay_glide_to(sx, sy).await;
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
-                x: sx,
-                y: sy,
-            });
+            overlay_glide_to_for(&cursor_id, sx, sy).await;
         }
         let result =
             tokio::task::spawn_blocking(move || crate::atspi::set_value(pid, idx, &value_for_task))

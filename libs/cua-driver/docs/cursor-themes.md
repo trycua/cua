@@ -16,12 +16,21 @@ uses Cua blue. Named sessions receive a stable fill
 from the built-in session palette, so concurrent agents remain visually
 distinct.
 
-The native renderer places the sanitized public session name in a badge below
-the built-in pointer. The badge follows the cursor and uses the same session
-color, but it is not part of the dotLottie theme artifact. Custom theme authors
+The native renderer places the sanitized public session name in a compact badge
+below the built-in pointer. The badge uses a session-accent gradient and a
+circular session marker. It appears when the cursor is first revealed, remains
+fully visible for two seconds, then fades over 400 milliseconds while the
+cursor stays available. Hiding and revealing the cursor shows the badge again.
+The badge is not part of the dotLottie theme artifact, so custom theme authors
 do not need to provide badge artwork or a font. Cua Driver strips control
-characters, collapses whitespace, and shortens labels longer than 28
-characters before rendering the bundled Inter typeface.
+characters, collapses whitespace, and shortens labels longer than 28 characters
+before rendering the bundled Inter typeface.
+
+The production pointer footprint is 42 logical points. Actions with a resolved
+screen target, including indexed or token-addressed text and value operations,
+move the agent cursor to that target before dispatch. Actions without a spatial
+target, such as typing into the already focused desktop application, keep the
+cursor at its current location and only change the semantic animation.
 
 The cursor is a visual aid for people watching an agent. It is not a security
 indicator, an authorization prompt, or evidence that a tool call succeeded.
@@ -232,9 +241,10 @@ From the repository root:
 ./libs/cua-driver/scripts/cursor-gallery.sh serve
 ```
 
-Open `http://127.0.0.1:3001` to pause, replay, change speed, and compare the
-states on light, dark, blue, or mixed backgrounds. The generated WebM files and
-raw frames are ignored by Git.
+Open `http://127.0.0.1:3001` to pause, replay, change speed, compare the states
+on light, dark, blue, or mixed backgrounds, and inspect the exact session-badge
+hold and fade behavior. The generated WebM files and raw frames are ignored by
+Git.
 
 Regenerate the public documentation GIFs after changing the built-in cursor:
 

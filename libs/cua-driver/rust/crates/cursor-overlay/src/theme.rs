@@ -16,7 +16,7 @@ pub const DEFAULT_THEME_ID: &str = "cua.default";
 pub const DEFAULT_THEME_VERSION: &str = "1.0.0";
 pub const THEME_PROFILE: &str = "cua-driver-full-v1";
 pub const CANVAS_SIZE: f32 = 128.0;
-pub const DISPLAY_SIZE: f32 = 48.0;
+pub const DISPLAY_SIZE: f32 = 42.0;
 const FLOAT_DURATION_SECS: f32 = 4.0;
 
 pub const DEFAULT_CURSOR_FILL: [u8; 4] = [94, 192, 232, 255];
@@ -259,8 +259,8 @@ mod tests {
     }
 
     #[test]
-    fn default_theme_uses_compact_48_point_footprint() {
-        assert_eq!(DISPLAY_SIZE, 48.0);
+    fn default_theme_uses_compact_42_point_footprint() {
+        assert_eq!(DISPLAY_SIZE, 42.0);
     }
 
     #[test]

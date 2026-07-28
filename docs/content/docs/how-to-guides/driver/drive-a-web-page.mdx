@@ -331,6 +331,20 @@ browser_type({
 
 The default `insert_text` mode is efficient for ordinary text. Use
 `mode: "keystrokes"` when the page depends on per-character keyboard events.
+Both modes insert at the current selection. To replace a pre-filled value,
+pass `replace: true`. An empty `text` with `replace: true` clears the field
+through normal input events:
+
+```jsonc
+browser_type({
+  "target_id": "<target_id>",
+  "tab_id": "<tab_id>",
+  "ref": "p2:4",
+  "text": "new value",
+  "replace": true,
+  "session": "research-1"
+})
+```
 
 ## Use extended pointer actions
 

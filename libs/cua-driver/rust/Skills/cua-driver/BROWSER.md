@@ -297,8 +297,11 @@ cua-driver browser_type \
 ```
 
 `insert_text` is the default bulk insertion route. Use `keystrokes` only when
-the page requires per-character key events. Inspect the live schema when in
-doubt:
+the page requires per-character key events. Both modes insert at the current
+selection. When a field already contains text, pass `"replace":true` to select
+its complete value first. Passing an empty `text` with `replace:true` clears
+the field while preserving normal input events. Inspect the live schema when
+in doubt:
 
 ```bash
 cua-driver describe browser_type

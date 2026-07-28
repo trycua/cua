@@ -810,12 +810,13 @@ Click a page element (by ref) or viewport coordinates in an exactly-bound tab. D
 
 ### `browser_type`
 
-Type text into an exactly-bound tab via the Input domain. mode="insert_text" (default) uses Input.insertText; mode="keystrokes" dispatches per-character key events. Pass a ref to an editable element from the latest snapshot. A ref is required; heuristic bindings are refused.
+Type text into an exactly-bound tab via the Input domain. mode="insert_text" (default) uses Input.insertText; mode="keystrokes" dispatches per-character key events. Both insert at the caret, so typing into a field that already holds text appends to it; pass replace=true to set the field instead, or to clear it by typing an empty string. Pass a ref to an editable element from the latest snapshot. A ref is required; heuristic bindings are refused.
 
 **Arguments:**
 
 - `mode` (string, optional): insert_text (default): bulk Input.insertText. keystrokes: per-character Input.dispatchKeyEvent.
 - `ref` (string, required): Page element ref in the p&lt;snapshot&gt;:&lt;index&gt; namespace from get_browser_state. Refs are invalidated by navigation and by newer snapshots of the same tab.
+- `replace` (boolean, optional): false (default): insert at the caret, appending to whatever the field already holds. true: select the element's whole content first so the text replaces it — with an empty text this clears the field. Replacement goes through the selection, so beforeinput/input still fire and framework state stays consistent.
 - `session` (string, optional): Stable caller-declared session id. Browser targets, tabs, and refs are scoped to this session.
 - `tab_id` (string, required): Opaque tab id from get_browser_state (session-scoped).
 - `target_id` (string, required): Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).

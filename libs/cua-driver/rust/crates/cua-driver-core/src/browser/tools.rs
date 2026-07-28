@@ -15,6 +15,7 @@ use crate::tool::{ProtectedResourceOwnership, Tool, ToolDef, ToolRegistry};
 use crate::tool_args::ArgsExt;
 
 use super::approval::MCP_HOST_APPROVAL_ARG;
+use super::cdp_ws::CdpConnection;
 use super::download::BrowserDownloadTool;
 use super::engine::{BrowserEngine, BrowserTabScreenshot};
 use super::platform::{
@@ -1331,6 +1332,145 @@ const FOCUS_EMULATION_READY_CHECK: &str = "function() { \
     return document.hasFocus() && active === this; \
 }";
 
+// Select the element's whole content so the next insertion replaces it instead
+// of appending. Returns the number of characters selected, or -1 when the node
+// is not a shape we know how to select. Selection is the only clearing path
+// that keeps input semantics intact: assigning `value` directly would skip the
+// beforeinput/input events that frameworks bind their state to.
+const SELECT_ALL_IN_ELEMENT: &str = "function() { \
+    if (this.tagName === 'INPUT' || this.tagName === 'TEXTAREA') { \
+        const value = this.value || ''; \
+        try { this.setSelectionRange(0, value.length); } catch (e) { \
+            try { this.select(); } catch (_) { return -1; } \
+        } \
+        if (this.selectionStart !== 0 || this.selectionEnd !== value.length) return -1; \
+        return Array.from(value).length; \
+    } \
+    if (this.isContentEditable) { \
+        const root = this.getRootNode(); \
+        const owner = ('getSelection' in root) ? root : this.ownerDocument; \
+        const selection = owner.getSelection(); \
+        if (!selection) return -1; \
+        const range = this.ownerDocument.createRange(); \
+        range.selectNodeContents(this); \
+        selection.removeAllRanges(); \
+        selection.addRange(range); \
+        return Array.from(this.textContent || '').length; \
+    } \
+    return -1; \
+}";
+
+/// Put the element's entire content into the selection.
+///
+/// `browser_type` delivers through `Input.insertText` and the trusted key path,
+/// and both insert at the caret. Without an explicit selection there is no way
+/// to *set* a field that already holds text — a caller who tries ends up with
+/// the old and the new value concatenated. Both delivery paths replace the
+/// current selection, so selecting everything first turns "insert" into "set".
+async fn select_all_in_element(
+    conn: &CdpConnection,
+    cdp: &str,
+    object_id: &str,
+) -> Result<usize, String> {
+    let selected = conn
+        .call(
+            Some(cdp),
+            "Runtime.callFunctionOn",
+            json!({
+                "objectId": object_id,
+                "functionDeclaration": SELECT_ALL_IN_ELEMENT,
+                "returnByValue": true,
+            }),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    match selected["result"]["value"].as_i64() {
+        Some(n) if n >= 0 => Ok(n as usize),
+        _ => Err("the ref is not a text input, textarea, or contenteditable \
+                  element, so its content cannot be selected for replacement"
+            .into()),
+    }
+}
+
+/// Establish Chromium's trusted-input focus state for an inactive tab.
+///
+/// Selection alone is not durable in a fully occluded window: without focus
+/// emulation Chromium can accept `Input.insertText` while discarding the
+/// selection, silently turning replacement back into append.
+async fn enter_focus_emulation(
+    conn: &CdpConnection,
+    cdp: &str,
+    backend_node_id: i64,
+    object_id: &str,
+) -> Result<(), String> {
+    conn.call(
+        Some(cdp),
+        "Emulation.setFocusEmulationEnabled",
+        json!({ "enabled": true }),
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+
+    let mut focus_error = None;
+    for _ in 0..20 {
+        if let Err(error) = conn
+            .call(
+                Some(cdp),
+                "DOM.focus",
+                json!({ "backendNodeId": backend_node_id }),
+            )
+            .await
+        {
+            focus_error = Some(error.to_string());
+            break;
+        }
+        let ready = conn
+            .call(
+                Some(cdp),
+                "Runtime.callFunctionOn",
+                json!({
+                    "objectId": object_id,
+                    "functionDeclaration": FOCUS_EMULATION_READY_CHECK,
+                    "returnByValue": true,
+                }),
+            )
+            .await;
+        if matches!(
+            ready,
+            Ok(ref value) if value["result"]["value"].as_bool() == Some(true)
+        ) {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            if let Err(error) = conn
+                .call(
+                    Some(cdp),
+                    "DOM.focus",
+                    json!({ "backendNodeId": backend_node_id }),
+                )
+                .await
+            {
+                focus_error = Some(error.to_string());
+                break;
+            }
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+
+    let _ = conn
+        .call(
+            Some(cdp),
+            "Emulation.setFocusEmulationEnabled",
+            json!({ "enabled": false }),
+        )
+        .await;
+    Err(format!(
+        "the exact editable ref did not become focus-ready under CDP emulation{}",
+        focus_error
+            .map(|error| format!(": {error}"))
+            .unwrap_or_default()
+    ))
+}
+
 pub struct BrowserTypeTool {
     def: ToolDef,
     engine: Arc<BrowserEngine>,
@@ -1342,9 +1482,11 @@ impl BrowserTypeTool {
             name: "browser_type".into(),
             description: "Type text into an exactly-bound tab via the Input domain. \
                 mode=\"insert_text\" (default) uses Input.insertText; \
-                mode=\"keystrokes\" dispatches per-character key events. Pass a ref \
-                to an editable element from the latest snapshot. A ref is required; \
-                heuristic bindings are refused."
+                mode=\"keystrokes\" dispatches per-character key events. Both insert \
+                at the caret, so typing into a field that already holds text appends \
+                to it; pass replace=true to set the field instead, or to clear it by \
+                typing an empty string. Pass a ref to an editable element from the \
+                latest snapshot. A ref is required; heuristic bindings are refused."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -1359,6 +1501,15 @@ impl BrowserTypeTool {
                         "enum": ["insert_text", "keystrokes"],
                         "description": "insert_text (default): bulk Input.insertText. \
                             keystrokes: per-character Input.dispatchKeyEvent."
+                    },
+                    "replace": {
+                        "type": "boolean",
+                        "description": "false (default): insert at the caret, appending \
+                            to whatever the field already holds. true: select the \
+                            element's whole content first so the text replaces it — \
+                            with an empty text this clears the field. Replacement goes \
+                            through the selection, so beforeinput/input still fire and \
+                            framework state stays consistent."
                     },
                 },
                 "required": ["target_id", "tab_id", "ref", "text"],
@@ -1422,6 +1573,7 @@ impl Tool for BrowserTypeTool {
                 "mode must be \"insert_text\" or \"keystrokes\", got {mode:?}"
             ));
         }
+        let replace = args.opt_bool("replace").unwrap_or(false);
 
         let _mutation = match self
             .engine
@@ -1568,11 +1720,93 @@ impl Tool for BrowserTypeTool {
         }
 
         let requested_chars = text.chars().count();
+        let mut replaced_chars = 0usize;
         let (typed, delivered_chars) = if mode == "insert_text" {
-            match conn
-                .call(Some(cdp), "Input.insertText", json!({ "text": text }))
-                .await
-            {
+            if replace {
+                if let Err(detail) =
+                    enter_focus_emulation(conn, cdp, entry.backend_node_id, &object_id).await
+                {
+                    return BrowserRefusal::new(
+                        BrowserRefusalCode::BrowserInputTrustUnavailable,
+                        format!(
+                            "the inactive tab could not prepare trusted replacement input: {detail}"
+                        ),
+                    )
+                    .to_tool_result();
+                }
+                match select_all_in_element(conn, cdp, &object_id).await {
+                    Ok(n) => replaced_chars = n,
+                    Err(detail) => {
+                        let _ = conn
+                            .call(
+                                Some(cdp),
+                                "Emulation.setFocusEmulationEnabled",
+                                json!({ "enabled": false }),
+                            )
+                            .await;
+                        return BrowserRefusal::new(
+                            BrowserRefusalCode::BrowserActionUnavailable,
+                            format!("replace=true could not select the ref's content: {detail}"),
+                        )
+                        .to_tool_result();
+                    }
+                }
+            }
+            // An empty insertText is a no-op, so "clear the field" needs an
+            // explicit deletion of the selection we just made. Delete keeps the
+            // same event path as typing; it is not a value assignment.
+            let mut call = if replace && text.is_empty() {
+                if replaced_chars == 0 {
+                    Ok(json!({}))
+                } else {
+                    match conn
+                        .call(
+                            Some(cdp),
+                            "Input.dispatchKeyEvent",
+                            json!({
+                                "type": "keyDown",
+                                "key": "Delete",
+                                "code": "Delete",
+                                "windowsVirtualKeyCode": 46,
+                                "nativeVirtualKeyCode": 46,
+                            }),
+                        )
+                        .await
+                    {
+                        Ok(_) => {
+                            conn.call(
+                                Some(cdp),
+                                "Input.dispatchKeyEvent",
+                                json!({
+                                    "type": "keyUp",
+                                    "key": "Delete",
+                                    "code": "Delete",
+                                    "windowsVirtualKeyCode": 46,
+                                    "nativeVirtualKeyCode": 46,
+                                }),
+                            )
+                            .await
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
+            } else {
+                conn.call(Some(cdp), "Input.insertText", json!({ "text": text }))
+                    .await
+            };
+            if replace {
+                if let Err(error) = conn
+                    .call(
+                        Some(cdp),
+                        "Emulation.setFocusEmulationEnabled",
+                        json!({ "enabled": false }),
+                    )
+                    .await
+                {
+                    call = Err(error);
+                }
+            }
+            match call {
                 Ok(_) => (Ok(()), requested_chars),
                 Err(error) => (Err(error), 0),
             }
@@ -1672,8 +1906,56 @@ impl Tool for BrowserTypeTool {
                 )
                 .to_tool_result();
             }
+            // Select AFTER the last DOM.focus above: re-focusing a node drops
+            // the selection again, so selecting any earlier would silently
+            // degrade replace=true back to append.
+            if replace {
+                match select_all_in_element(conn, cdp, &object_id).await {
+                    Ok(n) => replaced_chars = n,
+                    Err(detail) => {
+                        // Leave focus emulation the way we found it, exactly as
+                        // the other early returns in this branch do.
+                        let _ = conn
+                            .call(
+                                Some(cdp),
+                                "Emulation.setFocusEmulationEnabled",
+                                json!({ "enabled": false }),
+                            )
+                            .await;
+                        return BrowserRefusal::new(
+                            BrowserRefusalCode::BrowserActionUnavailable,
+                            format!("replace=true could not select the ref's content: {detail}"),
+                        )
+                        .to_tool_result();
+                    }
+                }
+            }
             let mut result = Ok(());
             let mut delivered = 0;
+            // No characters to type means the selection has to go away by
+            // itself; the loop below would leave the old content selected but
+            // present, and "cleared" would be a false report.
+            if replace && text.is_empty() && replaced_chars > 0 {
+                for phase in ["keyDown", "keyUp"] {
+                    if let Err(error) = conn
+                        .call(
+                            Some(cdp),
+                            "Input.dispatchKeyEvent",
+                            json!({
+                                "type": phase,
+                                "key": "Delete",
+                                "code": "Delete",
+                                "windowsVirtualKeyCode": 46,
+                                "nativeVirtualKeyCode": 46,
+                            }),
+                        )
+                        .await
+                    {
+                        result = Err(error);
+                        break;
+                    }
+                }
+            }
             for ch in text.chars() {
                 let (key, key_text) = if ch == '\n' {
                     ("Enter".to_string(), "\r".to_string())
@@ -1730,10 +2012,14 @@ impl Tool for BrowserTypeTool {
         };
 
         match typed {
-            Ok(()) => ToolResult::text(format!(
-                "typed {} char(s) into {tab_id}",
-                requested_chars
-            ))
+            Ok(()) => ToolResult::text(if replace {
+                format!(
+                    "typed {requested_chars} char(s) into {tab_id}, replacing \
+                     {replaced_chars} char(s)"
+                )
+            } else {
+                format!("typed {requested_chars} char(s) into {tab_id}")
+            })
             .with_structured(json!({
                 "status": "ok",
                 "target_id": target_id,
@@ -1744,6 +2030,11 @@ impl Tool for BrowserTypeTool {
                 "chars": requested_chars,
                 "requested_chars": requested_chars,
                 "delivered_chars": delivered_chars,
+                // Report what was displaced, not just what was sent: a caller
+                // that asked to replace needs to distinguish "set an empty
+                // field" from "overwrote something" without re-reading the page.
+                "replace": replace,
+                "replaced_chars": replaced_chars,
             })),
             Err(e) => BrowserRefusal::new(
                 BrowserRefusalCode::BrowserInputIncomplete,

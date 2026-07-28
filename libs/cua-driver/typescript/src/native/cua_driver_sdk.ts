@@ -4,14 +4,14 @@
 /* eslint-disable */
 // @ts-nocheck
 import nativeModule from "./cua_driver_sdk-ffi.js";
-import { type UniffiRustFutureContinuationCallback, type UniffiForeignFutureDroppedCallback, type UniffiForeignFutureDroppedCallbackStruct,
+import { type UniffiRustFutureContinuationCallback, type UniffiForeignFutureDroppedCallback, type UniffiForeignFutureDroppedCallbackStruct, type UniffiVTableCallbackInterfaceCuaDriverSdkDriverActivityObserver, type UniffiForeignFutureResultRustBuffer, type UniffiForeignFutureCompleterustBuffer, type UniffiVTableCallbackInterfaceCuaDriverSdkDriverAuthorizationHost,
 } from "./cua_driver_sdk-ffi.js";
-import { type ClickInput, type DragInput, type EndSessionInput, type EndSessionOutput, type EscalateSessionInput, type GetCursorPositionInput, type GetDesktopStateInput, type GetScreenSizeInput, type GetSessionStateInput, type HotkeyInput, type MoveCursorInput, type PressKeyInput, type ScrollInput, type SessionStateOutput, type StartSessionInput, type StartSessionOutput, type TypeTextInput,
+import { type ClickInput, type DragInput, type EndSessionInput, type EndSessionOutput, type EscalateSessionInput, type GetAgentCursorStateInput, type GetCursorPositionInput, type GetDesktopStateInput, type GetScreenSizeInput, type GetSessionStateInput, type HotkeyInput, type MoveCursorInput, type PressKeyInput, type ScrollInput, type SessionStateOutput, type SetAgentCursorEnabledInput, type SetAgentCursorMotionInput, type SetAgentCursorThemeInput, type StartSessionInput, type StartSessionOutput, type TypeTextInput,
 } from "./cua_driver_contract.js";
-import { type FfiConverter, type UniffiByteArray, type UniffiGcObject, type UniffiHandle, type UniffiObjectFactory, AbstractFfiConverterByteArray, FfiConverterArray, FfiConverterBool, FfiConverterInt32, FfiConverterObject, FfiConverterOptional, FfiConverterUInt32, FfiConverterUInt64, FfiConverterUInt8, RustBuffer, UniffiAbstractObject, UniffiEnum, UniffiError, UniffiInternalError, UniffiRustCaller, destructorGuardSymbol, pointerLiteralSymbol, uniffiCreateFfiConverterString, uniffiCreateRecord, uniffiRustCallAsync, uniffiTypeNameSymbol, variantOrdinalSymbol,
+import { type FfiConverter, type UniffiByteArray, type UniffiGcObject, type UniffiHandle, type UniffiObjectFactory, type UniffiReferenceHolder, type UniffiRustCallStatus, AbstractFfiConverterByteArray, FfiConverterArray, FfiConverterBool, FfiConverterInt32, FfiConverterObject, FfiConverterObjectWithCallbacks, FfiConverterOptional, FfiConverterUInt32, FfiConverterUInt64, FfiConverterUInt8, RustBuffer, UniffiAbstractObject, UniffiEnum, UniffiError, UniffiInternalError, UniffiResult, UniffiRustCaller, destructorGuardSymbol, pointerLiteralSymbol, uniffiCreateFfiConverterString, uniffiCreateRecord, uniffiRustCallAsync, uniffiTraitInterfaceCall, uniffiTraitInterfaceCallAsyncWithError, uniffiTypeNameSymbol, variantOrdinalSymbol,
 } from "@ubjs/core";
 import uniffiCuaDriverContractModule from "./cua_driver_contract.js";
-const { FfiConverterTypeClickInput, FfiConverterTypeDragInput, FfiConverterTypeEndSessionInput, FfiConverterTypeEndSessionOutput, FfiConverterTypeEscalateSessionInput, FfiConverterTypeGetCursorPositionInput, FfiConverterTypeGetDesktopStateInput, FfiConverterTypeGetScreenSizeInput, FfiConverterTypeGetSessionStateInput, FfiConverterTypeHotkeyInput, FfiConverterTypeMoveCursorInput, FfiConverterTypePressKeyInput, FfiConverterTypeScrollInput, FfiConverterTypeSessionStateOutput, FfiConverterTypeStartSessionInput, FfiConverterTypeStartSessionOutput, FfiConverterTypeTypeTextInput } = uniffiCuaDriverContractModule.converters;
+const { FfiConverterTypeClickInput, FfiConverterTypeDragInput, FfiConverterTypeEndSessionInput, FfiConverterTypeEndSessionOutput, FfiConverterTypeEscalateSessionInput, FfiConverterTypeGetAgentCursorStateInput, FfiConverterTypeGetCursorPositionInput, FfiConverterTypeGetDesktopStateInput, FfiConverterTypeGetScreenSizeInput, FfiConverterTypeGetSessionStateInput, FfiConverterTypeHotkeyInput, FfiConverterTypeMoveCursorInput, FfiConverterTypePressKeyInput, FfiConverterTypeScrollInput, FfiConverterTypeSessionStateOutput, FfiConverterTypeSetAgentCursorEnabledInput, FfiConverterTypeSetAgentCursorMotionInput, FfiConverterTypeSetAgentCursorThemeInput, FfiConverterTypeStartSessionInput, FfiConverterTypeStartSessionOutput, FfiConverterTypeTypeTextInput } = uniffiCuaDriverContractModule.converters;
 const uniffiCaller = new UniffiRustCaller(() => ({ code: 0 }));
 
 const uniffiIsDebug =
@@ -250,6 +250,294 @@ const FfiConverterTypeConfiguredDriverOptions = (() => {
         allocationSize(value: TypeName): number {
             return FfiConverterBool.allocationSize(value.claudeCodeCompatibility) +
              FfiConverterTypeRuntimeAuthorizationOptions.allocationSize(value.authorization);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export enum DriverActivityKind {
+    AuthorizedAction,
+    AuthorizationRefused,
+    ActionFailed,
+    GrantIssued,
+    GrantRevoked,
+    SessionStarted,
+    SessionEnded
+}
+
+const FfiConverterTypeDriverActivityKind = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = DriverActivityKind;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return DriverActivityKind.AuthorizedAction;
+                case 2: return DriverActivityKind.AuthorizationRefused;
+                case 3: return DriverActivityKind.ActionFailed;
+                case 4: return DriverActivityKind.GrantIssued;
+                case 5: return DriverActivityKind.GrantRevoked;
+                case 6: return DriverActivityKind.SessionStarted;
+                case 7: return DriverActivityKind.SessionEnded;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case DriverActivityKind.AuthorizedAction: return ordinalConverter.write(1, into);
+                case DriverActivityKind.AuthorizationRefused: return ordinalConverter.write(2, into);
+                case DriverActivityKind.ActionFailed: return ordinalConverter.write(3, into);
+                case DriverActivityKind.GrantIssued: return ordinalConverter.write(4, into);
+                case DriverActivityKind.GrantRevoked: return ordinalConverter.write(5, into);
+                case DriverActivityKind.SessionStarted: return ordinalConverter.write(6, into);
+                case DriverActivityKind.SessionEnded: return ordinalConverter.write(7, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+/**
+ * A content-free lifecycle event emitted after native authorization decides
+ * a call. It never carries arguments, page text, paths, typed input, images,
+ * or raw resource identities.
+ */
+export type DriverActivityEvent = {
+    kind: DriverActivityKind,
+    unixMs: bigint,
+    toolName: string,
+    adapterIds: Array<string>,
+    riskClass: string,
+    publicSession?: string,
+    refusalCode?: string
+}
+
+/**
+ * Generated factory for {@link DriverActivityEvent} record objects.
+ */
+export const DriverActivityEvent = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<DriverActivityEvent, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<DriverActivityEvent>,
+    });
+})();
+
+const FfiConverterTypeDriverActivityEvent = (() => {
+    type TypeName = DriverActivityEvent;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                kind: FfiConverterTypeDriverActivityKind.read(from),
+                unixMs: FfiConverterUInt64.read(from),
+                toolName: FfiConverterString.read(from),
+                adapterIds: FfiConverterSequenceString.read(from),
+                riskClass: FfiConverterString.read(from),
+                publicSession: FfiConverterOptionalString.read(from),
+                refusalCode: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeDriverActivityKind.write(value.kind, into);
+            FfiConverterUInt64.write(value.unixMs, into);
+            FfiConverterString.write(value.toolName, into);
+            FfiConverterSequenceString.write(value.adapterIds, into);
+            FfiConverterString.write(value.riskClass, into);
+            FfiConverterOptionalString.write(value.publicSession, into);
+            FfiConverterOptionalString.write(value.refusalCode, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeDriverActivityKind.allocationSize(value.kind) +
+             FfiConverterUInt64.allocationSize(value.unixMs) +
+             FfiConverterString.allocationSize(value.toolName) +
+             FfiConverterSequenceString.allocationSize(value.adapterIds) +
+             FfiConverterString.allocationSize(value.riskClass) +
+             FfiConverterOptionalString.allocationSize(value.publicSession) +
+             FfiConverterOptionalString.allocationSize(value.refusalCode);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export enum DriverAuthorizationAction {
+    Allow,
+    Deny,
+    Cancel
+}
+
+const FfiConverterTypeDriverAuthorizationAction = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = DriverAuthorizationAction;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return DriverAuthorizationAction.Allow;
+                case 2: return DriverAuthorizationAction.Deny;
+                case 3: return DriverAuthorizationAction.Cancel;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case DriverAuthorizationAction.Allow: return ordinalConverter.write(1, into);
+                case DriverAuthorizationAction.Deny: return ordinalConverter.write(2, into);
+                case DriverAuthorizationAction.Cancel: return ordinalConverter.write(3, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export type DriverAuthorizationDecision = {
+    action: DriverAuthorizationAction,
+    requestDigest: string
+}
+
+/**
+ * Generated factory for {@link DriverAuthorizationDecision} record objects.
+ */
+export const DriverAuthorizationDecision = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<DriverAuthorizationDecision, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<DriverAuthorizationDecision>,
+    });
+})();
+
+const FfiConverterTypeDriverAuthorizationDecision = (() => {
+    type TypeName = DriverAuthorizationDecision;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                action: FfiConverterTypeDriverAuthorizationAction.read(from),
+                requestDigest: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeDriverAuthorizationAction.write(value.action, into);
+            FfiConverterString.write(value.requestDigest, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeDriverAuthorizationAction.allocationSize(value.action) +
+             FfiConverterString.allocationSize(value.requestDigest);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * Content-bounded request delivered only to trusted host code.
+ *
+ * `resource_json` contains an attested resource identity. Hosts must avoid
+ * logging it or forwarding it to a model.
+ */
+export type DriverAuthorizationRequest = {
+    schema: string,
+    nonce: string,
+    generation: bigint,
+    daemonInstance: string,
+    permissionMode: string,
+    managedPolicySha256?: string,
+    userPolicySha256?: string,
+    adapterId: string,
+    riskClass: string,
+    publicSession: string,
+    transportSession: string,
+    resourceJson: string,
+    humanSummary: string,
+    expiresUnixMs: bigint,
+    requestDigest: string
+}
+
+/**
+ * Generated factory for {@link DriverAuthorizationRequest} record objects.
+ */
+export const DriverAuthorizationRequest = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<DriverAuthorizationRequest, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<DriverAuthorizationRequest>,
+    });
+})();
+
+const FfiConverterTypeDriverAuthorizationRequest = (() => {
+    type TypeName = DriverAuthorizationRequest;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                schema: FfiConverterString.read(from),
+                nonce: FfiConverterString.read(from),
+                generation: FfiConverterUInt64.read(from),
+                daemonInstance: FfiConverterString.read(from),
+                permissionMode: FfiConverterString.read(from),
+                managedPolicySha256: FfiConverterOptionalString.read(from),
+                userPolicySha256: FfiConverterOptionalString.read(from),
+                adapterId: FfiConverterString.read(from),
+                riskClass: FfiConverterString.read(from),
+                publicSession: FfiConverterString.read(from),
+                transportSession: FfiConverterString.read(from),
+                resourceJson: FfiConverterString.read(from),
+                humanSummary: FfiConverterString.read(from),
+                expiresUnixMs: FfiConverterUInt64.read(from),
+                requestDigest: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.schema, into);
+            FfiConverterString.write(value.nonce, into);
+            FfiConverterUInt64.write(value.generation, into);
+            FfiConverterString.write(value.daemonInstance, into);
+            FfiConverterString.write(value.permissionMode, into);
+            FfiConverterOptionalString.write(value.managedPolicySha256, into);
+            FfiConverterOptionalString.write(value.userPolicySha256, into);
+            FfiConverterString.write(value.adapterId, into);
+            FfiConverterString.write(value.riskClass, into);
+            FfiConverterString.write(value.publicSession, into);
+            FfiConverterString.write(value.transportSession, into);
+            FfiConverterString.write(value.resourceJson, into);
+            FfiConverterString.write(value.humanSummary, into);
+            FfiConverterUInt64.write(value.expiresUnixMs, into);
+            FfiConverterString.write(value.requestDigest, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.schema) +
+             FfiConverterString.allocationSize(value.nonce) +
+             FfiConverterUInt64.allocationSize(value.generation) +
+             FfiConverterString.allocationSize(value.daemonInstance) +
+             FfiConverterString.allocationSize(value.permissionMode) +
+             FfiConverterOptionalString.allocationSize(value.managedPolicySha256) +
+             FfiConverterOptionalString.allocationSize(value.userPolicySha256) +
+             FfiConverterString.allocationSize(value.adapterId) +
+             FfiConverterString.allocationSize(value.riskClass) +
+             FfiConverterString.allocationSize(value.publicSession) +
+             FfiConverterString.allocationSize(value.transportSession) +
+             FfiConverterString.allocationSize(value.resourceJson) +
+             FfiConverterString.allocationSize(value.humanSummary) +
+             FfiConverterUInt64.allocationSize(value.expiresUnixMs) +
+             FfiConverterString.allocationSize(value.requestDigest);
 
         }
     };
@@ -1000,6 +1288,105 @@ const FfiConverterTypeActionCompletion = (() => {
         }
         allocationSize(value: TypeName): number {
             return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+
+// Error type: DriverAuthorizationHostError
+export enum DriverAuthorizationHostError_Tags {
+    Failed = "Failed"
+}
+export const DriverAuthorizationHostError = (() => {
+
+    type Failed__interface = {
+        tag: DriverAuthorizationHostError_Tags.Failed;
+        inner:
+Readonly<{reason: string}>
+    };
+    class Failed_ extends UniffiError implements Failed__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "DriverAuthorizationHostError";
+        readonly tag = DriverAuthorizationHostError_Tags.Failed;
+        readonly inner:
+Readonly<{reason: string}>;
+        constructor(
+inner: {reason: string }) {
+            super("DriverAuthorizationHostError", "Failed");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {reason: string }): Failed_ {
+            return new Failed_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Failed_ {
+            return obj.tag === DriverAuthorizationHostError_Tags.Failed;
+        }
+        static hasInner(obj: any): obj is Failed_ {
+            return Failed_.instanceOf(obj);
+        }
+
+        static getInner(obj: Failed_):
+Readonly<{reason: string}> {
+            return obj.inner;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is DriverAuthorizationHostError {
+        return obj[uniffiTypeNameSymbol] === "DriverAuthorizationHostError";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  Failed: Failed_
+    });
+
+})();
+export type DriverAuthorizationHostError = InstanceType<
+    typeof DriverAuthorizationHostError['Failed']
+>;
+
+// FfiConverter for enum DriverAuthorizationHostError
+const FfiConverterTypeDriverAuthorizationHostError = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = DriverAuthorizationHostError;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return new DriverAuthorizationHostError.Failed({reason: FfiConverterString.read(from) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value.tag) {
+                case DriverAuthorizationHostError_Tags.Failed: {
+                    ordinalConverter.write(1, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.reason, into);
+                    return;
+                }
+                default:
+                    // Throwing from here means that DriverAuthorizationHostError_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case DriverAuthorizationHostError_Tags.Failed: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(1);
+                    size += FfiConverterString.allocationSize(inner.reason);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
         }
     }
     return new FFIConverter();
@@ -2150,6 +2537,7 @@ export interface CuaDriverLike {
     endSession(input: EndSessionInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<EndSessionOutput>;
     escalateSession(input: EscalateSessionInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SessionStateOutput>;
     executionMode(): DriverExecutionMode;
+    getAgentCursorState(input: GetAgentCursorStateInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ToolResult>;
     getCursorPosition(input: GetCursorPositionInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ToolResult>;
     getDesktopState(input: GetDesktopStateInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ToolResult>;
     getScreenSize(input: GetScreenSizeInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ToolResult>;
@@ -2163,7 +2551,11 @@ export interface CuaDriverLike {
     metadata(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<DriverMetadata>;
     moveCursor(input: MoveCursorInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ToolResult>;
     pressKey(input: PressKeyInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ToolResult>;
+    runtimeScopePrefix(): string | undefined;
     scroll(input: ScrollInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ToolResult>;
+    setAgentCursorEnabled(input: SetAgentCursorEnabledInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ToolResult>;
+    setAgentCursorMotion(input: SetAgentCursorMotionInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ToolResult>;
+    setAgentCursorTheme(input: SetAgentCursorThemeInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ToolResult>;
 /**
  * Stop accepting new embedded operations. Repeated calls are harmless;
  * daemon compatibility clients do not own the daemon and therefore no-op.
@@ -2263,6 +2655,78 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
+ * Create a configured same-process runtime with a content-free activity
+ * observer supplied by trusted embedding-host code.
+ */
+    static createConfiguredWithActivityObserver(options: ConfiguredDriverOptions, observer: DriverActivityObserver): CuaDriverLike /*throws*/ {
+    return FfiConverterTypeCuaDriver.lift(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeDriverError.lift.bind(FfiConverterTypeDriverError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with_activity_observer(
+        FfiConverterTypeConfiguredDriverOptions.lower(options, nativeModule().rustbuffer_alloc),
+        FfiConverterTypeDriverActivityObserver.lower(observer, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * Language-package entry point for a configured activity-observer runtime.
+ */
+    static createConfiguredWithActivityObserverAndClientKind(options: ConfiguredDriverOptions, observer: DriverActivityObserver, clientKind: SdkClientKind): CuaDriverLike /*throws*/ {
+    return FfiConverterTypeCuaDriver.lift(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeDriverError.lift.bind(FfiConverterTypeDriverError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with_activity_observer_and_client_kind(
+        FfiConverterTypeConfiguredDriverOptions.lower(options, nativeModule().rustbuffer_alloc),
+        FfiConverterTypeDriverActivityObserver.lower(observer, nativeModule().rustbuffer_alloc),
+        FfiConverterTypeSdkClientKind.lower(clientKind, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * Create a configured same-process runtime with an optional residual
+ * authorization callback supplied by trusted embedding-host code.
+ *
+ * The callback object is immutable runtime configuration. Applications
+ * must not expose it to an agent or implement it using ordinary MCP
+ * elicitation, model-visible stdio, or an auto-accepting callback.
+ */
+    static createConfiguredWithAuthorizationHost(options: ConfiguredDriverOptions, host: DriverAuthorizationHost): CuaDriverLike /*throws*/ {
+    return FfiConverterTypeCuaDriver.lift(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeDriverError.lift.bind(FfiConverterTypeDriverError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with_authorization_host(
+        FfiConverterTypeConfiguredDriverOptions.lower(options, nativeModule().rustbuffer_alloc),
+        FfiConverterTypeDriverAuthorizationHost.lower(host, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * Language-package entry point for a configured protected-host runtime.
+ */
+    static createConfiguredWithAuthorizationHostAndClientKind(options: ConfiguredDriverOptions, host: DriverAuthorizationHost, clientKind: SdkClientKind): CuaDriverLike /*throws*/ {
+    return FfiConverterTypeCuaDriver.lift(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeDriverError.lift.bind(FfiConverterTypeDriverError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with_authorization_host_and_client_kind(
+        FfiConverterTypeConfiguredDriverOptions.lower(options, nativeModule().rustbuffer_alloc),
+        FfiConverterTypeDriverAuthorizationHost.lower(host, nativeModule().rustbuffer_alloc),
+        FfiConverterTypeSdkClientKind.lower(clientKind, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
  * Language-package entry point for an explicitly configured runtime.
  */
     static createConfiguredWithClientKind(options: ConfiguredDriverOptions, clientKind: SdkClientKind): CuaDriverLike /*throws*/ {
@@ -2271,6 +2735,42 @@ private constructor(pointer: UniffiHandle) {
             /*caller:*/ (callStatus) => {
                 return nativeModule().uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with_client_kind(
         FfiConverterTypeConfiguredDriverOptions.lower(options, nativeModule().rustbuffer_alloc),
+        FfiConverterTypeSdkClientKind.lower(clientKind, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * Create a configured same-process runtime with both residual
+ * authorization and content-free activity callbacks.
+ */
+    static createConfiguredWithHostIntegrations(options: ConfiguredDriverOptions, host: DriverAuthorizationHost, observer: DriverActivityObserver): CuaDriverLike /*throws*/ {
+    return FfiConverterTypeCuaDriver.lift(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeDriverError.lift.bind(FfiConverterTypeDriverError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with_host_integrations(
+        FfiConverterTypeConfiguredDriverOptions.lower(options, nativeModule().rustbuffer_alloc),
+        FfiConverterTypeDriverAuthorizationHost.lower(host, nativeModule().rustbuffer_alloc),
+        FfiConverterTypeDriverActivityObserver.lower(observer, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * Language-package entry point for both trusted host callbacks.
+ */
+    static createConfiguredWithHostIntegrationsAndClientKind(options: ConfiguredDriverOptions, host: DriverAuthorizationHost, observer: DriverActivityObserver, clientKind: SdkClientKind): CuaDriverLike /*throws*/ {
+    return FfiConverterTypeCuaDriver.lift(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeDriverError.lift.bind(FfiConverterTypeDriverError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_configured_with_host_integrations_and_client_kind(
+        FfiConverterTypeConfiguredDriverOptions.lower(options, nativeModule().rustbuffer_alloc),
+        FfiConverterTypeDriverAuthorizationHost.lower(host, nativeModule().rustbuffer_alloc),
+        FfiConverterTypeDriverActivityObserver.lower(observer, nativeModule().rustbuffer_alloc),
         FfiConverterTypeSdkClientKind.lower(clientKind, nativeModule().rustbuffer_alloc),
                 callStatus);
             },
@@ -2513,6 +3013,38 @@ private constructor(pointer: UniffiHandle) {
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
     ));
+    }
+
+    async getAgentCursorState(input: GetAgentCursorStateInput, asyncOpts_?: { signal: AbortSignal }): Promise<ToolResult> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_method_cuadriver_get_agent_cursor_state(
+                    uniffiTypeCuaDriverObjectFactory.clonePointer(this),FfiConverterTypeGetAgentCursorStateInput.lower(input, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeToolResult.lift.bind(FfiConverterTypeToolResult),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeDriverError.lift.bind(FfiConverterTypeDriverError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
     }
 
     async getCursorPosition(input: GetCursorPositionInput, asyncOpts_?: { signal: AbortSignal }): Promise<ToolResult> /*throws*/ {
@@ -2817,6 +3349,23 @@ private constructor(pointer: UniffiHandle) {
     }
     }
 
+    runtimeScopePrefix(): string | undefined {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterOptionalString.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_method_cuadriver_runtime_scope_prefix(
+                uniffiTypeCuaDriverObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
     async scroll(input: ScrollInput, asyncOpts_?: { signal: AbortSignal }): Promise<ToolResult> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
     try {
@@ -2825,6 +3374,102 @@ private constructor(pointer: UniffiHandle) {
             /*rustFutureFunc:*/ () => {
                 return nativeModule().uniffi_cua_driver_sdk_fn_method_cuadriver_scroll(
                     uniffiTypeCuaDriverObjectFactory.clonePointer(this),FfiConverterTypeScrollInput.lower(input, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeToolResult.lift.bind(FfiConverterTypeToolResult),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeDriverError.lift.bind(FfiConverterTypeDriverError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+    async setAgentCursorEnabled(input: SetAgentCursorEnabledInput, asyncOpts_?: { signal: AbortSignal }): Promise<ToolResult> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_method_cuadriver_set_agent_cursor_enabled(
+                    uniffiTypeCuaDriverObjectFactory.clonePointer(this),FfiConverterTypeSetAgentCursorEnabledInput.lower(input, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeToolResult.lift.bind(FfiConverterTypeToolResult),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeDriverError.lift.bind(FfiConverterTypeDriverError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+    async setAgentCursorMotion(input: SetAgentCursorMotionInput, asyncOpts_?: { signal: AbortSignal }): Promise<ToolResult> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_method_cuadriver_set_agent_cursor_motion(
+                    uniffiTypeCuaDriverObjectFactory.clonePointer(this),FfiConverterTypeSetAgentCursorMotionInput.lower(input, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeToolResult.lift.bind(FfiConverterTypeToolResult),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeDriverError.lift.bind(FfiConverterTypeDriverError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+    async setAgentCursorTheme(input: SetAgentCursorThemeInput, asyncOpts_?: { signal: AbortSignal }): Promise<ToolResult> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_method_cuadriver_set_agent_cursor_theme(
+                    uniffiTypeCuaDriverObjectFactory.clonePointer(this),FfiConverterTypeSetAgentCursorThemeInput.lower(input, nativeModule().rustbuffer_alloc)
                 );
             },
             /*pollFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_poll_rust_buffer,
@@ -3059,6 +3704,7 @@ export interface CuaDriverSessionLike {
     drag(input: DragInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ToolResult>;
     endSession(input: EndSessionInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<EndSessionOutput>;
     escalateSession(input: EscalateSessionInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SessionStateOutput>;
+    getAgentCursorState(input: GetAgentCursorStateInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ToolResult>;
     getCursorPosition(input: GetCursorPositionInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ToolResult>;
     getDesktopState(input: GetDesktopStateInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ToolResult>;
     getScreenSize(input: GetScreenSizeInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ToolResult>;
@@ -3067,6 +3713,9 @@ export interface CuaDriverSessionLike {
     moveCursor(input: MoveCursorInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ToolResult>;
     pressKey(input: PressKeyInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ToolResult>;
     scroll(input: ScrollInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ToolResult>;
+    setAgentCursorEnabled(input: SetAgentCursorEnabledInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ToolResult>;
+    setAgentCursorMotion(input: SetAgentCursorMotionInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ToolResult>;
+    setAgentCursorTheme(input: SetAgentCursorThemeInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ToolResult>;
     startSession(input: StartSessionInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<StartSessionOutput>;
     typeText(input: TypeTextInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ToolResult>;
 }
@@ -3254,6 +3903,38 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterTypeSessionStateOutput.lift.bind(FfiConverterTypeSessionStateOutput),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeDriverError.lift.bind(FfiConverterTypeDriverError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+    async getAgentCursorState(input: GetAgentCursorStateInput, asyncOpts_?: { signal: AbortSignal }): Promise<ToolResult> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_method_cuadriversession_get_agent_cursor_state(
+                    uniffiTypeCuaDriverSessionObjectFactory.clonePointer(this),FfiConverterTypeGetAgentCursorStateInput.lower(input, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeToolResult.lift.bind(FfiConverterTypeToolResult),
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeDriverError.lift.bind(FfiConverterTypeDriverError)
@@ -3522,6 +4203,102 @@ private constructor(pointer: UniffiHandle) {
     }
     }
 
+    async setAgentCursorEnabled(input: SetAgentCursorEnabledInput, asyncOpts_?: { signal: AbortSignal }): Promise<ToolResult> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_method_cuadriversession_set_agent_cursor_enabled(
+                    uniffiTypeCuaDriverSessionObjectFactory.clonePointer(this),FfiConverterTypeSetAgentCursorEnabledInput.lower(input, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeToolResult.lift.bind(FfiConverterTypeToolResult),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeDriverError.lift.bind(FfiConverterTypeDriverError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+    async setAgentCursorMotion(input: SetAgentCursorMotionInput, asyncOpts_?: { signal: AbortSignal }): Promise<ToolResult> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_method_cuadriversession_set_agent_cursor_motion(
+                    uniffiTypeCuaDriverSessionObjectFactory.clonePointer(this),FfiConverterTypeSetAgentCursorMotionInput.lower(input, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeToolResult.lift.bind(FfiConverterTypeToolResult),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeDriverError.lift.bind(FfiConverterTypeDriverError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+    async setAgentCursorTheme(input: SetAgentCursorThemeInput, asyncOpts_?: { signal: AbortSignal }): Promise<ToolResult> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_method_cuadriversession_set_agent_cursor_theme(
+                    uniffiTypeCuaDriverSessionObjectFactory.clonePointer(this),FfiConverterTypeSetAgentCursorThemeInput.lower(input, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeToolResult.lift.bind(FfiConverterTypeToolResult),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeDriverError.lift.bind(FfiConverterTypeDriverError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
     async startSession(input: StartSessionInput, asyncOpts_?: { signal: AbortSignal }): Promise<StartSessionOutput> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
     try {
@@ -3665,6 +4442,388 @@ const uniffiTypeCuaDriverSessionObjectFactory: UniffiObjectFactory<CuaDriverSess
     },
 }})();
 const FfiConverterTypeCuaDriverSession = new FfiConverterObject(uniffiTypeCuaDriverSessionObjectFactory);
+
+/**
+ * Optional observer implemented by trusted embedding-host code.
+ *
+ * Observations are informational and cannot grant authority or change a tool
+ * result. Implementations should return quickly and hand off expensive work.
+ */
+export interface DriverActivityObserver {
+
+    onActivity(event: DriverActivityEvent): void;
+}
+
+
+/**
+ * Optional observer implemented by trusted embedding-host code.
+ *
+ * Observations are informational and cannot grant authority or change a tool
+ * result. Implementations should return quickly and hand off expensive work.
+ */
+export class DriverActivityObserverImpl extends UniffiAbstractObject implements DriverActivityObserver {
+
+    readonly [uniffiTypeNameSymbol] = "DriverActivityObserverImpl";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    // No primary constructor declared for this class.
+private constructor(pointer: UniffiHandle) {
+    super();
+    this[pointerLiteralSymbol] = pointer;
+    this[destructorGuardSymbol] = uniffiTypeDriverActivityObserverImplObjectFactory.bless(pointer);
+}
+
+
+
+
+    onActivity(event: DriverActivityEvent): void {uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => { nativeModule().uniffi_cua_driver_sdk_fn_method_driveractivityobserver_on_activity(
+                uniffiTypeDriverActivityObserverImplObjectFactory.clonePointer(this),
+        FfiConverterTypeDriverActivityEvent.lower(event, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    );
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeDriverActivityObserverImplObjectFactory.pointer(this);
+            uniffiTypeDriverActivityObserverImplObjectFactory.freePointer(pointer);
+            uniffiTypeDriverActivityObserverImplObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is DriverActivityObserverImpl {
+        return uniffiTypeDriverActivityObserverImplObjectFactory.isConcreteType(obj_);
+    }
+
+
+}
+
+const uniffiTypeDriverActivityObserverImplObjectFactory: UniffiObjectFactory<DriverActivityObserver> = (() => {
+
+    /// <reference lib="es2021" />
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeDriverActivityObserverImplObjectFactory.freePointer(heldValue);
+    }) : null;
+
+    return {
+    create(pointer: UniffiHandle): DriverActivityObserver {
+        const instance = Object.create(DriverActivityObserverImpl.prototype);
+        instance[pointerLiteralSymbol] = pointer;
+        instance[destructorGuardSymbol] = this.bless(pointer);
+        instance[uniffiTypeNameSymbol] = "DriverActivityObserverImpl";
+        return instance;
+    },
+
+
+    bless(p: UniffiHandle): UniffiGcObject {
+        const ptr = {
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
+        };
+        if (registry) {
+            registry.register(ptr, p, ptr);
+        }
+        return ptr;
+    },
+
+    unbless(ptr_: UniffiGcObject) {
+        if (registry) {
+            registry.unregister(ptr_);
+        }
+    },
+
+    pointer(obj_: DriverActivityObserver): UniffiHandle {
+        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
+            throw new UniffiInternalError.UnexpectedNullPointer();
+        }
+        return (obj_ as any)[pointerLiteralSymbol];
+    },
+
+    clonePointer(obj_: DriverActivityObserver): UniffiHandle {
+        const pointer = this.pointer(obj_);
+        return uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_driver_sdk_fn_clone_driveractivityobserver(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    freePointer(pointer: UniffiHandle): void {
+        uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_driver_sdk_fn_free_driveractivityobserver(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    isConcreteType(obj_: any): obj_ is DriverActivityObserver {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "DriverActivityObserverImpl";
+    },
+}})();
+const FfiConverterTypeDriverActivityObserver = new FfiConverterObjectWithCallbacks(uniffiTypeDriverActivityObserverImplObjectFactory);
+
+// Add a vtable for the callbacks that go in DriverActivityObserver.
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+const uniffiCallbackInterfaceDriverActivityObserver: { vtable: any; register: () => void; } = {
+    // Create the VTable using a series of closures.
+    // ts automatically converts these into C callback functions.
+    vtable: {
+        on_activity: (
+            uniffiHandle: bigint,
+            event: Uint8Array,) => {
+            const uniffiMakeCall =
+            ()
+            : void => {
+                const jsCallback = FfiConverterTypeDriverActivityObserver.lift(uniffiHandle);
+                return jsCallback.onActivity(
+                    FfiConverterTypeDriverActivityEvent.lift(event)
+                )
+            };
+            const uniffiResult = UniffiResult.ready<void>();
+            const uniffiHandleSuccess = (obj: any) => {};
+            const uniffiHandleError = (code: number, errBuf: UniffiByteArray) => {
+                UniffiResult.writeError(uniffiResult, code, errBuf);
+            };
+            uniffiTraitInterfaceCall(
+                /*makeCall:*/ uniffiMakeCall,
+                /*handleSuccess:*/ uniffiHandleSuccess,
+                /*handleError:*/ uniffiHandleError,
+                /*lowerString:*/ FfiConverterString.lower.bind(FfiConverterString),
+                /*alloc:*/ nativeModule().rustbuffer_alloc,
+            )
+            return uniffiResult;
+        },
+        uniffi_free: (uniffiHandle: UniffiHandle): void => {
+            // this will throw a stale handle error if the handle isn't found.
+            FfiConverterTypeDriverActivityObserver.drop(uniffiHandle);
+        },
+        uniffi_clone: (uniffiHandle: UniffiHandle): UniffiHandle => {
+            return FfiConverterTypeDriverActivityObserver.clone(uniffiHandle);
+        }
+    },
+    register: () => {nativeModule().uniffi_cua_driver_sdk_fn_init_callback_vtable_driveractivityobserver(
+            uniffiCallbackInterfaceDriverActivityObserver.vtable
+        );
+    },
+};
+
+/**
+ * Optional callback implemented by a trusted embedding application.
+ *
+ * Cua invokes this only for a residual boundary whose active permission mode
+ * requires a host grant. Routine standard-mode automation and every
+ * in-manifest bounded operation bypass it.
+ */
+export interface DriverAuthorizationHost {
+
+    authorize(request: DriverAuthorizationRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<DriverAuthorizationDecision>;
+}
+
+
+/**
+ * Optional callback implemented by a trusted embedding application.
+ *
+ * Cua invokes this only for a residual boundary whose active permission mode
+ * requires a host grant. Routine standard-mode automation and every
+ * in-manifest bounded operation bypass it.
+ */
+export class DriverAuthorizationHostImpl extends UniffiAbstractObject implements DriverAuthorizationHost {
+
+    readonly [uniffiTypeNameSymbol] = "DriverAuthorizationHostImpl";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    // No primary constructor declared for this class.
+private constructor(pointer: UniffiHandle) {
+    super();
+    this[pointerLiteralSymbol] = pointer;
+    this[destructorGuardSymbol] = uniffiTypeDriverAuthorizationHostImplObjectFactory.bless(pointer);
+}
+
+
+
+
+    async authorize(request: DriverAuthorizationRequest, asyncOpts_?: { signal: AbortSignal }): Promise<DriverAuthorizationDecision> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_method_driverauthorizationhost_authorize(
+                    uniffiTypeDriverAuthorizationHostImplObjectFactory.clonePointer(this),FfiConverterTypeDriverAuthorizationRequest.lower(request, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_driver_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeDriverAuthorizationDecision.lift.bind(FfiConverterTypeDriverAuthorizationDecision),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeDriverAuthorizationHostError.lift.bind(FfiConverterTypeDriverAuthorizationHostError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeDriverAuthorizationHostImplObjectFactory.pointer(this);
+            uniffiTypeDriverAuthorizationHostImplObjectFactory.freePointer(pointer);
+            uniffiTypeDriverAuthorizationHostImplObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is DriverAuthorizationHostImpl {
+        return uniffiTypeDriverAuthorizationHostImplObjectFactory.isConcreteType(obj_);
+    }
+
+
+}
+
+const uniffiTypeDriverAuthorizationHostImplObjectFactory: UniffiObjectFactory<DriverAuthorizationHost> = (() => {
+
+    /// <reference lib="es2021" />
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeDriverAuthorizationHostImplObjectFactory.freePointer(heldValue);
+    }) : null;
+
+    return {
+    create(pointer: UniffiHandle): DriverAuthorizationHost {
+        const instance = Object.create(DriverAuthorizationHostImpl.prototype);
+        instance[pointerLiteralSymbol] = pointer;
+        instance[destructorGuardSymbol] = this.bless(pointer);
+        instance[uniffiTypeNameSymbol] = "DriverAuthorizationHostImpl";
+        return instance;
+    },
+
+
+    bless(p: UniffiHandle): UniffiGcObject {
+        const ptr = {
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
+        };
+        if (registry) {
+            registry.register(ptr, p, ptr);
+        }
+        return ptr;
+    },
+
+    unbless(ptr_: UniffiGcObject) {
+        if (registry) {
+            registry.unregister(ptr_);
+        }
+    },
+
+    pointer(obj_: DriverAuthorizationHost): UniffiHandle {
+        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
+            throw new UniffiInternalError.UnexpectedNullPointer();
+        }
+        return (obj_ as any)[pointerLiteralSymbol];
+    },
+
+    clonePointer(obj_: DriverAuthorizationHost): UniffiHandle {
+        const pointer = this.pointer(obj_);
+        return uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_driver_sdk_fn_clone_driverauthorizationhost(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    freePointer(pointer: UniffiHandle): void {
+        uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_driver_sdk_fn_free_driverauthorizationhost(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    isConcreteType(obj_: any): obj_ is DriverAuthorizationHost {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "DriverAuthorizationHostImpl";
+    },
+}})();
+const FfiConverterTypeDriverAuthorizationHost = new FfiConverterObjectWithCallbacks(uniffiTypeDriverAuthorizationHostImplObjectFactory);
+
+// Add a vtable for the callbacks that go in DriverAuthorizationHost.
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+const uniffiCallbackInterfaceDriverAuthorizationHost: { vtable: any; register: () => void; } = {
+    // Create the VTable using a series of closures.
+    // ts automatically converts these into C callback functions.
+    vtable: {
+        authorize: (
+            uniffiHandle: bigint,
+            request: Uint8Array,
+            uniffiFutureCallback: UniffiForeignFutureCompleterustBuffer,
+            uniffiCallbackData: bigint) => {
+            const uniffiMakeCall =
+            async (signal: AbortSignal)
+            : Promise<DriverAuthorizationDecision> => {
+                const jsCallback = FfiConverterTypeDriverAuthorizationHost.lift(uniffiHandle);
+                return await jsCallback.authorize(
+                    FfiConverterTypeDriverAuthorizationRequest.lift(request), { signal }
+                )
+            };
+            const uniffiHandleSuccess = (returnValue: DriverAuthorizationDecision) => {
+                uniffiFutureCallback.call(
+                    uniffiFutureCallback,
+                    uniffiCallbackData,
+                    /* UniffiForeignFutureResultRustBuffer */{
+                        return_value: FfiConverterTypeDriverAuthorizationDecision.lower(returnValue, nativeModule().rustbuffer_alloc),
+                        call_status: uniffiCaller.createCallStatus()
+                    }
+                );
+            };
+            const uniffiHandleError = (code: number, errorBuf: UniffiByteArray) => {
+                uniffiFutureCallback.call(
+                    uniffiFutureCallback,
+                    uniffiCallbackData,
+                    /* UniffiForeignFutureResultRustBuffer */{
+                        return_value: /*empty*/ new Uint8Array(0),
+                        // TODO create callstatus with error.
+                        call_status: uniffiCaller.createErrorStatus(code, errorBuf),
+                    }
+                );
+            };
+            const uniffiForeignFuture = uniffiTraitInterfaceCallAsyncWithError(
+                /*makeCall:*/ uniffiMakeCall,
+                /*handleSuccess:*/ uniffiHandleSuccess,
+                /*handleError:*/ uniffiHandleError,
+                /*isErrorType:*/ DriverAuthorizationHostError.instanceOf,
+                /*lowerError:*/ FfiConverterTypeDriverAuthorizationHostError.lower.bind(FfiConverterTypeDriverAuthorizationHostError),
+                /*lowerString:*/ FfiConverterString.lower.bind(FfiConverterString),
+                /*alloc:*/ nativeModule().rustbuffer_alloc,
+            );
+            return uniffiForeignFuture;
+        },
+        uniffi_free: (uniffiHandle: UniffiHandle): void => {
+            // this will throw a stale handle error if the handle isn't found.
+            FfiConverterTypeDriverAuthorizationHost.drop(uniffiHandle);
+        },
+        uniffi_clone: (uniffiHandle: UniffiHandle): UniffiHandle => {
+            return FfiConverterTypeDriverAuthorizationHost.clone(uniffiHandle);
+        }
+    },
+    register: () => {nativeModule().uniffi_cua_driver_sdk_fn_init_callback_vtable_driverauthorizationhost(
+            uniffiCallbackInterfaceDriverAuthorizationHost.vtable
+        );
+    },
+};
 
 export interface EmbeddedCuaDriverHostLike {
 
@@ -4031,8 +5190,26 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured() !== 58596) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured");
     }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_activity_observer() !== 37471) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_activity_observer");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_activity_observer_and_client_kind() !== 50814) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_activity_observer_and_client_kind");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_authorization_host() !== 28087) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_authorization_host");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_authorization_host_and_client_kind() !== 17837) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_authorization_host_and_client_kind");
+    }
     if (nativeModule().uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_client_kind() !== 23819) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_client_kind");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_host_integrations() !== 2578) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_host_integrations");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_host_integrations_and_client_kind() !== 25294) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_configured_with_host_integrations_and_client_kind");
     }
     if (nativeModule().uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_private_worker() !== 8571) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_private_worker");
@@ -4060,6 +5237,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriver_execution_mode() !== 2639) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cuadriver_execution_mode");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriver_get_agent_cursor_state() !== 45642) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cuadriver_get_agent_cursor_state");
     }
     if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriver_get_cursor_position() !== 34285) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cuadriver_get_cursor_position");
@@ -4091,8 +5271,20 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriver_press_key() !== 63712) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cuadriver_press_key");
     }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriver_runtime_scope_prefix() !== 2453) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cuadriver_runtime_scope_prefix");
+    }
     if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriver_scroll() !== 52290) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cuadriver_scroll");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriver_set_agent_cursor_enabled() !== 26268) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cuadriver_set_agent_cursor_enabled");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriver_set_agent_cursor_motion() !== 12578) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cuadriver_set_agent_cursor_motion");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriver_set_agent_cursor_theme() !== 53908) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cuadriver_set_agent_cursor_theme");
     }
     if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriver_shutdown() !== 36331) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cuadriver_shutdown");
@@ -4124,6 +5316,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriversession_escalate_session() !== 34392) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cuadriversession_escalate_session");
     }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriversession_get_agent_cursor_state() !== 60344) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cuadriversession_get_agent_cursor_state");
+    }
     if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriversession_get_cursor_position() !== 54838) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cuadriversession_get_cursor_position");
     }
@@ -4148,11 +5343,26 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriversession_scroll() !== 8013) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cuadriversession_scroll");
     }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriversession_set_agent_cursor_enabled() !== 37153) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cuadriversession_set_agent_cursor_enabled");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriversession_set_agent_cursor_motion() !== 26144) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cuadriversession_set_agent_cursor_motion");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriversession_set_agent_cursor_theme() !== 29734) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cuadriversession_set_agent_cursor_theme");
+    }
     if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriversession_start_session() !== 13118) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cuadriversession_start_session");
     }
     if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriversession_type_text() !== 63241) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cuadriversession_type_text");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_driveractivityobserver_on_activity() !== 9786) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_driveractivityobserver_on_activity");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_driverauthorizationhost_authorize() !== 10089) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_driverauthorizationhost_authorize");
     }
     if (nativeModule().uniffi_cua_driver_sdk_checksum_constructor_embeddedcuadriverhost_new() !== 10108) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_constructor_embeddedcuadriverhost_new");
@@ -4179,6 +5389,8 @@ function uniffiEnsureInitialized() {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_wait_for_exit");
     }
 
+    uniffiCallbackInterfaceDriverActivityObserver.register();
+    uniffiCallbackInterfaceDriverAuthorizationHost.register();
     }
 
 export default Object.freeze({
@@ -4188,6 +5400,14 @@ export default Object.freeze({
     FfiConverterTypeConfiguredDriverOptions,
     FfiConverterTypeCuaDriver,
     FfiConverterTypeCuaDriverSession,
+    FfiConverterTypeDriverActivityEvent,
+    FfiConverterTypeDriverActivityKind,
+    FfiConverterTypeDriverActivityObserver,
+    FfiConverterTypeDriverAuthorizationAction,
+    FfiConverterTypeDriverAuthorizationDecision,
+    FfiConverterTypeDriverAuthorizationHost,
+    FfiConverterTypeDriverAuthorizationHostError,
+    FfiConverterTypeDriverAuthorizationRequest,
     FfiConverterTypeDriverError,
     FfiConverterTypeDriverExecutionMode,
     FfiConverterTypeDriverMetadata,

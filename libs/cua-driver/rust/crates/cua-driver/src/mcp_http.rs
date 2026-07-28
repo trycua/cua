@@ -22,9 +22,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use cua_driver_core::protocol::{Request, Response};
-use cua_driver_core::server::{
-    handle_request, session_tool_context, tool_observation_timer, StdioExecutionPath,
-};
+use cua_driver_core::server::{handle_request, tool_observation_timer, StdioExecutionPath};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{debug, info, warn};
@@ -98,7 +96,15 @@ async fn serve_conn(
             return Ok(()); // clean EOF
         };
         let keep_alive = req.keep_alive;
-        if !req.authorized {
+        if req.has_origin {
+            write_http(
+                &mut stream,
+                403,
+                br#"{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Browser-origin requests are forbidden"}}"#,
+                keep_alive,
+            )
+            .await?;
+        } else if !req.authorized {
             write_http(
                 &mut stream,
                 401,
@@ -143,11 +149,14 @@ async fn dispatch(body: &[u8], sdk: &Arc<crate::sdk_adapter::SdkAdapter>) -> Opt
     };
     req.id.as_ref()?;
     let initialize_metadata = req.initialize_metadata();
-    let session_context = session_tool_context(
-        &req,
-        |name| sdk.is_known_tool(name),
-        cua_driver_core::session::SessionTransport::McpHttp,
-    );
+    let session_context = req.tool_call().ok().and_then(|call| {
+        sdk.begin_tool_call(
+            &call.name,
+            &call.args,
+            cua_driver_core::session::SessionTransport::McpHttp,
+            cua_driver_core::session::SessionClientKind::Mcp,
+        )
+    });
     let id = req.id.clone().unwrap_or(serde_json::Value::Null);
     apply_session_identity(&mut req);
     let timer = http_tool_observation_timer(&req, |name| sdk.is_known_tool(name));
@@ -182,10 +191,9 @@ fn serialize(resp: &Response) -> String {
 }
 
 /// Mirror an explicit `session` arg into `_session_id` (the per-session config /
-/// recording key) and refresh its idle-TTL — the HTTP-side equivalent of
-/// `serve.rs::apply_session_identity`. The agent cursor reads `session` directly
-/// (so it already works); this keeps config + recording session-scoping
-/// consistent across transports.
+/// recording key) — the HTTP-side equivalent of
+/// `serve.rs::apply_session_identity`. Runtime-private idle-TTL activity is
+/// refreshed later at the authorized registry boundary.
 fn apply_session_identity(req: &mut Request) {
     let Some(params) = req.params.as_mut() else {
         return;
@@ -201,7 +209,6 @@ fn apply_session_identity(req: &mut Request) {
     if let Some(sess) = session {
         args.entry("_session_id")
             .or_insert_with(|| serde_json::Value::String(sess.clone()));
-        cua_driver_core::session::touch_session(&sess);
     }
 }
 
@@ -211,6 +218,8 @@ struct HttpRequest {
     #[allow(dead_code)]
     path: String,
     body: Vec<u8>,
+    /// Browser requests carry Origin; native MCP clients normally do not.
+    has_origin: bool,
     /// Whether to keep the connection open after responding (HTTP/1.1 default;
     /// false if the client sent `Connection: close` or spoke HTTP/1.0).
     keep_alive: bool,
@@ -246,12 +255,15 @@ async fn read_http_request(
     let path = parts.next().unwrap_or("/").to_owned();
     let version = parts.next().unwrap_or("HTTP/1.1");
     let mut content_length = 0usize;
+    let mut has_origin = false;
     let mut keep_alive = version.eq_ignore_ascii_case("HTTP/1.1"); // 1.1 defaults to keep-alive
     let mut authorized = false;
     for line in lines {
         if let Some((k, v)) = line.split_once(':') {
             let (k, v) = (k.trim(), v.trim());
-            if k.eq_ignore_ascii_case("content-length") {
+            if k.eq_ignore_ascii_case("origin") {
+                has_origin = true;
+            } else if k.eq_ignore_ascii_case("content-length") {
                 content_length = v.parse().unwrap_or(0);
             } else if k.eq_ignore_ascii_case("connection") {
                 if v.eq_ignore_ascii_case("close") {
@@ -277,6 +289,7 @@ async fn read_http_request(
         method,
         path,
         body,
+        has_origin,
         keep_alive,
         authorized,
     }))
@@ -331,6 +344,7 @@ async fn write_http(
     let reason = match status {
         200 => "OK",
         202 => "Accepted",
+        403 => "Forbidden",
         401 => "Unauthorized",
         405 => "Method Not Allowed",
         _ => "OK",
@@ -352,6 +366,50 @@ async fn write_http(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    async fn serve_raw_request(sdk: Arc<crate::sdk_adapter::SdkAdapter>, request: &[u8]) -> String {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            serve_conn(
+                stream,
+                sdk,
+                Arc::<str>::from("0123456789abcdef0123456789abcdef"),
+            )
+            .await
+            .unwrap();
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        client.write_all(request).await.unwrap();
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+        server.await.unwrap();
+        String::from_utf8(response).unwrap()
+    }
+
+    #[tokio::test]
+    async fn origin_header_is_forbidden_but_originless_request_is_unchanged() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
+        let sdk = crate::sdk_adapter::SdkAdapter::load(crate::build_driver_without_cursor())
+            .await
+            .expect("SDK adapter");
+        let without_origin = serve_raw_request(
+            sdk.clone(),
+            b"POST /mcp HTTP/1.1\r\nAuthorization: Bearer 0123456789abcdef0123456789abcdef\r\nContent-Length: 8\r\nConnection: close\r\n\r\nnot-json",
+        )
+        .await;
+        assert!(without_origin.starts_with("HTTP/1.1 200 OK\r\n"));
+
+        let with_origin = serve_raw_request(
+            sdk.clone(),
+            b"POST /mcp HTTP/1.1\r\nAuthorization: Bearer 0123456789abcdef0123456789abcdef\r\noRiGiN:\r\nContent-Length: 8\r\nConnection: close\r\n\r\nnot-json",
+        )
+        .await;
+        assert!(with_origin.starts_with("HTTP/1.1 403 Forbidden\r\n"));
+        sdk.shutdown().await.expect("SDK shutdown");
+    }
 
     #[test]
     fn apply_session_identity_mirrors_session_to_session_id() {

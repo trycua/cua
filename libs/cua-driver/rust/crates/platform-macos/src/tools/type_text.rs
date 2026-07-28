@@ -548,7 +548,10 @@ fn read_axvalue(pid: i32, element_ptr_and_idx: Option<(usize, Option<usize>)>) -
 /// browser's OWN native chrome (address bar, toolbar) has no `AXWebArea`
 /// ancestor, so it stays trusted. Walks a bounded ancestor chain; each
 /// `AXParent` copy is released, and it stops at the window/app boundary.
-fn target_in_web_area(pid: i32, element_ptr_and_idx: Option<(usize, Option<usize>)>) -> bool {
+pub(super) fn target_in_web_area(
+    pid: i32,
+    element_ptr_and_idx: Option<(usize, Option<usize>)>,
+) -> bool {
     use crate::ax::bindings::AXUIElementCopyAttributeValue;
     use core_foundation::base::{CFTypeRef, TCFType};
     use core_foundation::string::CFString;

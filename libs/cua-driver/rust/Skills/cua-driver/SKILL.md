@@ -131,11 +131,12 @@ Tool names are `snake_case`, management subcommands are
 `kebab-case` — no ambiguity. Tools invoked as `cua-driver
 <tool-name> '<JSON-args>'`. Management subcommands:
 
-- `cua-driver serve` — start the persistent daemon (**required for every
-  tool call**). CLI and MCP processes are adapters; the daemon owns policy,
-  platform identity, state, and the per-pid element cache.
-  macOS users: see `MACOS.md` for the LaunchServices-routed launch
-  form.
+- `cua-driver serve` — start an explicit persistent service when short-lived
+  clients must share runtime state or a platform identity. Bare MCP owns its
+  runtime directly on Windows/Linux and uses the signed app service on macOS;
+  `cua-driver mcp --socket <endpoint>` selects a service explicitly.
+  One-shot CLI tool calls still use the service path. macOS users: see
+  `MACOS.md` for the LaunchServices-routed launch form.
 - `cua-driver stop` / `status`
 - `cua-driver list-tools`, `describe <tool>`
 - `cua-driver recording start|stop|status` — see `RECORDING.md`
@@ -164,9 +165,14 @@ must be replaced by a fresh snapshot.
 
 Visual cursor overlay for demos and screen recordings. It is enabled by
 default for declared sessions; anonymous actions remain cursor-less. Toggle with
-`cua-driver set_agent_cursor_enabled '{"enabled":true|false}'` only to
-hide or re-show it. A triangle pointer Bezier-glides to each click
-target, ring-ripples on landing, idle-hides after ~1.5s. Motion knobs:
+`set_agent_cursor_enabled` to hide or re-show it. The embedded
+`cua.default` theme uses a session-colored pointer over a larger,
+cursor-shaped glow in the same session color. The glow fades to transparent
+around the full silhouette. Action and modifier marks use the same
+session-colored center and white-outline treatment, plus a tighter, softer
+glow. This pairing preserves contrast across varied backgrounds. It provides animations for
+idle, observe, click, drag, scroll, text, key, navigation, app, transfer,
+recording, and system activity. Motion knobs:
 `set_agent_cursor_motion` takes any subset of `start_handle`,
 `end_handle`, `arc_size`, `arc_flow`, `spring` — tuneable at runtime,
 persisted to config.
@@ -174,10 +180,16 @@ persisted to config.
 **Per-session cursors.** Each MCP session automatically owns its own
 cursor, keyed by the session's id (the proxy mints one session id per
 MCP connection and the daemon scopes the cursor, config overrides, and
-recording to it). You normally pass nothing — the session key is wired
-through for you. Pass an explicit `cursor_id` only to _deliberately
-share_ one cursor across sessions. When a session ends (the MCP client
-disconnects) its cursor is removed automatically.
+recording to it). The CLI and SDK contracts take the declared `session`
+explicitly. Cursor-theme controls no longer accept `cursor_id` or the legacy
+shape/color/image fields. Input-delivery tools may still use `cursor_id` to
+name a virtual pointer; it never selects artwork. The default cursor is Cua
+blue, while each named session receives a stable fill from the built-in
+palette. Select only preinstalled
+themes with `set_agent_cursor_theme`; theme source paths and inline animation
+data are never accepted through an agent tool. Use the trusted local
+`cua-driver cursor-theme` workflow to validate, compile, preview, install,
+list, or remove custom themes.
 
 **Visibility caveat (AX runs).** On a pure accessibility-action run
 (clicking by `element_index`), the first action **seeds the cursor
@@ -189,8 +201,12 @@ recording, do a pixel click (`click({pid,x,y})`) or a `move_cursor`
 first to put the cursor on-screen; subsequent AX actions then glide the
 full path normally.
 
-Requires the daemon process's UI runloop, which `cua-driver serve`
-bootstraps. One-shot CLI adapters do not own an overlay themselves.
+Requires a suitable UI event loop. Service and private-worker runtimes provide
+one. On macOS, a same-process SDK runtime or `cua-driver mcp --direct` without
+a certified host main-thread adapter returns a structured
+`facility_unavailable` result for overlay operations; do not treat that as a
+successful cursor move. One-shot CLI adapters do not own an overlay
+themselves.
 
 ## The core invariant — snapshot before AND after every action
 
@@ -690,7 +706,7 @@ schema-rejected.
 
 Genuinely platform-specific params stay OUT of the shared contract by
 design (launch-app identifiers, the Windows-only `debug_window_info`, the
-macOS-only `check_permissions.prompt`). The per-OS files list the
+macOS-only status-only `check_permissions.prompt`). The per-OS files list the
 residuals that matter when you drive on that platform.
 
 ## Pixel-coordinate clicks

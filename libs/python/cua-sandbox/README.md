@@ -6,9 +6,9 @@ Sandboxed VM environments with a unified Python API. Cloud by default.
 pip install cua-sandbox
 ```
 
-Fleet support requires the platform-specific `cua-train` wheel that bundles the
-`cyclops_sdk` native binding. Install from the Cua wheel index when resolving
-dependencies with pip:
+Fleet support is provided through the `cua-fleet` facade. Its transitive
+`cua-train` dependency bundles the platform-specific `cyclops_sdk` native binding.
+Install from the Cua wheel index when resolving dependencies with pip:
 
 ```bash
 pip install --extra-index-url https://wheels.cua.ai/simple cua-sandbox

@@ -538,13 +538,25 @@ provides-extras = ["otel", "telemetry"]
 dev = [{ name = "pytest", specifier = ">=8.3.5" }]
 
 [[package]]
+name = "cua-fleet"
+version = "0.0.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cua-train" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e9/2e/c629e6c5c80034fdf3e0274c370670a02e3decd4a716ae55fd426f52c0fe/cua_fleet-0.0.4.tar.gz", hash = "sha256:3c6a922fa800d6cd7fdc35c60a9d77f8f25b7b7b154ddd3b3f6053b5ce28581f", size = 3811, upload-time = "2026-07-26T17:02:18.455Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/24/84/f6be9349312eeb16a85fde9968979af2af042e846ffc26ccd5e17aa27ff3/cua_fleet-0.0.4-py3-none-any.whl", hash = "sha256:8a26610ae663eb231f2444ac4a03f8f8c41803679726e949ea7889ba1fe48766", size = 2393, upload-time = "2026-07-26T17:02:17.52Z" },
+]
+
+[[package]]
 name = "cua-sandbox"
 version = "0.1.17"
 source = { editable = "." }
 dependencies = [
     { name = "cua-auto" },
     { name = "cua-core" },
-    { name = "cua-train" },
+    { name = "cua-fleet" },
     { name = "grpcio" },
     { name = "httpx" },
     { name = "oras" },
@@ -576,7 +588,7 @@ dev = [
 requires-dist = [
     { name = "cua-auto", specifier = ">=0.1.2" },
     { name = "cua-core", specifier = ">=0.3.0,<0.4.0" },
-    { name = "cua-train", specifier = "==0.1.1", index = "https://wheels.cua.ai/simple" },
+    { name = "cua-fleet", specifier = "==0.0.4" },
     { name = "grpcio", specifier = "==1.78.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "oras", specifier = ">=0.2.40" },

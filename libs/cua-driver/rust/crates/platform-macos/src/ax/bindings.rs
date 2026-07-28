@@ -172,6 +172,11 @@ pub unsafe fn copy_number_attr(element: AXUIElementRef, attr_name: &str) -> Opti
 /// Copy a boolean attribute from an AX element. Returns `None` on any error
 /// or if the attribute is neither a `CFBoolean` nor a `CFNumber` (some apps
 /// report AXEnabled/AXSelected as a 0/1 CFNumber instead of a CFBoolean).
+///
+/// # Safety
+///
+/// `element` must be a valid Accessibility object reference for the duration
+/// of this call.
 pub unsafe fn copy_bool_attr(element: AXUIElementRef, attr_name: &str) -> Option<bool> {
     use core_foundation::boolean::CFBoolean;
     use core_foundation::number::CFNumber;
@@ -249,6 +254,11 @@ unsafe fn coerce_stringish_value(value: CFTypeRef) -> Option<StringishAttrValue>
 /// markdown while using the same single AX read for structured control state.
 /// Numbers render without a trailing `.0` when integral (`8`, not `8.0`), and
 /// booleans render as `1`/`0` to match AppKit's two-state controls.
+///
+/// # Safety
+///
+/// `element` must be a valid Accessibility object reference for the duration
+/// of this call.
 pub unsafe fn copy_stringish_attr(
     element: AXUIElementRef,
     attr_name: &str,

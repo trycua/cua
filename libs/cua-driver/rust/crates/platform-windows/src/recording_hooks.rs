@@ -7,7 +7,10 @@
 //!    on UIA/MSAA-indexed clicks (not just pixel-addressed ones).
 
 #[cfg(target_os = "windows")]
-use std::sync::{Arc, OnceLock};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex, OnceLock, Weak},
+};
 
 #[cfg(target_os = "windows")]
 use crate::uia::ElementCache;
@@ -26,11 +29,18 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 #[cfg(target_os = "windows")]
-static ELEMENT_CACHE: OnceLock<Arc<ElementCache>> = OnceLock::new();
+static ELEMENT_CACHES: OnceLock<Mutex<HashMap<String, Weak<ElementCache>>>> = OnceLock::new();
 
 #[cfg(target_os = "windows")]
 pub fn set_element_cache(cache: Arc<ElementCache>) {
-    let _ = ELEMENT_CACHE.set(cache);
+    let runtime_scope =
+        cua_driver_core::tool::current_dispatch_runtime_scope().unwrap_or_else(|| "legacy".into());
+    let mut caches = ELEMENT_CACHES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap();
+    caches.retain(|_, cache| cache.strong_count() > 0);
+    caches.insert(runtime_scope, Arc::downgrade(&cache));
 }
 
 /// Resolve the window whose application evidence should be captured. Keep a
@@ -104,7 +114,14 @@ pub fn app_state_json_for(window_id: Option<u64>, pid: Option<i64>) -> Option<Ve
 
 #[cfg(target_os = "windows")]
 pub fn element_window_local_xy(window_id: u64, pid: i64, element_index: u32) -> Option<(f64, f64)> {
-    let cache = ELEMENT_CACHE.get()?;
+    let runtime_scope =
+        cua_driver_core::tool::current_dispatch_runtime_scope().unwrap_or_else(|| "legacy".into());
+    let cache = ELEMENT_CACHES
+        .get()?
+        .lock()
+        .unwrap()
+        .get(&runtime_scope)?
+        .upgrade()?;
     let pid_u32 = u32::try_from(pid).ok()?;
     let (sx, sy) = cache.get_element_center(pid_u32, window_id, element_index as usize)?;
     // The cached center is in SCREEN coords. Convert to window-local pixel

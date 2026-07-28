@@ -12,10 +12,38 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use std::process::Command;
 
+struct SecureCapturePath {
+    directory: std::path::PathBuf,
+    file: std::path::PathBuf,
+}
+
+impl SecureCapturePath {
+    fn new(file_name: &str) -> anyhow::Result<Self> {
+        use std::os::unix::fs::DirBuilderExt;
+
+        let directory = std::env::temp_dir().join(format!(
+            "cua-driver-rs-capture-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::DirBuilder::new().mode(0o700).create(&directory)?;
+        let file = directory.join(file_name);
+        Ok(Self { directory, file })
+    }
+}
+
+impl Drop for SecureCapturePath {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.file);
+        let _ = std::fs::remove_dir(&self.directory);
+    }
+}
+
 /// Capture a window by its `window_id` (CGWindowID).
 /// Returns raw PNG bytes or an error.
 pub fn screenshot_window_bytes(window_id: u32) -> anyhow::Result<Vec<u8>> {
-    let tmp_path = format!("/tmp/cua-driver-rs-capture-{}.png", window_id);
+    let capture = SecureCapturePath::new("window.png")?;
+    let tmp_path = capture.file.to_string_lossy().into_owned();
 
     let output = Command::new("screencapture")
         .args([
@@ -41,8 +69,7 @@ pub fn screenshot_window_bytes(window_id: u32) -> anyhow::Result<Vec<u8>> {
         );
     }
 
-    let bytes = std::fs::read(&tmp_path)?;
-    let _ = std::fs::remove_file(&tmp_path);
+    let bytes = std::fs::read(&capture.file)?;
 
     if bytes.is_empty() {
         anyhow::bail!("screencapture produced empty output for window {window_id}");
@@ -62,11 +89,11 @@ pub fn screenshot_window(window_id: u32) -> anyhow::Result<(String, u32, u32)> {
 /// Capture the full main display.
 /// Returns raw PNG bytes or an error.
 pub fn screenshot_display_bytes() -> anyhow::Result<Vec<u8>> {
-    // Use a pid-unique path so concurrent cua-driver processes don't step on each other.
-    let tmp_path = format!("/tmp/cua-driver-rs-display-{}.png", std::process::id());
+    let capture = SecureCapturePath::new("display.png")?;
+    let tmp_path = capture.file.to_string_lossy().into_owned();
 
     let output = Command::new("screencapture")
-        .args(["-x", &*tmp_path])
+        .args(["-x", &tmp_path])
         .output()?;
 
     if !output.status.success() {
@@ -83,8 +110,7 @@ pub fn screenshot_display_bytes() -> anyhow::Result<Vec<u8>> {
         );
     }
 
-    let bytes = std::fs::read(&tmp_path)?;
-    let _ = std::fs::remove_file(&tmp_path);
+    let bytes = std::fs::read(&capture.file)?;
 
     if bytes.is_empty() {
         anyhow::bail!("screencapture produced empty output for main display");

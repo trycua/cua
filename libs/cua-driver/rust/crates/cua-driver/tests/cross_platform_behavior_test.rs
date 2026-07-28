@@ -366,7 +366,18 @@ fn launch_host_with_evidence(spec: &HostSpec, scenario: &str, evidence: &mut Evi
                         name: spec.name,
                         journal,
                     };
-                    let ax_deadline = Instant::now() + Duration::from_secs(10);
+                    // A freshly provisioned platform webview can need more than
+                    // the generic fixture budget to start its renderer and
+                    // expose the remote accessibility subtree (observed for
+                    // cold Windows WebView2 and macOS WKWebView helpers). Keep
+                    // the extension Tauri-specific and bounded; every other
+                    // harness still fails fast.
+                    let ax_timeout = if spec.name == "tauri" {
+                        Duration::from_secs(30)
+                    } else {
+                        Duration::from_secs(10)
+                    };
+                    let ax_deadline = Instant::now() + ax_timeout;
                     let mut last_tree = String::new();
                     while Instant::now() < ax_deadline {
                         let state = snapshot(&mut fixture);

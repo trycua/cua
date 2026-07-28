@@ -18,7 +18,6 @@ on:
           - pypi/computer-server
           - pypi/cloud
           - pypi/core
-          - pypi/fleet
           - pypi/mcp-server
           - pypi/sandbox
           - pypi/sandbox-apps
@@ -65,7 +64,7 @@ jobs:
           TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         run: |
           case "$ACTOR:$TRIGGERING_ACTOR" in
-            "f-trycua:f-trycua"|"cua-release-bot[bot]:cua-release-bot[bot]")
+            "f-trycua:f-trycua"|"r33drichards:r33drichards"|"cua-release-bot[bot]:cua-release-bot[bot]")
               echo "Version bump authorized for $ACTOR."
               ;;
             *)
@@ -122,10 +121,6 @@ jobs:
               ;;
             "pypi/core")
               echo "directory=libs/python/core" >> $GITHUB_OUTPUT
-              echo "type=python" >> $GITHUB_OUTPUT
-              ;;
-            "pypi/fleet")
-              echo "directory=libs/python/cua-fleet" >> $GITHUB_OUTPUT
               echo "type=python" >> $GITHUB_OUTPUT
               ;;
             "pypi/mcp-server")

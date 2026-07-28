@@ -137,6 +137,7 @@ pub struct ExistingProfileSetupOutcome {
     pub opened_setup_page: bool,
     pub closed_setup_page: bool,
     pub enabled_remote_debugging: bool,
+    pub used_bounded_pixel_fallback: bool,
     pub focused_setup_address_field: bool,
     pub foregrounded_window: bool,
     pub injected_global_input: bool,
@@ -203,6 +204,7 @@ pub struct PrepareSideEffects {
     pub opened_setup_page: bool,
     pub closed_setup_page: bool,
     pub enabled_remote_debugging: bool,
+    pub used_bounded_pixel_fallback: bool,
     pub focused_setup_address_field: bool,
     pub foregrounded_window: bool,
     pub injected_global_input: bool,
@@ -264,6 +266,22 @@ pub trait BrowserPlatform: Send + Sync {
         &self,
         pid: i64,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal>;
+
+    /// Attest the exact private-profile endpoint emitted by a browser process
+    /// that core just spawned. The default keeps ordinary exact-pid ownership.
+    /// Platforms with launcher-stub handoffs may override this narrowly; they
+    /// must match `expected_ws_url` and retain the exact listener pid so core
+    /// can promote the live runtime identity.
+    async fn discover_spawned_endpoint(
+        &self,
+        pid: i64,
+        expected_ws_url: &str,
+    ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        Ok(self
+            .discover_owned_endpoint(pid)
+            .await?
+            .filter(|endpoint| endpoint.ws_url == expected_ws_url))
+    }
 
     /// Discover an endpoint while handling an explicitly approved
     /// existing-profile request. The default is the ordinary side-effect-free

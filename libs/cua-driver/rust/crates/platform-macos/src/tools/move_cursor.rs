@@ -81,6 +81,9 @@ impl Tool for MoveCursorTool {
                 Err(error) => ToolResult::error(format!("desktop pointer task failed: {error}")),
             };
         }
+        if !self.state.cursor_overlay_available {
+            return super::cursor_overlay_unavailable();
+        }
         let x = match args.require_f64("x") {
             Ok(v) => v,
             Err(e) => return e,

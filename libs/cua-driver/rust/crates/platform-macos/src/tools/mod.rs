@@ -40,6 +40,11 @@ use std::sync::Arc;
 
 use crate::{ax::cache::ElementCache, cursor::state::CursorRegistry};
 
+pub use check_permissions::{
+    request_from_launchservices_host as request_permissions_from_launchservices_host,
+    PERMISSIONS_HOST_REQUEST_ARG,
+};
+
 /// Per-process zoom context — stores the padded crop origin and resize scale
 /// from the most recent `zoom` call, so `click(from_zoom=true)` can translate
 /// zoom-image pixel coordinates back to full-window coordinates.
@@ -458,10 +463,30 @@ pub struct ToolState {
     /// see `CdpSessionCache` for why (Chrome's "allow remote debugging"
     /// popup fires on every new connection, not once per session).
     pub cdp_sessions: Arc<crate::browser::CdpSessionCache>,
+    /// Whether the runtime owner installed the AppKit main-thread cursor
+    /// overlay facility. Imported SDK runtimes deliberately leave this false;
+    /// explicit cursor-overlay methods must refuse instead of reporting a
+    /// successful no-op.
+    pub cursor_overlay_available: bool,
+    /// Direct and embedded hosts own TCC request UX. Their runtime may inspect
+    /// permission state but must not raise Cua-owned prompts.
+    pub host_owns_permission_ux: bool,
+    /// Advisory host identity for permission diagnostics only.
+    pub host_bundle_id: Option<String>,
 }
 
 impl Default for ToolState {
     fn default() -> Self {
+        Self::new(false, false, None)
+    }
+}
+
+impl ToolState {
+    fn new(
+        cursor_overlay_available: bool,
+        host_owns_permission_ux: bool,
+        host_bundle_id: Option<String>,
+    ) -> Self {
         Self {
             element_cache: Arc::new(ElementCache::new()),
             cursor_registry: Arc::new(CursorRegistry::new()),
@@ -472,19 +497,46 @@ impl Default for ToolState {
             config: Arc::new(std::sync::RwLock::new(load_driver_config())),
             session_config: Arc::new(SessionConfigRegistry::new()),
             cdp_sessions: Arc::new(crate::browser::CdpSessionCache::new()),
+            cursor_overlay_available,
+            host_owns_permission_ux,
+            host_bundle_id,
         }
     }
+}
+
+pub(crate) fn cursor_overlay_unavailable() -> cua_driver_core::protocol::ToolResult {
+    let message = "macOS agent cursor overlay is unavailable: this runtime owner has no certified \
+                   AppKit main-thread host adapter or no Window Server graphic-session access; \
+                   use a GUI private worker or standalone service for cursor-overlay controls";
+    cua_driver_core::protocol::ToolResult::error(message).with_structured(serde_json::json!({
+        "status": "refused",
+        "refusal": {
+            "code": "facility_unavailable",
+            "facility": "macos_cursor_overlay",
+            "message": message,
+        }
+    }))
 }
 
 /// Register all macOS tools into the registry. `compat=true` swaps the
 /// regular `screenshot` tool for the Claude Code computer-use compat
 /// variant — same name, stricter args, window-scoped JPEG @ 85% + a text
 /// note telling the caller to use pixel-addressed tools.
-pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
-    let state = Arc::new(ToolState::default());
-    {
+pub fn register_all(
+    registry: &mut ToolRegistry,
+    compat: bool,
+    cursor_overlay_available: bool,
+    host_owns_permission_ux: bool,
+    host_bundle_id: Option<String>,
+) {
+    let state = Arc::new(ToolState::new(
+        cursor_overlay_available,
+        host_owns_permission_ux,
+        host_bundle_id,
+    ));
+    let cursor_outcome_reader = {
         let cursor_registry = state.cursor_registry.clone();
-        let _ = cua_driver_core::session::set_cursor_outcome_reader(std::sync::Arc::new(
+        cua_driver_core::session::register_scoped_cursor_outcome_reader(std::sync::Arc::new(
             move |session_id| {
                 let state = cursor_registry.get(session_id);
                 let motion_customized = state.is_some()
@@ -500,9 +552,7 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
                     Some(state) => cua_driver_core::session::bounded_cursor_outcome(
                         true,
                         state.config.enabled,
-                        state.config.cursor_icon.as_deref(),
-                        state.config.cursor_color.as_deref(),
-                        state.config.cursor_label.as_deref(),
+                        Some(state.config.theme_id.as_str()),
                         motion_customized,
                         active_cursor_count,
                     ),
@@ -510,14 +560,27 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
                         false,
                         false,
                         None,
-                        None,
-                        None,
                         false,
                         active_cursor_count,
                     ),
                 }
             },
-        ));
+        ))
+    };
+    registry.retain_cursor_outcome_reader(cursor_outcome_reader);
+    if let Some(runtime_scope) = cua_driver_core::tool::current_dispatch_runtime_scope() {
+        let prefix = format!("__cua_runtime_{runtime_scope}:");
+        let cursor_registry = state.cursor_registry.clone();
+        registry.retain_runtime_cleanup(move || {
+            for cursor in cursor_registry
+                .all_states()
+                .into_iter()
+                .filter(|cursor| cursor.config.cursor_id.starts_with(&prefix))
+            {
+                cursor_registry.remove(&cursor.config.cursor_id);
+                crate::cursor::overlay::remove_cursor(cursor.config.cursor_id);
+            }
+        });
     }
     // Share the element cache with the recording-hook layer so it can
     // resolve element_index → window-local screenshot coords for click.png.
@@ -529,17 +592,19 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
     {
         let session_config = state.session_config.clone();
         let cursor_registry = state.cursor_registry.clone();
-        cua_driver_core::session::register_session_end_hook(move |session_id| {
-            session_config.clear(session_id);
-            // Per-session agent cursor: the session_id is the cursor key when
-            // the caller gave no explicit cursor_id, so dropping it here both
-            // prunes the metadata registry and stops the overlay painting that
-            // session's cursor. Both paths guard "default" so the anonymous /
-            // one-shot cursor survives. Anonymous sessions that never created a
-            // cursor are a harmless no-op.
-            cursor_registry.remove(session_id);
-            crate::cursor::overlay::remove_cursor(session_id.to_owned());
-        });
+        let registration =
+            cua_driver_core::session::register_scoped_session_end_hook(move |session_id| {
+                session_config.clear(session_id);
+                // Per-session agent cursor: the session_id is the cursor key when
+                // the caller gave no explicit cursor_id, so dropping it here both
+                // prunes the metadata registry and stops the overlay painting that
+                // session's cursor. Both paths guard "default" so the anonymous /
+                // one-shot cursor survives. Anonymous sessions that never created a
+                // cursor are a harmless no-op.
+                cursor_registry.remove(session_id);
+                crate::cursor::overlay::remove_cursor(session_id.to_owned());
+            });
+        registry.retain_session_end_hook(registration);
     }
 
     registry.register(Box::new(list_apps::ListAppsTool));
@@ -578,13 +643,15 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
     registry.register(Box::new(cursor_tools::SetAgentCursorMotionTool::new(
         state.clone(),
     )));
-    registry.register(Box::new(cursor_tools::SetAgentCursorStyleTool::new(
+    registry.register(Box::new(cursor_tools::SetAgentCursorThemeTool::new(
         state.clone(),
     )));
     registry.register(Box::new(cursor_tools::GetAgentCursorStateTool::new(
         state.clone(),
     )));
-    registry.register(Box::new(check_permissions::CheckPermissionsTool));
+    registry.register(Box::new(check_permissions::CheckPermissionsTool::new(
+        state.clone(),
+    )));
     // `health_report` — single-call end-to-end diagnostics. Stable
     // schema_version="1" contract aimed at downstream consumers who must
     // not have to know cua-driver internals. Provider is platform-specific; tool plumbing is in
@@ -616,9 +683,13 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
     registry.register(Box::new(cua_driver_core::page::PageTool::new(Arc::new(
         page::MacOsPageBackend::new(state.clone()),
     ))));
-    let browser_engine = cua_driver_core::browser::BrowserEngine::new(Arc::new(
-        crate::browser::MacOsBrowserPlatform::new(state.cursor_registry.clone()),
-    ));
+    let browser_engine = cua_driver_core::browser::BrowserEngine::new_with_runtime_services(
+        Arc::new(crate::browser::MacOsBrowserPlatform::new(
+            state.cursor_registry.clone(),
+        )),
+        registry.approval_broker(),
+        registry.protected_resource_ownership(),
+    );
     cua_driver_core::browser::register_browser_tools(&browser_engine, registry);
     // Recording / replay + session-lifecycle tools are platform-independent.
     registry.register_recording_tools();
@@ -664,6 +735,40 @@ mod session_config_guard_tests {
         reg.set(sid, overrides(800));
         let dim = reg.effective_max_image_dimension(Some(sid), &global);
         assert_eq!(dim, 800, "live session override must apply");
+    }
+}
+
+#[cfg(test)]
+mod cursor_overlay_facility_tests {
+    use super::*;
+    use cua_driver_core::tool::Tool;
+
+    fn assert_facility_unavailable(result: cua_driver_core::protocol::ToolResult) {
+        assert_eq!(result.is_error, Some(true));
+        let refusal = result
+            .structured_content
+            .and_then(|value| value.get("refusal").cloned())
+            .expect("structured refusal");
+        assert_eq!(refusal["code"], "facility_unavailable");
+        assert_eq!(refusal["facility"], "macos_cursor_overlay");
+    }
+
+    #[tokio::test]
+    async fn cursor_control_refuses_without_main_thread_host_facility() {
+        let state = Arc::new(ToolState::new(false, true, None));
+        let result = cursor_tools::SetAgentCursorEnabledTool::new(state)
+            .invoke(serde_json::json!({"enabled": true, "session": "test"}))
+            .await;
+        assert_facility_unavailable(result);
+    }
+
+    #[tokio::test]
+    async fn window_cursor_move_refuses_without_main_thread_host_facility() {
+        let state = Arc::new(ToolState::new(false, true, None));
+        let result = move_cursor::MoveCursorTool::new(state)
+            .invoke(serde_json::json!({"x": 10, "y": 20, "session": "test"}))
+            .await;
+        assert_facility_unavailable(result);
     }
 }
 

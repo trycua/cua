@@ -36,7 +36,7 @@ async def test_linux_docker_container_uses_resolved_image(
             api_port=None,
         )
 
-assert start_container.await_args.kwargs["image"] == expected_image
+        assert start_container.await_args.kwargs["image"] == expected_image
 
 
 def test_resolve_container_image_qemu_ignores_disk_name() -> None:

@@ -51,6 +51,7 @@ pub struct SdkAdapter {
     // transport error without reintroducing process-global public session IDs.
     public_sessions: Arc<Mutex<PublicSessionState>>,
     runtime_prefix: String,
+    runtime_scope: String,
     _session_end_hook: cua_driver_core::session::SessionEndHookRegistration,
     session_lifecycle: tokio::sync::Mutex<()>,
 }
@@ -69,6 +70,12 @@ impl SdkAdapter {
         let runtime_prefix = driver.runtime_scope_prefix().ok_or_else(|| {
             anyhow::anyhow!("SDK adapter requires a directly owned embedded runtime")
         })?;
+        let runtime_scope = runtime_prefix
+            .strip_prefix("__cua_runtime_")
+            .and_then(|value| value.strip_suffix(':'))
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("SDK adapter received an invalid runtime scope"))?
+            .to_owned();
         let public_sessions = Arc::new(Mutex::new(PublicSessionState::default()));
         let hook_sessions = public_sessions.clone();
         let hook_prefix = runtime_prefix.clone();
@@ -89,6 +96,7 @@ impl SdkAdapter {
             tools_list,
             public_sessions,
             runtime_prefix,
+            runtime_scope,
             _session_end_hook: session_end_hook,
             session_lifecycle: tokio::sync::Mutex::new(()),
         }))
@@ -226,6 +234,7 @@ impl SdkAdapter {
 
     pub async fn revoke_all_sessions(&self) -> usize {
         let _lifecycle = self.session_lifecycle.lock().await;
+        cua_driver_core::session::suspend_runtime_scope(&self.runtime_scope);
         let count = cua_driver_core::session::revoke_sessions_with_prefix(&self.runtime_prefix);
         self.mark_all_sessions_ended();
         count
@@ -343,6 +352,8 @@ mod tests {
             claude_code_compatibility: false,
             prepare_desktop_environment: false,
             register_host_tools: None,
+            authorization_host: None,
+            activity_observer: None,
         })
     }
 

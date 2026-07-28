@@ -1,4 +1,4 @@
-//! Protected consent provider seam.
+//! Trusted host authorization seam.
 //!
 //! Ordinary MCP elicitation, tool arguments, inherited stdio, files, and
 //! environment variables never implement this trait. A provider is installed
@@ -7,7 +7,7 @@
 //! implementations must authenticate their private channel before adapting it
 //! to this interface.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -18,7 +18,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::authorization::{PermissionMode, RiskClass};
+use crate::authorization::{ModeBehavior, PermissionMode, RiskClass, ENFORCEMENT_ADAPTERS};
 
 const DEFAULT_REQUEST_TTL: Duration = Duration::from_secs(2 * 60);
 
@@ -57,45 +57,13 @@ pub struct ConsentRequest {
     pub request_digest: String,
 }
 
-#[derive(Debug, Clone)]
-pub struct IndicatorLease {
-    pub id: String,
-    revoked: Arc<AtomicBool>,
-}
-
-impl IndicatorLease {
-    pub fn new(id: impl Into<String>, revoked: Arc<AtomicBool>) -> Self {
-        Self {
-            id: id.into(),
-            revoked,
-        }
-    }
-
-    pub fn revoked(&self) -> bool {
-        self.revoked.load(Ordering::Acquire)
-    }
-
-    pub fn revoke(&self) {
-        self.revoked.store(true, Ordering::Release);
-    }
-}
-
-/// Trusted integration contract. Implementors must keep approval and Stop UI
-/// outside model/tool control and must not auto-accept protected requests.
-/// The returned indicator lease is authoritative: the provider must bind its
-/// visible state to the lease's revocation flag so session teardown remains
-/// effective even when an asynchronous deactivate callback cannot run.
+/// Trusted integration contract. The embedding host decides how to obtain
+/// authorization. Cua never requires the host to render a particular UI.
 #[async_trait]
 pub trait ProtectedConsentProvider: Send + Sync + 'static {
     fn provider_id(&self) -> &'static str;
 
     async fn request_consent(&self, request: &ConsentRequest) -> Result<ProviderDecision, String>;
-
-    /// Activate persistent, non-optional visible state with a Stop control.
-    /// Returning an error prevents the grant from becoming live.
-    async fn activate_indicator(&self, request: &ConsentRequest) -> Result<IndicatorLease, String>;
-
-    async fn deactivate_indicator(&self, indicator_id: &str);
 }
 
 #[derive(Debug, Clone)]
@@ -103,31 +71,33 @@ pub struct ProtectedGrant {
     pub id: Uuid,
     pub provider_id: &'static str,
     pub request_digest: String,
-    pub indicator: IndicatorLease,
+    revoked: Arc<AtomicBool>,
 }
 
 impl ProtectedGrant {
     pub fn is_live(&self) -> bool {
-        !self.indicator.revoked()
+        !self.revoked.load(Ordering::Acquire)
+    }
+
+    pub fn revoke(&self) {
+        self.revoked.store(true, Ordering::Release);
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ConsentError {
-    #[error("no certified protected-consent provider is available")]
+    #[error("no request-bound confirmation provider is available")]
     Unavailable,
-    #[error("protected consent was declined")]
+    #[error("confirmation was declined")]
     Declined,
-    #[error("protected consent was canceled")]
+    #[error("confirmation was canceled")]
     Canceled,
-    #[error("protected consent provider failed: {0}")]
+    #[error("confirmation provider failed: {0}")]
     Provider(String),
-    #[error("protected consent response did not match the exact request digest")]
+    #[error("confirmation response did not match the exact request digest")]
     DigestMismatch,
-    #[error("protected consent expired before activation")]
+    #[error("confirmation expired before activation")]
     Expired,
-    #[error("persistent consent indicator could not be activated: {0}")]
-    Indicator(String),
     #[error("protected resource is outside the bounded session policy: {0}")]
     BoundedResource(String),
 }
@@ -240,64 +210,16 @@ impl ApprovalBroker {
         if request.expires_unix_ms < now_unix_ms() {
             return Err(ConsentError::Expired);
         }
-        let indicator =
-            tokio::time::timeout(remaining(request)?, provider.activate_indicator(request))
-                .await
-                .map_err(|_| ConsentError::Indicator("activation timed out".to_owned()))?
-                .map_err(ConsentError::Indicator)?;
-        if request.expires_unix_ms < now_unix_ms() {
-            indicator.revoke();
-            provider.deactivate_indicator(&indicator.id).await;
-            return Err(ConsentError::Expired);
-        }
         Ok(ProtectedGrant {
             id: Uuid::new_v4(),
             provider_id: provider.provider_id(),
             request_digest: request.request_digest.clone(),
-            indicator,
-        })
-    }
-
-    /// Activate the mandatory indicator for an operation already covered by a
-    /// launch-approved bounded manifest. This never asks or accepts an
-    /// in-band decision; the manifest remains the authorization and the
-    /// provider supplies only persistent visible Stop state.
-    pub async fn activate_preapproved(
-        &self,
-        request: &ConsentRequest,
-    ) -> Result<ProtectedGrant, ConsentError> {
-        let provider = self.provider.as_ref().ok_or(ConsentError::Unavailable)?;
-        if request.expires_unix_ms < now_unix_ms() {
-            return Err(ConsentError::Expired);
-        }
-        if request.request_digest != digest_request(request) {
-            return Err(ConsentError::DigestMismatch);
-        }
-        let indicator =
-            tokio::time::timeout(remaining(request)?, provider.activate_indicator(request))
-                .await
-                .map_err(|_| ConsentError::Indicator("activation timed out".to_owned()))?
-                .map_err(ConsentError::Indicator)?;
-        if request.expires_unix_ms < now_unix_ms() {
-            indicator.revoke();
-            provider.deactivate_indicator(&indicator.id).await;
-            return Err(ConsentError::Expired);
-        }
-        Ok(ProtectedGrant {
-            id: Uuid::new_v4(),
-            provider_id: provider.provider_id(),
-            request_digest: request.request_digest.clone(),
-            indicator,
+            revoked: Arc::new(AtomicBool::new(false)),
         })
     }
 
     pub async fn revoke(&self, grant: &ProtectedGrant) {
-        grant.indicator.revoke();
-        if let Some(provider) = &self.provider {
-            if provider.provider_id() == grant.provider_id {
-                provider.deactivate_indicator(&grant.indicator.id).await;
-            }
-        }
+        grant.revoke();
     }
 }
 
@@ -349,34 +271,75 @@ pub struct ProtectedResourceGrants {
 
 /// Runtime-owned proof that a process was created and remains managed by Cua.
 ///
-/// Tool arguments can select a PID but can never populate this store. The
-/// browser engine records only an attested isolated process that it launched,
-/// and removes that proof with the owning lifecycle session.
+/// Tool arguments can select a PID but can never populate this store. Every
+/// record includes an OS-attested fingerprint so PID reuse cannot inherit
+/// ownership. The caller must re-attest the process at each use.
 #[derive(Default)]
 pub struct ProtectedResourceOwnershipStore {
-    pids_by_session: Mutex<HashMap<String, HashSet<i64>>>,
+    processes_by_session: Mutex<HashMap<String, HashMap<i64, crate::browser::ProcessFingerprint>>>,
 }
 
 impl ProtectedResourceOwnershipStore {
-    pub fn mark_driver_owned_pid(&self, session: &str, pid: i64) {
-        self.pids_by_session
+    pub fn mark_driver_owned_process(
+        &self,
+        session: &str,
+        fingerprint: crate::browser::ProcessFingerprint,
+    ) {
+        self.processes_by_session
             .lock()
             .unwrap()
             .entry(session.to_owned())
             .or_default()
-            .insert(pid);
+            .insert(fingerprint.pid, fingerprint);
+    }
+
+    /// Transitional helper for tests and adapters that have not yet learned a
+    /// complete fingerprint. A PID-only record never validates against a
+    /// platform fingerprint that contains a start time.
+    pub fn mark_driver_owned_pid(&self, session: &str, pid: i64) {
+        self.mark_driver_owned_process(
+            session,
+            crate::browser::ProcessFingerprint {
+                pid,
+                start_time: None,
+                executable: None,
+            },
+        );
     }
 
     pub fn is_driver_owned_pid(&self, session: &str, pid: i64) -> bool {
-        self.pids_by_session
+        self.processes_by_session
             .lock()
             .unwrap()
             .get(session)
-            .is_some_and(|pids| pids.contains(&pid))
+            .is_some_and(|processes| processes.contains_key(&pid))
+    }
+
+    /// Re-prove ownership against a fresh platform fingerprint. Identity drift
+    /// is terminal for the record and removes it immediately.
+    pub fn reprove_driver_owned_process(
+        &self,
+        session: &str,
+        current: &crate::browser::ProcessFingerprint,
+    ) -> bool {
+        let mut sessions = self.processes_by_session.lock().unwrap();
+        let Some(processes) = sessions.get_mut(session) else {
+            return false;
+        };
+        let matches = processes
+            .get(&current.pid)
+            .is_some_and(|recorded| recorded.matches(current));
+        if !matches {
+            processes.remove(&current.pid);
+        }
+        if processes.is_empty() {
+            sessions.remove(session);
+        }
+        matches
     }
 
     pub fn remove_session(&self, session: &str) {
-        self.pids_by_session.lock().unwrap().remove(session);
+        self.processes_by_session.lock().unwrap().remove(session);
     }
 }
 
@@ -401,18 +364,34 @@ impl ProtectedResourceGrants {
         idle_ttl: Duration,
         absolute_ttl: Duration,
     ) -> Result<Option<ResourceGrant>, ConsentError> {
-        if context.mode() == PermissionMode::Unrestricted {
-            return Ok(None);
-        }
-        if context.mode() == PermissionMode::Bounded {
-            let manifest = context.bounded_manifest().ok_or_else(|| {
-                ConsentError::BoundedResource(
-                    "bounded mode has no approved session manifest".to_owned(),
-                )
+        let descriptor = ENFORCEMENT_ADAPTERS
+            .iter()
+            .find(|descriptor| descriptor.id == adapter_id)
+            .ok_or_else(|| {
+                ConsentError::Provider(format!(
+                    "protected resource adapter '{adapter_id}' is not registered"
+                ))
             })?;
-            manifest
-                .authorize_protected_resource(adapter_id, &resource)
-                .map_err(ConsentError::BoundedResource)?;
+        match descriptor.behavior_by_mode.for_mode(context.mode()) {
+            ModeBehavior::Allow => return Ok(None),
+            ModeBehavior::Deny => {
+                return Err(ConsentError::Provider(format!(
+                    "adapter '{adapter_id}' is denied in {} mode",
+                    context.mode().as_str()
+                )))
+            }
+            ModeBehavior::Manifest => {
+                let manifest = context.bounded_manifest().ok_or_else(|| {
+                    ConsentError::BoundedResource(
+                        "bounded mode has no approved session manifest".to_owned(),
+                    )
+                })?;
+                manifest
+                    .authorize_protected_resource(adapter_id, &resource)
+                    .map_err(ConsentError::BoundedResource)?;
+                return Ok(None);
+            }
+            ModeBehavior::RequireGrant => {}
         }
         let resource_digest = digest_resource(adapter_id, &resource);
         let key = resource_grant_key(context, lifecycle_session, adapter_id, &resource_digest);
@@ -446,8 +425,9 @@ impl ProtectedResourceGrants {
         );
         let protected = match context.mode() {
             PermissionMode::Standard => self.broker.approve(&request).await?,
-            PermissionMode::Bounded => self.broker.activate_preapproved(&request).await?,
-            PermissionMode::Unrestricted => unreachable!("handled before protected admission"),
+            PermissionMode::Bounded | PermissionMode::Unrestricted => {
+                unreachable!("handled before protected admission")
+            }
         };
         let now = Instant::now();
         let grant = ResourceGrant {
@@ -480,7 +460,7 @@ impl ProtectedResourceGrants {
             || grant.user_policy_sha256.as_deref() != context.user_policy_sha256()
         {
             if let Some(expired) = grants.remove(key) {
-                expired.protected.indicator.revoke();
+                expired.protected.revoke();
             }
             return None;
         }
@@ -493,7 +473,7 @@ impl ProtectedResourceGrants {
         self.grants.lock().unwrap().retain(|key, grant| {
             let keep = key.public_session != session && key.transport_session != session;
             if !keep {
-                grant.protected.indicator.revoke();
+                grant.protected.revoke();
                 removed.push(grant.protected.clone());
             }
             keep
@@ -511,7 +491,7 @@ impl ProtectedResourceGrants {
         let digest = digest_resource(adapter_id, resource);
         let key = resource_grant_key(context, lifecycle_session, adapter_id, &digest);
         self.grants.lock().unwrap().remove(&key).map(|grant| {
-            grant.protected.indicator.revoke();
+            grant.protected.revoke();
             grant.protected
         })
     }
@@ -521,7 +501,7 @@ impl ProtectedResourceGrants {
         let removed = grants
             .drain()
             .map(|(_, grant)| {
-                grant.protected.indicator.revoke();
+                grant.protected.revoke();
                 grant.protected
             })
             .collect();
@@ -536,7 +516,7 @@ impl ProtectedResourceGrants {
 impl Drop for ProtectedResourceGrants {
     fn drop(&mut self) {
         for (_, grant) in self.grants.get_mut().unwrap().drain() {
-            grant.protected.indicator.revoke();
+            grant.protected.revoke();
         }
     }
 }
@@ -619,10 +599,6 @@ mod tests {
     struct FakeProvider {
         action: ConsentAction,
         replace_digest: bool,
-        indicator_error: bool,
-        indicator_delay: Duration,
-        revoked: Arc<AtomicBool>,
-        deactivated: Mutex<Vec<String>>,
         requests: AtomicU64,
     }
 
@@ -646,34 +622,12 @@ mod tests {
                 },
             })
         }
-
-        async fn activate_indicator(
-            &self,
-            _request: &ConsentRequest,
-        ) -> Result<IndicatorLease, String> {
-            tokio::time::sleep(self.indicator_delay).await;
-            if self.indicator_error {
-                return Err("indicator unavailable".to_owned());
-            }
-            Ok(IndicatorLease::new("indicator-1", self.revoked.clone()))
-        }
-
-        async fn deactivate_indicator(&self, indicator_id: &str) {
-            self.deactivated
-                .lock()
-                .unwrap()
-                .push(indicator_id.to_owned());
-        }
     }
 
     fn provider(action: ConsentAction) -> Arc<FakeProvider> {
         Arc::new(FakeProvider {
             action,
             replace_digest: false,
-            indicator_error: false,
-            indicator_delay: Duration::ZERO,
-            revoked: Arc::new(AtomicBool::new(false)),
-            deactivated: Mutex::new(Vec::new()),
             requests: AtomicU64::new(0),
         })
     }
@@ -706,6 +660,28 @@ mod tests {
     }
 
     #[test]
+    fn process_ownership_requires_the_same_attested_process_instance() {
+        let store = ProtectedResourceOwnershipStore::default();
+        let recorded = crate::browser::ProcessFingerprint {
+            pid: 42,
+            start_time: Some(100),
+            executable: Some("/Applications/Fixture.app/Contents/MacOS/Fixture".to_owned()),
+        };
+        store.mark_driver_owned_process("runtime:session", recorded.clone());
+        assert!(store.reprove_driver_owned_process("runtime:session", &recorded));
+
+        let reused = crate::browser::ProcessFingerprint {
+            start_time: Some(101),
+            ..recorded.clone()
+        };
+        assert!(!store.reprove_driver_owned_process("runtime:session", &reused));
+        assert!(
+            !store.is_driver_owned_pid("runtime:session", 42),
+            "identity drift must remove launch provenance"
+        );
+    }
+
+    #[test]
     fn provider_identity_is_runtime_scoped() {
         let with_provider = crate::tool::ToolRegistry::new_with_protected_consent_provider(Some(
             provider(ConsentAction::Accept),
@@ -713,23 +689,23 @@ mod tests {
         let without_provider = crate::tool::ToolRegistry::new();
 
         assert_eq!(
-            with_provider.authorization_status_json()["protected_consent_collector"],
+            with_provider.authorization_status_json()["authorization_host"],
             "test.protected-provider"
         );
         assert_eq!(
-            without_provider.authorization_status_json()["protected_consent_collector"],
+            without_provider.authorization_status_json()["authorization_host"],
             serde_json::Value::Null
         );
     }
 
     #[tokio::test]
-    async fn exact_resource_grants_are_reused_and_scope_changes_reprompt() {
+    async fn standard_routine_resources_never_request_host_authorization() {
         let provider = provider(ConsentAction::Accept);
         let broker = Arc::new(ApprovalBroker::new(Some(provider.clone())));
         let grants = ProtectedResourceGrants::new(broker);
         let context = authorization_context(PermissionMode::Standard);
 
-        let first = grants
+        assert!(grants
             .authorize(
                 &context,
                 "private_observation",
@@ -742,8 +718,8 @@ mod tests {
             )
             .await
             .unwrap()
-            .unwrap();
-        let reused = grants
+            .is_none());
+        assert!(grants
             .authorize(
                 &context,
                 "private_observation",
@@ -756,33 +732,17 @@ mod tests {
             )
             .await
             .unwrap()
-            .unwrap();
-        assert_eq!(first.protected.id, reused.protected.id);
-        assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
-
-        grants
-            .authorize(
-                &context,
-                "private_observation",
-                RiskClass::R2,
-                Some("public-a"),
-                serde_json::json!({"pid": 42, "window_id": 8}),
-                "Observe app window 8",
-                Duration::from_secs(30),
-                Duration::from_secs(60),
-            )
-            .await
-            .unwrap();
-        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
+            .is_none());
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
-    async fn revocation_is_immediate_and_unrestricted_skips_the_broker() {
+    async fn standard_and_unrestricted_routine_actions_skip_the_broker() {
         let provider = provider(ConsentAction::Accept);
         let broker = Arc::new(ApprovalBroker::new(Some(provider.clone())));
         let grants = ProtectedResourceGrants::new(broker);
         let standard = authorization_context(PermissionMode::Standard);
-        let live = grants
+        assert!(grants
             .authorize(
                 &standard,
                 "desktop_input",
@@ -795,10 +755,9 @@ mod tests {
             )
             .await
             .unwrap()
-            .unwrap();
+            .is_none());
         let revoked = grants.revoke_session(&standard.runtime_session_key("public-a"));
-        assert_eq!(revoked.len(), 1);
-        assert!(!live.is_live());
+        assert!(revoked.is_empty());
 
         let unrestricted = authorization_context(PermissionMode::Unrestricted);
         assert!(grants
@@ -815,21 +774,17 @@ mod tests {
             .await
             .unwrap()
             .is_none());
-        assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
-    async fn exact_accept_activates_a_revocable_indicator() {
+    async fn exact_accept_creates_a_revocable_grant() {
         let provider = provider(ConsentAction::Accept);
         let broker = ApprovalBroker::new(Some(provider.clone()));
         let grant = broker.approve(&request(&broker)).await.unwrap();
         assert!(grant.is_live());
         broker.revoke(&grant).await;
         assert!(!grant.is_live());
-        assert_eq!(
-            provider.deactivated.lock().unwrap().as_slice(),
-            ["indicator-1"]
-        );
     }
 
     #[tokio::test]
@@ -846,10 +801,6 @@ mod tests {
         let fake = FakeProvider {
             action: ConsentAction::Accept,
             replace_digest: true,
-            indicator_error: false,
-            indicator_delay: Duration::ZERO,
-            revoked: Arc::new(AtomicBool::new(false)),
-            deactivated: Mutex::new(Vec::new()),
             requests: AtomicU64::new(0),
         };
         let broker = ApprovalBroker::new(Some(Arc::new(fake)));
@@ -857,57 +808,5 @@ mod tests {
             broker.approve(&request(&broker)).await.unwrap_err(),
             ConsentError::DigestMismatch
         );
-    }
-
-    #[tokio::test]
-    async fn indicator_failure_prevents_grant_activation() {
-        let provider = Arc::new(FakeProvider {
-            action: ConsentAction::Accept,
-            replace_digest: false,
-            indicator_error: true,
-            indicator_delay: Duration::ZERO,
-            revoked: Arc::new(AtomicBool::new(false)),
-            deactivated: Mutex::new(Vec::new()),
-            requests: AtomicU64::new(0),
-        });
-        let broker = ApprovalBroker::new(Some(provider));
-        assert!(matches!(
-            broker.approve(&request(&broker)).await,
-            Err(ConsentError::Indicator(_))
-        ));
-    }
-
-    #[tokio::test]
-    async fn launch_preapproved_autonomy_activates_indicator_without_a_second_prompt() {
-        let provider = provider(ConsentAction::Decline);
-        let broker = ApprovalBroker::new(Some(provider.clone()));
-        let grant = broker
-            .activate_preapproved(&request(&broker))
-            .await
-            .unwrap();
-        assert!(grant.is_live());
-        assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
-    }
-
-    #[tokio::test]
-    async fn provider_cannot_activate_an_indicator_after_request_expiry() {
-        let provider = Arc::new(FakeProvider {
-            action: ConsentAction::Accept,
-            replace_digest: false,
-            indicator_error: false,
-            indicator_delay: Duration::from_millis(50),
-            revoked: Arc::new(AtomicBool::new(false)),
-            deactivated: Mutex::new(Vec::new()),
-            requests: AtomicU64::new(0),
-        });
-        let broker = ApprovalBroker::new(Some(provider));
-        let mut expiring = request(&broker);
-        expiring.expires_unix_ms = now_unix_ms() + 15;
-        expiring.request_digest = digest_request(&expiring);
-
-        assert!(matches!(
-            broker.approve(&expiring).await,
-            Err(ConsentError::Indicator(message)) if message.contains("timed out")
-        ));
     }
 }

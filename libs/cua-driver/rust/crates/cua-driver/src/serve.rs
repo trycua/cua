@@ -447,7 +447,7 @@ fn authenticate_embedded_host_connection(stream: &tokio::net::UnixStream) -> any
 }
 
 fn service_authorization_status(trusted_host_connection: bool) -> serde_json::Value {
-    let mut status = cua_driver_core::authorization::status_json();
+    let mut status = cua_driver_core::authorization::status_json_with_provider(None);
     if trusted_host_connection {
         let object = status
             .as_object_mut()
@@ -1666,8 +1666,11 @@ pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
                     println!("  managed policy sha256: {hash}");
                 }
                 println!(
-                    "  protected consent collector: {}",
-                    status["protected_consent_collector"]
+                    "  authorization host: {} ({})",
+                    status["authorization_host"]
+                        .as_str()
+                        .unwrap_or("unavailable"),
+                    status["authorization_host_assurance"]
                         .as_str()
                         .unwrap_or("unavailable")
                 );
@@ -1843,7 +1846,7 @@ mod gate_tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn ended_session_call_is_gated_live_and_anon_pass() {
+    async fn ended_session_and_runtime_revocation_are_gated() {
         let _runtime_guard = crate::test_runtime_lock().lock().await;
         PROBE_INVOCATIONS.store(0, Ordering::SeqCst);
 
@@ -1858,6 +1861,8 @@ mod gate_tests {
                 claude_code_compatibility: false,
                 prepare_desktop_environment: false,
                 register_host_tools: Some(register_probe),
+                authorization_host: None,
+                activity_observer: None,
             });
         let direct_driver = driver.clone();
         let sdk = crate::sdk_adapter::SdkAdapter::load(driver)
@@ -2023,17 +2028,30 @@ mod gate_tests {
             "bulk-revoked session call must not invoke the tool"
         );
 
-        // 4. Anonymous call (no session id) still passes — no false positive.
+        // 4. Runtime-wide revocation is terminal for every later dispatch,
+        // including anonymous calls that do not carry a public session label.
         let socket4 = socket.clone();
         let resp = tokio::task::spawn_blocking(move || send_request(&socket4, &call_req(None)))
             .await
             .unwrap()
             .expect("anon call response");
-        assert!(resp.ok, "anonymous call should succeed");
+        assert!(
+            resp.ok,
+            "tool-level authorization refusals remain successful daemon envelopes"
+        );
+        let result = resp.result.expect("anonymous refusal result");
+        assert_eq!(result.get("isError"), Some(&serde_json::Value::Bool(true)));
+        assert_eq!(
+            result.pointer("/structuredContent/refusal/code"),
+            Some(&serde_json::Value::String(
+                "authorization_suspended".to_owned()
+            )),
+            "anonymous calls must not bypass a terminal runtime revocation"
+        );
         assert_eq!(
             PROBE_INVOCATIONS.load(Ordering::SeqCst),
-            3,
-            "anonymous (no session id) call must still invoke the tool"
+            2,
+            "runtime-wide revocation must stop anonymous dispatch"
         );
 
         // Tear down the daemon.

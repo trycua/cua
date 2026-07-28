@@ -49,6 +49,21 @@ where
     }
 }
 
+async fn retry_claim_after_accepted_consent<T, Retry>(
+    initial: anyhow::Result<T>,
+    accepted_consent: bool,
+    retry: Retry,
+) -> (anyhow::Result<T>, Option<anyhow::Error>)
+where
+    Retry: Future<Output = anyhow::Result<T>>,
+{
+    match initial {
+        Ok(value) => (Ok(value), None),
+        Err(initial_error) if accepted_consent => (retry.await, Some(initial_error)),
+        Err(error) => (Err(error), None),
+    }
+}
+
 fn with_setup_side_effects(
     mut error: BrowserRefusal,
     setup: &ExistingProfileSetupOutcome,
@@ -717,9 +732,11 @@ impl BrowserEngine {
                 owner_sessions.push(transport_session);
             }
         }
-        for owner in &owner_sessions {
-            self.protected_resource_ownership
-                .mark_driver_owned_pid(owner, prepared_pid);
+        if let Ok(fingerprint) = self.platform.process_fingerprint(prepared_pid).await {
+            for owner in &owner_sessions {
+                self.protected_resource_ownership
+                    .mark_driver_owned_process(owner, fingerprint.clone());
+            }
         }
         self.managed_browsers.lock().unwrap().push(ManagedBrowser {
             child,
@@ -750,6 +767,8 @@ impl BrowserEngine {
     ) -> Result<PrepareOutcome, BrowserRefusal> {
         enum ConsentPath {
             Protected,
+            BoundedManifest,
+            LaunchGrant,
             LegacyArtifact,
             Unrestricted,
         }
@@ -777,6 +796,32 @@ impl BrowserEngine {
             })?;
         let consent_path = if mode == crate::authorization::PermissionMode::Unrestricted {
             ConsentPath::Unrestricted
+        } else if mode == crate::authorization::PermissionMode::Bounded {
+            let context = crate::tool::current_dispatch_authorization_context().ok_or_else(|| {
+                refusal(
+                    BrowserRefusalCode::BrowserConsentRequired,
+                    "bounded existing-profile attachment requires a live session authorization context",
+                )
+            })?;
+            let manifest = context.bounded_manifest().ok_or_else(|| {
+                refusal(
+                    BrowserRefusalCode::BrowserConsentRequired,
+                    "bounded existing-profile attachment requires an approved session manifest",
+                )
+            })?;
+            manifest
+                .authorize_call(
+                    "browser_prepare",
+                    &serde_json::json!({
+                        "pid": request.pid,
+                        "window_id": window_id,
+                        "strategy": {"kind": "existing_profile"},
+                    }),
+                )
+                .map_err(|message| refusal(BrowserRefusalCode::BrowserConsentRequired, message))?;
+            ConsentPath::BoundedManifest
+        } else if crate::authorization::launch_grant_enabled("existing_profile") {
+            ConsentPath::LaunchGrant
         } else if self.approval_broker.provider_id().is_some() {
             ConsentPath::Protected
         } else if crate::authorization::legacy_existing_profile_approval_enabled() {
@@ -803,13 +848,13 @@ impl BrowserEngine {
         } else {
             return Err(refusal(
                 BrowserRefusalCode::BrowserConsentRequired,
-                "existing-profile attachment requires a certified trusted-consent provider in standard/bounded mode; the legacy file-backed artifact is disabled",
+                "existing-profile attachment in standard mode requires --grant existing-profile or an embedding authorization host; bounded mode requires a matching manifest",
             )
             .with_detail(serde_json::json!({
                 "permission_mode": mode.as_str(),
-                "trusted_consent_required": true,
+                "authorization_required": true,
                 "legacy_approval_enabled": false,
-                "protected_consent_collector": self.approval_broker.provider_id(),
+                "authorization_host": self.approval_broker.provider_id(),
             })));
         };
         if request.profile.is_some() || request.allow_launch {
@@ -938,10 +983,10 @@ impl BrowserEngine {
             return Err(error);
         }
 
-        // Consent is collected only after the exact process, native window,
-        // browser product, and endpoint owner have all been proven. This keeps
-        // the human-visible request exact and avoids activating an indicator
-        // for a target that cannot be attached.
+        // Host authorization is requested only after the exact process,
+        // native window, browser product, and endpoint owner have all been
+        // proven. Bounded manifests, launch grants, and unrestricted mode
+        // never enter this callback path.
         let protected_consent = if matches!(consent_path, ConsentPath::Protected) {
             let transport_session = request
                 .transport_session
@@ -966,25 +1011,21 @@ impl BrowserEngine {
                 ),
             );
             Some(
-                if mode == crate::authorization::PermissionMode::Bounded {
-                    self.approval_broker
-                        .activate_preapproved(&approval_request)
-                        .await
-                } else {
-                    self.approval_broker.approve(&approval_request).await
-                }
-                .map_err(|error| {
-                    refusal(
-                        BrowserRefusalCode::BrowserConsentRequired,
-                        format!("protected existing-profile consent was not granted: {error}"),
-                    )
-                    .with_detail(serde_json::json!({
-                        "permission_mode": mode.as_str(),
-                        "trusted_consent_required": true,
-                        "provider": self.approval_broker.provider_id(),
-                        "approval_request_id": approval_request.nonce,
-                    }))
-                })?,
+                self.approval_broker
+                    .approve(&approval_request)
+                    .await
+                    .map_err(|error| {
+                        refusal(
+                            BrowserRefusalCode::BrowserConsentRequired,
+                            format!("existing-profile authorization was not granted: {error}"),
+                        )
+                        .with_detail(serde_json::json!({
+                            "permission_mode": mode.as_str(),
+                            "trusted_consent_required": true,
+                            "provider": self.approval_broker.provider_id(),
+                            "approval_request_id": approval_request.nonce,
+                        }))
+                    })?,
             )
         } else {
             None
@@ -1082,7 +1123,19 @@ impl BrowserEngine {
                 }
             }
         };
-        if let Err(_error) = claimed {
+        // Chrome on Windows can reject the WebSocket handshake that was
+        // pending while its native remote-debugging consent prompt was open.
+        // After an explicit acceptance, make one fresh, bounded dial to the
+        // same attested endpoint under the same grant. The driver does not
+        // request consent again or broaden the approved target; the browser
+        // still owns any transport-level UI for the fresh connection.
+        let (claimed, initial_claim_error) = retry_claim_after_accepted_consent(
+            claimed,
+            displayed_consent_prompt,
+            self.pool.claim_existing(&endpoint.ws_url, grant.generation),
+        )
+        .await;
+        if let Err(_final_claim_error) = claimed {
             self.revoke_existing_profile_grant(
                 &request.session,
                 request.transport_session.as_deref(),
@@ -1093,7 +1146,11 @@ impl BrowserEngine {
                 refusal(
                     BrowserRefusalCode::BrowserReconnectExhausted,
                     "the approved browser socket could not be claimed",
-                ),
+                )
+                .with_detail(serde_json::json!({
+                    "retried_after_consent": initial_claim_error.is_some(),
+                    "fresh_claim_failed": initial_claim_error.is_some(),
+                })),
                 &setup,
                 displayed_consent_prompt,
             );
@@ -1195,6 +1252,75 @@ mod tests {
                 .expect("accepted consent should resume the existing claim");
         assert_eq!(result.unwrap(), 9);
         assert!(displayed);
+    }
+
+    #[tokio::test]
+    async fn accepted_consent_retries_one_failed_claim_with_a_fresh_dial() {
+        let (result, initial_error) = retry_claim_after_accepted_consent(
+            Err(anyhow::anyhow!("pre-consent handshake rejected")),
+            true,
+            async { Ok::<_, anyhow::Error>(11_u8) },
+        )
+        .await;
+        assert_eq!(result.unwrap(), 11);
+        assert_eq!(
+            initial_error.expect("initial error").to_string(),
+            "pre-consent handshake rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn claim_failure_without_accepted_consent_is_not_retried() {
+        let retry_polled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let retry_marker = retry_polled.clone();
+        let (result, initial_error) = retry_claim_after_accepted_consent(
+            Err::<u8, _>(anyhow::anyhow!("connection refused")),
+            false,
+            async move {
+                retry_marker.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok::<_, anyhow::Error>(12_u8)
+            },
+        )
+        .await;
+        assert_eq!(result.unwrap_err().to_string(), "connection refused");
+        assert!(initial_error.is_none());
+        assert!(!retry_polled.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn successful_claim_does_not_retry_after_accepted_consent() {
+        let retry_polled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let retry_marker = retry_polled.clone();
+        let (result, initial_error) =
+            retry_claim_after_accepted_consent(Ok::<_, anyhow::Error>(13_u8), true, async move {
+                retry_marker.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok::<_, anyhow::Error>(14_u8)
+            })
+            .await;
+        assert_eq!(result.unwrap(), 13);
+        assert!(initial_error.is_none());
+        assert!(!retry_polled.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn accepted_consent_limits_a_failed_fresh_dial_to_one_retry() {
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let attempt_counter = attempts.clone();
+        let (result, initial_error) = retry_claim_after_accepted_consent(
+            Err::<u8, _>(anyhow::anyhow!("pre-consent handshake rejected")),
+            true,
+            async move {
+                attempt_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Err::<u8, _>(anyhow::anyhow!("fresh handshake rejected"))
+            },
+        )
+        .await;
+        assert_eq!(result.unwrap_err().to_string(), "fresh handshake rejected");
+        assert_eq!(
+            initial_error.expect("initial error").to_string(),
+            "pre-consent handshake rejected"
+        );
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[test]

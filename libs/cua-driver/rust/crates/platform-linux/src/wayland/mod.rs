@@ -1564,6 +1564,7 @@ pub fn drag(
     to_x: i32,
     to_y: i32,
     steps: u32,
+    duration_ms: u64,
     button: u8,
 ) -> anyhow::Result<()> {
     with_libei_fallback(
@@ -1571,7 +1572,7 @@ pub fn drag(
         || {
             libei_wait_pointer_ready()?;
             activate_window_for_input(window_id)?;
-            libei_drag(from_x, from_y, to_x, to_y, steps, button)
+            libei_drag(from_x, from_y, to_x, to_y, steps, duration_ms, button)
         },
     )
 }
@@ -1583,13 +1584,14 @@ pub fn drag_desktop(
     to_x: i32,
     to_y: i32,
     steps: u32,
+    duration_ms: u64,
     button: u8,
 ) -> anyhow::Result<()> {
     with_libei_fallback(
         || drag_vptr(None, from_x, from_y, to_x, to_y, steps, button),
         || {
             libei_wait_pointer_ready()?;
-            libei_drag(from_x, from_y, to_x, to_y, steps, button)
+            libei_drag(from_x, from_y, to_x, to_y, steps, duration_ms, button)
         },
     )
 }
@@ -2009,6 +2011,7 @@ fn libei_drag(
     _to_x: i32,
     _to_y: i32,
     _steps: u32,
+    _duration_ms: u64,
     _button: u8,
 ) -> anyhow::Result<()> {
     unreachable!("libei fallback compiled out (no portal-input feature)")
@@ -2099,6 +2102,7 @@ fn libei_drag(
     to_x: i32,
     to_y: i32,
     steps: u32,
+    duration_ms: u64,
     button: u8,
 ) -> anyhow::Result<()> {
     // ei_button exposes separate Press/Released states, so the libei worker can
@@ -2117,6 +2121,7 @@ fn libei_drag(
         cx(to_x) as f64,
         cy(to_y) as f64,
         steps,
+        duration_ms,
         btn,
     )?;
     record_synth_cursor(cx(to_x), cy(to_y));

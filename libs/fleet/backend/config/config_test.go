@@ -4,9 +4,30 @@ import (
 	"testing"
 
 	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
 )
 
+func TestLoadConfig_UsesPublicIssuerForTokenURL(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Setenv("KC_BASE_URL", "http://10.43.161.164:8080")
+	t.Setenv("KC_ISSUER", "https://auth.cua.ai/realms/cyclops-cs")
+	t.Setenv("KC_ADMIN_CLIENT_SECRET", "secret")
+	RegisterFlags(pflag.NewFlagSet("test", pflag.ContinueOnError))
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+
+	if got, want := cfg.Keycloak.TokenURL, "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token"; got != want {
+		t.Fatalf("Keycloak.TokenURL = %q, want %q", got, want)
+	}
+}
+
 func TestLoadConfig_TelemetryDefaults(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
 	t.Setenv("KC_ADMIN_CLIENT_SECRET", "secret")
 	RegisterFlags(pflag.NewFlagSet("test", pflag.ContinueOnError))
 

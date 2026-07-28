@@ -530,6 +530,20 @@ fn row_expects_refusal(row: CatalogRow) -> bool {
     if row.delivery != Delivery::Background {
         return false;
     }
+    // A plain left single-click on an accessible GTK control is intentionally
+    // promoted from pixel targeting to the focus-free AT-SPI action bridge.
+    // The fixture target is accessible, so this catalog row must exercise the
+    // delivered bridge instead of the focus-bound pointer refusal path.
+    if matches!(
+        row.operation,
+        Operation::PxClick {
+            button: "left",
+            count: 1,
+            ..
+        }
+    ) {
+        return false;
+    }
     let inject_mode = std::env::var_os("CUA_INJECT_SOCKET").is_some();
     if !inject_mode
         && matches!(
@@ -562,7 +576,17 @@ fn run_catalog_row(row: CatalogRow) {
                 row.operation,
                 Operation::PressKey { .. } | Operation::Hotkey { .. }
             )) {
-        if std::env::var_os("CUA_INJECT_SOCKET").is_some() {
+        if matches!(
+            row.operation,
+            Operation::PxClick {
+                button: "left",
+                count: 1,
+                ..
+            }
+        ) && row.delivery == Delivery::Background
+        {
+            DriverRoute::LinuxAtSpiAction
+        } else if std::env::var_os("CUA_INJECT_SOCKET").is_some() {
             DriverRoute::LinuxCuaCompositorInject
         } else {
             DriverRoute::LinuxWaylandVirtualPointer
@@ -703,7 +727,7 @@ catalog_test!(
         action: "left_click",
         targeting: Targeting::Px,
         delivery: Delivery::Background,
-        route: DriverRoute::LinuxXSendEvent,
+        route: DriverRoute::LinuxAtSpiAction,
         operation: Operation::PxClick {
             target: "btn-clicktarget",
             button: "left",

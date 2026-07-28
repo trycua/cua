@@ -759,7 +759,7 @@ Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native br
 
 ### `browser_prepare`
 
-Explicitly prepare an owned DevTools endpoint for a browser pid. Existing endpoints are detected without side effects. Acting setup for an isolated profile requires host approval or a short-lived setup token plus allow_launch=true. It launches a separate browser and never copies, modifies, or terminates the requested user profile. Existing-profile attachment is explicit and follows the daemon's immutable permission mode: standard requires a certified protected-consent provider, bounded requires a launch-approved exact resource manifest plus protected indicator, and unrestricted requires explicit trusted startup risk acceptance. Ordinary MCP transport approval never proves profile consent. On proven platforms, an authorized request also permits one bounded exact-window setup: open the recognized browser product's fixed remote-debugging page, toggle its uniquely matched per-instance checkbox, prove the PID-owned loopback endpoint, and close the temporary tab. Every visible effect is reported; ambiguity is refused.
+Explicitly prepare an owned DevTools endpoint for a browser pid. Existing endpoints are detected without side effects. Acting setup for an isolated profile requires host approval or a short-lived setup token plus allow_launch=true. It launches a separate browser and never copies, modifies, or terminates the requested user profile. Existing-profile attachment is explicit and follows the runtime's immutable permission mode: standard requires an explicit --grant existing-profile launch grant or an embedding authorization host, bounded requires a launch-approved exact resource manifest, and unrestricted requires explicit trusted startup risk acceptance. Ordinary MCP transport approval never proves profile authorization. On proven platforms, an authorized request also permits one bounded exact-window setup: open the recognized browser product's fixed remote-debugging page, toggle its uniquely matched per-instance checkbox, prove the PID-owned loopback endpoint, and close the temporary tab. Every visible effect is reported; ambiguity is refused.
 
 **Arguments:**
 
@@ -810,12 +810,13 @@ Click a page element (by ref) or viewport coordinates in an exactly-bound tab. D
 
 ### `browser_type`
 
-Type text into an exactly-bound tab via the Input domain. mode="insert_text" (default) uses Input.insertText; mode="keystrokes" dispatches per-character key events. Pass a ref to an editable element from the latest snapshot. A ref is required; heuristic bindings are refused.
+Type text into an exactly-bound tab via the Input domain. mode="insert_text" (default) uses Input.insertText; mode="keystrokes" dispatches per-character key events. Both insert at the caret, so typing into a field that already holds text appends to it; pass replace=true to set the field instead, or to clear it by typing an empty string. Pass a ref to an editable element from the latest snapshot. A ref is required; heuristic bindings are refused.
 
 **Arguments:**
 
 - `mode` (string, optional): insert_text (default): bulk Input.insertText. keystrokes: per-character Input.dispatchKeyEvent.
 - `ref` (string, required): Page element ref in the p&lt;snapshot&gt;:&lt;index&gt; namespace from get_browser_state. Refs are invalidated by navigation and by newer snapshots of the same tab.
+- `replace` (boolean, optional): false (default): insert at the caret, appending to whatever the field already holds. true: select the element's whole content first so the text replaces it — with an empty text this clears the field. Replacement goes through the selection, so beforeinput/input still fire and framework state stays consistent.
 - `session` (string, optional): Stable caller-declared session id. Browser targets, tabs, and refs are scoped to this session.
 - `tab_id` (string, required): Opaque tab id from get_browser_state (session-scoped).
 - `target_id` (string, required): Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).

@@ -30,6 +30,9 @@ pub enum Command {
         /// the MCP server is wired up as `cua-computer-use` in Claude
         /// Code, where this is the documented best-practice install.
         claude_code_compat: bool,
+        /// Repeatable trusted launch grants for residual standard-mode
+        /// boundaries, for example `--grant existing-profile`.
+        grants: Vec<String>,
     },
     ListTools,
     Describe(String),
@@ -70,6 +73,8 @@ pub enum Command {
         /// `launch_daemon_and_wait`) so that daemon registers the requested
         /// compatibility surface.
         claude_code_compat: bool,
+        /// Repeatable trusted launch grants.
+        grants: Vec<String>,
     },
     Stop {
         socket: Option<String>,
@@ -204,6 +209,7 @@ const VALUE_FLAGS: &[&str] = &[
     "--client",
     "--socket",
     "--permission-mode",
+    "--grant",
     "--session-policy",
     "--pid-file",
     "--type",
@@ -476,6 +482,10 @@ pub fn parse_command() -> Command {
         println!("agent authorization (serve only):");
         println!("  --permission-mode <mode>        standard (default), bounded, or unrestricted.");
         println!(
+            "  --grant existing-profile       Pre-authorize existing logged-in Chromium attachment"
+        );
+        println!("                                  for this runtime. Repeatable for future grant types.");
+        println!(
             "  --dangerously-bypass-approvals  Select unrestricted mode and acknowledge its risk."
         );
         println!("                                  The mode is fixed for the daemon lifetime and cannot");
@@ -594,6 +604,7 @@ pub fn parse_command() -> Command {
     let approval_session = flag_value(&args, "--session");
     let approval_profile_mode = flag_value(&args, "--profile-mode");
     let approval_profile_name = flag_value(&args, "--profile-name");
+    let grants = flag_values(&args, "--grant");
 
     // `--embedded` / `--host-bundle-id` export to the environment rather
     // than threading through `Command`: all consumers read
@@ -659,12 +670,14 @@ pub fn parse_command() -> Command {
                 socket: socket.clone(),
                 direct: args.iter().any(|a| a == "--direct"),
                 claude_code_compat,
+                grants: grants.clone(),
             }
         }
         Some("mcp") => Command::Mcp {
             socket: socket.clone(),
             direct: args.iter().any(|a| a == "--direct"),
             claude_code_compat,
+            grants: grants.clone(),
         },
         Some("list-tools") => Command::ListTools,
         Some("mcp-config") => Command::McpConfig { client: mcp_client },
@@ -682,6 +695,7 @@ pub fn parse_command() -> Command {
             // Bare flag — present anywhere on argv counts as "skip the gate".
             no_permissions_gate: args.iter().any(|a| a == "--no-permissions-gate"),
             claude_code_compat,
+            grants,
         },
         Some("stop") => Command::Stop { socket },
         Some("revoke") => {
@@ -1033,6 +1047,30 @@ fn flag_value(args: &[String], flag: &str) -> Option<String> {
     None
 }
 
+/// Return every value of a repeatable `--flag value` or `--flag=value`.
+fn flag_values(args: &[String], flag: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let argument = &args[index];
+        if argument == flag {
+            if let Some(value) = args.get(index + 1) {
+                values.push(value.clone());
+            }
+            index += 2;
+            continue;
+        }
+        if let Some(value) = argument
+            .strip_prefix(flag)
+            .and_then(|rest| rest.strip_prefix('='))
+        {
+            values.push(value.to_owned());
+        }
+        index += 1;
+    }
+    values
+}
+
 /// Print all tools in the registry, one per line: `name: first sentence`.
 pub fn run_list_tools(tools_list: &serde_json::Value) {
     // Sort alphabetically by name to match Swift's
@@ -1151,6 +1189,7 @@ pub fn launch_daemon_and_wait(
     socket_path: &str,
     timeout_secs: u64,
     claude_code_compat: bool,
+    grants: &[String],
 ) -> Result<(), LaunchDaemonError> {
     use std::process::{Command as Cmd, Stdio};
     use std::time::{Duration, Instant};
@@ -1183,6 +1222,10 @@ pub fn launch_daemon_and_wait(
     // pre-existing daemon keeps whatever surface it launched with.
     if claude_code_compat {
         open_args.push("--claude-code-computer-use-compat");
+    }
+    for grant in grants {
+        open_args.push("--grant");
+        open_args.push(grant.as_str());
     }
 
     let status = Cmd::new("/usr/bin/open")
@@ -1269,6 +1312,7 @@ impl McpDaemonStartup {
 pub fn run_mcp_via_daemon_proxy<F>(
     socket: Option<String>,
     claude_code_compat: bool,
+    grants: &[String],
     on_startup: F,
 ) -> anyhow::Result<()>
 where
@@ -1281,6 +1325,14 @@ where
     let socket_path = socket.unwrap_or_else(crate::serve::default_socket_path);
 
     let already_running = crate::serve::is_daemon_listening(&socket_path);
+    if already_running && !grants.is_empty() {
+        if let Some(on_startup) = on_startup.take() {
+            on_startup(McpDaemonStartup::AlreadyRunning, false);
+        }
+        anyhow::bail!(
+            "--grant configures a newly launched runtime and cannot modify the daemon already listening on {socket_path}; restart it with the same --grant option"
+        );
+    }
     let mut daemon = McpDaemonStartup::AlreadyRunning;
     if !already_running {
         // Never replace an embedded host's TCC identity by launching the
@@ -1309,7 +1361,8 @@ where
                  and proxying MCP requests through it.",
                 crate::bundle::cli_name()
             );
-            if let Err(error) = launch_daemon_and_wait(&socket_path, 10, claude_code_compat) {
+            if let Err(error) = launch_daemon_and_wait(&socket_path, 10, claude_code_compat, grants)
+            {
                 if let Some(on_startup) = on_startup.take() {
                     on_startup(
                         if error.kind == LaunchDaemonErrorKind::Timeout {
@@ -1411,13 +1464,15 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--direct", "type": "flag", "description": "Own the runtime in the MCP process; on macOS this explicitly accepts host TCC attribution. Mutually exclusive with --socket." },
                   { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Select the Claude Code computer-use compat tool surface." },
                   { "name": "--embedded", "type": "flag", "description": "Declare embedding-host mode. Without --direct, requires the host's private service through --socket instead of auto-launching the standalone app." },
-                  { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." }
+                  { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." },
+                  { "name": "--grant", "type": "repeatable-string", "description": "Pre-authorize a residual standard-mode boundary for a newly launched runtime. Supported value: existing-profile." }
               ] },
             { "name": "serve",
               "description": "Run the long-lived daemon — backs the proxy/auto-relaunch path on macOS and the autostart Session 1+ daemon on Windows.",
               "args": [
                   { "name": "--socket", "type": "string", "description": "Override the listen socket path." },
                   { "name": "--permission-mode", "type": "string", "description": "Immutable daemon authorization mode: standard, bounded, or unrestricted." },
+                  { "name": "--grant", "type": "repeatable-string", "description": "Pre-authorize a residual standard-mode boundary. Supported value: existing-profile." },
                   { "name": "--dangerously-bypass-approvals", "type": "flag", "description": "Select unrestricted mode and acknowledge its risk." },
                   { "name": "--allow-legacy-existing-profile-approval", "type": "flag", "description": "Temporary migration flag for the unprotected file-backed existing-profile artifact." },
                   { "name": "--session-policy", "type": "string", "description": "Immutable tool manifest required in bounded mode." },
@@ -2738,7 +2793,7 @@ fn run_permissions_grant() {
                  and Screen Recording in System Settings, then this command continues."
             );
             // Permissions-grant launch never needs the compat screenshot surface.
-            if let Err(e) = launch_daemon_and_wait(&socket, 180, false) {
+            if let Err(e) = launch_daemon_and_wait(&socket, 180, false, &[]) {
                 eprintln!("\nDidn't detect the {app_name} daemon: {e}");
                 eprintln!(
                     "If you haven't yet, grant Accessibility + Screen Recording to {app_name} \
@@ -2936,7 +2991,8 @@ fn cli_docs_json() -> serde_json::Value {
                     {"name":"socket","short_name":null,"help":"Select an explicit daemon socket or named-pipe endpoint.","type":"String","default_value":null,"is_optional":true},
                     {"name":"host-bundle-id","short_name":null,"help":"Advisory host bundle id label echoed in check_permissions output (embedded mode).","type":"String","default_value":null,"is_optional":true},
                     {"name":"cursor-theme","short_name":null,"help":"Select an installed cursor theme id.","type":"String","default_value":"cua.default","is_optional":true},
-                    {"name":"cursor-reduced-motion","short_name":null,"help":"Follow the OS setting, force still frames, or allow animation: auto, on, or off.","type":"String","default_value":"auto","is_optional":true}
+                    {"name":"cursor-reduced-motion","short_name":null,"help":"Follow the OS setting, force still frames, or allow animation: auto, on, or off.","type":"String","default_value":"auto","is_optional":true},
+                    {"name":"grant","short_name":null,"help":"Pre-authorize a residual standard-mode boundary for a newly launched runtime. Repeatable; supported value: existing-profile.","type":"String","default_value":null,"is_optional":true,"is_repeatable":true}
                 ],
                 "flags": [
                     {"name":"direct","short_name":null,"help":"Own the runtime in this MCP process; mutually exclusive with --socket.","default_value":false},
@@ -2987,6 +3043,7 @@ fn cli_docs_json() -> serde_json::Value {
                     {"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true},
                     {"name":"pid-file","short_name":null,"help":"Override the pid-file path on Unix targets.","type":"String","default_value":null,"is_optional":true},
                     {"name":"permission-mode","short_name":null,"help":"Immutable agent authorization mode: standard, bounded, or unrestricted.","type":"String","default_value":"standard","is_optional":true},
+                    {"name":"grant","short_name":null,"help":"Pre-authorize a residual standard-mode boundary. Repeatable; supported value: existing-profile.","type":"String","default_value":null,"is_optional":true,"is_repeatable":true},
                     {"name":"session-policy","short_name":null,"help":"Immutable tool manifest required in bounded mode.","type":"String","default_value":null,"is_optional":true},
                     {"name":"host-bundle-id","short_name":null,"help":"Advisory host bundle id label echoed in check_permissions output (embedded mode).","type":"String","default_value":null,"is_optional":true}
                 ],

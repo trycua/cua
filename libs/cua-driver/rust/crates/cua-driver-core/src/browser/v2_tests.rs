@@ -908,7 +908,6 @@ async fn existing_profile_only_fixture() -> Fixture {
 
 struct FixtureProtectedProvider {
     consent_seen: AtomicBool,
-    stopped: Arc<AtomicBool>,
 }
 
 #[async_trait]
@@ -927,20 +926,6 @@ impl crate::consent::ProtectedConsentProvider for FixtureProtectedProvider {
             request_digest: request.request_digest.clone(),
         })
     }
-
-    async fn activate_indicator(
-        &self,
-        _request: &crate::consent::ConsentRequest,
-    ) -> Result<crate::consent::IndicatorLease, String> {
-        Ok(crate::consent::IndicatorLease::new(
-            "browser-indicator",
-            self.stopped.clone(),
-        ))
-    }
-
-    async fn deactivate_indicator(&self, _indicator_id: &str) {
-        self.stopped.store(true, Ordering::SeqCst);
-    }
 }
 
 async fn protected_existing_profile_fixture() -> (Fixture, Arc<FixtureProtectedProvider>) {
@@ -949,7 +934,6 @@ async fn protected_existing_profile_fixture() -> (Fixture, Arc<FixtureProtectedP
     let setup_invoked = Arc::new(AtomicBool::new(false));
     let provider = Arc::new(FixtureProtectedProvider {
         consent_seen: AtomicBool::new(false),
-        stopped: Arc::new(AtomicBool::new(false)),
     });
     let engine = BrowserEngine::new_with_protected_consent_provider(
         Arc::new(FixturePlatform {
@@ -1064,7 +1048,7 @@ async fn approved_existing_profile_attach_claims_then_binds_one_generation() {
 }
 
 #[tokio::test]
-async fn protected_provider_accepts_exact_attach_and_stop_revokes_the_grant() {
+async fn protected_provider_accepts_exact_attach_and_session_end_revokes_the_grant() {
     const PROTECTED_SESSION: &str = "protected-provider-v2";
     const PROTECTED_TRANSPORT: &str = "protected-transport-v2";
     let (f, provider) = protected_existing_profile_fixture().await;
@@ -1084,11 +1068,9 @@ async fn protected_provider_accepts_exact_attach_and_stop_revokes_the_grant() {
         structured(&prepare)
     );
     assert!(provider.consent_seen.load(Ordering::SeqCst));
-    assert!(!provider.stopped.load(Ordering::SeqCst));
 
     crate::session::fire_session_end(PROTECTED_TRANSPORT);
     tokio::task::yield_now().await;
-    assert!(provider.stopped.load(Ordering::SeqCst));
 
     let state = GetBrowserStateTool::new(f.engine.clone())
         .invoke(json!({

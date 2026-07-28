@@ -288,6 +288,10 @@ if ($suite -in @("shared", "all")) {
 }
 
 if ($suite -in @("native", "all")) {
+    Invoke-CargoTest "Agent cursor showcase" @(
+        "test", "-p", "cua-driver", "--test", "agent_cursor_showcase_test", "--",
+        "--ignored", "--nocapture", "--test-threads=1"
+    )
     Invoke-CargoTest "Windows native harnesses" @(
         "test", "-p", "cua-driver", "--test", "harness_wpf_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"

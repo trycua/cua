@@ -575,6 +575,60 @@ impl ToolRegistry {
         self.protected_resource_ownership.clone()
     }
 
+    async fn snapshot_running_pids(&self) -> Option<std::collections::BTreeSet<i64>> {
+        let tool = self.tools.get("list_apps")?;
+        let result = tool.invoke(serde_json::json!({})).await;
+        if result.is_error == Some(true) {
+            return None;
+        }
+        let apps = result.structured_content?.get("apps")?.as_array()?.clone();
+        Some(
+            apps.into_iter()
+                .filter_map(|app| app.get("pid").and_then(Value::as_i64))
+                .filter(|pid| *pid > 0)
+                .collect(),
+        )
+    }
+
+    async fn attest_process_fingerprint(
+        &self,
+        pid: i64,
+    ) -> Option<crate::browser::ProcessFingerprint> {
+        let tool = self.tools.get("kill_app")?;
+        let scope = tool
+            .protected_resource_scope("process_control", &serde_json::json!({"pid": pid}))
+            .await
+            .ok()??;
+        serde_json::from_value(scope.get("fingerprint")?.clone()).ok()
+    }
+
+    async fn enrich_application_resource(&self, resource: &mut Value, pid: i64) {
+        if let Some(fingerprint) = self.attest_process_fingerprint(pid).await {
+            resource["fingerprint"] = serde_json::to_value(fingerprint).unwrap_or(Value::Null);
+        }
+        let Some(tool) = self.tools.get("list_apps") else {
+            return;
+        };
+        let result = tool.invoke(serde_json::json!({})).await;
+        let Some(app) = result
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.get("apps"))
+            .and_then(Value::as_array)
+            .and_then(|apps| {
+                apps.iter()
+                    .find(|app| app.get("pid").and_then(Value::as_i64) == Some(pid))
+            })
+        else {
+            return;
+        };
+        for key in ["bundle_id", "launch_path"] {
+            if let Some(value) = app.get(key).filter(|value| !value.is_null()) {
+                resource[key] = value.clone();
+            }
+        }
+    }
+
     /// Content-free authorization status for this exact runtime.
     pub fn authorization_status_json(&self) -> Value {
         crate::authorization::status_json_with_provider(self.approval_broker.provider_id())
@@ -807,6 +861,19 @@ impl ToolRegistry {
         // caller-forgeable here.
         crate::tool_args::sanitize_reserved_args(&mut args);
 
+        if crate::session::is_runtime_scope_suspended(&context.runtime_scope_key()) {
+            return protected_refusal(
+                "authorization_suspended",
+                "authorization for this Cua runtime has been suspended by revoke-all",
+            );
+        }
+        if context.is_revoked() {
+            return protected_refusal(
+                "authorization_revoked",
+                "this session authorization context has been revoked",
+            );
+        }
+
         // Deprecated alias: `type_text_chars` → `type_text`.  Swift's
         // ToolRegistry.swift keeps the same alias (with stderr warning) for
         // backwards compatibility with hermes-agent builds that still emit
@@ -851,6 +918,16 @@ impl ToolRegistry {
             .and_then(Value::as_str)
             .map(str::to_owned);
         if let Some(session) = runtime_session.as_deref() {
+            if !matches!(resolved_name, "start_session" | "end_session")
+                && crate::session::is_session_ended(session)
+            {
+                let mut result = protected_refusal(
+                    "session_ended",
+                    "this session has ended; call start_session explicitly to reuse its label",
+                );
+                restore_public_runtime_result(&mut result, &runtime_prefix);
+                return result;
+            }
             crate::session::touch_session(session);
         }
 
@@ -868,6 +945,43 @@ impl ToolRegistry {
         let active_adapters =
             crate::authorization::enforcement_adapters_for_call(resolved_name, &public_args);
         let has_adapter = |id: &str| active_adapters.iter().any(|adapter| adapter.id == id);
+        let current_process_fingerprint = if has_adapter("process_control") {
+            match tool
+                .protected_resource_scope("process_control", &public_args)
+                .await
+            {
+                Ok(Some(scope)) => serde_json::from_value::<crate::browser::ProcessFingerprint>(
+                    scope["fingerprint"].clone(),
+                )
+                .ok(),
+                Ok(None) | Err(_) => None,
+            }
+        } else {
+            None
+        };
+        let runtime_proves_driver_owned = runtime_session
+            .as_deref()
+            .zip(current_process_fingerprint.as_ref())
+            .is_some_and(|(session, fingerprint)| {
+                self.protected_resource_ownership
+                    .reprove_driver_owned_process(session, fingerprint)
+            });
+
+        if context.mode() == crate::authorization::PermissionMode::Standard
+            && has_adapter("process_control")
+            && !runtime_proves_driver_owned
+        {
+            return protected_refusal(
+                "foreign_process_termination_denied",
+                "standard mode may terminate only a process proven to have been launched by this Cua runtime",
+            );
+        }
+        if runtime_proves_driver_owned {
+            if let Some(fingerprint) = current_process_fingerprint.as_ref() {
+                args["_protected_process_fingerprint"] =
+                    serde_json::to_value(fingerprint).unwrap_or(Value::Null);
+            }
+        }
 
         // Raw/legacy page mutations have no exact browser binding. They are
         // not grantable through a model-time confirmation: only a trusted
@@ -903,20 +1017,6 @@ impl ToolRegistry {
         // avoids prompting for a call the session policy will refuse, while
         // preserving the public arguments in the grant scope and the private
         // runtime session key in its revocation lifecycle.
-        let runtime_proves_driver_owned = runtime_session
-            .as_deref()
-            .zip(public_args.get("pid").and_then(Value::as_i64))
-            .is_some_and(|(session, pid)| {
-                self.protected_resource_ownership
-                    .is_driver_owned_pid(session, pid)
-                    || public_args
-                        .get("session")
-                        .and_then(Value::as_str)
-                        .is_some_and(|public_session| {
-                            self.protected_resource_ownership
-                                .is_driver_owned_pid(public_session, pid)
-                        })
-            });
         if has_adapter("private_observation")
             && !runtime_proves_driver_owned
             && tool
@@ -1043,7 +1143,10 @@ impl ToolRegistry {
                 return refusal;
             }
         }
-        if has_adapter("process_control") && !runtime_proves_driver_owned {
+        if has_adapter("process_control")
+            && (!runtime_proves_driver_owned
+                || context.mode() == crate::authorization::PermissionMode::Bounded)
+        {
             let approved_scope = match self
                 .authorize_attested_resource(
                     tool.as_ref(),
@@ -1093,6 +1196,11 @@ impl ToolRegistry {
         }
 
         // Capture start time for recording timestamps only after validation.
+        let launch_snapshot = if resolved_name == "launch_app" && runtime_session.is_some() {
+            self.snapshot_running_pids().await
+        } else {
+            None
+        };
         let start_ms = now_ms();
         let cursor_event = crate::cursor_events::begin_tool(resolved_name, &args);
 
@@ -1131,6 +1239,24 @@ impl ToolRegistry {
             .flatten();
 
         let mut result = tool.invoke(args.clone()).await;
+        if resolved_name == "launch_app" && result.is_error != Some(true) {
+            if let (Some(session), Some(before), Some(pid)) = (
+                runtime_session.as_deref(),
+                launch_snapshot.as_ref(),
+                result
+                    .structured_content
+                    .as_ref()
+                    .and_then(|value| value.get("pid"))
+                    .and_then(Value::as_i64),
+            ) {
+                if pid > 0 && !before.contains(&pid) {
+                    if let Some(fingerprint) = self.attest_process_fingerprint(pid).await {
+                        self.protected_resource_ownership
+                            .mark_driver_owned_process(session, fingerprint);
+                    }
+                }
+            }
+        }
         crate::cursor_events::end_tool(cursor_event);
         // Coordinate the physical action itself, not post-action evidence
         // capture or result shaping. Keeping the global desktop lock through
@@ -1224,13 +1350,32 @@ impl ToolRegistry {
         if context.mode() == crate::authorization::PermissionMode::Unrestricted {
             return Ok(());
         }
+        let browser_target = args.get("target_id").and_then(Value::as_str);
+        let browser_tab = args.get("tab_id").and_then(Value::as_str);
+        if context.mode() == crate::authorization::PermissionMode::Standard {
+            // Standard observation is promptless, but browser observations
+            // still have to attest their live target before dispatch.
+            if browser_target.is_some()
+                && tool
+                    .protected_resource_scope("private_observation", args)
+                    .await
+                    .map_err(crate::consent::ConsentError::Provider)?
+                    .is_none()
+            {
+                return Err(crate::consent::ConsentError::Provider(
+                    "browser observation did not attest a live top-level origin".to_owned(),
+                ));
+            }
+            // Whole-display scope discovery is X11-specific on Linux. It is
+            // not a grant boundary in standard mode and must not turn routine
+            // promptless operation into a pure-Wayland failure.
+            return Ok(());
+        }
         let browser_scope = tool
             .protected_resource_scope("private_observation", args)
             .await
             .map_err(crate::consent::ConsentError::Provider)?;
-        let browser_target = args.get("target_id").and_then(Value::as_str);
-        let browser_tab = args.get("tab_id").and_then(Value::as_str);
-        let (resource, summary) = if let Some(resource) = browser_scope {
+        let (mut resource, summary) = if let Some(resource) = browser_scope {
             let target_id = browser_target.unwrap_or("unknown");
             (
                 resource,
@@ -1328,6 +1473,11 @@ impl ToolRegistry {
             )
         };
 
+        if context.mode() == crate::authorization::PermissionMode::Bounded {
+            if let Some(pid) = resource.get("pid").and_then(Value::as_i64) {
+                self.enrich_application_resource(&mut resource, pid).await;
+            }
+        }
         self.protected_resource_grants
             .authorize(
                 context,
@@ -1350,7 +1500,14 @@ impl ToolRegistry {
         context: &crate::session_authorization::EffectiveAuthorizationContext,
         lifecycle_session: Option<&str>,
     ) -> Result<(), crate::consent::ConsentError> {
-        if context.mode() == crate::authorization::PermissionMode::Unrestricted {
+        if matches!(
+            context.mode(),
+            crate::authorization::PermissionMode::Standard
+                | crate::authorization::PermissionMode::Unrestricted
+        ) {
+            // Standard and unrestricted input do not need a protected grant.
+            // Bounded mode continues below so the exact resource can be
+            // checked against its approved manifest.
             return Ok(());
         }
         let delivery_mode = if tool_name == "bring_to_front" {
@@ -1360,7 +1517,7 @@ impl ToolRegistry {
                 .and_then(Value::as_str)
                 .unwrap_or("background")
         };
-        let (resource, summary) = if let Some(window_id) =
+        let (mut resource, summary) = if let Some(window_id) =
             args.get("window_id").and_then(Value::as_u64)
         {
             let pid = args.get("pid").and_then(Value::as_i64);
@@ -1422,6 +1579,11 @@ impl ToolRegistry {
             )
         };
 
+        if context.mode() == crate::authorization::PermissionMode::Bounded {
+            if let Some(pid) = resource.get("pid").and_then(Value::as_i64) {
+                self.enrich_application_resource(&mut resource, pid).await;
+            }
+        }
         self.protected_resource_grants
             .authorize(
                 context,
@@ -1588,7 +1750,7 @@ impl ToolRegistry {
         if context.mode() == crate::authorization::PermissionMode::Unrestricted {
             return Ok(Value::Null);
         }
-        let resource = tool
+        let mut resource = tool
             .protected_resource_scope(adapter_id, args)
             .await
             .map_err(|message| protected_scope_refusal(&message))?
@@ -1597,6 +1759,15 @@ impl ToolRegistry {
                     "the concrete tool cannot attest an exact protected resource scope",
                 )
             })?;
+        if adapter_id == "process_control" {
+            let driver_owned = lifecycle_session
+                .zip(resource.pointer("/fingerprint/pid").and_then(Value::as_i64))
+                .is_some_and(|(session, pid)| {
+                    self.protected_resource_ownership
+                        .is_driver_owned_pid(session, pid)
+                });
+            resource["driver_owned"] = Value::Bool(driver_owned);
+        }
         self.protected_resource_grants
             .authorize(
                 context,
@@ -1625,8 +1796,14 @@ impl ToolRegistry {
         if context.mode() == crate::authorization::PermissionMode::Unrestricted {
             return Ok(());
         }
+        let mut validation_scope = approved_scope.clone();
+        if adapter_id == "process_control" {
+            if let Some(scope) = validation_scope.as_object_mut() {
+                scope.remove("driver_owned");
+            }
+        }
         if let Err(message) = tool
-            .validate_protected_resource_scope(adapter_id, args, approved_scope)
+            .validate_protected_resource_scope(adapter_id, args, &validation_scope)
             .await
         {
             if let Some(grant) = self.protected_resource_grants.revoke_resource(
@@ -1916,6 +2093,19 @@ fn namespace_runtime_args(
     let Some(arguments) = args.as_object_mut() else {
         return runtime_prefix;
     };
+    if let Some(public_session) = arguments
+        .get("session")
+        .and_then(Value::as_str)
+        .filter(|value| {
+            !value.is_empty() && *value != "default" && !value.starts_with("__cua_runtime_")
+        })
+        .map(str::to_owned)
+    {
+        arguments.insert(
+            "_public_session_label".to_owned(),
+            Value::String(public_session),
+        );
+    }
     if !arguments.contains_key("_transport_session_id") {
         if let Some(session) = context.transport_session() {
             arguments.insert(
@@ -1990,9 +2180,13 @@ fn restore_public_runtime_value(value: &mut Value, runtime_prefix: &str) -> bool
             *text = text.replace(runtime_prefix, "");
             false
         }
-        Value::Array(values) => values.iter_mut().fold(false, |collision, value| {
-            restore_public_runtime_value(value, runtime_prefix) || collision
-        }),
+        Value::Array(values) => {
+            let mut collision = false;
+            for value in values {
+                collision |= restore_public_runtime_value(value, runtime_prefix);
+            }
+            collision
+        }
         Value::Object(values) => {
             let original = std::mem::take(values);
             let mut collision = false;
@@ -2016,15 +2210,13 @@ mod runtime_isolation_tests {
     };
     use crate::{
         authorization::PermissionMode,
-        consent::{
-            ConsentAction, ConsentRequest, IndicatorLease, ProtectedConsentProvider,
-            ProviderDecision,
-        },
+        consent::{ConsentAction, ConsentRequest, ProtectedConsentProvider, ProviderDecision},
         protocol::ToolResult,
         session_authorization::{SessionAuthorizationRegistry, SessionModeCeiling},
     };
+    use std::io::Write;
     use std::sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
         Arc, Mutex,
     };
     use std::time::Duration;
@@ -2052,6 +2244,27 @@ mod runtime_isolation_tests {
         .unwrap();
         SessionAuthorizationRegistry::with_ceiling(ceiling)
             .compatibility_context(PermissionMode::Unrestricted, None)
+            .unwrap()
+    }
+
+    fn bounded_context(
+        manifest_source: &str,
+    ) -> Arc<crate::session_authorization::EffectiveAuthorizationContext> {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(manifest_source.as_bytes()).unwrap();
+        let manifest = Arc::new(
+            crate::session_manifest::load_manifest(file.path())
+                .expect("test bounded manifest loads"),
+        );
+        let ceiling = SessionModeCeiling::for_trusted_sessions(
+            [PermissionMode::Bounded],
+            false,
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        SessionAuthorizationRegistry::with_ceiling(ceiling)
+            .compatibility_context(PermissionMode::Bounded, Some(manifest))
             .unwrap()
     }
 
@@ -2161,18 +2374,6 @@ mod runtime_isolation_tests {
                 request_digest: request.request_digest.clone(),
             })
         }
-
-        async fn activate_indicator(
-            &self,
-            request: &ConsentRequest,
-        ) -> Result<IndicatorLease, String> {
-            Ok(IndicatorLease::new(
-                format!("indicator-{}", request.generation),
-                Arc::new(AtomicBool::new(false)),
-            ))
-        }
-
-        async fn deactivate_indicator(&self, _indicator_id: &str) {}
     }
 
     fn observation_registry(
@@ -2252,12 +2453,33 @@ mod runtime_isolation_tests {
         stale_before_dispatch: bool,
     ) -> Arc<super::ToolRegistry> {
         let mut registry = super::ToolRegistry::new_with_protected_consent_provider(provider);
-        registry.register(Box::new(AttestedProbe {
-            hits,
-            scope: serde_json::json!({
+        let scope = match name {
+            "kill_app" => serde_json::json!({
+                "kind": "process_instance",
+                "fingerprint": {
+                    "pid": 424242,
+                    "start_time": 7,
+                    "executable": "/synthetic/fixture"
+                }
+            }),
+            "get_window_state" => serde_json::json!({
+                "kind": "window",
+                "pid": 424242,
+                "window_id": 7,
+                "fingerprint": {
+                    "pid": 424242,
+                    "start_time": 7,
+                    "executable": "/synthetic/fixture"
+                }
+            }),
+            _ => serde_json::json!({
                 "kind": "synthetic_attested_resource",
                 "identity": "exact-1",
             }),
+        };
+        registry.register(Box::new(AttestedProbe {
+            hits,
+            scope,
             stale_before_dispatch,
             def: super::ToolDef {
                 name: name.to_owned(),
@@ -2376,7 +2598,7 @@ mod runtime_isolation_tests {
     }
 
     #[tokio::test]
-    async fn observation_refuses_before_platform_dispatch_without_a_protected_host() {
+    async fn standard_observation_runs_without_a_protected_host() {
         let hits = Arc::new(AtomicUsize::new(0));
         let registry = observation_registry(None, hits.clone());
         let result = registry
@@ -2387,20 +2609,94 @@ mod runtime_isolation_tests {
             )
             .await;
 
-        assert_eq!(hits.load(Ordering::SeqCst), 0);
-        assert_eq!(result.is_error, Some(true));
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        assert_ne!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn bounded_observation_uses_only_the_manifest_without_a_protected_host() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let registry = attested_registry("get_window_state", None, hits.clone(), false);
+        let context = bounded_context(
+            r#"
+version: 2
+mode: bounded
+expires_after: 1h
+idle_timeout: 30m
+allow:
+  tools: [get_window_state]
+resources:
+  apps:
+    - executable: /synthetic/fixture
+      launch: false
+      windows: all
+      terminate: deny
+"#,
+        );
+        let result = registry
+            .invoke_with_context(
+                "get_window_state",
+                serde_json::json!({"pid": 42, "window_id": 7, "session": "review"}),
+                context,
+            )
+            .await;
+
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        assert_ne!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn ended_session_and_runtime_suspend_latches_fail_closed_at_dispatch() {
+        let ended_hits = Arc::new(AtomicUsize::new(0));
+        let ended_registry = observation_registry(None, ended_hits.clone());
+        let ended_context = standard_context();
+        let ended_prefix = format!("__cua_runtime_{}:", ended_context.runtime_scope_key());
+        let ended_runtime_session = ended_context.runtime_session_key("ended");
+        crate::session::end_session(&ended_runtime_session);
+        let ended = ended_registry
+            .invoke_with_context(
+                "get_window_state",
+                serde_json::json!({"pid": 42, "window_id": 7, "session": "ended"}),
+                ended_context,
+            )
+            .await;
+        assert_eq!(ended_hits.load(Ordering::SeqCst), 0);
         assert_eq!(
-            result
+            ended
                 .structured_content
                 .as_ref()
                 .and_then(|value| value.pointer("/refusal/code"))
                 .and_then(serde_json::Value::as_str),
-            Some("protected_consent_required")
+            Some("session_ended")
         );
+
+        let suspended_hits = Arc::new(AtomicUsize::new(0));
+        let suspended_registry = observation_registry(None, suspended_hits.clone());
+        let suspended_context = standard_context();
+        let scope = suspended_context.runtime_scope_key();
+        assert!(crate::session::suspend_runtime_scope(&scope));
+        let suspended = suspended_registry
+            .invoke_with_context(
+                "get_window_state",
+                serde_json::json!({"pid": 42, "window_id": 7, "session": "new-label"}),
+                suspended_context,
+            )
+            .await;
+        assert_eq!(suspended_hits.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            suspended
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(serde_json::Value::as_str),
+            Some("authorization_suspended")
+        );
+        assert!(crate::session::forget_suspended_runtime_scope(&scope));
+        crate::session::forget_ended_sessions_with_prefix(&ended_prefix);
     }
 
     #[tokio::test]
-    async fn observation_reuses_only_the_exact_window_grant() {
+    async fn standard_observation_never_requests_per_window_grants() {
         let hits = Arc::new(AtomicUsize::new(0));
         let provider = Arc::new(AcceptingProvider {
             requests: AtomicUsize::new(0),
@@ -2421,9 +2717,21 @@ mod runtime_isolation_tests {
                 .await;
             assert_ne!(result.is_error, Some(true));
         }
+        let display_wide = registry
+            .invoke_with_context(
+                "get_window_state",
+                serde_json::json!({"session": "review"}),
+                context,
+            )
+            .await;
+        assert_ne!(
+            display_wide.is_error,
+            Some(true),
+            "standard display-wide observation must not require get_screen_size"
+        );
 
-        assert_eq!(hits.load(Ordering::SeqCst), 3);
-        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
+        assert_eq!(hits.load(Ordering::SeqCst), 4);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
@@ -2463,15 +2771,15 @@ mod runtime_isolation_tests {
         assert_eq!(hits.load(Ordering::SeqCst), 1);
         assert_eq!(
             provider.requests.load(Ordering::SeqCst),
-            2,
-            "trajectory recording requires independent observation and exact output grants"
+            0,
+            "routine standard recording is promptless"
         );
     }
 
     #[tokio::test]
-    async fn desktop_input_refuses_before_dispatch_and_scopes_foreground_separately() {
-        let denied_hits = Arc::new(AtomicUsize::new(0));
-        let denied = input_registry(None, denied_hits.clone())
+    async fn standard_desktop_input_is_promptless_across_delivery_modes() {
+        let no_host_hits = Arc::new(AtomicUsize::new(0));
+        let no_host = input_registry(None, no_host_hits.clone())
             .invoke_with_context(
                 "click",
                 serde_json::json!({
@@ -2484,14 +2792,25 @@ mod runtime_isolation_tests {
                 standard_context(),
             )
             .await;
-        assert_eq!(denied_hits.load(Ordering::SeqCst), 0);
-        assert_eq!(
-            denied
-                .structured_content
-                .as_ref()
-                .and_then(|value| value.pointer("/refusal/code"))
-                .and_then(serde_json::Value::as_str),
-            Some("protected_consent_required")
+        assert_eq!(no_host_hits.load(Ordering::SeqCst), 1);
+        assert_ne!(no_host.is_error, Some(true));
+        let display_wide_hits = Arc::new(AtomicUsize::new(0));
+        let display_wide = input_registry(None, display_wide_hits.clone())
+            .invoke_with_context(
+                "click",
+                serde_json::json!({
+                    "session": "control",
+                    "x": 10,
+                    "y": 20
+                }),
+                standard_context(),
+            )
+            .await;
+        assert_eq!(display_wide_hits.load(Ordering::SeqCst), 1);
+        assert_ne!(
+            display_wide.is_error,
+            Some(true),
+            "standard display-wide input must not require get_screen_size"
         );
 
         let hits = Arc::new(AtomicUsize::new(0));
@@ -2518,19 +2837,19 @@ mod runtime_isolation_tests {
             assert_ne!(result.is_error, Some(true));
         }
         assert_eq!(hits.load(Ordering::SeqCst), 3);
-        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
-    async fn file_transfer_refuses_before_dispatch_and_reuses_only_the_exact_paths() {
+    async fn standard_file_transfer_is_promptless_and_still_canonicalizes_paths() {
         let files = tempfile::tempdir().unwrap();
         let first = files.path().join("first.txt");
         let second = files.path().join("second.txt");
         std::fs::write(&first, b"first").unwrap();
         std::fs::write(&second, b"second").unwrap();
 
-        let denied_hits = Arc::new(AtomicUsize::new(0));
-        let denied = file_registry(None, denied_hits.clone(), Arc::new(Mutex::new(None)))
+        let no_host_hits = Arc::new(AtomicUsize::new(0));
+        let no_host = file_registry(None, no_host_hits.clone(), Arc::new(Mutex::new(None)))
             .invoke_with_context(
                 "browser_set_input_files",
                 serde_json::json!({
@@ -2543,15 +2862,8 @@ mod runtime_isolation_tests {
                 standard_context(),
             )
             .await;
-        assert_eq!(denied_hits.load(Ordering::SeqCst), 0);
-        assert_eq!(
-            denied
-                .structured_content
-                .as_ref()
-                .and_then(|value| value.pointer("/refusal/code"))
-                .and_then(serde_json::Value::as_str),
-            Some("protected_consent_required")
-        );
+        assert_eq!(no_host_hits.load(Ordering::SeqCst), 1);
+        assert_ne!(no_host.is_error, Some(true));
 
         let hits = Arc::new(AtomicUsize::new(0));
         let last_args = Arc::new(Mutex::new(None));
@@ -2577,7 +2889,7 @@ mod runtime_isolation_tests {
             assert_ne!(result.is_error, Some(true));
         }
         assert_eq!(hits.load(Ordering::SeqCst), 3);
-        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
         let expected = std::fs::canonicalize(second)
             .unwrap()
             .to_string_lossy()
@@ -2673,9 +2985,9 @@ mod runtime_isolation_tests {
     }
 
     #[tokio::test]
-    async fn typed_browser_grants_require_attested_exact_resources() {
-        let denied_hits = Arc::new(AtomicUsize::new(0));
-        let denied = attested_registry("browser_click", None, denied_hits.clone(), false)
+    async fn standard_browser_input_uses_the_existing_binding_without_action_grants() {
+        let no_host_hits = Arc::new(AtomicUsize::new(0));
+        let no_host = attested_registry("browser_click", None, no_host_hits.clone(), false)
             .invoke_with_context(
                 "browser_click",
                 serde_json::json!({
@@ -2686,15 +2998,8 @@ mod runtime_isolation_tests {
                 standard_context(),
             )
             .await;
-        assert_eq!(denied_hits.load(Ordering::SeqCst), 0);
-        assert_eq!(
-            denied
-                .structured_content
-                .as_ref()
-                .and_then(|value| value.pointer("/refusal/code"))
-                .and_then(serde_json::Value::as_str),
-            Some("protected_consent_required")
-        );
+        assert_eq!(no_host_hits.load(Ordering::SeqCst), 1);
+        assert_ne!(no_host.is_error, Some(true));
 
         let hits = Arc::new(AtomicUsize::new(0));
         let provider = Arc::new(AcceptingProvider {
@@ -2718,11 +3023,11 @@ mod runtime_isolation_tests {
             assert_ne!(result.is_error, Some(true));
         }
         assert_eq!(hits.load(Ordering::SeqCst), 2);
-        assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
-    async fn process_identity_is_reproved_after_consent_before_termination() {
+    async fn standard_foreign_process_termination_denies_without_prompting() {
         let hits = Arc::new(AtomicUsize::new(0));
         let provider = Arc::new(AcceptingProvider {
             requests: AtomicUsize::new(0),
@@ -2736,19 +3041,47 @@ mod runtime_isolation_tests {
             )
             .await;
         assert_eq!(hits.load(Ordering::SeqCst), 0);
-        assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
         assert_eq!(
             result
                 .structured_content
                 .as_ref()
                 .and_then(|value| value.pointer("/refusal/code"))
                 .and_then(serde_json::Value::as_str),
-            Some("protected_resource_scope_stale")
+            Some("foreign_process_termination_denied")
         );
     }
 
     #[tokio::test]
-    async fn browser_identity_is_reproved_after_consent_before_input() {
+    async fn standard_owned_process_termination_reproves_the_fingerprint() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let registry = attested_registry("kill_app", None, hits.clone(), false);
+        let context = standard_context();
+        let runtime_session = context.runtime_session_key("process");
+        registry
+            .protected_resource_ownership()
+            .mark_driver_owned_process(
+                &runtime_session,
+                crate::browser::ProcessFingerprint {
+                    pid: 424242,
+                    start_time: Some(7),
+                    executable: Some("/synthetic/fixture".to_owned()),
+                },
+            );
+
+        let result = registry
+            .invoke_with_context(
+                "kill_app",
+                serde_json::json!({"pid": 424242, "session": "process"}),
+                context,
+            )
+            .await;
+        assert_ne!(result.is_error, Some(true));
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn standard_browser_identity_is_reproved_without_repeating_attach_authorization() {
         let hits = Arc::new(AtomicUsize::new(0));
         let provider = Arc::new(AcceptingProvider {
             requests: AtomicUsize::new(0),
@@ -2767,7 +3100,7 @@ mod runtime_isolation_tests {
             )
             .await;
         assert_eq!(hits.load(Ordering::SeqCst), 0);
-        assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
         assert_eq!(
             result
                 .structured_content
@@ -2881,7 +3214,7 @@ mod runtime_isolation_tests {
     }
 
     #[tokio::test]
-    async fn driver_configuration_grants_bind_exact_changes() {
+    async fn standard_agent_adjustable_driver_configuration_is_promptless() {
         let hits = Arc::new(AtomicUsize::new(0));
         let provider = Arc::new(AcceptingProvider {
             requests: AtomicUsize::new(0),
@@ -2903,7 +3236,7 @@ mod runtime_isolation_tests {
             assert_ne!(result.is_error, Some(true));
         }
         assert_eq!(hits.load(Ordering::SeqCst), 3);
-        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
 
         let unknown = registry
             .invoke_with_context(
@@ -2918,7 +3251,7 @@ mod runtime_isolation_tests {
             .await;
         assert_eq!(unknown.is_error, Some(true));
         assert_eq!(hits.load(Ordering::SeqCst), 3);
-        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
     }
 
     #[test]
@@ -3043,6 +3376,7 @@ mod runtime_isolation_tests {
         assert_eq!(args["session"], format!("{prefix}shared-session"));
         assert_eq!(args["_session_id"], format!("{prefix}shared-session"));
         assert_eq!(args["cursor_id"], format!("{prefix}shared-cursor"));
+        assert_eq!(args["_public_session_label"], "shared-session");
 
         let mut result = ToolResult::text(format!("{prefix}shared-session")).with_structured(
             serde_json::json!({
@@ -3121,6 +3455,7 @@ mod runtime_isolation_tests {
         assert_eq!(args["session"], "default");
         assert_eq!(args["_session_id"], "default");
         assert_eq!(args["cursor_id"], "default");
+        assert!(args.get("_public_session_label").is_none());
     }
 }
 
@@ -3136,13 +3471,12 @@ fn permission_denied_result(message: String) -> ToolResult {
 
 fn protected_consent_refusal(error: crate::consent::ConsentError) -> ToolResult {
     let code = match &error {
-        crate::consent::ConsentError::Unavailable => "protected_consent_required",
-        crate::consent::ConsentError::Declined => "protected_consent_declined",
-        crate::consent::ConsentError::Canceled => "protected_consent_canceled",
-        crate::consent::ConsentError::DigestMismatch => "protected_consent_scope_mismatch",
-        crate::consent::ConsentError::Expired => "protected_consent_expired",
-        crate::consent::ConsentError::Indicator(_) => "protected_indicator_unavailable",
-        crate::consent::ConsentError::Provider(_) => "protected_consent_provider_failed",
+        crate::consent::ConsentError::Unavailable => "authorization_required",
+        crate::consent::ConsentError::Declined => "authorization_declined",
+        crate::consent::ConsentError::Canceled => "authorization_canceled",
+        crate::consent::ConsentError::DigestMismatch => "authorization_scope_mismatch",
+        crate::consent::ConsentError::Expired => "authorization_expired",
+        crate::consent::ConsentError::Provider(_) => "authorization_host_failed",
         crate::consent::ConsentError::BoundedResource(_) => "bounded_resource_outside_manifest",
     };
     let message = error.to_string();
@@ -3702,7 +4036,7 @@ mod capability_tests {
     fn to_list_entry_includes_versioned_risk_metadata() {
         let entry = dummy_def("browser_prepare").to_list_entry();
         assert_eq!(entry["risk"]["class"], "r2");
-        assert_eq!(entry["risk"]["enforcement"], "metadata_only");
+        assert_eq!(entry["risk"]["enforcement"], "active");
         assert_eq!(entry["risk"]["operation_sensitive"], true);
         assert_eq!(entry["risk"]["version"], "1");
     }

@@ -622,10 +622,14 @@ function Register-CuaDriverAutostart {
     Write-Host "The task itself runs silently at every logon afterwards." -ForegroundColor Yellow
     Write-Host ""
 
-    $elevCmd = "& `"$InstalledBinary`" autostart enable; `$ec = `$LASTEXITCODE; if (`$ec -ne 0) { Read-Host 'cua-driver autostart enable failed; press Enter to close' }; exit `$ec"
     try {
-        $proc = Start-Process -FilePath "powershell.exe" `
-            -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-Command",$elevCmd `
+        # Elevate the installed executable directly. Passing a quoted command
+        # string through Start-Process -ArgumentList loses the executable's
+        # outer quotes when PowerShell joins the arguments, so profile paths
+        # containing spaces are split before the elevated shell can invoke
+        # the binary.
+        $proc = Start-Process -FilePath $InstalledBinary `
+            -ArgumentList @("autostart", "enable") `
             -Verb RunAs -Wait -PassThru -ErrorAction Stop
         if ($proc.ExitCode -ne 0) {
             throw "cua-driver autostart enable failed in elevated session (exit $($proc.ExitCode))"

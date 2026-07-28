@@ -1249,29 +1249,48 @@ const ACTIVATION_VERBS: &[&str] = &[
     "dodefault",
 ];
 
-/// Is this action name an activation — the AT-SPI analogue of a click?
-///
-/// Position is not meaning. A GTK4 text view advertises fifteen actions whose
-/// first is `buffer.delete-line`, so actuating "action 0" there deletes a line
-/// of the user's document instead of placing a caret.
-fn is_activation_action(name: &str) -> bool {
-    let verb: String = name
-        .rsplit('.')
+/// Checkbox-only verbs exposed by Chromium's AT-SPI bridge. These are not
+/// globally safe activation names: an unrelated widget may advertise a
+/// namespaced action ending in `check`, so the role gate is mandatory.
+const CHECKBOX_ACTIVATION_VERBS: &[&str] = &["check", "uncheck"];
+
+fn normalized_action_verb(name: &str) -> String {
+    name.rsplit('.')
         .next()
         .unwrap_or(name)
         .trim()
         .chars()
         .filter(|ch| ch.is_ascii_alphanumeric())
         .flat_map(char::to_lowercase)
-        .collect();
+        .collect()
+}
+
+/// Is this action name an activation — the AT-SPI analogue of a click?
+///
+/// Position is not meaning. A GTK4 text view advertises fifteen actions whose
+/// first is `buffer.delete-line`, so actuating "action 0" there deletes a line
+/// of the user's document instead of placing a caret.
+fn is_activation_action(name: &str) -> bool {
+    let verb = normalized_action_verb(name);
     ACTIVATION_VERBS.contains(&verb.as_str())
+}
+
+fn is_checkbox_role(role: &str) -> bool {
+    matches!(
+        role.trim().to_ascii_lowercase().as_str(),
+        "check box" | "checkbox"
+    )
 }
 
 /// Index of the action to actuate, or `None` when the element advertises no
 /// activation. `None` must not fall back to index 0: firing an arbitrary
 /// action is worse than reporting that there is nothing to fire.
-fn activation_index(actions: &[String]) -> Option<usize> {
-    actions.iter().position(|a| is_activation_action(a))
+fn activation_index(role: &str, actions: &[String]) -> Option<usize> {
+    actions.iter().position(|action| {
+        is_activation_action(action)
+            || (is_checkbox_role(role)
+                && CHECKBOX_ACTIVATION_VERBS.contains(&normalized_action_verb(action).as_str()))
+    })
 }
 
 pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
@@ -1301,7 +1320,7 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
             // reporting an ordinary click. An element that advertises no
             // activation at all is a no-op the caller must escalate past —
             // not an invitation to fire whatever happens to be first.
-            let chosen = activation_index(&target.actions).ok_or_else(|| {
+            let chosen = activation_index(&target.role, &target.actions).ok_or_else(|| {
                 anyhow!("element {idx} does not advertise a safe activation action")
             })?;
 
@@ -1572,7 +1591,7 @@ pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Optio
                 return Ok(None);
             };
             let target = &visited[idx];
-            let Some(chosen) = activation_index(&target.actions) else {
+            let Some(chosen) = activation_index(&target.role, &target.actions) else {
                 return Ok(None);
             };
             let ap = target
@@ -1684,7 +1703,7 @@ pub fn perform_action_at_screen_point(
                 return Ok(None);
             };
             let target = action_nodes[idx];
-            let Some(chosen) = activation_index(&target.actions) else {
+            let Some(chosen) = activation_index(&target.role, &target.actions) else {
                 return Ok(None);
             };
             let ap = target
@@ -2530,7 +2549,7 @@ mod coord_tests {
         .iter()
         .map(|s| (*s).to_owned())
         .collect();
-        assert_eq!(activation_index(&text_view), None);
+        assert_eq!(activation_index("text", &text_view), None);
     }
 
     #[test]
@@ -2544,17 +2563,30 @@ mod coord_tests {
         assert!(!is_activation_action("showContextMenu"));
         let entry = vec!["activate".to_owned(), "showContextMenu".to_owned()];
         let statisch = vec!["clickAncestor".to_owned(), "showContextMenu".to_owned()];
-        assert_eq!(activation_index(&entry), Some(0));
-        assert_eq!(activation_index(&statisch), Some(0));
+        assert_eq!(activation_index("entry", &entry), Some(0));
+        assert_eq!(activation_index("static", &statisch), Some(0));
+    }
+
+    #[test]
+    fn chromium_checkbox_verbs_are_role_gated() {
+        let check = vec!["check".to_owned(), "showContextMenu".to_owned()];
+        let uncheck = vec!["uncheck".to_owned(), "showContextMenu".to_owned()];
+
+        assert_eq!(activation_index("check box", &check), Some(0));
+        assert_eq!(activation_index("checkbox", &uncheck), Some(0));
+        assert_eq!(activation_index("text", &check), None);
+        assert_eq!(activation_index("entry", &uncheck), None);
+        assert!(!is_activation_action("check"));
+        assert!(!is_activation_action("uncheck"));
     }
 
     #[test]
     fn a_button_activates_on_its_click_action() {
         let button = vec!["click".to_owned()];
-        assert_eq!(activation_index(&button), Some(0));
+        assert_eq!(activation_index("button", &button), Some(0));
         // Position is not meaning: the activation may sit anywhere.
         let mixed = vec!["clipboard.copy".to_owned(), "activate".to_owned()];
-        assert_eq!(activation_index(&mixed), Some(1));
+        assert_eq!(activation_index("button", &mixed), Some(1));
         // Failed action-name lookups are retained as empty placeholders so
         // the selected vector position is still the original AT-SPI index.
         let sparse = vec![
@@ -2562,6 +2594,6 @@ mod coord_tests {
             "buffer.delete-line".to_owned(),
             "activate".to_owned(),
         ];
-        assert_eq!(activation_index(&sparse), Some(2));
+        assert_eq!(activation_index("button", &sparse), Some(2));
     }
 }

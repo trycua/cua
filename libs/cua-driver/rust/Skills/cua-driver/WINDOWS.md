@@ -314,7 +314,9 @@ on a Chromium target falls through to `send_click_synthesized`
   that can happen as the renderer's input handler processes the click
   (focus().activate() / WebContents::Activate() — 100-500 ms later). The
   guard is gated on `GetWindowThreadProcessId(fg_now) == pid` so user
-  Alt-Tabs are respected.
+  Alt-Tabs are respected. The polling guard is asynchronous and best-effort,
+  so the tool response is not proof that the previous foreground has already
+  been restored.
 
 ## Defaults — always prefer cua-driver over shell shims
 

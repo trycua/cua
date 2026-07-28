@@ -6801,10 +6801,16 @@ impl Tool for BringToFrontTool {
             name: "bring_to_front".into(),
             description:
                 "Persistently activate a window so subsequent input lands on it. \
+                 This deliberately breaks the no-foreground contract and is not part \
+                 of the normal input ladder. For an ordinary `background_unavailable` \
+                 response, retry only the refused action with \
+                 `delivery_mode:\"foreground\"`; the input tool performs its own \
+                 activate, act, and restore sequence. Use `bring_to_front` only for a \
+                 focus-proxy surface that must remain foreground across multiple calls, \
+                 such as a remote desktop session, or when repeated action-scoped \
+                 activation prevents the remote surface from accepting input. \
                  X11: EWMH _NET_ACTIVE_WINDOW activation (the `wmctrl -a` equivalent, \
-                 proper timestamp handling to beat focus-stealing prevention) — call \
-                 it before `delivery_mode:\"foreground\"` input to avoid a per-call \
-                 flash, or to escalate when background injection didn't land. \
+                 with proper timestamp handling to beat focus-stealing prevention). \
                  Wayland: activates through a target-addressable compositor adapter \
                  (wlroots foreign-toplevel or the GNOME Shell helper) and refuses \
                  when the compositor offers no safe adapter. Matches the macOS / \

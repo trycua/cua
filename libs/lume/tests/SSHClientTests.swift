@@ -1,4 +1,5 @@
 @preconcurrency import NIOCore
+@preconcurrency import NIOConcurrencyHelpers
 @preconcurrency import NIOEmbedded
 @preconcurrency import NIOSSH
 import Testing
@@ -15,18 +16,18 @@ func childPromiseIsCreatedAfterHandlerLookup() throws {
     let handlerFuture = eventLoop.makeFailedFuture(
         SSHClientFutureTestError.handlerLookupFailed
     ) as EventLoopFuture<NIOSSHHandler>
-    var initializerCalled = false
+    let initializerCalled = NIOLockedValueBox(false)
 
     let childFuture = SSHClient.makeChildChannelFuture(
         handlerFuture: handlerFuture,
         eventLoop: eventLoop
     ) { _, promise in
-        initializerCalled = true
+        initializerCalled.withLockedValue { $0 = true }
         promise.fail(SSHClientFutureTestError.handlerLookupFailed)
     }
 
     #expect(throws: SSHClientFutureTestError.self) {
         try childFuture.wait()
     }
-    #expect(!initializerCalled)
+    #expect(!initializerCalled.withLockedValue { $0 })
 }

@@ -9,7 +9,13 @@ Preserve contributor credit when external code or design ships in Cua.
   commit remain in history.
 - When adapting material parts of a contribution in a new commit, add the
   contributor with a `Co-authored-by` trailer and write `Salvaged from #<pr>`
-  in the commit or landing pull request body.
+  in the commit or landing pull request body. The source pull request must be
+  different from the landing pull request.
+- When adapting a contribution directly in its existing pull request, keep the
+  contributor as the commit author and credit adapting authors with
+  `Co-authored-by` trailers instead of citing the pull request as its own source.
+- Use GitHub-linked or GitHub noreply email addresses for commit authors and
+  coauthors so the contributor-attribution check can resolve each identity.
 - Preserve known human coauthor trailers during rebases and squash merges.
 - Link the source pull request and tell its author where the work shipped.
 - Honor public credit opt-out requests. Keep security attribution private until

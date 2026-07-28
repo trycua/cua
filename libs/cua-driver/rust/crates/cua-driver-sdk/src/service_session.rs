@@ -36,6 +36,14 @@ impl ServiceSessionClient {
         options: TrustedSessionOptions,
         client_kind: DaemonClientKind,
     ) -> Result<Arc<Self>, DriverError> {
+        let metadata =
+            cua_driver_core::daemon::request_daemon_metadata(&socket_path).map_err(|error| {
+                DriverError::Transport {
+                    socket_path: socket_path.clone(),
+                    reason: format!("read service compatibility metadata: {error}"),
+                }
+            })?;
+        crate::validate_daemon_metadata(&metadata)?;
         let stream = connect(&socket_path)?;
         let writer = stream.try_clone().map_err(|error| DriverError::Transport {
             socket_path: socket_path.clone(),
@@ -298,6 +306,25 @@ mod tests {
     use crate::{SessionPermissionMode, TrustedSessionOptions};
     use std::os::unix::net::UnixListener;
 
+    fn serve_compatible_metadata(listener: &UnixListener) {
+        let (stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        let request: DaemonRequest = serde_json::from_str(&line).unwrap();
+        assert_eq!(request.method, "metadata");
+        let mut writer = stream;
+        writeln!(
+            writer,
+            "{}",
+            serde_json::to_string(&DaemonResponse::ok(
+                serde_json::to_value(cua_driver_core::daemon::current_daemon_metadata()).unwrap()
+            ))
+            .unwrap()
+        )
+        .unwrap();
+    }
+
     #[test]
     fn response_reader_preserves_partial_utf8_across_poll_timeouts() {
         let (reader, mut writer) = std::os::unix::net::UnixStream::pair().unwrap();
@@ -324,6 +351,7 @@ mod tests {
         let socket = directory.path().join("service.sock");
         let listener = UnixListener::bind(&socket).unwrap();
         let server = std::thread::spawn(move || {
+            serve_compatible_metadata(&listener);
             let (stream, _) = listener.accept().unwrap();
             let mut reader = BufReader::new(stream.try_clone().unwrap());
             let mut writer = stream;
@@ -377,6 +405,7 @@ mod tests {
         let socket = directory.path().join("delayed-service.sock");
         let listener = UnixListener::bind(&socket).unwrap();
         let server = std::thread::spawn(move || {
+            serve_compatible_metadata(&listener);
             let (stream, _) = listener.accept().unwrap();
             let mut reader = BufReader::new(stream.try_clone().unwrap());
             let mut writer = stream;

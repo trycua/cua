@@ -40,8 +40,10 @@ import asyncio
 from cua_driver import (
     CaptureScope,
     CuaDriver,
+    CursorReducedMotion,
     EndSessionInput,
     GetDesktopStateInput,
+    SetAgentCursorThemeInput,
     StartSessionInput,
 )
 
@@ -51,6 +53,13 @@ async def main() -> None:
         StartSessionInput(session="demo", capture_scope=CaptureScope.DESKTOP)
     )
     try:
+        await driver.set_agent_cursor_theme(
+            SetAgentCursorThemeInput(
+                session="demo",
+                theme_id="cua.default",
+                reduced_motion=CursorReducedMotion.AUTO,
+            )
+        )
         desktop = await driver.get_desktop_state(
             GetDesktopStateInput(session="demo", screenshot_out_file=None)
         )
@@ -67,6 +76,30 @@ SDK operations are asynchronous. Desktop calls return a typed `ToolResult` with
 text, images, verification/error metadata, and `structured_json` / `raw_json`
 for platform-extensible results. Session lifecycle calls return dedicated
 generated records.
+
+The agent cursor is session-owned. Its default theme and custom dotLottie
+authoring workflow are documented in
+[`docs/cursor-themes.md`](../docs/cursor-themes.md). Custom source is compiled
+and installed with the local CLI; SDK and MCP tools select only an installed
+theme ID. The built-in cursor shows the sanitized public session name in a
+badge below the pointer.
+
+## Authorization integrations
+
+`standard` is promptless for normal automation. An application that needs to
+authorize attachment to an existing logged-in Chromium profile can construct a
+configured runtime with
+`CuaDriver.create_configured_with_authorization_host(options, host)`.
+Implement `DriverAuthorizationHost.authorize()` in trusted application code
+and return the request's exact digest with `ALLOW`, `DENY`, or `CANCEL`.
+
+`CuaDriver.create_configured_with_activity_observer(options, observer)` emits
+content-free action, refusal, grant, and session events. The observer cannot
+change authorization or tool results. Use
+`create_configured_with_host_integrations` when the application needs both.
+
+See the [SDK reference](https://cua.ai/docs/reference/cua-driver/sdk-reference)
+for complete examples and the callback trust rules.
 
 `CuaDriver.connect(socket_path)` remains available while existing applications
 migrate. It exposes the same methods over the installed daemon, but it does not

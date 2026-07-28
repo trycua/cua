@@ -14,7 +14,8 @@ implementations, testkit, and helper crates.
 | `platform-linux` | Linux AT-SPI, X11/Wayland, capture, and input support |
 | `cua-driver-testkit` | Test-only helpers for spawning the daemon and parsing responses |
 | `cua-driver-uia` | Windows UIAccess worker |
-| `cursor-overlay` | Cursor overlay support |
+| `cursor-overlay` | Cross-platform semantic cursor renderer and bounded compiled-theme loader |
+| `cursor-theme-cli` | Short-lived dotLottie validation, compilation, preview, and installation sidecar |
 | `pip-preview` | Packaging preview helper |
 
 Platform crates are selected with `cfg(target_os)` from the main driver crate.

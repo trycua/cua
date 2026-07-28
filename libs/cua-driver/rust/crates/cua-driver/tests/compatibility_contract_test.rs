@@ -102,6 +102,62 @@ fn direct_mcp_runtime_matches_the_released_protocol_contract() {
     assert_mcp_contract(&mut driver, &fixture);
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn explicit_direct_mcp_is_read_only_for_permissions_and_refuses_overlay_tools() {
+    let Some(mut driver) = RawDriver::spawn_explicit_direct() else {
+        panic!("compatibility test requires the built cua-driver binary");
+    };
+
+    driver.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {}
+    }));
+    driver.recv();
+
+    driver.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": "get_agent_cursor_state",
+            "arguments": {"session": "explicit-direct"}
+        }
+    }));
+    let overlay = driver.recv();
+    assert_eq!(overlay["result"]["isError"], true, "{overlay:?}");
+    assert_eq!(
+        overlay["result"]["structuredContent"]["refusal"]["code"], "facility_unavailable",
+        "{overlay:?}"
+    );
+
+    driver.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "tools/call",
+        "params": {
+            "name": "check_permissions",
+            "arguments": {"prompt": true}
+        }
+    }));
+    let permissions = driver.recv();
+    assert_ne!(permissions["result"]["isError"], true, "{permissions:?}");
+    assert_eq!(
+        permissions["result"]["structuredContent"]["direct_capture_status"], "not_checked",
+        "{permissions:?}"
+    );
+    assert_eq!(
+        permissions["result"]["structuredContent"]["source"]["attribution"], "host",
+        "{permissions:?}"
+    );
+    assert_eq!(
+        permissions["result"]["structuredContent"]["source"]["direct_runtime"], true,
+        "{permissions:?}"
+    );
+}
+
 fn assert_mcp_contract(driver: &mut RawDriver, fixture: &Value) {
     driver.send(&json!({
         "jsonrpc": "2.0",

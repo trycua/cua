@@ -76,6 +76,14 @@ jobs:
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           workspaces: "libs/cua-driver/rust -> target"
+      - name: Record Windows runner session
+        if: runner.os == 'Windows'
+        id: windows-session
+        shell: pwsh
+        run: |
+          $sessionId = (Get-Process -Id $PID).SessionId
+          "session_id=$sessionId" >> $env:GITHUB_OUTPUT
+          "Windows runner process session id: $sessionId"
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
@@ -84,10 +92,12 @@ jobs:
             clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
             libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
       - name: Prove portable contracts match the live registry
+        if: runner.os != 'Windows' || steps.windows-session.outputs.session_id != '0'
         working-directory: libs/cua-driver/rust
         run: cargo test --locked -p cua-driver --test schema_consistency_test portable_desktop_contracts_are_accepted_by_active_backend
 
       - name: Verify released CLI and MCP compatibility
+        if: runner.os != 'Windows' || steps.windows-session.outputs.session_id != '0'
         working-directory: libs/cua-driver/rust
         run: cargo test --locked -p cua-driver --test compatibility_contract_test
 
@@ -95,9 +105,33 @@ jobs:
         working-directory: libs/cua-driver/rust
         run: cargo check --locked -p cua-driver-sdk
 
+      - name: Compile the frozen previous-release Rust application
+        run: cargo check --manifest-path libs/cua-driver/compat-fixtures/apps/rust/Cargo.toml
+
+      - name: Run the frozen previous-release Rust application
+        if: runner.os == 'Linux'
+        run: cargo run --manifest-path libs/cua-driver/compat-fixtures/apps/rust/Cargo.toml
+
       - name: Prove the embedded host serves SDK and MCP clients
+        if: runner.os != 'Windows' || steps.windows-session.outputs.session_id != '0'
         working-directory: libs/cua-driver/rust
         run: cargo test --locked -p cua-driver --test embedded_host_sdk_mcp_test
+
+      - name: Prove Windows Session 0 refusal and desktop-free metadata
+        if: runner.os == 'Windows' && steps.windows-session.outputs.session_id == '0'
+        working-directory: libs/cua-driver/rust
+        shell: pwsh
+        run: |
+          cargo test --locked -p platform-windows diagnostics::tests:: --lib
+          if ($LASTEXITCODE -ne 0) { throw "Windows diagnostics tests failed with exit $LASTEXITCODE" }
+          cargo test --locked -p cua-driver-sdk session_zero_refuses_runtime_creation_before_platform_dispatch --lib
+          if ($LASTEXITCODE -ne 0) { throw "Session 0 refusal test failed with exit $LASTEXITCODE" }
+          cargo run --locked -p cua-driver -- list-tools | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Session 0 list-tools failed with exit $LASTEXITCODE" }
+          cargo run --locked -p cua-driver -- describe click | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Session 0 describe failed with exit $LASTEXITCODE" }
+          cargo run --locked -p cua-driver -- dump-docs --type cli | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Session 0 dump-docs failed with exit $LASTEXITCODE" }
 
   verify:
     name: Generated contract and SDK bindings
@@ -215,8 +249,10 @@ jobs:
             python -m build --wheel --outdir /tmp/cua-driver-wheels python
           unzip -l /tmp/cua-driver-wheels/*.whl | grep -F 'cua_driver/libcua_driver_sdk.so'
           python -m pip install --target /tmp/cua-driver-wheel-smoke /tmp/cua-driver-wheels/*.whl
+          PYTHONPATH=/tmp/cua-driver-wheel-smoke python \
+            compat-fixtures/apps/python/app.py
           PYTHONPATH=/tmp/cua-driver-wheel-smoke python -c \
-            "from cua_driver import CuaDriver, EmbeddedCuaDriverHost; print(CuaDriver.connect(None).socket_path(), EmbeddedCuaDriverHost)"
+            "from cua_driver import EmbeddedCuaDriverHost; print(EmbeddedCuaDriverHost)"
 
       - name: Verify Node native package contents
         working-directory: libs/cua-driver/typescript
@@ -243,8 +279,10 @@ jobs:
             "/tmp/cua-driver-npm/trycua-cua-driver-$VERSION.tgz" \
             "/tmp/cua-driver-npm/trycua-cua-driver-linux-x64-gnu-$VERSION.tgz"
           cd /tmp/cua-driver-npm/smoke
+          cp "$GITHUB_WORKSPACE/libs/cua-driver/compat-fixtures/apps/typescript/app.mjs" .
+          node app.mjs
           node --input-type=module -e \
-            "const sdk = await import('@trycua/cua-driver'); const driver = sdk.CuaDriver.connect(undefined); console.log(driver.socketPath()); driver.uniffiDestroy(); const embedded = await import('@trycua/cua-driver/embedded'); if (embedded.EmbeddedCuaDriverHost !== sdk.EmbeddedCuaDriverHost) process.exit(1)"
+            "const sdk = await import('@trycua/cua-driver'); const embedded = await import('@trycua/cua-driver/embedded'); if (embedded.EmbeddedCuaDriverHost !== sdk.EmbeddedCuaDriverHost) process.exit(1)"
 
       - name: Install Python agent SDK example dependencies
         working-directory: libs/cua-driver/examples/agent-sdks

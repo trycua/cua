@@ -305,7 +305,7 @@ pub(crate) fn locate_by_name(name: &str) -> Option<AppLocator> {
 /// this file) to avoid pulling in a plist crate just for this.
 fn bundle_id_for_app_path(app_path: &str) -> Option<String> {
     let plist = format!("{app_path}/Contents/Info.plist");
-    let out = Command::new("plutil")
+    let out = Command::new("/usr/bin/plutil")
         .args(["-extract", "CFBundleIdentifier", "raw", "-o", "-", &plist])
         .output()
         .ok()?;

@@ -13,6 +13,7 @@
     "subcommands": {
       "mcp": [
         ["--socket", "string"],
+        ["--grant", "repeatable-string"],
         ["--claude-code-computer-use-compat", "flag"],
         ["--embedded", "flag"],
         ["--host-bundle-id", "string"]
@@ -20,6 +21,7 @@
       "serve": [
         ["--socket", "string"],
         ["--permission-mode", "string"],
+        ["--grant", "repeatable-string"],
         ["--dangerously-bypass-approvals", "flag"],
         ["--session-policy", "string"],
         ["--approve-session-policy", "flag"],

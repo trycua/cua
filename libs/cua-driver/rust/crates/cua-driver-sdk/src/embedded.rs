@@ -1113,7 +1113,11 @@ mod tests {
 
     fn options(mode: EmbeddedPermissionMode) -> EmbeddedDriverHostOptions {
         EmbeddedDriverHostOptions {
-            binary_path: "/example/cua-driver".into(),
+            binary_path: std::env::current_dir()
+                .expect("test working directory")
+                .join("cua-driver")
+                .to_string_lossy()
+                .into_owned(),
             host_bundle_id: "com.example.host".into(),
             socket_path: None,
             startup_timeout_ms: None,
@@ -1187,6 +1191,37 @@ mod tests {
         assert!(!values
             .iter()
             .any(|variable| variable.value == "forged-lock"));
+    }
+
+    #[test]
+    fn interactive_linux_session_environment_is_inherited() {
+        let values = merge_safe_environment(
+            [
+                ("WAYLAND_DISPLAY".into(), "wayland-7".into()),
+                ("XDG_RUNTIME_DIR".into(), "/run/user/1000".into()),
+                ("XDG_SESSION_TYPE".into(), "wayland".into()),
+                (
+                    "DBUS_SESSION_BUS_ADDRESS".into(),
+                    "unix:path=/run/user/1000/bus".into(),
+                ),
+                ("AT_SPI_BUS_ADDRESS".into(), "must-not-leak".into()),
+            ],
+            &[],
+        );
+
+        for (name, value) in [
+            ("WAYLAND_DISPLAY", "wayland-7"),
+            ("XDG_RUNTIME_DIR", "/run/user/1000"),
+            ("XDG_SESSION_TYPE", "wayland"),
+            ("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus"),
+        ] {
+            assert!(values
+                .iter()
+                .any(|variable| variable.name == name && variable.value == value));
+        }
+        assert!(!values
+            .iter()
+            .any(|variable| variable.name == "AT_SPI_BUS_ADDRESS"));
     }
 
     #[test]

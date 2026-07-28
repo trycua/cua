@@ -27,8 +27,7 @@ use std::time::{Duration, Instant};
 #[cfg(target_os = "linux")]
 use cursor_overlay::ZOrderEnforcer;
 use cursor_overlay::{
-    CursorConfig, CursorKey, KeyedOverlayCommand, OverlayCommand, OverlayMsg, Palette,
-    RenderStateCore,
+    CursorConfig, CursorKey, KeyedOverlayCommand, OverlayCommand, OverlayMsg, RenderStateCore,
 };
 
 // ── Global channel ────────────────────────────────────────────────────────
@@ -67,9 +66,9 @@ struct RenderMap {
 }
 
 fn render_state_for_key(template: &CursorConfig, key: &str) -> RenderState {
-    let mut rs = RenderState::new(template.clone());
-    rs.core.palette = Palette::for_instance(key);
-    rs
+    let mut config = template.clone();
+    config.cursor_id = key.to_owned();
+    RenderState::new(config)
 }
 
 fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
@@ -106,20 +105,60 @@ fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
 }
 
 pub fn init(cfg: CursorConfig) {
-    let (tx, rx) = std::sync::mpsc::sync_channel(4096);
-    let _ = CMD_TX.set(tx);
-    *CMD_RX_CELL.lock().unwrap() = Some(rx);
-    *ARRIVAL_TX.lock().unwrap() = Some(HashMap::new());
-    let mut cursors = HashMap::new();
-    cursors.insert("default".to_owned(), RenderState::new(cfg.clone()));
-    *RENDER.lock().unwrap() = Some(RenderMap {
-        cursors,
-        scr_w: 1920,
-        scr_h: 1080,
-        template: cfg,
-        ended: HashSet::new(),
-        last_active: None,
+    static INITIALIZED: OnceLock<()> = OnceLock::new();
+    INITIALIZED.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::sync_channel(4096);
+        CMD_TX
+            .set(tx)
+            .expect("cursor overlay sender is initialized exactly once");
+        *CMD_RX_CELL.lock().unwrap() = Some(rx);
+        *ARRIVAL_TX.lock().unwrap() = Some(HashMap::new());
+        let mut cursors = HashMap::new();
+        cursors.insert("default".to_owned(), RenderState::new(cfg.clone()));
+        *RENDER.lock().unwrap() = Some(RenderMap {
+            cursors,
+            scr_w: 1920,
+            scr_h: 1080,
+            template: cfg,
+            ended: HashSet::new(),
+            last_active: None,
+        });
     });
+    cua_driver_core::cursor_events::install_cursor_event_sink(std::sync::Arc::new(
+        |event: cua_driver_core::cursor_events::CursorEvent| {
+            use cua_driver_core::cursor_events::{CursorEvent, CursorEventPhase};
+            let (session, cmd) = match event {
+                CursorEvent::SetSessionLabel { session, label } => {
+                    (session, OverlayCommand::SetSessionLabel(label))
+                }
+                CursorEvent::Action {
+                    session,
+                    phase: CursorEventPhase::Begin,
+                    semantics,
+                } => (
+                    session,
+                    OverlayCommand::BeginAction {
+                        action: semantics.action,
+                        delivery: semantics.delivery,
+                        target: semantics.target,
+                    },
+                ),
+                CursorEvent::Action {
+                    session,
+                    phase: CursorEventPhase::End,
+                    semantics,
+                } => (session, OverlayCommand::EndAction(semantics.action)),
+                CursorEvent::SelectTheme { session, selection } => (
+                    session,
+                    OverlayCommand::SetTheme {
+                        theme_id: selection.theme_id,
+                        reduced_motion: selection.reduced_motion,
+                    },
+                ),
+            };
+            send_command_for(session, cmd);
+        },
+    ));
 }
 
 pub fn send_command(cmd: OverlayCommand) {
@@ -143,7 +182,10 @@ pub fn send_command_for(key: CursorKey, cmd: OverlayCommand) {
     #[cfg(target_os = "linux")]
     {
         if crate::wayland::is_wayland() {
-            if crate::wayland::shell_helper::available() {
+            if crate::wayland::shell_helper::semantic_cursor_available() {
+                crate::wayland::shell_helper::set_cursor_color(&cursor_overlay::session_fill_hex(
+                    &key,
+                ));
                 // GNOME has no layer-shell. Drive only the final positioning
                 // commands through the compositor helper; it performs its own
                 // easing and avoids starting a worker that must fail.
@@ -151,12 +193,45 @@ pub fn send_command_for(key: CursorKey, cmd: OverlayCommand) {
                     cursor_overlay::OverlayCommand::ClickPulse { x, y } => {
                         crate::wayland::shell_helper::click_pulse(*x as i32, *y as i32);
                     }
+                    cursor_overlay::OverlayCommand::MoveTo { x, y, .. } => {
+                        crate::wayland::shell_helper::move_cursor(*x as i32, *y as i32);
+                    }
                     cursor_overlay::OverlayCommand::SnapTo { x, y, .. } => {
                         crate::wayland::shell_helper::move_cursor(*x as i32, *y as i32);
                     }
+                    cursor_overlay::OverlayCommand::BeginAction {
+                        action,
+                        delivery,
+                        target,
+                    } => {
+                        crate::wayland::shell_helper::set_cursor_state(
+                            action.as_str(),
+                            delivery.as_ref().map_or("", |value| value.as_str()),
+                            target.as_ref().map_or("", |value| value.as_str()),
+                            true,
+                        );
+                    }
+                    cursor_overlay::OverlayCommand::EndAction(action) => {
+                        crate::wayland::shell_helper::set_cursor_state(
+                            action.as_str(),
+                            "",
+                            "",
+                            false,
+                        );
+                    }
+                    cursor_overlay::OverlayCommand::SetSessionLabel(label) => {
+                        crate::wayland::shell_helper::set_session_label(
+                            cursor_overlay::sanitize_session_label(label)
+                                .as_deref()
+                                .unwrap_or(""),
+                        );
+                    }
+                    cursor_overlay::OverlayCommand::SetEnabled(false) => {
+                        crate::wayland::shell_helper::hide_cursor();
+                    }
                     _ => {}
                 }
-            } else {
+            } else if !crate::wayland::shell_helper::available() {
                 let _ = crate::wayland::overlay::forward(&msg);
             }
         }
@@ -211,6 +286,25 @@ pub fn current_motion_for(key: &str) -> cursor_overlay::MotionConfig {
             })
         })
         .unwrap_or_default()
+}
+
+pub fn current_theme_state_for(
+    key: &str,
+) -> Option<(
+    String,
+    String,
+    String,
+    Option<String>,
+    cursor_overlay::CursorVisualState,
+)> {
+    let guard = RENDER.lock().ok()?;
+    let map = guard.as_ref()?;
+    let state = map
+        .cursors
+        .get(key)
+        .or_else(|| map.cursors.get("default"))?;
+    let (id, version, profile, fallback) = state.core.active_theme_metadata();
+    Some((id, version, profile, fallback, state.core.visual.clone()))
 }
 
 fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
@@ -881,6 +975,8 @@ fn x11_compositor_present(conn: &impl x11rb::connection::Connection, screen_num:
 /// independent of the root-window area without clipping antialiasing.
 #[cfg(target_os = "linux")]
 const X11_CURSOR_TILE_MARGIN: f64 = 64.0;
+#[cfg(target_os = "linux")]
+const X11_LABELED_CURSOR_HORIZONTAL_MARGIN: f64 = 96.0;
 
 #[cfg(target_os = "linux")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -909,9 +1005,14 @@ fn cursor_tile_bounds(
 
     let screen_width = i32::try_from(screen_width).ok()?;
     let screen_height = i32::try_from(screen_height).ok()?;
-    let left = (core.pos.0 - X11_CURSOR_TILE_MARGIN).floor() as i32;
+    let horizontal_margin = if core.session_label.is_some() {
+        X11_LABELED_CURSOR_HORIZONTAL_MARGIN
+    } else {
+        X11_CURSOR_TILE_MARGIN
+    };
+    let left = (core.pos.0 - horizontal_margin).floor() as i32;
     let top = (core.pos.1 - X11_CURSOR_TILE_MARGIN).floor() as i32;
-    let right = (core.pos.0 + X11_CURSOR_TILE_MARGIN).ceil() as i32;
+    let right = (core.pos.0 + horizontal_margin).ceil() as i32;
     let bottom = (core.pos.1 + X11_CURSOR_TILE_MARGIN).ceil() as i32;
 
     let left = left.clamp(0, screen_width);
@@ -1096,6 +1197,12 @@ fn bgra_and_visible_shape(
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keyed_render_state_carries_the_session_color_identity() {
+        let state = render_state_for_key(&CursorConfig::default(), "session-blueprint");
+        assert_eq!(state.core.cfg.cursor_id, "session-blueprint");
+    }
 
     fn default_render_map() -> RenderMap {
         let cfg = CursorConfig::default();
@@ -1324,7 +1431,10 @@ mod tests {
                 &mut map,
                 Some(OverlayMsg::Cmd(KeyedOverlayCommand {
                     key: "other".to_owned(),
-                    cmd: OverlayCommand::SetPalette(Palette::for_instance("other")),
+                    cmd: OverlayCommand::SetTheme {
+                        theme_id: cursor_overlay::DEFAULT_THEME_ID.to_owned(),
+                        reduced_motion: cursor_overlay::ReducedMotion::Auto,
+                    },
                 })),
                 &rx,
                 0.1,
@@ -1516,6 +1626,23 @@ mod tests {
         assert_eq!(tile.bounds.height, 128);
         assert_eq!(tile.pixmap.data().len(), 128 * 128 * 4);
         assert!(tile.pixmap.data().len() < (map.scr_w * map.scr_h * 4) as usize);
+    }
+
+    #[test]
+    fn session_badge_expands_only_the_local_cursor_tile() {
+        let mut map = default_render_map();
+        map.scr_w = 7680;
+        map.scr_h = 2160;
+        let cursor = map.cursors.get_mut("default").unwrap();
+        cursor.core.pos = (4000.0, 1000.0);
+        cursor.core.session_label = Some("research-run".to_owned());
+
+        let tiles = render_x11_tiles(&map);
+
+        assert_eq!(tiles.len(), 1);
+        assert_eq!(tiles[0].bounds.width, 192);
+        assert_eq!(tiles[0].bounds.height, 128);
+        assert!(tiles[0].pixmap.data().len() < (map.scr_w * map.scr_h * 4) as usize);
     }
 
     #[test]

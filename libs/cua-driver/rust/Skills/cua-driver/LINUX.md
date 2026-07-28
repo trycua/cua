@@ -49,9 +49,16 @@ and Windows surface:
   e.g. a GTK dialog button or a widget that only reads input while focused.
   A brief focus swap unless the target was already active.
 
-**`bring_to_front`** (X11): persistent `_NET_ACTIVE_WINDOW` activation (the
-`wmctrl -a` equivalent), kept active. Call it before `delivery_mode:"foreground"`
-input to avoid a per-call flash, or to escalate when background didn't land.
+### Persistent focus-proxy exception
+
+`bring_to_front` is not part of the normal input ladder. For an ordinary
+`background_unavailable` response, retry only the refused action with
+`delivery_mode:"foreground"`; cua-driver activates the target, performs the
+action, and restores the prior active window. Use `bring_to_front` only when a
+focus-proxy surface must remain foreground across multiple calls, such as a
+remote desktop session, or when repeated action-scoped activation prevents the
+remote surface from accepting input. On X11 it uses persistent
+`_NET_ACTIVE_WINDOW` activation (the `wmctrl -a` equivalent).
 
 **Read-back / `verified`** — `type_text` reports `{verified}`: the AT-SPI
 `EditableText.insertText` path (`path:"ax"`) is the **driver-verifiable** rung

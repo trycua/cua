@@ -279,6 +279,14 @@ final class LumeController {
         }
     }
 
+    /// Classifies resize-guard contention using the transaction marker as the
+    /// authoritative signal. A running VM intentionally holds the guard for
+    /// its lifetime, so lock contention without a marker is not an interrupted
+    /// resize and must not suggest rollback.
+    private func resizeGuardContentionError(_ vmDir: VMDirectory, name: String) -> DiskResizeError {
+        vmDir.hasResizeMarker() ? .resizeInProgress(name) : .vmRunning(name)
+    }
+
     @MainActor
     public func clone(
         name: String, newName: String, sourceLocation: String? = nil, destLocation: String? = nil
@@ -301,7 +309,7 @@ final class LumeController {
             // Check if source VM is still being provisioned
             let sourceVmDir = try home.getVMDirectory(normalizedName, storage: actualSourceLocation)
             guard let resizeGuard = try sourceVmDir.tryAcquireResizeGuard(exclusive: false) else {
-                throw DiskResizeError.resizeInProgress(normalizedName)
+                throw resizeGuardContentionError(sourceVmDir, name: normalizedName)
             }
             defer {
                 flock(resizeGuard.fileDescriptor, LOCK_UN)
@@ -313,7 +321,7 @@ final class LumeController {
             let destinationVmDir = try home.getVMDirectory(normalizedNewName, storage: destLocation)
             guard let destinationGuard = try destinationVmDir.tryAcquireResizeGuard(exclusive: true)
             else {
-                throw DiskResizeError.resizeInProgress(normalizedNewName)
+                throw resizeGuardContentionError(destinationVmDir, name: normalizedNewName)
             }
             defer {
                 flock(destinationGuard.fileDescriptor, LOCK_UN)
@@ -909,7 +917,7 @@ final class LumeController {
             }
 
             guard let resizeGuard = try vmDir.tryAcquireResizeGuard(exclusive: true) else {
-                throw DiskResizeError.resizeInProgress(normalizedName)
+                throw resizeGuardContentionError(vmDir, name: normalizedName)
             }
             defer {
                 flock(resizeGuard.fileDescriptor, LOCK_UN)
@@ -1320,7 +1328,7 @@ final class LumeController {
             // Get the VM directory
             let vmDir = try home.getVMDirectory(name, storage: actualLocation)
             guard let resizeGuard = try vmDir.tryAcquireResizeGuard(exclusive: false) else {
-                throw DiskResizeError.resizeInProgress(name)
+                throw resizeGuardContentionError(vmDir, name: name)
             }
             defer {
                 flock(resizeGuard.fileDescriptor, LOCK_UN)

@@ -72,7 +72,7 @@ func testVMVirtualizationServiceFailures() async throws {
 }
 
 @MainActor
-@Test("Shared directories with one tag use a disambiguated multiple-directory share")
+@Test("macOS automount directories keep a live-update placeholder and disambiguate names")
 func testSharedDirectoryGrouping() throws {
     let tag = VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag
     let sharedDirectories = [
@@ -81,7 +81,8 @@ func testSharedDirectoryGrouping() throws {
     ]
 
     let devices = BaseVirtualizationService.createDirectorySharingDevices(
-        sharedDirectories: sharedDirectories
+        sharedDirectories: sharedDirectories,
+        withLiveUpdatePlaceholder: true
     )
     let device = try #require(devices.first as? VZVirtioFileSystemDeviceConfiguration)
     let share = try #require(device.share as? VZMultipleDirectoryShare)
@@ -89,7 +90,38 @@ func testSharedDirectoryGrouping() throws {
     #expect(devices.count == 1)
     #expect(device.tag == tag)
     let names = Swift.Set<String>(share.directories.keys)
-    #expect(names == Swift.Set(["Shared", "Shared (2)"]))
+    #expect(names == Swift.Set([".lume-live-share", "Shared", "Shared (2)"]))
+    #expect(share.directories[".lume-live-share"]?.isReadOnly == true)
+    #expect(share.directories[".lume-live-share"]?.url.path == "/var/empty")
     #expect(share.directories["Shared"]?.isReadOnly == false)
     #expect(share.directories["Shared (2)"]?.isReadOnly == true)
+}
+
+@MainActor
+@Test("Only live macOS automount shares receive the placeholder")
+func testLiveSharePlaceholderScope() throws {
+    let tag = VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag
+    let automountShare = try #require(
+        BaseVirtualizationService.createDirectoryShare(
+            [],
+            withLiveUpdatePlaceholder: true
+        ) as? VZMultipleDirectoryShare
+    )
+    let regularShare = try #require(
+        BaseVirtualizationService.createDirectoryShare([]) as? VZMultipleDirectoryShare
+    )
+
+    #expect(Swift.Set(automountShare.directories.keys) == [".lume-live-share"])
+    #expect(regularShare.directories.isEmpty)
+
+    let regularDevices = BaseVirtualizationService.createDirectorySharingDevices(
+        sharedDirectories: [
+            SharedDirectory(hostPath: "/tmp/regular", tag: tag, readOnly: false)
+        ]
+    )
+    let regularDevice = try #require(
+        regularDevices.first as? VZVirtioFileSystemDeviceConfiguration
+    )
+    let regularDeviceShare = try #require(regularDevice.share as? VZMultipleDirectoryShare)
+    #expect(regularDeviceShare.directories[".lume-live-share"] == nil)
 }

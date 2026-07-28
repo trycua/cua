@@ -175,7 +175,10 @@ class BaseVirtualizationService: VMVirtualizationService {
                             "The VM was not started with a live shared-folder device"))
                     return
                 }
-                device.share = Self.createDirectoryShare(sharedDirectories)
+                device.share = Self.createDirectoryShare(
+                    sharedDirectories,
+                    withLiveUpdatePlaceholder: true
+                )
                 continuation.resume()
             }
         }
@@ -273,21 +276,39 @@ class BaseVirtualizationService: VMVirtualizationService {
         return network
     }
 
-    static func createDirectorySharingDevices(sharedDirectories: [SharedDirectory]?)
+    static func createDirectorySharingDevices(
+        sharedDirectories: [SharedDirectory]?,
+        withLiveUpdatePlaceholder: Bool = false
+    )
         -> [VZDirectorySharingDeviceConfiguration]
     {
         let grouped = Dictionary(grouping: sharedDirectories ?? [], by: \.tag)
+        let automountTag = VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag
         return grouped.map { tag, directories in
             let device = VZVirtioFileSystemDeviceConfiguration(tag: tag)
-            device.share = createDirectoryShare(directories)
+            device.share = createDirectoryShare(
+                directories,
+                withLiveUpdatePlaceholder: withLiveUpdatePlaceholder && tag == automountTag
+            )
             return device
         }
     }
 
     nonisolated static func createDirectoryShare(
-        _ sharedDirectories: [SharedDirectory]
+        _ sharedDirectories: [SharedDirectory],
+        withLiveUpdatePlaceholder: Bool = false
     ) -> VZDirectoryShare {
         var directories: [String: VZSharedDirectory] = [:]
+        if withLiveUpdatePlaceholder {
+            // Live updates work reliably when VZMultipleDirectoryShare starts populated.
+            // Starting macOS with an entirely empty share leaves its automounted
+            // VirtioFS root stale after the first update. Keep one hidden, harmless
+            // entry so replacing the share invalidates the guest mount correctly.
+            directories[".lume-live-share"] = VZSharedDirectory(
+                url: URL(fileURLWithPath: "/var/empty", isDirectory: true),
+                readOnly: true
+            )
+        }
         for sharedDirectory in sharedDirectories {
             let url = URL(fileURLWithPath: sharedDirectory.hostPath)
             let directory = VZSharedDirectory(url: url, readOnly: sharedDirectory.readOnly)
@@ -443,16 +464,18 @@ final class DarwinVirtualizationService: BaseVirtualizationService {
             }
         }
 
-        // Directory sharing. Keep an empty macOS automount device available so the
-        // native toolbar can replace its share while the VM is running.
+        // Directory sharing. Keep a populated macOS automount device available so
+        // the native toolbar can replace its share while the VM is running.
         var directorySharingDevices = createDirectorySharingDevices(
-            sharedDirectories: config.sharedDirectories)
+            sharedDirectories: config.sharedDirectories,
+            withLiveUpdatePlaceholder: true
+        )
         let automountTag = VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag
         if !directorySharingDevices.contains(where: {
             ($0 as? VZVirtioFileSystemDeviceConfiguration)?.tag == automountTag
         }) {
             let device = VZVirtioFileSystemDeviceConfiguration(tag: automountTag)
-            device.share = createDirectoryShare([])
+            device.share = createDirectoryShare([], withLiveUpdatePlaceholder: true)
             directorySharingDevices.append(device)
         }
         vzConfig.directorySharingDevices = directorySharingDevices

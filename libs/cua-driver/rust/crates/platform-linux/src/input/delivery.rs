@@ -145,16 +145,13 @@ pub fn background_unavailable_error(
 ) -> cua_driver_core::protocol::ToolResult {
     let detail = reason.detail();
     cua_driver_core::protocol::ToolResult::error(format!(
-        "Background delivery is not available: {detail}. Either call bring_to_front \
-         then retry with delivery_mode:\"foreground\", or accept activation by \
-         setting delivery_mode:\"foreground\" directly."
+        "Background delivery is not available: {detail}. Retry this action with \
+         delivery_mode:\"foreground\"."
     ))
     .with_structured(serde_json::json!({
         "code": reason.code(),
         "detail": detail,
-        "suggestion":
-            "Either call bring_to_front then retry with delivery_mode:\"foreground\", \
-             or set delivery_mode:\"foreground\" directly.",
+        "suggestion": "Retry this action with delivery_mode:\"foreground\".",
     }))
 }
 
@@ -223,5 +220,29 @@ mod tests {
             r.structured_content.as_ref().unwrap()["code"],
             serde_json::json!("background_unavailable")
         );
+    }
+
+    #[test]
+    fn background_unavailable_prefers_action_scoped_foreground_retry() {
+        for reason in [
+            BackgroundUnavailable::NoLibeiBackend,
+            BackgroundUnavailable::ChromiumInput,
+            BackgroundUnavailable::FocusedInputOnly,
+            BackgroundUnavailable::WebKitSyntheticInput,
+        ] {
+            let result = background_unavailable_error(reason);
+            let structured = result.structured_content.as_ref().expect("structured");
+            assert_eq!(
+                structured["suggestion"].as_str(),
+                Some("Retry this action with delivery_mode:\"foreground\".")
+            );
+
+            let text = match &result.content[0] {
+                cua_driver_core::protocol::Content::Text { text, .. } => text,
+                _ => panic!("expected text content"),
+            };
+            assert!(text.contains("Retry this action with delivery_mode:\"foreground\"."));
+            assert!(!text.contains("bring_to_front"));
+        }
     }
 }

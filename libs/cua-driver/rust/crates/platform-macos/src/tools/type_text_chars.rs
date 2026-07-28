@@ -94,20 +94,43 @@ impl Tool for TypeTextCharsTool {
 
         // Pre-focus element if requested.
         if !type_chars_only {
-            if let (Some(idx), Some(wid)) = (element_index, window_id) {
+            if let Some(idx) = element_index {
                 // Retain so a concurrent get_window_state can't free the element
                 // during the focus call (use-after-free → daemon crash). The
                 // guard outlives the awaited spawn_blocking below.
-                if let Some(element_guard) =
-                    self.state.element_cache.get_element_retained(pid, wid, idx)
-                {
-                    let element_ptr = element_guard.as_ptr();
-                    let _ = tokio::task::spawn_blocking(move || {
-                        crate::input::ax_actions::focus_element(element_ptr)
-                    })
-                    .await;
-                    drop(element_guard);
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                let retained = window_id
+                    .and_then(|wid| self.state.element_cache.get_element_retained(pid, wid, idx));
+                match retained {
+                    Some(element_guard) => {
+                        let element_ptr = element_guard.as_ptr();
+                        let focused = tokio::task::spawn_blocking(move || {
+                            crate::input::ax_actions::focus_element(element_ptr)
+                        })
+                        .await;
+                        drop(element_guard);
+                        // A failed focus is a hard error: typing anyway sends the
+                        // characters wherever focus happens to be.
+                        match focused {
+                            Ok(Ok(())) => {}
+                            Ok(Err(e)) => {
+                                return ToolResult::error(format!(
+                                    "Could not focus element index {idx}: {e}"
+                                ))
+                            }
+                            Err(e) => return ToolResult::error(format!("Task error: {e}")),
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    }
+                    // An element target was explicitly requested but couldn't be
+                    // retained from the cache — the snapshot is stale. Fail loudly
+                    // instead of falling through to the keystrokes below, which
+                    // would type into whatever holds focus (possibly the user's
+                    // own window). Same refusal every other element tool makes.
+                    None => {
+                        return ToolResult::error(format!(
+                            "Element index {idx} not found. Call get_window_state first."
+                        ))
+                    }
                 }
             }
         }
@@ -125,5 +148,65 @@ impl Tool for TypeTextCharsTool {
             Ok(Err(e)) => ToolResult::error(format!("Type text chars failed: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Above macOS's pid_max (99999): no process can be listening, so a
+    /// regression that types anyway still cannot reach a real window.
+    const UNUSED_PID: i32 = 2_000_000;
+
+    fn tool() -> TypeTextCharsTool {
+        TypeTextCharsTool::new(Arc::new(ToolState::new(false, false, None)))
+    }
+
+    fn text_of(result: &ToolResult) -> &str {
+        match &result.content[0] {
+            cua_driver_core::protocol::Content::Text { text, .. } => text,
+            _ => panic!("expected text content"),
+        }
+    }
+
+    #[tokio::test]
+    async fn stale_element_index_refuses_instead_of_typing() {
+        // The element the caller addressed is not in the cache (stale
+        // snapshot). Typing anyway would send the characters to whatever
+        // holds focus — the user's own window, for a background agent.
+        let result = tool()
+            .invoke(serde_json::json!({
+                "pid": UNUSED_PID,
+                "text": "hello",
+                "window_id": 7,
+                "element_index": 4242,
+            }))
+            .await;
+
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            text_of(&result),
+            "Element index 4242 not found. Call get_window_state first."
+        );
+    }
+
+    #[tokio::test]
+    async fn element_index_without_window_id_refuses() {
+        // Without window_id the element can never be retained from the cache,
+        // so the addressed target is unresolvable — same refusal as scroll.
+        let result = tool()
+            .invoke(serde_json::json!({
+                "pid": UNUSED_PID,
+                "text": "hello",
+                "element_index": 3,
+            }))
+            .await;
+
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            text_of(&result),
+            "Element index 3 not found. Call get_window_state first."
+        );
     }
 }

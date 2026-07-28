@@ -33,6 +33,9 @@ fn child_configuration_probe() {
             SessionPermissionMode::Standard,
             SessionPermissionMode::Unrestricted,
         ])),
+        "legacy_approval" => {
+            CuaDriver::create_configured(options(vec![SessionPermissionMode::Standard]))
+        }
         other => panic!("unknown probe case {other}"),
     };
 
@@ -42,7 +45,7 @@ fn child_configuration_probe() {
                 panic!("matching environment was rejected: {error}");
             }
         }
-        "conflicting_mode" | "managed_disable" => {
+        "conflicting_mode" | "managed_disable" | "legacy_approval" => {
             assert!(result.is_err(), "contradictory environment was accepted")
         }
         _ => unreachable!(),
@@ -57,6 +60,7 @@ fn run_probe(case: &str, environment: &[(&str, &str)]) {
         .env_remove("CUA_DRIVER_PERMISSION_MODE")
         .env_remove("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS")
         .env_remove("CUA_DRIVER_DISABLE_UNRESTRICTED")
+        .env_remove("CUA_DRIVER_ALLOW_LEGACY_EXISTING_PROFILE_APPROVAL")
         .env_remove("CUA_DRIVER_SESSION_POLICY_FILE")
         .env_remove("CUA_DRIVER_SESSION_POLICY_APPROVED");
     for (name, value) in environment {
@@ -84,5 +88,9 @@ fn explicit_runtime_configuration_rejects_contradictory_environment() {
     run_probe(
         "managed_disable",
         &[("CUA_DRIVER_DISABLE_UNRESTRICTED", "1")],
+    );
+    run_probe(
+        "legacy_approval",
+        &[("CUA_DRIVER_ALLOW_LEGACY_EXISTING_PROFILE_APPROVAL", "1")],
     );
 }

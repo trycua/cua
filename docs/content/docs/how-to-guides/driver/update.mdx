@@ -7,6 +7,32 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 Cua Driver gives you three update paths: a passive banner at launch time, a CLI command that only checks, and a separate command that installs the update. Keep the **check and apply steps separate** so you can decide when to change the installed binary.
 
+## Before updating from 0.12.x to 0.13.0
+
+The installer command, CLI/MCP connection flow, tool names, and Python and
+TypeScript SDK constructors remain the same. Two behavior changes require
+attention:
+
+1. `standard` is the promptless practical default for normal observation,
+   input, file, browser, and configuration tools. Attaching to an existing
+   logged-in Chromium profile remains an explicit boundary. Start CLI or MCP
+   with `--grant existing-profile`, use a matching bounded manifest, or supply
+   an authorization host from an embedding application.
+2. The old cursor-style fields and `set_agent_cursor_style` operation are
+   removed. Sessions use the built-in animated `cua.default` theme and display
+   the public session name in a badge below the cursor unless an installed
+   theme ID is selected.
+
+For unattended authenticated-browser work, create a short-lived `bounded`
+manifest instead of disabling every approval. Use `unrestricted` only when a
+trusted launcher explicitly supplies `--dangerously-bypass-approvals` and the
+environment can tolerate full Cua autonomy.
+
+See [Permission modes and bounded autonomy](/reference/cua-driver/permission-modes),
+[Drive a web page](/how-to-guides/driver/drive-a-web-page), and
+[Personalize the agent cursor](/how-to-guides/driver/personalize-cursor) before
+restarting a long-running daemon or worker.
+
 ## Check for updates
 
 ```bash

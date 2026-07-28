@@ -79,10 +79,60 @@ browser, copy the profile, or modify profile files. The route supports Chrome
 and Edge on macOS and Windows, plus Chrome in the validated Linux X11 and Sway
 configurations. Chromium and Edge have descriptor-backed Linux routes but are
 not yet product-validated there. Start a named driver session and choose the
-permission mode before launching the daemon. The standalone daemon has no
-certified protected host provider, so `standard` and `autonomous` refuse
-logged-in profile attachment. For a disposable VM where you accept the risk,
-launch unrestricted mode explicitly:
+permission mode before launching the daemon.
+
+Prefer `bounded` for repeatable browser automation: approve one short-lived
+manifest that names the browser profile kind, application identity, allowed
+origins, and typed browser tools. This avoids prompts without granting every
+Cua capability. For example:
+
+```yaml
+version: 2
+mode: bounded
+expires_after: 2h
+idle_timeout: 20m
+
+resources:
+  apps:
+    - bundle_id: com.google.Chrome
+      launch: false
+      windows: all
+      terminate: never
+  browser:
+    profiles:
+      - kind: existing_profile
+    origins:
+      - https://app.example.com
+
+allow:
+  tools:
+    - start_session
+    - end_session
+    - get_browser_state
+    - browser_prepare
+    - browser_navigate
+    - browser_click
+    - browser_type
+```
+
+On Windows and Linux, use Chrome's canonical absolute executable path instead
+of `bundle_id`. The runtime still re-proves the live process fingerprint and
+exact native window before attaching.
+
+Launch Cua Driver with that reviewed scope:
+
+```bash
+cua-driver serve \
+  --permission-mode bounded \
+  --session-policy ./browser-session.yaml \
+  --approve-session-policy
+```
+
+Bounded attachment does not display a Cua modal or banner. The manifest is the
+trusted launcher's authorization boundary, and calls outside it fail closed.
+
+For a disposable VM where you intentionally accept all Cua actions, launch
+unrestricted mode explicitly instead:
 
 ```bash
 cua-driver serve \
@@ -102,14 +152,16 @@ browser_prepare({
 ```
 
 > **Warning:** Unrestricted mode has no runtime Cua approval prompts and makes
-> no prompt-injection safety claim. Prefer `isolated_new`. Use unrestricted
+> no prompt-injection safety claim. Prefer `isolated_new`, or a bounded
+> existing-profile manifest when authentication is required. Use unrestricted
 > existing-profile attachment only in an environment whose account and data
 > exposure you accept.
 
-A trusted embedding host can install the protected-consent provider described
+A trusted embedding host can install the authorization callback described
 in [Permission modes and bounded autonomy](/reference/cua-driver/permission-modes).
-In that configuration, `standard` prompts once for the bound browser resource,
-and `autonomous` uses the launch-approved session manifest.
+In `standard`, the host may authorize the exact browser resource once. A
+standalone CLI or MCP launch can instead use `--grant existing-profile`.
+`bounded` uses the approved session manifest.
 
 The browser may display its own remote-debugging consent prompt. Cua Driver will
 press only the exact browser-owned semantic allow action for this approved
@@ -130,6 +182,19 @@ the structured refusal reports `detail.setup_side_effects`; a checkbox changed
 by that failed attempt is restored when its exact state can still be proven.
 Any ambiguous control or changed process/window identity is refused.
 
+On macOS, semantic AX matching remains the first route. If Chrome withholds the
+internal page's web AX subtree, Cua Driver opens and navigates its own temporary
+tab, waits for the fixed address to be committed with the expected selected-tab
+title and no omnibox edit in progress, then requires one unique
+checkbox-shaped control in a bounded setup-page region. It revalidates the
+unchanged target window, routes the click only to that browser PID, and verifies
+the resulting state on the same control. Because macOS delivers this bounded
+pixel action through global input, Cua Driver may briefly foreground the exact
+approved window, restore the previous frontmost app, and report those effects in
+`side_effects`. Unsupported appearance, scale, zoom, window-size, or toolbar
+geometry is refused without a click. This fallback never applies to ordinary
+web pages or generic security dialogs.
+
 On Linux, launch the browser with `--force-renderer-accessibility` unless a
 screen reader already enables its complete AT-SPI tree. Native Wayland also
 requires a validated compositor route that can prove the exact process,
@@ -142,16 +207,16 @@ After `attached_existing_profile`, list windows again if needed and call
 browser capabilities, so do not reuse a previous `target_id`, `tab_id`, or
 page ref.
 
-The grant lives only in daemon memory. It expires after inactivity, has an
-absolute lifetime, and is revoked when its owning session ends or the daemon
-restarts. A dropped browser socket may reconnect up to three times under the
+The grant lives only in runtime memory. It expires after inactivity, has an
+absolute lifetime, and is revoked when its owning session ends or the runtime
+shuts down. A dropped browser socket may reconnect up to three times under the
 same live grant; a successful reconnect invalidates capabilities again and
-requires another bind. Browser restart requires a new approval in this first
-release.
+requires another bind. Browser restart requires a new authorization.
 
-Existing-profile consent turns record redacted action metadata and results but
-omit screenshots and accessibility snapshots, so authenticated page content is
-not persisted as consent evidence.
+Existing-profile activity events record content-free action metadata and
+results. They omit screenshots, accessibility snapshots, URLs, and resource
+identities, so authenticated page content is not persisted as authorization
+evidence.
 
 ## Bind the native window
 
@@ -319,13 +384,14 @@ contains only a count and never echoes the local paths.
 
 ## Download into an approved directory
 
-Choose a current ref that activates the download and call `browser_download`
-through an MCP host that presents its destructive-tool approval. Pass an
-existing canonical absolute `destination_root`. The tool temporarily scopes
+Choose a current ref that activates the download and call `browser_download`.
+An MCP host may still apply its own destructive-tool approval rules. Pass an
+existing canonical absolute `destination_root`. Cua's policy stack and bounded
+manifest, when active, must admit that directory. The tool temporarily scopes
 Chromium's browser-wide download behavior, correlates the exact frame and
 opaque download id, restores the default on every outcome, and returns only
 the final byte count and opaque id. It does not return a filename, URL, or
-local path. A direct raw call without host approval is refused.
+local path.
 
 ## Navigate
 

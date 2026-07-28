@@ -17,6 +17,7 @@ on:
       - "libs/cua-driver/rust/crates/cursor-overlay/**"
       - "libs/cua-driver/rust/crates/pip-preview/**"
       - "libs/cua-driver/rust/crates/platform-linux/**"
+      - "libs/cua-driver/wayland-helper/**"
       - "libs/cua-driver/tests/fixtures/shared/web/index.html"
       - ".github/workflows/ci-nix-linux.yml"
   push:
@@ -34,6 +35,7 @@ on:
       - "libs/cua-driver/rust/crates/cursor-overlay/**"
       - "libs/cua-driver/rust/crates/pip-preview/**"
       - "libs/cua-driver/rust/crates/platform-linux/**"
+      - "libs/cua-driver/wayland-helper/**"
       - "libs/cua-driver/tests/fixtures/shared/web/index.html"
       - ".github/workflows/ci-nix-linux.yml"
   workflow_dispatch:

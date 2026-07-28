@@ -150,17 +150,20 @@ assert status['source']['attribution'] == 'driver-daemon'
 PY
 ```
 
-Run the prompt-capable live probe explicitly, then exercise both the
-accessibility and capture paths:
+Run the human-owned permission setup command from the VM's interactive
+Terminal. Agent and daemon tool calls are deliberately read-only and cannot
+raise macOS permission UI. Then exercise both the accessibility and capture
+paths:
 
 ```bash
-/Users/lume/.local/bin/cua-driver call check_permissions '{"prompt":true}' \
+/Users/lume/.local/bin/cua-driver permissions grant
+/Users/lume/.local/bin/cua-driver permissions status --json \
   > /tmp/cua-driver-permissions-live.json
 /usr/bin/python3 - <<'PY'
 import json
 
 with open('/tmp/cua-driver-permissions-live.json') as source:
-    status = json.load(source)['structuredContent']
+    status = json.load(source)
 
 assert status['screen_recording_capturable'] is True
 assert status['direct_capture_status'] == 'ready'

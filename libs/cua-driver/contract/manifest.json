@@ -27,6 +27,9 @@
         "open_world": true
       },
       "schema_mode": "portable_subset",
+      "cursor_semantics": {
+        "action": "click"
+      },
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -101,6 +104,9 @@
         "open_world": true
       },
       "schema_mode": "portable_subset",
+      "cursor_semantics": {
+        "action": "drag"
+      },
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -191,6 +197,9 @@
         "open_world": false
       },
       "schema_mode": "canonical_runtime",
+      "cursor_semantics": {
+        "action": "system"
+      },
       "input_schema": {
         "additionalProperties": true,
         "properties": {
@@ -239,6 +248,9 @@
         "open_world": false
       },
       "schema_mode": "canonical_runtime",
+      "cursor_semantics": {
+        "action": "system"
+      },
       "input_schema": {
         "additionalProperties": true,
         "properties": {
@@ -331,6 +343,231 @@
       }
     },
     {
+      "name": "get_agent_cursor_state",
+      "description": "Return the session cursor's theme, semantic playback, position, visibility, and motion.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "capabilities": [
+        "agent_cursor.state"
+      ],
+      "annotations": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": false
+      },
+      "schema_mode": "canonical_runtime",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "session": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session"
+        ],
+        "type": "object"
+      },
+      "success_output_schema": {
+        "additionalProperties": true,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "motion": {
+            "properties": {
+              "arc_flow": {
+                "format": "double",
+                "type": "number"
+              },
+              "arc_size": {
+                "format": "double",
+                "type": "number"
+              },
+              "dwell_after_click_ms": {
+                "format": "double",
+                "type": "number"
+              },
+              "end_handle": {
+                "format": "double",
+                "type": "number"
+              },
+              "glide_duration_ms": {
+                "format": "double",
+                "type": "number"
+              },
+              "idle_hide_ms": {
+                "format": "double",
+                "type": "number"
+              },
+              "spring": {
+                "format": "double",
+                "type": "number"
+              },
+              "start_handle": {
+                "format": "double",
+                "type": "number"
+              },
+              "turn_radius": {
+                "format": "double",
+                "type": "number"
+              }
+            },
+            "required": [
+              "start_handle",
+              "end_handle",
+              "arc_size",
+              "arc_flow",
+              "spring",
+              "glide_duration_ms",
+              "dwell_after_click_ms",
+              "idle_hide_ms",
+              "turn_radius"
+            ],
+            "type": "object"
+          },
+          "position": {
+            "properties": {
+              "x": {
+                "format": "double",
+                "type": "number"
+              },
+              "y": {
+                "format": "double",
+                "type": "number"
+              }
+            },
+            "required": [
+              "x",
+              "y"
+            ],
+            "type": "object"
+          },
+          "session": {
+            "type": "string"
+          },
+          "theme": {
+            "properties": {
+              "fallback": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "profile": {
+                "type": "string"
+              },
+              "reduced_motion": {
+                "enum": [
+                  "auto",
+                  "on",
+                  "off"
+                ],
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "version",
+              "profile",
+              "reduced_motion",
+              "fallback"
+            ],
+            "type": "object"
+          },
+          "visual_state": {
+            "properties": {
+              "frame": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "modifiers": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "phase": {
+                "type": "string"
+              },
+              "preempted_count": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "requested_action": {
+                "enum": [
+                  "idle",
+                  "observe",
+                  "click",
+                  "drag",
+                  "scroll",
+                  "text",
+                  "key",
+                  "navigate",
+                  "app",
+                  "transfer",
+                  "record",
+                  "system"
+                ],
+                "type": "string"
+              },
+              "resolved_action": {
+                "enum": [
+                  "idle",
+                  "observe",
+                  "click",
+                  "drag",
+                  "scroll",
+                  "text",
+                  "key",
+                  "navigate",
+                  "app",
+                  "transfer",
+                  "record",
+                  "system"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "requested_action",
+              "resolved_action",
+              "modifiers",
+              "phase",
+              "frame",
+              "preempted_count"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "session",
+          "enabled",
+          "position",
+          "theme",
+          "visual_state",
+          "motion"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "get_cursor_position",
       "description": "Return the OS cursor position when the platform can observe it.",
       "platforms": [
@@ -348,6 +585,9 @@
         "open_world": false
       },
       "schema_mode": "portable_subset",
+      "cursor_semantics": {
+        "action": "observe"
+      },
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -397,6 +637,9 @@
         "open_world": false
       },
       "schema_mode": "portable_subset",
+      "cursor_semantics": {
+        "action": "observe"
+      },
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -479,6 +722,9 @@
         "open_world": false
       },
       "schema_mode": "portable_subset",
+      "cursor_semantics": {
+        "action": "observe"
+      },
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -529,6 +775,9 @@
         "open_world": false
       },
       "schema_mode": "canonical_runtime",
+      "cursor_semantics": {
+        "action": "system"
+      },
       "input_schema": {
         "additionalProperties": true,
         "properties": {
@@ -622,6 +871,9 @@
         "open_world": true
       },
       "schema_mode": "portable_subset",
+      "cursor_semantics": {
+        "action": "key"
+      },
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -681,6 +933,9 @@
         "open_world": false
       },
       "schema_mode": "portable_subset",
+      "cursor_semantics": {
+        "action": "navigate"
+      },
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -740,6 +995,9 @@
         "open_world": true
       },
       "schema_mode": "portable_subset",
+      "cursor_semantics": {
+        "action": "key"
+      },
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -801,6 +1059,9 @@
         "open_world": true
       },
       "schema_mode": "portable_subset",
+      "cursor_semantics": {
+        "action": "scroll"
+      },
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -864,6 +1125,314 @@
       }
     },
     {
+      "name": "set_agent_cursor_enabled",
+      "description": "Show or hide the agent cursor owned by a session.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "capabilities": [
+        "agent_cursor.set_enabled"
+      ],
+      "annotations": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": false
+      },
+      "schema_mode": "canonical_runtime",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "session": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session",
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "success_output_schema": {
+        "additionalProperties": true,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "session": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session",
+          "enabled"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "set_agent_cursor_motion",
+      "description": "Configure only movement physics and visibility timing for a session cursor.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "capabilities": [
+        "agent_cursor.set_motion"
+      ],
+      "annotations": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": false
+      },
+      "schema_mode": "canonical_runtime",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "arc_flow": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "arc_size": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "dwell_after_click_ms": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "end_handle": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "glide_duration_ms": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "idle_hide_ms": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "session": {
+            "type": "string"
+          },
+          "spring": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "start_handle": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "turn_radius": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "session"
+        ],
+        "type": "object"
+      },
+      "success_output_schema": {
+        "additionalProperties": true,
+        "properties": {
+          "motion": {
+            "properties": {
+              "arc_flow": {
+                "format": "double",
+                "type": "number"
+              },
+              "arc_size": {
+                "format": "double",
+                "type": "number"
+              },
+              "dwell_after_click_ms": {
+                "format": "double",
+                "type": "number"
+              },
+              "end_handle": {
+                "format": "double",
+                "type": "number"
+              },
+              "glide_duration_ms": {
+                "format": "double",
+                "type": "number"
+              },
+              "idle_hide_ms": {
+                "format": "double",
+                "type": "number"
+              },
+              "spring": {
+                "format": "double",
+                "type": "number"
+              },
+              "start_handle": {
+                "format": "double",
+                "type": "number"
+              },
+              "turn_radius": {
+                "format": "double",
+                "type": "number"
+              }
+            },
+            "required": [
+              "start_handle",
+              "end_handle",
+              "arc_size",
+              "arc_flow",
+              "spring",
+              "glide_duration_ms",
+              "dwell_after_click_ms",
+              "idle_hide_ms",
+              "turn_radius"
+            ],
+            "type": "object"
+          },
+          "session": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session",
+          "motion"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "set_agent_cursor_theme",
+      "description": "Select an already-installed cursor theme for a session.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "capabilities": [
+        "agent_cursor.set_theme"
+      ],
+      "annotations": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": false
+      },
+      "schema_mode": "canonical_runtime",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "reduced_motion": {
+            "default": "auto",
+            "enum": [
+              "auto",
+              "on",
+              "off"
+            ],
+            "type": "string"
+          },
+          "session": {
+            "type": "string"
+          },
+          "theme_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "session",
+          "theme_id"
+        ],
+        "type": "object"
+      },
+      "success_output_schema": {
+        "additionalProperties": true,
+        "properties": {
+          "session": {
+            "type": "string"
+          },
+          "theme": {
+            "properties": {
+              "fallback": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "profile": {
+                "type": "string"
+              },
+              "reduced_motion": {
+                "enum": [
+                  "auto",
+                  "on",
+                  "off"
+                ],
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "version",
+              "profile",
+              "reduced_motion",
+              "fallback"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "session",
+          "theme"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "start_session",
       "description": "Declare a session — a named, color-coded identity for THIS agent run. Pass a stable `session` id and choose capture_scope=auto|window|desktop; the agent cursor, capture policy, per-session config, and recording all key on it, and it follows the run across any apps/windows. The cursor's color is derived from the id, so distinct runs are visually distinct. A cursor is shown only for a declared session — call this (or pass `session` on your first action) to opt in. Idempotent: re-calling with the same id just refreshes its idle-TTL. End it with `end_session` (or let the idle-TTL reclaim it). Concurrent runs/subagents each pass their own `session` to get their own cursor.",
       "platforms": [
@@ -882,6 +1451,9 @@
         "open_world": false
       },
       "schema_mode": "canonical_runtime",
+      "cursor_semantics": {
+        "action": "system"
+      },
       "input_schema": {
         "additionalProperties": true,
         "properties": {
@@ -894,6 +1466,30 @@
               "desktop"
             ],
             "type": "string"
+          },
+          "cursor_theme": {
+            "description": "Optional initial cursor theme. The host applies it before the cursor is\nfirst made visible, avoiding a flash of the default theme.",
+            "properties": {
+              "reduced_motion": {
+                "default": "auto",
+                "enum": [
+                  "auto",
+                  "on",
+                  "off"
+                ],
+                "type": "string"
+              },
+              "theme_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "theme_id"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "session": {
             "description": "Stable session id for this run (e.g. \"research-run-1\").",
@@ -996,6 +1592,9 @@
         "open_world": true
       },
       "schema_mode": "portable_subset",
+      "cursor_semantics": {
+        "action": "text"
+      },
       "input_schema": {
         "additionalProperties": false,
         "properties": {

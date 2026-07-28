@@ -122,30 +122,41 @@ except FileNotFoundError:
             socket_path = str(Path(directory) / "driver.sock")
             listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             listener.bind(socket_path)
-            listener.listen(1)
+            listener.listen(2)
             captured: list[dict[str, object]] = []
 
             def serve() -> None:
-                connection, _ = listener.accept()
-                with connection:
-                    line = connection.makefile("r", encoding="utf-8").readline()
-                    captured.append(json.loads(line))
-                    response = {
-                        "ok": True,
-                        "result": {
-                            "content": [
-                                {"type": "text", "text": "python ffi"},
-                                {
-                                    "type": "image",
-                                    "mimeType": "image/png",
-                                    "data": "cG5n",
-                                },
-                            ],
-                            "structuredContent": {"verified": True},
-                            "isError": False,
-                        },
-                    }
-                    connection.sendall((json.dumps(response) + "\n").encode())
+                for _ in range(2):
+                    connection, _ = listener.accept()
+                    with connection:
+                        line = connection.makefile("r", encoding="utf-8").readline()
+                        request = json.loads(line)
+                        if request["method"] == "metadata":
+                            result = {
+                                "driver_version": "0.12.6",
+                                "contract_version": "0.2.0",
+                                "tools_list_schema_version": "1",
+                                "capability_version": "1",
+                                "mcp_protocol_version": "2025-06-18",
+                                "pid": os.getpid(),
+                                "embedded": False,
+                            }
+                        else:
+                            captured.append(request)
+                            result = {
+                                "content": [
+                                    {"type": "text", "text": "python ffi"},
+                                    {
+                                        "type": "image",
+                                        "mimeType": "image/png",
+                                        "data": "cG5n",
+                                    },
+                                ],
+                                "structuredContent": {"verified": True},
+                                "isError": False,
+                            }
+                        response = {"ok": True, "result": result}
+                        connection.sendall((json.dumps(response) + "\n").encode())
 
             server = threading.Thread(target=serve)
             server.start()

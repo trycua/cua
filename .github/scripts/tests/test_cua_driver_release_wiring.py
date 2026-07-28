@@ -259,6 +259,15 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             cleanup,
         )
 
+    def test_release_installers_bound_cursor_theme_compatibility(self) -> None:
+        shell = self.read("libs/cua-driver/scripts/_install-rust.sh")
+        self.assertIn('CURSOR_THEME_REQUIRED_FROM="0.12.7"', shell)
+        self.assertIn('"$VERSION" "$CURSOR_THEME_REQUIRED_FROM"', shell)
+
+        powershell = self.read("libs/cua-driver/scripts/install.ps1")
+        self.assertIn('$CursorThemeRequiredFrom = [version]"0.12.7"', powershell)
+        self.assertIn("[version]$version -ge $CursorThemeRequiredFrom", powershell)
+
     def test_local_installer_does_not_clean_release_or_legacy_homes(self) -> None:
         installer = self.read("libs/cua-driver/scripts/_install-local-rust.sh")
 
@@ -400,6 +409,55 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             workflow,
         )
         self.assertIn("} > checksums.txt", workflow)
+
+    def test_driver_release_verifies_archives_before_publish(self) -> None:
+        workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
+
+        self.assertIn("verify-release-artifacts:", workflow)
+        self.assertIn("name: release artifact contract", workflow)
+        self.assertIn("verify_cua_driver_release_archives.py", workflow)
+        self.assertIn("ref: ${{ github.workflow_sha }}", workflow)
+        self.assertIn(
+            "[build-linux, build-windows, build-macos-universal, "
+            "verify-release-artifacts]",
+            workflow,
+        )
+
+    def test_installer_compatibility_runs_current_installers_on_releases(
+        self,
+    ) -> None:
+        workflow = self.read(
+            ".github/workflows/ci-cua-driver-installer-compat.yml"
+        )
+
+        self.assertIn("workflow_call:\n", workflow)
+        self.assertIn("Installer compatibility summary", workflow)
+        self.assertIn("ubuntu-latest, macos-26, windows-latest", workflow)
+        self.assertIn("repos/$GITHUB_REPOSITORY/releases?per_page=100", workflow)
+        self.assertIn("libs/cua-driver/scripts/install.sh", workflow)
+        self.assertIn("libs/cua-driver/scripts/install.ps1", workflow)
+        self.assertIn("-NoAutoStart", workflow)
+        self.assertIn('CUA_DRIVER_RS_TELEMETRY_ENABLED: "false"', workflow)
+
+        release_metadata = self.read(
+            ".github/workflows/ci-release-metadata.yml"
+        )
+        self.assertIn(
+            "uses: ./.github/workflows/ci-cua-driver-installer-compat.yml",
+            release_metadata,
+        )
+        self.assertIn(
+            "validate:\n    needs: installer-compatibility",
+            release_metadata,
+        )
+        self.assertIn(
+            "needs: installer-compatibility\n    if: always()",
+            release_metadata,
+        )
+        self.assertIn(
+            'if [[ "$INSTALLER_CERTIFICATION_RESULT" != "success" ]]',
+            release_metadata,
+        )
 
     def test_lume_uses_the_same_draft_finalizer(self) -> None:
         workflow = self.read(".github/workflows/cd-swift-lume.yml")

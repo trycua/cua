@@ -1023,6 +1023,401 @@ class _UniffiFfiConverterTypeClickInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeClickButton.write(value.button, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.count, buf)
 
+@dataclass
+class CursorMotionOutput:
+    def __init__(self, *, start_handle:float, end_handle:float, arc_size:float, arc_flow:float, spring:float, glide_duration_ms:float, dwell_after_click_ms:float, idle_hide_ms:float, turn_radius:float):
+        self.start_handle = start_handle
+        self.end_handle = end_handle
+        self.arc_size = arc_size
+        self.arc_flow = arc_flow
+        self.spring = spring
+        self.glide_duration_ms = glide_duration_ms
+        self.dwell_after_click_ms = dwell_after_click_ms
+        self.idle_hide_ms = idle_hide_ms
+        self.turn_radius = turn_radius
+
+
+
+
+    def __str__(self):
+        return "CursorMotionOutput(start_handle={}, end_handle={}, arc_size={}, arc_flow={}, spring={}, glide_duration_ms={}, dwell_after_click_ms={}, idle_hide_ms={}, turn_radius={})".format(self.start_handle, self.end_handle, self.arc_size, self.arc_flow, self.spring, self.glide_duration_ms, self.dwell_after_click_ms, self.idle_hide_ms, self.turn_radius)
+    def __eq__(self, other):
+        if self.start_handle != other.start_handle:
+            return False
+        if self.end_handle != other.end_handle:
+            return False
+        if self.arc_size != other.arc_size:
+            return False
+        if self.arc_flow != other.arc_flow:
+            return False
+        if self.spring != other.spring:
+            return False
+        if self.glide_duration_ms != other.glide_duration_ms:
+            return False
+        if self.dwell_after_click_ms != other.dwell_after_click_ms:
+            return False
+        if self.idle_hide_ms != other.idle_hide_ms:
+            return False
+        if self.turn_radius != other.turn_radius:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeCursorMotionOutput(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return CursorMotionOutput(
+            start_handle=_UniffiFfiConverterFloat64.read(buf),
+            end_handle=_UniffiFfiConverterFloat64.read(buf),
+            arc_size=_UniffiFfiConverterFloat64.read(buf),
+            arc_flow=_UniffiFfiConverterFloat64.read(buf),
+            spring=_UniffiFfiConverterFloat64.read(buf),
+            glide_duration_ms=_UniffiFfiConverterFloat64.read(buf),
+            dwell_after_click_ms=_UniffiFfiConverterFloat64.read(buf),
+            idle_hide_ms=_UniffiFfiConverterFloat64.read(buf),
+            turn_radius=_UniffiFfiConverterFloat64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterFloat64.check_lower(value.start_handle)
+        _UniffiFfiConverterFloat64.check_lower(value.end_handle)
+        _UniffiFfiConverterFloat64.check_lower(value.arc_size)
+        _UniffiFfiConverterFloat64.check_lower(value.arc_flow)
+        _UniffiFfiConverterFloat64.check_lower(value.spring)
+        _UniffiFfiConverterFloat64.check_lower(value.glide_duration_ms)
+        _UniffiFfiConverterFloat64.check_lower(value.dwell_after_click_ms)
+        _UniffiFfiConverterFloat64.check_lower(value.idle_hide_ms)
+        _UniffiFfiConverterFloat64.check_lower(value.turn_radius)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterFloat64.write(value.start_handle, buf)
+        _UniffiFfiConverterFloat64.write(value.end_handle, buf)
+        _UniffiFfiConverterFloat64.write(value.arc_size, buf)
+        _UniffiFfiConverterFloat64.write(value.arc_flow, buf)
+        _UniffiFfiConverterFloat64.write(value.spring, buf)
+        _UniffiFfiConverterFloat64.write(value.glide_duration_ms, buf)
+        _UniffiFfiConverterFloat64.write(value.dwell_after_click_ms, buf)
+        _UniffiFfiConverterFloat64.write(value.idle_hide_ms, buf)
+        _UniffiFfiConverterFloat64.write(value.turn_radius, buf)
+
+@dataclass
+class CursorPointOutput:
+    def __init__(self, *, x:float, y:float):
+        self.x = x
+        self.y = y
+
+
+
+
+    def __str__(self):
+        return "CursorPointOutput(x={}, y={})".format(self.x, self.y)
+    def __eq__(self, other):
+        if self.x != other.x:
+            return False
+        if self.y != other.y:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeCursorPointOutput(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return CursorPointOutput(
+            x=_UniffiFfiConverterFloat64.read(buf),
+            y=_UniffiFfiConverterFloat64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterFloat64.check_lower(value.x)
+        _UniffiFfiConverterFloat64.check_lower(value.y)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterFloat64.write(value.x, buf)
+        _UniffiFfiConverterFloat64.write(value.y, buf)
+
+
+
+
+
+
+class CursorReducedMotion(enum.Enum):
+
+    AUTO = 0
+
+    ON = 1
+
+    OFF = 2
+
+
+
+class _UniffiFfiConverterTypeCursorReducedMotion(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return CursorReducedMotion.AUTO
+        if variant == 2:
+            return CursorReducedMotion.ON
+        if variant == 3:
+            return CursorReducedMotion.OFF
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value == CursorReducedMotion.AUTO:
+            return
+        if value == CursorReducedMotion.ON:
+            return
+        if value == CursorReducedMotion.OFF:
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value == CursorReducedMotion.AUTO:
+            buf.write_i32(1)
+        if value == CursorReducedMotion.ON:
+            buf.write_i32(2)
+        if value == CursorReducedMotion.OFF:
+            buf.write_i32(3)
+
+
+
+@dataclass
+class CursorThemeOutput:
+    def __init__(self, *, id:str, version:str, profile:str, reduced_motion:CursorReducedMotion, fallback:typing.Optional[str]):
+        self.id = id
+        self.version = version
+        self.profile = profile
+        self.reduced_motion = reduced_motion
+        self.fallback = fallback
+
+
+
+
+    def __str__(self):
+        return "CursorThemeOutput(id={}, version={}, profile={}, reduced_motion={}, fallback={})".format(self.id, self.version, self.profile, self.reduced_motion, self.fallback)
+    def __eq__(self, other):
+        if self.id != other.id:
+            return False
+        if self.version != other.version:
+            return False
+        if self.profile != other.profile:
+            return False
+        if self.reduced_motion != other.reduced_motion:
+            return False
+        if self.fallback != other.fallback:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeCursorThemeOutput(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return CursorThemeOutput(
+            id=_UniffiFfiConverterString.read(buf),
+            version=_UniffiFfiConverterString.read(buf),
+            profile=_UniffiFfiConverterString.read(buf),
+            reduced_motion=_UniffiFfiConverterTypeCursorReducedMotion.read(buf),
+            fallback=_UniffiFfiConverterOptionalString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.id)
+        _UniffiFfiConverterString.check_lower(value.version)
+        _UniffiFfiConverterString.check_lower(value.profile)
+        _UniffiFfiConverterTypeCursorReducedMotion.check_lower(value.reduced_motion)
+        _UniffiFfiConverterOptionalString.check_lower(value.fallback)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.id, buf)
+        _UniffiFfiConverterString.write(value.version, buf)
+        _UniffiFfiConverterString.write(value.profile, buf)
+        _UniffiFfiConverterTypeCursorReducedMotion.write(value.reduced_motion, buf)
+        _UniffiFfiConverterOptionalString.write(value.fallback, buf)
+
+@dataclass
+class CursorThemeSelection:
+    def __init__(self, *, theme_id:str, reduced_motion:CursorReducedMotion):
+        self.theme_id = theme_id
+        self.reduced_motion = reduced_motion
+
+
+
+
+    def __str__(self):
+        return "CursorThemeSelection(theme_id={}, reduced_motion={})".format(self.theme_id, self.reduced_motion)
+    def __eq__(self, other):
+        if self.theme_id != other.theme_id:
+            return False
+        if self.reduced_motion != other.reduced_motion:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeCursorThemeSelection(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return CursorThemeSelection(
+            theme_id=_UniffiFfiConverterString.read(buf),
+            reduced_motion=_UniffiFfiConverterTypeCursorReducedMotion.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.theme_id)
+        _UniffiFfiConverterTypeCursorReducedMotion.check_lower(value.reduced_motion)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.theme_id, buf)
+        _UniffiFfiConverterTypeCursorReducedMotion.write(value.reduced_motion, buf)
+
+
+
+
+
+
+class CursorAction(enum.Enum):
+
+    IDLE = 0
+
+    OBSERVE = 1
+
+    CLICK = 2
+
+    DRAG = 3
+
+    SCROLL = 4
+
+    TEXT = 5
+
+    KEY = 6
+
+    NAVIGATE = 7
+
+    APP = 8
+
+    TRANSFER = 9
+
+    RECORD = 10
+
+    SYSTEM = 11
+
+
+
+class _UniffiFfiConverterTypeCursorAction(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return CursorAction.IDLE
+        if variant == 2:
+            return CursorAction.OBSERVE
+        if variant == 3:
+            return CursorAction.CLICK
+        if variant == 4:
+            return CursorAction.DRAG
+        if variant == 5:
+            return CursorAction.SCROLL
+        if variant == 6:
+            return CursorAction.TEXT
+        if variant == 7:
+            return CursorAction.KEY
+        if variant == 8:
+            return CursorAction.NAVIGATE
+        if variant == 9:
+            return CursorAction.APP
+        if variant == 10:
+            return CursorAction.TRANSFER
+        if variant == 11:
+            return CursorAction.RECORD
+        if variant == 12:
+            return CursorAction.SYSTEM
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value == CursorAction.IDLE:
+            return
+        if value == CursorAction.OBSERVE:
+            return
+        if value == CursorAction.CLICK:
+            return
+        if value == CursorAction.DRAG:
+            return
+        if value == CursorAction.SCROLL:
+            return
+        if value == CursorAction.TEXT:
+            return
+        if value == CursorAction.KEY:
+            return
+        if value == CursorAction.NAVIGATE:
+            return
+        if value == CursorAction.APP:
+            return
+        if value == CursorAction.TRANSFER:
+            return
+        if value == CursorAction.RECORD:
+            return
+        if value == CursorAction.SYSTEM:
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value == CursorAction.IDLE:
+            buf.write_i32(1)
+        if value == CursorAction.OBSERVE:
+            buf.write_i32(2)
+        if value == CursorAction.CLICK:
+            buf.write_i32(3)
+        if value == CursorAction.DRAG:
+            buf.write_i32(4)
+        if value == CursorAction.SCROLL:
+            buf.write_i32(5)
+        if value == CursorAction.TEXT:
+            buf.write_i32(6)
+        if value == CursorAction.KEY:
+            buf.write_i32(7)
+        if value == CursorAction.NAVIGATE:
+            buf.write_i32(8)
+        if value == CursorAction.APP:
+            buf.write_i32(9)
+        if value == CursorAction.TRANSFER:
+            buf.write_i32(10)
+        if value == CursorAction.RECORD:
+            buf.write_i32(11)
+        if value == CursorAction.SYSTEM:
+            buf.write_i32(12)
+
+
+
+class _UniffiFfiConverterSequenceString(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterString.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterString.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterString.read(buf) for i in range(count)
+        ]
+
 class _UniffiFfiConverterUInt64(_UniffiConverterPrimitiveInt):
     CLASS_NAME = "u64"
     VALUE_MIN = 0
@@ -1035,6 +1430,66 @@ class _UniffiFfiConverterUInt64(_UniffiConverterPrimitiveInt):
     @staticmethod
     def write(value, buf):
         buf.write_u64(value)
+
+@dataclass
+class CursorVisualOutput:
+    def __init__(self, *, requested_action:CursorAction, resolved_action:CursorAction, modifiers:typing.List[str], phase:str, frame:int, preempted_count:int):
+        self.requested_action = requested_action
+        self.resolved_action = resolved_action
+        self.modifiers = modifiers
+        self.phase = phase
+        self.frame = frame
+        self.preempted_count = preempted_count
+
+
+
+
+    def __str__(self):
+        return "CursorVisualOutput(requested_action={}, resolved_action={}, modifiers={}, phase={}, frame={}, preempted_count={})".format(self.requested_action, self.resolved_action, self.modifiers, self.phase, self.frame, self.preempted_count)
+    def __eq__(self, other):
+        if self.requested_action != other.requested_action:
+            return False
+        if self.resolved_action != other.resolved_action:
+            return False
+        if self.modifiers != other.modifiers:
+            return False
+        if self.phase != other.phase:
+            return False
+        if self.frame != other.frame:
+            return False
+        if self.preempted_count != other.preempted_count:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeCursorVisualOutput(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return CursorVisualOutput(
+            requested_action=_UniffiFfiConverterTypeCursorAction.read(buf),
+            resolved_action=_UniffiFfiConverterTypeCursorAction.read(buf),
+            modifiers=_UniffiFfiConverterSequenceString.read(buf),
+            phase=_UniffiFfiConverterString.read(buf),
+            frame=_UniffiFfiConverterUInt64.read(buf),
+            preempted_count=_UniffiFfiConverterUInt64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterTypeCursorAction.check_lower(value.requested_action)
+        _UniffiFfiConverterTypeCursorAction.check_lower(value.resolved_action)
+        _UniffiFfiConverterSequenceString.check_lower(value.modifiers)
+        _UniffiFfiConverterString.check_lower(value.phase)
+        _UniffiFfiConverterUInt64.check_lower(value.frame)
+        _UniffiFfiConverterUInt64.check_lower(value.preempted_count)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterTypeCursorAction.write(value.requested_action, buf)
+        _UniffiFfiConverterTypeCursorAction.write(value.resolved_action, buf)
+        _UniffiFfiConverterSequenceString.write(value.modifiers, buf)
+        _UniffiFfiConverterString.write(value.phase, buf)
+        _UniffiFfiConverterUInt64.write(value.frame, buf)
+        _UniffiFfiConverterUInt64.write(value.preempted_count, buf)
 
 class _UniffiFfiConverterOptionalUInt64(_UniffiConverterRustBuffer):
     @classmethod
@@ -1060,29 +1515,6 @@ class _UniffiFfiConverterOptionalUInt64(_UniffiConverterRustBuffer):
             return _UniffiFfiConverterUInt64.read(buf)
         else:
             raise InternalError("Unexpected flag byte for optional type")
-
-class _UniffiFfiConverterSequenceString(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, value):
-        for item in value:
-            _UniffiFfiConverterString.check_lower(item)
-
-    @classmethod
-    def write(cls, value, buf):
-        items = len(value)
-        buf.write_i32(items)
-        for item in value:
-            _UniffiFfiConverterString.write(item, buf)
-
-    @classmethod
-    def read(cls, buf):
-        count = buf.read_i32()
-        if count < 0:
-            raise InternalError("Unexpected negative sequence length")
-
-        return [
-            _UniffiFfiConverterString.read(buf) for i in range(count)
-        ]
 
 class _UniffiFfiConverterOptionalSequenceString(_UniffiConverterRustBuffer):
     @classmethod
@@ -1388,6 +1820,121 @@ class _UniffiFfiConverterTypeEscalateSessionInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.write(value.session, buf)
         _UniffiFfiConverterTypeEscalationReason.write(value.reason, buf)
         _UniffiFfiConverterOptionalString.write(value.detail, buf)
+
+@dataclass
+class GetAgentCursorStateInput:
+    def __init__(self, *, session:str):
+        self.session = session
+
+
+
+
+    def __str__(self):
+        return "GetAgentCursorStateInput(session={})".format(self.session)
+    def __eq__(self, other):
+        if self.session != other.session:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeGetAgentCursorStateInput(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return GetAgentCursorStateInput(
+            session=_UniffiFfiConverterString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.session)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.session, buf)
+
+class _UniffiFfiConverterOptionalTypeCursorPointOutput(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeCursorPointOutput.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeCursorPointOutput.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeCursorPointOutput.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+@dataclass
+class GetAgentCursorStateOutput:
+    def __init__(self, *, session:str, enabled:bool, position:typing.Optional[CursorPointOutput], theme:CursorThemeOutput, visual_state:CursorVisualOutput, motion:CursorMotionOutput):
+        self.session = session
+        self.enabled = enabled
+        self.position = position
+        self.theme = theme
+        self.visual_state = visual_state
+        self.motion = motion
+
+
+
+
+    def __str__(self):
+        return "GetAgentCursorStateOutput(session={}, enabled={}, position={}, theme={}, visual_state={}, motion={})".format(self.session, self.enabled, self.position, self.theme, self.visual_state, self.motion)
+    def __eq__(self, other):
+        if self.session != other.session:
+            return False
+        if self.enabled != other.enabled:
+            return False
+        if self.position != other.position:
+            return False
+        if self.theme != other.theme:
+            return False
+        if self.visual_state != other.visual_state:
+            return False
+        if self.motion != other.motion:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeGetAgentCursorStateOutput(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return GetAgentCursorStateOutput(
+            session=_UniffiFfiConverterString.read(buf),
+            enabled=_UniffiFfiConverterBoolean.read(buf),
+            position=_UniffiFfiConverterOptionalTypeCursorPointOutput.read(buf),
+            theme=_UniffiFfiConverterTypeCursorThemeOutput.read(buf),
+            visual_state=_UniffiFfiConverterTypeCursorVisualOutput.read(buf),
+            motion=_UniffiFfiConverterTypeCursorMotionOutput.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.session)
+        _UniffiFfiConverterBoolean.check_lower(value.enabled)
+        _UniffiFfiConverterOptionalTypeCursorPointOutput.check_lower(value.position)
+        _UniffiFfiConverterTypeCursorThemeOutput.check_lower(value.theme)
+        _UniffiFfiConverterTypeCursorVisualOutput.check_lower(value.visual_state)
+        _UniffiFfiConverterTypeCursorMotionOutput.check_lower(value.motion)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.session, buf)
+        _UniffiFfiConverterBoolean.write(value.enabled, buf)
+        _UniffiFfiConverterOptionalTypeCursorPointOutput.write(value.position, buf)
+        _UniffiFfiConverterTypeCursorThemeOutput.write(value.theme, buf)
+        _UniffiFfiConverterTypeCursorVisualOutput.write(value.visual_state, buf)
+        _UniffiFfiConverterTypeCursorMotionOutput.write(value.motion, buf)
 
 @dataclass
 class GetCursorPositionInput:
@@ -2016,6 +2563,301 @@ class _UniffiFfiConverterTypeSessionStateOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeEscalationReason.write(value.escalation_reason, buf)
         _UniffiFfiConverterOptionalString.write(value.escalation_detail, buf)
 
+@dataclass
+class SetAgentCursorEnabledInput:
+    def __init__(self, *, session:str, enabled:bool):
+        self.session = session
+        self.enabled = enabled
+
+
+
+
+    def __str__(self):
+        return "SetAgentCursorEnabledInput(session={}, enabled={})".format(self.session, self.enabled)
+    def __eq__(self, other):
+        if self.session != other.session:
+            return False
+        if self.enabled != other.enabled:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeSetAgentCursorEnabledInput(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return SetAgentCursorEnabledInput(
+            session=_UniffiFfiConverterString.read(buf),
+            enabled=_UniffiFfiConverterBoolean.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.session)
+        _UniffiFfiConverterBoolean.check_lower(value.enabled)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.session, buf)
+        _UniffiFfiConverterBoolean.write(value.enabled, buf)
+
+@dataclass
+class SetAgentCursorEnabledOutput:
+    def __init__(self, *, session:str, enabled:bool):
+        self.session = session
+        self.enabled = enabled
+
+
+
+
+    def __str__(self):
+        return "SetAgentCursorEnabledOutput(session={}, enabled={})".format(self.session, self.enabled)
+    def __eq__(self, other):
+        if self.session != other.session:
+            return False
+        if self.enabled != other.enabled:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeSetAgentCursorEnabledOutput(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return SetAgentCursorEnabledOutput(
+            session=_UniffiFfiConverterString.read(buf),
+            enabled=_UniffiFfiConverterBoolean.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.session)
+        _UniffiFfiConverterBoolean.check_lower(value.enabled)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.session, buf)
+        _UniffiFfiConverterBoolean.write(value.enabled, buf)
+
+class _UniffiFfiConverterOptionalFloat64(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterFloat64.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterFloat64.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterFloat64.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+@dataclass
+class SetAgentCursorMotionInput:
+    def __init__(self, *, session:str, start_handle:typing.Optional[float], end_handle:typing.Optional[float], arc_size:typing.Optional[float], arc_flow:typing.Optional[float], spring:typing.Optional[float], glide_duration_ms:typing.Optional[float], dwell_after_click_ms:typing.Optional[float], idle_hide_ms:typing.Optional[float], turn_radius:typing.Optional[float]):
+        self.session = session
+        self.start_handle = start_handle
+        self.end_handle = end_handle
+        self.arc_size = arc_size
+        self.arc_flow = arc_flow
+        self.spring = spring
+        self.glide_duration_ms = glide_duration_ms
+        self.dwell_after_click_ms = dwell_after_click_ms
+        self.idle_hide_ms = idle_hide_ms
+        self.turn_radius = turn_radius
+
+
+
+
+    def __str__(self):
+        return "SetAgentCursorMotionInput(session={}, start_handle={}, end_handle={}, arc_size={}, arc_flow={}, spring={}, glide_duration_ms={}, dwell_after_click_ms={}, idle_hide_ms={}, turn_radius={})".format(self.session, self.start_handle, self.end_handle, self.arc_size, self.arc_flow, self.spring, self.glide_duration_ms, self.dwell_after_click_ms, self.idle_hide_ms, self.turn_radius)
+    def __eq__(self, other):
+        if self.session != other.session:
+            return False
+        if self.start_handle != other.start_handle:
+            return False
+        if self.end_handle != other.end_handle:
+            return False
+        if self.arc_size != other.arc_size:
+            return False
+        if self.arc_flow != other.arc_flow:
+            return False
+        if self.spring != other.spring:
+            return False
+        if self.glide_duration_ms != other.glide_duration_ms:
+            return False
+        if self.dwell_after_click_ms != other.dwell_after_click_ms:
+            return False
+        if self.idle_hide_ms != other.idle_hide_ms:
+            return False
+        if self.turn_radius != other.turn_radius:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeSetAgentCursorMotionInput(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return SetAgentCursorMotionInput(
+            session=_UniffiFfiConverterString.read(buf),
+            start_handle=_UniffiFfiConverterOptionalFloat64.read(buf),
+            end_handle=_UniffiFfiConverterOptionalFloat64.read(buf),
+            arc_size=_UniffiFfiConverterOptionalFloat64.read(buf),
+            arc_flow=_UniffiFfiConverterOptionalFloat64.read(buf),
+            spring=_UniffiFfiConverterOptionalFloat64.read(buf),
+            glide_duration_ms=_UniffiFfiConverterOptionalFloat64.read(buf),
+            dwell_after_click_ms=_UniffiFfiConverterOptionalFloat64.read(buf),
+            idle_hide_ms=_UniffiFfiConverterOptionalFloat64.read(buf),
+            turn_radius=_UniffiFfiConverterOptionalFloat64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.session)
+        _UniffiFfiConverterOptionalFloat64.check_lower(value.start_handle)
+        _UniffiFfiConverterOptionalFloat64.check_lower(value.end_handle)
+        _UniffiFfiConverterOptionalFloat64.check_lower(value.arc_size)
+        _UniffiFfiConverterOptionalFloat64.check_lower(value.arc_flow)
+        _UniffiFfiConverterOptionalFloat64.check_lower(value.spring)
+        _UniffiFfiConverterOptionalFloat64.check_lower(value.glide_duration_ms)
+        _UniffiFfiConverterOptionalFloat64.check_lower(value.dwell_after_click_ms)
+        _UniffiFfiConverterOptionalFloat64.check_lower(value.idle_hide_ms)
+        _UniffiFfiConverterOptionalFloat64.check_lower(value.turn_radius)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.session, buf)
+        _UniffiFfiConverterOptionalFloat64.write(value.start_handle, buf)
+        _UniffiFfiConverterOptionalFloat64.write(value.end_handle, buf)
+        _UniffiFfiConverterOptionalFloat64.write(value.arc_size, buf)
+        _UniffiFfiConverterOptionalFloat64.write(value.arc_flow, buf)
+        _UniffiFfiConverterOptionalFloat64.write(value.spring, buf)
+        _UniffiFfiConverterOptionalFloat64.write(value.glide_duration_ms, buf)
+        _UniffiFfiConverterOptionalFloat64.write(value.dwell_after_click_ms, buf)
+        _UniffiFfiConverterOptionalFloat64.write(value.idle_hide_ms, buf)
+        _UniffiFfiConverterOptionalFloat64.write(value.turn_radius, buf)
+
+@dataclass
+class SetAgentCursorMotionOutput:
+    def __init__(self, *, session:str, motion:CursorMotionOutput):
+        self.session = session
+        self.motion = motion
+
+
+
+
+    def __str__(self):
+        return "SetAgentCursorMotionOutput(session={}, motion={})".format(self.session, self.motion)
+    def __eq__(self, other):
+        if self.session != other.session:
+            return False
+        if self.motion != other.motion:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeSetAgentCursorMotionOutput(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return SetAgentCursorMotionOutput(
+            session=_UniffiFfiConverterString.read(buf),
+            motion=_UniffiFfiConverterTypeCursorMotionOutput.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.session)
+        _UniffiFfiConverterTypeCursorMotionOutput.check_lower(value.motion)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.session, buf)
+        _UniffiFfiConverterTypeCursorMotionOutput.write(value.motion, buf)
+
+@dataclass
+class SetAgentCursorThemeInput:
+    def __init__(self, *, session:str, theme_id:str, reduced_motion:CursorReducedMotion):
+        self.session = session
+        self.theme_id = theme_id
+        self.reduced_motion = reduced_motion
+
+
+
+
+    def __str__(self):
+        return "SetAgentCursorThemeInput(session={}, theme_id={}, reduced_motion={})".format(self.session, self.theme_id, self.reduced_motion)
+    def __eq__(self, other):
+        if self.session != other.session:
+            return False
+        if self.theme_id != other.theme_id:
+            return False
+        if self.reduced_motion != other.reduced_motion:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeSetAgentCursorThemeInput(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return SetAgentCursorThemeInput(
+            session=_UniffiFfiConverterString.read(buf),
+            theme_id=_UniffiFfiConverterString.read(buf),
+            reduced_motion=_UniffiFfiConverterTypeCursorReducedMotion.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.session)
+        _UniffiFfiConverterString.check_lower(value.theme_id)
+        _UniffiFfiConverterTypeCursorReducedMotion.check_lower(value.reduced_motion)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.session, buf)
+        _UniffiFfiConverterString.write(value.theme_id, buf)
+        _UniffiFfiConverterTypeCursorReducedMotion.write(value.reduced_motion, buf)
+
+@dataclass
+class SetAgentCursorThemeOutput:
+    def __init__(self, *, session:str, theme:CursorThemeOutput):
+        self.session = session
+        self.theme = theme
+
+
+
+
+    def __str__(self):
+        return "SetAgentCursorThemeOutput(session={}, theme={})".format(self.session, self.theme)
+    def __eq__(self, other):
+        if self.session != other.session:
+            return False
+        if self.theme != other.theme:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeSetAgentCursorThemeOutput(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return SetAgentCursorThemeOutput(
+            session=_UniffiFfiConverterString.read(buf),
+            theme=_UniffiFfiConverterTypeCursorThemeOutput.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.session)
+        _UniffiFfiConverterTypeCursorThemeOutput.check_lower(value.theme)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.session, buf)
+        _UniffiFfiConverterTypeCursorThemeOutput.write(value.theme, buf)
+
 class _UniffiFfiConverterOptionalTypeCaptureScope(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -2041,21 +2883,49 @@ class _UniffiFfiConverterOptionalTypeCaptureScope(_UniffiConverterRustBuffer):
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
+class _UniffiFfiConverterOptionalTypeCursorThemeSelection(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeCursorThemeSelection.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeCursorThemeSelection.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeCursorThemeSelection.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
 @dataclass
 class StartSessionInput:
-    def __init__(self, *, session:str, capture_scope:typing.Optional[CaptureScope]):
+    def __init__(self, *, session:str, capture_scope:typing.Optional[CaptureScope], cursor_theme:typing.Optional[CursorThemeSelection]):
         self.session = session
         self.capture_scope = capture_scope
+        self.cursor_theme = cursor_theme
 
 
 
 
     def __str__(self):
-        return "StartSessionInput(session={}, capture_scope={})".format(self.session, self.capture_scope)
+        return "StartSessionInput(session={}, capture_scope={}, cursor_theme={})".format(self.session, self.capture_scope, self.cursor_theme)
     def __eq__(self, other):
         if self.session != other.session:
             return False
         if self.capture_scope != other.capture_scope:
+            return False
+        if self.cursor_theme != other.cursor_theme:
             return False
         return True
 
@@ -2065,17 +2935,20 @@ class _UniffiFfiConverterTypeStartSessionInput(_UniffiConverterRustBuffer):
         return StartSessionInput(
             session=_UniffiFfiConverterString.read(buf),
             capture_scope=_UniffiFfiConverterOptionalTypeCaptureScope.read(buf),
+            cursor_theme=_UniffiFfiConverterOptionalTypeCursorThemeSelection.read(buf),
         )
 
     @staticmethod
     def check_lower(value):
         _UniffiFfiConverterString.check_lower(value.session)
         _UniffiFfiConverterOptionalTypeCaptureScope.check_lower(value.capture_scope)
+        _UniffiFfiConverterOptionalTypeCursorThemeSelection.check_lower(value.cursor_theme)
 
     @staticmethod
     def write(value, buf):
         _UniffiFfiConverterString.write(value.session, buf)
         _UniffiFfiConverterOptionalTypeCaptureScope.write(value.capture_scope, buf)
+        _UniffiFfiConverterOptionalTypeCursorThemeSelection.write(value.cursor_theme, buf)
 
 @dataclass
 class StartSessionOutput:
@@ -2229,6 +3102,8 @@ __all__ = [
     "InternalError",
     "DesktopScope",
     "ClickButton",
+    "CursorReducedMotion",
+    "CursorAction",
     "EscalationReason",
     "ScrollDirection",
     "ScrollBy",
@@ -2236,10 +3111,17 @@ __all__ = [
     "EffectiveScope",
     "Platform",
     "ClickInput",
+    "CursorMotionOutput",
+    "CursorPointOutput",
+    "CursorThemeOutput",
+    "CursorThemeSelection",
+    "CursorVisualOutput",
     "DragInput",
     "EndSessionInput",
     "EndSessionOutput",
     "EscalateSessionInput",
+    "GetAgentCursorStateInput",
+    "GetAgentCursorStateOutput",
     "GetCursorPositionInput",
     "GetDesktopStateInput",
     "GetScreenSizeInput",
@@ -2249,6 +3131,12 @@ __all__ = [
     "PressKeyInput",
     "ScrollInput",
     "SessionStateOutput",
+    "SetAgentCursorEnabledInput",
+    "SetAgentCursorEnabledOutput",
+    "SetAgentCursorMotionInput",
+    "SetAgentCursorMotionOutput",
+    "SetAgentCursorThemeInput",
+    "SetAgentCursorThemeOutput",
     "StartSessionInput",
     "StartSessionOutput",
     "TypeTextInput",

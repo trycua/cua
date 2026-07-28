@@ -29,7 +29,7 @@ A few parameters are platform-specific by design and are intentionally NOT part 
 | ----------------- | -------- | --- |
 | `launch_app` identifiers | macOS: `bundle_id`, `urls`. Windows: `aumid`, `launch_path`, `path`, `start_minimized`. | App launch is OS-native. `name` is the portable fallback that works on both. |
 | `debug_window_info` | Windows only | A window-handle / class / rect / z-order debug tool with no macOS or Linux counterpart. |
-| `check_permissions.prompt` | macOS only | Raises the TCC permission dialogs; there is no Windows or Linux equivalent of TCC. |
+| `check_permissions.prompt` | macOS only | Public tool calls are read-only by default. `prompt:true` is refused before platform dispatch; use the human-run `cua-driver permissions grant` setup command, which launches the installed app through LaunchServices. There is no Windows or Linux equivalent of TCC. |
 | Windowless screen-absolute (desktop-scope) clicks/scrolls | all three platforms, **exposed differently** | The capability exists everywhere, but the knob differs: macOS takes a **per-call `scope:"desktop"`** parameter on the pointer tools, while Windows and Linux gate it on the persisted **`capture_scope:"desktop"`** config (`set_config`). So a per-call `scope` param appears only on macOS; on Windows/Linux you opt in once via config. Unifying this knob is a tracked follow-up. |
 | `modifier` on a *background* click | honored on macOS and Linux; dropped on a Windows background click | A Windows background click goes through UIA Invoke / PostMessage, which carry no live keyboard state, so `modifier` takes effect only on the `delivery_mode:"foreground"` (SendInput) rung there. |
 

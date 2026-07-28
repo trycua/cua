@@ -107,7 +107,7 @@ Register Cua Driver with your agent harness once.
     It prints a command you run to register the server (paths will be specific to your install):
 
     ```bash
-    claude mcp add-json cua-computer-use '{"args":["mcp","--claude-code-computer-use-compat"],"command":"/Users/you/.local/bin/cua-driver"}'
+    claude mcp add-json --scope user cua-computer-use '{"args":["mcp"],"command":"/Users/you/.local/bin/cua-driver"}'
     ```
   </Tab>
   <Tab value="Codex">

@@ -32,6 +32,18 @@ It also covers the portable whole-desktop loop:
 - `drag` and `scroll` in native desktop coordinates
 - `type_text`, `press_key`, and `hotkey` against the foreground application
 
+The canonical session-owned cursor slice is shared exactly by MCP and both
+generated SDKs:
+
+- `set_agent_cursor_enabled`
+- `set_agent_cursor_motion`
+- `set_agent_cursor_theme`
+- `get_agent_cursor_state`
+
+Cursor artwork is selected by installed theme ID. Theme installation and
+dotLottie compilation are intentionally local CLI operations, not SDK or MCP
+tool calls.
+
 Session contracts are marked `canonical_runtime`: the same typed Rust input,
 output, and metadata declaration builds the live MCP tool. Desktop contracts
 are marked `portable_subset`: their typed Rust inputs are a deliberately

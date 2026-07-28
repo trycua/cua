@@ -20,6 +20,25 @@ language-native MCP facade and have no `/sdk`, `/mcp`, or `/native` public
 suffix. MCP remains implemented by the `cua-driver` executable as the
 runtime-neutral agent boundary.
 
+## Permission modes
+
+`standard` is the promptless default for normal automation. `bounded` admits
+only the tools and resources in a reviewed manifest. `unrestricted` requires
+`--dangerously-bypass-approvals`.
+
+Attaching to an existing logged-in Chromium profile remains explicit:
+
+```bash
+cua-driver mcp --grant existing-profile
+```
+
+An embedding application can instead provide `DriverAuthorizationHost`, and a
+bounded runtime can declare `kind: existing_profile` in its manifest. Cua
+Driver does not render its own authorization modal or banner.
+
+See the hosted [permission mode
+reference](https://cua.ai/docs/reference/cua-driver/permission-modes).
+
 ## Repository Layout
 
 | Path                            | Purpose                                                                |
@@ -63,6 +82,8 @@ generated Cua client.
 
 Contributor documentation:
 
+- `docs/cursor-themes.md` documents the default semantic cursor and custom
+  dotLottie authoring contract.
 - `docs/test-matrix.md` maps unit and canonical harness E2E suites.
 - `docs/action-support.md` is the empirical platform behavior ledger.
 - `docs/test-harnesses-guide.md` explains fixture and runner ownership.
@@ -92,6 +113,10 @@ Use MCP for this Claude Code vision/computer-use-style path. CLI screenshots sti
 macOS attributes Accessibility and Screen Recording grants to a responsible app identity, not simply to an executable path. Use one of these supported launch modes:
 
 - **Standalone:** install `CuaDriver.app`, grant permissions to it, and start its daemon with `open -n -g -a CuaDriver --args serve`. The installed `cua-driver mcp` CLI may proxy through this daemon automatically.
+- **Explicit direct MCP:** `cua-driver mcp --direct` makes the MCP process own
+  its runtime. On macOS this deliberately uses the spawning host's TCC
+  attribution and does not provide the AppKit cursor overlay without a
+  certified host adapter.
 - **Embedded:** have the macOS app that owns the grants use the generated `EmbeddedCuaDriverHost` to spawn a private daemon and return both SDK and MCP connection details. The daemon stays in the app's responsibility chain and inherits its grants. A gateway, terminal, or unrelated helper must not spawn the daemon on the app's behalf. `@trycua/cua-driver/embedded` is an organizational alias for the same Rust host exported at the package root; it has no separate lifecycle implementation.
 
 Directly spawning a raw `cua-driver serve` outside `CuaDriver.app` without embedded mode is unsupported: it has no stable bundle identity for TCC attribution. Do not grant permissions to arbitrary binary paths or rely on that configuration in production. See [`rust/Skills/cua-driver/EMBEDDING.md`](rust/Skills/cua-driver/EMBEDDING.md) for the embedding contract and examples.

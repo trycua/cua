@@ -64,7 +64,7 @@ Requires a Cua Driver daemon. JSON arguments may be passed as a positional JSON 
 
 Run the stdio MCP server.
 
-On Windows and Linux, bare cua-driver mcp owns its runtime directly and shuts it down on stdin EOF. On macOS it proxies to CuaDriver.app so desktop permissions retain the app identity. Pass --socket to select an explicit daemon endpoint.
+On Windows and Linux, bare cua-driver mcp owns its runtime directly and shuts it down on stdin EOF. On macOS it proxies to CuaDriver.app so desktop permissions retain the app identity. Pass --direct to make the macOS MCP process own the runtime and TCC attribution, or --socket to select an explicit daemon endpoint.
 
 **Options:**
 
@@ -72,13 +72,17 @@ On Windows and Linux, bare cua-driver mcp owns its runtime directly and shuts it
 | ---- | ---- | ------- | ----------- |
 | `--socket` | String | — | Select an explicit daemon socket or named-pipe endpoint. |
 | `--host-bundle-id` | String | — | Advisory host bundle id label echoed in check_permissions output (embedded mode). |
+| `--cursor-theme` | String | cua.default | Select an installed cursor theme id. |
+| `--cursor-reduced-motion` | String | auto | Follow the OS setting, force still frames, or allow animation: auto, on, or off. |
+| `--grant` | String | — | Pre-authorize a residual standard-mode boundary for a newly launched runtime. Repeatable; supported value: existing-profile. |
 
 **Flags:**
 
 | Name | Description |
 | ---- | ----------- |
-| `--claude-code-computer-use-compat` | Expose the Claude Code computer-use compatibility screenshot surface. |
-| `--embedded` | Require a daemon spawned by the embedding host instead of auto-launching the standalone app. |
+| `--direct` | Own the runtime in this MCP process; mutually exclusive with --socket. |
+| `--claude-code-computer-use-compat` | Accepted for older Claude Code setup snippets; no standalone screenshot tool — use get_window_state for window screenshots. |
+| `--embedded` | Declare embedding-host mode. Without --direct, require the host's private service through --socket instead of auto-launching the standalone app. |
 
 ### `cua-driver serve`
 
@@ -93,6 +97,7 @@ The daemon owns per-process state such as element-index caches, recording state,
 | `--socket` | String | — | Override the daemon socket or named-pipe path. |
 | `--pid-file` | String | — | Override the pid-file path on Unix targets. |
 | `--permission-mode` | String | standard | Immutable agent authorization mode: standard, bounded, or unrestricted. |
+| `--grant` | String | — | Pre-authorize a residual standard-mode boundary. Repeatable; supported value: existing-profile. |
 | `--session-policy` | String | — | Immutable tool manifest required in bounded mode. |
 | `--host-bundle-id` | String | — | Advisory host bundle id label echoed in check_permissions output (embedded mode). |
 
@@ -105,6 +110,7 @@ The daemon owns per-process state such as element-index caches, recording state,
 | `--approve-session-policy` | Trusted-launcher confirmation that the exact bounded manifest was reviewed. |
 | `--no-permissions-gate` | Skip the macOS first-launch permissions gate. |
 | `--embedded` | Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1. |
+| `--no-overlay` | Disable the agent cursor overlay for this daemon. |
 
 ### `cua-driver stop`
 
@@ -422,6 +428,126 @@ Report local skill-pack and per-agent link state.
 #### `cua-driver skills path`
 
 Print the local skill-pack path.
+
+### `cua-driver manifest`
+
+Emit a stable JSON description of the CLI surface.
+
+Consumers can use this instead of hardcoding launch arguments such as the MCP invocation.
+
+**Flags:**
+
+| Name | Description |
+| ---- | ----------- |
+| `-p`, `--pretty` | Pretty-print JSON. |
+
+### `cua-driver cursor-theme`
+
+Validate, compile, inspect, preview, install, or remove a local cursor theme.
+
+This is a trusted local authoring workflow. Agent-facing tools may select an installed theme id, but cannot install source or compiled theme data.
+
+#### `cua-driver cursor-theme validate`
+
+Validate a bounded dotLottie source archive.
+
+**Arguments:**
+
+| Name | Type | Required | Description |
+| ---- | ---- | -------- | ----------- |
+| `<source>` | String | Yes | Path to the source .lottie archive. |
+
+**Flags:**
+
+| Name | Description |
+| ---- | ----------- |
+| `--development` | Allow the reserved com.example development namespace. |
+
+#### `cua-driver cursor-theme build`
+
+Compile a validated dotLottie archive into a bounded .cua-theme artifact.
+
+**Arguments:**
+
+| Name | Type | Required | Description |
+| ---- | ---- | -------- | ----------- |
+| `<source>` | String | Yes | Path to the source .lottie archive. |
+
+**Options:**
+
+| Name | Type | Default | Description |
+| ---- | ---- | ------- | ----------- |
+| `--output` | String | — | Output .cua-theme path. |
+
+**Flags:**
+
+| Name | Description |
+| ---- | ----------- |
+| `--development` | Allow the reserved com.example development namespace. |
+
+#### `cua-driver cursor-theme inspect`
+
+Inspect metadata in a compiled .cua-theme artifact.
+
+**Arguments:**
+
+| Name | Type | Required | Description |
+| ---- | ---- | -------- | ----------- |
+| `<theme>` | String | Yes | Path to the compiled .cua-theme artifact. |
+
+**Flags:**
+
+| Name | Description |
+| ---- | ----------- |
+| `--json` | Emit machine-readable JSON. |
+
+#### `cua-driver cursor-theme preview`
+
+Render a compiled theme's representative still frames to a directory.
+
+**Arguments:**
+
+| Name | Type | Required | Description |
+| ---- | ---- | -------- | ----------- |
+| `<theme>` | String | Yes | Path to the compiled .cua-theme artifact. |
+
+**Options:**
+
+| Name | Type | Default | Description |
+| ---- | ---- | ------- | ----------- |
+| `--output` | String | — | Preview output directory. |
+
+#### `cua-driver cursor-theme install`
+
+Install a compiled theme into the current user's theme store.
+
+**Arguments:**
+
+| Name | Type | Required | Description |
+| ---- | ---- | -------- | ----------- |
+| `<theme>` | String | Yes | Path to the compiled .cua-theme artifact. |
+
+#### `cua-driver cursor-theme list`
+
+List the built-in and installed cursor themes.
+
+**Flags:**
+
+| Name | Description |
+| ---- | ----------- |
+| `--json` | Emit machine-readable JSON. |
+
+#### `cua-driver cursor-theme uninstall`
+
+Remove a custom theme from the current user's theme store.
+
+The built-in cua.default theme cannot be removed.
+
+**Arguments:**
+
+| Name | Type | Required | Description |
+| ---- | ---- | -------- | ----------- |
+| `<theme-id>` | String | Yes | Installed custom theme id. |
 
 ### `cua-driver dump-docs`
 

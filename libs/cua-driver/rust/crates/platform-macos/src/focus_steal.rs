@@ -88,6 +88,13 @@ struct Entry {
     /// The wildcard variant is used while a launch is in flight and the
     /// real pid isn't known yet.
     target_pid: Option<i32>,
+    /// One intentional activation that a wildcard entry must allow through.
+    ///
+    /// Raw background pixel clicks use the focus-without-raise recipe: the
+    /// target must become AppKit-active long enough for its event queue to
+    /// accept the click, while activations of every *other* app should still
+    /// be suppressed as cross-app side effects.
+    allowed_pid: Option<i32>,
     /// Pid to restore focus to when an activation matches this entry.
     restore_to: i32,
     /// Monotonic deadline. After this, the entry is pruned without
@@ -142,6 +149,27 @@ impl FocusStealPreventer {
         }
     }
 
+    /// Begin wildcard suppression while allowing one intentional activation.
+    ///
+    /// This is narrower than disabling suppression altogether: activation of
+    /// `allowed_pid` is ignored, but any other pid still restores
+    /// `restore_to`.
+    pub fn begin_suppression_allowing(
+        allowed_pid: i32,
+        restore_to: i32,
+        origin: &'static str,
+    ) -> SuppressionLease {
+        let shared = Self::shared();
+        let handle = shared
+            .dispatcher
+            .add_allowing(allowed_pid, restore_to, origin);
+        SuppressionLease {
+            handle,
+            dispatcher: Arc::clone(&shared.dispatcher),
+            released: false,
+        }
+    }
+
     /// Run `f` with a suppression entry active. Equivalent to
     /// `begin_suppression(...)` + run `f` + drop the lease — but expressed
     /// as a single async call site.
@@ -167,6 +195,15 @@ pub fn begin_suppression(
     origin: &'static str,
 ) -> SuppressionLease {
     FocusStealPreventer::begin_suppression(target_pid, restore_to, origin)
+}
+
+/// Begin wildcard suppression while permitting `allowed_pid` to activate.
+pub fn begin_suppression_allowing(
+    allowed_pid: i32,
+    restore_to: i32,
+    origin: &'static str,
+) -> SuppressionLease {
+    FocusStealPreventer::begin_suppression_allowing(allowed_pid, restore_to, origin)
 }
 
 /// RAII lease. `Drop` ends the entry synchronously, so the entry is
@@ -234,9 +271,30 @@ impl Dispatcher {
         restore_to: i32,
         origin: &'static str,
     ) -> SuppressionHandle {
+        self.add_entry(target_pid, None, restore_to, origin)
+    }
+
+    /// Add a wildcard entry that ignores one intentional target activation.
+    fn add_allowing(
+        self: &Arc<Self>,
+        allowed_pid: i32,
+        restore_to: i32,
+        origin: &'static str,
+    ) -> SuppressionHandle {
+        self.add_entry(None, Some(allowed_pid), restore_to, origin)
+    }
+
+    fn add_entry(
+        self: &Arc<Self>,
+        target_pid: Option<i32>,
+        allowed_pid: Option<i32>,
+        restore_to: i32,
+        origin: &'static str,
+    ) -> SuppressionHandle {
         let id = Uuid::new_v4();
         let entry = Entry {
             target_pid,
+            allowed_pid,
             restore_to,
             deadline: Instant::now() + ENTRY_DEADLINE,
             origin,
@@ -278,6 +336,9 @@ impl Dispatcher {
         guard
             .values()
             .filter(|e| {
+                if e.allowed_pid == Some(activated_pid) {
+                    return false;
+                }
                 match e.target_pid {
                     Some(p) => p == activated_pid,
                     // Wildcard: match any activation except the restore_to
@@ -508,6 +569,29 @@ mod tests {
         assert!(d.snapshot_matches(7).is_empty());
     }
 
+    /// A background pixel click intentionally makes its target AppKit-active
+    /// without raising it. The wildcard guard must allow that one pid while
+    /// continuing to suppress unrelated cross-app activations.
+    #[test]
+    fn wildcard_can_allow_intentional_target_activation() {
+        let d = Arc::new(Dispatcher::new());
+        let _h = d.add_allowing(42, 7, "test.allow");
+
+        assert!(
+            d.snapshot_matches(42).is_empty(),
+            "intentional target activation must not be restored before the click"
+        );
+        assert_eq!(
+            d.snapshot_matches(99),
+            vec![7],
+            "unrelated activations must remain suppressed"
+        );
+        assert!(
+            d.snapshot_matches(7).is_empty(),
+            "restoring the original foreground must never recurse"
+        );
+    }
+
     /// Lease Drop is the standard remove path.
     #[test]
     fn lease_drop_removes_entry() {
@@ -551,6 +635,7 @@ mod tests {
                 id,
                 Entry {
                     target_pid: Some(42),
+                    allowed_pid: None,
                     restore_to: 7,
                     deadline: Instant::now() - Duration::from_secs(1),
                     origin: "test.leak",

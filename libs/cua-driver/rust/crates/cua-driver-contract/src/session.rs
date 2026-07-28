@@ -2,9 +2,9 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 use crate::{
-    EndSessionInput, EndSessionOutput, EscalateSessionInput, GetSessionStateInput, Platform,
-    SchemaMode, SessionStateOutput, StartSessionInput, StartSessionOutput, ToolAnnotations,
-    ToolContract, ToolInput, ToolOutput,
+    CursorAction, CursorSemantics, EndSessionInput, EndSessionOutput, EscalateSessionInput,
+    GetSessionStateInput, Platform, SchemaMode, SessionStateOutput, StartSessionInput,
+    StartSessionOutput, ToolAnnotations, ToolContract, ToolInput, ToolOutput,
 };
 
 const ALL_PLATFORMS: [Platform; 3] = [Platform::Macos, Platform::Windows, Platform::Linux];
@@ -28,6 +28,7 @@ fn contract<I: ToolInput, O: ToolOutput>(
         capabilities: capabilities.iter().map(|value| (*value).into()).collect(),
         annotations,
         schema_mode: SchemaMode::CanonicalRuntime,
+        cursor_semantics: Some(CursorSemantics::new(CursorAction::System)),
         input_schema: I::input_schema(),
         success_output_schema: Some(O::output_schema()),
         output_validator: crate::validate_typed_output::<O>,

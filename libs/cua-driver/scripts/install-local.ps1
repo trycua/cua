@@ -64,6 +64,7 @@ $RepoRoot    = (Resolve-Path "$ScriptDir\..\rust").Path
 $BinaryName  = "cua-driver-local.exe"
 $BuiltBinaryName = "cua-driver.exe"
 $UiaBinaryName = "cua-driver-uia-local.exe"
+$ThemeBinaryName = "cua-cursor-theme.exe"
 # Always release-config — matches the binary install.ps1 hands end users.
 $Config      = "release"
 
@@ -172,10 +173,10 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
 
 # ---------- Build ----------------------------------------------------------
 
-Write-Step "cargo build --release -p cua-driver -p cua-driver-uia"
+Write-Step "cargo build --release -p cua-driver -p cua-driver-uia -p cursor-theme-cli"
 Push-Location $RepoRoot
 try {
-    & cargo build --release -p cua-driver -p cua-driver-uia
+    & cargo build --release -p cua-driver -p cua-driver-uia -p cursor-theme-cli
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Error: cargo build failed." -ForegroundColor Red
         exit $LASTEXITCODE
@@ -186,8 +187,13 @@ finally {
 }
 $BuiltBinary = Join-Path $RepoRoot "target\$Config\$BuiltBinaryName"
 $BuiltUiaBinary = Join-Path $RepoRoot "target\$Config\cua-driver-uia.exe"
+$BuiltThemeBinary = Join-Path $RepoRoot "target\$Config\$ThemeBinaryName"
 if (-not (Test-Path -LiteralPath $BuiltBinary)) {
     Write-Host "Error: build produced no binary at $BuiltBinary" -ForegroundColor Red
+    exit 1
+}
+if (-not (Test-Path -LiteralPath $BuiltThemeBinary)) {
+    Write-Host "Error: build produced no cursor-theme compiler at $BuiltThemeBinary" -ForegroundColor Red
     exit 1
 }
 
@@ -232,6 +238,7 @@ if (Test-Path -LiteralPath $DestBinary) {
 Write-Step "staging into $VersionedDir"
 New-Item -ItemType Directory -Path $VersionedDir -Force | Out-Null
 Copy-Item -LiteralPath $BuiltBinary -Destination $DestBinary -Force
+Copy-Item -LiteralPath $BuiltThemeBinary -Destination (Join-Path $VersionedDir $ThemeBinaryName) -Force
 $DestUiaBinary = Join-Path $VersionedDir $UiaBinaryName
 if (Test-Path -LiteralPath $BuiltUiaBinary) {
     Copy-Item -LiteralPath $BuiltUiaBinary -Destination $DestUiaBinary -Force

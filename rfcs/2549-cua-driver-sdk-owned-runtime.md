@@ -1,6 +1,6 @@
 ---
 rfc: 2549
-title: "Cua Driver: SDK-Owned Runtime and Optional Services"
+title: 'Cua Driver: SDK-Owned Runtime and Optional Services'
 authors:
   - Cua maintainers
 created: 2026-07-24
@@ -8,7 +8,7 @@ last_updated: 2026-07-24
 status: review
 discussion: https://github.com/trycua/cua/issues/2549
 rfc_pr: https://github.com/trycua/cua/pull/2550
-implementation:
+implementation: https://github.com/trycua/cua/pull/2561
 supersedes: 2447
 superseded_by:
 ---
@@ -968,9 +968,11 @@ supported platform.
 
 ### Phase 5: Platform-aware MCP ownership
 
-Make MCP stdio own its runtime on Windows, Linux, and embedded macOS paths.
-Keep standalone installed macOS MCP connected to the signed CuaDriver.app
-service by default. Preserve explicit direct and service connection modes.
+Make MCP stdio own its runtime on Windows and Linux. On macOS, keep standalone
+MCP connected to the signed CuaDriver.app service by default and require
+`--direct` for an explicit MCP-process owner, including an embedded host that
+chooses direct ownership instead of its private service endpoint. Preserve the
+explicit service connection mode.
 
 ### Phase 6: Private worker
 
@@ -1297,4 +1299,15 @@ The RFC is implemented when all of the following evidence passes.
 ## Decision record
 
 RFC 2549 supersedes RFC 2447 while preserving its typed-contract and native-ABI
-decisions. Final disposition remains pending RFC discussion.
+decisions. The implementation keeps CLI and MCP as the preferred standalone
+agent integrations; "direct by default" applies to applications importing the
+typed SDK and owning their automation lifecycle.
+
+The implementation makes one additive CLI choice: `cua-driver mcp --direct`
+explicitly selects MCP-process ownership and, on macOS, accepts the spawning
+host's TCC attribution. Bare MCP remains direct on Windows/Linux and
+CuaDriver.app-backed on macOS. `--socket` remains the explicit service choice
+and is mutually exclusive with `--direct`.
+
+PR #2561 is the implementation candidate. Final disposition remains pending
+RFC and implementation review.

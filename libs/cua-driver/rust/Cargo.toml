@@ -12,6 +12,7 @@ members = [
     "crates/platform-windows",
     "crates/platform-linux",
     "crates/cursor-overlay",
+    "crates/cursor-theme-cli",
     "crates/pip-preview",
 ]
 
@@ -34,3 +35,6 @@ base64 = "0.22"
 uuid = { version = "1", features = ["v4"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 uniffi = "=0.31.0"
+postcard = { version = "1", features = ["alloc"] }
+sha2 = "0.10"
+zstd = "0.13"

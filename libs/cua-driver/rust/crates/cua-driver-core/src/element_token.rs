@@ -21,18 +21,17 @@
 //!   s{snapshot_id_hex}:{element_index}
 //! ```
 //!
-//! - `snapshot_id_hex` is a lowercase 4-hex-char prefix of a process-
-//!   global u32 snapshot counter (`AtomicU32`). 4 chars gives 16 bits of
-//!   namespace — collisions are statistically impossible inside the
-//!   8-entry-per-pid LRU window we keep, and the prefix stays human-eyeball
-//!   friendly in logs.
+//! - `snapshot_id_hex` is the complete lowercase 8-hex-char value of a
+//!   process-global u32 snapshot counter (`AtomicU32`). Keeping all 32 bits
+//!   prevents a live token from aliasing a newer snapshot after only 65,536
+//!   calls.
 //! - `element_index` is the same `usize` already returned in
 //!   `structuredContent.elements[].element_index`. Keeping it in plain
 //!   sight in the token means a server-side log line like
 //!   `element_token=s00007a3f:42` is debug-grep-able without a side-table.
 //!
-//! Tokens are 11–15 chars (`"s00000001:0"` up to `"sffffffff:999"`). Still
-//! within the 8–16 char budget the Surface 6 plan called out.
+//! Tokens are at least 11 chars (`"s00000001:0"`); the decimal element index
+//! determines the remaining length.
 //!
 //! ## Validity contract
 //!
@@ -46,9 +45,8 @@
 //!   [`STALE_TOKEN_ERROR`] — consumers MUST treat that as "re-snapshot
 //!   and retry", never as "click failed".
 //!
-//! The LRU is **per-pid**, not global. Two snapshots from different pids
-//! never collide even when their numeric counter happens to wrap (which
-//! it won't in practice — u32 wraps after 4 billion calls).
+//! The LRU is **per runtime and pid**, not global. Two snapshots in different
+//! lanes never collide even when their numeric counters match.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -116,14 +114,10 @@ impl TokenRegistry {
     /// in its lane, the oldest is evicted and any token that referenced
     /// it becomes stale — that's the contract.
     pub fn register_snapshot(&self, pid: i32, window_id: u32, element_count: usize) -> u32 {
-        // Keep the full 32-bit counter. Truncating to 16 bits made the id
-        // space small enough for a live collision: with LRU_CAP_PER_PID = 8
-        // entries per lane, each mint has an 8/65536 chance of matching a
-        // still-resolvable entry, so a session issuing 10k get_window_state
-        // calls expects roughly 1.2 collisions. A collision here resolves a
-        // token to the wrong snapshot, which surfaces as a silent misclick
-        // rather than an error — exactly the failure mode this module's
-        // header warns about.
+        // Keep the full 32-bit counter. Truncating to 16 bits repeats an id
+        // every 65,536 process-global snapshots. A long-lived daemon can then
+        // mint an id that still exists in another runtime/pid lane, allowing a
+        // stale token to resolve to the wrong snapshot instead of failing.
         let id = mint_snapshot_id();
         let runtime_scope = current_runtime_scope();
         let mut entries = self.by_runtime_and_pid.lock().unwrap();

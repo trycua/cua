@@ -9,7 +9,7 @@ import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from ..sessions.providers.local_environment import check_image_exists, pull_image
 from .docker_utils import (
@@ -974,6 +974,77 @@ class TaskRunner:
             remove_on_exit=False,  # Don't auto-remove, we need logs
         )
 
+    def _build_daytona_solver_command(
+        self,
+        python_exe: str,
+        task_path: str,
+        task_index: int,
+        oracle: bool,
+        agent: Optional[str],
+        agent_import_path: Optional[str],
+        model: Optional[str],
+        max_steps: int,
+    ) -> List[str]:
+        """Build the solver argv shared by Linux and Windows Daytona runs."""
+        command = [python_exe, "-m", "cua_bench.batch.solver", task_path]
+        command.extend(["--task-index", str(task_index)])
+        if not oracle:
+            command.append("--eval")
+            if agent:
+                command.extend(["--agent", agent])
+            if agent_import_path:
+                command.extend(["--agent-import-path", agent_import_path])
+            if model:
+                command.extend(["--model", model])
+            if max_steps:
+                command.extend(["--max-steps", str(max_steps)])
+        return command
+
+    def _daytona_sigterm_guard(self, harness) -> Callable[[], None]:
+        """Install the Daytona cleanup SIGTERM handler and return its restorer."""
+        import signal
+
+        def _sigterm_handler(signum, frame):
+            import asyncio as _asyncio
+            import threading
+
+            def _cleanup():
+                loop = _asyncio.new_event_loop()
+                loop.run_until_complete(harness.cleanup())
+                loop.close()
+
+            thread = threading.Thread(target=_cleanup, daemon=True)
+            thread.start()
+            thread.join(timeout=15)
+            raise SystemExit(0)
+
+        old_handler = signal.signal(signal.SIGTERM, _sigterm_handler)
+
+        def _restore() -> None:
+            signal.signal(signal.SIGTERM, old_handler)
+
+        return _restore
+
+    def _daytona_task_result(
+        self,
+        exit_code: int,
+        agent_logs: str,
+        output_dir: Optional[str],
+    ) -> TaskResult:
+        """Persist Daytona solver logs and construct the successful run result."""
+        if output_dir and agent_logs:
+            log_file = Path(output_dir) / "run.log"
+            log_file.parent.mkdir(parents=True, exist_ok=True)
+            log_file.write_text(agent_logs, encoding="utf-8", errors="replace")
+
+        return TaskResult(
+            success=exit_code == 0,
+            exit_code=exit_code,
+            agent_logs=agent_logs,
+            env_logs="",
+            output_dir=output_dir,
+        )
+
     async def _run_task_daytona(
         self,
         env_path: Path,
@@ -990,16 +1061,28 @@ class TaskRunner:
         output_dir: Optional[str],
         timeout: Optional[int],
     ) -> "TaskResult":
-        """Run a task inside a single Daytona sandbox.
-
-        Both the env desktop (supervisord/VNC/cua-computer-server) and the
-        solver run inside the same sandbox.  Computer-use traffic stays on
-        localhost:8000, so no base64-exec calls are needed during the agent loop.
+        """Run a Daytona task: Linux co-locates desktop and solver in the sandbox;
+        Windows (environment types with ``os_type`` "windows") dispatches to
+        ``_run_task_daytona_windows``, where the sandbox is the desktop only and
+        the solver runs locally.
         """
-        import signal
-        import sys
-
         from .daytona_harness import DaytonaHarness
+
+        os_type = ENV_CONFIGS.get(env_type or "", {}).get("os_type", "linux")
+        if os_type == "windows":
+            return await self._run_task_daytona_windows(
+                env_path=env_path,
+                task_index=task_index,
+                golden_name=golden_name,
+                agent=agent,
+                agent_command=agent_command,
+                agent_import_path=agent_import_path,
+                model=model,
+                max_steps=max_steps,
+                oracle=oracle,
+                output_dir=output_dir,
+                timeout=timeout,
+            )
 
         harness = DaytonaHarness()
 
@@ -1021,38 +1104,18 @@ class TaskRunner:
                 creation_env[key] = val
 
         # Build solver command (runs inside the sandbox, so use sandbox python)
-        if agent_command:
-            command = agent_command
-        else:
-            command = ["/opt/venv/bin/python3", "-m", "cua_bench.batch.solver", "/tmp/task_env"]
-            command.extend(["--task-index", str(task_index)])
-            if not oracle:
-                command.append("--eval")
-                if agent:
-                    command.extend(["--agent", agent])
-                if agent_import_path:
-                    command.extend(["--agent-import-path", agent_import_path])
-                if model:
-                    command.extend(["--model", model])
-                if max_steps:
-                    command.extend(["--max-steps", str(max_steps)])
+        command = agent_command or self._build_daytona_solver_command(
+            python_exe="/opt/venv/bin/python3",
+            task_path="/tmp/task_env",
+            task_index=task_index,
+            oracle=oracle,
+            agent=agent,
+            agent_import_path=agent_import_path,
+            model=model,
+            max_steps=max_steps,
+        )
 
-        # Register SIGTERM handler so cleanup runs even when the process is killed
-        def _sigterm_handler(signum, frame):
-            import asyncio as _asyncio
-            import threading
-
-            def _cleanup():
-                loop = _asyncio.new_event_loop()
-                loop.run_until_complete(harness.cleanup())
-                loop.close()
-
-            t = threading.Thread(target=_cleanup, daemon=True)
-            t.start()
-            t.join(timeout=15)
-            raise SystemExit(0)
-
-        old_handler = signal.signal(signal.SIGTERM, _sigterm_handler)
+        restore_sigterm = self._daytona_sigterm_guard(harness)
 
         try:
             # 1. Start sandbox (bootstraps supervisord, waits for computer-server ready)
@@ -1092,19 +1155,7 @@ class TaskRunner:
                 ),
             )
 
-            # 6. Write logs to local output_dir if requested
-            if output_dir and agent_logs:
-                log_file = Path(output_dir) / "run.log"
-                log_file.parent.mkdir(parents=True, exist_ok=True)
-                log_file.write_text(agent_logs, encoding="utf-8", errors="replace")
-
-            return TaskResult(
-                success=exit_code == 0,
-                exit_code=exit_code,
-                agent_logs=agent_logs,
-                env_logs="",
-                output_dir=output_dir,
-            )
+            return self._daytona_task_result(exit_code, agent_logs, output_dir)
 
         except Exception as e:
             return TaskResult(
@@ -1117,7 +1168,102 @@ class TaskRunner:
             )
 
         finally:
-            signal.signal(signal.SIGTERM, old_handler)
+            restore_sigterm()
+            await harness.cleanup()
+
+    async def _run_task_daytona_windows(
+        self,
+        env_path: Path,
+        task_index: int,
+        golden_name: Optional[str],
+        agent: Optional[str],
+        agent_command: Optional[List[str]],
+        agent_import_path: Optional[str],
+        model: Optional[str],
+        max_steps: int,
+        oracle: bool,
+        output_dir: Optional[str],
+        timeout: Optional[int],
+    ) -> "TaskResult":
+        """Run a task locally against a Daytona Windows desktop sandbox."""
+        import sys
+
+        from .daytona_harness import DaytonaHarness
+
+        _raw = golden_name or ""
+        # Values that mean "no Daytona snapshot was chosen": env-type keys and
+        # Docker images are Docker-provider defaults, not Daytona snapshot names.
+        _non_snapshot = set(ENV_CONFIGS) | {
+            config["image"] for config in ENV_CONFIGS.values()
+        }
+        snapshot = (
+            _raw
+            if _raw and _raw not in _non_snapshot
+            else os.environ.get("DAYTONA_WINDOWS_SNAPSHOT")
+        )
+        if not snapshot:
+            raise ValueError(
+                "Windows on Daytona needs a Daytona Windows snapshot with "
+                "cua-computer-server baked in; pass --image <snapshot> or set "
+                "DAYTONA_WINDOWS_SNAPSHOT. See the snapshot build script: "
+                "python -m cua_bench.scripts.build_daytona_windows_snapshot"
+            )
+
+        harness = DaytonaHarness()
+
+        command = agent_command or self._build_daytona_solver_command(
+            python_exe=sys.executable,
+            task_path=str(env_path.resolve()),
+            task_index=task_index,
+            oracle=oracle,
+            agent=agent,
+            agent_import_path=agent_import_path,
+            model=model,
+            max_steps=max_steps,
+        )
+
+        restore_sigterm = self._daytona_sigterm_guard(harness)
+
+        try:
+            # The solver runs locally, so secrets never enter the sandbox.
+            api_url = await harness.start_env_sandbox(image=snapshot, env_vars={})
+
+            solver_env: Dict[str, str] = {
+                "CUA_ENV_API_URL": api_url,
+                "CUA_ENV_VNC_URL": "",
+                "CUA_ENV_TYPE": "windows",
+                "CUA_PROVIDER": "daytona",
+                "BATCH_TASK_INDEX": str(task_index),
+                "BATCH_TASK_COUNT": "1",
+                "CUA_TELEMETRY_DISABLED": "1",
+            }
+            if output_dir:
+                solver_env["CUA_OUTPUT_DIR"] = output_dir
+
+            loop = asyncio.get_event_loop()
+            exit_code, agent_logs = await loop.run_in_executor(
+                None,
+                lambda: harness.run_solver_locally(
+                    command=command,
+                    env_vars=solver_env,
+                    timeout=timeout,
+                ),
+            )
+
+            return self._daytona_task_result(exit_code, agent_logs, output_dir)
+
+        except Exception as e:
+            return TaskResult(
+                success=False,
+                exit_code=-1,
+                agent_logs="",
+                env_logs="",
+                output_dir=output_dir,
+                error=str(e),
+            )
+
+        finally:
+            restore_sigterm()
             await harness.cleanup()
 
     async def _cleanup_task(self, task_id: str) -> None:

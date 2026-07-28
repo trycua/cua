@@ -390,6 +390,12 @@ class VM {
                         throw VMError.internalError("The VM session is no longer available")
                     }
                     try await self.addSharedFolder(url, readOnly: readOnly)
+                },
+                copyFilesToGuestDesktop: { [weak self] urls in
+                    guard let self else {
+                        throw VMError.internalError("The VM session is no longer available")
+                    }
+                    try await self.copyFilesToGuestDesktop(urls)
                 }
             )
             displayContext = context
@@ -556,6 +562,49 @@ class VM {
         if let sessionURL = vncService.url {
             saveSessionData(url: sessionURL, sharedDirectories: updated)
         }
+    }
+
+    private func copyFilesToGuestDesktop(_ urls: [URL]) async throws {
+        guard !urls.isEmpty else {
+            throw VMError.internalError("Drop at least one file or folder")
+        }
+        for url in urls {
+            guard url.isFileURL, FileManager.default.fileExists(atPath: url.path) else {
+                throw VMError.internalError("A dropped item is no longer available")
+            }
+        }
+
+        guard virtualizationService?.state == .running else {
+            throw SSHError.vmNotRunning(vmDirContext.name)
+        }
+        guard let macAddress = vmDirContext.config.macAddress else {
+            throw SSHError.noIPAddress(vmDirContext.name)
+        }
+        let ipAddress = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(
+                    returning: DHCPLeaseParser.getIPAddress(forMAC: macAddress)
+                )
+            }
+        }
+        guard let ipAddress, !ipAddress.isEmpty else {
+            throw SSHError.noIPAddress(vmDirContext.name)
+        }
+
+        let client = SystemSSHClient(
+            host: ipAddress,
+            port: 22,
+            user: "lume",
+            password: "lume"
+        )
+        try await client.copyToRemoteDesktop(urls)
+
+        Logger.info(
+            "Copied dropped items to VM Desktop",
+            metadata: [
+                "name": vmDirContext.name,
+                "count": "\(urls.count)",
+            ])
     }
 
     private func cleanupSession() async {

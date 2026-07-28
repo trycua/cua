@@ -10,6 +10,7 @@ struct VMDisplayContext {
     let copyFromGuest: (@MainActor () async throws -> Void)?
     let pasteIntoGuest: (@MainActor () async throws -> Void)?
     let addSharedFolder: (@MainActor (URL, Bool) async throws -> Void)?
+    let copyFilesToGuestDesktop: (@MainActor ([URL]) async throws -> Void)?
 
     init(
         virtualMachine: VZVirtualMachine?,
@@ -18,7 +19,8 @@ struct VMDisplayContext {
         vmName: String = "Lume VM",
         copyFromGuest: (@MainActor () async throws -> Void)? = nil,
         pasteIntoGuest: (@MainActor () async throws -> Void)? = nil,
-        addSharedFolder: (@MainActor (URL, Bool) async throws -> Void)? = nil
+        addSharedFolder: (@MainActor (URL, Bool) async throws -> Void)? = nil,
+        copyFilesToGuestDesktop: (@MainActor ([URL]) async throws -> Void)? = nil
     ) {
         self.virtualMachine = virtualMachine
         self.vncURL = vncURL
@@ -27,6 +29,7 @@ struct VMDisplayContext {
         self.copyFromGuest = copyFromGuest
         self.pasteIntoGuest = pasteIntoGuest
         self.addSharedFolder = addSharedFolder
+        self.copyFilesToGuestDesktop = copyFilesToGuestDesktop
     }
 }
 
@@ -83,8 +86,37 @@ private enum NativeClipboardShortcut {
 }
 
 @MainActor
+enum NativeFileDrop {
+    static func fileURLs(from pasteboard: NSPasteboard) -> [URL] {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [
+            .urlReadingFileURLsOnly: true
+        ]
+        let objects = pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: options
+        ) as? [NSURL]
+        return (objects ?? []).map { $0 as URL }.filter(\.isFileURL)
+    }
+}
+
+@MainActor
 private final class NativeVirtualMachineView: VZVirtualMachineView {
     var onClipboardShortcut: ((NativeClipboardShortcut) -> Bool)?
+    var onFileDragEntered: (() -> Void)?
+    var canAcceptFileDrop: (() -> Bool)?
+    var onFileDrop: (([URL]) -> Bool)?
+    private var cachedDragSequenceNumber: Int?
+    private var cachedDragURLs: [URL] = []
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        registerForDraggedTypes([.fileURL])
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        registerForDraggedTypes([.fileURL])
+    }
 
     override func keyDown(with event: NSEvent) {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -103,6 +135,55 @@ private final class NativeVirtualMachineView: VZVirtualMachineView {
             }
         }
         super.keyDown(with: event)
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard onFileDrop != nil, canAcceptFileDrop?() != false,
+            !fileURLs(from: sender).isEmpty
+        else {
+            return []
+        }
+        onFileDragEntered?()
+        return .copy
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard onFileDrop != nil, canAcceptFileDrop?() != false,
+            !fileURLs(from: sender).isEmpty
+        else {
+            return []
+        }
+        return .copy
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = fileURLs(from: sender)
+        defer { resetCachedDrag() }
+        guard !urls.isEmpty, let onFileDrop else { return false }
+        return onFileDrop(urls)
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        resetCachedDrag()
+    }
+
+    override func concludeDragOperation(_ sender: NSDraggingInfo?) {
+        resetCachedDrag()
+    }
+
+    private func fileURLs(from sender: NSDraggingInfo) -> [URL] {
+        let sequenceNumber = sender.draggingSequenceNumber
+        if cachedDragSequenceNumber == sequenceNumber {
+            return cachedDragURLs
+        }
+        cachedDragSequenceNumber = sequenceNumber
+        cachedDragURLs = NativeFileDrop.fileURLs(from: sender.draggingPasteboard)
+        return cachedDragURLs
+    }
+
+    private func resetCachedDrag() {
+        cachedDragSequenceNumber = nil
+        cachedDragURLs = []
     }
 }
 
@@ -130,6 +211,9 @@ final class NativeVMDisplayPresenter: NSObject, VMDisplayPresenter, NSWindowDele
     private var copyFromGuestAction: (@MainActor () async throws -> Void)?
     private var pasteIntoGuestAction: (@MainActor () async throws -> Void)?
     private var addSharedFolderAction: (@MainActor (URL, Bool) async throws -> Void)?
+    private var copyFilesToGuestDesktopAction: (@MainActor ([URL]) async throws -> Void)?
+    private var fileDropTask: Task<Void, Never>?
+    private var fileDropInProgress = false
     private var captureSystemKeysItem: NSMenuItem?
     private var captureSystemKeysToolbarItem: NSToolbarItem?
     private var showWindowItem: NSMenuItem?
@@ -146,6 +230,7 @@ final class NativeVMDisplayPresenter: NSObject, VMDisplayPresenter, NSWindowDele
         copyFromGuestAction = context.copyFromGuest
         pasteIntoGuestAction = context.pasteIntoGuest
         addSharedFolderAction = context.addSharedFolder
+        copyFilesToGuestDesktopAction = context.copyFilesToGuestDesktop
 
         let application = NSApplication.shared
         if application.activationPolicy() != .regular {
@@ -182,7 +267,11 @@ final class NativeVMDisplayPresenter: NSObject, VMDisplayPresenter, NSWindowDele
     func hide() {
         overlayTask?.cancel()
         overlayTask = nil
+        fileDropTask?.cancel()
         machineView?.onClipboardShortcut = nil
+        machineView?.onFileDragEntered = nil
+        machineView?.canAcceptFileDrop = nil
+        machineView?.onFileDrop = nil
         machineView?.virtualMachine = nil
         window?.delegate = nil
         window?.orderOut(nil)
@@ -195,6 +284,10 @@ final class NativeVMDisplayPresenter: NSObject, VMDisplayPresenter, NSWindowDele
         copyFromGuestAction = nil
         pasteIntoGuestAction = nil
         addSharedFolderAction = nil
+        copyFilesToGuestDesktopAction = nil
+        if fileDropTask == nil {
+            fileDropInProgress = false
+        }
         captureSystemKeysItem = nil
         captureSystemKeysToolbarItem = nil
         showWindowItem = nil
@@ -247,6 +340,20 @@ final class NativeVMDisplayPresenter: NSObject, VMDisplayPresenter, NSWindowDele
                 guard pasteIntoGuestAction != nil else { return false }
                 requestPasteIntoGuest()
             }
+            return true
+        }
+        view.onFileDragEntered = { [weak self] in
+            self?.showOverlay("Drop to copy to the VM Desktop")
+        }
+        view.canAcceptFileDrop = { [weak self] in
+            guard let self else { return false }
+            return copyFilesToGuestDesktopAction != nil && !fileDropInProgress
+        }
+        view.onFileDrop = { [weak self] urls in
+            guard let self, copyFilesToGuestDesktopAction != nil, !fileDropInProgress else {
+                return false
+            }
+            requestFileDrop(urls)
             return true
         }
         container.addSubview(view)
@@ -454,6 +561,50 @@ final class NativeVMDisplayPresenter: NSObject, VMDisplayPresenter, NSWindowDele
         }
     }
 
+    private func requestFileDrop(_ urls: [URL]) {
+        guard let copyFilesToGuestDesktopAction, !fileDropInProgress else {
+            showOverlay("File transfer unavailable")
+            return
+        }
+
+        fileDropInProgress = true
+        let itemDescription = urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) items"
+        showOverlay("Copying \(itemDescription) to Desktop…", automaticallyHides: false)
+        let scopedURLs = urls.filter { $0.startAccessingSecurityScopedResource() }
+
+        fileDropTask = Task { @MainActor [weak self] in
+            defer {
+                for url in scopedURLs {
+                    url.stopAccessingSecurityScopedResource()
+                }
+            }
+            guard let self else { return }
+            defer {
+                self.fileDropInProgress = false
+                self.fileDropTask = nil
+            }
+
+            do {
+                try await copyFilesToGuestDesktopAction(urls)
+                self.showOverlay("Copied to VM Desktop")
+            } catch is CancellationError {
+                Logger.info(
+                    "Native file drop cancelled",
+                    metadata: ["vm": self.vmName, "count": "\(urls.count)"]
+                )
+            } catch {
+                Logger.error(
+                    "Native file drop failed",
+                    metadata: [
+                        "vm": self.vmName,
+                        "count": "\(urls.count)",
+                        "error": error.localizedDescription,
+                    ])
+                self.showOverlay("File copy failed — \(error.localizedDescription)")
+            }
+        }
+    }
+
     private func requestCopyFromGuest() {
         guard let copyFromGuestAction else {
             showOverlay("Copy unavailable")
@@ -486,13 +637,15 @@ final class NativeVMDisplayPresenter: NSObject, VMDisplayPresenter, NSWindowDele
         }
     }
 
-    private func showOverlay(_ message: String) {
+    private func showOverlay(_ message: String, automaticallyHides: Bool = true) {
         guard let overlayView, let overlayLabel else { return }
         overlayTask?.cancel()
+        overlayTask = nil
         overlayLabel.stringValue = message
         overlayView.alphaValue = 1
         overlayView.isHidden = false
 
+        guard automaticallyHides else { return }
         overlayTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(1.2))
             guard !Task.isCancelled, let self, let overlayView = self.overlayView else { return }

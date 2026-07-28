@@ -268,6 +268,27 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn('$CursorThemeRequiredFrom = [version]"0.12.7"', powershell)
         self.assertIn("[version]$version -ge $CursorThemeRequiredFrom", powershell)
 
+    def test_windows_installer_elevates_autostart_binary_without_command_string(
+        self,
+    ) -> None:
+        powershell = self.read("libs/cua-driver/scripts/install.ps1")
+        block = powershell.split(
+            "function Register-CuaDriverAutostart {", maxsplit=1
+        )[1].split(
+            "# ---------- Concurrent-install lockfile", maxsplit=1
+        )[0]
+
+        self.assertIn(
+            "Start-Process -FilePath $InstalledBinary",
+            block,
+        )
+        self.assertIn(
+            '-ArgumentList @("autostart", "enable")',
+            block,
+        )
+        self.assertNotIn("$elevCmd", block)
+        self.assertNotIn("Read-Host", block)
+
     def test_local_installer_does_not_clean_release_or_legacy_homes(self) -> None:
         installer = self.read("libs/cua-driver/scripts/_install-local-rust.sh")
 

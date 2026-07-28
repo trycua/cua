@@ -1,4 +1,6 @@
+import AppKit
 import ArgumentParser
+import Dispatch
 import Foundation
 
 @main
@@ -56,7 +58,27 @@ extension Lume {
 
 // MARK: - Command Execution
 extension Lume {
-    public static func main() async {
+    public static func main() {
+        if let vmName = nativeDisplayVMName() {
+            ProcessInfo.processInfo.processName = "Lume — \(vmName)"
+            do {
+                try NativeApplicationLoop.run {
+                    await executeInvocation()
+                }
+            } catch {
+                exit(withError: error)
+            }
+            return
+        }
+
+        Task {
+            await executeInvocation()
+            Foundation.exit(EXIT_SUCCESS)
+        }
+        dispatchMain()
+    }
+
+    private static func executeInvocation() async {
         // Telemetry management must be able to be the first invocation without
         // creating an ID or making a request. Every other entry point performs
         // consent-aware registration and per-version release recording before
@@ -82,6 +104,26 @@ extension Lume {
             await TelemetryClient.shared.flush()
             exit(withError: error)
         }
+    }
+
+    private static func nativeDisplayVMName() -> String? {
+        let args = Array(CommandLine.arguments.dropFirst())
+        guard args.first == "run", !args.contains("--no-display") else {
+            return nil
+        }
+        let usesNativeDisplay = args.contains("--display=native")
+            || args.indices.contains { index in
+                args[index] == "--display"
+                    && args.index(after: index) < args.endIndex
+                    && args[args.index(after: index)] == "native"
+            }
+        guard usesNativeDisplay else { return nil }
+
+        // The Run command's first positional argument is the VM name.
+        guard args.count > 1, !args[1].hasPrefix("-") else {
+            return "VM"
+        }
+        return args[1]
     }
 
     private static func isTelemetryManagementInvocation() -> Bool {

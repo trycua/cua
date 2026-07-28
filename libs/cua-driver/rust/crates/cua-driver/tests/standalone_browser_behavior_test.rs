@@ -3741,6 +3741,7 @@ fn run_type_replace(spec: &BrowserSpec) {
             let session = format!("standalone-type-replace-{}", fixture.pid);
             let (target, tab, snapshot) = bind(fixture, &session);
             let input_ref = ref_by_label(&snapshot, "id=txt-input");
+            let number_input_ref = ref_by_label(&snapshot, "id=number-input");
 
             let mut type_text = |text: &str, replace: Option<bool>, mode: Option<&str>| {
                 let mut args = serde_json::json!({
@@ -3770,8 +3771,8 @@ fn run_type_replace(spec: &BrowserSpec) {
 
             // replace=true sets the field instead of extending it, and reports
             // how much it displaced so the caller need not re-read the page.
-            let replaced = type_text("third", Some(true), None);
-            wait_for_value(&fixture.server, "txt-input", "third");
+            let replaced = type_text("third🙂", Some(true), None);
+            wait_for_value(&fixture.server, "txt-input", "third🙂");
             assert_eq!(replaced.structured()["replace"], true, "{}", replaced.raw);
             assert_eq!(
                 replaced.structured()["replaced_chars"],
@@ -3781,8 +3782,14 @@ fn run_type_replace(spec: &BrowserSpec) {
             );
 
             // The trusted keystroke path replaces through the same selection.
-            type_text("fourth", Some(true), Some("keystrokes"));
+            let replaced_unicode = type_text("fourth", Some(true), Some("keystrokes"));
             wait_for_value(&fixture.server, "txt-input", "fourth");
+            assert_eq!(
+                replaced_unicode.structured()["replaced_chars"],
+                6,
+                "replaced_chars must count Unicode scalar values like requested_chars: {}",
+                replaced_unicode.raw
+            );
 
             // Empty text with replace=true is the only way to clear a field.
             let cleared = type_text("", Some(true), None);
@@ -3793,6 +3800,28 @@ fn run_type_replace(spec: &BrowserSpec) {
                 "clearing must report what it removed: {}",
                 cleared.raw
             );
+
+            // Input types without a real selection API must fail closed. If
+            // this silently proceeded, Input.insertText would append and turn
+            // 42 into 427 while reporting a successful replacement.
+            let unsupported = fixture.driver.call(
+                "browser_type",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "ref": number_input_ref,
+                    "text": "7",
+                    "replace": true,
+                    "session": session,
+                }),
+            );
+            assert_eq!(
+                unsupported.structured()["refusal"]["code"],
+                "browser_action_unavailable",
+                "{}",
+                unsupported.raw
+            );
+            wait_for_value(&fixture.server, "number-input", "42");
 
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         })

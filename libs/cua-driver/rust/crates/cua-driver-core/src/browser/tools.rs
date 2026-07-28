@@ -1339,9 +1339,12 @@ const FOCUS_EMULATION_READY_CHECK: &str = "function() { \
 // beforeinput/input events that frameworks bind their state to.
 const SELECT_ALL_IN_ELEMENT: &str = "function() { \
     if (this.tagName === 'INPUT' || this.tagName === 'TEXTAREA') { \
-        const n = (this.value || '').length; \
-        try { this.setSelectionRange(0, n); } catch (e) { this.select(); } \
-        return n; \
+        const value = this.value || ''; \
+        try { this.setSelectionRange(0, value.length); } catch (e) { \
+            try { this.select(); } catch (_) { return -1; } \
+        } \
+        if (this.selectionStart !== 0 || this.selectionEnd !== value.length) return -1; \
+        return Array.from(value).length; \
     } \
     if (this.isContentEditable) { \
         const root = this.getRootNode(); \
@@ -1352,7 +1355,7 @@ const SELECT_ALL_IN_ELEMENT: &str = "function() { \
         range.selectNodeContents(this); \
         selection.removeAllRanges(); \
         selection.addRange(range); \
-        return (this.textContent || '').length; \
+        return Array.from(this.textContent || '').length; \
     } \
     return -1; \
 }";
@@ -1387,6 +1390,85 @@ async fn select_all_in_element(
                   element, so its content cannot be selected for replacement"
             .into()),
     }
+}
+
+/// Establish Chromium's trusted-input focus state for an inactive tab.
+///
+/// Selection alone is not durable in a fully occluded window: without focus
+/// emulation Chromium can accept `Input.insertText` while discarding the
+/// selection, silently turning replacement back into append.
+async fn enter_focus_emulation(
+    conn: &CdpConnection,
+    cdp: &str,
+    backend_node_id: i64,
+    object_id: &str,
+) -> Result<(), String> {
+    conn.call(
+        Some(cdp),
+        "Emulation.setFocusEmulationEnabled",
+        json!({ "enabled": true }),
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+
+    let mut focus_error = None;
+    for _ in 0..20 {
+        if let Err(error) = conn
+            .call(
+                Some(cdp),
+                "DOM.focus",
+                json!({ "backendNodeId": backend_node_id }),
+            )
+            .await
+        {
+            focus_error = Some(error.to_string());
+            break;
+        }
+        let ready = conn
+            .call(
+                Some(cdp),
+                "Runtime.callFunctionOn",
+                json!({
+                    "objectId": object_id,
+                    "functionDeclaration": FOCUS_EMULATION_READY_CHECK,
+                    "returnByValue": true,
+                }),
+            )
+            .await;
+        if matches!(
+            ready,
+            Ok(ref value) if value["result"]["value"].as_bool() == Some(true)
+        ) {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            if let Err(error) = conn
+                .call(
+                    Some(cdp),
+                    "DOM.focus",
+                    json!({ "backendNodeId": backend_node_id }),
+                )
+                .await
+            {
+                focus_error = Some(error.to_string());
+                break;
+            }
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+
+    let _ = conn
+        .call(
+            Some(cdp),
+            "Emulation.setFocusEmulationEnabled",
+            json!({ "enabled": false }),
+        )
+        .await;
+    Err(format!(
+        "the exact editable ref did not become focus-ready under CDP emulation{}",
+        focus_error
+            .map(|error| format!(": {error}"))
+            .unwrap_or_default()
+    ))
 }
 
 pub struct BrowserTypeTool {
@@ -1641,55 +1723,89 @@ impl Tool for BrowserTypeTool {
         let mut replaced_chars = 0usize;
         let (typed, delivered_chars) = if mode == "insert_text" {
             if replace {
+                if let Err(detail) =
+                    enter_focus_emulation(conn, cdp, entry.backend_node_id, &object_id).await
+                {
+                    return BrowserRefusal::new(
+                        BrowserRefusalCode::BrowserInputTrustUnavailable,
+                        format!(
+                            "the inactive tab could not prepare trusted replacement input: {detail}"
+                        ),
+                    )
+                    .to_tool_result();
+                }
                 match select_all_in_element(conn, cdp, &object_id).await {
                     Ok(n) => replaced_chars = n,
                     Err(detail) => {
+                        let _ = conn
+                            .call(
+                                Some(cdp),
+                                "Emulation.setFocusEmulationEnabled",
+                                json!({ "enabled": false }),
+                            )
+                            .await;
                         return BrowserRefusal::new(
                             BrowserRefusalCode::BrowserActionUnavailable,
                             format!("replace=true could not select the ref's content: {detail}"),
                         )
-                        .to_tool_result()
+                        .to_tool_result();
                     }
                 }
             }
             // An empty insertText is a no-op, so "clear the field" needs an
             // explicit deletion of the selection we just made. Delete keeps the
             // same event path as typing; it is not a value assignment.
-            let call = if replace && text.is_empty() {
+            let mut call = if replace && text.is_empty() {
                 if replaced_chars == 0 {
                     Ok(json!({}))
                 } else {
-                    conn.call(
-                        Some(cdp),
-                        "Input.dispatchKeyEvent",
-                        json!({
-                            "type": "keyDown",
-                            "key": "Delete",
-                            "code": "Delete",
-                            "windowsVirtualKeyCode": 46,
-                            "nativeVirtualKeyCode": 46,
-                        }),
-                    )
-                    .await
-                    .and(
-                        conn.call(
+                    match conn
+                        .call(
                             Some(cdp),
                             "Input.dispatchKeyEvent",
                             json!({
-                                "type": "keyUp",
+                                "type": "keyDown",
                                 "key": "Delete",
                                 "code": "Delete",
                                 "windowsVirtualKeyCode": 46,
                                 "nativeVirtualKeyCode": 46,
                             }),
                         )
-                        .await,
-                    )
+                        .await
+                    {
+                        Ok(_) => {
+                            conn.call(
+                                Some(cdp),
+                                "Input.dispatchKeyEvent",
+                                json!({
+                                    "type": "keyUp",
+                                    "key": "Delete",
+                                    "code": "Delete",
+                                    "windowsVirtualKeyCode": 46,
+                                    "nativeVirtualKeyCode": 46,
+                                }),
+                            )
+                            .await
+                        }
+                        Err(error) => Err(error),
+                    }
                 }
             } else {
                 conn.call(Some(cdp), "Input.insertText", json!({ "text": text }))
                     .await
             };
+            if replace {
+                if let Err(error) = conn
+                    .call(
+                        Some(cdp),
+                        "Emulation.setFocusEmulationEnabled",
+                        json!({ "enabled": false }),
+                    )
+                    .await
+                {
+                    call = Err(error);
+                }
+            }
             match call {
                 Ok(_) => (Ok(()), requested_chars),
                 Err(error) => (Err(error), 0),

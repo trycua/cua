@@ -53,6 +53,7 @@ private enum ClipboardPayload: Equatable, Sendable {
 public actor ClipboardWatcher {
     private let vmName: String
     private let storage: String?
+    private let macAddress: String?
     private var watchTask: Task<Void, Never>?
     private var isRunning = false
 
@@ -67,6 +68,7 @@ public actor ClipboardWatcher {
     private var cachedIPAddress: String?
     private var sshCommandInProgress = false
     private var manualTransferInProgress = false
+    private var manualTransferRequested = false
     private var automaticSyncInProgress = false
 
     // Error suppression to avoid flooding logs with repeated failures.
@@ -79,9 +81,10 @@ public actor ClipboardWatcher {
     private static let maxTextSize = 1_000_000
     private static let maxImageSize = 10_000_000
 
-    public init(vmName: String, storage: String?) {
+    public init(vmName: String, storage: String?, macAddress: String? = nil) {
         self.vmName = vmName
         self.storage = storage
+        self.macAddress = macAddress
     }
 
     public func start() {
@@ -115,16 +118,25 @@ public actor ClipboardWatcher {
     /// Prevent the automatic watcher from changing either pasteboard between a
     /// manual action's baseline read, injected shortcut, and payload transfer.
     func beginManualTransfer() async throws {
-        // A normal image command may legitimately run for up to 30 seconds.
-        // Bound the wait so a wedged poll can never spin a toolbar action forever.
-        for _ in 0..<1_400 {
-            try Task.checkCancellation()
-            if !manualTransferInProgress && !automaticSyncInProgress {
-                manualTransferInProgress = true
-                return
+        manualTransferRequested = true
+        do {
+            // A command may spend five seconds connecting before its normal
+            // 30-second image timeout. Bound the wait without rejecting a
+            // healthy in-flight poll at its documented ceiling.
+            for _ in 0..<1_800 {
+                try Task.checkCancellation()
+                if !manualTransferInProgress && !automaticSyncInProgress {
+                    manualTransferRequested = false
+                    manualTransferInProgress = true
+                    return
+                }
+                try await Task.sleep(for: .milliseconds(25))
             }
-            try await Task.sleep(for: .milliseconds(25))
+        } catch {
+            manualTransferRequested = false
+            throw error
         }
+        manualTransferRequested = false
         throw ClipboardSyncError.transferInProgress
     }
 
@@ -188,11 +200,14 @@ public actor ClipboardWatcher {
     private func syncBidirectional() async {
         // Manual Copy/Paste is a multi-step transaction. Do not let polling
         // overwrite a pasteboard or satisfy a change-count wait in the middle.
-        guard !manualTransferInProgress, !automaticSyncInProgress else { return }
+        guard !manualTransferRequested, !manualTransferInProgress, !automaticSyncInProgress else {
+            return
+        }
         automaticSyncInProgress = true
         defer { automaticSyncInProgress = false }
 
         let hostClipboard = await readHostClipboard()
+        guard !manualTransferRequested else { return }
         if hostClipboard.changeCount != lastHostChangeCount {
             lastHostChangeCount = hostClipboard.changeCount
             if let payload = hostClipboard.payload,
@@ -209,9 +224,11 @@ public actor ClipboardWatcher {
         if let pendingHostPayload {
             do {
                 try await writePayloadToVM(pendingHostPayload)
+                guard !manualTransferRequested else { return }
                 lastVMPayload = pendingHostPayload
                 self.pendingHostPayload = nil
                 lastVMChangeCount = try? await readVMChangeCount()
+                guard !manualTransferRequested else { return }
                 resetFailureState()
             } catch {
                 handleSyncError("Failed to sync clipboard to VM", error: error)
@@ -221,6 +238,7 @@ public actor ClipboardWatcher {
 
         do {
             let currentChangeCount = try await readVMChangeCount()
+            guard !manualTransferRequested else { return }
             guard let previousChangeCount = lastVMChangeCount else {
                 lastVMChangeCount = currentChangeCount
                 return
@@ -229,6 +247,7 @@ public actor ClipboardWatcher {
             lastVMChangeCount = currentChangeCount
 
             let payload = try await readPayloadFromVM()
+            guard !manualTransferRequested else { return }
             guard payload != lastVMPayload,
                   payload != lastHostPayload,
                   isValidSize(payload) else {
@@ -311,7 +330,11 @@ public actor ClipboardWatcher {
     /// Wait for the guest pasteboard generation to advance after Command-C.
     /// This is internal so the timeout behavior can be regression-tested without
     /// requiring a VM or live SSH server.
-    static func guestClipboardWaitCommand(after baseline: Int, attempts: Int = 25) -> String {
+    static func guestClipboardWaitCommand(
+        after baseline: Int,
+        attempts: Int = 25,
+        changeCountExpression: String = "Number(pasteboard.changeCount)"
+    ) -> String {
         let boundedAttempts = max(1, attempts)
         return """
             /usr/bin/osascript -l JavaScript -e '\
@@ -321,7 +344,7 @@ public actor ClipboardWatcher {
             const baseline = \(baseline); \
             const attempts = \(boundedAttempts); \
             for (let attempt = 0; attempt < attempts; attempt += 1) { \
-              const current = Number(pasteboard.changeCount); \
+              const current = \(changeCountExpression); \
               if (current !== baseline) { console.log(String(current)); $.exit(0); } \
               $.NSThread.sleepForTimeInterval(0.1); \
             } \
@@ -365,7 +388,9 @@ public actor ClipboardWatcher {
               printf 'TEXT\\n'
               pbpaste | base64
             fi
+            lume_status=$?
             rm -f '\(path)'
+            exit $lume_status
             """
 
         let result = try await executeSSHCommand(command: command, timeout: 30)
@@ -463,11 +488,14 @@ public actor ClipboardWatcher {
                 throw ClipboardSyncError.unavailable
             }
             do {
-                return try await sshClient.execute(command: command, timeout: timeout)
+                let result = try await sshClient.execute(command: command, timeout: timeout)
+                try Task.checkCancellation()
+                return result
             } catch is CancellationError {
                 throw CancellationError()
             } catch let error as SSHError {
-                guard case .connectionFailed = error, attempt == 0 else {
+                guard case .connectionFailed = error, attempt == 0,
+                      !manualTransferRequested else {
                     throw error
                 }
                 cachedSSHClient = nil
@@ -515,27 +543,41 @@ public actor ClipboardWatcher {
     }
 
     private func getSSHClient() async -> SSHClient? {
+        if let cachedSSHClient, cachedIPAddress != nil {
+            return cachedSSHClient
+        }
+
         do {
-            let vmDetails = try await MainActor.run {
-                let controller = LumeController()
-                return try controller.getDetails(name: vmName, storage: storage)
+            let ipAddress: String?
+            if let macAddress {
+                ipAddress = await withCheckedContinuation { continuation in
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        continuation.resume(
+                            returning: DHCPLeaseParser.getIPAddress(forMAC: macAddress)
+                        )
+                    }
+                }
+            } else {
+                let vmDetails = try await MainActor.run {
+                    let controller = LumeController()
+                    return try controller.getDetails(name: vmName, storage: storage)
+                }
+                guard vmDetails.status == "running", vmDetails.sshAvailable == true else {
+                    return nil
+                }
+                ipAddress = vmDetails.ipAddress
             }
 
-            guard vmDetails.status == "running",
-                  let ipAddress = vmDetails.ipAddress, !ipAddress.isEmpty,
-                  vmDetails.sshAvailable == true else {
+            guard let ipAddress, !ipAddress.isEmpty else {
                 return nil
-            }
-
-            if let cachedSSHClient, cachedIPAddress == ipAddress {
-                return cachedSSHClient
             }
 
             let client = SSHClient(
                 host: ipAddress,
                 port: 22,
                 user: "lume",
-                password: "lume"
+                password: "lume",
+                connectTimeout: 5
             )
             cachedSSHClient = client
             cachedIPAddress = ipAddress

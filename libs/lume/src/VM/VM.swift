@@ -494,7 +494,8 @@ class VM {
         guard clipboardWatcher == nil else { return }
         let watcher = ClipboardWatcher(
             vmName: vmDirContext.name,
-            storage: vmDirContext.storage
+            storage: vmDirContext.storage,
+            macAddress: vmDirContext.config.macAddress
         )
         clipboardWatcher = watcher
         await watcher.start()
@@ -528,10 +529,13 @@ class VM {
         }
         try await withManualClipboardTransfer(clipboardWatcher) {
             let baseline = try await clipboardWatcher.vmClipboardChangeCount()
+            try Task.checkCancellation()
             for attempt in 0..<2 {
                 try await sendGuestClipboardShortcut("c")
+                try Task.checkCancellation()
                 do {
                     try await clipboardWatcher.pullVMClipboardToHost(after: baseline)
+                    try Task.checkCancellation()
                     return
                 } catch ClipboardSyncError.guestCopyTimedOut where attempt == 0 {
                     Logger.debug(
@@ -550,6 +554,7 @@ class VM {
         }
         try await withManualClipboardTransfer(clipboardWatcher) {
             try await clipboardWatcher.pushHostClipboardToVM()
+            try Task.checkCancellation()
             // Give the guest pasteboard server a moment to publish the new value
             // before delivering Command-V to the foreground application.
             try await Task.sleep(for: .milliseconds(100))

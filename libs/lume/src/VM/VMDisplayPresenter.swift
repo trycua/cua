@@ -214,6 +214,7 @@ final class NativeVMDisplayPresenter: NSObject, VMDisplayPresenter, NSWindowDele
     private var copyFilesToGuestDesktopAction: (@MainActor ([URL]) async throws -> Void)?
     private var fileDropTask: Task<Void, Never>?
     private var fileDropInProgress = false
+    private var clipboardActionTask: Task<Void, Never>?
     private var clipboardActionInProgress = false
     private var clipboardToolbarItems: [NSToolbarItem] = []
     private var captureSystemKeysItem: NSMenuItem?
@@ -270,6 +271,7 @@ final class NativeVMDisplayPresenter: NSObject, VMDisplayPresenter, NSWindowDele
         overlayTask?.cancel()
         overlayTask = nil
         fileDropTask?.cancel()
+        clipboardActionTask?.cancel()
         machineView?.onClipboardShortcut = nil
         machineView?.onFileDragEntered = nil
         machineView?.canAcceptFileDrop = nil
@@ -290,7 +292,9 @@ final class NativeVMDisplayPresenter: NSObject, VMDisplayPresenter, NSWindowDele
         if fileDropTask == nil {
             fileDropInProgress = false
         }
-        clipboardActionInProgress = false
+        if clipboardActionTask == nil {
+            clipboardActionInProgress = false
+        }
         clipboardToolbarItems.removeAll()
         captureSystemKeysItem = nil
         captureSystemKeysToolbarItem = nil
@@ -630,12 +634,17 @@ final class NativeVMDisplayPresenter: NSObject, VMDisplayPresenter, NSWindowDele
         }
         guard beginClipboardAction() else { return }
         showOverlay("Copy VM → Mac: sending ⌘C…", automaticallyHides: false)
-        Task { @MainActor [weak self] in
+        clipboardActionTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.endClipboardAction() }
+            defer {
+                self.endClipboardAction()
+                self.clipboardActionTask = nil
+            }
             do {
                 try await copyFromGuestAction()
                 self.showOverlay("Copied VM clipboard to Mac")
+            } catch is CancellationError {
+                Logger.info("Native clipboard copy cancelled", metadata: ["vm": self.vmName])
             } catch {
                 Logger.error(
                     "Native clipboard copy failed",
@@ -655,12 +664,17 @@ final class NativeVMDisplayPresenter: NSObject, VMDisplayPresenter, NSWindowDele
         }
         guard beginClipboardAction() else { return }
         showOverlay("Paste Mac → VM: syncing clipboard…", automaticallyHides: false)
-        Task { @MainActor [weak self] in
+        clipboardActionTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.endClipboardAction() }
+            defer {
+                self.endClipboardAction()
+                self.clipboardActionTask = nil
+            }
             do {
                 try await pasteIntoGuestAction()
                 self.showOverlay("Pasted Mac clipboard into VM")
+            } catch is CancellationError {
+                Logger.info("Native clipboard paste cancelled", metadata: ["vm": self.vmName])
             } catch {
                 Logger.error(
                     "Native clipboard paste failed",

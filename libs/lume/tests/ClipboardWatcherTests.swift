@@ -1,13 +1,15 @@
-import AppKit
 import Foundation
 import Testing
 
 @testable import lume
 
-@Test("Guest copy wait command succeeds when the pasteboard already changed")
+@Test("Guest copy wait command succeeds only after the pasteboard changes")
 func guestClipboardWaitCommandDetectsChange() throws {
-    let current = NSPasteboard.general.changeCount
-    let command = ClipboardWatcher.guestClipboardWaitCommand(after: current - 1, attempts: 3)
+    let command = ClipboardWatcher.guestClipboardWaitCommand(
+        after: 41,
+        attempts: 3,
+        changeCountExpression: "42"
+    )
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/bin/sh")
     process.arguments = ["-c", command]
@@ -22,8 +24,9 @@ func guestClipboardWaitCommandDetectsChange() throws {
 @Test("Guest copy wait command reports a distinct timeout")
 func guestClipboardWaitCommandTimesOut() throws {
     let command = ClipboardWatcher.guestClipboardWaitCommand(
-        after: NSPasteboard.general.changeCount,
-        attempts: 1
+        after: 41,
+        attempts: 1,
+        changeCountExpression: "41"
     )
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/bin/sh")

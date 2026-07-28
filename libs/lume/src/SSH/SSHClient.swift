@@ -21,18 +21,21 @@ public actor SSHClient {
     private let port: Int
     private let user: String
     private let password: String
+    private let connectTimeout: TimeInterval
     private let eventLoopGroup: MultiThreadedEventLoopGroup
 
     public init(
         host: String,
         port: UInt16 = 22,
         user: String = "lume",
-        password: String = "lume"
+        password: String = "lume",
+        connectTimeout: TimeInterval = 30
     ) {
         self.host = host
         self.port = Int(port)
         self.user = user
         self.password = password
+        self.connectTimeout = connectTimeout
         self.eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     }
 
@@ -188,7 +191,7 @@ public actor SSHClient {
             }
             .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
             .channelOption(ChannelOptions.socket(SocketOptionLevel(IPPROTO_TCP), TCP_NODELAY), value: 1)
-            .connectTimeout(.seconds(30))
+            .connectTimeout(.seconds(max(1, Int64(connectTimeout.rounded(.up)))))
 
         do {
             return try await bootstrap.connect(host: host, port: port).get()

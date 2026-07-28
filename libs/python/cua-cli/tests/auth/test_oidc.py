@@ -4,7 +4,13 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 
 import pytest
-from cua_cli.auth.oidc import DEVICE_GRANT_TYPE, OidcClient
+from cua_cli.auth.oidc import (
+    DEVICE_GRANT_TYPE,
+    DeviceCode,
+    OidcClient,
+    OidcDiscovery,
+    OidcError,
+)
 from cua_cli.auth.store import OAuthCredentials
 
 
@@ -18,6 +24,35 @@ class ScriptedRequester:
     ) -> tuple[int, dict]:
         self.calls.append((method, url, form))
         return self.responses.pop(0)
+
+
+def test_rejects_unsafe_discovery_and_device_verification_urls() -> None:
+    discovery = {
+        "token_endpoint": "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token",
+        "device_authorization_endpoint": "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/device/code",
+        "revocation_endpoint": "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/revoke",
+    }
+    for endpoint, unsafe_url in (
+        ("token_endpoint", "http://auth.cua.ai/token"),
+        ("device_authorization_endpoint", "/device/code"),
+        ("revocation_endpoint", "javascript:alert(1)"),
+    ):
+        with pytest.raises(OidcError):
+            OidcDiscovery.from_response({**discovery, endpoint: unsafe_url})
+
+    device_code = {
+        "device_code": "device-code",
+        "user_code": "ABCD-EFGH",
+        "verification_uri": "https://run.cua.ai/device",
+        "verification_uri_complete": "https://run.cua.ai/device?user_code=ABCD-EFGH",
+        "expires_in": 600,
+    }
+    for field, unsafe_url in (
+        ("verification_uri", "http://run.cua.ai/device"),
+        ("verification_uri_complete", "//run.cua.ai/device?user_code=ABCD-EFGH"),
+    ):
+        with pytest.raises(OidcError):
+            DeviceCode.from_response({**device_code, field: unsafe_url})
 
 
 @pytest.mark.asyncio
@@ -142,3 +177,20 @@ async def test_poll_slow_down_increases_interval() -> None:
     await OidcClient(request=requester, sleep=sleep).poll_for_tokens(discovery, device_code)
 
     assert delays == [8]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", ["access_denied", "expired_token"])
+async def test_poll_stops_on_terminal_device_authorization_errors(error: str) -> None:
+    requester = ScriptedRequester([(400, {"error": error})])
+    discovery = type(
+        "Discovery",
+        (),
+        {"token_endpoint": "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token"},
+    )()
+    device_code = type("Device", (), {"device_code": "device", "expires_in": 600, "interval": 3})()
+
+    with pytest.raises(OidcError):
+        await OidcClient(request=requester).poll_for_tokens(discovery, device_code)
+
+    assert len(requester.calls) == 1

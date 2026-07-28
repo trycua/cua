@@ -35,27 +35,70 @@ impl WindowPxFrame {
 }
 
 /// Why a window-local pixel action cannot be translated.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PxFrameError {
     /// WindowServer has no usable frame for this id: it was closed, the id is
     /// stale or fabricated, or the record carries degenerate `0×0` bounds
     /// (`windows.rs`'s missing-`kCGWindowBounds` default), which would make
     /// the window origin indistinguishable from the screen origin.
     WindowNotFound { window_id: u32 },
+    /// The current capture could not be obtained or decoded, so its pixel
+    /// coordinate system cannot be proven against the WindowServer frame.
+    CaptureUnavailable { window_id: u32, reason: String },
+    /// The capture dimensions are not a coherent 1×/2× representation of the
+    /// requested WindowServer frame. Dispatching with this transform would
+    /// recreate #2237's wrong-surface misclick.
+    FrameMismatch {
+        window_id: u32,
+        bounds_width: f64,
+        bounds_height: f64,
+        capture_width: u32,
+        capture_height: u32,
+        scale_x: f64,
+        scale_y: f64,
+    },
 }
 
-/// Derive the capture's backing scale by comparing its physical width to the
-/// window's logical width.
+/// Validate that a raw window capture and its WindowServer bounds describe one
+/// coordinate frame, returning the physical-pixels-per-point backing scale.
 ///
-/// Pure so the Retina arithmetic is testable without a display. Falls back to
-/// `1.0` whenever the comparison is not meaningful — a capture that is not
-/// wider than the logical bounds is already in points.
-pub fn backing_scale_from_capture(capture_px_w: u32, logical_w: f64) -> f64 {
-    let pw = capture_px_w as f64;
-    if logical_w > 0.0 && pw > logical_w {
-        pw / logical_w
-    } else {
+/// macOS window captures are 1× or 2×. Small rounding differences are allowed,
+/// but arbitrary ratios are not: the original #2237 failure paired a parent
+/// window screenshot with panel bounds and would otherwise look like a
+/// plausible-but-wrong ~2.2× scale.
+pub fn validate_capture_frame(
+    window_id: u32,
+    bounds: &WindowBounds,
+    capture_px_w: u32,
+    capture_px_h: u32,
+) -> Result<f64, PxFrameError> {
+    if bounds.width <= 0.0 || bounds.height <= 0.0 {
+        return Err(PxFrameError::WindowNotFound { window_id });
+    }
+    let scale_x = capture_px_w as f64 / bounds.width;
+    let scale_y = capture_px_h as f64 / bounds.height;
+    let nearest = if (scale_x - 1.0).abs() <= (scale_x - 2.0).abs() {
         1.0
+    } else {
+        2.0
+    };
+    let coherent = scale_x.is_finite()
+        && scale_y.is_finite()
+        && (scale_x - scale_y).abs() <= 0.03
+        && (scale_x - nearest).abs() <= 0.03
+        && (scale_y - nearest).abs() <= 0.03;
+    if coherent {
+        Ok(nearest)
+    } else {
+        Err(PxFrameError::FrameMismatch {
+            window_id,
+            bounds_width: bounds.width,
+            bounds_height: bounds.height,
+            capture_width: capture_px_w,
+            capture_height: capture_px_h,
+            scale_x,
+            scale_y,
+        })
     }
 }
 
@@ -65,16 +108,20 @@ pub fn resolve_window_px_frame(window_id: u32) -> Result<WindowPxFrame, PxFrameE
     let bounds = crate::windows::window_bounds_by_id(window_id)
         .filter(|b| b.width > 0.0 && b.height > 0.0)
         .ok_or(PxFrameError::WindowNotFound { window_id })?;
-    // The capture is only used to measure pixels-per-point. A capture failure
-    // (e.g. screen-recording denied) is not a reason to refuse the action: the
-    // window origin is known, so fall back to 1.0 as the pre-existing code did.
-    let scale = match crate::capture::screenshot_window_bytes(window_id) {
-        Ok(png) => match crate::capture::png_dimensions(&png) {
-            Ok((pw, _)) => backing_scale_from_capture(pw, bounds.width),
-            Err(_) => 1.0,
-        },
-        Err(_) => 1.0,
-    };
+    // A window-local point is meaningful only when the current capture proves
+    // the same frame and scale. Never guess 1× on capture failure.
+    let png = crate::capture::screenshot_window_bytes(window_id).map_err(|e| {
+        PxFrameError::CaptureUnavailable {
+            window_id,
+            reason: e.to_string(),
+        }
+    })?;
+    let (pw, ph) =
+        crate::capture::png_dimensions(&png).map_err(|e| PxFrameError::CaptureUnavailable {
+            window_id,
+            reason: e.to_string(),
+        })?;
+    let scale = validate_capture_frame(window_id, &bounds, pw, ph)?;
     Ok(WindowPxFrame { bounds, scale })
 }
 
@@ -92,6 +139,46 @@ pub fn refusal(error: &PxFrameError) -> ToolResult {
             "window_id": window_id,
             "suggestion": "refusing to interpret window-local pixels as screen-absolute; \
                            call list_windows for a current window_id"
+        })),
+        PxFrameError::CaptureUnavailable { window_id, reason } => ToolResult::error(format!(
+            "window_id {window_id}'s current capture is unavailable ({reason}), so its \
+                 pixel coordinate frame cannot be verified. Refusing to dispatch."
+        ))
+        .with_structured(serde_json::json!({
+            "code": "px_capture_unavailable",
+            "window_id": window_id,
+            "reason": reason,
+            "suggestion": "re-snapshot the window after capture permission/state recovers"
+        })),
+        PxFrameError::FrameMismatch {
+            window_id,
+            bounds_width,
+            bounds_height,
+            capture_width,
+            capture_height,
+            scale_x,
+            scale_y,
+        } => ToolResult::error(format!(
+            "window_id {window_id}'s capture is {capture_width}x{capture_height}, but its \
+             WindowServer bounds are {bounds_width:.2}x{bounds_height:.2} points \
+             (scale_x={scale_x:.4}, scale_y={scale_y:.4}). These are not one coherent \
+             1x/2x frame. Refusing to dispatch."
+        ))
+        .with_structured(serde_json::json!({
+            "code": "px_frame_mismatch",
+            "window_id": window_id,
+            "window_bounds": {
+                "width": bounds_width,
+                "height": bounds_height
+            },
+            "capture_size": {
+                "width": capture_width,
+                "height": capture_height
+            },
+            "scale_x": scale_x,
+            "scale_y": scale_y,
+            "suggestion": "re-list and re-snapshot the exact window; do not reuse coordinates \
+                           from a different surface"
         })),
     }
 }
@@ -141,25 +228,48 @@ mod tests {
 
     #[test]
     fn backing_scale_detects_retina_capture() {
-        assert_eq!(backing_scale_from_capture(1000, 500.0), 2.0);
+        let b = frame(1.0).bounds;
+        assert_eq!(validate_capture_frame(11, &b, 1000, 1000).unwrap(), 2.0);
     }
 
     #[test]
     fn backing_scale_is_one_for_point_sized_capture() {
-        assert_eq!(backing_scale_from_capture(500, 500.0), 1.0);
+        let b = frame(1.0).bounds;
+        assert_eq!(validate_capture_frame(11, &b, 500, 500).unwrap(), 1.0);
     }
 
     #[test]
     fn backing_scale_never_divides_by_zero_bounds() {
         // windows.rs defaults absent kCGWindowBounds to 0×0.
-        assert_eq!(backing_scale_from_capture(1000, 0.0), 1.0);
+        let mut b = frame(1.0).bounds;
+        b.width = 0.0;
+        assert_eq!(
+            validate_capture_frame(11, &b, 1000, 1000),
+            Err(PxFrameError::WindowNotFound { window_id: 11 })
+        );
     }
 
     #[test]
-    fn backing_scale_ignores_a_capture_narrower_than_bounds() {
-        // A clipped/off-Space capture must not produce a sub-1 scale that
-        // would inflate every translated coordinate.
-        assert_eq!(backing_scale_from_capture(250, 500.0), 1.0);
+    fn capture_narrower_than_bounds_is_a_mismatch() {
+        let b = frame(1.0).bounds;
+        assert!(matches!(
+            validate_capture_frame(11, &b, 250, 250),
+            Err(PxFrameError::FrameMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn parent_capture_cannot_masquerade_as_a_panel_scale() {
+        let bounds = WindowBounds {
+            x: 72.0,
+            y: 88.0,
+            width: 880.0,
+            height: 448.0,
+        };
+        assert!(matches!(
+            validate_capture_frame(55, &bounds, 1920, 960),
+            Err(PxFrameError::FrameMismatch { .. })
+        ));
     }
 
     /// Locks the exact regression: a stale window_id used to fall through to

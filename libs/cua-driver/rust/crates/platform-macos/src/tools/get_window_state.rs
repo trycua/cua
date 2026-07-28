@@ -55,7 +55,11 @@ fn def() -> &'static ToolDef {
             this pid but its accessibility surface can't be resolved, the tree comes back \
             EMPTY with `degraded_reason: ax_window_unresolved` and the screenshot of the \
             requested window — act by pixel there. This tool never returns another \
-            surface's elements under your window_id.\n\n\
+            surface's elements under your window_id. Before exposing a screenshot, \
+            its raw dimensions are validated as a coherent 1x/2x representation of \
+            the requested WindowServer bounds. `px_frame_mismatch` or \
+            `px_capture_unavailable` refuses an unprovable pixel frame instead of \
+            guessing a transform.\n\n\
             Optional `query` filters the tree_markdown to matching lines plus their ancestor \
             chain (case-insensitive substring). The element_index values are unchanged — \
             filtering only trims the rendered Markdown.\n\n\
@@ -259,25 +263,84 @@ impl Tool for GetWindowStateTool {
         // screenshot_out_file). With `screenshot_out_file` set, write to disk and
         // surface the path instead of embedding base64; otherwise embed base64.
         let max_dim = effective_max_dim;
-        // Returns (b64_or_path, final_w, final_h, Option<original_w>, is_file_path)
+        // Returns the encoded/file capture, delivered dimensions, optional
+        // downscale source width, the WindowServer bounds it was validated
+        // against, and the raw capture's backing scale.
         let screenshot = if should_capture {
             let out_file = screenshot_out_file.clone();
-            let res = tokio::task::spawn_blocking(move || -> anyhow::Result<(Option<String>, Option<String>, u32, u32, Option<u32>)> {
+            let res = tokio::task::spawn_blocking(move || -> Result<
+                (
+                    Option<String>,
+                    Option<String>,
+                    u32,
+                    u32,
+                    Option<u32>,
+                    crate::windows::WindowBounds,
+                    f64,
+                ),
+                super::px_frame::PxFrameError,
+            > {
                 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-                let raw = crate::capture::screenshot_window_bytes(window_id)?;
-                let (orig_w, _orig_h) = crate::capture::png_dimensions(&raw)?;
-                let png = crate::capture::resize_png_if_needed(&raw, max_dim)?;
-                let (w, h) = crate::capture::png_dimensions(&png)?;
+                let bounds = crate::windows::window_bounds_by_id(window_id)
+                    .filter(|b| b.width > 0.0 && b.height > 0.0)
+                    .ok_or(super::px_frame::PxFrameError::WindowNotFound { window_id })?;
+                let raw = crate::capture::screenshot_window_bytes(window_id).map_err(|e| {
+                    super::px_frame::PxFrameError::CaptureUnavailable {
+                        window_id,
+                        reason: e.to_string(),
+                    }
+                })?;
+                let (orig_w, orig_h) = crate::capture::png_dimensions(&raw).map_err(|e| {
+                    super::px_frame::PxFrameError::CaptureUnavailable {
+                        window_id,
+                        reason: e.to_string(),
+                    }
+                })?;
+                let scale =
+                    super::px_frame::validate_capture_frame(window_id, &bounds, orig_w, orig_h)?;
+                let png = crate::capture::resize_png_if_needed(&raw, max_dim).map_err(|e| {
+                    super::px_frame::PxFrameError::CaptureUnavailable {
+                        window_id,
+                        reason: e.to_string(),
+                    }
+                })?;
+                let (w, h) = crate::capture::png_dimensions(&png).map_err(|e| {
+                    super::px_frame::PxFrameError::CaptureUnavailable {
+                        window_id,
+                        reason: e.to_string(),
+                    }
+                })?;
                 let original_w = if w < orig_w { Some(orig_w) } else { None };
                 if let Some(ref path) = out_file {
-                    std::fs::write(path, &png)?;
-                    Ok((None, Some(path.clone()), w, h, original_w))
+                    std::fs::write(path, &png).map_err(|e| {
+                        super::px_frame::PxFrameError::CaptureUnavailable {
+                            window_id,
+                            reason: e.to_string(),
+                        }
+                    })?;
+                    Ok((
+                        None,
+                        Some(path.clone()),
+                        w,
+                        h,
+                        original_w,
+                        bounds,
+                        scale,
+                    ))
                 } else {
-                    Ok((Some(BASE64.encode(&png)), None, w, h, original_w))
+                    Ok((
+                        Some(BASE64.encode(&png)),
+                        None,
+                        w,
+                        h,
+                        original_w,
+                        bounds,
+                        scale,
+                    ))
                 }
             }).await;
             match res {
-                Ok(Ok((b64, file_path, w, h, orig_w))) => {
+                Ok(Ok((b64, file_path, w, h, orig_w, bounds, scale))) => {
                     // Record resize ratio so ClickTool can scale coordinates back
                     // up. Keyed per window: two windows of one pid can carry
                     // different ratios (only the large one downscales), and a
@@ -294,11 +357,10 @@ impl Tool for GetWindowStateTool {
                     } else {
                         self.state.resize_registry.clear_ratio(pid, window_id);
                     }
-                    Some((b64, file_path, w, h))
+                    Some((b64, file_path, w, h, bounds, scale))
                 }
                 Ok(Err(e)) => {
-                    tracing::warn!("Screenshot failed for window {window_id}: {e}");
-                    None
+                    return super::px_frame::refusal(&e);
                 }
                 Err(e) => {
                     tracing::warn!("Screenshot task error for window {window_id}: {e}");
@@ -310,13 +372,18 @@ impl Tool for GetWindowStateTool {
         };
 
         // Capture screenshot dimensions before consuming.
-        let screenshot_dims = screenshot.as_ref().map(|(_, _, w, h)| (*w, *h));
-        let screenshot_file_path = screenshot.as_ref().and_then(|(_, fp, _, _)| fp.clone());
+        let screenshot_dims = screenshot.as_ref().map(|(_, _, w, h, _, _)| (*w, *h));
+        let screenshot_file_path = screenshot
+            .as_ref()
+            .and_then(|(_, fp, _, _, _, _)| fp.clone());
+        let screenshot_frame = screenshot
+            .as_ref()
+            .map(|(_, _, _, _, bounds, scale)| (bounds.clone(), *scale));
 
         // Build response.
         let mut content: Vec<Content> = Vec::new();
 
-        if let Some((b64_opt, _file_path, w, h)) = screenshot {
+        if let Some((b64_opt, _file_path, w, h, _bounds, _scale)) = screenshot {
             if let Some(b64) = b64_opt {
                 content.push(Content::image_png(b64));
             }
@@ -463,6 +530,16 @@ impl Tool for GetWindowStateTool {
             // `mimeType` on the protocol image part — this mirrors it onto
             // the structured side. Additive: keeps every existing field.
             structured["screenshot_mime_type"] = serde_json::json!("image/png");
+        }
+        if let Some((bounds, scale)) = screenshot_frame {
+            structured["window_bounds"] = serde_json::json!({
+                "x": bounds.x,
+                "y": bounds.y,
+                "width": bounds.width,
+                "height": bounds.height
+            });
+            structured["screenshot_scale"] = serde_json::json!(scale);
+            structured["screenshot_frame_valid"] = serde_json::json!(true);
         }
         if let Some(ref fp) = screenshot_file_path {
             structured["screenshot_file_path"] = serde_json::json!(fp);

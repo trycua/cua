@@ -46,6 +46,9 @@ impl WindowScope {
 #[derive(Debug, Clone)]
 pub struct TopLevelCandidate {
     pub role: String,
+    /// AXSubrole for top-level windows. Dialog-like windows must not inherit
+    /// the application's menu bar into their window-scoped snapshot.
+    pub subrole: Option<String>,
     /// `_AXUIElementGetWindow` result, when the SPI resolved one. Only read
     /// for `AXWindow` roles.
     pub ax_window_id: Option<u32>,
@@ -55,8 +58,22 @@ impl TopLevelCandidate {
     pub fn new(role: impl Into<String>, ax_window_id: Option<u32>) -> Self {
         Self {
             role: role.into(),
+            subrole: None,
             ax_window_id,
         }
+    }
+
+    pub fn with_subrole(mut self, subrole: impl Into<String>) -> Self {
+        self.subrole = Some(subrole.into());
+        self
+    }
+
+    fn is_dialog_like(&self) -> bool {
+        self.role == "AXSheet"
+            || self
+                .subrole
+                .as_deref()
+                .is_some_and(|s| matches!(s, "AXDialog" | "AXSystemDialog" | "AXSheet"))
     }
 }
 
@@ -129,10 +146,14 @@ where
     // menu navigation with no replacement path. Keeping other non-window
     // children is also what `browser/consent_ui.rs` relies on to reach a
     // top-level `AXSheet` consent prompt.
+    let dialog_scope = matched.iter().any(|&i| candidates[i].is_dialog_like());
     let walk = candidates
         .iter()
         .enumerate()
-        .filter(|(i, c)| c.role != "AXWindow" || matched.contains(i))
+        .filter(|(i, c)| {
+            (c.role != "AXWindow" || matched.contains(i))
+                && !(dialog_scope && c.role == "AXMenuBar")
+        })
         .map(|(i, _)| i)
         .collect();
     ScopeDecision {
@@ -169,6 +190,18 @@ mod tests {
         let d = decide_window_scope(&candidates, 22, never_called);
         assert_eq!(d.scope, WindowScope::Matched);
         assert_eq!(d.walk, vec![0, 2], "menu bar + requested window only");
+    }
+
+    #[test]
+    fn matched_dialog_excludes_the_application_menu_bar() {
+        let candidates = [
+            TopLevelCandidate::new("AXMenuBar", None),
+            TopLevelCandidate::new("AXWindow", Some(11)).with_subrole("AXStandardWindow"),
+            TopLevelCandidate::new("AXWindow", Some(22)).with_subrole("AXDialog"),
+        ];
+        let d = decide_window_scope(&candidates, 22, never_called);
+        assert_eq!(d.scope, WindowScope::Matched);
+        assert_eq!(d.walk, vec![2], "dialog snapshot must not carry AXMenuBar");
     }
 
     /// Issue #2237's headline defect: an id nothing claims used to fall through

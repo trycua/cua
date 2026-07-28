@@ -261,6 +261,7 @@ pub fn walk_tree_bounded(
                 .map(|&child| {
                     set_messaging_timeout(child);
                     let role = copy_string_attr(child, "AXRole").unwrap_or_default();
+                    let subrole = copy_string_attr(child, "AXSubrole");
                     // Match AX window element → CGWindowID via private SPI.
                     // Only windows carry one, so skip the round-trip elsewhere.
                     let ax_window_id = if role == "AXWindow" {
@@ -268,7 +269,11 @@ pub fn walk_tree_bounded(
                     } else {
                         None
                     };
-                    TopLevelCandidate { role, ax_window_id }
+                    TopLevelCandidate {
+                        role,
+                        subrole,
+                        ax_window_id,
+                    }
                 })
                 .collect();
             let decision = decide_window_scope(&candidates, wid, || {

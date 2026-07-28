@@ -158,6 +158,13 @@ impl Tool for SetValueTool {
                 }
             };
         let element_ptr = element_guard.as_ptr();
+        // An AXValue read-back is not ground truth for web content. Chromium,
+        // WebKit, and Electron can echo the write through accessibility while
+        // the renderer never observes it. Reuse type_text's bounded ancestor
+        // check so native browser chrome stays trusted but rendered content is
+        // always reported as unverified.
+        let ax_echo_surface =
+            super::type_text::target_in_web_area(pid, Some((element_ptr, Some(element_index))));
 
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // AXValue writes on popups / sliders can cause reflex activations
@@ -182,21 +189,26 @@ impl Tool for SetValueTool {
         let changes = snapshot.detect_async().await;
 
         match result {
-            Ok(Ok(outcome)) => {
+            Ok(Ok(mut outcome)) => {
+                apply_surface_trust(&mut outcome, ax_echo_surface);
+                apply_verification_label(&mut outcome);
                 let mut msg = outcome.detail;
                 msg.push_str(&changes.result_suffix());
-                let mut structured = serde_json::Map::new();
-                if let Some(verified) = outcome.verified {
-                    structured.insert("verified".into(), serde_json::Value::Bool(verified));
+                let verified = outcome.verified.unwrap_or(false);
+                let mut structured = serde_json::json!({
+                    "path": "ax",
+                    "verified": verified,
+                    "effect": if verified { "confirmed" } else { "unverifiable" },
+                });
+                if ax_echo_surface {
+                    structured["escalation"] = serde_json::json!({
+                        "recommended": "px",
+                        "reason": "AXValue read-back is not trusted for web content. Verify \
+                                   through the renderer; use browser page tools for a tab or \
+                                   manipulate the control through its pixel action."
+                    });
                 }
-                if let Some(changed) = outcome.changed {
-                    structured.insert("changed".into(), serde_json::Value::Bool(changed));
-                }
-                if structured.is_empty() {
-                    ToolResult::text(msg)
-                } else {
-                    ToolResult::text(msg).with_structured(serde_json::Value::Object(structured))
-                }
+                ToolResult::text(msg).with_structured(structured)
             }
             Ok(Err(e)) => ToolResult::error(format!("set_value failed: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -221,6 +233,25 @@ struct SetValueOutcome {
     /// `Some(false)` when the element already held the requested value, so the
     /// write was a no-op. Lets callers distinguish "idempotent" from "applied".
     changed: Option<bool>,
+}
+
+fn apply_surface_trust(outcome: &mut SetValueOutcome, ax_echo_surface: bool) {
+    if ax_echo_surface && outcome.verified == Some(true) {
+        outcome.verified = Some(false);
+        outcome.changed = None;
+        outcome.detail.push_str(
+            " AXValue read-back is not trusted for web content; verify the \
+             renderer via screenshot or use the browser page tools.",
+        );
+    }
+}
+
+fn apply_verification_label(outcome: &mut SetValueOutcome) {
+    if outcome.verified != Some(true) {
+        if let Some(rest) = outcome.detail.strip_prefix("✅ Set") {
+            outcome.detail = format!("📨 Sent (unverified){rest}");
+        }
+    }
 }
 
 fn set_value_blocking(
@@ -269,7 +300,12 @@ fn set_value_blocking(
         };
         if err == kAXErrorSuccess {
             let after = unsafe { copy_string_attr(element, "AXValue") };
-            let (verified, changed) = classify_write(before.as_deref(), after.as_deref(), value);
+            let (verified, changed) = classify_write(
+                before.as_deref(),
+                after.as_deref(),
+                value,
+                numeric_target.is_some(),
+            );
             let suffix = match (verified, changed) {
                 (Some(true), Some(false)) => " Value already matched; write was idempotent.",
                 (Some(true), _) => "",
@@ -286,7 +322,8 @@ fn set_value_blocking(
             // stepping the control via AXIncrement / AXDecrement actions.
             if step_to_value(element, target) {
                 let after = unsafe { copy_string_attr(element, "AXValue") };
-                let (verified, changed) = classify_write(None, after.as_deref(), value);
+                let (verified, changed) =
+                    classify_write(before.as_deref(), after.as_deref(), value, true);
                 Ok(SetValueOutcome {
                     detail: format!(
                         "✅ Set AXValue on [{element_index}] {role} via AXIncrement/AXDecrement stepping."
@@ -319,6 +356,7 @@ fn classify_write(
     before: Option<&str>,
     after: Option<&str>,
     requested: &str,
+    numeric: bool,
 ) -> (Option<bool>, Option<bool>) {
     let Some(after) = after else {
         return (None, None);
@@ -327,11 +365,17 @@ fn classify_write(
         if observed == expected {
             return true;
         }
+        if !numeric {
+            return false;
+        }
         match (
             observed.trim().parse::<f64>(),
             expected.trim().parse::<f64>(),
         ) {
-            (Ok(a), Ok(b)) => (a - b).abs() < f64::EPSILON,
+            (Ok(a), Ok(b)) => {
+                let scale = a.abs().max(b.abs()).max(1.0);
+                (a - b).abs() <= 1e-9 * scale
+            }
             _ => false,
         }
     };
@@ -595,19 +639,22 @@ fn hex_digit(n: u8) -> char {
 
 #[cfg(test)]
 mod tests {
-    use super::classify_write;
+    use super::{apply_surface_trust, apply_verification_label, classify_write, SetValueOutcome};
 
     #[test]
     fn unreadable_value_reports_neither_verified_nor_changed() {
         // AXValue is not exposed: the write can be neither confirmed nor denied,
         // so the tool must not claim success on the return code alone.
-        assert_eq!(classify_write(Some("old"), None, "new"), (None, None));
+        assert_eq!(
+            classify_write(Some("old"), None, "new", false),
+            (None, None)
+        );
     }
 
     #[test]
     fn matching_read_back_verifies_the_write() {
         assert_eq!(
-            classify_write(Some("old"), Some("new"), "new"),
+            classify_write(Some("old"), Some("new"), "new", false),
             (Some(true), Some(true))
         );
     }
@@ -618,7 +665,7 @@ mod tests {
         // the renderer never took. A success return code must not be reported
         // as a verified write.
         assert_eq!(
-            classify_write(Some("old"), Some("old"), "new"),
+            classify_write(Some("old"), Some("old"), "new", false),
             (Some(false), Some(false))
         );
     }
@@ -626,7 +673,7 @@ mod tests {
     #[test]
     fn idempotent_write_is_verified_but_unchanged() {
         assert_eq!(
-            classify_write(Some("same"), Some("same"), "same"),
+            classify_write(Some("same"), Some("same"), "same", false),
             (Some(true), Some(false))
         );
     }
@@ -635,14 +682,64 @@ mod tests {
     fn numeric_controls_compare_numerically() {
         // AXSlider reports "25.0" for a requested "25".
         assert_eq!(
-            classify_write(Some("10"), Some("25.0"), "25"),
+            classify_write(Some("10"), Some("25.000000001"), "25", true),
             (Some(true), Some(true))
         );
     }
 
     #[test]
-    fn missing_before_still_verifies_after() {
-        // The stepping fallback has no usable pre-read; verification still applies.
-        assert_eq!(classify_write(None, Some("25.0"), "25"), (Some(true), None));
+    fn numeric_text_is_not_normalised_on_a_text_target() {
+        assert_eq!(
+            classify_write(Some("old"), Some("7"), "007", false),
+            (Some(false), Some(true))
+        );
+    }
+
+    #[test]
+    fn missing_before_still_verifies_numeric_after() {
+        assert_eq!(
+            classify_write(None, Some("25.0"), "25", true),
+            (Some(true), None)
+        );
+    }
+
+    #[test]
+    fn web_content_ax_echo_is_never_reported_as_verified() {
+        let mut outcome = SetValueOutcome {
+            detail: "Set value.".to_owned(),
+            verified: Some(true),
+            changed: Some(true),
+        };
+        apply_surface_trust(&mut outcome, true);
+        assert_eq!(outcome.verified, Some(false));
+        assert_eq!(outcome.changed, None);
+        assert!(outcome.detail.contains("not trusted for web content"));
+    }
+
+    #[test]
+    fn native_read_back_remains_trusted() {
+        let mut outcome = SetValueOutcome {
+            detail: "Set value.".to_owned(),
+            verified: Some(true),
+            changed: Some(true),
+        };
+        apply_surface_trust(&mut outcome, false);
+        assert_eq!(outcome.verified, Some(true));
+        assert_eq!(outcome.changed, Some(true));
+        assert_eq!(outcome.detail, "Set value.");
+    }
+
+    #[test]
+    fn unverified_result_does_not_keep_a_success_checkmark() {
+        let mut outcome = SetValueOutcome {
+            detail: "✅ Set AXValue on [4] AXTextField.".to_owned(),
+            verified: Some(false),
+            changed: Some(false),
+        };
+        apply_verification_label(&mut outcome);
+        assert_eq!(
+            outcome.detail,
+            "📨 Sent (unverified) AXValue on [4] AXTextField."
+        );
     }
 }

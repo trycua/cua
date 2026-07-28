@@ -75,25 +75,12 @@ pub fn element_window_local_xy(window_id: u64, pid: i64, element_index: u32) -> 
     let element = cache.get_element_retained(pid_i32, window_id_u32, element_index as usize)?;
     let (sx, sy) = unsafe { element_screen_center(element.as_ptr() as AXUIElementRef)? };
 
-    let bounds = crate::windows::window_bounds_by_id(window_id_u32)?;
-    // Probe the captured PNG's width to derive the Retina scale — the
-    // screenshot is in physical pixels, the window bounds are in points.
-    let scale = if let Ok(png) = crate::capture::screenshot_window_bytes(window_id_u32) {
-        if png.len() >= 24 {
-            let pw = u32::from_be_bytes([png[16], png[17], png[18], png[19]]) as f64;
-            if bounds.width > 0.0 && pw > bounds.width {
-                pw / bounds.width
-            } else {
-                1.0
-            }
-        } else {
-            1.0
-        }
-    } else {
-        1.0
-    };
-
-    let wx = (sx - bounds.x) * scale;
-    let wy = (sy - bounds.y) * scale;
+    // Same frame resolution the pixel action rungs use (origin + Retina scale
+    // measured off the capture), so a recording marker can never disagree with
+    // the click it is annotating. `None` when the window has no live frame —
+    // this hook is best-effort and simply records no coordinates then.
+    let frame = crate::tools::px_frame::resolve_window_px_frame(window_id_u32).ok()?;
+    let wx = (sx - frame.bounds.x) * frame.scale;
+    let wy = (sy - frame.bounds.y) * frame.scale;
     Some((wx, wy))
 }

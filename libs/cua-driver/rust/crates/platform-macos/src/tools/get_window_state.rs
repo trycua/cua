@@ -47,6 +47,15 @@ fn def() -> &'static ToolDef {
             and ignored. Pass `include_screenshot:false` to skip the grab and get \
             the tree only — the cheap path when you're just re-indexing before an \
             element ax action.\n\n\
+            The snapshot is SCOPED to `window_id`: a window_id that no longer exists is \
+            refused with `window_id_not_found`, and one owned by another process is \
+            refused with `window_owner_pid_mismatch` naming the real `owner_pid` to retry \
+            with (macOS hosts a sandboxed app's Open/Save panel out-of-process, so its \
+            window belongs to the panel service, not the app). If the window is live under \
+            this pid but its accessibility surface can't be resolved, the tree comes back \
+            EMPTY with `degraded_reason: ax_window_unresolved` and the screenshot of the \
+            requested window — act by pixel there. This tool never returns another \
+            surface's elements under your window_id.\n\n\
             Optional `query` filters the tree_markdown to matching lines plus their ancestor \
             chain (case-insensitive substring). The element_index values are unchanged — \
             filtering only trims the rendered Markdown.\n\n\
@@ -108,6 +117,35 @@ impl Tool for GetWindowStateTool {
             Ok(v) => v,
             Err(e) => return e,
         };
+
+        // Issue #2237: pre-flight the requested window against WindowServer
+        // BEFORE the (up to 20 s) AX walk. An id that no window carries, or
+        // that another process owns, used to fall through the scoped filter and
+        // return the app's MENU BAR as a healthy snapshot of the requested
+        // window — with a screenshot of the requested window beside it. macOS
+        // hosts every sandboxed app's Open/Save panel in
+        // `com.apple.appkit.xpc.openAndSavePanelService`, so the owner-mismatch
+        // shape is routine, and the caller must be told the real owner pid.
+        {
+            let owner = match tokio::task::spawn_blocking(move || {
+                crate::windows::resolve_window_owner(pid, window_id)
+            })
+            .await
+            {
+                Ok(owner) => owner,
+                Err(e) => {
+                    return ToolResult::error(format!(
+                        "window ownership lookup for window_id {window_id} failed: {e}"
+                    ))
+                }
+            };
+            if let Some(scope) = crate::ax::window_scope::scope_from_owner(&owner) {
+                if let Some(refusal) = window_scope_refusal(pid, window_id, &scope) {
+                    return refusal;
+                }
+            }
+        }
+
         let query = args.opt_str("query");
         let screenshot_out_file = args.opt_str("screenshot_out_file").map(|s| {
             // Expand ~ prefix.
@@ -188,9 +226,31 @@ impl Tool for GetWindowStateTool {
             }
         };
 
-        // Update element cache.
+        // The window can close, or its CGWindow can be re-parented onto another
+        // process, between the pre-flight and the walk. Re-apply the same
+        // refusals against what the walk actually observed.
+        let window_scope = tree_result.as_ref().and_then(|r| r.window_scope.clone());
+        if let Some(ref scope) = window_scope {
+            if let Some(refusal) = window_scope_refusal(pid, window_id, scope) {
+                return refusal;
+            }
+        }
+        // `window_scope` is None only when no window_id was requested, which
+        // this tool never does — so treat that as resolved.
+        let scope_matched = window_scope.as_ref().is_none_or(|s| s.is_matched());
+
+        // Update element cache — ONLY for a resolved window scope. Caching an
+        // unresolved scope's nodes under (pid, window_id) is what turned a
+        // wrong-surface snapshot into a wrong-surface *action*: a follow-up
+        // click(element_index=N) picked whatever the walk happened to return.
+        // For an unresolved scope, replace any prior entry with an empty
+        // snapshot so a stale index map cannot be clicked through either.
         if let Some(ref r) = tree_result {
-            self.state.element_cache.update(pid, window_id, &r.nodes);
+            if scope_matched {
+                self.state.element_cache.update(pid, window_id, &r.nodes);
+            } else {
+                self.state.element_cache.update(pid, window_id, &[]);
+            }
         }
 
         // Capture the screenshot and deliver it alongside the tree — the
@@ -218,15 +278,21 @@ impl Tool for GetWindowStateTool {
             }).await;
             match res {
                 Ok(Ok((b64, file_path, w, h, orig_w))) => {
-                    // Record resize ratio so ClickTool can scale coordinates back up.
+                    // Record resize ratio so ClickTool can scale coordinates back
+                    // up. Keyed per window: two windows of one pid can carry
+                    // different ratios (only the large one downscales), and a
+                    // pid-only key leaked one window's ratio into the other's
+                    // pixel clicks.
                     if let Some(ow) = orig_w {
                         if w > 0 {
-                            self.state
-                                .resize_registry
-                                .set_ratio(pid, ow as f64 / w as f64);
+                            self.state.resize_registry.set_ratio(
+                                pid,
+                                window_id,
+                                ow as f64 / w as f64,
+                            );
                         }
                     } else {
-                        self.state.resize_registry.clear_ratio(pid);
+                        self.state.resize_registry.clear_ratio(pid, window_id);
                     }
                     Some((b64, file_path, w, h))
                 }
@@ -293,15 +359,23 @@ impl Tool for GetWindowStateTool {
         // generated even when the walk returned no elements so consumers
         // calling `get_window_state` and then immediately re-snapshotting
         // get a clean LRU step every time.
+        //
+        // Skipped entirely for an unresolved window scope: an element_token is
+        // a promise that index N addresses a row of THIS window, and there is
+        // no such row to promise (issue #2237).
         let elem_count_for_snapshot = tree_result
             .as_ref()
             .map(|r| r.nodes.iter().filter(|n| n.element_index.is_some()).count())
             .unwrap_or(0);
-        let snapshot_id = cua_driver_core::element_token::global().register_snapshot(
-            pid,
-            window_id,
-            elem_count_for_snapshot,
-        );
+        let snapshot_id = if scope_matched {
+            Some(cua_driver_core::element_token::global().register_snapshot(
+                pid,
+                window_id,
+                elem_count_for_snapshot,
+            ))
+        } else {
+            None
+        };
 
         // Build the structured `elements` array — one entry per actionable
         // node, matching the order (and indices) of the markdown rendering.
@@ -309,10 +383,10 @@ impl Tool for GetWindowStateTool {
         // alongside for back-compat with existing text-parsing callers
         // (Hermes' regex parser, Codex, Claude Code) and is signalled as
         // preferred-for-back-compat-only via the `_note` field below.
-        let elements_json: Vec<serde_json::Value> = tree_result
-            .as_ref()
-            .map(|r| build_elements_array_with_token(&r.nodes, snapshot_id))
-            .unwrap_or_default();
+        let elements_json: Vec<serde_json::Value> = match (snapshot_id, tree_result.as_ref()) {
+            (Some(sid), Some(r)) => build_elements_array_with_token(&r.nodes, sid),
+            _ => Vec::new(),
+        };
 
         let mut structured = serde_json::json!({
             "window_id": window_id,
@@ -320,45 +394,64 @@ impl Tool for GetWindowStateTool {
             "element_count": element_count,
             "tree_markdown": tree_md,
             "elements": elements_json,
-            // Surface 6: an opaque snapshot identifier consumers can log
-            // alongside the per-element tokens for debug correlation.
-            // Same value embedded in every `element_token` emitted in
-            // `elements[]` above. Additive — old consumers ignore it.
-            "snapshot_id": cua_driver_core::element_token::token_for(snapshot_id, 0)
-                .trim_end_matches(":0")
-                .to_string(),
             "_note": "Prefer `elements` — `tree_markdown` will continue to work \
                 but new fields will only be added to the structured side. \
                 Issue #22865: use `max_elements` / `max_depth` to bound the \
                 AX walk on apps with very large trees."
         });
-        // Best-effort-background ladder, rung (2): an AX walk that ran but found
-        // zero actionable elements is NOT a clean snapshot — the window may be a
-        // non-AX surface (canvas/WebGL) or its tree wasn't ready (Chromium needs
-        // an enable+settle). Mark it degraded so callers don't read `elements: []`
-        // as "this window has no controls". Only applies when a walk was actually
-        // attempted (tree_result is None in capture_mode=vision, where empty is
-        // expected, not degraded).
-        if tree_result.is_some() && element_count == 0 {
-            structured["degraded"] = serde_json::json!(true);
-            structured["degraded_reason"] = serde_json::json!(
-                "ax_tree_empty: the AX walk returned no actionable elements. The \
-                 window may be a non-AX surface (canvas/WebGL/custom-drawn) or its \
-                 accessibility tree was not ready (Chromium/Electron require an \
-                 AX-enable + settle). Do not treat element data as authoritative — \
-                 re-snapshot if the app just launched, otherwise switch to the \
-                 visual path."
-            );
-            // Point the agent at the next rung: an empty AX tree means
-            // element_index has nothing to bind to, so the deliberate move is an
-            // element px action — read the screenshot already in this response and
-            // click by pixel (x,y). macOS can pixel-target in the background, so
-            // the recommendation is `px`, not `foreground`.
-            structured["escalation"] = serde_json::json!({
-                "recommended": "px",
-                "reason": "non-AX surface — act by pixel (x,y) off the screenshot \
-                           in this response (an element px action)."
-            });
+        // Surface 6: an opaque snapshot identifier consumers can log
+        // alongside the per-element tokens for debug correlation. Same value
+        // embedded in every `element_token` emitted in `elements[]` above.
+        // Additive — old consumers ignore it. Absent when no snapshot was
+        // registered (unresolved window scope).
+        if let Some(sid) = snapshot_id {
+            structured["snapshot_id"] =
+                serde_json::json!(cua_driver_core::element_token::token_for(sid, 0)
+                    .trim_end_matches(":0")
+                    .to_string());
+        }
+        // Best-effort-background ladder, rung (2). Both rungs point the agent at
+        // the same next move: an empty AX tree means element_index has nothing
+        // to bind to, so the deliberate action is an element px action — read
+        // the screenshot already in this response and click by pixel (x,y).
+        // macOS can pixel-target in the background, so the recommendation is
+        // `px`, not `foreground`.
+        match degradation_for(tree_result.is_some(), element_count, window_scope.as_ref()) {
+            Degradation::None => {}
+            Degradation::AxTreeEmpty => {
+                structured["degraded"] = serde_json::json!(true);
+                structured["degraded_reason"] = serde_json::json!(
+                    "ax_tree_empty: the AX walk returned no actionable elements. The \
+                     window may be a non-AX surface (canvas/WebGL/custom-drawn) or its \
+                     accessibility tree was not ready (Chromium/Electron require an \
+                     AX-enable + settle). Do not treat element data as authoritative — \
+                     re-snapshot if the app just launched, otherwise switch to the \
+                     visual path."
+                );
+                structured["escalation"] = serde_json::json!({
+                    "recommended": "px",
+                    "reason": "non-AX surface — act by pixel (x,y) off the screenshot \
+                               in this response (an element px action)."
+                });
+            }
+            Degradation::AxWindowUnresolved { ax_window_count } => {
+                structured["degraded"] = serde_json::json!(true);
+                structured["degraded_reason"] = serde_json::json!(format!(
+                    "ax_window_unresolved: window_id {window_id} exists and is owned by \
+                     pid {pid}, but none of the {ax_window_count} AXWindow element(s) \
+                     under that pid reports this CGWindowID. The tree is returned EMPTY \
+                     on purpose: the accessibility elements reachable under this pid \
+                     belong to other surfaces (the menu bar, other windows), not to the \
+                     requested window, so presenting them would misground the next \
+                     action."
+                ));
+                structured["escalation"] = serde_json::json!({
+                    "recommended": "px",
+                    "reason": "act by pixel (x,y) off the screenshot in this response — \
+                               the frame IS the requested window even though its AX \
+                               surface is unresolved."
+                });
+            }
         }
         if let Some((sw, sh)) = screenshot_dims {
             structured["screenshot_width"] = serde_json::json!(sw);
@@ -380,6 +473,105 @@ impl Tool for GetWindowStateTool {
             structured_content: Some(structured),
         }
     }
+}
+
+/// Turn an unresolvable window scope into a structured refusal, or `None` when
+/// the scope is one the caller can still be served (issue #2237).
+///
+/// Refusing is the point: the pre-fix behaviour returned the app's menu bar
+/// under the requested `window_id`, which reads as a healthy snapshot and gets
+/// clicked by `element_index`. Both refusals name the exact retry, matching the
+/// remedy-in-the-refusal shape the rest of the driver uses.
+///
+/// The owner pid is REPORTED, not followed: `element_cache`, the element-token
+/// registry and `ResizeRegistry` are all keyed on the caller-supplied pid, so
+/// walking under `owner_pid` while echoing the requested pid would hand back
+/// indices the caller replays against the wrong key. One retry with the named
+/// pid is correct and cheap.
+fn window_scope_refusal(
+    pid: i32,
+    window_id: u32,
+    scope: &crate::ax::WindowScope,
+) -> Option<ToolResult> {
+    use crate::ax::WindowScope;
+    match scope {
+        // Resolved, or resolvable-as-degraded — the caller gets a response.
+        WindowScope::Matched | WindowScope::AxUnresolved { .. } => None,
+        WindowScope::NotFound => Some(
+            ToolResult::error(format!(
+                "window_id {window_id} is not a live window (closed, or the id is stale). \
+                 Refusing to return an accessibility tree, because the elements reachable \
+                 under pid {pid} belong to other surfaces — not to the window you asked \
+                 for. Call list_windows for current window_ids."
+            ))
+            .with_structured(serde_json::json!({
+                "code": "window_id_not_found",
+                "pid": pid,
+                "window_id": window_id,
+                "suggestion": "call list_windows for current window_ids; the window may have closed"
+            })),
+        ),
+        WindowScope::OwnerPidMismatch {
+            owner_pid,
+            owner_app_name,
+        } => Some(
+            ToolResult::error(format!(
+                "window_id {window_id} is owned by pid {owner_pid} (\"{owner_app_name}\"), \
+                 not pid {pid}. macOS hosts a sandboxed app's Open/Save panel \
+                 out-of-process, so the panel's CGWindowID belongs to the panel service \
+                 rather than the app that opened it. Refusing to return pid {pid}'s \
+                 accessibility tree for it. Re-call get_window_state with pid={owner_pid} \
+                 and the same window_id."
+            ))
+            .with_structured(serde_json::json!({
+                "code": "window_owner_pid_mismatch",
+                "pid": pid,
+                "window_id": window_id,
+                "owner_pid": owner_pid,
+                "owner_app_name": owner_app_name,
+                "suggestion": format!(
+                    "window_id {window_id} is owned by pid {owner_pid}, not pid {pid} \
+                     (macOS hosts sandboxed Open/Save panels out-of-process). Re-call \
+                     get_window_state with pid={owner_pid} and the same window_id."
+                )
+            })),
+        ),
+    }
+}
+
+/// Which degradation rung a snapshot lands on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Degradation {
+    /// Clean snapshot — no `degraded` field is emitted.
+    None,
+    /// A walk ran and produced no actionable elements.
+    AxTreeEmpty,
+    /// The requested window is live and owned by this pid, but no AXWindow
+    /// claims its CGWindowID, so the walk deliberately covered nothing.
+    AxWindowUnresolved { ax_window_count: usize },
+}
+
+/// Decide the degradation rung. Pure: `walk_attempted` is false in the
+/// screenshot-only path (an empty tree is expected there, not degraded), and
+/// the unresolved-scope rung outranks the generic empty-tree rung because it
+/// explains *why* the tree is empty.
+fn degradation_for(
+    walk_attempted: bool,
+    element_count: usize,
+    scope: Option<&crate::ax::WindowScope>,
+) -> Degradation {
+    if !walk_attempted {
+        return Degradation::None;
+    }
+    if let Some(crate::ax::WindowScope::AxUnresolved { ax_window_count }) = scope {
+        return Degradation::AxWindowUnresolved {
+            ax_window_count: *ax_window_count,
+        };
+    }
+    if element_count == 0 {
+        return Degradation::AxTreeEmpty;
+    }
+    Degradation::None
 }
 
 /// Render the actionable nodes from the AX walk into the
@@ -494,6 +686,123 @@ pub(crate) fn build_elements_array(nodes: &[crate::ax::tree::AXNode]) -> Vec<ser
         }
     }
     out
+}
+
+#[cfg(test)]
+mod window_scope_contract_tests {
+    use super::*;
+    use crate::ax::WindowScope;
+
+    fn panel_mismatch() -> WindowScope {
+        WindowScope::OwnerPidMismatch {
+            owner_pid: 900,
+            owner_app_name: "Open and Save Panel Service".into(),
+        }
+    }
+
+    fn structured(result: ToolResult) -> serde_json::Value {
+        assert_eq!(result.is_error, Some(true), "must be an error result");
+        result
+            .structured_content
+            .expect("refusals carry structured content")
+    }
+
+    #[test]
+    fn stale_window_id_is_a_structured_not_found() {
+        let s = structured(
+            window_scope_refusal(800, 67340, &WindowScope::NotFound).expect("must refuse"),
+        );
+        assert_eq!(s["code"], "window_id_not_found");
+        assert_eq!(s["pid"], 800);
+        assert_eq!(s["window_id"], 67340);
+        assert!(s["suggestion"].as_str().unwrap().contains("list_windows"));
+    }
+
+    /// Issue #2237's reported case: TextEdit's Open panel window belongs to the
+    /// out-of-process panel service. The refusal must name the real owner pid
+    /// so the caller can retry, and must NOT redirect on its own (the element
+    /// caches are keyed on the caller-supplied pid).
+    #[test]
+    fn owner_pid_mismatch_names_the_owner_and_the_retry() {
+        let refusal = window_scope_refusal(800, 67340, &panel_mismatch()).expect("must refuse");
+        let text = format!("{:?}", refusal.content);
+        let s = structured(refusal);
+        assert_eq!(s["code"], "window_owner_pid_mismatch");
+        assert_eq!(s["owner_pid"], 900);
+        assert_eq!(s["owner_app_name"], "Open and Save Panel Service");
+        assert_eq!(s["pid"], 800, "the requested pid is echoed, not replaced");
+        assert!(
+            s["suggestion"].as_str().unwrap().contains("pid=900"),
+            "the retry must name the owner pid: {}",
+            s["suggestion"]
+        );
+        assert!(
+            !text.contains("AXMenuBar"),
+            "the refusal must never carry menu-bar content"
+        );
+    }
+
+    #[test]
+    fn resolvable_scopes_are_not_refused() {
+        assert!(window_scope_refusal(800, 11, &WindowScope::Matched).is_none());
+        assert!(
+            window_scope_refusal(800, 11, &WindowScope::AxUnresolved { ax_window_count: 2 })
+                .is_none(),
+            "a live same-pid window degrades; it does not error"
+        );
+    }
+
+    /// The reported failure signature: a wrong-surface walk returns a healthy
+    /// non-zero element count, so the pre-fix `element_count == 0` rung stayed
+    /// silent. An unresolved scope now degrades on its own evidence.
+    #[test]
+    fn unresolved_scope_degrades_with_its_own_reason() {
+        assert_eq!(
+            degradation_for(
+                true,
+                0,
+                Some(&WindowScope::AxUnresolved { ax_window_count: 3 })
+            ),
+            Degradation::AxWindowUnresolved { ax_window_count: 3 }
+        );
+    }
+
+    #[test]
+    fn empty_tree_still_degrades_as_ax_tree_empty() {
+        // Back-compat with the pre-existing rung.
+        assert_eq!(
+            degradation_for(true, 0, Some(&WindowScope::Matched)),
+            Degradation::AxTreeEmpty
+        );
+    }
+
+    #[test]
+    fn resolved_window_with_elements_is_not_degraded() {
+        assert_eq!(
+            degradation_for(true, 42, Some(&WindowScope::Matched)),
+            Degradation::None
+        );
+    }
+
+    #[test]
+    fn screenshot_only_path_does_not_degrade() {
+        assert_eq!(degradation_for(false, 0, None), Degradation::None);
+    }
+
+    #[test]
+    fn schema_advertises_the_window_scope_error_codes() {
+        let description = def().description.clone();
+        for code in [
+            "window_id_not_found",
+            "window_owner_pid_mismatch",
+            "ax_window_unresolved",
+        ] {
+            assert!(
+                description.contains(code),
+                "tool description must advertise {code}"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

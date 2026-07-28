@@ -616,7 +616,7 @@ impl Tool for ClickTool {
                         ))
                     }
                 }
-            } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+            } else if let Some(ratio) = self.state.resize_registry.ratio(pid, window_id) {
                 // Coordinates are in the downscaled image space; scale back to native pixels.
                 cx *= ratio;
                 cy *= ratio;
@@ -624,53 +624,18 @@ impl Tool for ClickTool {
 
             // ── Window-local → screen coordinate translation ──────────────────
             // `click_at_xy` accepts screen-space coordinates (top-left origin).
-            // Callers supply window-local screenshot pixels; we add the window's
-            // screen-origin to produce the final screen position.
+            // Callers supply window-local screenshot pixels; `px_frame` adds the
+            // window's screen-origin (and divides out the Retina backing scale)
+            // to produce the final screen position, or refuses when the window
+            // has no live frame — see px_frame's module docs for why there is
+            // no screen-absolute fallback.
             //
-            // Backing scale: screencapture captures at physical pixels, so on a
-            // Retina display the screenshot is 2× the logical window size.
-            // We detect the scale by comparing the live screenshot dimensions to
-            // the window's logical bounds from WindowServer.
-            //
-            // win_local_x/y: window-local logical-pixel coords (= cx/scale, cy/scale)
-            // needed for CGEventSetWindowLocation in the Chromium recipe.
+            // win_local_x/y: window-local logical-pixel coords needed for
+            // CGEventSetWindowLocation in the Chromium recipe.
             let (screen_x, screen_y, win_local_x, win_local_y) = if let Some(wid) = window_id {
-                let result = tokio::task::spawn_blocking(move || {
-                    let bounds = crate::windows::window_bounds_by_id(wid);
-                    let scale: f64 = if let Some(ref b) = bounds {
-                        // Detect Retina scale from the window screenshot.
-                        // We take a tiny peek at the PNG dimensions to compare
-                        // against the logical bounds.
-                        if let Ok(png) = crate::capture::screenshot_window_bytes(wid) {
-                            if png.len() >= 24 {
-                                let pw =
-                                    u32::from_be_bytes([png[16], png[17], png[18], png[19]]) as f64;
-                                let lw = b.width;
-                                if lw > 0.0 && pw > lw {
-                                    pw / lw
-                                } else {
-                                    1.0
-                                }
-                            } else {
-                                1.0
-                            }
-                        } else {
-                            1.0
-                        }
-                    } else {
-                        1.0
-                    };
-                    (bounds, scale)
-                })
-                .await
-                .unwrap_or((None, 1.0));
-                if let (Some(b), scale) = result {
-                    let wx = cx / scale;
-                    let wy = cy / scale;
-                    (b.x + wx, b.y + wy, wx, wy)
-                } else {
-                    // window_id not found — fall back to treating x,y as screen coords.
-                    (cx, cy, cx, cy)
+                match super::px_frame::resolve_or_refuse(wid).await {
+                    Ok(frame) => frame.to_screen(cx, cy),
+                    Err(refusal) => return refusal,
                 }
             } else {
                 // No window_id → treat x,y as screen coordinates (legacy behaviour).

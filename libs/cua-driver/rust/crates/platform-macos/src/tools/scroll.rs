@@ -373,55 +373,32 @@ impl Tool for ScrollTool {
                 );
             }
             // Pixel path: x,y are window-local screenshot pixels. Mirror the
-            // click pixel path — undo any session downscale, then add the
-            // window origin and divide out the Retina backing scale.
-            if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+            // click pixel path — undo any session downscale, then translate
+            // through the shared window frame (which refuses a window with no
+            // live frame rather than scrolling at screen-absolute coords).
+            if let Some(ratio) = self.state.resize_registry.ratio(pid, window_id) {
                 cx *= ratio;
                 cy *= ratio;
             }
-            let wid = window_id;
-            tokio::task::spawn_blocking(move || {
-                if let Some(wid) = wid {
-                    let bounds = crate::windows::window_bounds_by_id(wid);
-                    let scale: f64 = if let Some(ref b) = bounds {
-                        if let Ok(png) = crate::capture::screenshot_window_bytes(wid) {
-                            if png.len() >= 24 {
-                                let pw =
-                                    u32::from_be_bytes([png[16], png[17], png[18], png[19]]) as f64;
-                                if b.width > 0.0 && pw > b.width {
-                                    pw / b.width
-                                } else {
-                                    1.0
-                                }
-                            } else {
-                                1.0
-                            }
-                        } else {
-                            1.0
-                        }
-                    } else {
-                        1.0
-                    };
-                    if let Some(b) = bounds {
-                        let (wx, wy) = (cx / scale, cy / scale);
-                        return WheelTarget {
-                            screen_x: b.x + wx,
-                            screen_y: b.y + wy,
-                            win_local: Some((wx, wy)),
-                            wid: Some(wid),
-                        };
-                    }
+            let Some(wid) = window_id else {
+                // Unreachable: the None case refused above. Kept explicit so a
+                // future edit cannot reintroduce the screen-absolute fallback.
+                return ToolResult::error(
+                    "window_id is required when scrolling by window-local x,y pixels.".to_string(),
+                );
+            };
+            match super::px_frame::resolve_or_refuse(wid).await {
+                Ok(frame) => {
+                    let (sx, sy, lx, ly) = frame.to_screen(cx, cy);
+                    Some(WheelTarget {
+                        screen_x: sx,
+                        screen_y: sy,
+                        win_local: Some((lx, ly)),
+                        wid: Some(wid),
+                    })
                 }
-                // No window_id → treat x,y as screen coordinates.
-                WheelTarget {
-                    screen_x: cx,
-                    screen_y: cy,
-                    win_local: None,
-                    wid: None,
-                }
-            })
-            .await
-            .ok()
+                Err(refusal) => return refusal,
+            }
         } else {
             None
         };

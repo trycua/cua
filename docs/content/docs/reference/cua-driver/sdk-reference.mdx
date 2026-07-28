@@ -19,6 +19,9 @@ asynchronous. Python uses `snake_case`; TypeScript uses `camelCase`.
 | ------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------ |
 | `CuaDriver.create(options=None)`      | `CuaDriver.create(options?)`     | Creates the primary same-process runtime. No daemon, executable, or IPC is required.       |
 | `CuaDriver.create_configured(options)` | `CuaDriver.createConfigured(options)` | Trusted-host constructor with an immutable runtime ceiling and compatibility mode. |
+| `CuaDriver.create_configured_with_authorization_host(options, host)` | `CuaDriver.createConfiguredWithAuthorizationHost(options, host)` | Adds a trusted host callback for residual authorization boundaries. |
+| `CuaDriver.create_configured_with_activity_observer(options, observer)` | `CuaDriver.createConfiguredWithActivityObserver(options, observer)` | Adds content-free activity events without changing authorization. |
+| `CuaDriver.create_configured_with_host_integrations(options, host, observer)` | `CuaDriver.createConfiguredWithHostIntegrations(options, host, observer)` | Installs both optional host integrations. |
 | `CuaDriver.create_private_worker(options)` | `CuaDriver.createPrivateWorker(options)` | Spawns one supervised process-isolated runtime over inherited pipes; no reusable endpoint is created. |
 | `CuaDriver.connect(socket_path=None)` | `CuaDriver.connect(socketPath?)` | Connects the same typed surface to a daemon. This is a compatibility and app-hosting path. |
 
@@ -63,6 +66,83 @@ or reattached.
 Daemon `connect()` clients retain the daemon compatibility mode. An embedded
 host may create a trusted session only over its original authenticated service
 connection; an ordinary or standalone daemon client cannot.
+
+## Authorization host
+
+Routine standard-mode automation does not call the authorization host. The
+callback currently handles the existing logged-in Chromium profile boundary.
+It receives an attested, expiring request and must return the same
+`request_digest` with `Allow`, `Deny`, or `Cancel`.
+
+Python:
+
+```python
+from cua_driver import (
+    CuaDriver,
+    DriverAuthorizationAction,
+    DriverAuthorizationDecision,
+    DriverAuthorizationHost,
+)
+
+class AppAuthorization(DriverAuthorizationHost):
+    async def authorize(self, request):
+        allowed = await app_ui.confirm(request.human_summary)
+        return DriverAuthorizationDecision(
+            action=(
+                DriverAuthorizationAction.ALLOW
+                if allowed
+                else DriverAuthorizationAction.DENY
+            ),
+            request_digest=request.request_digest,
+        )
+
+driver = CuaDriver.create_configured_with_authorization_host(
+    options,
+    AppAuthorization(),
+)
+```
+
+TypeScript:
+
+```ts
+import {
+  CuaDriver,
+  DriverAuthorizationAction,
+  type DriverAuthorizationHost,
+} from "@trycua/cua-driver";
+
+const authorizationHost: DriverAuthorizationHost = {
+  async authorize(request) {
+    const allowed = await appUi.confirm(request.humanSummary);
+    return {
+      action: allowed
+        ? DriverAuthorizationAction.Allow
+        : DriverAuthorizationAction.Deny,
+      requestDigest: request.requestDigest,
+    };
+  },
+};
+
+const driver = CuaDriver.createConfiguredWithAuthorizationHost(
+  options,
+  authorizationHost,
+);
+```
+
+The callback is trusted application code. Do not expose it as a model tool,
+forward `resource_json` / `resourceJson` to an agent, or auto-accept every
+request. Cua Driver intentionally does not prescribe or render the host UI.
+
+## Activity observer
+
+`DriverActivityObserver` receives content-free events for authorized actions,
+authorization refusals, ordinary action failures, grant issue and revocation,
+and session start and end. Events include the tool name, risk class, adapter
+IDs, public session label, and stable refusal code. They never include tool
+arguments, text, images, URLs, file paths, or attested resource JSON.
+
+The observer cannot authorize, deny, or change a result. Return quickly and
+hand expensive work to an application queue.
 
 `execution_mode()` / `executionMode()` reports the generated
 `DriverExecutionMode` value. The enum variants are `Embedded`, `PrivateWorker`,

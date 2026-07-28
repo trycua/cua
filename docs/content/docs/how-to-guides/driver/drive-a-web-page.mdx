@@ -82,22 +82,28 @@ not yet product-validated there. Start a named driver session and choose the
 permission mode before launching the daemon.
 
 Prefer `bounded` for repeatable browser automation: approve one short-lived
-manifest that names the exact browser window, allowed origins, and typed
-browser tools. This avoids per-action prompts without granting every Cua
-capability. For example:
+manifest that names the browser profile kind, application identity, allowed
+origins, and typed browser tools. This avoids prompts without granting every
+Cua capability. For example:
 
 ```yaml
-version: 1
+version: 2
 mode: bounded
 expires_after: 2h
 idle_timeout: 20m
+
 resources:
+  apps:
+    - bundle_id: com.google.Chrome
+      launch: false
+      windows: all
+      terminate: never
   browser:
-    existing_profiles:
-      - pid: 844
-        window_id: 10725
+    profiles:
+      - kind: existing_profile
     origins:
       - https://app.example.com
+
 allow:
   tools:
     - start_session
@@ -109,6 +115,10 @@ allow:
     - browser_type
 ```
 
+On Windows and Linux, use Chrome's canonical absolute executable path instead
+of `bundle_id`. The runtime still re-proves the live process fingerprint and
+exact native window before attaching.
+
 Launch Cua Driver with that reviewed scope:
 
 ```bash
@@ -118,12 +128,8 @@ cua-driver serve \
   --approve-session-policy
 ```
 
-Interactive standalone runtimes show a persistent Stop indicator for the
-bounded attachment, but do not prompt again for actions already admitted by
-the manifest. The built-in indicator is ordinary same-desktop UI: another
-automation runtime or remote-desktop controller with access to that desktop
-can operate it. Use a stronger host-provided collector when hostile local
-automation is in scope.
+Bounded attachment does not display a Cua modal or banner. The manifest is the
+trusted launcher's authorization boundary, and calls outside it fail closed.
 
 For a disposable VM where you intentionally accept all Cua actions, launch
 unrestricted mode explicitly instead:
@@ -151,10 +157,11 @@ browser_prepare({
 > existing-profile attachment only in an environment whose account and data
 > exposure you accept.
 
-A trusted embedding host can install the confirmation provider described
+A trusted embedding host can install the authorization callback described
 in [Permission modes and bounded autonomy](/reference/cua-driver/permission-modes).
-In `standard`, the provider prompts once for the bound browser resource.
-`bounded` uses the launch-approved session manifest.
+In `standard`, the host may authorize the exact browser resource once. A
+standalone CLI or MCP launch can instead use `--grant existing-profile`.
+`bounded` uses the approved session manifest.
 
 The browser may display its own remote-debugging consent prompt. Cua Driver will
 press only the exact browser-owned semantic allow action for this approved
@@ -200,16 +207,16 @@ After `attached_existing_profile`, list windows again if needed and call
 browser capabilities, so do not reuse a previous `target_id`, `tab_id`, or
 page ref.
 
-The grant lives only in daemon memory. It expires after inactivity, has an
-absolute lifetime, and is revoked when its owning session ends or the daemon
-restarts. A dropped browser socket may reconnect up to three times under the
+The grant lives only in runtime memory. It expires after inactivity, has an
+absolute lifetime, and is revoked when its owning session ends or the runtime
+shuts down. A dropped browser socket may reconnect up to three times under the
 same live grant; a successful reconnect invalidates capabilities again and
-requires another bind. Browser restart requires a new approval in this first
-release.
+requires another bind. Browser restart requires a new authorization.
 
-Existing-profile consent turns record redacted action metadata and results but
-omit screenshots and accessibility snapshots, so authenticated page content is
-not persisted as consent evidence.
+Existing-profile activity events record content-free action metadata and
+results. They omit screenshots, accessibility snapshots, URLs, and resource
+identities, so authenticated page content is not persisted as authorization
+evidence.
 
 ## Bind the native window
 
@@ -377,13 +384,14 @@ contains only a count and never echoes the local paths.
 
 ## Download into an approved directory
 
-Choose a current ref that activates the download and call `browser_download`
-through an MCP host that presents its destructive-tool approval. Pass an
-existing canonical absolute `destination_root`. The tool temporarily scopes
+Choose a current ref that activates the download and call `browser_download`.
+An MCP host may still apply its own destructive-tool approval rules. Pass an
+existing canonical absolute `destination_root`. Cua's policy stack and bounded
+manifest, when active, must admit that directory. The tool temporarily scopes
 Chromium's browser-wide download behavior, correlates the exact frame and
 opaque download id, restores the default on every outcome, and returns only
 the final byte count and opaque id. It does not return a filename, URL, or
-local path. A direct raw call without host approval is refused.
+local path.
 
 ## Navigate
 

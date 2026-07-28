@@ -1161,9 +1161,10 @@ impl NativeAbiDriver {
         })
     }
 
-    pub(crate) fn create_configured_with_protected_provider(
+    pub(crate) fn create_configured_with_authorization_provider(
         options: Value,
         provider: Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>,
+        activity_observer: Option<Arc<dyn crate::DriverActivityObserver>>,
     ) -> Result<Self, DriverError> {
         let options: AbiDriverOptions =
             serde_json::from_value(options).map_err(|error| DriverError::Configuration {
@@ -1173,7 +1174,24 @@ impl NativeAbiDriver {
             runtime_options_from_abi(options).map_err(|error| DriverError::Configuration {
                 reason: error.message,
             })?;
-        runtime_options.protected_consent_provider = Some(provider);
+        runtime_options.authorization_host = Some(provider);
+        runtime_options.activity_observer = activity_observer;
+        Self::create_for_host(runtime_options)
+    }
+
+    pub(crate) fn create_configured_with_activity_observer(
+        options: Value,
+        observer: Arc<dyn crate::DriverActivityObserver>,
+    ) -> Result<Self, DriverError> {
+        let options: AbiDriverOptions =
+            serde_json::from_value(options).map_err(|error| DriverError::Configuration {
+                reason: format!("invalid configured host options: {error}"),
+            })?;
+        let mut runtime_options =
+            runtime_options_from_abi(options).map_err(|error| DriverError::Configuration {
+                reason: error.message,
+            })?;
+        runtime_options.activity_observer = Some(observer);
         Self::create_for_host(runtime_options)
     }
 
@@ -1187,6 +1205,10 @@ impl NativeAbiDriver {
         })
     }
 
+    // This is the narrow ABI bridge between the public host options and the
+    // runtime options. Keeping the fields explicit avoids exposing the
+    // internal RuntimeOptions type across the bridge.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn create_configured_for_host(
         options: Value,
         cursor: cursor_overlay::CursorConfig,
@@ -1194,9 +1216,8 @@ impl NativeAbiDriver {
         host_bundle_id: Option<String>,
         prepare_desktop_environment: bool,
         register_host_tools: Option<fn(&mut cua_driver_core::tool::ToolRegistry)>,
-        protected_consent_provider: Option<
-            Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>,
-        >,
+        authorization_host: Option<Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
+        activity_observer: Option<Arc<dyn crate::DriverActivityObserver>>,
     ) -> Result<Self, DriverError> {
         let options: AbiDriverOptions =
             serde_json::from_value(options).map_err(|error| DriverError::Configuration {
@@ -1211,7 +1232,8 @@ impl NativeAbiDriver {
         runtime_options.host_bundle_id = host_bundle_id;
         runtime_options.prepare_desktop_environment = prepare_desktop_environment;
         runtime_options.register_host_tools = register_host_tools;
-        runtime_options.protected_consent_provider = protected_consent_provider;
+        runtime_options.authorization_host = authorization_host;
+        runtime_options.activity_observer = activity_observer;
         Self::create_for_host(runtime_options)
     }
 

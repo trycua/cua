@@ -5,6 +5,7 @@
 //! also needs trusted human consent. The mode is resolved once at daemon
 //! startup and cannot be changed by a tool call or transport argument.
 
+use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
@@ -16,6 +17,34 @@ pub const DISABLE_UNRESTRICTED_ENV: &str = "CUA_DRIVER_DISABLE_UNRESTRICTED";
 pub const LEGACY_EXISTING_PROFILE_APPROVAL_ENV: &str =
     "CUA_DRIVER_ALLOW_LEGACY_EXISTING_PROFILE_APPROVAL";
 pub const RISK_METADATA_VERSION: &str = "1";
+
+static LAUNCH_GRANTS: OnceLock<BTreeSet<String>> = OnceLock::new();
+
+/// Install immutable launcher grants before the action runtime is created.
+///
+/// These grants are process-local trusted configuration. They are never read
+/// from environment variables or accepted from tool arguments.
+pub fn configure_launch_grants(grants: &[String]) -> Result<(), String> {
+    let mut normalized = BTreeSet::new();
+    for grant in grants {
+        match grant.trim() {
+            "existing-profile" | "existing_profile" => {
+                normalized.insert("existing_profile".to_owned());
+            }
+            "" => return Err("launch grant cannot be empty".to_owned()),
+            other => return Err(format!("unknown launch grant '{other}'")),
+        }
+    }
+    LAUNCH_GRANTS
+        .set(normalized)
+        .map_err(|_| "launch grants were already configured".to_owned())
+}
+
+pub fn launch_grant_enabled(grant: &str) -> bool {
+    LAUNCH_GRANTS
+        .get()
+        .is_some_and(|grants| grants.contains(grant))
+}
 
 /// Reviewed risk attached to a typed tool operation. `Unclassified` is a
 /// fail-closed sentinel and is never an executable risk tier.
@@ -80,13 +109,15 @@ pub struct EnforcementAdapterDescriptor {
     pub grant_type: Option<&'static str>,
     pub idle_ttl_seconds: Option<u64>,
     pub absolute_ttl_seconds: Option<u64>,
-    pub indicator_requirement: &'static str,
+    pub authorization_requirement: &'static str,
     pub revocation_triggers: &'static [&'static str],
     pub refusal_code: Option<&'static str>,
-    pub provider_requirement: &'static str,
+    pub authorization_source: &'static str,
     /// Mode-specific truth. `state` remains the standard-mode value for
     /// backward-compatible inventory consumers.
     pub enforcement_by_mode: AdapterEnforcement,
+    /// Runtime behavior selected after hard invariants and policy admission.
+    pub behavior_by_mode: AdapterModeBehavior,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -114,6 +145,44 @@ impl AdapterEnforcement {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModeBehavior {
+    Allow,
+    Deny,
+    RequireGrant,
+    Manifest,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct AdapterModeBehavior {
+    pub standard: ModeBehavior,
+    pub bounded: ModeBehavior,
+    pub unrestricted: ModeBehavior,
+}
+
+impl AdapterModeBehavior {
+    pub const fn new(
+        standard: ModeBehavior,
+        bounded: ModeBehavior,
+        unrestricted: ModeBehavior,
+    ) -> Self {
+        Self {
+            standard,
+            bounded,
+            unrestricted,
+        }
+    }
+
+    pub const fn for_mode(self, mode: PermissionMode) -> ModeBehavior {
+        match mode {
+            PermissionMode::Standard => self.standard,
+            PermissionMode::Bounded => self.bounded,
+            PermissionMode::Unrestricted => self.unrestricted,
+        }
+    }
+}
+
 const EXISTING_PROFILE_OPERATIONS: &[&str] = &["browser_prepare[strategy.kind=existing_profile]"];
 const EXISTING_PROFILE_SCOPE_KEYS: &[&str] = &[
     "daemon_generation",
@@ -129,7 +198,6 @@ const EXISTING_PROFILE_SCOPE_KEYS: &[&str] = &[
     "user_policy_sha256",
 ];
 const EXISTING_PROFILE_REVOCATION: &[&str] = &[
-    "indicator_stop",
     "session_end",
     "idle_expiry",
     "absolute_expiry",
@@ -279,7 +347,6 @@ const OS_PERMISSION_PROMPT_OPERATIONS: &[&str] = &["check_permissions[prompt=tru
 const DRIVER_CONFIGURATION_OPERATIONS: &[&str] = &["set_config"];
 
 const SESSION_REVOCATION: &[&str] = &[
-    "indicator_stop",
     "session_end",
     "expiry",
     "policy_change",
@@ -298,12 +365,17 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         grant_type: Some("existing_profile_session_grant"),
         idle_ttl_seconds: Some(30 * 60),
         absolute_ttl_seconds: Some(8 * 60 * 60),
-        indicator_requirement: "required_in_standard_and_bounded",
+        authorization_requirement: "launch_grant_or_host_in_standard; manifest_in_bounded",
         revocation_triggers: EXISTING_PROFILE_REVOCATION,
         refusal_code: Some("browser_consent_required"),
-        provider_requirement:
-            "protected_consent_in_standard; protected_indicator_in_bounded; none_in_unrestricted",
+        authorization_source:
+            "launch_grant_or_authorization_host_in_standard; manifest_in_bounded; trusted_launch_acknowledgement_in_unrestricted",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
+        behavior_by_mode: AdapterModeBehavior::new(
+            ModeBehavior::RequireGrant,
+            ModeBehavior::Manifest,
+            ModeBehavior::Allow,
+        ),
     },
     EnforcementAdapterDescriptor {
         id: "private_observation",
@@ -315,12 +387,16 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         grant_type: Some("protected_resource_grant"),
         idle_ttl_seconds: Some(30 * 60),
         absolute_ttl_seconds: Some(8 * 60 * 60),
-        indicator_requirement: "required_in_standard_and_bounded",
+        authorization_requirement: "manifest_only_in_bounded",
         revocation_triggers: SESSION_REVOCATION,
-        refusal_code: Some("protected_consent_required"),
-        provider_requirement:
-            "protected_consent_in_standard; protected_indicator_in_bounded; none_in_unrestricted",
+        refusal_code: Some("authorization_required"),
+        authorization_source: "built_in_standard; manifest_in_bounded; trusted_unrestricted_mode",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
+        behavior_by_mode: AdapterModeBehavior::new(
+            ModeBehavior::Allow,
+            ModeBehavior::Manifest,
+            ModeBehavior::Allow,
+        ),
     },
     EnforcementAdapterDescriptor {
         id: "desktop_input",
@@ -332,12 +408,16 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         grant_type: Some("protected_resource_grant"),
         idle_ttl_seconds: Some(30 * 60),
         absolute_ttl_seconds: Some(8 * 60 * 60),
-        indicator_requirement: "required_in_standard_and_bounded",
+        authorization_requirement: "manifest_only_in_bounded",
         revocation_triggers: SESSION_REVOCATION,
-        refusal_code: Some("protected_consent_required"),
-        provider_requirement:
-            "protected_consent_in_standard; protected_indicator_in_bounded; none_in_unrestricted",
+        refusal_code: Some("authorization_required"),
+        authorization_source: "built_in_standard; manifest_in_bounded; trusted_unrestricted_mode",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
+        behavior_by_mode: AdapterModeBehavior::new(
+            ModeBehavior::Allow,
+            ModeBehavior::Manifest,
+            ModeBehavior::Allow,
+        ),
     },
     EnforcementAdapterDescriptor {
         id: "file_transfer_and_output",
@@ -349,12 +429,16 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         grant_type: Some("protected_resource_grant"),
         idle_ttl_seconds: Some(30 * 60),
         absolute_ttl_seconds: Some(8 * 60 * 60),
-        indicator_requirement: "required_in_standard_and_bounded",
+        authorization_requirement: "manifest_only_in_bounded",
         revocation_triggers: SESSION_REVOCATION,
-        refusal_code: Some("protected_consent_required"),
-        provider_requirement:
-            "protected_consent_in_standard; protected_indicator_in_bounded; none_in_unrestricted",
+        refusal_code: Some("authorization_required"),
+        authorization_source: "built_in_standard; manifest_in_bounded; trusted_unrestricted_mode",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
+        behavior_by_mode: AdapterModeBehavior::new(
+            ModeBehavior::Allow,
+            ModeBehavior::Manifest,
+            ModeBehavior::Allow,
+        ),
     },
     EnforcementAdapterDescriptor {
         id: "browser_consequential_action",
@@ -366,12 +450,16 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         grant_type: Some("protected_resource_grant"),
         idle_ttl_seconds: Some(5 * 60),
         absolute_ttl_seconds: Some(30 * 60),
-        indicator_requirement: "required_in_standard_and_bounded",
+        authorization_requirement: "manifest_only_in_bounded",
         revocation_triggers: SESSION_REVOCATION,
-        refusal_code: Some("protected_consent_required"),
-        provider_requirement:
-            "protected_consent_in_standard; protected_indicator_in_bounded; none_in_unrestricted",
+        refusal_code: Some("authorization_required"),
+        authorization_source: "built_in_standard; manifest_in_bounded; trusted_unrestricted_mode",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
+        behavior_by_mode: AdapterModeBehavior::new(
+            ModeBehavior::Allow,
+            ModeBehavior::Manifest,
+            ModeBehavior::Allow,
+        ),
     },
     EnforcementAdapterDescriptor {
         id: "browser_unbounded_script",
@@ -383,11 +471,16 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         grant_type: Some("trusted_launch_mode_gate"),
         idle_ttl_seconds: None,
         absolute_ttl_seconds: None,
-        indicator_requirement: "not_grantable_in_standard_or_bounded",
+        authorization_requirement: "not_grantable_in_standard_or_bounded",
         revocation_triggers: &[],
         refusal_code: Some("unbounded_operation_requires_unrestricted"),
-        provider_requirement: "unrestricted_mode_with_trusted_launch_time_risk_acknowledgement",
+        authorization_source: "unrestricted_mode_with_trusted_launch_time_risk_acknowledgement",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
+        behavior_by_mode: AdapterModeBehavior::new(
+            ModeBehavior::Deny,
+            ModeBehavior::Deny,
+            ModeBehavior::Allow,
+        ),
     },
     EnforcementAdapterDescriptor {
         id: "browser_bound_input",
@@ -399,12 +492,16 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         grant_type: Some("protected_resource_grant"),
         idle_ttl_seconds: Some(30 * 60),
         absolute_ttl_seconds: Some(8 * 60 * 60),
-        indicator_requirement: "required_in_standard_and_bounded",
+        authorization_requirement: "manifest_only_in_bounded",
         revocation_triggers: SESSION_REVOCATION,
-        refusal_code: Some("protected_consent_required"),
-        provider_requirement:
-            "protected_consent_in_standard; protected_indicator_in_bounded; none_in_unrestricted",
+        refusal_code: Some("authorization_required"),
+        authorization_source: "built_in_standard; manifest_in_bounded; trusted_unrestricted_mode",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
+        behavior_by_mode: AdapterModeBehavior::new(
+            ModeBehavior::Allow,
+            ModeBehavior::Manifest,
+            ModeBehavior::Allow,
+        ),
     },
     EnforcementAdapterDescriptor {
         id: "process_control",
@@ -416,12 +513,17 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         grant_type: Some("protected_resource_grant"),
         idle_ttl_seconds: Some(2 * 60),
         absolute_ttl_seconds: Some(10 * 60),
-        indicator_requirement: "required_in_standard_and_bounded",
+        authorization_requirement: "driver_ownership_in_standard; manifest_in_bounded",
         revocation_triggers: SESSION_REVOCATION,
-        refusal_code: Some("protected_consent_required"),
-        provider_requirement:
-            "protected_consent_in_standard; protected_indicator_in_bounded; none_in_unrestricted",
+        refusal_code: Some("authorization_required"),
+        authorization_source:
+            "driver_ownership_in_standard; manifest_in_bounded; trusted_unrestricted_mode",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
+        behavior_by_mode: AdapterModeBehavior::new(
+            ModeBehavior::Deny,
+            ModeBehavior::Manifest,
+            ModeBehavior::Allow,
+        ),
     },
     EnforcementAdapterDescriptor {
         id: "os_permission_prompt",
@@ -433,11 +535,16 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         grant_type: None,
         idle_ttl_seconds: None,
         absolute_ttl_seconds: None,
-        indicator_requirement: "never_agent_controllable",
+        authorization_requirement: "never_agent_controllable",
         revocation_triggers: &[],
         refusal_code: Some("os_permission_prompt_requires_trusted_host"),
-        provider_requirement: "trusted_host_setup_outside_the_agent_tool_path",
+        authorization_source: "trusted_host_setup_outside_the_agent_tool_path",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
+        behavior_by_mode: AdapterModeBehavior::new(
+            ModeBehavior::Deny,
+            ModeBehavior::Deny,
+            ModeBehavior::Deny,
+        ),
     },
     EnforcementAdapterDescriptor {
         id: "driver_configuration",
@@ -454,12 +561,16 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         grant_type: Some("protected_resource_grant"),
         idle_ttl_seconds: Some(5 * 60),
         absolute_ttl_seconds: Some(30 * 60),
-        indicator_requirement: "required_in_standard_and_bounded",
+        authorization_requirement: "manifest_only_in_bounded",
         revocation_triggers: SESSION_REVOCATION,
-        refusal_code: Some("protected_consent_required"),
-        provider_requirement:
-            "protected_consent_in_standard; protected_indicator_in_bounded; none_in_unrestricted",
+        refusal_code: Some("authorization_required"),
+        authorization_source: "built_in_standard; manifest_in_bounded; trusted_unrestricted_mode",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
+        behavior_by_mode: AdapterModeBehavior::new(
+            ModeBehavior::Allow,
+            ModeBehavior::Manifest,
+            ModeBehavior::Allow,
+        ),
     },
     EnforcementAdapterDescriptor {
         id: "clipboard",
@@ -471,11 +582,16 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         grant_type: None,
         idle_ttl_seconds: None,
         absolute_ttl_seconds: None,
-        indicator_requirement: "required_before_exposure",
+        authorization_requirement: "required_before_exposure",
         revocation_triggers: &[],
         refusal_code: None,
-        provider_requirement: "capability_not_exposed",
+        authorization_source: "capability_not_exposed",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::NotExposed),
+        behavior_by_mode: AdapterModeBehavior::new(
+            ModeBehavior::Deny,
+            ModeBehavior::Deny,
+            ModeBehavior::Deny,
+        ),
     },
     EnforcementAdapterDescriptor {
         id: "devices",
@@ -487,11 +603,16 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         grant_type: None,
         idle_ttl_seconds: None,
         absolute_ttl_seconds: None,
-        indicator_requirement: "required_before_exposure",
+        authorization_requirement: "required_before_exposure",
         revocation_triggers: &[],
         refusal_code: None,
-        provider_requirement: "capability_not_exposed",
+        authorization_source: "capability_not_exposed",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::NotExposed),
+        behavior_by_mode: AdapterModeBehavior::new(
+            ModeBehavior::Deny,
+            ModeBehavior::Deny,
+            ModeBehavior::Deny,
+        ),
     },
     EnforcementAdapterDescriptor {
         id: "shell_and_network",
@@ -503,11 +624,16 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         grant_type: None,
         idle_ttl_seconds: None,
         absolute_ttl_seconds: None,
-        indicator_requirement: "required_before_exposure",
+        authorization_requirement: "required_before_exposure",
         revocation_triggers: &[],
         refusal_code: None,
-        provider_requirement: "capability_not_exposed",
+        authorization_source: "capability_not_exposed",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::NotExposed),
+        behavior_by_mode: AdapterModeBehavior::new(
+            ModeBehavior::Deny,
+            ModeBehavior::Deny,
+            ModeBehavior::Deny,
+        ),
     },
 ];
 
@@ -1151,11 +1277,8 @@ pub fn status_json() -> serde_json::Value {
 ///
 /// Provider identity is runtime state, never a process-global first-writer
 /// value: multiple direct runtimes may install different trusted hosts.
-pub fn status_json_with_provider(
-    protected_consent_collector: Option<&'static str>,
-) -> serde_json::Value {
-    let protected_consent_assurance = match protected_consent_collector {
-        Some("cua_local_desktop_confirmation_v1") => "same_desktop_best_effort",
+pub fn status_json_with_provider(authorization_host: Option<&'static str>) -> serde_json::Value {
+    let authorization_host_assurance = match authorization_host {
         Some(_) => "host_provided",
         None => "unavailable",
     };
@@ -1184,6 +1307,7 @@ pub fn status_json_with_provider(
         .map(|manifest| {
             let (allow, deny, ask) = manifest.counts();
             serde_json::json!({
+                "version": manifest.version(),
                 "sha256": manifest.sha256(),
                 "expires_unix_ms": manifest.expires_unix_ms(),
                 "idle_timeout_seconds": manifest.idle_timeout().as_secs(),
@@ -1219,8 +1343,8 @@ pub fn status_json_with_provider(
         "effective_metadata_only_risk_enforcement": effective_metadata_only_risk_enforcement,
         "effective_not_exposed_risk_enforcement": effective_not_exposed_risk_enforcement,
         "enforcement_adapters": enforcement_adapter_inventory_json(),
-        "protected_consent_collector": protected_consent_collector,
-        "protected_consent_assurance": protected_consent_assurance,
+        "authorization_host": authorization_host,
+        "authorization_host_assurance": authorization_host_assurance,
         "session_policy_configured": std::env::var_os(crate::session_manifest::SESSION_POLICY_FILE_ENV).is_some(),
         "session_policy_approved_at_startup": env_flag(crate::session_manifest::SESSION_POLICY_APPROVED_ENV),
         "session_policy_valid": session_policy.is_ok(),
@@ -1453,6 +1577,53 @@ mod tests {
     }
 
     #[test]
+    fn adapter_mode_behavior_matches_the_product_contract() {
+        let behavior = |id: &str, mode| {
+            ENFORCEMENT_ADAPTERS
+                .iter()
+                .find(|adapter| adapter.id == id)
+                .unwrap()
+                .behavior_by_mode
+                .for_mode(mode)
+        };
+
+        for id in [
+            "private_observation",
+            "desktop_input",
+            "file_transfer_and_output",
+            "browser_consequential_action",
+            "browser_bound_input",
+            "driver_configuration",
+        ] {
+            assert_eq!(behavior(id, PermissionMode::Standard), ModeBehavior::Allow);
+            assert_eq!(
+                behavior(id, PermissionMode::Bounded),
+                ModeBehavior::Manifest
+            );
+            assert_eq!(
+                behavior(id, PermissionMode::Unrestricted),
+                ModeBehavior::Allow
+            );
+        }
+        assert_eq!(
+            behavior("browser_prepare.existing_profile", PermissionMode::Standard),
+            ModeBehavior::RequireGrant
+        );
+        assert_eq!(
+            behavior("process_control", PermissionMode::Standard),
+            ModeBehavior::Deny
+        );
+        assert_eq!(
+            behavior("browser_unbounded_script", PermissionMode::Bounded),
+            ModeBehavior::Deny
+        );
+        assert_eq!(
+            behavior("os_permission_prompt", PermissionMode::Unrestricted),
+            ModeBehavior::Deny
+        );
+    }
+
+    #[test]
     fn exact_call_inventory_composes_overlapping_resource_boundaries() {
         let ids = |tool, args: Value| {
             enforcement_adapters_for_call(tool, &args)
@@ -1581,15 +1752,15 @@ mod tests {
             status["enforcement_adapters"],
             enforcement_adapter_inventory_json()
         );
-        assert_eq!(status["protected_consent_assurance"], "unavailable");
+        assert_eq!(status["authorization_host_assurance"], "unavailable");
         assert_eq!(
             status_json_with_provider(Some("cua_local_desktop_confirmation_v1"))
-                ["protected_consent_assurance"],
-            "same_desktop_best_effort"
+                ["authorization_host_assurance"],
+            "host_provided"
         );
         assert_eq!(
             status_json_with_provider(Some("external_host_consent_v1"))
-                ["protected_consent_assurance"],
+                ["authorization_host_assurance"],
             "host_provided"
         );
         assert_eq!(status["effective_session_mode_source"], "process");

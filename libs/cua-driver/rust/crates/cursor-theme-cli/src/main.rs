@@ -26,6 +26,9 @@ const CANVAS: u32 = 128;
 const FPS: f32 = 30.0;
 const MAX_FRAMES: usize = 120;
 
+type SourceArchiveEntries = BTreeMap<String, Vec<u8>>;
+type SourceArchive = (Vec<u8>, SourceArchiveEntries);
+
 #[derive(Debug, Deserialize)]
 struct ThemeManifest {
     schema: String,
@@ -202,7 +205,7 @@ fn flag_path(args: &[String], flag: &str) -> Result<PathBuf> {
         .ok_or_else(|| anyhow!("missing value for {flag}"))
 }
 
-fn read_source_archive(path: &Path) -> Result<(Vec<u8>, BTreeMap<String, Vec<u8>>)> {
+fn read_source_archive(path: &Path) -> Result<SourceArchive> {
     let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
     if bytes.len() > MAX_ARCHIVE_BYTES {
         bail!("source archive exceeds the {MAX_ARCHIVE_BYTES}-byte limit");

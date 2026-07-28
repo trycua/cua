@@ -21,6 +21,10 @@ pub enum CursorEventPhase {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CursorEvent {
+    SetSessionLabel {
+        session: String,
+        label: String,
+    },
     Action {
         session: String,
         phase: CursorEventPhase,
@@ -75,6 +79,17 @@ fn explicit_session(args: &Value) -> Option<String> {
 
 pub fn begin_tool(name: &str, args: &Value) -> Option<(String, CursorAction)> {
     let session = explicit_session(args)?;
+    if let Some(label) = args
+        .get("_public_session_label")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|label| !label.is_empty())
+    {
+        emit(CursorEvent::SetSessionLabel {
+            session: session.clone(),
+            label: label.to_owned(),
+        });
+    }
     if name == "start_session" {
         if let Some(selection) = args
             .get("cursor_theme")
@@ -123,12 +138,23 @@ mod tests {
     use serde_json::json;
     use std::sync::Mutex;
 
+    fn test_sink_guard() -> std::sync::MutexGuard<'static, ()> {
+        static TEST_SINK: Mutex<()> = Mutex::new(());
+        TEST_SINK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     #[test]
     fn emits_only_for_explicit_session_and_known_tool() {
+        let _guard = test_sink_guard();
         let events = Arc::new(Mutex::new(Vec::new()));
         let captured = Arc::clone(&events);
         install_cursor_event_sink(Arc::new(move |event| {
-            captured.lock().unwrap().push(event);
+            captured
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(event);
         }));
 
         assert!(begin_tool("click", &json!({"x":1,"y":2})).is_none());
@@ -139,7 +165,10 @@ mod tests {
         );
         end_tool(active);
 
-        let events = events.lock().unwrap();
+        clear_cursor_event_sink();
+        let events = events
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         assert_eq!(events.len(), 2);
         assert!(matches!(
             events[0],
@@ -155,6 +184,44 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn public_label_metadata_is_emitted_separately_from_private_cursor_key() {
+        let _guard = test_sink_guard();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&events);
+        install_cursor_event_sink(Arc::new(move |event| {
+            captured
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(event);
+        }));
+
+        let active = begin_tool(
+            "click",
+            &json!({
+                "session":"__cua_runtime_private:research",
+                "_public_session_label":"Research run",
+                "x":1,
+                "y":2
+            }),
+        );
+        end_tool(active);
+
         clear_cursor_event_sink();
+        let events = events
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert!(matches!(
+            &events[0],
+            CursorEvent::SetSessionLabel { session, label }
+                if session == "__cua_runtime_private:research" && label == "Research run"
+        ));
+        assert!(matches!(
+            &events[1],
+            CursorEvent::Action { session, .. }
+                if session == "__cua_runtime_private:research"
+        ));
     }
 }

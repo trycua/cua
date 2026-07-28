@@ -105,9 +105,9 @@ window_id)`.
 
 ### Existing profile
 
-Attaching to an authenticated profile requires a separate interactive grant
-bound to the exact process, native window, and caller session. Ordinary MCP
-approval is not enough:
+Attaching to an authenticated profile requires explicit trusted launch or host
+authorization bound to the exact process, native window, and caller session.
+Ordinary MCP approval is not enough:
 
 CDP exposes broad authority over the profile's live pages, cookies, storage,
 runtime, and network state. Loopback prevents remote-host access but is not
@@ -116,14 +116,19 @@ route only on a trusted machine and only when an isolated profile cannot
 satisfy the task.
 
 ```bash
-cua-driver browser-approve --strategy existing_profile \
-  --pid 4242 --window-id 991 --session browser-run-1
+# Start the runtime with the trusted standard-mode launch grant.
+cua-driver mcp --grant existing-profile
 
 cua-driver browser_prepare \
   '{"pid":4242,"window_id":991,"session":"browser-run-1",
-    "strategy":{"kind":"existing_profile"},
-    "approval_token":"<token>"}'
+    "strategy":{"kind":"existing_profile"}}'
 ```
+
+For long-running service use, place `--grant existing-profile` on
+`cua-driver serve`. An embedding application may instead provide
+`DriverAuthorizationHost`. Bounded mode uses a reviewed manifest with
+`resources.browser.profiles: [{kind: existing_profile}]`. Unrestricted mode
+requires `--dangerously-bypass-approvals`.
 
 On supported Chrome, Chromium, and Edge combinations, the approved operation
 may open that product's fixed remote-debugging page in the exact approved
@@ -140,8 +145,8 @@ transition on that same control. Unsupported appearance, scale, zoom,
 window-size, or toolbar geometry refuses without a click; the fallback does not
 authorize generic pixel interaction.
 
-The grant lives only in the daemon, is scoped and expiring, and is discarded
-when the daemon restarts. A bounded reconnect can reuse it only while the same
+The grant lives only in the runtime, is scoped and expiring, and is discarded
+when the runtime shuts down. A bounded reconnect can reuse it only while the same
 process/profile proof remains valid. After preparation or reconnect, discard
 all previous target, tab, and ref values, list windows again when the pid
 changed, and bind again.
@@ -150,7 +155,7 @@ Never:
 
 - pass remote-debugging flags through `launch_app` for a personal profile;
 - edit Chromium `Preferences`, `Local State`, or profile files;
-- invent, log, persist, or reuse an approval token;
+- invent, log, persist, or reuse an authorization artifact;
 - copy a personal profile into a driver-owned directory;
 - terminate or restart the user's browser as a hidden setup step.
 
@@ -400,8 +405,9 @@ result from the current host, process, window, session, and tab.
 
 - `browser_requires_setup`: obtain explicit approval and call
   `browser_prepare`; never make setup a hidden read side effect.
-- `browser_consent_required`: use the exact interactive approval flow; do not
-  automate a generic approval dialog.
+- `browser_consent_required`: restart standard mode with the trusted launch
+  grant, use a matching bounded manifest, or let the embedding host decide the
+  attested request. Do not automate a generic approval dialog.
 - `browser_binding_ambiguous` or heuristic binding: resolve the native-window
   ambiguity and bind again; do not mutate.
 - `browser_ref_stale`: snapshot again and use a new ref.

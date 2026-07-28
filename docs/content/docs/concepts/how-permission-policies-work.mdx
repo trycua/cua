@@ -35,9 +35,15 @@ endpoint.
 `CUA_DRIVER_MANAGED_POLICY_FILE` loads an administrator ceiling in the same
 YAML or Rego formats. A call must pass both the managed and user layers. The
 runtime hashes each immutable policy snapshot and includes those hashes in
-protected approval requests and status output.
+authorization-host requests and status output.
 
-Permission mode is separate from capability policy. Policy answers whether a call is inside the allowed ceiling. Mode answers whether an allowed operation must stop for protected human approval. Approval and unrestricted mode cannot widen the policy ceiling. See [Permission modes and bounded autonomy](/reference/cua-driver/permission-modes).
+Permission mode is separate from capability policy. Policy answers whether a
+call is inside the allowed ceiling. Mode supplies the default autonomy model:
+`standard` admits the reviewed built-in operation set, `bounded` narrows calls
+to a reviewed manifest, and `unrestricted` removes Cua's runtime restrictions
+after explicit launch-time risk acceptance. No mode can widen a managed or
+user policy ceiling. See [Permission modes and bounded
+autonomy](/reference/cua-driver/permission-modes).
 
 ## Runtime-lifetime snapshot
 
@@ -107,11 +113,9 @@ A policy that allows `screenshot` permits an agent to take an unlimited number o
 
 The policy is evaluated in the same process as the tool implementation. An
 agent that can replace or inject code into the runtime-owning process can
-bypass it. Local shell access alone does not turn ordinary MCP arguments,
-files, TTY input, or environment values into a trusted confirmation channel.
-The built-in native card is only best-effort same-desktop confirmation. Use a
-trusted host to construct direct runtimes, or a trusted launcher and OS
-isolation for workers and services.
+bypass it. Cua Driver does not render authorization UI. Use a trusted host to
+construct direct runtimes, a trusted launcher to supply explicit launch
+grants, or OS isolation for workers and services.
 
 For remote agents connecting through an authenticated service, the policy
 provides a meaningful boundary: the service runtime will not execute a tool
@@ -121,5 +125,5 @@ that the policy blocks, regardless of what the agent sends.
 
 - [Restrict tool access with permission policies](/how-to-guides/driver/restrict-tool-access): step-by-step setup guide
 - [Permission policies](/reference/cua-driver/permission-policies): YAML schema and Rego input interface
-- [Permission modes and bounded autonomy](/reference/cua-driver/permission-modes): how mode, consent grants, and policy layers compose
+- [Permission modes and bounded autonomy](/reference/cua-driver/permission-modes): how modes, launch grants, manifests, and policy layers compose
 - [Process model](/reference/cua-driver/process-model): direct, worker, MCP, and service ownership

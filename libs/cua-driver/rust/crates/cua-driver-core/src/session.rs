@@ -331,6 +331,12 @@ pub fn begin_tool_call_with_state(
 /// once. Growth is bounded (one short string per ended session over the
 /// daemon's lifetime); eviction is a deliberate non-blocking follow-up.
 static ENDED_SESSIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+/// Runtime generations that have received terminal revoke-all.
+///
+/// This latch is intentionally independent of grants and public session
+/// labels. Once set, every later dispatch owned by the same runtime
+/// generation fails closed until that runtime is destroyed.
+static SUSPENDED_RUNTIME_SCOPES: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 fn hooks() -> &'static Mutex<HashMap<u64, SessionEndHook>> {
     SESSION_END_HOOKS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -338,6 +344,36 @@ fn hooks() -> &'static Mutex<HashMap<u64, SessionEndHook>> {
 
 fn ended_sessions() -> &'static Mutex<HashSet<String>> {
     ENDED_SESSIONS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn suspended_runtime_scopes() -> &'static Mutex<HashSet<String>> {
+    SUSPENDED_RUNTIME_SCOPES.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Terminally suspend authorization for one private runtime generation.
+///
+/// The opaque scope is generated inside Cua and is never accepted from a
+/// public tool argument.
+pub fn suspend_runtime_scope(runtime_scope: &str) -> bool {
+    suspended_runtime_scopes()
+        .lock()
+        .unwrap()
+        .insert(runtime_scope.to_owned())
+}
+
+pub fn is_runtime_scope_suspended(runtime_scope: &str) -> bool {
+    suspended_runtime_scopes()
+        .lock()
+        .unwrap()
+        .contains(runtime_scope)
+}
+
+/// Forget a suspend latch only when its owning runtime is being destroyed.
+pub fn forget_suspended_runtime_scope(runtime_scope: &str) -> bool {
+    suspended_runtime_scopes()
+        .lock()
+        .unwrap()
+        .remove(runtime_scope)
 }
 
 fn public_session_label(session_id: &str) -> &str {
@@ -753,12 +789,11 @@ mod tests {
         assert!(custom.motion_customized);
         assert_eq!(custom.active_cursor_count, 7);
         let debug = format!("{custom:?}");
-        for forbidden in ["private.customer.theme"] {
-            assert!(
-                !debug.contains(forbidden),
-                "cursor outcome leaked {forbidden}: {debug}"
-            );
-        }
+        let forbidden = "private.customer.theme";
+        assert!(
+            !debug.contains(forbidden),
+            "cursor outcome leaked {forbidden}: {debug}"
+        );
 
         let unknown = bounded_cursor_outcome(false, true, Some("cua.default"), true, 0);
         assert_eq!(unknown.theme, CursorThemeCategory::Unknown);

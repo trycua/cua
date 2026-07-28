@@ -213,6 +213,10 @@ if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
 fi
 
 if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
+  run_test agent-cursor-showcase \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test agent_cursor_showcase_test -- \
+      --ignored --nocapture --test-threads=1
   run_test gtk3-native-harness \
     cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
       --test harness_gtk3_test -- \

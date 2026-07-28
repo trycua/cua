@@ -13,10 +13,23 @@ CuaDriver.create = (options) =>
   CuaDriver.createWithClientKind(options, SdkClientKind.Typescript)
 CuaDriver.createConfigured = (options) =>
   CuaDriver.createConfiguredWithClientKind(options, SdkClientKind.Typescript)
-CuaDriver.createConfiguredWithProtectedHost = (options, host) =>
-  CuaDriver.createConfiguredWithProtectedHostAndClientKind(
+CuaDriver.createConfiguredWithAuthorizationHost = (options, host) =>
+  CuaDriver.createConfiguredWithAuthorizationHostAndClientKind(
     options,
     host,
+    SdkClientKind.Typescript,
+  )
+CuaDriver.createConfiguredWithActivityObserver = (options, observer) =>
+  CuaDriver.createConfiguredWithActivityObserverAndClientKind(
+    options,
+    observer,
+    SdkClientKind.Typescript,
+  )
+CuaDriver.createConfiguredWithHostIntegrations = (options, host, observer) =>
+  CuaDriver.createConfiguredWithHostIntegrationsAndClientKind(
+    options,
+    host,
+    observer,
     SdkClientKind.Typescript,
   )
 CuaDriver.createPrivateWorker = (options) =>

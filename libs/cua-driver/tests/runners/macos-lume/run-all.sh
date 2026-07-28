@@ -176,9 +176,14 @@ fi
 
 LOCAL_PLIST="${HOME}/Library/LaunchAgents/com.trycua.cua-driver-local.plist"
 RESTORE_STANDARD_DAEMON=0
+UNRESTRICTED_WATCHDOG_PID=""
 restore_standard_daemon() {
   local command_status=$?
   trap - EXIT
+  if [[ -n "${UNRESTRICTED_WATCHDOG_PID}" ]]; then
+    kill "${UNRESTRICTED_WATCHDOG_PID}" >/dev/null 2>&1 || true
+    wait "${UNRESTRICTED_WATCHDOG_PID}" 2>/dev/null || true
+  fi
   if [[ "${RESTORE_STANDARD_DAEMON}" != 1 ]]; then
     exit "${command_status}"
   fi
@@ -206,15 +211,33 @@ restore_standard_daemon() {
 }
 trap restore_standard_daemon EXIT
 
+start_unrestricted_daemon() {
+  open -n -g /Applications/CuaDriverLocal.app --args \
+    serve \
+    --permission-mode unrestricted \
+    --dangerously-bypass-approvals \
+    >/dev/null 2>&1
+}
+
+keep_unrestricted_daemon_alive() {
+  while true; do
+    local status
+    status="$("${INSTALLED_BIN}" status --socket "${CUA_E2E_MACOS_DAEMON_SOCKET}" 2>&1 || true)"
+    if ! grep -Fq "permission mode: unrestricted" <<< "${status}"; then
+      printf '%s daemon was unavailable or used the wrong mode; restarting\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      "${INSTALLED_BIN}" stop --socket "${CUA_E2E_MACOS_DAEMON_SOCKET}" >/dev/null 2>&1 || true
+      start_unrestricted_daemon
+    fi
+    sleep 3
+  done
+}
+
 echo "[AUTHORIZATION] Starting the disposable worker daemon in unrestricted mode"
 launchctl unload "${LOCAL_PLIST}" 2>/dev/null || true
 "${INSTALLED_BIN}" stop --socket "${CUA_E2E_MACOS_DAEMON_SOCKET}" >/dev/null 2>&1 || true
 RESTORE_STANDARD_DAEMON=1
-open -n -g /Applications/CuaDriverLocal.app --args \
-  serve \
-  --permission-mode unrestricted \
-  --dangerously-bypass-approvals \
-  >/dev/null 2>&1
+start_unrestricted_daemon
 UNRESTRICTED_READY=0
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   if "${INSTALLED_BIN}" status --socket "${CUA_E2E_MACOS_DAEMON_SOCKET}" \
@@ -228,6 +251,9 @@ if [[ "${UNRESTRICTED_READY}" != 1 ]]; then
   echo "The macOS behavior matrix could not start its unrestricted worker daemon" >&2
   exit 1
 fi
+keep_unrestricted_daemon_alive \
+  >> "${ARTIFACT_DIR}/unrestricted-daemon-watchdog.log" 2>&1 &
+UNRESTRICTED_WATCHDOG_PID=$!
 
 echo "[APP DISCOVERY] Verifying the installed CuaDriver can enumerate apps"
 if ! "${INSTALLED_BIN}" list_apps '{}' > "${ARTIFACT_DIR}/driver-list-apps.json"; then

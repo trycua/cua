@@ -130,8 +130,14 @@ where
 pub struct TreeWalkResult {
     pub tree_markdown: String,
     pub nodes: Vec<AXNode>,
-    /// True when the walk was cut short by the MAX_ELEMENTS cap.
+    /// True when the walk was cut short by either the element or depth cap.
     pub truncated: bool,
+}
+
+#[derive(Default)]
+struct WalkTruncation {
+    element_limit: bool,
+    depth_limit: bool,
 }
 
 /// Walk the AX tree of `pid`, optionally filtered to a specific window.
@@ -178,9 +184,9 @@ pub fn walk_tree_bounded(
     let mut index_counter = 0usize;
     // Shared visited-node counter passed into walk_element to enforce the cap.
     let mut visited_count = 0usize;
-    // Set to true only when walk_element actually stops early due to the cap —
-    // avoids a false-positive when the tree naturally ends on exactly the cap.
-    let mut truncated = false;
+    // Record only bounds that actually omit a node, avoiding a false-positive
+    // when the tree naturally ends exactly on either bound.
+    let mut truncated = WalkTruncation::default();
 
     unsafe {
         let app_elem = AXUIElementCreateApplication(pid);
@@ -279,7 +285,7 @@ pub fn walk_tree_bounded(
         CFRelease(app_elem as CFTypeRef);
     }
 
-    let truncated_flag = truncated;
+    let truncated_flag = truncated.element_limit || truncated.depth_limit;
     let raw_markdown = render_lines(&lines);
     let mut tree_markdown = if let Some(q) = query {
         filter_tree(&raw_markdown, q)
@@ -287,10 +293,16 @@ pub fn walk_tree_bounded(
         raw_markdown
     };
 
-    if truncated_flag {
+    if truncated.element_limit {
         tree_markdown.push_str(&format!(
             "\n⚠️  AX tree truncated at {max_elements} nodes \
              (app has a very large accessibility tree — Arc, Electron, or similar). \
+             Element indices above are still valid. Use pixel clicks for elements \
+             not visible in this partial tree."
+        ));
+    } else if truncated.depth_limit {
+        tree_markdown.push_str(&format!(
+            "\n⚠️  AX tree truncated beyond depth {max_depth}. \
              Element indices above are still valid. Use pixel clicks for elements \
              not visible in this partial tree."
         ));
@@ -312,17 +324,18 @@ unsafe fn walk_element(
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
     visited_count: &mut usize,
-    truncated: &mut bool,
+    truncated: &mut WalkTruncation,
     max_elements: usize,
     max_depth: usize,
 ) {
     if depth > max_depth {
+        truncated.depth_limit = true;
         return;
     }
     // Enforce total-node cap — mirrors Swift's maxElements guard.
     // Set the truncated flag only when we actually stop early.
     if *visited_count >= max_elements {
-        *truncated = true;
+        truncated.element_limit = true;
         return;
     }
     *visited_count += 1;

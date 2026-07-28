@@ -9,7 +9,7 @@
 //! - `background` (DEFAULT) — PostMessage / UIA path only, never fronts. If
 //!   `would_be_silently_dropped(target, event_kind)` returns true, the tool
 //!   returns a structured `background_unavailable` error so the caller can
-//!   `bring_to_front` then retry with `delivery_mode:"foreground"`. This is
+//!   retry that action with `delivery_mode:"foreground"`. This is
 //!   the default because cua-driver's value proposition is that input never
 //!   steals foreground — surfacing an honest error beats silently fronting.
 //!
@@ -119,7 +119,7 @@ pub fn delivery_mode_schema() -> Value {
          the tool returns a structured background_unavailable error rather than \
          fronting. 'foreground' is the explicit escalation: a brief \
          SetForegroundWindow swap + SendInput, restoring the prior foreground \
-         afterward (call bring_to_front first to avoid the flash). \
+         afterward. \
          IMPORTANT: 'background' is not a hint to weigh — it is the mandatory \
          first attempt. Do NOT pass 'foreground' preemptively because a target \
          'looks like' GTK/Chromium/Electron; the DRIVER decides when background \
@@ -331,24 +331,22 @@ pub fn background_unavailable_error(
     let class = read_class_name(hwnd);
     let text = format!(
         "Background delivery is not available for target window class \
-         '{class}' on this event kind ({}). Either call bring_to_front \
-         then retry with delivery_mode:\"foreground\", or accept the foreground \
-         swap directly by setting delivery_mode:\"foreground\".",
+         '{class}' on this event kind ({}). Retry this action with \
+         delivery_mode:\"foreground\"; Cua Driver will activate the target for \
+         the action and restore the previous foreground afterward.",
         kind.name()
     );
     cua_driver_core::protocol::ToolResult::error(text).with_structured(serde_json::json!({
         "code": "background_unavailable",
         "target_class": class,
         "event_kind": kind.name(),
-        "suggestion":
-            "Either call bring_to_front then retry with delivery_mode:\"foreground\", \
-             or accept the foreground swap by setting delivery_mode:\"foreground\" directly.",
+        "suggestion": "Retry this action with delivery_mode:\"foreground\".",
         // Windows analog of the macOS escalation signal: this surface drops
         // background input, so the deliberate next rung is foreground delivery.
         "escalation": {
             "recommended": "foreground",
-            "reason": "background input is dropped by this surface — re-call \
-                       delivery_mode:\"foreground\" (or bring_to_front first).",
+            "reason": "background input is dropped by this surface; retry this \
+                       action with delivery_mode:\"foreground\".",
         },
     }))
 }
@@ -374,7 +372,9 @@ pub fn background_unavailable_error_with_cause(
     };
     let text = format!(
         "Background delivery is not available for target window class \
-         '{class}' on this event kind ({}): {cause}",
+         '{class}' on this event kind ({}): {cause}. Retry this action with \
+         delivery_mode:\"foreground\"; Cua Driver will activate the target for \
+         the action and restore the previous foreground afterward.",
         kind.name()
     );
     cua_driver_core::protocol::ToolResult::error(text).with_structured(serde_json::json!({
@@ -382,13 +382,11 @@ pub fn background_unavailable_error_with_cause(
         "target_class": class,
         "event_kind": kind.name(),
         "cause": cause,
-        "suggestion":
-            "Either call bring_to_front then retry with delivery_mode:\"foreground\", \
-             or accept the foreground swap by setting delivery_mode:\"foreground\" directly.",
+        "suggestion": "Retry this action with delivery_mode:\"foreground\".",
         "escalation": {
             "recommended": "foreground",
-            "reason": "background input could not be delivered by the coordinate actuator — \
-                       re-call delivery_mode:\"foreground\" (or bring_to_front first).",
+            "reason": "background input could not be delivered by the coordinate \
+                       actuator; retry this action with delivery_mode:\"foreground\".",
         },
     }))
 }
@@ -458,6 +456,41 @@ mod tests {
     }
 
     #[test]
+    fn delivery_mode_schema_keeps_persistent_activation_out_of_the_input_ladder() {
+        let schema = delivery_mode_schema();
+        let description = schema["description"]
+            .as_str()
+            .expect("delivery_mode description");
+        assert!(description.contains("Only THEN re-issue the same action with 'foreground'"));
+        assert!(!description.contains("bring_to_front"));
+    }
+
+    #[test]
+    fn background_unavailable_prefers_action_scoped_foreground_delivery() {
+        let result = background_unavailable_error(0, EventKind::MouseClick);
+        let structured = result.structured_content.as_ref().expect("structured");
+        let text = match &result.content[0] {
+            cua_driver_core::protocol::Content::Text { text, .. } => text,
+            _ => panic!("expected text content"),
+        };
+
+        assert!(text.contains("Retry this action with delivery_mode:\"foreground\""));
+        assert!(!text.contains("bring_to_front"));
+        assert_eq!(
+            structured["suggestion"].as_str(),
+            Some("Retry this action with delivery_mode:\"foreground\".")
+        );
+        assert_eq!(
+            structured["escalation"]["recommended"].as_str(),
+            Some("foreground")
+        );
+        assert!(!structured["escalation"]["reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("bring_to_front"));
+    }
+
+    #[test]
     fn background_unavailable_with_cause_preserves_actuator_failure() {
         let result = background_unavailable_error_with_cause(
             0,
@@ -478,6 +511,12 @@ mod tests {
             _ => panic!("expected text content"),
         };
         assert!(text.contains("occluded"), "result text lost cause: {text}");
+        assert!(text.contains("Retry this action with delivery_mode:\"foreground\""));
+        assert!(!text.contains("bring_to_front"));
+        assert!(!structured["suggestion"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("bring_to_front"));
 
         let uipi = background_unavailable_error_with_cause(
             0,

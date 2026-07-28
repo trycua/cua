@@ -77,7 +77,25 @@ The agent cursor is session-owned. Its default theme and custom dotLottie
 authoring workflow are documented in
 [`docs/cursor-themes.md`](../docs/cursor-themes.md). Custom source is compiled
 and installed with the local CLI; SDK and MCP tools select only an installed
-theme ID.
+theme ID. The built-in cursor shows the sanitized public session name in a
+badge below the pointer.
+
+## Authorization integrations
+
+`standard` is promptless for normal automation. An application that needs to
+authorize attachment to an existing logged-in Chromium profile can construct a
+configured runtime with
+`CuaDriver.createConfiguredWithAuthorizationHost(options, host)`. Implement
+the `DriverAuthorizationHost` interface in trusted application code and return
+the request's exact digest with `Allow`, `Deny`, or `Cancel`.
+
+`CuaDriver.createConfiguredWithActivityObserver(options, observer)` emits
+content-free action, refusal, grant, and session events. The observer cannot
+change authorization or tool results. Use
+`createConfiguredWithHostIntegrations` when the application needs both.
+
+See the [SDK reference](https://cua.ai/docs/reference/cua-driver/sdk-reference)
+for complete examples and the callback trust rules.
 
 `CuaDriver.connect(socketPath)` remains available while existing applications
 migrate. It exposes the same methods over the installed daemon, but it does not

@@ -13,6 +13,8 @@
 //!   (the GNOME analogue of the X11 `_GTK_FRAME_EXTENTS` reconstruction).
 //! - `MoveCursor(x,y)` / `ClickPulse(x,y)` / `HideCursor()` — draw the agent
 //!   cursor as a Clutter actor on the compositor stage.
+//! - `SetCursorState(...)` / `SetCursorColor(...)` — keep the compositor cursor
+//!   aligned with the shared semantic theme and active session identity.
 //!
 //! Everything here is **best-effort**: if the extension isn't installed/enabled
 //! the calls return `None` / no-op and callers keep the prior behaviour (no
@@ -33,6 +35,7 @@ const DBUS_DEST: &str = "org.freedesktop.DBus";
 const DBUS_PATH: &str = "/org/freedesktop/DBus";
 const DBUS_IFACE: &str = "org.freedesktop.DBus";
 const BROWSER_HELPER_API_VERSION: u32 = 4;
+const SEMANTIC_CURSOR_API_VERSION: u32 = 6;
 
 #[derive(Debug, Clone)]
 struct ShellWindow {
@@ -42,6 +45,10 @@ struct ShellWindow {
 
 pub fn available() -> bool {
     shell_owner(false).is_some()
+}
+
+pub fn semantic_cursor_available() -> bool {
+    shell_owner_with_min_version(Some(SEMANTIC_CURSOR_API_VERSION)).is_some()
 }
 
 fn gdbus_call(method: &str, args: &[String]) -> Option<String> {
@@ -110,6 +117,10 @@ fn gdbus_call_to(
 /// name closes the race where another process replaces the well-known name
 /// after ownership is checked.
 fn shell_owner(require_browser_api: bool) -> Option<String> {
+    shell_owner_with_min_version(require_browser_api.then_some(BROWSER_HELPER_API_VERSION))
+}
+
+fn shell_owner_with_min_version(min_version: Option<u32>) -> Option<String> {
     let owner_raw = gdbus_call_to(
         DBUS_DEST,
         DBUS_PATH,
@@ -142,7 +153,7 @@ fn shell_owner(require_browser_api: bool) -> Option<String> {
         return None;
     }
 
-    if require_browser_api {
+    if let Some(min_version) = min_version {
         let version_raw = gdbus_call_to(
             &owner,
             PATH,
@@ -150,7 +161,7 @@ fn shell_owner(require_browser_api: bool) -> Option<String> {
             &[],
             Duration::from_millis(800),
         )?;
-        if parse_first_u32(&version_raw)? < BROWSER_HELPER_API_VERSION {
+        if parse_first_u32(&version_raw)? < min_version {
             return None;
         }
     }
@@ -523,6 +534,32 @@ pub fn click_pulse(x: i32, y: i32) {
     let _ = gdbus_call("ClickPulse", &[x.to_string(), y.to_string()]);
 }
 
+/// Set the stable session-specific fill color for the compositor cursor.
+pub fn set_cursor_color(fill_color: &str) {
+    let _ = gdbus_call("SetCursorColor", &[fill_color.to_owned()]);
+}
+
+/// Update the compositor-owned cursor's semantic action state.
+///
+/// Callers gate this method on helper v5 so an older helper cannot silently
+/// render the retired cursor artwork.
+pub fn set_cursor_state(action: &str, delivery: &str, target: &str, active: bool) {
+    let _ = gdbus_call(
+        "SetCursorState",
+        &[
+            action.to_owned(),
+            delivery.to_owned(),
+            target.to_owned(),
+            active.to_string(),
+        ],
+    );
+}
+
+/// Set the renderer-visible public session label for the compositor cursor.
+pub fn set_session_label(label: &str) {
+    let _ = gdbus_call("SetSessionLabel", &[label.to_owned()]);
+}
+
 /// Hide the agent cursor.
 pub fn hide_cursor() {
     let _ = gdbus_call("HideCursor", &[]);
@@ -531,6 +568,11 @@ pub fn hide_cursor() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const EXTENSION_SOURCE: &str =
+        include_str!("../../../../../wayland-helper/winrects@cua/extension.js");
+    const EXTENSION_METADATA: &str =
+        include_str!("../../../../../wayland-helper/winrects@cua/metadata.json");
 
     #[test]
     fn parses_and_filters_shell_windows() {
@@ -582,5 +624,36 @@ mod tests {
         assert!(!windows[0].focused);
         assert!(windows[1].focused);
         assert_eq!(windows[1].info.xid, 47);
+    }
+
+    #[test]
+    fn bundled_helper_v6_uses_the_compact_semantic_cursor_and_session_badge() {
+        assert!(EXTENSION_SOURCE.contains("GetVersion() { return 6; }"));
+        assert!(EXTENSION_SOURCE.contains("SetCursorState"));
+        assert!(EXTENSION_SOURCE.contains("SetCursorColor"));
+        assert!(EXTENSION_SOURCE.contains("SetSessionLabel"));
+        assert!(EXTENSION_SOURCE.contains("const DISPLAY_SIZE = 48;"));
+        assert!(EXTENSION_SOURCE.contains("const GLOW_PADDING = 24;"));
+        assert!(EXTENSION_SOURCE.contains("function drawCursorGlowShape"));
+        assert!(EXTENSION_SOURCE.contains("function glowPath"));
+        assert!(EXTENSION_SOURCE.contains("strokePath(cr, width, alpha, fillColor)"));
+        assert!(EXTENSION_SOURCE.contains("width + 1.5"));
+        assert!(EXTENSION_SOURCE.contains("width - 1"));
+        assert!(EXTENSION_SOURCE.contains("createGlowSurface(this._fillColor)"));
+        assert!(EXTENSION_SOURCE.contains("cr.translate(-GLOW_PADDING, -GLOW_PADDING);"));
+        assert!(EXTENSION_METADATA.contains("\"version\":6"));
+
+        for action in [
+            "idle", "observe", "click", "drag", "scroll", "text", "key", "navigate", "app",
+            "transfer", "record", "system",
+        ] {
+            assert!(
+                EXTENSION_SOURCE.contains(&format!("'{action}'")),
+                "missing semantic cursor state {action}"
+            );
+        }
+
+        assert!(!EXTENSION_SOURCE.contains("const VERTS"));
+        assert!(!EXTENSION_SOURCE.contains("setSourceRGBA(0.10, 0.75, 1.00"));
     }
 }

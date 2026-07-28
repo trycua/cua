@@ -4,6 +4,7 @@
 //! objects and the daemon host construct the same runtime here; transport
 //! adapters are downstream consumers of `CuaDriver`.
 
+use crate::{DriverActivityEvent, DriverActivityKind, DriverActivityObserver};
 use cua_driver_core::{
     authorization::PermissionMode,
     protocol::ToolResult as CoreToolResult,
@@ -54,10 +55,10 @@ pub(crate) struct RuntimeOptions {
     pub register_host_tools: Option<fn(&mut ToolRegistry)>,
     pub authorization_ceiling: Option<SessionModeCeiling>,
     pub compatibility_authorization: Option<(PermissionMode, Option<Arc<SessionManifest>>)>,
-    /// Constructor-only protected host. This object is never reachable from
+    /// Constructor-only authorization host. This object is never reachable from
     /// public tool arguments or transport metadata.
-    pub protected_consent_provider:
-        Option<Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
+    pub authorization_host: Option<Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
+    pub activity_observer: Option<Arc<dyn DriverActivityObserver>>,
 }
 
 impl RuntimeOptions {
@@ -74,7 +75,8 @@ impl RuntimeOptions {
             register_host_tools: None,
             authorization_ceiling: None,
             compatibility_authorization: None,
-            protected_consent_provider: None,
+            authorization_host: None,
+            activity_observer: None,
         }
     }
 
@@ -156,6 +158,7 @@ pub(crate) struct DriverRuntime {
     /// admission. Therefore shutdown is idempotent and does not return while a
     /// previously admitted operation is still executing.
     lifecycle: tokio::sync::RwLock<()>,
+    activity_observer: Option<Arc<dyn DriverActivityObserver>>,
 }
 
 impl DriverRuntime {
@@ -191,6 +194,7 @@ impl DriverRuntime {
             shutdown: AtomicBool::new(false),
             last_activity: AtomicU64::new(now_unix_secs()),
             lifecycle: tokio::sync::RwLock::new(()),
+            activity_observer: options.activity_observer.clone(),
         });
         spawn_lifecycle_maintenance(&runtime);
         Ok(runtime)
@@ -214,6 +218,9 @@ impl DriverRuntime {
         );
         cua_driver_core::session::revoke_sessions_with_prefix(&runtime_prefix);
         cua_driver_core::session::forget_ended_sessions_with_prefix(&runtime_prefix);
+        cua_driver_core::session::forget_suspended_runtime_scope(
+            &self.compatibility_context.runtime_scope_key(),
+        );
         cua_driver_core::element_token::global()
             .clear_runtime_scope(&self.compatibility_context.runtime_scope_key());
         let recording = self.registry.recording.clone();
@@ -282,10 +289,74 @@ impl DriverRuntime {
                     .map(|session| context.runtime_session_key(session))
             })
             .flatten();
+        let public_session = args
+            .get("session")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        let risk = cua_driver_core::authorization::classify_tool_call(name, &args);
+        let adapters = cua_driver_core::authorization::enforcement_adapters_for_call(name, &args)
+            .into_iter()
+            .map(|adapter| adapter.id.to_owned())
+            .collect::<Vec<_>>();
         let result = self
             .registry
             .invoke_with_context_and_evidence(name, args, context, evidence)
             .await;
+        if let Some(observer) = self.activity_observer.as_ref() {
+            let refusal_code = result
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            let success = result.is_error != Some(true);
+            observer.on_activity(DriverActivityEvent {
+                kind: if success {
+                    DriverActivityKind::AuthorizedAction
+                } else if refusal_code.is_some() {
+                    DriverActivityKind::AuthorizationRefused
+                } else {
+                    DriverActivityKind::ActionFailed
+                },
+                unix_ms: now_unix_ms(),
+                tool_name: name.to_owned(),
+                adapter_ids: adapters.clone(),
+                risk_class: risk.class.as_str().to_owned(),
+                public_session: public_session.clone(),
+                refusal_code,
+            });
+            if success && name == "start_session" {
+                observer.on_activity(activity_lifecycle_event(
+                    DriverActivityKind::SessionStarted,
+                    name,
+                    public_session.clone(),
+                ));
+            }
+            if success
+                && adapters
+                    .iter()
+                    .any(|adapter| adapter == "browser_prepare.existing_profile")
+            {
+                observer.on_activity(activity_lifecycle_event(
+                    DriverActivityKind::GrantIssued,
+                    name,
+                    public_session.clone(),
+                ));
+            }
+            if success && name == "end_session" {
+                observer.on_activity(activity_lifecycle_event(
+                    DriverActivityKind::GrantRevoked,
+                    name,
+                    public_session.clone(),
+                ));
+                observer.on_activity(activity_lifecycle_event(
+                    DriverActivityKind::SessionEnded,
+                    name,
+                    public_session,
+                ));
+            }
+        }
         if let Some(session) = ending_session {
             // `end_session` is a lifecycle boundary: do not report completion
             // until any recording owned by the session has finalized.
@@ -323,6 +394,31 @@ impl DriverRuntime {
     }
 }
 
+fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
+}
+
+fn activity_lifecycle_event(
+    kind: DriverActivityKind,
+    tool_name: &str,
+    public_session: Option<String>,
+) -> DriverActivityEvent {
+    DriverActivityEvent {
+        kind,
+        unix_ms: now_unix_ms(),
+        tool_name: tool_name.to_owned(),
+        adapter_ids: Vec::new(),
+        risk_class: "r0".to_owned(),
+        public_session,
+        refusal_code: None,
+    }
+}
+
 impl Drop for DriverRuntime {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Release);
@@ -331,6 +427,7 @@ impl Drop for DriverRuntime {
         let runtime_prefix = format!("__cua_runtime_{runtime_scope}:");
         cua_driver_core::session::revoke_sessions_with_prefix(&runtime_prefix);
         cua_driver_core::session::forget_ended_sessions_with_prefix(&runtime_prefix);
+        cua_driver_core::session::forget_suspended_runtime_scope(&runtime_scope);
         cua_driver_core::element_token::global().clear_runtime_scope(&runtime_scope);
         // Explicit `shutdown()` drains work and finalizes recordings. Drop is
         // runtime-scoped and non-blocking so a retained binding cannot affect
@@ -421,7 +518,7 @@ fn build_registry(options: &RuntimeOptions) -> ToolRegistry {
     let mut registry = {
         configure_macos_runtime();
         platform_macos::register_tools_with_cursor_and_provider(
-            options.protected_consent_provider.clone(),
+            options.authorization_host.clone(),
             options.cursor.clone(),
             options.compatibility_mode,
             options.host_owns_permission_ux,
@@ -433,7 +530,7 @@ fn build_registry(options: &RuntimeOptions) -> ToolRegistry {
     let mut registry = {
         configure_windows_runtime();
         platform_windows::register_tools_with_cursor_and_provider(
-            options.protected_consent_provider.clone(),
+            options.authorization_host.clone(),
             options.cursor.clone(),
             options.compatibility_mode,
         )
@@ -443,7 +540,7 @@ fn build_registry(options: &RuntimeOptions) -> ToolRegistry {
     let mut registry = {
         configure_linux_runtime(options.prepare_desktop_environment);
         platform_linux::register_tools_with_cursor_and_provider(
-            options.protected_consent_provider.clone(),
+            options.authorization_host.clone(),
             options.cursor.clone(),
             options.compatibility_mode,
         )
@@ -559,9 +656,8 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use cua_driver_core::consent::{
-        ConsentAction, ConsentRequest, IndicatorLease, ProtectedConsentProvider, ProviderDecision,
+        ConsentAction, ConsentRequest, ProtectedConsentProvider, ProviderDecision,
     };
-    use std::sync::atomic::AtomicBool;
     use std::time::Duration;
 
     struct TestProtectedHost;
@@ -581,18 +677,6 @@ mod tests {
                 request_digest: request.request_digest.clone(),
             })
         }
-
-        async fn activate_indicator(
-            &self,
-            request: &ConsentRequest,
-        ) -> Result<IndicatorLease, String> {
-            Ok(IndicatorLease::new(
-                format!("test-indicator-{}", request.generation),
-                Arc::new(AtomicBool::new(false)),
-            ))
-        }
-
-        async fn deactivate_indicator(&self, _indicator_id: &str) {}
     }
 
     fn standard_options() -> RuntimeOptions {
@@ -605,7 +689,7 @@ mod tests {
         .unwrap();
         let mut options =
             RuntimeOptions::embedded_with_ceiling(false, ceiling, PermissionMode::Standard, None);
-        options.protected_consent_provider = Some(Arc::new(TestProtectedHost));
+        options.authorization_host = Some(Arc::new(TestProtectedHost));
         options
     }
 

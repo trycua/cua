@@ -201,6 +201,9 @@ if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
     --nocapture --test-threads=1
 fi
 if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
+  run_test agent-cursor-showcase cargo test -p cua-driver \
+    --test agent_cursor_showcase_test -- \
+    --ignored --nocapture --test-threads=1
   for appkit_test in \
     harness_appkit_smoke \
     harness_appkit_text_input \

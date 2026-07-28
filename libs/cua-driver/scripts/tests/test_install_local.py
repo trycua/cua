@@ -29,6 +29,11 @@ def test_installer_stages_binary_from_custom_cargo_target(
     shutil.copy2(INSTALL_LOCAL, scripts_dir / INSTALL_LOCAL.name)
     shutil.copy2(LOCAL_SIGNING, scripts_dir / LOCAL_SIGNING.name)
 
+    wayland_helper = fixture_root / "wayland-helper/winrects@cua"
+    wayland_helper.mkdir(parents=True)
+    (wayland_helper / "metadata.json").write_text('{"version":5}\n', encoding="utf-8")
+    (wayland_helper / "extension.js").write_text("// semantic cursor v5\n", encoding="utf-8")
+
     stale_binary = rust_dir / "target/release/cua-driver"
     _write_executable(stale_binary, "printf 'stale workspace target\\n'")
 
@@ -64,12 +69,17 @@ esac
     _write_executable(fake_bin / "pkill", "exit 0")
 
     local_home = tmp_path / "local-home"
+    user_home = tmp_path / "home"
+    installed_helper = user_home / ".local/share/gnome-shell/extensions/winrects@cua"
+    installed_helper.mkdir(parents=True)
+    (installed_helper / "metadata.json").write_text('{"version":4}\n', encoding="utf-8")
+    (installed_helper / "extension.js").write_text("// legacy cursor\n", encoding="utf-8")
     install_bin = tmp_path / "install-bin"
     env = os.environ.copy()
     env.pop("SUDO_USER", None)
     env.update(
         {
-            "HOME": str(tmp_path / "home"),
+            "HOME": str(user_home),
             "PATH": f"{fake_bin}:/usr/bin:/bin",
             "CARGO_TARGET_DIR": cargo_target_dir,
             "EXPECTED_CARGO_TARGET_DIR": str(custom_target),
@@ -97,3 +107,8 @@ esac
     assert (
         local_home / "packages/current/cua-cursor-theme"
     ).read_text() == "fresh cursor theme compiler\n"
+    assert (
+        local_home / "packages/current/wayland-helper/winrects@cua/metadata.json"
+    ).read_text() == '{"version":5}\n'
+    assert (installed_helper / "metadata.json").read_text() == '{"version":5}\n'
+    assert (installed_helper / "extension.js").read_text() == "// semantic cursor v5\n"

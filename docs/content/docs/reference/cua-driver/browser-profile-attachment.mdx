@@ -20,27 +20,25 @@ profiles.
 
 `pid`, `window_id`, and `session` are required. `strategy` cannot be combined
 with legacy `allow_launch` or `profile` fields. Authorization depends on the
-daemon's immutable [permission mode](/reference/cua-driver/permission-modes):
+runtime's immutable [permission mode](/reference/cua-driver/permission-modes):
 
-- `standard` requests exact confirmation from the runtime's provider.
-- `bounded` requires the launch-approved manifest to list this PID/window;
-  the provider activates its persistent Stop indicator without a second prompt.
-- `unrestricted` attaches without a runtime approval after the trusted launcher
-  supplied `--dangerously-bypass-approvals`.
+- `standard` requires either the trusted launch option
+  `--grant existing-profile` or an authorization callback supplied by the
+  embedding application.
+- `bounded` requires the approved manifest to match the browser profile,
+  application identity, and requested operation.
+- `unrestricted` attaches without a second authorization after the trusted
+  launcher supplied `--dangerously-bypass-approvals`.
 
-The internal approval marker supplied by an MCP transport does not authorize
-this strategy. Interactive standalone daemons use Cua's native confirmation
-card. Headless daemons without a confirmation surface fail closed in
-`standard`, and bounded attachment fails when its required persistent
-indicator cannot be shown.
+Cua Driver does not display its own confirmation modal or persistent banner.
+The CLI launch grant is useful when a person or trusted supervisor starts the
+runtime. Embedded applications can collect authorization in their own UI and
+return the decision through `DriverAuthorizationHost`.
 
-![Cua Driver confirmation card beside its persistent session indicator](/img/cua-driver-consent-ui.jpg)
-
-The native card is same-desktop, best-effort confirmation. It prevents
-tool-argument forgery and clearly presents the exact operation, but another
-process or remote-desktop controller that can automate the same desktop can
-activate it. It is not a secure-desktop or biometric boundary. Use a stronger
-host-provided collector when local hostile automation is in scope.
+The ordinary MCP destructive-tool marker does not authorize this strategy. It
+proves transport provenance, not approval to use an authenticated browser
+profile. A standalone standard-mode runtime without a launch grant or host
+callback fails closed.
 
 The old `browser-approve` file artifact is disabled by default. A trusted
 launcher can temporarily enable it with
@@ -59,7 +57,7 @@ A successful call returns `action: "attached_existing_profile"` and an
 | `capabilities_invalidated` | `true`              |
 | `next_action`              | `get_browser_state` |
 
-`side_effects` reports the bounded setup and consent effects:
+`side_effects` reports the bounded setup and browser-owned connection effects:
 
 | Field                         | Meaning                                                                                                                |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
@@ -71,7 +69,7 @@ A successful call returns `action: "attached_existing_profile"` and an
 | `foregrounded_window`         | Setup temporarily foregrounded the exact approved browser window for a bounded local action.                           |
 | `injected_global_input`       | Setup delivered global mouse or keyboard input only after revalidating the approved browser process and window.        |
 | `changed_preferences`         | Mirrors `enabled_remote_debugging` for the generic prepare contract.                                                   |
-| `displayed_consent_prompt`    | Chrome displayed its browser-owned connection-consent prompt.                                                          |
+| `displayed_consent_prompt`    | Chrome displayed its browser-owned connection prompt.                                                                  |
 
 All fields are `false` when the endpoint was already available. The driver does
 not return the profile identity, endpoint address, port, connection generation,
@@ -103,11 +101,11 @@ state; callers must not infer that remote debugging is disabled.
 
 ## Grant lifetime
 
-The grant is scoped to the daemon instance, public session, transport session,
+The grant is scoped to the runtime instance, public session, transport session,
 browser process fingerprint, approved native window, and proven loopback
 endpoint. It expires after 30 minutes of inactivity or eight hours absolutely,
-whichever comes first. Session end, consent dismissal, identity mismatch,
-reconnect exhaustion, and daemon restart revoke it.
+whichever comes first. Session end, browser prompt dismissal, identity
+mismatch, reconnect exhaustion, and runtime shutdown revoke it.
 
 One browser-level connection is owned per generation. At most three reconnect
 attempts are made after a socket loss. A successful reconnect increments the
@@ -120,11 +118,11 @@ by the previous generation.
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Network exposure     | The accepted DevTools endpoint must be loopback-only.                                                                                                                                                                                             |
 | Process binding      | The endpoint, native window, and live process fingerprint must agree before every mutation.                                                                                                                                                       |
-| Driver authorization | Standard and bounded setup need a request-bound confirmation provider; a model-supplied Boolean, ordinary MCP approval, TTY input, and files are insufficient. The built-in native card has `same_desktop_best_effort` assurance.                 |
-| Revocation           | A grant cannot become live until its provider activates persistent Stop UI. `cua-driver revoke` and session end provide additional deny-only paths.                                                                                               |
+| Driver authorization | Standard requires a trusted launch grant or host callback. Bounded requires a matching approved manifest. A model-supplied Boolean and ordinary MCP approval are insufficient.                                                         |
+| Revocation           | `cua-driver revoke`, session end, browser identity changes, expiry, and runtime shutdown revoke the attachment grant.                                                                                                                               |
 | Capability scope     | Targets, tabs, dialogs, frames, and refs are opaque, session-scoped, and invalidated after navigation or connection-generation changes.                                                                                                           |
 | Profile handling     | Cua Driver does not copy, edit, restart, or terminate the selected existing profile.                                                                                                                                                              |
-| Residual local risk  | CDP itself is not authenticated. Another process running as the same OS user may connect to an exposed endpoint outside Cua Driver. Another automation runtime with control of the same desktop may also activate the built-in confirmation card. |
+| Residual local risk  | CDP itself is not authenticated. Another process running as the same OS user may connect to an exposed endpoint outside Cua Driver. Cua Driver is a same-user tool boundary, not a defense against a hostile process with the same OS account.    |
 
 An isolated profile is the recommended default. Existing-profile attachment is
 appropriate only when the task requires its authenticated state and the host is
@@ -135,8 +133,8 @@ for why Cua Driver uses CDP and which risks remain outside the driver.
 
 | Code                              | Meaning                                                                                                                                                                  |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `browser_consent_required`        | No live exact approval exists, or it expired.                                                                                                                            |
-| `browser_consent_revoked`         | The person dismissed or denied the browser prompt.                                                                                                                       |
+| `browser_consent_required`        | Standard has no launch grant or host decision, or bounded has no matching manifest grant.                                                                                |
+| `browser_consent_revoked`         | The host denied the request or the browser-owned connection prompt was dismissed.                                                                                        |
 | `browser_requires_setup`          | No unique approved browser endpoint is available.                                                                                                                        |
 | `browser_endpoint_owner_mismatch` | Endpoint ownership or identity changed.                                                                                                                                  |
 | `browser_wrong_target_refused`    | The native window, prompt, or browser target is not exact.                                                                                                               |
@@ -149,10 +147,11 @@ for why Cua Driver uses CDP and which risks remain outside the driver.
 
 ## Recording and telemetry
 
-Consent turns persist redacted request metadata and the structured outcome.
-They suppress browser screenshots and accessibility snapshots. Public results,
-recordings, and telemetry must not contain profile paths or hashes, endpoint
-URLs or ports, approval tokens, page content, tab URLs, cookies, or storage.
+Host authorization events contain only bounded metadata and the structured
+outcome. They do not include browser screenshots or accessibility snapshots.
+Public results, recordings, and telemetry must not contain profile paths or
+hashes, endpoint URLs or ports, approval tokens, page content, tab URLs,
+cookies, or storage.
 The content-free browser operation and refusal fields are documented in
 [Telemetry and privacy](/reference/cua-driver/telemetry#structured-browser-refusals).
 

@@ -11,6 +11,16 @@ from ._native import (
     ConfiguredDriverOptions,
     CuaDriver as _NativeCuaDriver,
     CuaDriverSession,
+    DriverActivityEvent,
+    DriverActivityKind,
+    DriverActivityObserver,
+    DriverActivityObserverImpl,
+    DriverAuthorizationAction,
+    DriverAuthorizationDecision,
+    DriverAuthorizationHost,
+    DriverAuthorizationHostError,
+    DriverAuthorizationHostImpl,
+    DriverAuthorizationRequest,
     DriverError,
     DriverExecutionMode,
     DriverMetadata,
@@ -27,11 +37,6 @@ from ._native import (
     ImageContent,
     MacOsPermissionStatus,
     PrivateWorkerOptions,
-    ProtectedConsentAction,
-    ProtectedConsentDecision,
-    ProtectedConsentHost,
-    ProtectedConsentHostError,
-    ProtectedConsentRequest,
     RuntimeAuthorizationOptions,
     SdkClientKind,
     SessionPermissionMode,
@@ -97,11 +102,26 @@ def _create_configured_python_sdk(cls, options):
     return cls.create_configured_with_client_kind(options, SdkClientKind.PYTHON)
 
 
-def _create_configured_with_protected_host_python_sdk(cls, options, host):
-    """Create a trusted protected-host runtime tagged as a Python SDK host."""
+def _create_configured_with_authorization_host_python_sdk(cls, options, host):
+    """Create a runtime with a trusted authorization callback."""
 
-    return cls.create_configured_with_protected_host_and_client_kind(
+    return cls.create_configured_with_authorization_host_and_client_kind(
         options, host, SdkClientKind.PYTHON
+    )
+
+def _create_configured_with_activity_observer_python_sdk(cls, options, observer):
+    """Create a runtime with a content-free activity observer."""
+
+    return cls.create_configured_with_activity_observer_and_client_kind(
+        options, observer, SdkClientKind.PYTHON
+    )
+
+
+def _create_configured_with_host_integrations_python_sdk(cls, options, host, observer):
+    """Create a runtime with both trusted host integrations."""
+
+    return cls.create_configured_with_host_integrations_and_client_kind(
+        options, host, observer, SdkClientKind.PYTHON
     )
 
 
@@ -114,8 +134,14 @@ def _create_private_worker_python_sdk(cls, options):
 _NativeCuaDriver.connect = classmethod(_connect_python_sdk)
 _NativeCuaDriver.create = classmethod(_create_python_sdk)
 _NativeCuaDriver.create_configured = classmethod(_create_configured_python_sdk)
-_NativeCuaDriver.create_configured_with_protected_host = classmethod(
-    _create_configured_with_protected_host_python_sdk
+_NativeCuaDriver.create_configured_with_authorization_host = classmethod(
+    _create_configured_with_authorization_host_python_sdk
+)
+_NativeCuaDriver.create_configured_with_activity_observer = classmethod(
+    _create_configured_with_activity_observer_python_sdk
+)
+_NativeCuaDriver.create_configured_with_host_integrations = classmethod(
+    _create_configured_with_host_integrations_python_sdk
 )
 _NativeCuaDriver.create_private_worker = classmethod(_create_private_worker_python_sdk)
 CuaDriver = _NativeCuaDriver
@@ -134,6 +160,16 @@ __all__ = [
     "DesktopScope",
     "DragInput",
     "DriverError",
+    "DriverActivityEvent",
+    "DriverActivityKind",
+    "DriverActivityObserver",
+    "DriverActivityObserverImpl",
+    "DriverAuthorizationAction",
+    "DriverAuthorizationDecision",
+    "DriverAuthorizationHost",
+    "DriverAuthorizationHostError",
+    "DriverAuthorizationHostImpl",
+    "DriverAuthorizationRequest",
     "DriverExecutionMode",
     "DriverMetadata",
     "DriverOptions",
@@ -162,11 +198,6 @@ __all__ = [
     "MoveCursorInput",
     "Platform",
     "PrivateWorkerOptions",
-    "ProtectedConsentAction",
-    "ProtectedConsentDecision",
-    "ProtectedConsentHost",
-    "ProtectedConsentHostError",
-    "ProtectedConsentRequest",
     "PressKeyInput",
     "RuntimeAuthorizationOptions",
     "ScrollBy",

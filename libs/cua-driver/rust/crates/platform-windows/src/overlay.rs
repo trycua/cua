@@ -113,8 +113,9 @@ struct RenderMap {
 /// Build the `RenderState` for a lazily-created session cursor from the
 /// process launch template.
 fn render_state_for_key(template: &CursorConfig, key: &str) -> RenderState {
-    let _ = key;
-    RenderState::new(template.clone())
+    let mut config = template.clone();
+    config.cursor_id = key.to_owned();
+    RenderState::new(config)
 }
 
 /// Apply one inbound [`OverlayMsg`] to the render map (drain step). Factored
@@ -190,6 +191,9 @@ pub fn init(cfg: CursorConfig) {
         |event: cua_driver_core::cursor_events::CursorEvent| {
             use cua_driver_core::cursor_events::{CursorEvent, CursorEventPhase};
             let (session, cmd) = match event {
+                CursorEvent::SetSessionLabel { session, label } => {
+                    (session, OverlayCommand::SetSessionLabel(label))
+                }
                 CursorEvent::Action {
                     session,
                     phase: CursorEventPhase::Begin,
@@ -1152,6 +1156,12 @@ impl ZOrderEnforcer for WinZOrderEnforcer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keyed_render_state_carries_the_session_color_identity() {
+        let state = render_state_for_key(&CursorConfig::default(), "session-blueprint");
+        assert_eq!(state.core.cfg.cursor_id, "session-blueprint");
+    }
 
     fn empty_map() -> RenderMap {
         let mut cursors = IndexMap::new();

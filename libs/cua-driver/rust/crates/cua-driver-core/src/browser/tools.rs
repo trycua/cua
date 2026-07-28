@@ -594,13 +594,11 @@ impl BrowserPrepareTool {
                 for an isolated profile requires host approval or a short-lived setup \
                 token plus allow_launch=true. It launches a separate browser and never \
                 copies, modifies, or terminates the requested user profile. Existing-profile \
-                attachment is explicit and follows the daemon's immutable permission mode: \
-                standard requires a request-bound confirmation provider, bounded requires \
-                a launch-approved exact resource manifest plus persistent indicator, and \
-                unrestricted requires explicit trusted startup risk acceptance. Ordinary MCP \
-                transport approval never proves profile consent. Interactive standalone \
-                daemons use Cua's best-effort same-desktop confirmation card; it is not a \
-                secure-desktop or biometric boundary. On proven platforms, an \
+                attachment is explicit and follows the runtime's immutable permission mode: \
+                standard requires an explicit --grant existing-profile launch grant or an \
+                embedding authorization host, bounded requires a launch-approved exact resource \
+                manifest, and unrestricted requires explicit trusted startup risk acceptance. \
+                Ordinary MCP transport approval never proves profile authorization. On proven platforms, an \
                 authorized request also permits one bounded exact-window setup: \
                 open the recognized browser product's fixed remote-debugging page, toggle \
                 its uniquely matched per-instance checkbox, prove the PID-owned loopback \

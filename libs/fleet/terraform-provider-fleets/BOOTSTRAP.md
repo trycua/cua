@@ -7,6 +7,4 @@ protection. Do not add human-maintained source files.
 
 Dispatch `Copybara Provider Export` with `bootstrap` enabled. The workflow uses
 `--force --squash`, which creates the empty destination's `main` branch and
-writes the flattened `cyclops-cs/terraform-provider-fleets` projection. After
-bootstrap, all destination changes come from Cloud through
-`CloudTerraformProviderFleets-RevId`; no direct writers are permitted.
+populates it. No direct writers are permitted after bootstrap.

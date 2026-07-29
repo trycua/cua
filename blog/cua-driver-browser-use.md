@@ -13,7 +13,7 @@ Browser use is already becoming part of coding agents. [Claude Code connects to 
 We wanted a different integration boundary. Cua Driver puts the bridge in an agent-neutral computer-use driver rather than a specific agent host or browser integration. It binds an operating-system process and native window to an exact Chrome or Edge tab, then keeps page-aware CDP actions and native desktop control inside the same named session. A connected agent can move from the document to browser chrome, permission UI, file pickers, terminals, editors, and other desktop apps without installing an extension or moving the workflow into an embedded browser.
 
 <div align="center">
-  <video src="https://trycua.github.io/assets/videos/cua-driver/macos-background-chrome.mp4" poster="https://trycua.github.io/assets/posters/cua-driver/macos-background-chrome.jpg" width="760" controls></video>
+  <video src="https://github.com/user-attachments/assets/44b85a9d-bb71-46d1-b591-43439d0f0fcc" poster="https://github.com/user-attachments/assets/8c0cf22e-6097-4238-8b92-5dfe73e4d74b" width="760" controls></video>
 </div>
 
 _Claude Code starts a video in Chrome while the browser stays behind the agent terminal._
@@ -45,7 +45,7 @@ Using CDP safely requires more than opening a debugging port. A browser has two 
 
 Before Cua Driver allows a page mutation, it proves that both identities describe the same surface.
 
-![A Cua Driver session connecting a coding agent through MCP, CLI, or SDK to native operating-system routes and a loopback CDP page route, converging on an exact process, window, and tab.](./assets/cua-driver-browser-bridge-blue.png)
+![A Cua Driver session connecting a coding agent through MCP, CLI, or SDK to native operating-system routes and a loopback CDP page route, converging on an exact process, window, and tab.](https://github.com/user-attachments/assets/71df6e03-fd71-4d73-b83d-49fe78e6e358)
 
 _Cua Driver keeps native OS actions and page-aware CDP actions inside one exact, session-scoped browser binding._
 

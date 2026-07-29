@@ -104,6 +104,36 @@ fn standalone_browser_completeness_html() -> String {
     )
 }
 
+/// Sanitized fixture for browser-owned permission chrome. The page contains no
+/// origin names, prompt copy, or user choices; it records only lifecycle state.
+/// A fresh Chromium profile should keep the returned promise pending while its
+/// browser-owned notification permission bubble is visible.
+fn standalone_browser_permission_prompt_html() -> String {
+    standalone_fixture_html().replace(
+        "</body>",
+        r#"<fieldset style="position:fixed;left:16px;top:120px;z-index:10000;background:white">
+  <legend>browser-owned permission</legend>
+  <button id="standalone-browser-permission" data-cua-id="standalone-browser-permission"
+          aria-label="Request browser permission">Request browser permission</button>
+  <span id="standalone-browser-permission-state"
+        data-cua-id="standalone-browser-permission-state"
+        style="display:none">permission=idle</span>
+</fieldset>
+<script>
+  document.getElementById('standalone-browser-permission').addEventListener('click', () => {
+    const state = document.getElementById('standalone-browser-permission-state');
+    state.textContent = 'permission=requested';
+    Notification.requestPermission().then(result => {
+      state.textContent = `permission=resolved:${result}`;
+    }, () => {
+      state.textContent = 'permission=error';
+    });
+  });
+</script>
+</body>"#,
+    )
+}
+
 fn standalone_semantic_fixture_html() -> String {
     let hidden = (0..320)
         .map(|index| {
@@ -1108,6 +1138,7 @@ fn spawn_browser_command(
     url: &str,
     position: (i32, i32),
     force_high_device_scale: bool,
+    disable_quiet_notification_prompts: bool,
 ) {
     let mut command = command_for_browser(
         spec,
@@ -1117,6 +1148,12 @@ fn spawn_browser_command(
         position,
         force_high_device_scale,
     );
+    if cfg!(target_os = "windows") && disable_quiet_notification_prompts {
+        // Edge defaults to Chromium's quiet notification UI, which exposes
+        // only an address-bar indicator and no permission surface to compare.
+        // Keep this certification row on the full browser-owned prompt.
+        command.arg("--disable-features=QuietNotificationPrompts");
+    }
     if force_high_device_scale {
         command.arg("--force-device-scale-factor=2");
     }
@@ -1159,6 +1196,7 @@ fn launch_browser_with_driver(
         "about:blank",
         TEST_BROWSER_INITIAL_POSITION,
         label.contains("multi-tab"),
+        label.contains("browser-owned-permission"),
     );
     navigate_initial_page(cdp_port, &server);
     record_browser_provenance(spec, cdp_port);
@@ -3297,6 +3335,492 @@ fn run_same_title_tabs(spec: &BrowserSpec) {
     );
 }
 
+fn browser_owned_permission_evidence_dir(spec: &BrowserSpec) -> (PathBuf, PathBuf) {
+    let relative = PathBuf::from("capture-evidence").join(format!(
+        "{}-{}-browser-owned-permission",
+        std::env::consts::OS,
+        spec.name
+    ));
+    let root = std::env::var_os("CUA_E2E_ARTIFACT_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("cua-driver-browser-evidence"));
+    let absolute = root.join(&relative);
+    std::fs::create_dir_all(&absolute).expect("create browser-owned permission evidence directory");
+    (absolute, relative)
+}
+
+fn browser_window_bounds(driver: &mut McpDriver, pid: u32, window_id: u64) -> (f64, f64, f64, f64) {
+    let windows = driver.call("list_windows", serde_json::json!({"pid": pid as i64}));
+    let bounds = windows.structured()["windows"]
+        .as_array()
+        .and_then(|windows| {
+            windows
+                .iter()
+                .find(|window| window["window_id"].as_u64() == Some(window_id))
+        })
+        .map(|window| &window["bounds"])
+        .unwrap_or_else(|| {
+            panic!(
+                "browser window {window_id} missing while collecting capture evidence: {}",
+                windows.raw
+            )
+        });
+    let value = |name: &str| {
+        bounds[name]
+            .as_f64()
+            .unwrap_or_else(|| panic!("browser window bound {name:?} missing: {}", windows.raw))
+    };
+    (value("x"), value("y"), value("width"), value("height"))
+}
+
+fn load_capture(path: &Path) -> image::RgbaImage {
+    image::open(path)
+        .unwrap_or_else(|error| panic!("decode capture {}: {error}", path.display()))
+        .to_rgba8()
+}
+
+fn desktop_window_crop(
+    desktop_path: &Path,
+    desktop: &ToolResponse,
+    bounds: (f64, f64, f64, f64),
+    output_size: (u32, u32),
+) -> image::RgbaImage {
+    let image = load_capture(desktop_path);
+    let screen_width = desktop.structured()["screen_width"]
+        .as_f64()
+        .expect("desktop screen width");
+    let screen_height = desktop.structured()["screen_height"]
+        .as_f64()
+        .expect("desktop screen height");
+    let scale_x = f64::from(image.width()) / screen_width;
+    let scale_y = f64::from(image.height()) / screen_height;
+    let (x, y, width, height) = bounds;
+    let left = (x * scale_x).round().max(0.0) as u32;
+    let top = (y * scale_y).round().max(0.0) as u32;
+    let width = (width * scale_x)
+        .round()
+        .max(1.0)
+        .min(f64::from(image.width().saturating_sub(left))) as u32;
+    let height = (height * scale_y)
+        .round()
+        .max(1.0)
+        .min(f64::from(image.height().saturating_sub(top))) as u32;
+    assert!(
+        width > 0 && height > 0,
+        "browser window bounds {bounds:?} are outside desktop capture {}x{}",
+        image.width(),
+        image.height()
+    );
+    let crop = image::imageops::crop_imm(&image, left, top, width, height).to_image();
+    image::imageops::resize(
+        &crop,
+        output_size.0,
+        output_size.1,
+        image::imageops::FilterType::Triangle,
+    )
+}
+
+fn changed_pixel_count(before: &image::RgbaImage, after: &image::RgbaImage) -> u64 {
+    assert_eq!(before.dimensions(), after.dimensions());
+    before
+        .pixels()
+        .zip(after.pixels())
+        .filter(|(before, after)| {
+            before
+                .0
+                .iter()
+                .zip(after.0.iter())
+                .take(3)
+                .any(|(before, after)| before.abs_diff(*after) >= 32)
+        })
+        .count() as u64
+}
+
+fn browser_chrome_changed_pixel_center(
+    before: &image::RgbaImage,
+    after: &image::RgbaImage,
+    desktop: &ToolResponse,
+    bounds: (f64, f64, f64, f64),
+) -> Option<(f64, f64)> {
+    assert_eq!(before.dimensions(), after.dimensions());
+    let screen_width = desktop.structured()["screen_width"].as_f64()?;
+    let screen_height = desktop.structured()["screen_height"].as_f64()?;
+    let scale_x = f64::from(before.width()) / screen_width;
+    let scale_y = f64::from(before.height()) / screen_height;
+    let left = (bounds.0 * scale_x).round().max(0.0) as u32;
+    let top = (bounds.1 * scale_y).round().max(0.0) as u32;
+    let right = ((bounds.0 + bounds.2) * scale_x)
+        .round()
+        .min(f64::from(before.width())) as u32;
+    // Browser permission indicators live in the top chrome. Limiting the
+    // search excludes any unrelated page repaint below the toolbar.
+    let bottom = ((bounds.1 + bounds.3.min(120.0)) * scale_y)
+        .round()
+        .min(f64::from(before.height())) as u32;
+    let mut changed = 0_u64;
+    let mut x_sum = 0_u64;
+    let mut y_sum = 0_u64;
+    for y in top..bottom {
+        for x in left..right {
+            let before = before.get_pixel(x, y);
+            let after = after.get_pixel(x, y);
+            if before
+                .0
+                .iter()
+                .zip(after.0.iter())
+                .take(3)
+                .any(|(before, after)| before.abs_diff(*after) >= 32)
+            {
+                changed += 1;
+                x_sum += u64::from(x);
+                y_sum += u64::from(y);
+            }
+        }
+    }
+    (changed > 0).then(|| {
+        (
+            (x_sum as f64 / changed as f64) / scale_x,
+            (y_sum as f64 / changed as f64) / scale_y,
+        )
+    })
+}
+
+fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
+    let scenario = format!(
+        "{}-{}-standalone-browser-owned-permission",
+        std::env::consts::OS,
+        spec.name
+    );
+    let mut spec_case = case(&spec.name, "browser_owned_permission");
+    spec_case.oracles = vec![OracleKind::FixtureState, OracleKind::Pixels];
+    execute_case(spec_case, |evidence| {
+        let mut fixture =
+            launch_browser_with_html(spec, &scenario, standalone_browser_permission_prompt_html());
+        *evidence = recording_evidence(fixture.driver.recording_dir());
+        let (evidence_dir, relative_evidence_dir) = browser_owned_permission_evidence_dir(spec);
+        let window_before_path = evidence_dir.join("window-before.png");
+        let desktop_before_path = evidence_dir.join("desktop-before.png");
+        let window_after_path = evidence_dir.join("window-after.png");
+        let desktop_after_path = evidence_dir.join("desktop-after.png");
+        let desktop_crop_before_path = evidence_dir.join("desktop-window-crop-before.png");
+        let desktop_crop_after_path = evidence_dir.join("desktop-window-crop-after.png");
+        let metrics_path = evidence_dir.join("capture-metrics.json");
+        let window_session = format!("standalone-browser-permission-window-{}", fixture.pid);
+        let after_window_session =
+            format!("standalone-browser-permission-window-after-{}", fixture.pid);
+        let browser_session = format!("standalone-browser-permission-page-{}", fixture.pid);
+        let bounds = browser_window_bounds(&mut fixture.driver, fixture.pid, fixture.window_id);
+        let before = fixture.driver.call(
+            "get_window_state",
+            serde_json::json!({
+                "pid": fixture.pid as i64,
+                "window_id": fixture.window_id,
+                "session": window_session,
+                "screenshot_out_file": window_before_path,
+            }),
+        );
+        if cfg!(target_os = "linux") {
+            assert!(
+                before.structured()["capture_coverage"]["browser_chrome"].is_null(),
+                "Linux window capture already includes the browser-owned prompt surface: {}",
+                before.raw
+            );
+        } else {
+            assert_eq!(
+                before.structured()["capture_coverage"]["browser_chrome"]["status"],
+                "not_observable_in_window_scope",
+                "{}",
+                before.raw
+            );
+            assert_eq!(
+                before.structured()["capture_coverage"]["recovery"]["when"],
+                "verified_window_action_ineffective",
+                "{}",
+                before.raw
+            );
+            assert_eq!(
+                before.structured()["capture_coverage"]["recovery"]["escalate"],
+                serde_json::json!({
+                    "tool": "escalate_session",
+                    "reason": "foreground_ineffective",
+                }),
+                "{}",
+                before.raw
+            );
+        }
+        let escalated = fixture.driver.call(
+            "escalate_session",
+            serde_json::json!({
+                "session": window_session,
+                "reason": "foreground_ineffective",
+                "detail": "browser chrome may be outside window capture",
+            }),
+        );
+        assert!(
+            !escalated.is_error(),
+            "desktop inspection escalation failed: {}",
+            escalated.raw
+        );
+        assert_eq!(
+            escalated.structured()["effective_scope"],
+            "desktop",
+            "{}",
+            escalated.raw
+        );
+        let desktop_before = fixture.driver.call(
+            "get_desktop_state",
+            serde_json::json!({
+                "session": window_session,
+                "screenshot_out_file": desktop_before_path,
+            }),
+        );
+        assert!(
+            !desktop_before.is_error(),
+            "desktop baseline capture failed: {}",
+            desktop_before.raw
+        );
+        let (target_id, tab_id, snapshot) = bind(&mut fixture, &browser_session);
+        fixture.driver.start_behavior_recording();
+        // Windows can prove and deliver a native trusted pointer route for
+        // both Chrome and Edge. Edge rejects a synthetic DOM click before it
+        // opens browser chrome. Linux/macOS currently expose only dom_event
+        // through browser_click; Linux Chrome accepts it for this API.
+        let input_route = if cfg!(target_os = "windows") {
+            "trusted"
+        } else {
+            "dom_event"
+        };
+        let clicked = fixture.driver.call(
+            "browser_click",
+            serde_json::json!({
+                "target_id": target_id,
+                "tab_id": tab_id,
+                "ref": ref_by_label(&snapshot, "id=standalone-browser-permission"),
+                "input_route": input_route,
+                "session": browser_session,
+            }),
+        );
+        assert!(
+            !clicked.is_error(),
+            "permission trigger failed: {}",
+            clicked.raw
+        );
+        wait_for_text(
+            &fixture.server,
+            "standalone-browser-permission-state",
+            "permission=requested",
+        );
+        thread::sleep(Duration::from_millis(250));
+
+        let window = fixture.driver.call(
+            "get_window_state",
+            serde_json::json!({
+                "pid": fixture.pid as i64,
+                "window_id": fixture.window_id,
+                "session": after_window_session,
+                "screenshot_out_file": window_after_path,
+            }),
+        );
+        if cfg!(target_os = "linux") {
+            assert!(
+                window.structured()["capture_coverage"]["browser_chrome"].is_null(),
+                "Linux window capture already includes the browser-owned prompt surface: {}",
+                window.raw
+            );
+        } else {
+            assert_eq!(
+                window.structured()["capture_coverage"]["browser_chrome"]["status"],
+                "not_observable_in_window_scope",
+                "{}",
+                window.raw
+            );
+        }
+        assert!(
+            !window
+                .raw
+                .to_string()
+                .contains("Notification.requestPermission"),
+            "window contract leaked fixture prompt internals: {}",
+            window.raw
+        );
+        let mut desktop = fixture.driver.call(
+            "get_desktop_state",
+            serde_json::json!({
+                "session": window_session,
+                "screenshot_out_file": desktop_after_path,
+            }),
+        );
+        assert!(
+            !desktop.is_error(),
+            "desktop fallback failed: {}",
+            desktop.raw
+        );
+
+        let window_before = load_capture(&window_before_path);
+        let mut window_after = load_capture(&window_after_path);
+        assert_eq!(
+            window_before.dimensions(),
+            window_after.dimensions(),
+            "browser window changed size while permission prompt was open"
+        );
+        let output_size = window_before.dimensions();
+        let desktop_crop_before =
+            desktop_window_crop(&desktop_before_path, &desktop_before, bounds, output_size);
+        let mut desktop_crop_after =
+            desktop_window_crop(&desktop_after_path, &desktop, bounds, output_size);
+        let compared_pixels = u64::from(output_size.0) * u64::from(output_size.1);
+        let minimum_prompt_pixels = (compared_pixels / 1_000).max(1_000);
+        let initial_desktop_changed_pixels =
+            changed_pixel_count(&desktop_crop_before, &desktop_crop_after);
+        let mut quiet_prompt_expanded = false;
+        let mut quiet_prompt_indicator = None;
+
+        // Edge can collapse the notification request to a quiet indicator in
+        // browser chrome. Expand the region that actually changed, then assess
+        // the resulting browser-owned surface with the same pixel oracle.
+        if cfg!(target_os = "windows")
+            && spec.name == "edge"
+            && initial_desktop_changed_pixels < minimum_prompt_pixels
+        {
+            let full_desktop_before = load_capture(&desktop_before_path);
+            let full_desktop_after = load_capture(&desktop_after_path);
+            let (x, y) = browser_chrome_changed_pixel_center(
+                &full_desktop_before,
+                &full_desktop_after,
+                &desktop,
+                bounds,
+            )
+            .expect("quiet permission indicator did not produce a changed browser chrome region");
+            quiet_prompt_indicator = Some((x, y));
+            let expanded = fixture.driver.call(
+                "click",
+                serde_json::json!({
+                    "session": window_session,
+                    "scope": "desktop",
+                    "x": x,
+                    "y": y,
+                }),
+            );
+            assert!(
+                !expanded.is_error(),
+                "expand quiet permission indicator: {}",
+                expanded.raw
+            );
+            thread::sleep(Duration::from_millis(250));
+            let recaptured_window = fixture.driver.call(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": fixture.pid as i64,
+                    "window_id": fixture.window_id,
+                    "session": after_window_session,
+                    "screenshot_out_file": window_after_path,
+                }),
+            );
+            assert!(
+                !recaptured_window.is_error(),
+                "recapture expanded quiet permission window: {}",
+                recaptured_window.raw
+            );
+            desktop = fixture.driver.call(
+                "get_desktop_state",
+                serde_json::json!({
+                    "session": window_session,
+                    "screenshot_out_file": desktop_after_path,
+                }),
+            );
+            assert!(
+                !desktop.is_error(),
+                "recapture expanded quiet permission desktop: {}",
+                desktop.raw
+            );
+            window_after = load_capture(&window_after_path);
+            desktop_crop_after =
+                desktop_window_crop(&desktop_after_path, &desktop, bounds, output_size);
+            quiet_prompt_expanded = true;
+        }
+
+        desktop_crop_before
+            .save(&desktop_crop_before_path)
+            .expect("write normalized desktop baseline");
+        desktop_crop_after
+            .save(&desktop_crop_after_path)
+            .expect("write normalized desktop permission capture");
+
+        let desktop_changed_pixels = changed_pixel_count(&desktop_crop_before, &desktop_crop_after);
+        let window_changed_pixels = changed_pixel_count(&window_before, &window_after);
+        let minimum_desktop_to_window_ratio = 2_u64;
+        let desktop_has_materially_more_prompt_pixels = window_changed_pixels
+            .saturating_mul(minimum_desktop_to_window_ratio)
+            < desktop_changed_pixels;
+        let metrics = serde_json::json!({
+            "platform": std::env::consts::OS,
+            "browser": spec.name,
+            "window_bounds": {
+                "x": bounds.0,
+                "y": bounds.1,
+                "width": bounds.2,
+                "height": bounds.3,
+            },
+            "compared_width": output_size.0,
+            "compared_height": output_size.1,
+            "compared_pixels": compared_pixels,
+            "pixel_channel_threshold": 32,
+            "minimum_prompt_pixels": minimum_prompt_pixels,
+            "initial_desktop_changed_pixels": initial_desktop_changed_pixels,
+            "desktop_changed_pixels": desktop_changed_pixels,
+            "window_changed_pixels": window_changed_pixels,
+            "minimum_desktop_to_window_ratio": minimum_desktop_to_window_ratio,
+            "quiet_prompt_expanded": quiet_prompt_expanded,
+            "quiet_prompt_indicator": quiet_prompt_indicator.map(|(x, y)| {
+                serde_json::json!({"x": x, "y": y})
+            }),
+            "desktop_has_materially_more_prompt_pixels":
+                desktop_has_materially_more_prompt_pixels,
+        });
+        std::fs::write(
+            &metrics_path,
+            serde_json::to_vec_pretty(&metrics).expect("serialize capture metrics"),
+        )
+        .expect("write capture metrics");
+
+        evidence.screenshot = Some(
+            relative_evidence_dir
+                .join("desktop-after.png")
+                .to_string_lossy()
+                .replace('\\', "/"),
+        );
+        evidence.log = Some(
+            relative_evidence_dir
+                .join("capture-metrics.json")
+                .to_string_lossy()
+                .replace('\\', "/"),
+        );
+        assert!(
+            desktop_changed_pixels >= minimum_prompt_pixels,
+            "desktop capture did not show a material permission surface change: {metrics}"
+        );
+        if cfg!(target_os = "linux") {
+            assert!(
+                window_changed_pixels >= minimum_prompt_pixels,
+                "Linux window capture omitted the material permission surface change: {metrics}"
+            );
+            assert!(
+                !desktop_has_materially_more_prompt_pixels,
+                "Linux desktop capture unexpectedly contained materially more permission UI than window capture: {metrics}"
+            );
+        } else {
+            assert!(
+                desktop_has_materially_more_prompt_pixels,
+                "window capture omitted too little of the permission surface to justify desktop fallback: {metrics}"
+            );
+        }
+        Observation::delivered(
+            vec![OracleKind::FixtureState, OracleKind::Pixels],
+            Evidence::default(),
+        )
+    });
+}
+
 fn run_dialogs(spec: &BrowserSpec) {
     let scenario = format!("{}-{}-standalone-dialogs", std::env::consts::OS, spec.name);
     let spec_case = if cfg!(target_os = "linux") {
@@ -4006,6 +4530,10 @@ standalone_browser_test!(standalone_browser_frames, run_frame_roundtrip);
 standalone_browser_test!(standalone_browser_multi_tab, run_multi_tab);
 standalone_browser_test!(standalone_browser_same_title_tabs, run_same_title_tabs);
 standalone_browser_test!(standalone_browser_dialogs, run_dialogs);
+standalone_browser_test!(
+    standalone_browser_owned_permission_prompt,
+    run_browser_owned_permission_prompt
+);
 #[cfg(target_os = "linux")]
 standalone_browser_test!(
     standalone_browser_dialog_background_refusal,

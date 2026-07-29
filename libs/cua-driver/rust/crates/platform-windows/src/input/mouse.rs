@@ -18,8 +18,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::WindowsAndMessaging::{
     ChildWindowFromPointEx, GetAncestor, GetClassLongPtrW, GetCursorPos, GetForegroundWindow,
     GetSystemMetrics, GetWindowLongPtrW, PostMessageW, SetCursorPos, SetWindowPos, CS_DBLCLKS,
-    CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, CWP_SKIPTRANSPARENT, GA_ROOT, GCL_STYLE, GWL_EXSTYLE,
-    HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+    CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, CWP_SKIPTRANSPARENT, GA_ROOT, GA_ROOTOWNER, GCL_STYLE,
+    GWL_EXSTYLE, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
     SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WM_LBUTTONDBLCLK,
     WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE,
     WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WS_EX_TOPMOST,
@@ -30,6 +30,25 @@ const MK_MBUTTON: u32 = 0x0010;
 const MK_RBUTTON: u32 = 0x0002;
 
 const CLICK_DELAY_MS: u64 = 35;
+
+fn activation_families_match(
+    foreground_root: usize,
+    foreground_root_owner: usize,
+    target_root: usize,
+    target_root_owner: usize,
+) -> bool {
+    let foreground_family = if foreground_root_owner == 0 {
+        foreground_root
+    } else {
+        foreground_root_owner
+    };
+    let target_family = if target_root_owner == 0 {
+        target_root
+    } else {
+        target_root_owner
+    };
+    foreground_family != 0 && foreground_family == target_family
+}
 
 fn posted_press_message(down: u32, double: u32, click_index: usize, wants_double: bool) -> u32 {
     if wants_double && click_index % 2 == 1 {
@@ -659,9 +678,23 @@ fn send_click_synthesized_mods_impl(
             bail!("SendInput inserted fewer mouse events than expected for the foreground click.");
         }
         if activate {
-            let foreground_root = GetAncestor(GetForegroundWindow(), GA_ROOT);
+            let foreground = GetForegroundWindow();
+            let foreground_root = GetAncestor(foreground, GA_ROOT);
+            let foreground_root_owner = GetAncestor(foreground, GA_ROOTOWNER);
             let target_root = GetAncestor(target, GA_ROOT);
-            if foreground_root != target_root {
+            let target_root_owner = GetAncestor(target, GA_ROOTOWNER);
+            // Browser-owned chrome can move foreground status to a transient
+            // owned window after the click. Its GA_ROOT differs from the
+            // clicked browser root even though both belong to the same Win32
+            // activation family. Compare root owners so successful clicks do
+            // not become false errors, while unrelated foreground windows
+            // still fail this delivery postcondition.
+            if !activation_families_match(
+                foreground_root.0 as usize,
+                foreground_root_owner.0 as usize,
+                target_root.0 as usize,
+                target_root_owner.0 as usize,
+            ) {
                 bail!("The foreground click did not activate its target window.");
             }
         }
@@ -1033,8 +1066,28 @@ mod nc_hit_tests {
 
 #[cfg(test)]
 mod wheel_tests {
-    use super::{posted_press_message, wheel_mouse_data, WHEEL_DELTA};
+    use super::{activation_families_match, posted_press_message, wheel_mouse_data, WHEEL_DELTA};
     use windows::Win32::UI::WindowsAndMessaging::{WM_LBUTTONDBLCLK, WM_LBUTTONDOWN};
+
+    #[test]
+    fn foreground_click_accepts_same_root_activation() {
+        assert!(activation_families_match(0x10, 0x10, 0x10, 0x10));
+    }
+
+    #[test]
+    fn foreground_click_accepts_transient_window_with_same_root_owner() {
+        assert!(activation_families_match(0x20, 0x10, 0x10, 0x10));
+    }
+
+    #[test]
+    fn foreground_click_rejects_unrelated_activation_family() {
+        assert!(!activation_families_match(0x20, 0x20, 0x10, 0x10));
+    }
+
+    #[test]
+    fn foreground_click_rejects_missing_foreground_window() {
+        assert!(!activation_families_match(0, 0, 0x10, 0x10));
+    }
 
     #[test]
     fn posted_double_click_uses_the_win32_double_click_message() {

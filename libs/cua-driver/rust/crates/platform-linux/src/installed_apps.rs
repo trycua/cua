@@ -19,8 +19,8 @@ pub struct InstalledApp {
     /// E.g. `org.gnome.Calculator.desktop` → `org.gnome.Calculator`;
     /// `kde4/konqbrowser.desktop` → `kde4-konqbrowser`.
     pub bundle_id: String,
-    /// Path the launcher would run — the unexpanded first token of `Exec=`
-    /// (field codes like `%U`, `%f` stripped). Pass to `launch_app(launch_path=...)`.
+    /// Normalized argv from `Exec=` with launch-time field codes removed.
+    /// Pass this value back to `launch_app(launch_path=...)` unchanged.
     pub launch_path: String,
     /// RFC3339 timestamp from the `.desktop` file's filesystem mtime, or
     /// `None` if the metadata could not be read.
@@ -133,10 +133,7 @@ fn parse_desktop_file(path: &Path, bundle_id: &str) -> Option<InstalledApp> {
 
     let name = string_key(&entry, "Name")?;
     let exec_raw = string_key(&entry, "Exec")?;
-    let launch_path = strip_exec_field_codes(&exec_raw);
-    if launch_path.is_empty() {
-        return None;
-    }
+    let launch_path = normalize_exec_command(&exec_raw)?;
 
     if bundle_id.is_empty() {
         return None;
@@ -220,21 +217,149 @@ fn bool_key(section: &str, key: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Strip XDG `Exec=` field codes (`%f`, `%F`, `%u`, `%U`, `%i`, `%c`, `%k`)
-/// and return the remaining launch command. `launch_app(launch_path=...)`
-/// performs shell-style argv parsing before directly spawning the program.
-fn strip_exec_field_codes(exec: &str) -> String {
-    let mut out = String::with_capacity(exec.len());
-    let mut chars = exec.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '%' {
-            // Consume the field-code letter, drop both.
-            chars.next();
+/// Parse an XDG `Exec=` value, remove field codes that require launch-time
+/// context, and serialize the remaining argv for `launch_app` to round-trip.
+fn normalize_exec_command(exec: &str) -> Option<String> {
+    let value = unescape_desktop_string(exec)?;
+    let argv = parse_exec_argv(&value)?;
+    if argv[0].is_empty() || argv[0].contains('=') {
+        return None;
+    }
+    let mut file_field_codes = 0;
+    let mut normalized = Vec::with_capacity(argv.len());
+    for argument in argv {
+        let (argument, argument_file_codes) = strip_exec_field_codes(&argument)?;
+        file_field_codes += argument_file_codes;
+        if file_field_codes > 1 {
+            return None;
+        }
+        if let Some(argument) = argument {
+            normalized.push(argument);
+        }
+    }
+    if normalized.is_empty() {
+        return None;
+    }
+    shlex::try_join(normalized.iter().map(String::as_str)).ok()
+}
+
+fn unescape_desktop_string(value: &str) -> Option<String> {
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars();
+    while let Some(character) = chars.next() {
+        if character != '\\' {
+            out.push(character);
             continue;
         }
-        out.push(c);
+        let escaped = chars.next()?;
+        match escaped {
+            's' => out.push(' '),
+            'n' => out.push('\n'),
+            't' => out.push('\t'),
+            'r' => out.push('\r'),
+            '\\' => out.push('\\'),
+            // Exec quoting has an additional escape layer for these
+            // characters, so leave the pair for parse_exec_argv.
+            '"' | '`' | '$' => {
+                out.push('\\');
+                out.push(escaped);
+            }
+            _ => return None,
+        }
     }
-    out.trim().to_owned()
+    Some(out)
+}
+
+fn parse_exec_argv(command: &str) -> Option<Vec<String>> {
+    let mut argv = Vec::new();
+    let mut argument = String::new();
+    let mut chars = command.chars();
+    let mut quoted = false;
+    let mut started = false;
+
+    while let Some(character) = chars.next() {
+        if quoted {
+            match character {
+                '"' => quoted = false,
+                '\\' => match chars.next()? {
+                    escaped @ ('"' | '`' | '$' | '\\') => argument.push(escaped),
+                    _ => return None,
+                },
+                '$' | '`' => return None,
+                _ => argument.push(character),
+            }
+            continue;
+        }
+
+        match character {
+            '"' => {
+                quoted = true;
+                started = true;
+            }
+            character if character.is_whitespace() => {
+                if started {
+                    argv.push(std::mem::take(&mut argument));
+                    started = false;
+                }
+            }
+            character if is_exec_reserved(character) => return None,
+            _ => {
+                argument.push(character);
+                started = true;
+            }
+        }
+    }
+    if quoted {
+        return None;
+    }
+    if started {
+        argv.push(argument);
+    }
+    (!argv.is_empty()).then_some(argv)
+}
+
+fn is_exec_reserved(character: char) -> bool {
+    matches!(
+        character,
+        '\'' | '\\' | '>' | '<' | '~' | '|' | '&' | ';' | '$' | '*' | '?' | '#' | '(' | ')' | '`'
+    )
+}
+
+fn strip_exec_field_codes(argument: &str) -> Option<(Option<String>, usize)> {
+    let mut out = String::with_capacity(argument.len());
+    let mut chars = argument.chars();
+    let mut file_field_codes = 0;
+    let mut removed_field_code = false;
+    while let Some(character) = chars.next() {
+        if character != '%' {
+            out.push(character);
+            continue;
+        }
+        match chars.next()? {
+            '%' => out.push('%'),
+            code @ ('F' | 'U' | 'i') => {
+                removed_field_code = true;
+                if argument != format!("%{code}") {
+                    return None;
+                }
+                if matches!(code, 'F' | 'U') {
+                    file_field_codes += 1;
+                }
+            }
+            'f' | 'u' => {
+                removed_field_code = true;
+                file_field_codes += 1;
+            }
+            'c' | 'k' | 'd' | 'D' | 'n' | 'N' | 'v' | 'm' => removed_field_code = true,
+            _ => return None,
+        }
+    }
+    let argument = if out.is_empty() && removed_field_code {
+        None
+    } else {
+        Some(out)
+    };
+    Some((argument, file_field_codes))
 }
 
 /// Format Unix epoch seconds as `YYYY-MM-DDTHH:MM:SSZ` (UTC).
@@ -268,13 +393,59 @@ mod tests {
     use super::*;
 
     #[test]
-    fn strips_field_codes() {
-        assert_eq!(strip_exec_field_codes("firefox %U"), "firefox");
+    fn normalizes_exec_field_codes() {
+        assert_eq!(normalize_exec_command("firefox %U"), Some("firefox".into()));
         assert_eq!(
-            strip_exec_field_codes("/usr/bin/gedit %f"),
-            "/usr/bin/gedit"
+            normalize_exec_command("/usr/bin/gedit %f"),
+            Some("/usr/bin/gedit".into())
         );
-        assert_eq!(strip_exec_field_codes("xterm -e %F"), "xterm -e");
+        assert_eq!(
+            normalize_exec_command("xterm -e %F"),
+            Some("xterm -e".into())
+        );
+    }
+
+    #[test]
+    fn normalizes_xdg_quoted_arguments_for_launch_round_trip() {
+        let command = normalize_exec_command(
+            "\"/opt/Demo App/bin/demo\" --profile \"two words\" --progress=100%% %U",
+        )
+        .expect("valid XDG Exec command");
+        assert_eq!(
+            shlex::split(&command).expect("normalized shell argv"),
+            vec![
+                "/opt/Demo App/bin/demo",
+                "--profile",
+                "two words",
+                "--progress=100%"
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_shell_quoting_in_xdg_exec_values() {
+        assert!(normalize_exec_command("sh -c 'exit 0'").is_none());
+    }
+
+    #[test]
+    fn preserves_an_explicit_empty_exec_argument() {
+        let command = normalize_exec_command("demo \"\"").expect("valid empty argument");
+        assert_eq!(
+            shlex::split(&command).expect("normalized shell argv"),
+            vec!["demo", ""]
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_or_repeated_file_field_codes() {
+        assert!(normalize_exec_command("demo %Z").is_none());
+        assert!(normalize_exec_command("demo %f %U").is_none());
+    }
+
+    #[test]
+    fn rejects_unescaped_exec_metacharacters_inside_quotes() {
+        assert!(normalize_exec_command("demo \"$HOME\"").is_none());
+        assert!(normalize_exec_command("demo \"`pwd`\"").is_none());
     }
 
     #[test]

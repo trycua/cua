@@ -14,3 +14,7 @@ From the repository root:
 `export-docs` requires Chrome, Node.js with WebSocket support, Python 3, and
 ffmpeg. It regenerates the public documentation GIFs deterministically from the
 same rendered frames.
+
+The gallery keeps action animations and host-rendered delivery and target
+badge chips in separate review sections. The generated modifier media is badge
+output from the production renderer, not modifier artwork from the theme.

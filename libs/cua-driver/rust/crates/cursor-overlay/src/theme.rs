@@ -13,8 +13,8 @@ pub use cua_driver_contract::{
 };
 
 pub const DEFAULT_THEME_ID: &str = "cua.default";
-pub const DEFAULT_THEME_VERSION: &str = "1.0.0";
-pub const THEME_PROFILE: &str = "cua-driver-full-v1";
+pub const DEFAULT_THEME_VERSION: &str = "2.0.0";
+pub const THEME_PROFILE: &str = "cua-driver-actions-v2";
 pub const CANVAS_SIZE: f32 = 128.0;
 pub const DISPLAY_SIZE: f32 = 42.0;
 const FLOAT_DURATION_SECS: f32 = 4.0;
@@ -194,7 +194,7 @@ pub(crate) fn shared_float_motion(visual: &CursorVisualState) -> (f32, f32, f32)
     )
 }
 
-/// Paint one frame of the embedded Full-v1 theme.
+/// Paint one frame of the embedded actions-v2 theme.
 ///
 /// `anchor_x/y` is the existing overlay's cursor centre. The Lottie canvas is
 /// centred there so the established click offset and path physics remain
@@ -360,7 +360,7 @@ mod tests {
     }
 
     #[test]
-    fn foreground_and_pixel_modifiers_render_on_opposite_sides() {
+    fn action_theme_ignores_host_owned_modifiers() {
         let mut base = tiny_skia::Pixmap::new(128, 128).unwrap();
         let mut pixmap = tiny_skia::Pixmap::new(128, 128).unwrap();
         let base_visual = CursorVisualState {
@@ -394,18 +394,7 @@ mod tests {
             [12, 34, 56, 255],
         );
 
-        let changed_pixels = |x_range: std::ops::Range<u32>| {
-            (0..128)
-                .flat_map(|y| x_range.clone().map(move |x| (x, y)))
-                .filter(|(x, y)| {
-                    let index = ((y * pixmap.width() + x) * 4) as usize;
-                    pixmap.data()[index..index + 4] != base.data()[index..index + 4]
-                })
-                .count()
-        };
-
-        assert!(changed_pixels(0..50) > 5);
-        assert!(changed_pixels(78..128) > 5);
+        assert_eq!(pixmap.data(), base.data());
     }
 
     #[test]

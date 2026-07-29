@@ -5,31 +5,40 @@ macOS, Windows, and Linux and cannot be removed. The theme uses a colored
 pointer with a white outline over a larger, cursor-shaped glow in the same
 session color. The glow softly fades to transparent around the full pointer
 silhouette, while the white outline preserves a crisp boundary on light, dark,
-and similarly colored backgrounds. Its semantic action and modifier marks use
+and similarly colored backgrounds. Its semantic action marks use
 the same session-colored center and white-outline treatment as the pointer,
 plus a tighter, softer glow so they remain legible without competing with it.
 Every semantic state inherits the same gentle levitation and rotation as the
-idle pointer, with its action-specific motion layered on top. The pointer,
-semantic mark, and active modifiers therefore move as one visual unit.
+idle pointer, with its action-specific motion layered on top. The pointer and
+semantic mark therefore move as one visual unit.
 Reduced-motion mode removes this shared movement. The anonymous/default cursor
 uses Cua blue. Named sessions receive a stable fill
 from the built-in session palette, so concurrent agents remain visually
 distinct.
 
-The native renderer places the sanitized public session name in a compact badge
-below the built-in pointer. The badge uses a session-accent gradient and a
-circular session marker. It appears when the cursor is first revealed, remains
-fully visible for two seconds, then fades over 400 milliseconds while the
-cursor stays available. Moving the human pointer over the synthetic cursor
-temporarily reveals the badge again, and moving it away hides the badge.
+The native renderer places the sanitized public session name and execution
+context in a compact badge below the built-in pointer. The badge uses a
+session-accent gradient and a circular session marker. The session name appears
+when the cursor is first revealed, remains fully visible for two seconds, then
+fades over 400 milliseconds while the cursor stays available. Moving the human
+pointer over the synthetic cursor temporarily reveals the name again, and
+moving it away hides the name.
 Hiding and revealing the cursor also shows the badge again. Hover reveal uses
 the native global-pointer APIs on macOS, Windows, and X11. Stock Wayland does
 not expose another client's global pointer position, so native Wayland keeps
 the timed reveal but cannot offer hover reveal without a compositor-owned
 adapter. The click-through overlay never captures pointer input to fake this
 capability.
-The badge is not part of the dotLottie theme artifact, so custom theme authors
-do not need to provide badge artwork or a font. Cua Driver strips control
+
+Delivery and target context appears as up to two chips inside the same badge.
+The delivery chip comes first and is filled; the target chip comes second and
+is outlined. Chips stay visible for the active action and fade over 400
+milliseconds when it ends. They do not reveal a session name that has already
+faded. An unlabeled session gets a compact marker-and-chips badge.
+
+The badge and its context glyphs are not part of the dotLottie theme artifact,
+so custom theme authors do not need to provide badge artwork or a font. Cua
+Driver strips control
 characters, collapses whitespace, and shortens labels longer than 28 characters
 before rendering the bundled Inter typeface.
 
@@ -101,9 +110,7 @@ A full custom theme must provide all twelve action animations:
 | `record`   | loop         |
 | `system`   | one shot     |
 
-It must also provide six transparent modifier animations. The renderer
-composites at most one delivery modifier and one target modifier over the
-action:
+Delivery and target context is host-owned rather than theme-owned:
 
 - delivery: `background`, `foreground`
 - target: `ax`, `pixel`, `browser`, `desktop`
@@ -127,12 +134,12 @@ theme.lottie
 
 Every animation must be a transparent 128×128 Lottie animation at 30 fps and
 contain no more than 120 frames. A compiled theme may contain at most 1,000
-frames in total across its actions and modifiers. The compiler samples
+frames in total across its actions. The compiler samples
 animation timing at 30 fps but preserves the artwork as vector paths, ellipses,
 rounded rectangles, solid fills, strokes, and transforms. The overlay then
 rasterizes those commands at the display's live backing scale.
 
-Profile v1 accepts shape layers with static path geometry and animated layer
+Profile v2 accepts shape layers with static path geometry and animated layer
 position, scale, rotation, opacity, solid color, and stroke width. Shape-layer
 transforms must remain at their identity values; place animation on the layer
 transform instead. Groups, animated path geometry, expressions, scripts,
@@ -144,15 +151,15 @@ unbounded archives, and other unsupported Lottie features are rejected.
 
 ```json
 {
-  "schema": "cua.cursor-theme/1",
+  "schema": "cua.cursor-theme/2",
   "id": "com.example.cursor.studio",
   "name": "Studio Cursor",
   "version": "1.0.0",
   "author": "Example Studio",
   "license": "MIT",
   "compatibility": {
-    "profile": "cua-driver-full-v1",
-    "semantics": 1
+    "profile": "cua-driver-actions-v2",
+    "semantics": 2
   },
   "canvas": { "width": 128, "height": 128, "fps": 30 },
   "hotspot": { "x": 55, "y": 30 },
@@ -169,21 +176,18 @@ unbounded archives, and other unsupported Lottie features are rejected.
     "transfer": { "animation": "action_transfer", "still_frame": 16 },
     "record": { "animation": "action_record", "still_frame": 16 },
     "system": { "animation": "action_system", "still_frame": 18 }
-  },
-  "modifiers": {
-    "background": { "animation": "modifier_background", "still_frame": 0 },
-    "foreground": { "animation": "modifier_foreground", "still_frame": 0 },
-    "ax": { "animation": "modifier_ax", "still_frame": 0 },
-    "pixel": { "animation": "modifier_pixel", "still_frame": 0 },
-    "browser": { "animation": "modifier_browser", "still_frame": 0 },
-    "desktop": { "animation": "modifier_desktop", "still_frame": 0 }
   }
 }
 ```
 
 The `still_frame` is used when reduced motion is active. Use a reverse-DNS
-theme ID. Profile v1 does not compile dotLottie color/theme variants; publish a
+theme ID. Profile v2 does not compile dotLottie color/theme variants; publish a
 visually distinct variant under a separate theme ID.
+
+Profile v2 is intentionally breaking. V1 source manifests and compiled
+artifacts are rejected with rebuild guidance. Remove the `modifiers` section,
+set the schema and semantic version to 2, use the
+`cua-driver-actions-v2` profile, and rebuild the artifact.
 
 ## Validate, compile, and install
 
@@ -224,7 +228,8 @@ The built-in default follows the same path. Its canonical
 `cursor-overlay/assets/`. The resulting bounded `cua.default.cua-theme` is
 embedded in the binary and decoded by the same renderer used for installed
 custom themes. Only the embedded default receives the runtime session-color
-tint and shared float transform. The artifact contains no fixed-resolution
+tint and shared float transform. Delivery and target chips remain consistent
+because the host badge renders them for every theme. The artifact contains no fixed-resolution
 pixel atlas, so the cursor stays crisp at 1×, 2×, 3×, and fractional display
 scales.
 

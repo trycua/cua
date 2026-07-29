@@ -6,6 +6,7 @@
 //! - `CubicBezier` + `PathPlanner` — Bezier path math (ported 1:1 from C#)
 //! - `OverlayCommand` — messages sent from MCP tools to the overlay thread
 
+pub mod badge_glyphs;
 pub mod bezier;
 pub mod capture_utils;
 pub mod motion;
@@ -17,11 +18,20 @@ pub mod theme_artifact;
 pub mod util;
 pub mod z_order;
 
+pub use badge_glyphs::{BadgeChip, BadgeGlyph};
 pub use bezier::CubicBezier;
 pub use motion::{MotionConfig, Spring};
 pub use path_planner::{PathPlanner, PathState, PlannedPath};
-pub use render_state::{paint_cursor, render_frame, FocusRect, RenderStateCore};
-pub use session_badge::{paint_session_badge, sanitize_session_label};
+pub use render_state::{
+    paint_cursor, render_frame, FocusRect, RenderStateCore, SESSION_BADGE_FADE_SECS,
+    SESSION_BADGE_HOLD_SECS,
+};
+pub use session_badge::{
+    paint_session_badge, sanitize_session_label, session_badge_extents, session_badge_layout,
+    BadgeExtents, BadgeLabelLayout, SessionBadgeInput, SessionBadgeLayout, BADGE_CHIP_GAP,
+    BADGE_CHIP_GROUP_GAP, BADGE_CHIP_SIZE, BADGE_CURSOR_GAP, BADGE_HEIGHT, BADGE_MAX_WIDTH,
+    MAX_SESSION_LABEL_CHARS,
+};
 pub use theme::{
     session_fill_hex, session_fill_rgba, CursorAction, CursorVisualState, DeliveryModifier,
     PlaybackKind, ReducedMotion, TargetModifier, DEFAULT_CURSOR_FILL, DEFAULT_THEME_ID,

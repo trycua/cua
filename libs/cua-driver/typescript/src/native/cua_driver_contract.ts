@@ -1404,7 +1404,8 @@ export type SessionStateOutput = {
     effectiveScope: EffectiveScope,
     desktopUnlocked: boolean,
     escalationReason?: EscalationReason,
-    escalationDetail?: string
+    escalationDetail?: string,
+    workspaceId?: string
 }
 
 /**
@@ -1433,7 +1434,8 @@ const FfiConverterTypeSessionStateOutput = (() => {
                 effectiveScope: FfiConverterTypeEffectiveScope.read(from),
                 desktopUnlocked: FfiConverterBool.read(from),
                 escalationReason: FfiConverterOptionalTypeEscalationReason.read(from),
-                escalationDetail: FfiConverterOptionalString.read(from)
+                escalationDetail: FfiConverterOptionalString.read(from),
+                workspaceId: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -1443,6 +1445,7 @@ const FfiConverterTypeSessionStateOutput = (() => {
             FfiConverterBool.write(value.desktopUnlocked, into);
             FfiConverterOptionalTypeEscalationReason.write(value.escalationReason, into);
             FfiConverterOptionalString.write(value.escalationDetail, into);
+            FfiConverterOptionalString.write(value.workspaceId, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.session) +
@@ -1450,7 +1453,8 @@ const FfiConverterTypeSessionStateOutput = (() => {
              FfiConverterTypeEffectiveScope.allocationSize(value.effectiveScope) +
              FfiConverterBool.allocationSize(value.desktopUnlocked) +
              FfiConverterOptionalTypeEscalationReason.allocationSize(value.escalationReason) +
-             FfiConverterOptionalString.allocationSize(value.escalationDetail);
+             FfiConverterOptionalString.allocationSize(value.escalationDetail) +
+             FfiConverterOptionalString.allocationSize(value.workspaceId);
 
         }
     };
@@ -1764,7 +1768,11 @@ export type StartSessionInput = {
      * Optional initial cursor theme. The host applies it before the cursor is
      * first made visible, avoiding a flash of the default theme.
      */
-    cursorTheme?: CursorThemeSelection
+    cursorTheme?: CursorThemeSelection,
+    /**
+     * Optional live workspace to bind to this session. Immutable until the session ends; launch_app inherits it when workspace_id is omitted.
+     */
+    workspaceId?: string
 }
 
 /**
@@ -1790,18 +1798,21 @@ const FfiConverterTypeStartSessionInput = (() => {
             return {
                 session: FfiConverterString.read(from),
                 captureScope: FfiConverterOptionalTypeCaptureScope.read(from),
-                cursorTheme: FfiConverterOptionalTypeCursorThemeSelection.read(from)
+                cursorTheme: FfiConverterOptionalTypeCursorThemeSelection.read(from),
+                workspaceId: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterString.write(value.session, into);
             FfiConverterOptionalTypeCaptureScope.write(value.captureScope, into);
             FfiConverterOptionalTypeCursorThemeSelection.write(value.cursorTheme, into);
+            FfiConverterOptionalString.write(value.workspaceId, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.session) +
              FfiConverterOptionalTypeCaptureScope.allocationSize(value.captureScope) +
-             FfiConverterOptionalTypeCursorThemeSelection.allocationSize(value.cursorTheme);
+             FfiConverterOptionalTypeCursorThemeSelection.allocationSize(value.cursorTheme) +
+             FfiConverterOptionalString.allocationSize(value.workspaceId);
 
         }
     };

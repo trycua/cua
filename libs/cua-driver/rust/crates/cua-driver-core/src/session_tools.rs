@@ -71,6 +71,15 @@ impl Tool for StartSessionTool {
             Err(result) => return result,
         };
         let requested = input.capture_scope;
+        let requested_workspace = input.workspace_id.as_deref();
+        if let Err(error) = crate::workspace::validate_workspace_id(requested_workspace) {
+            return ToolResult::error(error.to_string()).with_structured(json!({
+                "code": error.code(),
+                "session": id,
+                "workspace_id": requested_workspace,
+            }));
+        }
+        let had_capture_binding = crate::capture_scope::get_session(&id).is_some();
         let was_ended = crate::session::is_session_ended(&id);
         if !was_ended {
             match bind_session(&id, requested) {
@@ -124,11 +133,32 @@ impl Tool for StartSessionTool {
                     .with_structured(json!({ "code": "session_ended", "session": id }));
             }
         };
+        let workspace_id = match crate::workspace::bind_session(&id, requested_workspace) {
+            Ok(workspace_id) => workspace_id,
+            Err(error) => {
+                // `start_session` spans the capture and workspace registries.
+                // Roll back only state this invocation created so a failed
+                // workspace race/conflict cannot leave a half-started session.
+                if !had_capture_binding {
+                    crate::capture_scope::clear_session(&id);
+                }
+                if revived {
+                    crate::session::restore_ended_session(&id);
+                }
+                return ToolResult::error(error.to_string()).with_structured(json!({
+                    "code": error.code(),
+                    "session": id,
+                    "workspace_id": requested_workspace,
+                }));
+            }
+        };
         // Refresh (or begin) the session's idle-TTL clock. The cursor appears on
         // the first action carrying this `session`.
         crate::session::touch_session(&id);
+        let mut state = scope.output(&id);
+        state.workspace_id = workspace_id;
         let structured = serde_json::to_value(cua_driver_contract::StartSessionOutput {
-            state: scope.output(&id),
+            state,
             active: true,
             revived,
         })
@@ -180,8 +210,15 @@ impl Tool for EscalateSessionTool {
                 .with_structured(json!({ "code": "invalid_escalation_detail" }));
         }
         match escalate_session(&id, input.reason, input.detail.as_deref()) {
-            Ok(state) => ToolResult::text(format!("✅ Session '{id}' escalated to desktop scope."))
-                .with_structured(state.as_json(&id)),
+            Ok(state) => {
+                let mut output = state.output(&id);
+                output.workspace_id = crate::workspace::current_manager()
+                    .and_then(|manager| manager.workspace_for_session(&id));
+                ToolResult::text(format!("✅ Session '{id}' escalated to desktop scope."))
+                    .with_structured(
+                        serde_json::to_value(output).expect("session output serializes"),
+                    )
+            }
             Err(error) => {
                 let (code, message) = match error {
                     EscalateError::Ended => (
@@ -234,12 +271,16 @@ impl Tool for GetSessionStateTool {
             return ToolResult::error(format!("session '{id}' is not active"))
                 .with_structured(json!({ "code": "session_not_started", "session": id }));
         };
+        let mut output = state.output(&id);
+        output.workspace_id = crate::workspace::current_manager()
+            .and_then(|manager| manager.workspace_for_session(&id));
+        let structured = serde_json::to_value(output).expect("session output serializes");
         ToolResult::text(format!(
             "Session '{id}' uses capture_scope='{}' (effective_scope='{}').",
             state.policy,
             state.effective_scope().as_str()
         ))
-        .with_structured(state.as_json(&id))
+        .with_structured(structured)
     }
 }
 
@@ -263,6 +304,7 @@ impl Tool for EndSessionTool {
             return result;
         }
         crate::session::end_session(&id);
+        crate::workspace::clear_session(&id);
         ToolResult::text(format!("✅ Session '{id}' ended.")).with_structured(
             serde_json::to_value(cua_driver_contract::EndSessionOutput {
                 session: id,

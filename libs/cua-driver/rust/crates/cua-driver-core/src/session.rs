@@ -521,6 +521,20 @@ pub fn revive_session(session_id: &str) -> bool {
     ended_sessions().lock().unwrap().remove(session_id)
 }
 
+/// Restore a tombstone when a multi-subsystem `start_session` transaction
+/// fails after reviving an id but before the session becomes active.
+///
+/// This deliberately does not fan out end hooks or emit an observer event: it
+/// is rollback of an incomplete start, not a second session lifecycle event.
+pub(crate) fn restore_ended_session(session_id: &str) {
+    if is_trackable(session_id) {
+        ended_sessions()
+            .lock()
+            .unwrap()
+            .insert(session_id.to_owned());
+    }
+}
+
 /// Record activity for an explicit runtime-private session id, resetting its
 /// idle-TTL clock. Called at the authorized registry boundary after public
 /// arguments have been mapped into their owning runtime namespace. No-op for

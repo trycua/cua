@@ -143,6 +143,7 @@ async fn embedded_host_serves_sdk_and_mcp_with_one_contract() {
             session: "embedded-sdk-window".into(),
             capture_scope: Some(CaptureScope::Window),
             cursor_theme: None,
+            workspace_id: None,
         })
         .await
         .expect("start SDK-owned session");

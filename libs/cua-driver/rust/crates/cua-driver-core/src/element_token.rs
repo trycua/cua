@@ -38,9 +38,23 @@
 //! - Snapshot IDs are minted in `register_snapshot` (called by every
 //!   platform's `get_window_state` implementation immediately after the
 //!   AX/UIA/AT-SPI walk lands in the per-platform element cache).
-//! - A snapshot is valid until either (a) the LRU evicts it, or (b) a
-//!   newer snapshot for the same `pid` pushes it past the LRU cap of
-//!   [`LRU_CAP_PER_PID`].
+//! - A snapshot is valid until either (a) a newer snapshot for the same
+//!   `(pid, window_id)` supersedes it, or (b) the per-pid LRU evicts it
+//!   because [`LRU_CAP_PER_PID`] newer snapshots (of any window under
+//!   that pid) pushed it out.
+//! - Case (a) is the load-bearing one, and it is why the LRU cap alone
+//!   is not a validity rule: the per-platform element cache holds
+//!   exactly **one** snapshot per `(pid, window_id)` and
+//!   `get_window_state` replaces it on every call, while the LRU holds
+//!   up to [`LRU_CAP_PER_PID`] per pid. Honouring only the LRU would let
+//!   a token minted from an older snapshot of the same window resolve to
+//!   an `element_index` that now addresses a *different* node in the
+//!   current snapshot — a silent misclick, exactly the failure mode this
+//!   module exists to prevent.
+//! - The check is scoped per window, not per pid: a fresh snapshot of
+//!   window B does not invalidate a live token for window A. That keeps
+//!   multi-window sessions (Slack + Safari + Cursor under one pid)
+//!   workable; the LRU is what bounds them.
 //! - Resolving a stale token returns the explicit error string
 //!   [`STALE_TOKEN_ERROR`] — consumers MUST treat that as "re-snapshot
 //!   and retry", never as "click failed".
@@ -60,6 +74,12 @@ use std::sync::OnceLock;
 /// a multi-window session (open Slack, open Safari, swap to Cursor, …)
 /// before recycling; small enough that memory pressure is irrelevant.
 /// Matches the "e.g. 8 most recent" suggestion in the Surface 6 plan.
+///
+/// Note this bounds how many *distinct windows* can hold live tokens
+/// under one pid, not how long a token survives re-snapshotting: a
+/// second snapshot of the same window supersedes the first immediately,
+/// well before the cap is reached. See the module-level validity
+/// contract.
 pub const LRU_CAP_PER_PID: usize = 8;
 
 /// Sentinel string returned by [`TokenRegistry::resolve`] when the token
@@ -110,9 +130,13 @@ impl TokenRegistry {
     /// snapshot (the count of nodes that received an `element_index`).
     /// Used for up-front range checks on `resolve`.
     ///
-    /// Side effect: if this pid already has [`LRU_CAP_PER_PID`] snapshots
-    /// in its lane, the oldest is evicted and any token that referenced
-    /// it becomes stale — that's the contract.
+    /// Side effect: this snapshot supersedes any earlier snapshot of the
+    /// same `window_id` in this pid's lane — tokens minted from those go
+    /// stale immediately, because the per-platform element cache has
+    /// already replaced its one entry for `(pid, window_id)`. Separately,
+    /// if this pid already has [`LRU_CAP_PER_PID`] snapshots in its lane,
+    /// the oldest is evicted and any token that referenced it becomes
+    /// stale too — that's the contract.
     pub fn register_snapshot(&self, pid: i32, window_id: u32, element_count: usize) -> u32 {
         // Keep the full 32-bit counter. Truncating to 16 bits repeats an id
         // every 65,536 process-global snapshots. A long-lived daemon can then
@@ -143,8 +167,13 @@ impl TokenRegistry {
     ///
     /// - `"element_token has invalid format"` — couldn't parse the
     ///   `s{hex}:{idx}` shape.
-    /// - [`STALE_TOKEN_ERROR`] — parsed, but the snapshot id is no
-    ///   longer in the pid's LRU (either evicted or never registered).
+    /// - [`STALE_TOKEN_ERROR`] — parsed, but the snapshot it references
+    ///   is no longer live: either it left the pid's LRU (evicted or
+    ///   never registered) or a newer snapshot of the **same window**
+    ///   superseded it. The second case is what keeps resolution
+    ///   honest — the per-platform element cache only ever holds the
+    ///   newest snapshot per `(pid, window_id)`, so an older snapshot's
+    ///   `element_index` would address the *current* snapshot's node.
     /// - `"element_token element_index out of range"` — the index in
     ///   the token is past the max recorded for the snapshot.
     pub fn resolve(&self, pid: i32, token: &str) -> Result<(u32, usize), String> {
@@ -173,6 +202,25 @@ impl TokenRegistry {
                 STALE_TOKEN_ERROR.to_owned()
             }
         })?;
+        // The LRU keeps up to LRU_CAP_PER_PID snapshots per pid, but the
+        // per-platform element cache keeps exactly ONE snapshot per
+        // (pid, window_id) — `get_window_state` replaces it in place on
+        // every call. So a token minted from an older snapshot of the
+        // same window would still be "in the LRU" while its
+        // element_index now addresses a node from the CURRENT snapshot,
+        // which may be a completely different element. Refuse instead:
+        // a retryable stale error beats a confident action on the wrong
+        // node. Scoping the check to `entry.window_id` is deliberate —
+        // snapshotting window B must not invalidate a live token for
+        // window A under the same pid.
+        let newest_for_window = lane
+            .iter()
+            .rev()
+            .find(|e| e.window_id == entry.window_id)
+            .map(|e| e.snapshot_id);
+        if newest_for_window != Some(sid) {
+            return Err(STALE_TOKEN_ERROR.to_owned());
+        }
         if idx > entry.max_element_index {
             return Err(format!(
                 "element_token element_index {idx} out of range (snapshot had {} elements)",
@@ -488,32 +536,65 @@ mod tests {
     }
 
     #[test]
-    fn next_snapshot_for_same_pid_keeps_old_until_lru_evicts() {
-        // The contract is "previous snapshot is invalidated when a NEW
-        // snapshot runs for the pid" — but we hold an LRU of size
-        // LRU_CAP_PER_PID, so callers get a small grace window of recent
-        // snapshots, not strictly the most recent one. This is what the
-        // Surface 6 plan describes ("cap at e.g. 8 most recent").
+    fn next_snapshot_for_same_window_supersedes_the_previous_token() {
+        // The per-platform element cache holds exactly ONE snapshot per
+        // (pid, window_id) and get_window_state replaces it every call.
+        // So the moment a second snapshot of the same window lands, the
+        // first snapshot's element_index no longer addresses the node it
+        // was minted for — it addresses whatever now sits at that index.
+        // Resolution must refuse rather than act on the wrong node, even
+        // though the old entry is still inside the LRU cap.
         let reg = fresh_registry();
         let pid = 12;
         let s1 = reg.register_snapshot(pid, 1, 5);
         let s2 = reg.register_snapshot(pid, 1, 5);
-        // Both should still resolve.
-        let _ = reg
+        let err = reg
             .resolve(pid, &format_token(s1, 0))
-            .expect("s1 still in LRU");
-        let _ = reg.resolve(pid, &format_token(s2, 0)).expect("s2 fresh");
+            .expect_err("s1 must be superseded by s2 even though it is still in the LRU");
+        assert_eq!(err, STALE_TOKEN_ERROR);
+        // The newest snapshot for the window keeps working.
+        let (wid, idx) = reg
+            .resolve(pid, &format_token(s2, 0))
+            .expect("s2 is the newest snapshot for window 1");
+        assert_eq!(wid, 1);
+        assert_eq!(idx, 0);
+    }
+
+    #[test]
+    fn snapshot_of_other_window_leaves_first_windows_token_valid() {
+        // Supersede-invalidation is scoped per WINDOW, not per pid. An
+        // agent driving several windows of one app (Slack channel + Slack
+        // thread popout, Safari window A + window B) re-snapshots one of
+        // them all the time; that must not invalidate live tokens for the
+        // others, because each window has its own element-cache entry.
+        let reg = fresh_registry();
+        let pid = 15;
+        let win_a = reg.register_snapshot(pid, /* window_id = */ 100, 5);
+        let win_b = reg.register_snapshot(pid, /* window_id = */ 200, 5);
+        let _win_b_again = reg.register_snapshot(pid, /* window_id = */ 200, 5);
+        // Window A was never re-snapshotted, so its token is still live.
+        let (wid, idx) = reg
+            .resolve(pid, &format_token(win_a, 3))
+            .expect("a snapshot of window B must not invalidate window A's token");
+        assert_eq!(wid, 100);
+        assert_eq!(idx, 3);
+        // And the superseded window-B snapshot is stale, as above.
+        let err = reg.resolve(pid, &format_token(win_b, 0)).unwrap_err();
+        assert_eq!(err, STALE_TOKEN_ERROR);
     }
 
     #[test]
     fn lru_eviction_invalidates_oldest_snapshot() {
         let reg = fresh_registry();
         let pid = 13;
-        // Fill the LRU.
-        let oldest = reg.register_snapshot(pid, 1, 5);
-        for _ in 0..LRU_CAP_PER_PID {
+        // Every snapshot targets a DIFFERENT window so supersede-
+        // invalidation can't fire — the only thing that can make
+        // `oldest` stale here is the LRU cap, which is what this test
+        // is about.
+        let oldest = reg.register_snapshot(pid, /* window_id = */ 1, 5);
+        for window_id in 0..LRU_CAP_PER_PID {
             // Push LRU_CAP_PER_PID more, which evicts `oldest`.
-            let _ = reg.register_snapshot(pid, 1, 5);
+            let _ = reg.register_snapshot(pid, 2 + window_id as u32, 5);
         }
         // Lane size must respect the cap.
         assert_eq!(reg.snapshot_count(pid), LRU_CAP_PER_PID);
@@ -558,7 +639,9 @@ mod tests {
         let reg = fresh_registry();
         let pid = 14;
         let s1 = reg.register_snapshot(pid, 1, 5);
-        // Evict by pushing LRU_CAP_PER_PID newer snapshots.
+        // Push LRU_CAP_PER_PID newer snapshots of the same window. `s1`
+        // is stale twice over by the end — superseded by the first of
+        // these and evicted by the last.
         for _ in 0..LRU_CAP_PER_PID {
             let _ = reg.register_snapshot(pid, 1, 5);
         }

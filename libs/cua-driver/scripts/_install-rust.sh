@@ -501,7 +501,7 @@ done
 #
 # Version is resolved in priority order:
 #   1. CUA_DRIVER_RS_VERSION env var (explicit pin)
-#   2. CUA_DRIVER_RS_BAKED_VERSION below (updated in the release PR)
+#   2. CUA_DRIVER_RS_BAKED_VERSION below (updated after release publication)
 #   3. GitHub Releases API (fallback for dev / un-baked checkouts;
 #      unauthenticated = 60 req/hr per IP)
 #
@@ -512,8 +512,8 @@ done
 # checkouts) or when the baked version turns out to have no downloadable
 # asset — see the recovery at the download step below.
 #
-# ~~~ BAKED_VERSION: auto-updated in the release PR — do not edit ~~~
-CUA_DRIVER_RS_BAKED_VERSION="0.14.0" # x-release-please-version
+# ~~~ BAKED_VERSION: auto-updated after release publication — do not edit ~~~
+CUA_DRIVER_RS_BAKED_VERSION="0.14.0" # published-installer-version
 # ~~~ END_BAKED_VERSION ~~~
 
 # Run API requests with an optional token. Keep the header construction here
@@ -602,12 +602,10 @@ resolve_latest_version_from_api() {
 }
 
 # Where VERSION came from. A missing asset is fatal for an explicit pin (the
-# user named that version) but recoverable for the baked constant, which is
-# routinely ahead of reality: merging the Release Please pull request bumps it
-# on `main` and creates the tag, yet the release starts as an unpublished draft
-# whose assets stay undownloadable until the CD build publishes it. cua.ai
-# serves this script from `main`, so the public one-liner points at a version
-# nobody can fetch for the length of every release build.
+# user named that version) but recoverable for the baked constant. The normal
+# CD path advances it only after every staged release asset is public; fallback
+# remains defense in depth for manual edits, asset removal, or an interrupted
+# legacy release flow.
 if [[ -n "${CUA_DRIVER_RS_VERSION:-}" ]]; then
     VERSION_SOURCE="pin"
     TAG="${TAG_PREFIX}${CUA_DRIVER_RS_VERSION#v}"
@@ -710,10 +708,9 @@ download_release_tarball() {
 DOWNLOAD_STATUS=0
 download_release_tarball "$VERSION" || DOWNLOAD_STATUS=$?
 if (( DOWNLOAD_STATUS != 0 )); then
-    # Almost always the publish-lag window described at the baked constant: it
-    # is already live on `main` while its release is still an unpublished draft.
-    # Without this recovery the default `curl | bash` install fails outright for
-    # the length of every release build, with no way through but a version pin.
+    # Defense in depth for a manually advanced constant, removed asset, or
+    # interrupted legacy release flow. The normal CD path updates this constant
+    # only after every staged asset is publicly visible.
     if [[ "$VERSION_SOURCE" != "baked" || "$DOWNLOAD_STATUS" != "44" ]]; then
         err "download failed; try CUA_DRIVER_RS_VERSION=<version> to pin a specific release"
         exit 1

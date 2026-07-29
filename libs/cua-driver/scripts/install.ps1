@@ -102,10 +102,9 @@ $TagPrefix  = "cua-driver-rs-v"
 $BinaryName = "cua-driver.exe"
 $ThemeBinaryName = "cua-cursor-theme.exe"
 
-# Baked-version constant — kept in lock-step with the latest published
-# cua-driver-rs-v* release tag by the Release Please release pull request
-# (see .github/workflows/cd-rust-cua-driver.yml). The sentinel-block
-# markers identify this line for Release Please's generic version updater.
+# Baked-version constant — advanced by the Cua Driver CD workflow only after
+# the matching GitHub release and all staged assets are public. The sentinel
+# markers identify this line for the post-publication updater.
 #
 # Precedence at resolve time: $env:CUA_DRIVER_RS_VERSION > -Release arg >
 # this baked value > GitHub Releases API. Baked means the `irm | iex`
@@ -113,8 +112,8 @@ $ThemeBinaryName = "cua-cursor-theme.exe"
 # only consulted as a fallback when this script is run from a branch
 # where the baked line hasn't been updated yet.
 #
-# ~~~ BAKED_VERSION: auto-updated in the release PR — do not edit ~~~
-$Script:CuaDriverRsBakedVersion = "0.14.0" # x-release-please-version
+# ~~~ BAKED_VERSION: auto-updated after release publication — do not edit ~~~
+$Script:CuaDriverRsBakedVersion = "0.14.0" # published-installer-version
 # ~~~ END_BAKED_VERSION ~~~
 $CursorThemeRequiredFrom = [version]"0.12.7"
 
@@ -854,15 +853,11 @@ function Invoke-OldReleasesGc {
 #   'env' / 'release-arg' — the user named an exact version. Installing some
 #       other version would silently defy an explicit instruction, so a
 #       missing asset must stay fatal.
-#   'baked'               — recoverable, and routinely wrong for a window on
-#       every release. Merging the Release Please pull request bumps the
-#       constant on `main` and creates the tag, but the release it creates is
-#       a *draft*: its assets only become downloadable when the CD workflow
-#       finishes building and publishes it. Since cua.ai serves this script
-#       from `main`, the public one-liner advertises a version nobody can
-#       download for the length of that build. Observed windows on
-#       cua-driver-rs releases range from ~12 minutes to ~3.5 hours. Falling
-#       back to the newest published release keeps installs working through it.
+#   'baked'               — normally the newest fully published release. A
+#       confirmed missing asset can still happen after manual edits, release
+#       asset removal, or an interrupted legacy release flow. Falling back to
+#       the newest published component release keeps the default installer
+#       recoverable without weakening explicit version pins.
 #   'api'                 — already the API's answer; nothing left to fall
 #       back to.
 $Script:CuaDriverRsVersionSource = $null
@@ -1069,11 +1064,9 @@ function Get-ReleaseAsset([string]$version, [string]$archLabel, [string]$destDir
     }
 
     if ($download.Missing -and $Script:CuaDriverRsVersionSource -eq 'baked') {
-        # Almost always the publish-lag window described above: the constant is
-        # already live on `main` while its release is still an unpublished
-        # draft. Without this recovery the default `irm | iex` install fails
-        # outright for the length of every release build, with no way through
-        # but an explicit version pin.
+        # Defense in depth for a manually advanced constant, removed asset, or
+        # interrupted legacy release flow. The normal CD path updates this
+        # constant only after every staged asset is publicly visible.
         $apiVersion = Get-LatestVersionFromApi
         if (-not $apiVersion) {
             $missingDetail = "no published fallback could be resolved"

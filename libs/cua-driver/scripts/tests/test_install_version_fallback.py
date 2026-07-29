@@ -1,21 +1,18 @@
 """Installer release-resolution guards.
 
-Every release opens a window where the baked version constant points at assets
-nobody can download yet. Merging the Release Please pull request bumps the
-constant on `main` and creates the tag, but the release it creates is a draft;
-its assets only become fetchable once the CD workflow finishes building and
-publishes it. cua.ai serves both installers straight from `main`, so the public
-one-liner advertises an undownloadable version for the length of that build --
-observed windows on cua-driver-rs releases run from ~12 minutes to ~3.5 hours.
+The release workflow advances the baked version only after every staged asset
+is public. The runtime fallback remains defense in depth for manual edits,
+asset removal, interrupted legacy releases, and installer copies from older
+branches where a baked version may still point at an unavailable asset.
 
-The baked value must therefore degrade to the GitHub Releases API rather than
-fail the install. An explicit pin (CUA_DRIVER_RS_VERSION, -Release) is the
+A missing baked value may therefore degrade to the GitHub Releases API rather
+than fail the install. An explicit pin (CUA_DRIVER_RS_VERSION, -Release) is the
 opposite case: the user named one version, so a missing asset must stay fatal
 rather than silently installing a different one.
 
-Version *agreement* across the checked-in sources is not tested here --
-.github/scripts/validate_release_versions.py already owns that. It cannot cover
-these invariants, because at merge time the release genuinely is unpublished.
+Published installer-state agreement is owned by
+.github/scripts/validate_release_versions.py; this module tests runtime
+resolution and failure semantics.
 """
 
 from __future__ import annotations

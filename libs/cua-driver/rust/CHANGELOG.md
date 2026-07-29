@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.14.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.13.1...cua-driver-rs-v0.14.0) (2026-07-29)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cua-driver:** move cursor context into session badges ([#2677](https://github.com/trycua/cua/issues/2677))
+
+### Features
+
+* **cua-driver:** move cursor context into session badges ([#2677](https://github.com/trycua/cua/issues/2677)) ([11c4647](https://github.com/trycua/cua/commit/11c4647128a99b2879f31a3f4eedc6b08d52c079))
+
+
+### Bug Fixes
+
+* **cua-driver:** avoid starting Orca on COSMIC ([#2666](https://github.com/trycua/cua/issues/2666)) ([069272e](https://github.com/trycua/cua/commit/069272e0b97114559f2edc22e06b2f9cf5847847))
+* **cua-driver:** declare browser chrome capture coverage ([#2599](https://github.com/trycua/cua/issues/2599)) ([a36865c](https://github.com/trycua/cua/commit/a36865c236e7b70f67d974fb80e2b0119929b636))
+* **cua-driver:** keep cursor badges and drags in sync ([#2676](https://github.com/trycua/cua/issues/2676)) ([b249df8](https://github.com/trycua/cua/commit/b249df857994ebaebf9f02248e8312b3bd2a5dd2))
+* **cua-driver:** refine session cursor feedback ([#2665](https://github.com/trycua/cua/issues/2665)) ([d366af0](https://github.com/trycua/cua/commit/d366af084e5357a570891fcf2c77c14811d9b617))
+
 ## [0.13.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.6...cua-driver-rs-v0.13.1) (2026-07-28)
 
 

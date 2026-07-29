@@ -887,11 +887,28 @@ impl Tool for LaunchAppTool {
                         "xdg-open".to_owned(),
                     ));
                 }
-                // launch_path > name. Both go through the same direct-exec path
-                // (so XDG `Exec=` commands round-trip), but launch_path is the
-                // canonical form preferred by list_apps callers.
-                let command = launch_path_opt.as_deref().or(name_opt.as_deref());
-                if let Some(cmd) = command {
+                // launch_path round-trips the XDG Exec= command. Preserve its
+                // quoting and field structure through the documented shell path.
+                if let Some(cmd) = launch_path_opt.as_deref() {
+                    let mut extra_args = additional_arguments;
+                    if chromium_family_program(cmd)
+                        && !cmd.contains("--force-renderer-accessibility")
+                        && !extra_args
+                            .iter()
+                            .any(|arg| arg == "--force-renderer-accessibility")
+                    {
+                        extra_args.push("--force-renderer-accessibility".to_owned());
+                    }
+                    let child = super::process_control::spawn_shell_command(cmd, &extra_args)?;
+                    let pid = child.id();
+                    return Ok((
+                        format!("✅ Launched {cmd} (pid {pid}) in background."),
+                        Some(pid),
+                        cmd.to_owned(),
+                    ));
+                }
+                // Names retain the direct-exec path and xdg-open fallback.
+                if let Some(cmd) = name_opt.as_deref() {
                     let mut parts = cmd.split_whitespace();
                     let prog = parts.next().unwrap_or(cmd);
                     let mut rest: Vec<String> = parts.map(str::to_owned).collect();

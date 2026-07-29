@@ -588,6 +588,17 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
 
+      # Recovery dispatches may target an immutable tag created before the
+      # current release tooling existed. Keep release inputs pinned to that tag,
+      # but run orchestration helpers from the exact workflow revision that was
+      # dispatched.
+      - name: Check out release control tooling
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-control
+          persist-credentials: false
+
       - name: Determine version
         id: version
         run: |
@@ -640,7 +651,7 @@ jobs:
           cp libs/cua-driver/scripts/install.sh         release-upload/install.sh
           cp libs/cua-driver/scripts/install.ps1        release-upload/install.ps1
           cp libs/cua-driver/scripts/_install-rust.sh   release-upload/_install-rust.sh
-          python3 .github/scripts/update_cua_driver_installer_version.py \
+          python3 release-control/.github/scripts/update_cua_driver_installer_version.py \
             --version "$VERSION" \
             --shell-path release-upload/_install-rust.sh \
             --powershell-path release-upload/install.ps1
@@ -809,7 +820,7 @@ jobs:
             UPDATE_ROOT="${RUNNER_TEMP}/cua-installer-version-${ATTEMPT}"
             git worktree add --detach "$UPDATE_ROOT" origin/main
 
-            python3 .github/scripts/update_cua_driver_installer_version.py \
+            python3 release-control/.github/scripts/update_cua_driver_installer_version.py \
               --version "$VERSION" \
               --shell-path "$UPDATE_ROOT/libs/cua-driver/scripts/_install-rust.sh" \
               --powershell-path "$UPDATE_ROOT/libs/cua-driver/scripts/install.ps1" \
@@ -825,7 +836,7 @@ jobs:
             fi
 
             bash -n "$UPDATE_ROOT/libs/cua-driver/scripts/_install-rust.sh"
-            python3 .github/scripts/validate_release_versions.py \
+            python3 release-control/.github/scripts/validate_release_versions.py \
               --repo-root "$UPDATE_ROOT" \
               --product driver
             git -C "$UPDATE_ROOT" diff --check

@@ -86,3 +86,25 @@ def test_refuses_mismatched_installer_state(tmp_path: Path) -> None:
         update_installer_versions(
             shell, powershell, "999.998.997", state_path=state
         )
+
+
+def test_accepts_legacy_release_please_sentinels_for_tag_recovery(
+    tmp_path: Path,
+) -> None:
+    shell, powershell, _ = copy_installers(tmp_path)
+    shell.write_text(
+        shell.read_text().replace(
+            "# published-installer-version", "# x-release-please-version"
+        )
+    )
+    powershell.write_text(
+        powershell.read_text().replace(
+            "# published-installer-version", "# x-release-please-version"
+        )
+    )
+
+    changed = update_installer_versions(shell, powershell, "999.998.997")
+
+    assert changed == (shell, powershell)
+    assert "# x-release-please-version" in shell.read_text()
+    assert "# x-release-please-version" in powershell.read_text()

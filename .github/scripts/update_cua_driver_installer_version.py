@@ -15,11 +15,11 @@ class InstallerVersionError(RuntimeError):
 
 STABLE_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 SHELL_VERSION = re.compile(
-    r'^(CUA_DRIVER_RS_BAKED_VERSION=")([^"]+)(" # published-installer-version)$',
+    r'^(CUA_DRIVER_RS_BAKED_VERSION=")([^"]+)(" # (?:published-installer-version|x-release-please-version))$',
     re.MULTILINE,
 )
 POWERSHELL_VERSION = re.compile(
-    r'^(\$Script:CuaDriverRsBakedVersion\s*=\s*")([^"]+)(" # published-installer-version)$',
+    r'^(\$Script:CuaDriverRsBakedVersion\s*=\s*")([^"]+)(" # (?:published-installer-version|x-release-please-version))$',
     re.MULTILINE,
 )
 

@@ -237,8 +237,14 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
     def test_driver_installer_version_advances_only_after_publication(self) -> None:
         workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
 
+        release_job = workflow.index("  release:")
+        control_checkout = workflow.index(
+            "- name: Check out release control tooling", release_job
+        )
         stamp = workflow.index(
-            "python3 .github/scripts/update_cua_driver_installer_version.py"
+            "python3 release-control/.github/scripts/"
+            "update_cua_driver_installer_version.py",
+            control_checkout,
         )
         staged_shell = workflow.index(
             "--shell-path release-upload/_install-rust.sh", stamp
@@ -259,12 +265,16 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             "- name: Advance public installer version on main", app_token
         )
 
+        self.assertLess(release_job, control_checkout)
+        self.assertLess(control_checkout, stamp)
         self.assertLess(stamp, staged_shell)
         self.assertLess(staged_shell, staged_powershell)
         self.assertLess(staged_powershell, publish)
         self.assertLess(publish, verify_public)
         self.assertLess(verify_public, app_token)
         self.assertLess(app_token, advance)
+        self.assertIn("ref: ${{ github.workflow_sha }}", workflow)
+        self.assertIn("path: release-control", workflow)
         self.assertIn("select(.draft == false and .published_at != null)", workflow)
         self.assertIn("missing-release-assets.txt", workflow)
         self.assertIn("--allow-newer", workflow)

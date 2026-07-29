@@ -86,6 +86,10 @@ pub struct RenderStateCore {
     pub session_label: Option<String>,
     /// Elapsed time since the session label was revealed with the cursor.
     pub session_badge_secs: f64,
+    /// Whether the user's hardware pointer is currently over this synthetic
+    /// cursor. Hover temporarily reveals an already-faded session badge
+    /// without changing its one-shot reveal timer.
+    pub session_badge_hovered: bool,
 }
 
 impl RenderStateCore {
@@ -130,6 +134,7 @@ impl RenderStateCore {
             pinned_wid: None,
             session_label: None,
             session_badge_secs: SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS,
+            session_badge_hovered: false,
         }
     }
 
@@ -147,6 +152,9 @@ impl RenderStateCore {
         if self.session_label.is_none() {
             return 0.0;
         }
+        if self.session_badge_hovered {
+            return 1.0;
+        }
         if self.session_badge_secs <= SESSION_BADGE_HOLD_SECS {
             return 1.0;
         }
@@ -154,6 +162,38 @@ impl RenderStateCore {
             .clamp(0.0, 1.0);
         let smooth = fade * fade * (3.0 - 2.0 * fade);
         (1.0 - smooth) as f32
+    }
+
+    pub fn session_badge_needs_frame_tick(&self) -> bool {
+        self.session_label.is_some()
+            && self.session_badge_secs < SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS
+            && self.cursor_is_revealed()
+    }
+
+    /// Whether the platform overlay should keep a low-frequency hardware
+    /// pointer poll alive for hover-to-reveal. This is deliberately separate
+    /// from [`Self::session_badge_needs_frame_tick`]: a faded badge needs hover
+    /// hit-testing, not continuous 60 fps repainting.
+    pub fn session_badge_needs_hover_poll(&self) -> bool {
+        self.session_label.is_some() && self.cursor_is_revealed()
+    }
+
+    /// Update hover state from a platform-native hardware pointer sample.
+    ///
+    /// `self.pos` is the centre of the cursor artwork. The hit radius is a
+    /// little larger than the 42 point production artwork so the interaction
+    /// remains comfortable around the white outline and glow.
+    pub fn update_session_badge_hover(&mut self, pointer: Option<(f64, f64)>) -> bool {
+        const HOVER_RADIUS: f64 = crate::theme::DISPLAY_SIZE as f64 * 0.82;
+        let hovered = self.session_badge_needs_hover_poll()
+            && pointer.is_some_and(|(x, y)| {
+                let dx = x - self.pos.0;
+                let dy = y - self.pos.1;
+                dx * dx + dy * dy <= HOVER_RADIUS * HOVER_RADIUS
+            });
+        let changed = hovered != self.session_badge_hovered;
+        self.session_badge_hovered = hovered;
+        changed
     }
 
     /// Return the theme that is actually being painted, including any
@@ -606,8 +646,11 @@ impl RenderStateCore {
                 true
             }
             OverlayCommand::SetSessionLabel(label) => {
-                self.session_label = crate::sanitize_session_label(&label);
-                self.session_badge_secs = 0.0;
+                let session_label = crate::sanitize_session_label(&label);
+                if session_label != self.session_label {
+                    self.session_label = session_label;
+                    self.session_badge_secs = 0.0;
+                }
                 true
             }
             OverlayCommand::ShowFocusRect(_) => false, // caller-specific
@@ -882,6 +925,32 @@ mod session_badge_and_action_tests {
     }
 
     #[test]
+    fn repeated_session_label_metadata_does_not_restart_badge_timer() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.apply_command_base(
+            OverlayCommand::SetSessionLabel("Research".into()),
+            false,
+            false,
+        );
+        core.tick_motion(SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS);
+        assert_eq!(core.session_badge_alpha(), 0.0);
+
+        core.apply_command_base(
+            OverlayCommand::SetSessionLabel("Research".into()),
+            false,
+            false,
+        );
+        assert_eq!(core.session_badge_alpha(), 0.0);
+
+        core.apply_command_base(
+            OverlayCommand::SetSessionLabel("Writing".into()),
+            false,
+            false,
+        );
+        assert_eq!(core.session_badge_alpha(), 1.0);
+    }
+
+    #[test]
     fn revealing_hidden_cursor_restarts_badge_without_restarting_on_every_move() {
         let mut core = RenderStateCore::new(CursorConfig::default());
         core.apply_command_base(
@@ -902,6 +971,7 @@ mod session_badge_and_action_tests {
             false,
         );
         assert_eq!(core.session_badge_alpha(), 1.0);
+        assert!(core.session_badge_needs_frame_tick());
         core.tick_motion(0.5);
         let elapsed = core.session_badge_secs;
         core.apply_command_base(
@@ -914,6 +984,30 @@ mod session_badge_and_action_tests {
             false,
         );
         assert_eq!(core.session_badge_secs, elapsed);
+        core.tick_motion(SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS);
+        assert!(!core.session_badge_needs_frame_tick());
+    }
+
+    #[test]
+    fn hardware_pointer_hover_reveals_only_while_over_cursor() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.pos = (300.0, 240.0);
+        core.apply_command_base(
+            OverlayCommand::SetSessionLabel("Research".into()),
+            false,
+            false,
+        );
+        core.tick_motion(SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS);
+        assert_eq!(core.session_badge_alpha(), 0.0);
+        assert!(core.session_badge_needs_hover_poll());
+
+        assert!(core.update_session_badge_hover(Some((302.0, 238.0))));
+        assert_eq!(core.session_badge_alpha(), 1.0);
+        assert!(!core.update_session_badge_hover(Some((304.0, 241.0))));
+        assert_eq!(core.session_badge_alpha(), 1.0);
+
+        assert!(core.update_session_badge_hover(Some((500.0, 500.0))));
+        assert_eq!(core.session_badge_alpha(), 0.0);
     }
 
     #[test]

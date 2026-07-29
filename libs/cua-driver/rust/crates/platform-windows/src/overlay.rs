@@ -543,6 +543,7 @@ impl RenderState {
         self.core.path.is_some()
             || self.core.spring.is_some()
             || self.core.click_t.is_some()
+            || self.core.session_badge_needs_frame_tick()
             || (self.core.motion.idle_hide_ms > 0.0
                 && self.core.visible
                 && self.core.pos.0 >= -100.0
@@ -1063,9 +1064,11 @@ unsafe fn present_surface(hwnd: windows::Win32::Foundation::HWND, dirty: DirtyRe
 
 // ── Idle render gate (issue #1808) ────────────────────────────────────────
 //
-// The overlay window timer is re-armed between two cadences:
+// The overlay window timer is re-armed between three cadences:
 //   * ACTIVE  (`TIMER_MS_ACTIVE`, ~125 Hz) while any cursor is animating /
 //     fading — this is what produces a smooth glide + click pulse.
+//   * HOVER   (`TIMER_MS_HOVER`, 12.5 Hz) while a revealed cursor can show its
+//     session badge again under the user's hardware pointer.
 //   * IDLE    (`TIMER_MS_IDLE`, a slow heartbeat) when every cursor is
 //     quiescent — the handler then only drains the command channel cheaply
 //     and re-arms ACTIVE the instant a command arrives. No full-screen pixmap
@@ -1078,9 +1081,10 @@ unsafe fn present_surface(hwnd: windows::Win32::Foundation::HWND, dirty: DirtyRe
 // armed at; the WM_TIMER handler flips it based on `render_map_needs_frame_tick`.
 const TIMER_ID: usize = 1;
 const TIMER_MS_ACTIVE: u32 = 8; // ~125 Hz, matches the C# reference render rate
+const TIMER_MS_HOVER: u32 = 80; // low-cost hardware-pointer hover sampling
 const TIMER_MS_IDLE: u32 = 250; // slow heartbeat: drain channel, stay responsive
 /// Current armed timer cadence in ms. Compared against the desired cadence each
-/// WM_TIMER so we only call `SetTimer` (re-arm) on an actual active↔idle flip.
+/// WM_TIMER so we only call `SetTimer` when the desired cadence changes.
 static TIMER_PERIOD_MS: std::sync::atomic::AtomicU32 =
     std::sync::atomic::AtomicU32::new(TIMER_MS_ACTIVE);
 
@@ -1159,7 +1163,7 @@ unsafe extern "system" fn wnd_proc(
             // the slow IDLE cadence below.
             let was_active =
                 TIMER_PERIOD_MS.load(std::sync::atomic::Ordering::Relaxed) == TIMER_MS_ACTIVE;
-            let (upload, arrived, pinned_wid, needs_tick) = {
+            let (upload, arrived, pinned_wid, needs_tick, needs_hover_poll) = {
                 let mut guard = RENDER.lock().unwrap();
                 if let Some(map) = guard.as_mut() {
                     // Drain the channel via get-or-create; track the last-touched
@@ -1204,19 +1208,31 @@ unsafe extern "system" fn wnd_proc(
                                 (rs.core.idle_secs + (real_dt - dt)).min(fade_start);
                         }
                     }
+                    let mut pointer = POINT::default();
+                    let pointer = GetCursorPos(&mut pointer)
+                        .ok()
+                        .map(|_| (f64::from(pointer.x), f64::from(pointer.y)));
+                    let mut hover_changed = false;
+                    for rs in map.cursors.values_mut() {
+                        hover_changed |= rs.core.update_session_badge_hover(pointer);
+                    }
 
                     // After ticking: does any cursor still need frame ticks?
                     let needs_tick = render_map_needs_frame_tick(map);
+                    let needs_hover_poll = map
+                        .cursors
+                        .values()
+                        .any(|rs| rs.core.session_badge_needs_hover_poll());
 
                     // Render only when something can have changed pixels this
                     // frame: a fresh command, a still-running animation, or the
                     // final settle frame as the previous animation winds down
                     // (`was_active && !needs_tick`). A fully-quiescent idle tick
                     // returns `None` here and does no compositing at all.
-                    let should_render = had_msg || needs_tick || was_active;
+                    let should_render = had_msg || hover_changed || needs_tick || was_active;
 
                     if !should_render {
-                        (None, arrived, None, needs_tick)
+                        (None, arrived, None, needs_tick, needs_hover_poll)
                     } else {
                         // Decide where to pin the single overlay window in z.
                         //
@@ -1261,10 +1277,10 @@ unsafe extern "system" fn wnd_proc(
                         // preserves pre-retina-fix behaviour on Windows).
                         let upload = composite_dirty(map);
 
-                        (upload, arrived, pinned, needs_tick)
+                        (upload, arrived, pinned, needs_tick, needs_hover_poll)
                     }
                 } else {
-                    (None, Vec::new(), None, false)
+                    (None, Vec::new(), None, false, false)
                 }
             };
 
@@ -1299,6 +1315,8 @@ unsafe extern "system" fn wnd_proc(
             // same period every tick would itself be needless work.
             let desired_ms = if needs_tick {
                 TIMER_MS_ACTIVE
+            } else if needs_hover_poll {
+                TIMER_MS_HOVER
             } else {
                 TIMER_MS_IDLE
             };

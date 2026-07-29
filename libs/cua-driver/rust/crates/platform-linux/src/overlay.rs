@@ -460,6 +460,7 @@ impl RenderState {
         self.core.path.is_some()
             || self.core.spring.is_some()
             || self.core.click_t.is_some()
+            || self.core.session_badge_needs_frame_tick()
             || (self.core.motion.idle_hide_ms > 0.0
                 && self.core.visible
                 && self.core.pos.0 >= -100.0
@@ -775,12 +776,18 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         let now = Instant::now();
         let elapsed_dt = now.duration_since(last_tick).as_secs_f64();
         last_tick = now;
+        let hardware_pointer = conn
+            .query_pointer(root)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .map(|reply| (f64::from(reply.root_x), f64::from(reply.root_y)));
 
         // Drain commands and tick.
         let (
             arrived,
             pinned_wid,
             had_msg,
+            hover_changed,
             next_frame_tick_needed,
             next_z_order_tick_needed,
             next_idle_wait_interval,
@@ -795,6 +802,10 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
                     maintenance_timeout,
                     frame_tick_needed,
                 );
+                let mut hover_changed = false;
+                for rs in map.cursors.values_mut() {
+                    hover_changed |= rs.core.update_session_badge_hover(hardware_pointer);
+                }
                 let pinned_wid = map
                     .last_active
                     .as_ref()
@@ -807,6 +818,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
                     arrived,
                     pinned_wid,
                     had_msg,
+                    hover_changed,
                     next_frame_tick_needed,
                     next_z_order_tick_needed,
                     next_idle_wait_interval,
@@ -829,7 +841,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         // Render after a command, during an active animation/fade, and once
         // more as the final active state settles. This leaves the X11 window in
         // its completed/cleared state before the next blocking receive.
-        if had_msg || frame_tick_needed || next_frame_tick_needed {
+        if had_msg || hover_changed || frame_tick_needed || next_frame_tick_needed {
             let tiles = {
                 let guard = RENDER.lock().unwrap();
                 guard.as_ref().map(render_x11_tiles)

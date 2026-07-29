@@ -487,6 +487,49 @@ pub fn drag_at_xy(
     button: DragButton,
     foreground_release: bool,
 ) -> anyhow::Result<()> {
+    drag_at_xy_observed(
+        pid,
+        from_x,
+        from_y,
+        to_x,
+        to_y,
+        from_local,
+        to_local,
+        wid,
+        duration_ms,
+        steps,
+        modifiers,
+        button,
+        foreground_release,
+        |_, _| {},
+    )
+}
+
+/// PID-routed drag with an observer called for every native pointer position.
+///
+/// The cursor overlay uses this for the same reason as
+/// [`drag_at_xy_foreground_observed`]: the synthetic cursor should follow the
+/// actual dispatched path rather than jumping to the endpoint after release.
+#[allow(clippy::too_many_arguments)]
+pub fn drag_at_xy_observed<F>(
+    pid: i32,
+    from_x: f64,
+    from_y: f64,
+    to_x: f64,
+    to_y: f64,
+    from_local: Option<(f64, f64)>,
+    to_local: Option<(f64, f64)>,
+    wid: Option<u32>,
+    duration_ms: u64,
+    steps: usize,
+    modifiers: &[&str],
+    button: DragButton,
+    foreground_release: bool,
+    mut observe: F,
+) -> anyhow::Result<()>
+where
+    F: FnMut(f64, f64),
+{
     use core_graphics::event::CGEventTapLocation;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -552,6 +595,7 @@ pub fn drag_at_xy(
         button_number,
         0,
     );
+    observe(from_x, from_y);
     std::thread::sleep(std::time::Duration::from_millis(16));
 
     // Interpolated drag steps.
@@ -569,6 +613,7 @@ pub fn drag_at_xy(
             drag.set_flags(flags);
         }
         post_mouse_event(pid, &drag, il, wid, click_group_id, 1, button_number, 0);
+        observe(ix, iy);
         if step_delay_ms > 0 {
             std::thread::sleep(std::time::Duration::from_millis(step_delay_ms));
         }
@@ -618,6 +663,39 @@ pub fn drag_at_xy_foreground(
     modifiers: &[&str],
     button: DragButton,
 ) -> anyhow::Result<()> {
+    drag_at_xy_foreground_observed(
+        from_x,
+        from_y,
+        to_x,
+        to_y,
+        duration_ms,
+        steps,
+        modifiers,
+        button,
+        |_, _| {},
+    )
+}
+
+/// Foreground drag with an observer called for every native pointer position.
+///
+/// The cursor overlay uses this to follow the same interpolated path and
+/// cadence as the HID gesture instead of gliding only after the real pointer
+/// has already completed the drag.
+#[allow(clippy::too_many_arguments)]
+pub fn drag_at_xy_foreground_observed<F>(
+    from_x: f64,
+    from_y: f64,
+    to_x: f64,
+    to_y: f64,
+    duration_ms: u64,
+    steps: usize,
+    modifiers: &[&str],
+    button: DragButton,
+    mut observe: F,
+) -> anyhow::Result<()>
+where
+    F: FnMut(f64, f64),
+{
     use core_graphics::display::CGDisplay;
     use core_graphics::event::CGEventTapLocation;
 
@@ -658,6 +736,7 @@ pub fn drag_at_xy_foreground(
     // when the HID event carries an explicit location.
     let _ = CGDisplay::warp_mouse_cursor_position(CGPoint::new(from_x, from_y));
     unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
+    observe(from_x, from_y);
     std::thread::sleep(std::time::Duration::from_millis(40));
 
     // Prime the renderer's tracking state with a genuine HID mouse move.
@@ -687,18 +766,17 @@ pub fn drag_at_xy_foreground(
 
     for i in 1..=steps {
         let t = i as f64 / steps as f64;
-        let event = CGEvent::new_mouse_event(
-            source.clone(),
-            dragged_type,
-            CGPoint::new(from_x + (to_x - from_x) * t, from_y + (to_y - from_y) * t),
-            cg_button,
-        )
-        .map_err(|_| anyhow::anyhow!("foreground drag mouseDragged failed"))?;
+        let x = from_x + (to_x - from_x) * t;
+        let y = from_y + (to_y - from_y) * t;
+        let event =
+            CGEvent::new_mouse_event(source.clone(), dragged_type, CGPoint::new(x, y), cg_button)
+                .map_err(|_| anyhow::anyhow!("foreground drag mouseDragged failed"))?;
         if flags != CGEventFlags::CGEventFlagNull {
             event.set_flags(flags);
         }
         event.set_integer_value_field(core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE, 1);
         post(&event);
+        observe(x, y);
         if step_delay_ms > 0 {
             std::thread::sleep(std::time::Duration::from_millis(step_delay_ms));
         }

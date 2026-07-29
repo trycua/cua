@@ -359,3 +359,38 @@ pub enum OverlayCommand {
     /// `None` clears the highlight.
     ShowFocusRect(Option<[f64; 4]>),
 }
+
+/// Build the shared overlay command for one native pointer position.
+///
+/// Native drag implementations report the actual event coordinate while the
+/// cursor artwork is centred 16 points down-right so its tip lands on that
+/// coordinate. Keeping this transform here prevents platform-specific drag
+/// loops from drifting apart.
+pub fn track_pointer_command(x: f64, y: f64) -> OverlayCommand {
+    const CLICK_OFFSET: f64 = 16.0;
+    let heading = std::f64::consts::FRAC_PI_4;
+    OverlayCommand::SnapTo {
+        x: x + heading.cos() * CLICK_OFFSET,
+        y: y + heading.sin() * CLICK_OFFSET,
+        heading_radians: Some(heading),
+    }
+}
+
+#[cfg(test)]
+mod pointer_tracking_tests {
+    use super::*;
+
+    #[test]
+    fn tracked_artwork_keeps_its_tip_on_the_native_pointer() {
+        let OverlayCommand::SnapTo {
+            x,
+            y,
+            heading_radians: Some(heading),
+        } = track_pointer_command(120.0, 80.0)
+        else {
+            panic!("pointer tracking must produce an anchored snap");
+        };
+        assert!((x - (120.0 + heading.cos() * 16.0)).abs() < f64::EPSILON);
+        assert!((y - (80.0 + heading.sin() * 16.0)).abs() < f64::EPSILON);
+    }
+}

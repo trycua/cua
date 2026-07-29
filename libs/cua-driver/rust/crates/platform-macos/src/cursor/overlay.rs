@@ -522,6 +522,7 @@ impl RenderState {
             || self.core.spring.is_some()
             || self.core.click_t.is_some()
             || self.focus_rect.is_some()
+            || self.core.session_badge_needs_frame_tick()
             || (self.core.motion.idle_hide_ms > 0.0
                 && self.core.visible
                 && self.core.pos.0 >= -100.0
@@ -666,8 +667,10 @@ fn render_loop(
     _win_h: f64,
 ) {
     let target_frame_ms = Duration::from_millis(16); // ~60 fps while pixels can change
+    let hover_poll_ms = Duration::from_millis(80);
     let mut last_tick = Instant::now();
     let mut frame_tick_needed = false;
+    let mut hover_poll_needed = false;
     // Repin bookkeeping: track last pinned wid and a frame counter for
     // the periodic defensive-repin (every ~60 active frames ≈ 1 s).
     let mut last_pinned: Option<u64> = None;
@@ -677,11 +680,17 @@ fn render_loop(
         // When no cursor animation/fade is active, block until the MCP side
         // sends a command. This is the idle-server fast path: no fullscreen
         // pixmap allocation, no CGImage conversion, no 60fps wakeup.
-        let first_msg = if frame_tick_needed {
-            None
+        let (first_msg, hover_poll_tick) = if frame_tick_needed {
+            (None, hover_poll_needed)
+        } else if hover_poll_needed {
+            match rx.recv_timeout(hover_poll_ms) {
+                Ok(msg) => (Some(msg), true),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => (None, true),
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
         } else {
             match rx.recv() {
-                Ok(msg) => Some(msg),
+                Ok(msg) => (Some(msg), false),
                 Err(_) => break,
             }
         };
@@ -702,7 +711,17 @@ fn render_loop(
         // `pinned_wid` follows the most-recently-updated cursor: a single
         // NSWindow can occupy only one z-band, so the last-active cursor's
         // target wins. `arrived` collects the keys whose path just ended.
-        let (pinned_wid, raise_unpinned, arrived, win_w, win_h, had_msg, next_frame_tick_needed) = {
+        let (
+            pinned_wid,
+            raise_unpinned,
+            arrived,
+            win_w,
+            win_h,
+            had_msg,
+            hover_changed,
+            next_frame_tick_needed,
+            next_hover_poll_needed,
+        ) = {
             let mut guard = RENDER.lock().unwrap();
             match guard.as_mut() {
                 Some(map) => {
@@ -734,6 +753,22 @@ fn render_loop(
                             }
                         }
                     }
+                    let pointer = if hover_poll_tick
+                        || map
+                            .cursors
+                            .values()
+                            .any(|rs| rs.core.session_badge_needs_hover_poll())
+                    {
+                        hardware_cursor_position()
+                    } else {
+                        None
+                    };
+                    let mut hover_changed = false;
+                    if pointer.is_some() || hover_poll_tick {
+                        for rs in map.cursors.values_mut() {
+                            hover_changed |= rs.core.update_session_badge_hover(pointer);
+                        }
+                    }
                     let pinned = last_key
                         .as_ref()
                         .and_then(|k| map.cursors.get(k))
@@ -745,6 +780,10 @@ fn render_loop(
                         .is_some_and(cursor_is_externally_visible)
                         && pinned.is_none();
                     let next_frame_tick_needed = render_map_needs_frame_tick(map);
+                    let next_hover_poll_needed = map
+                        .cursors
+                        .values()
+                        .any(|rs| rs.core.session_badge_needs_hover_poll());
                     (
                         pinned,
                         raise_unpinned,
@@ -752,7 +791,9 @@ fn render_loop(
                         map.win_w,
                         map.win_h,
                         had_msg,
+                        hover_changed,
                         next_frame_tick_needed,
+                        next_hover_poll_needed,
                     )
                 }
                 None => break,
@@ -790,7 +831,7 @@ fn render_loop(
         // Render only when a command arrived or the previous/next tick can
         // change pixels. A final frame is emitted as animations/fades finish so
         // the layer is left in the completed/cleared state before blocking.
-        if had_msg || frame_tick_needed || next_frame_tick_needed {
+        if had_msg || hover_changed || frame_tick_needed || next_frame_tick_needed {
             let pixmap = {
                 let guard = RENDER.lock().unwrap();
                 if let Some(map) = guard.as_ref() {
@@ -830,6 +871,7 @@ fn render_loop(
         }
 
         frame_tick_needed = next_frame_tick_needed;
+        hover_poll_needed = next_hover_poll_needed;
         if frame_tick_needed {
             // Sleep remainder of frame budget.
             let elapsed = Instant::now().duration_since(last_tick);
@@ -838,6 +880,18 @@ fn render_loop(
             }
         }
     }
+}
+
+fn hardware_cursor_position() -> Option<(f64, f64)> {
+    use core_graphics::{
+        event::CGEvent,
+        event_source::{CGEventSource, CGEventSourceStateID},
+    };
+
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState).ok()?;
+    let event = CGEvent::new(source).ok()?;
+    let location = event.location();
+    Some((location.x, location.y))
 }
 
 fn cursor_is_externally_visible(state: &RenderState) -> bool {

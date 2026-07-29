@@ -216,7 +216,11 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
     layer_surface.set_exclusive_zone(-1);
     layer_surface.set_keyboard_interactivity(KeyboardInteractivity::None);
 
-    // Click-through: empty input region.
+    // Click-through: empty input region. Standard Wayland intentionally does
+    // not expose another client's global pointer position, so this surface
+    // cannot implement the macOS/Windows/X11 badge-hover reveal without a
+    // compositor-owned adapter. Giving it an input region would steal the
+    // user's pointer events instead of observing them.
     let region: WlRegion = compositor.create_region(&qh, ());
     surface.set_input_region(Some(&region));
     region.destroy();

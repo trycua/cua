@@ -23,6 +23,19 @@ Preserve contributor credit when external code or design ships in Cua.
 
 Do not reimplement submitted work solely to remove its authorship history.
 
+## Cross-platform Cua Driver behavior
+
+Treat user-visible Cua Driver behavior as a cross-platform contract. Implement
+shared state, geometry, timing, and protocol semantics in the common crates
+whenever possible, then keep each macOS, Windows, X11, and Wayland adapter thin.
+Do not silently land a platform-specific cursor or interaction change as though
+it were universal.
+
+For every affected platform, add focused coverage and either verify the native
+behavior or document a concrete operating-system or compositor limitation.
+When a platform cannot support the same contract, return or publish that
+limitation explicitly instead of substituting misleading behavior.
+
 ## Pull request titles and component releases
 
 Pull requests are squash-merged, so the pull request title becomes the commit

@@ -1750,6 +1750,15 @@ pub fn build_manifest() -> serde_json::Value {
         "schema_version": "1",
         "binary_version": env!("CARGO_PKG_VERSION"),
         "binary_path": binary,
+        // A release version cannot prove which optional Linux features were
+        // compiled into this artifact. Downstream hosts use this additive,
+        // machine-readable map to decide whether native Wayland may be
+        // auto-enabled safely.
+        "features": {
+            "wayland_native": cfg!(target_os = "linux"),
+            "portal_input": cfg!(feature = "portal-input"),
+            "portal_capture": cfg!(feature = "portal-capture"),
+        },
         "mcp_invocation": {
             "command": binary,
             "args": ["mcp"]
@@ -4928,6 +4937,31 @@ mod tests {
             .and_then(|v| v.as_str())
             .expect("binary_version present and a string");
         assert_eq!(bv, env!("CARGO_PKG_VERSION"));
+
+        // Explicit build-time capability claims let integrations decide whether
+        // a Linux artifact can safely auto-enable native Wayland.
+        let features = obj
+            .get("features")
+            .and_then(|v| v.as_object())
+            .expect("features is an object");
+        for key in ["wayland_native", "portal_input", "portal_capture"] {
+            assert!(
+                features.get(key).and_then(|v| v.as_bool()).is_some(),
+                "features.{key} must be a boolean"
+            );
+        }
+        assert_eq!(
+            features.get("wayland_native").and_then(|v| v.as_bool()),
+            Some(cfg!(target_os = "linux"))
+        );
+        assert_eq!(
+            features.get("portal_input").and_then(|v| v.as_bool()),
+            Some(cfg!(feature = "portal-input"))
+        );
+        assert_eq!(
+            features.get("portal_capture").and_then(|v| v.as_bool()),
+            Some(cfg!(feature = "portal-capture"))
+        );
 
         // mcp_invocation — { command: <bin path>, args: ["mcp"] }
         let inv = obj

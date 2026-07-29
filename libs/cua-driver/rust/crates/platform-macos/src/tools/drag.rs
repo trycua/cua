@@ -112,6 +112,7 @@ impl Tool for DragTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
         if args.opt_str("scope").as_deref() == Some("desktop")
             && args.get("pid").is_none()
             && args.get("window_id").is_none()
@@ -131,9 +132,14 @@ impl Tool for DragTool {
                 ClickButton::Right => DragButton::Right,
                 ClickButton::Middle => DragButton::Middle,
             };
+            let cursor_for_drag = cursor_key.clone();
+            crate::cursor::overlay::send_command(
+                cursor_key.clone(),
+                cursor_overlay::OverlayCommand::SetPressed(true),
+            );
             let result = tokio::task::spawn_blocking(move || {
                 let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                crate::input::mouse::drag_at_xy_foreground(
+                crate::input::mouse::drag_at_xy_foreground_observed(
                     from_x,
                     from_y,
                     to_x,
@@ -142,9 +148,24 @@ impl Tool for DragTool {
                     steps,
                     &modifier_refs,
                     button,
+                    move |x, y| {
+                        crate::cursor::overlay::send_command(
+                            cursor_for_drag.clone(),
+                            cursor_overlay::track_pointer_command(x, y),
+                        );
+                    },
                 )
             })
             .await;
+            crate::cursor::overlay::send_command(
+                cursor_key.clone(),
+                cursor_overlay::OverlayCommand::SetPressed(false),
+            );
+            if matches!(&result, Ok(Ok(()))) {
+                self.state
+                    .cursor_registry
+                    .update_position(&cursor_key, to_x, to_y);
+            }
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Dragged desktop from ({from_x:.1}, {from_y:.1}) to ({to_x:.1}, {to_y:.1})."
@@ -174,8 +195,6 @@ impl Tool for DragTool {
             )
             .with_structured(serde_json::json!({ "code": "background_unavailable" }));
         }
-        let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
-
         // Coerce integer or float from JSON for coordinate fields.
         let coerce = |key: &str| -> Option<f64> {
             args.opt_f64(key)
@@ -279,7 +298,12 @@ impl Tool for DragTool {
         // Dispatch blocking drag synthesis.
         let mods_owned = modifiers.clone();
         let fg = delivery_mode.is_foreground() && window_id.is_some();
-        let result = focus_guard::with_focus_suppressed(
+        let cursor_for_drag = cursor_key.clone();
+        crate::cursor::overlay::send_command(
+            cursor_key.clone(),
+            cursor_overlay::OverlayCommand::SetPressed(true),
+        );
+        let drag_input = focus_guard::with_focus_suppressed(
             // Foreground drag deliberately activates the target so the global
             // HID stream carries the pressed-button state. A suppression lease
             // here would race that activation and restore the prior app before
@@ -299,7 +323,8 @@ impl Tool for DragTool {
                             // documented Cocoa activation is the fallback.
                             apps::activate_pid(pid);
                             std::thread::sleep(std::time::Duration::from_millis(40));
-                            return crate::input::mouse::drag_at_xy_foreground(
+                            let observed_cursor = cursor_for_drag.clone();
+                            return crate::input::mouse::drag_at_xy_foreground_observed(
                                 from_sx,
                                 from_sy,
                                 to_sx,
@@ -308,9 +333,15 @@ impl Tool for DragTool {
                                 steps,
                                 &m,
                                 button,
+                                move |x, y| {
+                                    crate::cursor::overlay::send_command(
+                                        observed_cursor.clone(),
+                                        cursor_overlay::track_pointer_command(x, y),
+                                    );
+                                },
                             );
                         }
-                        crate::input::mouse::drag_at_xy(
+                        crate::input::mouse::drag_at_xy_observed(
                             pid,
                             from_sx,
                             from_sy,
@@ -324,6 +355,12 @@ impl Tool for DragTool {
                             &m,
                             button,
                             fg,
+                            move |x, y| {
+                                crate::cursor::overlay::send_command(
+                                    cursor_for_drag.clone(),
+                                    cursor_overlay::track_pointer_command(x, y),
+                                );
+                            },
                         )
                     };
                     // Foreground rung: activate for the complete HID gesture,
@@ -347,11 +384,19 @@ impl Tool for DragTool {
             },
         )
         .await;
+        let result = drag_input;
+        crate::cursor::overlay::send_command(
+            cursor_key.clone(),
+            cursor_overlay::OverlayCommand::SetPressed(false),
+        );
+        if matches!(&result, Ok(Ok(()))) {
+            self.state
+                .cursor_registry
+                .update_position(&cursor_key, to_sx, to_sy);
+        }
 
         let changes = super::finish_window_observation(snapshot, &args).await;
 
-        // Animate cursor to end position.
-        crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), to_sx, to_sy).await;
         if let Some(wid) = window_id {
             crate::cursor::overlay::send_command(
                 cursor_key.clone(),

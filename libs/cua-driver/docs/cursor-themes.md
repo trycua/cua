@@ -20,7 +20,14 @@ The native renderer places the sanitized public session name in a compact badge
 below the built-in pointer. The badge uses a session-accent gradient and a
 circular session marker. It appears when the cursor is first revealed, remains
 fully visible for two seconds, then fades over 400 milliseconds while the
-cursor stays available. Hiding and revealing the cursor shows the badge again.
+cursor stays available. Moving the human pointer over the synthetic cursor
+temporarily reveals the badge again, and moving it away hides the badge.
+Hiding and revealing the cursor also shows the badge again. Hover reveal uses
+the native global-pointer APIs on macOS, Windows, and X11. Stock Wayland does
+not expose another client's global pointer position, so native Wayland keeps
+the timed reveal but cannot offer hover reveal without a compositor-owned
+adapter. The click-through overlay never captures pointer input to fake this
+capability.
 The badge is not part of the dotLottie theme artifact, so custom theme authors
 do not need to provide badge artwork or a font. Cua Driver strips control
 characters, collapses whitespace, and shortens labels longer than 28 characters
@@ -31,6 +38,10 @@ screen target, including indexed or token-addressed text and value operations,
 move the agent cursor to that target before dispatch. Actions without a spatial
 target, such as typing into the already focused desktop application, keep the
 cursor at its current location and only change the semantic animation.
+During a drag, the native gesture's endpoints, step count, and wall-clock
+duration drive the same shared pointer-anchor transform on macOS, Windows, X11,
+and supported Wayland input routes, so the synthetic cursor follows the held
+gesture instead of moving only after release.
 
 The cursor is a visual aid for people watching an agent. It is not a security
 indicator, an authorization prompt, or evidence that a tool call succeeded.

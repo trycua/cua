@@ -651,7 +651,9 @@ mod tests {
         assert!(EXTENSION_SOURCE.contains("this._badgeLabel.hide()"));
         assert!(!EXTENSION_SOURCE.contains("this._badgeIdentity"));
         assert!(!EXTENSION_SOURCE.contains("function drawModifiers"));
-        assert!(EXTENSION_METADATA.contains("\"version\":8"));
+        let metadata: serde_json::Value =
+            serde_json::from_str(EXTENSION_METADATA).expect("valid bundled helper metadata");
+        assert_eq!(metadata["version"], 8);
 
         for action in [
             "idle", "observe", "click", "drag", "scroll", "text", "key", "navigate", "app",

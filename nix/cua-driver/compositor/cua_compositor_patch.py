@@ -578,11 +578,14 @@ static bool cua_type_hex(struct tinywl_server *server, struct tinywl_toplevel *t
 	struct wlr_surface *target = t->xdg_toplevel->base->surface;
 	struct wlr_surface *restore_root = restore ? wlr_surface_get_root_surface(restore) : NULL;
 	struct wlr_surface *target_root = wlr_surface_get_root_surface(target);
-	bool restore_focus = idx != 0 && restore_root != target_root;
-	if (restore_focus) {
-		struct wlr_keyboard_modifiers modifiers = {0};
-		wlr_seat_keyboard_notify_enter(server->seat, target, NULL, 0, &modifiers);
+	struct tinywl_toplevel *restore_toplevel = NULL;
+	struct tinywl_toplevel *candidate;
+	wl_list_for_each(candidate, &server->toplevels, link) {
+		struct wlr_surface *surface = candidate->xdg_toplevel->base->surface;
+		if (surface == restore_root) { restore_toplevel = candidate; break; }
 	}
+	bool restore_focus = idx != 0 && restore_root != target_root;
+	if (restore_focus) cua_focus_toplevel(t);
 	bool ok = true;
 	for (const char *p = hex; p[0] && p[1]; p += 2) {
 		int hi = (p[0] <= '9') ? p[0] - '0' : (p[0] | 0x20) - 'a' + 10;
@@ -590,8 +593,7 @@ static bool cua_type_hex(struct tinywl_server *server, struct tinywl_toplevel *t
 		if (!cua_type_cp(server, t, idx, (uint32_t)((hi << 4) | lo))) { ok = false; break; }
 	}
 	if (restore_focus) {
-		struct wlr_keyboard_modifiers modifiers = {0};
-		if (restore) wlr_seat_keyboard_notify_enter(server->seat, restore, NULL, 0, &modifiers);
+		if (restore_toplevel) cua_focus_toplevel(restore_toplevel);
 		else wlr_seat_keyboard_notify_clear_focus(server->seat);
 	}
 	return ok;

@@ -34,6 +34,29 @@ def require_equal(product: str, expected: str, values: dict[str, str]) -> None:
         raise VersionError(f"{product} expects {expected}; mismatched sources: {details}")
 
 
+def stable_version_tuple(version: str) -> tuple[int, int, int]:
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+        raise VersionError(f"expected an exact stable x.y.z version, got {version!r}")
+    major, minor, patch = version.split(".")
+    return int(major), int(minor), int(patch)
+
+
+def driver_installer_versions(root: Path) -> dict[str, str]:
+    base = root / "libs/cua-driver"
+    return {
+        ".github/release-state/cua-driver-rs-published-version": (
+            root / ".github/release-state/cua-driver-rs-published-version"
+        ).read_text().strip(),
+        "scripts/_install-rust.sh": read_match(
+            base / "scripts/_install-rust.sh", r'^CUA_DRIVER_RS_BAKED_VERSION="([^"]+)"'
+        ),
+        "scripts/install.ps1": read_match(
+            base / "scripts/install.ps1",
+            r'^\$Script:CuaDriverRsBakedVersion\s*=\s*"([^"]+)"',
+        ),
+    }
+
+
 def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
     base = root / "libs/cua-driver"
     docs = root / "docs/content/docs/reference/cua-driver"
@@ -56,13 +79,6 @@ def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
         "typescript/package-lock.json": str(typescript_lock["version"]),
         "typescript/package-lock.json:root": str(
             typescript_lock["packages"][""]["version"]
-        ),
-        "scripts/_install-rust.sh": read_match(
-            base / "scripts/_install-rust.sh", r'^CUA_DRIVER_RS_BAKED_VERSION="([^"]+)"'
-        ),
-        "scripts/install.ps1": read_match(
-            base / "scripts/install.ps1",
-            r'^\$Script:CuaDriverRsBakedVersion\s*=\s*"([^"]+)"',
         ),
         "rust/Skills/cua-driver/SKILL.md": read_match(
             base / "rust/Skills/cua-driver/SKILL.md",
@@ -125,6 +141,14 @@ def validate(root: Path, product: str) -> None:
         expected, values = driver_versions(root)
         values[".release-please-manifest.json"] = str(manifest["libs/cua-driver"])
         require_equal("Cua Driver", expected, values)
+        installers = driver_installer_versions(root)
+        installer_version = next(iter(installers.values()))
+        require_equal("Cua Driver baked installers", installer_version, installers)
+        if stable_version_tuple(installer_version) > stable_version_tuple(expected):
+            raise VersionError(
+                f"Cua Driver baked installers advertise {installer_version}, "
+                f"ahead of source release {expected}"
+            )
     if product in {"all", "lume"}:
         expected, values = lume_versions(root)
         values[".release-please-manifest.json"] = str(manifest["libs/lume"])

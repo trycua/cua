@@ -220,7 +220,7 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
                 relative_path,
             )
 
-    def test_release_please_keeps_driver_version_sources_synced(self) -> None:
+    def test_release_please_keeps_release_version_sources_synced(self) -> None:
         config = self.read("release-please-config.json")
 
         self.assertIn('"path": "rust/Cargo.toml"', config)
@@ -230,9 +230,61 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertEqual(
             config.count('"path": "typescript/package-lock.json"'), 2
         )
-        self.assertIn('"path": "scripts/_install-rust.sh"', config)
-        self.assertIn('"path": "scripts/install.ps1"', config)
+        self.assertNotIn('"path": "scripts/_install-rust.sh"', config)
+        self.assertNotIn('"path": "scripts/install.ps1"', config)
         self.assertIn('"path": "rust/Skills/cua-driver/SKILL.md"', config)
+
+    def test_driver_installer_version_advances_only_after_publication(self) -> None:
+        workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
+
+        release_job = workflow.index("  release:")
+        control_checkout = workflow.index(
+            "- name: Check out release control tooling", release_job
+        )
+        stamp = workflow.index(
+            "python3 release-control/.github/scripts/"
+            "update_cua_driver_installer_version.py",
+            control_checkout,
+        )
+        staged_shell = workflow.index(
+            "--shell-path release-upload/_install-rust.sh", stamp
+        )
+        staged_powershell = workflow.index(
+            "--powershell-path release-upload/install.ps1", stamp
+        )
+        publish = workflow.index(
+            "- name: Publish the verified Release Please draft", staged_powershell
+        )
+        verify_public = workflow.index(
+            "- name: Verify the release and every staged asset are public", publish
+        )
+        app_token = workflow.index(
+            "- name: Generate post-publication GitHub App token", verify_public
+        )
+        advance = workflow.index(
+            "- name: Advance public installer version on main", app_token
+        )
+
+        self.assertLess(release_job, control_checkout)
+        self.assertLess(control_checkout, stamp)
+        self.assertLess(stamp, staged_shell)
+        self.assertLess(staged_shell, staged_powershell)
+        self.assertLess(staged_powershell, publish)
+        self.assertLess(publish, verify_public)
+        self.assertLess(verify_public, app_token)
+        self.assertLess(app_token, advance)
+        self.assertIn("ref: ${{ github.workflow_sha }}", workflow)
+        self.assertIn("path: release-control", workflow)
+        self.assertIn("select(.draft == false and .published_at != null)", workflow)
+        self.assertIn("missing-release-assets.txt", workflow)
+        self.assertIn("--allow-newer", workflow)
+        self.assertIn(
+            "--state-path "
+            '"$UPDATE_ROOT/.github/release-state/cua-driver-rs-published-version"',
+            workflow,
+        )
+        self.assertIn("-F force=false", workflow)
+        self.assertIn("[skip ci]", workflow)
 
     def test_release_installers_preserve_legacy_telemetry_state_before_cleanup(self) -> None:
         installer = self.read("libs/cua-driver/scripts/_install-rust.sh")

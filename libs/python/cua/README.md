@@ -64,6 +64,6 @@ agent = ComputerAgent(..., telemetry_enabled=False)
 
 ## Links
 
-- [Documentation](https://docs.trycua.com)
+- [Documentation](https://cua.ai/docs)
 - [GitHub](https://github.com/trycua/cua)
 - [Issues](https://github.com/trycua/cua/issues)

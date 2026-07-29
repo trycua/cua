@@ -73,6 +73,25 @@ pub(super) fn track_child(child: Child) -> io::Result<()> {
     }
 }
 
+#[cfg(target_os = "linux")]
+pub(super) fn track_launched_child(child: Child) -> io::Result<(u32, Option<ProcessObservation>)> {
+    track_launched_child_with(child, observe_process)
+}
+
+#[cfg(target_os = "linux")]
+fn track_launched_child_with<F>(
+    child: Child,
+    observe: F,
+) -> io::Result<(u32, Option<ProcessObservation>)>
+where
+    F: FnOnce(i32) -> io::Result<Option<ProcessObservation>>,
+{
+    let pid = child.id();
+    let identity = observe(pid as i32);
+    track_child(child)?;
+    Ok((pid, identity?))
+}
+
 fn child_reaper() -> io::Result<&'static Sender<Child>> {
     static REAPER: OnceLock<Result<Sender<Child>, String>> = OnceLock::new();
     match REAPER.get_or_init(start_child_reaper) {
@@ -349,6 +368,30 @@ mod tests {
             "SIGKILLed process remained live"
         );
         let _ = child.wait();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn observation_failure_still_hands_child_to_reaper() {
+        let child = spawn_launch_command("true", &[]).expect("spawn short-lived child");
+        let pid = child.id();
+        let error = super::track_launched_child_with(child, |_| {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "simulated /proc restriction",
+            ))
+        })
+        .expect_err("observation failure must be returned");
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while process_exists(pid) {
+            assert!(
+                Instant::now() < deadline,
+                "child {pid} was not reaped after observation failure"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     fn shell_quote(value: &str) -> String {

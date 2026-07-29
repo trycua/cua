@@ -907,9 +907,8 @@ impl Tool for LaunchAppTool {
                         extra_args.push("--force-renderer-accessibility".to_owned());
                     }
                     let child = super::process_control::spawn_launch_command(cmd, &extra_args)?;
-                    let pid = child.id();
-                    let identity = super::process_control::observe_process(pid as i32)?;
-                    super::process_control::track_child(child)?;
+                    let (pid, identity) =
+                        super::process_control::track_launched_child(child)?;
                     return Ok((
                         format!("✅ Launched {cmd} (pid {pid}) in background."),
                         Some((pid, identity)),
@@ -940,9 +939,8 @@ impl Tool for LaunchAppTool {
                     }
                     match super::process_control::spawn_background(&mut launch) {
                         Ok(child) => {
-                            let pid = child.id();
-                            let identity = super::process_control::observe_process(pid as i32)?;
-                            super::process_control::track_child(child)?;
+                            let (pid, identity) =
+                                super::process_control::track_launched_child(child)?;
                             return Ok((
                                 format!("✅ Launched {cmd} (pid {pid}) in background."),
                                 Some((pid, identity)),

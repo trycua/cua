@@ -98,6 +98,11 @@ fn public_configuration_and_transport_are_constructible() {
 }
 
 #[test]
+fn native_http_client_constructor_is_constructible_without_a_foreign_callback() {
+    assert!(CyclopsClient::connect_with_native_http_client(configuration()).is_ok());
+}
+
+#[test]
 fn configuration_rejects_invalid_urls_and_polling_values() {
     let mut invalid_url = configuration();
     invalid_url.base_url = "not a URL".into();

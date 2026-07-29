@@ -488,7 +488,13 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token() != 10148:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_and_native_http_client() != 42291:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider() != 58487:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client() != 62005:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client() != 49301:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim() != 23330:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -882,6 +888,12 @@ _UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_t
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_and_native_http_client.argtypes = (
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_and_native_http_client.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider.argtypes = (
     _UniffiRustBuffer,
     ctypes.c_uint64,
@@ -889,6 +901,17 @@ _UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_t
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client.argtypes = (
+    _UniffiRustBuffer,
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_native_http_client.argtypes = (
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_native_http_client.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_claim.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -973,9 +996,18 @@ _UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_browser
 _UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_and_native_http_client.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_and_native_http_client.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim.restype = ctypes.c_uint16
@@ -2718,6 +2750,24 @@ class CyclopsClient(CyclopsClientProtocol):
         )
         return cls._uniffi_make_instance(_uniffi_ffi_result)
     @classmethod
+    def connect_with_access_token_and_native_http_client(cls, configuration: CyclopsTokenProviderConfiguration,access_token: str) -> CyclopsClient:
+
+        _UniffiFfiConverterTypeCyclopsTokenProviderConfiguration.check_lower(configuration)
+
+        _UniffiFfiConverterString.check_lower(access_token)
+        _uniffi_lowered_args = (
+            _UniffiFfiConverterTypeCyclopsTokenProviderConfiguration.lower(configuration),
+            _UniffiFfiConverterString.lower(access_token),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCyclopsClient.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_and_native_http_client,
+            *_uniffi_lowered_args,
+        )
+        return cls._uniffi_make_instance(_uniffi_ffi_result)
+    @classmethod
     def connect_with_access_token_provider(cls, configuration: CyclopsTokenProviderConfiguration,token_provider: AccessTokenProvider,http_client: HttpClient) -> CyclopsClient:
 
         _UniffiFfiConverterTypeCyclopsTokenProviderConfiguration.check_lower(configuration)
@@ -2735,6 +2785,39 @@ class CyclopsClient(CyclopsClientProtocol):
         _uniffi_ffi_result = _uniffi_rust_call_with_error(
             _uniffi_error_converter,
             _UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider,
+            *_uniffi_lowered_args,
+        )
+        return cls._uniffi_make_instance(_uniffi_ffi_result)
+    @classmethod
+    def connect_with_access_token_provider_and_native_http_client(cls, configuration: CyclopsTokenProviderConfiguration,token_provider: AccessTokenProvider) -> CyclopsClient:
+
+        _UniffiFfiConverterTypeCyclopsTokenProviderConfiguration.check_lower(configuration)
+
+        _UniffiFfiConverterTypeAccessTokenProvider.check_lower(token_provider)
+        _uniffi_lowered_args = (
+            _UniffiFfiConverterTypeCyclopsTokenProviderConfiguration.lower(configuration),
+            _UniffiFfiConverterTypeAccessTokenProvider.lower(token_provider),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCyclopsClient.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client,
+            *_uniffi_lowered_args,
+        )
+        return cls._uniffi_make_instance(_uniffi_ffi_result)
+    @classmethod
+    def connect_with_native_http_client(cls, configuration: CyclopsConfiguration) -> CyclopsClient:
+
+        _UniffiFfiConverterTypeCyclopsConfiguration.check_lower(configuration)
+        _uniffi_lowered_args = (
+            _UniffiFfiConverterTypeCyclopsConfiguration.lower(configuration),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCyclopsClient.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_native_http_client,
             *_uniffi_lowered_args,
         )
         return cls._uniffi_make_instance(_uniffi_ffi_result)

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.14.0...cua-driver-rs-v0.14.1) (2026-07-29)
+
+
+### Bug Fixes
+
+* **cua-driver:** advance installers only after release publication ([dad42d1](https://github.com/trycua/cua/commit/dad42d1932d9683a78b344bad6f058944446a59a))
+* **cua-driver:** fall back to the releases API when the baked version has no assets ([1be9c7e](https://github.com/trycua/cua/commit/1be9c7ed0d9aa7b6756727726350a39a6160c3d8))
+
 ## [0.14.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.13.1...cua-driver-rs-v0.14.0) (2026-07-29)
 
 

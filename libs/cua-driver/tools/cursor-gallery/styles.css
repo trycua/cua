@@ -175,7 +175,7 @@ h1 {
   /*
    * Renderer frames preserve the full 256 px transparent capture canvas.
    * The frame exporter renders at 1.5× backing scale. Scale its centered
-   * 164 px layout box to preserve that 72 px review size after the 256 px
+   * 164 px layout box to preserve the enlarged review size after the 256 px
    * capture canvas is fitted into the card.
    */
   width: 164px;

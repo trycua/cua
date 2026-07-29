@@ -25,14 +25,16 @@ const IFACE = `<node><interface name="org.cua.WinRects">
 // GNOME cannot host the Rust renderer directly, so this Shell actor mirrors
 // the embedded cua.default vector theme and semantic state vocabulary.
 const CANVAS_SIZE = 128;
-const DISPLAY_SIZE = 48;
+const DISPLAY_SIZE = 42;
 const ACTOR_SIZE = 112;
 const ACTOR_CENTER = ACTOR_SIZE / 2;
 const SCALE = DISPLAY_SIZE / CANVAS_SIZE;
 const FLOAT_DURATION = 4.0;
 const GLOW_SURFACE_SCALE = 3;
 const GLOW_PADDING = 24;
-const BADGE_Y_OFFSET = 34;
+const BADGE_Y_OFFSET = 29;
+const BADGE_HOLD_SECONDS = 2.0;
+const BADGE_FADE_SECONDS = 0.4;
 const ACTIONS = new Set([
     'idle', 'observe', 'click', 'drag', 'scroll', 'text',
     'key', 'navigate', 'app', 'transfer', 'record', 'system',
@@ -55,6 +57,27 @@ const ACTION_DURATIONS = {
 
 function nowSeconds() {
     return GLib.get_monotonic_time() / 1_000_000;
+}
+
+function mixChannel(base, accent, weight) {
+    return Math.round(base * (1 - weight) + accent * weight);
+}
+
+function badgeStyle(fillColor) {
+    const start = fillColor.map((channel, index) =>
+        mixChannel([94, 151, 178][index], channel, 0.52));
+    const end = fillColor.map((channel, index) =>
+        mixChannel([13, 27, 38][index], channel, 0.18));
+    return [
+        'spacing: 7px',
+        'padding: 6px 10px',
+        `background-gradient-start: rgba(${start[0]}, ${start[1]}, ${start[2]}, 0.93)`,
+        `background-gradient-end: rgba(${end[0]}, ${end[1]}, ${end[2]}, 0.96)`,
+        'background-gradient-direction: horizontal',
+        'border: 1px solid rgba(255, 255, 255, 0.63)',
+        'border-radius: 14px',
+        'box-shadow: 0 2px 9px rgba(0, 0, 0, 0.30)',
+    ].join(';');
 }
 
 function easeInOut(value) {
@@ -476,9 +499,9 @@ export default class WinRectsExtension extends Extension {
         this._cursor.set_pivot_point(0.5, 0.5);
         Main.layoutManager.addTopChrome(this._cursor);
         this._badgeDot = new St.Widget({
-            width: 5,
-            height: 5,
-            style: `background-color: ${this._fillColorCss}; border-radius: 3px;`,
+            width: 10,
+            height: 10,
+            style: `background-color: ${this._fillColorCss}; border: 1px solid white; border-radius: 99px;`,
             y_align: Clutter.ActorAlign.CENTER,
         });
         this._badgeLabel = new St.Label({
@@ -490,20 +513,14 @@ export default class WinRectsExtension extends Extension {
             visible: false,
             reactive: false,
             can_focus: false,
-            style: [
-                'spacing: 6px',
-                'padding: 5px 10px',
-                'background-color: rgba(18, 22, 28, 0.88)',
-                'border: 1px solid rgba(255, 255, 255, 0.36)',
-                'border-radius: 12px',
-                'box-shadow: 0 2px 8px rgba(0, 0, 0, 0.30)',
-            ].join(';'),
+            style: badgeStyle(this._fillColor),
         });
         this._badge.add_child(this._badgeDot);
         this._badge.add_child(this._badgeLabel);
         Main.layoutManager.addTopChrome(this._badge);
         this._cursorX = null;
         this._cursorY = null;
+        this._badgeRevealedAt = null;
         this._frameId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 33, () => {
             if (!this._cursor)
                 return GLib.SOURCE_REMOVE;
@@ -515,6 +532,18 @@ export default class WinRectsExtension extends Extension {
                 this._setCursorState('idle', '', '');
             if (this._cursor.visible)
                 this._cursor.queue_repaint();
+            if (this._badge?.visible && this._badgeRevealedAt !== null) {
+                const badgeElapsed = now - this._badgeRevealedAt;
+                if (badgeElapsed <= BADGE_HOLD_SECONDS) {
+                    this._badge.opacity = 255;
+                } else if (badgeElapsed < BADGE_HOLD_SECONDS + BADGE_FADE_SECONDS) {
+                    const fade = (badgeElapsed - BADGE_HOLD_SECONDS) / BADGE_FADE_SECONDS;
+                    this._badge.opacity = Math.round(255 * (1 - fade));
+                } else {
+                    this._badge.hide();
+                    this._badgeRevealedAt = null;
+                }
+            }
             return GLib.SOURCE_CONTINUE;
         });
     }
@@ -534,7 +563,7 @@ export default class WinRectsExtension extends Extension {
         if (this._impl) { this._impl.unexport(); this._impl = null; }
         if (this._nameId) { Gio.bus_unown_name(this._nameId); this._nameId = 0; }
     }
-    GetVersion() { return 6; }
+    GetVersion() { return 7; }
     GetRects() {
         const actors = global.get_window_actors();
         const actorByWindow = new Map();
@@ -613,6 +642,7 @@ export default class WinRectsExtension extends Extension {
     }
     MoveCursor(x, y) {
         if (!this._cursor) return;
+        const revealBadge = !this._cursor.visible;
         this._cursorX = x;
         this._cursorY = y;
         this._cursor.show();
@@ -623,16 +653,22 @@ export default class WinRectsExtension extends Extension {
             mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
         });
         this._positionBadge(x, y, 480);
+        if (revealBadge)
+            this._revealBadge();
     }
     ClickPulse(x, y) {
         if (!this._cursor) return;
+        const revealBadge = !this._cursor.visible;
         this._cursorX = x;
         this._cursorY = y;
         this._cursor.set_position(x - ACTOR_CENTER, y - ACTOR_CENTER);
         this._positionBadge(x, y, 0);
-        this._setCursorState('click', this._delivery, this._target);
+        if (['idle', 'navigate', 'click'].includes(this._action))
+            this._setCursorState('click', this._delivery, this._target);
         this._cursor.show();
         this._cursor.queue_repaint();
+        if (revealBadge)
+            this._revealBadge();
     }
     SetCursorColor(fillColor) {
         const match = /^#([0-9a-fA-F]{6})$/.exec(fillColor);
@@ -643,8 +679,10 @@ export default class WinRectsExtension extends Extension {
         this._fillColorCss = `#${match[1].toLowerCase()}`;
         if (this._badgeDot)
             this._badgeDot.set_style(
-                `background-color: ${this._fillColorCss}; border-radius: 3px;`
+                `background-color: ${this._fillColorCss}; border: 1px solid white; border-radius: 99px;`
             );
+        if (this._badge)
+            this._badge.set_style(badgeStyle(this._fillColor));
         if (this._glowSurface)
             this._glowSurface.finish();
         this._glowSurface = createGlowSurface(this._fillColor);
@@ -666,10 +704,13 @@ export default class WinRectsExtension extends Extension {
         this._badgeLabel.set_text(label);
         if (label.length === 0 || !this._cursor?.visible) {
             this._badge.hide();
+            this._badgeRevealedAt = null;
             return;
         }
-        if (this._cursorX !== null && this._cursorY !== null)
+        if (this._cursorX !== null && this._cursorY !== null) {
             this._positionBadge(this._cursorX, this._cursorY, 0);
+            this._revealBadge();
+        }
     }
     _positionBadge(x, y, duration) {
         if (!this._badge || !this._badgeLabel ||
@@ -678,7 +719,6 @@ export default class WinRectsExtension extends Extension {
         const [, naturalWidth] = this._badge.get_preferred_width(-1);
         const badgeX = Math.round(x - naturalWidth / 2);
         const badgeY = Math.round(y + BADGE_Y_OFFSET);
-        this._badge.show();
         if (duration > 0) {
             this._badge.ease({
                 x: badgeX,
@@ -689,6 +729,14 @@ export default class WinRectsExtension extends Extension {
         } else {
             this._badge.set_position(badgeX, badgeY);
         }
+    }
+    _revealBadge() {
+        if (!this._badge || !this._badgeLabel ||
+            this._badgeLabel.get_text().length === 0)
+            return;
+        this._badgeRevealedAt = nowSeconds();
+        this._badge.opacity = 255;
+        this._badge.show();
     }
     _setCursorState(action, delivery, target) {
         this._action = ACTIONS.has(action) ? action : 'idle';
@@ -702,5 +750,6 @@ export default class WinRectsExtension extends Extension {
     HideCursor() {
         if (this._cursor) this._cursor.hide();
         if (this._badge) this._badge.hide();
+        this._badgeRevealedAt = null;
     }
 }

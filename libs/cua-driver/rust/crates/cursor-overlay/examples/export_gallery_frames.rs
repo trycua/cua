@@ -1,6 +1,6 @@
 use cursor_overlay::{
-    theme::paint_default_theme, CursorAction, CursorVisualState, DeliveryModifier, ReducedMotion,
-    TargetModifier,
+    render_frame, theme::paint_default_theme, CursorAction, CursorConfig, CursorVisualState,
+    DeliveryModifier, OverlayCommand, ReducedMotion, RenderStateCore, TargetModifier,
 };
 use std::{fs, path::Path};
 use tiny_skia::Pixmap;
@@ -54,6 +54,38 @@ fn main() {
             scope.spawn(move || export_state(&path, action, delivery, target));
         }
     });
+    export_session_badge(&output.join("session").join("badge"));
+}
+
+fn export_session_badge(output: &Path) {
+    fs::create_dir_all(output).expect("create session badge frame output");
+    for frame in 0..FPS * DURATION_SECS {
+        let mut config = CursorConfig::default();
+        config.cursor_id = "gallery-session".into();
+        let mut core = RenderStateCore::new(config);
+        core.motion.idle_hide_ms = 0.0;
+        core.pos = (
+            f64::from(SIZE) / (2.0 * f64::from(PREVIEW_BACKING_SCALE)),
+            64.0,
+        );
+        core.apply_command_base(
+            OverlayCommand::SetSessionLabel("Research".into()),
+            false,
+            false,
+        );
+        core.tick_motion(f64::from(frame) / f64::from(FPS));
+        let pixmap = render_frame(&core, SIZE, SIZE, 0.0, 0.0, None, PREVIEW_BACKING_SCALE);
+        let pixels = unpremultiply_rgba(pixmap.data().to_vec());
+        image::save_buffer_with_format(
+            output.join(format!("{frame:04}.png")),
+            &pixels,
+            SIZE,
+            SIZE,
+            image::ColorType::Rgba8,
+            image::ImageFormat::Png,
+        )
+        .expect("write session badge frame");
+    }
 }
 
 fn export_state(

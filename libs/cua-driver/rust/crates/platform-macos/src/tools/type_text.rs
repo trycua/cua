@@ -260,6 +260,25 @@ impl Tool for TypeTextTool {
         } else {
             None
         };
+        if let (Some((element, _)), Some(wid)) = (element_guard.as_ref(), window_id) {
+            let center_ptr = element.as_ptr() as usize;
+            if let Ok(Some((screen_x, screen_y))) = tokio::task::spawn_blocking(move || unsafe {
+                crate::ax::bindings::element_screen_center(center_ptr as AXUIElementRef)
+            })
+            .await
+            {
+                let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
+                crate::cursor::overlay::send_command(
+                    cursor_key.clone(),
+                    cursor_overlay::OverlayCommand::PinAbove(wid as u64),
+                );
+                crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y)
+                    .await;
+                self.state
+                    .cursor_registry
+                    .update_position(&cursor_key, screen_x, screen_y);
+            }
+        }
         let element_ptr = element_guard
             .as_ref()
             .map(|(g, idx)| (g.as_ptr(), Some(*idx)));

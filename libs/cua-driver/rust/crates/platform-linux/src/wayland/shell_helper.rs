@@ -35,7 +35,7 @@ const DBUS_DEST: &str = "org.freedesktop.DBus";
 const DBUS_PATH: &str = "/org/freedesktop/DBus";
 const DBUS_IFACE: &str = "org.freedesktop.DBus";
 const BROWSER_HELPER_API_VERSION: u32 = 4;
-const SEMANTIC_CURSOR_API_VERSION: u32 = 6;
+const SEMANTIC_CURSOR_API_VERSION: u32 = 7;
 
 #[derive(Debug, Clone)]
 struct ShellWindow {
@@ -627,12 +627,12 @@ mod tests {
     }
 
     #[test]
-    fn bundled_helper_v6_uses_the_compact_semantic_cursor_and_session_badge() {
-        assert!(EXTENSION_SOURCE.contains("GetVersion() { return 6; }"));
+    fn bundled_helper_v7_uses_the_compact_semantic_cursor_and_session_badge() {
+        assert!(EXTENSION_SOURCE.contains("GetVersion() { return 7; }"));
         assert!(EXTENSION_SOURCE.contains("SetCursorState"));
         assert!(EXTENSION_SOURCE.contains("SetCursorColor"));
         assert!(EXTENSION_SOURCE.contains("SetSessionLabel"));
-        assert!(EXTENSION_SOURCE.contains("const DISPLAY_SIZE = 48;"));
+        assert!(EXTENSION_SOURCE.contains("const DISPLAY_SIZE = 42;"));
         assert!(EXTENSION_SOURCE.contains("const GLOW_PADDING = 24;"));
         assert!(EXTENSION_SOURCE.contains("function drawCursorGlowShape"));
         assert!(EXTENSION_SOURCE.contains("function glowPath"));
@@ -641,7 +641,7 @@ mod tests {
         assert!(EXTENSION_SOURCE.contains("width - 1"));
         assert!(EXTENSION_SOURCE.contains("createGlowSurface(this._fillColor)"));
         assert!(EXTENSION_SOURCE.contains("cr.translate(-GLOW_PADDING, -GLOW_PADDING);"));
-        assert!(EXTENSION_METADATA.contains("\"version\":6"));
+        assert!(EXTENSION_METADATA.contains("\"version\":7"));
 
         for action in [
             "idle", "observe", "click", "drag", "scroll", "text", "key", "navigate", "app",

@@ -259,6 +259,7 @@ pub fn classify_cursor_semantics(name: &str, args: &Value) -> Option<CursorSeman
         Some(CursorTarget::Browser)
     } else if args
         .get("element_index")
+        .or_else(|| args.get("element_token"))
         .is_some_and(|value| !value.is_null())
     {
         Some(CursorTarget::Ax)
@@ -329,6 +330,17 @@ mod tests {
                 action: CursorAction::Click,
                 delivery: None,
                 target: Some(CursorTarget::Browser),
+            })
+        );
+        assert_eq!(
+            classify_cursor_semantics(
+                "type_text",
+                &json!({"element_token":"opaque", "delivery_mode":"foreground"})
+            ),
+            Some(CursorSemantics {
+                action: CursorAction::Text,
+                delivery: Some(CursorDelivery::Foreground),
+                target: Some(CursorTarget::Ax),
             })
         );
     }

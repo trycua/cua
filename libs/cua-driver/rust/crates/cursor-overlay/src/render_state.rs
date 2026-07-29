@@ -40,6 +40,9 @@ use crate::{
 };
 use std::sync::Arc;
 
+pub const SESSION_BADGE_HOLD_SECS: f64 = 2.0;
+pub const SESSION_BADGE_FADE_SECS: f64 = 0.4;
+
 /// Platform-agnostic render state shared by macOS / Windows / Linux overlays.
 ///
 /// Each platform wraps this in its own struct that adds OS-specific fields
@@ -81,6 +84,8 @@ pub struct RenderStateCore {
     pub pinned_wid: Option<u64>,
     /// Sanitized caller-facing label painted below the cursor.
     pub session_label: Option<String>,
+    /// Elapsed time since the session label was revealed with the cursor.
+    pub session_badge_secs: f64,
 }
 
 impl RenderStateCore {
@@ -124,7 +129,31 @@ impl RenderStateCore {
             idle_alpha: 1.0,
             pinned_wid: None,
             session_label: None,
+            session_badge_secs: SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS,
         }
+    }
+
+    fn cursor_is_revealed(&self) -> bool {
+        self.visible && self.pos.0 >= -100.0 && self.idle_alpha >= 0.004
+    }
+
+    fn reveal_session_badge(&mut self) {
+        if self.session_label.is_some() {
+            self.session_badge_secs = 0.0;
+        }
+    }
+
+    pub fn session_badge_alpha(&self) -> f32 {
+        if self.session_label.is_none() {
+            return 0.0;
+        }
+        if self.session_badge_secs <= SESSION_BADGE_HOLD_SECS {
+            return 1.0;
+        }
+        let fade = ((self.session_badge_secs - SESSION_BADGE_HOLD_SECS) / SESSION_BADGE_FADE_SECS)
+            .clamp(0.0, 1.0);
+        let smooth = fade * fade * (3.0 - 2.0 * fade);
+        (1.0 - smooth) as f32
     }
 
     /// Return the theme that is actually being painted, including any
@@ -367,6 +396,10 @@ impl RenderStateCore {
     /// `motion.idle_hide_ms` has elapsed.  Identical across all platforms.
     fn tick_idle(&mut self, dt: f64) {
         self.visual.tick(dt);
+        if self.session_label.is_some() {
+            self.session_badge_secs = (self.session_badge_secs + dt)
+                .min(SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS);
+        }
         let idle_hide_ms = self.motion.idle_hide_ms;
         if idle_hide_ms > 0.0 {
             let moving = self.path.is_some() || self.spring.is_some() || self.click_t.is_some();
@@ -416,6 +449,7 @@ impl RenderStateCore {
                 y,
                 end_heading_radians,
             } => {
+                let reveal_badge = !self.cursor_is_revealed();
                 // Apply click offset (16 pt along end_heading) before planning,
                 // matching Swift `moveTo(point:endAngleRadians:)`:
                 //   tx = clickPoint.x + cos(endAngle) * clickOffset
@@ -439,9 +473,17 @@ impl RenderStateCore {
                 self.dist = 0.0;
                 self.spring = None;
                 self.spring_tgt = None;
-                self.visual.begin(CursorAction::Navigate, None, None);
+                if matches!(
+                    self.visual.resolved_action,
+                    CursorAction::Idle | CursorAction::Navigate
+                ) {
+                    self.visual.begin(CursorAction::Navigate, None, None);
+                }
                 self.idle_secs = 0.0;
                 self.idle_alpha = 1.0;
+                if reveal_badge {
+                    self.reveal_session_badge();
+                }
                 true
             }
             OverlayCommand::SnapTo {
@@ -449,6 +491,7 @@ impl RenderStateCore {
                 y,
                 heading_radians,
             } => {
+                let reveal_badge = !self.cursor_is_revealed();
                 self.pos = (x, y);
                 if let Some(heading) = heading_radians {
                     self.heading = heading;
@@ -457,12 +500,21 @@ impl RenderStateCore {
                 self.dist = 0.0;
                 self.spring = None;
                 self.spring_tgt = None;
-                self.visual.begin(CursorAction::Navigate, None, None);
+                if matches!(
+                    self.visual.resolved_action,
+                    CursorAction::Idle | CursorAction::Navigate
+                ) {
+                    self.visual.begin(CursorAction::Navigate, None, None);
+                }
                 self.idle_secs = 0.0;
                 self.idle_alpha = 1.0;
+                if reveal_badge {
+                    self.reveal_session_badge();
+                }
                 true
             }
             OverlayCommand::ClickPulse { x, y } => {
+                let reveal_badge = !self.cursor_is_revealed();
                 if click_pulse_sentinel_only {
                     // macOS: only snap position on first placement (sentinel state).
                     // After that the cursor stays where the animation landed.
@@ -479,9 +531,17 @@ impl RenderStateCore {
                     self.pos = (x, y);
                 }
                 self.click_t = Some(0.0);
-                self.visual.begin(CursorAction::Click, None, None);
+                if matches!(
+                    self.visual.resolved_action,
+                    CursorAction::Idle | CursorAction::Navigate | CursorAction::Click
+                ) {
+                    self.visual.begin(CursorAction::Click, None, None);
+                }
                 self.idle_secs = 0.0;
                 self.idle_alpha = 1.0;
+                if reveal_badge {
+                    self.reveal_session_badge();
+                }
                 true
             }
             OverlayCommand::SetPressed(v) => {
@@ -496,7 +556,11 @@ impl RenderStateCore {
                 true
             }
             OverlayCommand::SetEnabled(v) => {
+                let reveal_badge = v && !self.visible;
                 self.visible = v;
+                if reveal_badge {
+                    self.reveal_session_badge();
+                }
                 true
             }
             OverlayCommand::SetMotion(m) => {
@@ -543,6 +607,7 @@ impl RenderStateCore {
             }
             OverlayCommand::SetSessionLabel(label) => {
                 self.session_label = crate::sanitize_session_label(&label);
+                self.session_badge_secs = 0.0;
                 true
             }
             OverlayCommand::ShowFocusRect(_) => false, // caller-specific
@@ -718,13 +783,14 @@ pub fn paint_cursor(
     }
 
     if let Some(label) = core.session_label.as_deref() {
+        let badge_alpha = core.session_badge_alpha();
         crate::paint_session_badge(
             pm,
             label,
             px as f32,
             py as f32,
             backing_scale.max(1.0),
-            alpha_scale,
+            alpha_scale * badge_alpha,
             crate::session_fill_rgba(&core.cfg.cursor_id),
         );
     }
@@ -787,6 +853,100 @@ mod glide_duration_tests {
                 "swift={swift} short={short} long={long}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod session_badge_and_action_tests {
+    use super::*;
+    use crate::{CursorConfig, TargetModifier};
+
+    #[test]
+    fn session_badge_holds_then_fades_once() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        assert_eq!(core.session_badge_alpha(), 0.0);
+        assert!(core.apply_command_base(
+            OverlayCommand::SetSessionLabel("Research".into()),
+            false,
+            false,
+        ));
+        assert_eq!(core.session_badge_alpha(), 1.0);
+
+        core.tick_motion(SESSION_BADGE_HOLD_SECS - 0.05);
+        assert_eq!(core.session_badge_alpha(), 1.0);
+        core.tick_motion(SESSION_BADGE_FADE_SECS * 0.5 + 0.05);
+        assert!(core.session_badge_alpha() > 0.0);
+        assert!(core.session_badge_alpha() < 1.0);
+        core.tick_motion(SESSION_BADGE_FADE_SECS);
+        assert_eq!(core.session_badge_alpha(), 0.0);
+    }
+
+    #[test]
+    fn revealing_hidden_cursor_restarts_badge_without_restarting_on_every_move() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.apply_command_base(
+            OverlayCommand::SetSessionLabel("Research".into()),
+            false,
+            false,
+        );
+        core.tick_motion(SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS);
+        assert_eq!(core.session_badge_alpha(), 0.0);
+
+        core.apply_command_base(
+            OverlayCommand::SnapTo {
+                x: 100.0,
+                y: 100.0,
+                heading_radians: None,
+            },
+            false,
+            false,
+        );
+        assert_eq!(core.session_badge_alpha(), 1.0);
+        core.tick_motion(0.5);
+        let elapsed = core.session_badge_secs;
+        core.apply_command_base(
+            OverlayCommand::SnapTo {
+                x: 120.0,
+                y: 120.0,
+                heading_radians: None,
+            },
+            false,
+            false,
+        );
+        assert_eq!(core.session_badge_secs, elapsed);
+    }
+
+    #[test]
+    fn movement_preserves_the_active_semantic_action() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.pos = (20.0, 20.0);
+        core.apply_command_base(
+            OverlayCommand::BeginAction {
+                action: CursorAction::Text,
+                delivery: None,
+                target: Some(TargetModifier::Ax),
+            },
+            false,
+            false,
+        );
+        core.apply_command_base(
+            OverlayCommand::MoveTo {
+                x: 200.0,
+                y: 100.0,
+                end_heading_radians: 0.0,
+            },
+            false,
+            false,
+        );
+        assert_eq!(core.visual.resolved_action, CursorAction::Text);
+        assert_eq!(core.visual.target, Some(TargetModifier::Ax));
+        core.apply_command_base(
+            OverlayCommand::ClickPulse { x: 200.0, y: 100.0 },
+            false,
+            false,
+        );
+        assert_eq!(core.visual.resolved_action, CursorAction::Text);
+        assert_eq!(core.visual.target, Some(TargetModifier::Ax));
     }
 }
 

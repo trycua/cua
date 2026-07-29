@@ -3629,6 +3629,19 @@ impl Tool for TypeTextTool {
                 }
             }
         };
+        if let Some(idx) = elem_idx {
+            if let Some((cx, cy)) =
+                self.state
+                    .element_cache
+                    .get_element_center(pid, hwnd, idx as usize)
+            {
+                pin_overlay_above(&cursor_key, hwnd);
+                overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
+                self.state
+                    .cursor_registry
+                    .update_position(&cursor_key, cx as f64, cy as f64);
+            }
+        }
         let text_len = text.chars().count();
 
         // Native ConsoleHost can accept every synthesized Unicode event while

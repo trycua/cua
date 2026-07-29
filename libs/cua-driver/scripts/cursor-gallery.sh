@@ -28,7 +28,7 @@ export_assets() {
     --features theme-authoring \
     -- "$FRAMES_DIR"
 
-  for group in actions modifiers combined; do
+  for group in actions modifiers combined session; do
     mkdir -p "$GENERATED_DIR/$group"
     for state_dir in "$FRAMES_DIR/$group"/*; do
       state=$(basename "$state_dir")

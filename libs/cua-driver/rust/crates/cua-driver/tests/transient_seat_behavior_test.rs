@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use cua_driver_testkit::{harness_app, FixtureJournal};
 
-const HELLO: &str = "cua-inject-v1";
+const HELLO: &str = "cua-inject v1";
 
 struct Fixture {
     child: Child,

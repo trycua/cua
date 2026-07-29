@@ -6786,16 +6786,35 @@ impl Tool for KillAppTool {
                 )
             }
         };
-        // SAFETY: libc::kill is a thin syscall wrapper, no thread-safety concerns.
-        let rc = unsafe { libc::kill(pid_i, libc::SIGKILL) };
-        if rc == 0 {
-            ToolResult::text(format!("✅ Sent SIGKILL to pid {pid_i}."))
-        } else {
-            let err = std::io::Error::last_os_error();
-            ToolResult::error(format!(
-                "kill_app: kill(pid={pid_i}, SIGKILL) failed: {err}. \
-                 The process may not exist, or the daemon lacks permission to signal it."
-            ))
+        let termination = tokio::task::spawn_blocking(move || -> std::io::Result<bool> {
+            let expected = super::process_control::observe_process(pid_i)?.ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("pid {pid_i} does not exist"),
+                )
+            })?;
+            // SAFETY: libc::kill is a thin syscall wrapper, no thread-safety concerns.
+            let rc = unsafe { libc::kill(pid_i, libc::SIGKILL) };
+            if rc != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            super::process_control::wait_for_termination(pid_i, expected)
+        })
+        .await;
+        match termination {
+            Ok(Ok(true)) => ToolResult::text(format!("✅ Terminated pid {pid_i}.")),
+            Ok(Ok(false)) => ToolResult::error(format!(
+                "kill_app: SIGKILL was accepted for pid {pid_i}, but the same process \
+                 was still alive after 2 seconds."
+            )),
+            Ok(Err(error)) => ToolResult::error(format!(
+                "kill_app: could not terminate pid {pid_i}: {error}. \
+                 The process may not exist, or the daemon may lack permission to inspect \
+                 or signal it."
+            )),
+            Err(error) => ToolResult::error(format!(
+                "kill_app: termination verification task failed for pid {pid_i}: {error}"
+            )),
         }
     }
 }

@@ -4,9 +4,25 @@ use std::sync::{
     mpsc::{self, Receiver, RecvTimeoutError, Sender},
     OnceLock,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const REAP_INTERVAL: Duration = Duration::from_millis(50);
+#[cfg(target_os = "linux")]
+const TERMINATION_POLL_INTERVAL: Duration = Duration::from_millis(10);
+#[cfg(target_os = "linux")]
+const TERMINATION_TIMEOUT: Duration = Duration::from_secs(2);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct ProcessObservation {
+    pub(super) state: char,
+    pub(super) start_time: u64,
+}
+
+impl ProcessObservation {
+    fn is_terminal(self) -> bool {
+        matches!(self.state, 'Z' | 'X' | 'x')
+    }
+}
 
 pub(super) fn spawn_shell_command(command: &str, additional_args: &[String]) -> io::Result<Child> {
     let mut launch = Command::new("sh");
@@ -92,11 +108,84 @@ fn reap_finished_children(children: &mut Vec<Child>) {
     }
 }
 
+#[cfg(target_os = "linux")]
+pub(super) fn observe_process(pid: i32) -> io::Result<Option<ProcessObservation>> {
+    match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => parse_proc_stat(&stat).map(Some),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn parse_proc_stat(stat: &str) -> io::Result<ProcessObservation> {
+    let fields = stat
+        .rfind(") ")
+        .and_then(|name_end| stat.get(name_end + 2..))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "malformed /proc stat"))?;
+    let mut fields = fields.split_whitespace();
+    let state = fields
+        .next()
+        .and_then(|value| value.chars().next())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing process state"))?;
+    let start_time = fields
+        .nth(18)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing process start time"))?
+        .parse()
+        .map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid process start time: {error}"),
+            )
+        })?;
+    Ok(ProcessObservation { state, start_time })
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn wait_for_termination(pid: i32, expected: ProcessObservation) -> io::Result<bool> {
+    wait_for_termination_with(
+        Some(expected),
+        TERMINATION_TIMEOUT,
+        TERMINATION_POLL_INTERVAL,
+        || observe_process(pid),
+    )
+}
+
+fn wait_for_termination_with<F>(
+    expected: Option<ProcessObservation>,
+    timeout: Duration,
+    poll_interval: Duration,
+    mut observe: F,
+) -> io::Result<bool>
+where
+    F: FnMut() -> io::Result<Option<ProcessObservation>>,
+{
+    let deadline = Instant::now() + timeout;
+    loop {
+        let current = observe()?;
+        if current.is_none_or(|process| {
+            process.is_terminal()
+                || expected.is_some_and(|expected| process.start_time != expected.start_time)
+        }) {
+            return Ok(true);
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return Ok(false);
+        }
+        std::thread::sleep(poll_interval.min(deadline - now));
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
+    use std::io;
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-    use super::{spawn_shell_command, track_child};
+    use super::{
+        parse_proc_stat, spawn_shell_command, track_child, wait_for_termination_with,
+        ProcessObservation,
+    };
 
     #[test]
     fn launch_path_preserves_shell_quoting() {
@@ -158,6 +247,93 @@ mod tests {
             assert!(Instant::now() < deadline, "child {pid} was not reaped");
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    #[test]
+    fn proc_stat_parser_handles_spaces_and_parentheses_in_process_names() {
+        let stat = format!(
+            "123 (worker ) with spaces) S {} 4242",
+            vec!["0"; 18].join(" ")
+        );
+        assert_eq!(
+            parse_proc_stat(&stat).expect("parse process stat"),
+            ProcessObservation {
+                state: 'S',
+                start_time: 4242,
+            }
+        );
+    }
+
+    #[test]
+    fn termination_poll_accepts_terminal_state_and_pid_reuse() {
+        let original = ProcessObservation {
+            state: 'R',
+            start_time: 42,
+        };
+        let mut observations = VecDeque::from([
+            Some(original),
+            Some(ProcessObservation {
+                state: 'Z',
+                start_time: 42,
+            }),
+        ]);
+        assert!(wait_for_termination_with(
+            Some(original),
+            Duration::from_secs(1),
+            Duration::ZERO,
+            || Ok(observations.pop_front().expect("next observation")),
+        )
+        .expect("poll terminal process"));
+
+        assert!(
+            wait_for_termination_with(Some(original), Duration::ZERO, Duration::ZERO, || {
+                Ok(Some(ProcessObservation {
+                    state: 'R',
+                    start_time: 99,
+                }))
+            },)
+            .expect("detect pid reuse")
+        );
+    }
+
+    #[test]
+    fn termination_poll_reports_live_timeout_and_probe_errors() {
+        let original = ProcessObservation {
+            state: 'D',
+            start_time: 42,
+        };
+        assert!(
+            !wait_for_termination_with(Some(original), Duration::ZERO, Duration::ZERO, || Ok(
+                Some(original)
+            ),)
+            .expect("poll live process")
+        );
+        assert!(
+            wait_for_termination_with(Some(original), Duration::ZERO, Duration::ZERO, || Err(
+                io::Error::other("unreadable proc stat")
+            ),)
+            .is_err()
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn sigkill_reaches_a_terminal_process_state() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn sleep process");
+        let pid = child.id() as i32;
+        let expected = super::observe_process(pid)
+            .expect("read process state")
+            .expect("sleep process exists");
+        // SAFETY: the test owns this child process and passes its valid pid.
+        assert_eq!(unsafe { libc::kill(pid, libc::SIGKILL) }, 0);
+        assert!(
+            super::wait_for_termination(pid, expected).expect("verify process termination"),
+            "SIGKILLed process remained live"
+        );
+        let _ = child.wait();
     }
 
     fn shell_quote(value: &str) -> String {

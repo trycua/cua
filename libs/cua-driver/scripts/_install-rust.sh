@@ -513,7 +513,7 @@ done
 # asset — see the recovery at the download step below.
 #
 # ~~~ BAKED_VERSION: auto-updated after release publication — do not edit ~~~
-CUA_DRIVER_RS_BAKED_VERSION="0.14.0" # published-installer-version
+CUA_DRIVER_RS_BAKED_VERSION="0.14.1" # published-installer-version
 # ~~~ END_BAKED_VERSION ~~~
 
 # Run API requests with an optional token. Keep the header construction here

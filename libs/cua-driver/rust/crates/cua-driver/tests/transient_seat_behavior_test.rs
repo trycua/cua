@@ -90,6 +90,22 @@ fn target(fixture: &Fixture) -> String {
     format!("root:{}", fixture.pid)
 }
 
+fn wait_for_target(fixture: &Fixture) {
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let query = format!("g {}", fixture.pid);
+    while Instant::now() < deadline {
+        let response = exchange(&[query.clone()]).remove(0);
+        if response.starts_with("geometry ") {
+            return;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    panic!(
+        "fixture root PID {} never mapped into cua-compositor",
+        fixture.pid
+    );
+}
+
 fn hex(text: &str) -> String {
     text.as_bytes()
         .iter()
@@ -116,6 +132,8 @@ fn wait_for_fixture(journal: &FixtureJournal, marker: &str) {
 fn transient_seats_are_isolated_and_destroyable() {
     let fixture_a = launch_fixture("agent-a");
     let fixture_b = launch_fixture("agent-b");
+    wait_for_target(&fixture_a);
+    wait_for_target(&fixture_b);
     let target_a = target(&fixture_a);
     let target_b = target(&fixture_b);
     let default_focus_before = exchange(&["q 0".to_owned()]).remove(0);

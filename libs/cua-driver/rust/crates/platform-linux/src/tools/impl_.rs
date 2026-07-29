@@ -6802,21 +6802,47 @@ impl Tool for KillAppTool {
         })
         .await;
         match termination {
-            Ok(Ok(true)) => ToolResult::text(format!("✅ Terminated pid {pid_i}.")),
-            Ok(Ok(false)) => ToolResult::error(format!(
-                "kill_app: SIGKILL was accepted for pid {pid_i}, but the same process \
-                 was still alive after 2 seconds."
-            )),
-            Ok(Err(error)) => ToolResult::error(format!(
-                "kill_app: could not terminate pid {pid_i}: {error}. \
-                 The process may not exist, or the daemon may lack permission to inspect \
-                 or signal it."
-            )),
-            Err(error) => ToolResult::error(format!(
-                "kill_app: termination verification task failed for pid {pid_i}: {error}"
-            )),
+            Ok(Ok(true)) => kill_app_success(pid_i),
+            Ok(Ok(false)) => kill_app_failure(
+                pid_i,
+                "termination_unconfirmed",
+                format!(
+                    "kill_app: SIGKILL was accepted for pid {pid_i}, but the same process \
+                     was still alive after 2 seconds."
+                ),
+            ),
+            Ok(Err(error)) => kill_app_failure(
+                pid_i,
+                "termination_failed",
+                format!(
+                    "kill_app: could not terminate pid {pid_i}: {error}. \
+                     The process may not exist, or the daemon may lack permission to inspect \
+                     or signal it."
+                ),
+            ),
+            Err(error) => kill_app_failure(
+                pid_i,
+                "verification_task_failed",
+                format!("kill_app: termination verification task failed for pid {pid_i}: {error}"),
+            ),
         }
     }
+}
+
+fn kill_app_success(pid: i32) -> ToolResult {
+    ToolResult::text(format!("✅ Terminated pid {pid}.")).with_structured(json!({
+        "pid": pid,
+        "terminated": true,
+    }))
+}
+
+fn kill_app_failure(pid: i32, code: &str, message: String) -> ToolResult {
+    ToolResult::error(message.clone()).with_structured(json!({
+        "pid": pid,
+        "terminated": false,
+        "code": code,
+        "message": message,
+    }))
 }
 
 fn kill_app_stale_process_refusal(message: String) -> ToolResult {
@@ -6827,6 +6853,35 @@ fn kill_app_stale_process_refusal(message: String) -> ToolResult {
             "message": message,
         }
     }))
+}
+
+#[cfg(test)]
+mod kill_app_result_tests {
+    use super::{kill_app_failure, kill_app_success};
+
+    #[test]
+    fn success_exposes_a_confirmed_termination_verdict() {
+        let result = kill_app_success(42);
+        let structured = result.structured_content.expect("structured kill result");
+        assert_eq!(structured["pid"], 42);
+        assert_eq!(structured["terminated"], true);
+        assert!(result.is_error.is_none());
+    }
+
+    #[test]
+    fn failure_exposes_a_machine_readable_reason() {
+        let result = kill_app_failure(
+            42,
+            "termination_unconfirmed",
+            "process stayed alive".to_owned(),
+        );
+        let structured = result.structured_content.expect("structured kill failure");
+        assert_eq!(structured["pid"], 42);
+        assert_eq!(structured["terminated"], false);
+        assert_eq!(structured["code"], "termination_unconfirmed");
+        assert_eq!(structured["message"], "process stayed alive");
+        assert_eq!(result.is_error, Some(true));
+    }
 }
 
 // ── bring_to_front (Linux) ───────────────────────────────────────────────────

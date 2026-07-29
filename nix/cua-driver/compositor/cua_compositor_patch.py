@@ -508,9 +508,11 @@ static struct wlr_seat_client *cua_kbd_enter(struct tinywl_server *server, struc
 	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(server->seat, wl_resource_get_client(surface->resource));
 	if (!sc || wl_list_empty(&sc->keyboards)) return NULL;
 	struct wlr_surface *focused = server->seat->keyboard_state.focused_surface;
-	if (idx == 0 && focused && wlr_surface_get_root_surface(focused) == surface) {
-		/* Foreground delivery already has a protocol-complete seat enter. The
-		 * key path below uses wlr_seat_keyboard_notify_key for this target. */
+	if (focused && wlr_surface_get_root_surface(focused) == surface) {
+		/* The physical keyboard is already protocol-focused on this target.
+		 * Transient typing temporarily establishes this state and restores it after
+		 * delivery, so Chromium follows its normal keyboard path without retaining
+		 * a default-seat focus change. */
 		cua_kbd_state[idx].entered = surface;
 		return sc;
 	}
@@ -548,7 +550,7 @@ static void cua_kbd_key_target(struct tinywl_server *server, struct tinywl_tople
 	struct wlr_surface *target = wlr_surface_get_root_surface(t->xdg_toplevel->base->surface);
 	struct wlr_surface *focused = server->seat->keyboard_state.focused_surface;
 	struct wlr_surface *focused_root = focused ? wlr_surface_get_root_surface(focused) : NULL;
-	if (idx == 0 && target == focused_root) {
+	if (target == focused_root) {
 		wlr_seat_keyboard_notify_key(server->seat, cua_now_ms(), keycode,
 			pressed ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED);
 	} else {
@@ -569,13 +571,32 @@ static bool cua_type_cp(struct tinywl_server *server, struct tinywl_toplevel *t,
 /* Decode a hex-encoded ASCII string and type it focus-free into `t`. */
 static bool cua_type_hex(struct tinywl_server *server, struct tinywl_toplevel *t, int idx, const char *hex) {
 	if (!t) return false;
+	/* Chromium only dispatches keyboard events from wlroots' focused-seat route.
+	 * A transient logical seat borrows that route for one typed string, then puts
+	 * the physical/default focus back exactly where it was. */
+	struct wlr_surface *restore = server->seat->keyboard_state.focused_surface;
+	struct wlr_surface *target = t->xdg_toplevel->base->surface;
+	struct wlr_surface *restore_root = restore ? wlr_surface_get_root_surface(restore) : NULL;
+	struct wlr_surface *target_root = wlr_surface_get_root_surface(target);
+	bool restore_focus = idx != 0 && restore_root != target_root;
+	if (restore_focus) {
+		struct wlr_keyboard_modifiers modifiers = {0};
+		wlr_seat_keyboard_notify_enter(server->seat, target, NULL, 0, &modifiers);
+	}
+	bool ok = true;
 	for (const char *p = hex; p[0] && p[1]; p += 2) {
 		int hi = (p[0] <= '9') ? p[0] - '0' : (p[0] | 0x20) - 'a' + 10;
 		int lo = (p[1] <= '9') ? p[1] - '0' : (p[1] | 0x20) - 'a' + 10;
-		if (!cua_type_cp(server, t, idx, (uint32_t)((hi << 4) | lo))) return false;
+		if (!cua_type_cp(server, t, idx, (uint32_t)((hi << 4) | lo))) { ok = false; break; }
 	}
-	return true;
+	if (restore_focus) {
+		struct wlr_keyboard_modifiers modifiers = {0};
+		if (restore) wlr_seat_keyboard_notify_enter(server->seat, restore, NULL, 0, &modifiers);
+		else wlr_seat_keyboard_notify_clear_focus(server->seat);
+	}
+	return ok;
 }
+
 static uint32_t cua_named_keycode(const char *name) {
 	uint32_t kc = 0;
 	if (!strcasecmp(name, "enter") || !strcasecmp(name, "return")) kc = KEY_ENTER;

@@ -31,7 +31,7 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
-    "swagger-typescript-api": "13.2.7",
+    "swagger-typescript-api": "13.12.2",
     "typescript": "^5.7.2",
     "vite": "^5.4.11"
   },

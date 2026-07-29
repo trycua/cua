@@ -796,12 +796,12 @@ impl DirtyRect {
 }
 
 /// Conservative half-extent for the checked-in theme plus the session badge.
-/// The badge is up to 176 px wide and clamps independently at display edges,
-/// so a cursor at an edge can have badge pixels almost 176 px to one side.
+/// The badge is up to 188 px wide and clamps independently at display edges,
+/// so a cursor at an edge can have badge pixels almost 188 px to one side.
 /// Custom themes use a full-surface dirty rect because their bounded artifact
 /// coordinates can legitimately extend beyond this default-theme envelope.
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-const CURSOR_PAD: i32 = 192;
+const CURSOR_PAD: i32 = cursor_overlay::session_badge::BADGE_MAX_WIDTH as i32 + 12;
 
 #[cfg(target_os = "windows")]
 struct WinSurface {

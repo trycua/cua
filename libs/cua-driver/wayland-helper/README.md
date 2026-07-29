@@ -25,10 +25,9 @@ It exposes `org.cua.WinRects` on the session bus:
 - `MoveCursor(x,y)` / `ClickPulse(x,y)` / `HideCursor()` — position and hide
   the agent cursor as a Clutter actor on the compositor stage.
 - `SetCursorState(action,delivery,target,active)` — render the same 12 semantic
-  action states and delivery/target modifiers as the cross-platform
-  `cua.default` cursor theme. The marks use session-colored centers, white
-  outlines, and a tighter matching glow, while the pointer uses the larger
-  cursor-shaped glow. This method was added in helper v5.
+  action states as the cross-platform `cua.default` cursor theme. Delivery and
+  target context appears as host-owned chips in the session badge rather than
+  pointer-relative theme artwork. This contract requires helper v8.
 - `SetCursorColor(fill_color)` — apply the stable per-session fill selected by
   cua-driver. The helper validates the `#RRGGBB` value, updates the matching
   glow, and keeps a white pointer outline.
@@ -50,7 +49,7 @@ still work when it is absent, but pixel geometry, the Shell cursor, and safe
 foreground portal input are unavailable. cua-driver refuses focus-bound input
 instead of injecting into an unverified target.
 
-The semantic cursor requires helper v5. When an older helper is still loaded,
+The semantic cursor requires helper v8. When an older helper is still loaded,
 cua-driver does not draw its legacy cursor. Re-run the helper installer, then
 reload the GNOME session so the new compositor-owned artwork becomes active.
 

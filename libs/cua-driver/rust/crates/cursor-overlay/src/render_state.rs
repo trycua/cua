@@ -35,8 +35,8 @@
 //!   supplies one via the optional argument).
 
 use crate::{
-    CompiledTheme, CursorAction, CursorConfig, CursorVisualState, MotionConfig, OverlayCommand,
-    PathPlanner, PathState, PlannedPath, Spring,
+    CompiledTheme, CursorAction, CursorConfig, CursorVisualState, DeliveryModifier, MotionConfig,
+    OverlayCommand, PathPlanner, PathState, PlannedPath, Spring, TargetModifier,
 };
 use std::sync::Arc;
 
@@ -90,6 +90,12 @@ pub struct RenderStateCore {
     /// cursor. Hover temporarily reveals an already-faded session badge
     /// without changing its one-shot reveal timer.
     pub session_badge_hovered: bool,
+    /// Last action-scoped delivery and target context shown in the badge.
+    /// This is latched briefly after the semantic action ends so the chips
+    /// can fade without keeping modifier artwork inside the Lottie theme.
+    pub badge_modifiers: Option<(Option<DeliveryModifier>, Option<TargetModifier>)>,
+    /// Elapsed chip fade time after the active semantic action clears.
+    pub badge_modifier_fade_secs: Option<f64>,
 }
 
 impl RenderStateCore {
@@ -135,6 +141,8 @@ impl RenderStateCore {
             session_label: None,
             session_badge_secs: SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS,
             session_badge_hovered: false,
+            badge_modifiers: None,
+            badge_modifier_fade_secs: None,
         }
     }
 
@@ -164,10 +172,29 @@ impl RenderStateCore {
         (1.0 - smooth) as f32
     }
 
+    pub fn session_badge_chip_alpha(&self) -> f32 {
+        if self.badge_modifiers.is_none() {
+            return 0.0;
+        }
+        let Some(elapsed) = self.badge_modifier_fade_secs else {
+            return 1.0;
+        };
+        let fade = (elapsed / SESSION_BADGE_FADE_SECS).clamp(0.0, 1.0);
+        let smooth = fade * fade * (3.0 - 2.0 * fade);
+        (1.0 - smooth) as f32
+    }
+
+    pub fn session_badge_is_visible(&self) -> bool {
+        self.cursor_is_revealed()
+            && (self.session_badge_alpha() > 0.001 || self.session_badge_chip_alpha() > 0.001)
+    }
+
     pub fn session_badge_needs_frame_tick(&self) -> bool {
-        self.session_label.is_some()
-            && self.session_badge_secs < SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS
-            && self.cursor_is_revealed()
+        self.cursor_is_revealed()
+            && ((self.session_label.is_some()
+                && self.session_badge_secs < SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS)
+                || self.badge_modifier_fade_secs.is_some()
+                || self.visual.resolved_action != CursorAction::Idle)
     }
 
     /// Whether the platform overlay should keep a low-frequency hardware
@@ -189,7 +216,26 @@ impl RenderStateCore {
             && pointer.is_some_and(|(x, y)| {
                 let dx = x - self.pos.0;
                 let dy = y - self.pos.1;
-                dx * dx + dy * dy <= HOVER_RADIUS * HOVER_RADIUS
+                if dx * dx + dy * dy <= HOVER_RADIUS * HOVER_RADIUS {
+                    return true;
+                }
+                crate::session_badge_layout(crate::SessionBadgeInput {
+                    label: self.session_label.as_deref(),
+                    delivery: self.badge_modifiers.and_then(|modifiers| modifiers.0),
+                    target: self.badge_modifiers.and_then(|modifiers| modifiers.1),
+                    cursor: (self.pos.0 as f32, self.pos.1 as f32),
+                    backing_scale: 1.0,
+                    label_alpha: self.session_badge_alpha(),
+                    chip_alpha: self.session_badge_chip_alpha(),
+                    clip: None,
+                })
+                .is_some_and(|layout| {
+                    let rect = layout.rect;
+                    x >= rect.x() as f64
+                        && x <= (rect.x() + rect.width()) as f64
+                        && y >= rect.y() as f64
+                        && y <= (rect.y() + rect.height()) as f64
+                })
             });
         let changed = hovered != self.session_badge_hovered;
         self.session_badge_hovered = hovered;
@@ -435,7 +481,27 @@ impl RenderStateCore {
     /// moving, then fade `idle_alpha` from 1→0 over 180ms once
     /// `motion.idle_hide_ms` has elapsed.  Identical across all platforms.
     fn tick_idle(&mut self, dt: f64) {
+        let modifiers_before_tick = (self.visual.delivery, self.visual.target);
         self.visual.tick(dt);
+        let modifiers_after_tick = (self.visual.delivery, self.visual.target);
+        if modifiers_after_tick.0.is_some() || modifiers_after_tick.1.is_some() {
+            self.badge_modifiers = Some(modifiers_after_tick);
+            self.badge_modifier_fade_secs = None;
+        } else if (modifiers_before_tick.0.is_some() || modifiers_before_tick.1.is_some())
+            && self.badge_modifiers.is_some()
+            && self.badge_modifier_fade_secs.is_none()
+        {
+            self.badge_modifier_fade_secs = Some(0.0);
+        }
+        if let Some(elapsed) = self.badge_modifier_fade_secs {
+            let next = elapsed + dt.max(0.0);
+            if next >= SESSION_BADGE_FADE_SECS {
+                self.badge_modifiers = None;
+                self.badge_modifier_fade_secs = None;
+            } else {
+                self.badge_modifier_fade_secs = Some(next);
+            }
+        }
         if self.session_label.is_some() {
             self.session_badge_secs = (self.session_badge_secs + dt)
                 .min(SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS);
@@ -517,7 +583,9 @@ impl RenderStateCore {
                     self.visual.resolved_action,
                     CursorAction::Idle | CursorAction::Navigate
                 ) {
-                    self.visual.begin(CursorAction::Navigate, None, None);
+                    let delivery = self.visual.delivery;
+                    let target = self.visual.target;
+                    self.visual.begin(CursorAction::Navigate, delivery, target);
                 }
                 self.idle_secs = 0.0;
                 self.idle_alpha = 1.0;
@@ -544,7 +612,9 @@ impl RenderStateCore {
                     self.visual.resolved_action,
                     CursorAction::Idle | CursorAction::Navigate
                 ) {
-                    self.visual.begin(CursorAction::Navigate, None, None);
+                    let delivery = self.visual.delivery;
+                    let target = self.visual.target;
+                    self.visual.begin(CursorAction::Navigate, delivery, target);
                 }
                 self.idle_secs = 0.0;
                 self.idle_alpha = 1.0;
@@ -575,7 +645,9 @@ impl RenderStateCore {
                     self.visual.resolved_action,
                     CursorAction::Idle | CursorAction::Navigate | CursorAction::Click
                 ) {
-                    self.visual.begin(CursorAction::Click, None, None);
+                    let delivery = self.visual.delivery;
+                    let target = self.visual.target;
+                    self.visual.begin(CursorAction::Click, delivery, target);
                 }
                 self.idle_secs = 0.0;
                 self.idle_alpha = 1.0;
@@ -587,7 +659,9 @@ impl RenderStateCore {
             OverlayCommand::SetPressed(v) => {
                 self.pressed = v;
                 if v {
-                    self.visual.begin(CursorAction::Drag, None, None);
+                    let delivery = self.visual.delivery;
+                    let target = self.visual.target;
+                    self.visual.begin(CursorAction::Drag, delivery, target);
                 } else {
                     self.visual.end(CursorAction::Drag);
                 }
@@ -617,6 +691,12 @@ impl RenderStateCore {
                 target,
             } => {
                 self.visual.begin(action, delivery, target);
+                self.badge_modifiers = if delivery.is_some() || target.is_some() {
+                    Some((delivery, target))
+                } else {
+                    None
+                };
+                self.badge_modifier_fade_secs = None;
                 true
             }
             OverlayCommand::EndAction(action) => {
@@ -825,16 +905,22 @@ pub fn paint_cursor(
         );
     }
 
-    if let Some(label) = core.session_label.as_deref() {
-        let badge_alpha = core.session_badge_alpha();
+    let (delivery, target) = core.badge_modifiers.unwrap_or((None, None));
+    if let Some(layout) = crate::session_badge_layout(crate::SessionBadgeInput {
+        label: core.session_label.as_deref(),
+        delivery,
+        target,
+        cursor: (px as f32, py as f32),
+        backing_scale: backing_scale.max(1.0),
+        label_alpha: core.session_badge_alpha(),
+        chip_alpha: core.session_badge_chip_alpha(),
+        clip: Some((pm.width() as f32, pm.height() as f32)),
+    }) {
         crate::paint_session_badge(
             pm,
-            label,
-            px as f32,
-            py as f32,
-            backing_scale.max(1.0),
-            alpha_scale * badge_alpha,
+            &layout,
             crate::session_fill_rgba(&core.cfg.cursor_id),
+            alpha_scale,
         );
     }
 }
@@ -902,7 +988,7 @@ mod glide_duration_tests {
 #[cfg(test)]
 mod session_badge_and_action_tests {
     use super::*;
-    use crate::{CursorConfig, TargetModifier};
+    use crate::{CursorConfig, DeliveryModifier, TargetModifier};
 
     #[test]
     fn session_badge_holds_then_fades_once() {
@@ -1041,6 +1127,101 @@ mod session_badge_and_action_tests {
         );
         assert_eq!(core.visual.resolved_action, CursorAction::Text);
         assert_eq!(core.visual.target, Some(TargetModifier::Ax));
+    }
+
+    #[test]
+    fn modifiers_live_in_the_badge_then_fade_after_action_completion() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.pos = (200.0, 200.0);
+        core.apply_command_base(
+            OverlayCommand::BeginAction {
+                action: CursorAction::Click,
+                delivery: Some(DeliveryModifier::Foreground),
+                target: Some(TargetModifier::Pixel),
+            },
+            false,
+            false,
+        );
+        assert_eq!(
+            core.badge_modifiers,
+            Some((
+                Some(DeliveryModifier::Foreground),
+                Some(TargetModifier::Pixel)
+            ))
+        );
+        assert_eq!(core.session_badge_chip_alpha(), 1.0);
+        assert!(core.session_badge_is_visible());
+
+        let frame = 1.0 / 60.0;
+        for _ in 0..=((CursorAction::Click.duration_secs() / frame).ceil() as usize) {
+            core.tick_motion(frame);
+        }
+        assert!(core.session_badge_chip_alpha() > 0.0);
+        assert!(core.session_badge_chip_alpha() < 1.0);
+        assert!(core.session_badge_needs_frame_tick());
+
+        core.tick_motion(SESSION_BADGE_FADE_SECS);
+        assert_eq!(core.badge_modifiers, None);
+        assert_eq!(core.session_badge_chip_alpha(), 0.0);
+    }
+
+    #[test]
+    fn modifier_preemption_replaces_the_badge_context_without_cross_fading() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.apply_command_base(
+            OverlayCommand::BeginAction {
+                action: CursorAction::Observe,
+                delivery: Some(DeliveryModifier::Background),
+                target: Some(TargetModifier::Ax),
+            },
+            false,
+            false,
+        );
+        core.apply_command_base(
+            OverlayCommand::BeginAction {
+                action: CursorAction::Text,
+                delivery: Some(DeliveryModifier::Foreground),
+                target: Some(TargetModifier::Browser),
+            },
+            false,
+            false,
+        );
+        assert_eq!(
+            core.badge_modifiers,
+            Some((
+                Some(DeliveryModifier::Foreground),
+                Some(TargetModifier::Browser)
+            ))
+        );
+        assert_eq!(core.badge_modifier_fade_secs, None);
+        assert_eq!(core.session_badge_chip_alpha(), 1.0);
+    }
+
+    #[test]
+    fn click_pulse_preserves_declared_context_until_the_action_fades() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.apply_command_base(
+            OverlayCommand::BeginAction {
+                action: CursorAction::Click,
+                delivery: Some(DeliveryModifier::Background),
+                target: Some(TargetModifier::Ax),
+            },
+            false,
+            false,
+        );
+        core.apply_command_base(
+            OverlayCommand::ClickPulse { x: 40.0, y: 60.0 },
+            false,
+            false,
+        );
+        assert_eq!(
+            (core.visual.delivery, core.visual.target),
+            (Some(DeliveryModifier::Background), Some(TargetModifier::Ax))
+        );
+        assert_eq!(
+            core.badge_modifiers,
+            Some((Some(DeliveryModifier::Background), Some(TargetModifier::Ax)))
+        );
     }
 }
 

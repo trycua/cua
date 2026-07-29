@@ -49,6 +49,13 @@ whitespace, and shortens labels longer than 28 characters. The label is visual
 identity only. It does not grant authorization, select another session's
 capabilities, or expose Cua's private runtime identifier.
 
+The badge also shows execution context when it applies. A filled delivery chip
+identifies `background` or `foreground`, followed by an outlined target chip
+for `ax`, `pixel`, `browser`, or `desktop`. These chips stay visible while the
+action is active and fade independently from the session name. They are drawn
+by Cua Driver, so their meaning stays consistent across themes and operating
+systems.
+
 The old `set_agent_cursor_style` operation and its `cursor_id`, shape, color,
 label, size, opacity, image-path, gradient, and bloom styling fields have been
 removed. (`cursor_id` may still appear on input-delivery tools where it names a
@@ -64,8 +71,6 @@ A source theme is a dotLottie archive with:
 - a `cua/theme.json` semantic manifest;
 - all twelve actions: `idle`, `observe`, `click`, `drag`, `scroll`, `text`,
   `key`, `navigate`, `app`, `transfer`, `record`, and `system`;
-- all six modifiers: `background`, `foreground`, `ax`, `pixel`, `browser`, and
-  `desktop`;
 - a representative `still_frame` for every animation;
 - an author and license.
 
@@ -75,7 +80,7 @@ author, and license. It preserves paths and strokes as vectors, so the native
 renderer can draw them at the current display scale instead of enlarging a
 fixed-resolution image.
 
-![The six delivery and target modifiers supported by Cua cursor themes](/img/cua-driver/cursor-themes/delivery-target-context.gif)
+![The host-rendered delivery and target context chips](/img/cua-driver/cursor-themes/delivery-target-context.gif)
 
 Validate, compile, inspect, and preview the source:
 
@@ -96,8 +101,14 @@ cua-driver set_agent_cursor_theme \
   '{"session":"demo","theme_id":"com.example.cursor.studio"}'
 ```
 
-Profile v1 does not compile dotLottie color/theme variants. Publish each
+Profile v2 does not compile dotLottie color/theme variants. Publish each
 visually distinct design under a separate theme ID.
+
+Profile v2 contains action animations only. The source manifest uses
+`"schema": "cua.cursor-theme/2"`,
+`"profile": "cua-driver-actions-v2"`, and `"semantics": 2`. V1 source and
+compiled artifacts are rejected. Remove the old `modifiers` section and rebuild
+the theme with the current compiler.
 
 ## Why installation is separate
 
@@ -113,9 +124,10 @@ cannot install source or submit inline animation data.
 
 The built-in `cua.default` theme uses the same compiler and renderer. Cua ships
 its compiled artifact inside the driver, so users do not need to install it.
-The driver applies the stable session color and shared floating motion after
-compositing the default theme's action and modifier layers. Installed custom
-themes keep their authored colors.
+The driver applies the stable session color and shared floating motion to the
+default theme's action layer. Installed custom themes keep their authored
+colors. The host renders delivery and target chips in the badge for both the
+default and custom themes.
 
 Remove a custom theme with:
 

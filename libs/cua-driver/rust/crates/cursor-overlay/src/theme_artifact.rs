@@ -4,7 +4,7 @@
 //! header. The privileged overlay never parses Lottie, ZIP, JSON, fonts,
 //! expressions, URLs, or arbitrary source paths.
 
-use crate::{CursorAction, CursorVisualState, DeliveryModifier, TargetModifier};
+use crate::{CursorAction, CursorVisualState};
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -17,9 +17,10 @@ use std::{
 };
 use tiny_skia::{Color, FillRule, LineCap, LineJoin, Paint, PathBuilder, Stroke, Transform};
 
-const MAGIC: &[u8; 8] = b"CUATHEM2";
+const MAGIC: &[u8; 8] = b"CUATHEM3";
+const LEGACY_MAGIC: &[u8; 8] = b"CUATHEM2";
 const HEADER_LEN: usize = 8 + 2 + 4 + 32;
-const ARTIFACT_VERSION: u16 = 2;
+const ARTIFACT_VERSION: u16 = 3;
 const MAX_COMPRESSED_BYTES: usize = 24 * 1024 * 1024;
 const MAX_DECOMPRESSED_BYTES: usize = 24 * 1024 * 1024;
 const MAX_TOTAL_FRAMES: usize = 1_000;
@@ -111,7 +112,6 @@ pub struct CompiledTheme {
     pub source_hash: [u8; 32],
     pub hotspot: [u16; 2],
     pub actions: BTreeMap<String, CompiledAnimation>,
-    pub modifiers: BTreeMap<String, CompiledAnimation>,
 }
 
 impl CompiledTheme {
@@ -125,10 +125,6 @@ impl CompiledTheme {
 
     pub fn animation_for_action(&self, action: CursorAction) -> Option<&CompiledAnimation> {
         self.actions.get(action.as_str())
-    }
-
-    fn modifier(&self, name: &str) -> Option<&CompiledAnimation> {
-        self.modifiers.get(name)
     }
 }
 
@@ -281,24 +277,12 @@ pub fn validate_compiled_theme(theme: &CompiledTheme, full: bool) -> Result<()> 
                 bail!("full profile is missing action `{}`", action.as_str());
             }
         }
-        for modifier in [
-            "background",
-            "foreground",
-            "ax",
-            "pixel",
-            "browser",
-            "desktop",
-        ] {
-            if !theme.modifiers.contains_key(modifier) {
-                bail!("full profile is missing modifier `{modifier}`");
-            }
-        }
     } else if !theme.actions.contains_key("idle") || !theme.actions.contains_key("click") {
         bail!("development profile requires at least `idle` and `click`");
     }
 
     let mut total_frames = 0usize;
-    for (name, animation) in theme.actions.iter().chain(theme.modifiers.iter()) {
+    for (name, animation) in &theme.actions {
         total_frames += validate_animation(name, animation)?;
         if total_frames > MAX_TOTAL_FRAMES {
             bail!("theme exceeds the {MAX_TOTAL_FRAMES}-frame limit");
@@ -329,6 +313,11 @@ pub fn encode_theme(theme: &CompiledTheme) -> Result<Vec<u8>> {
 }
 
 pub fn decode_theme(bytes: &[u8]) -> Result<CompiledTheme> {
+    if bytes.len() >= LEGACY_MAGIC.len() && &bytes[..LEGACY_MAGIC.len()] == LEGACY_MAGIC {
+        bail!(
+            "cursor-theme artifact targets the retired v1 contract; rebuild the source as cua.cursor-theme/2"
+        );
+    }
     if bytes.len() < HEADER_LEN || &bytes[..8] != MAGIC {
         bail!("not a Cua cursor-theme artifact");
     }
@@ -810,42 +799,6 @@ pub fn paint_compiled_theme_with_tint(
             tint,
         );
     }
-    if let Some(delivery) = visual.delivery {
-        let name = match delivery {
-            DeliveryModifier::Background => "background",
-            DeliveryModifier::Foreground => "foreground",
-        };
-        if let Some(animation) = theme.modifier(name) {
-            draw_layer(
-                target,
-                animation,
-                visual.elapsed_secs,
-                reduced,
-                transform,
-                alpha,
-                tint,
-            );
-        }
-    }
-    if let Some(target_modifier) = visual.target {
-        let name = match target_modifier {
-            TargetModifier::Ax => "ax",
-            TargetModifier::Pixel => "pixel",
-            TargetModifier::Browser => "browser",
-            TargetModifier::Desktop => "desktop",
-        };
-        if let Some(animation) = theme.modifier(name) {
-            draw_layer(
-                target,
-                animation,
-                visual.elapsed_secs,
-                reduced,
-                transform,
-                alpha,
-                tint,
-            );
-        }
-    }
 }
 
 fn hex_digest(bytes: &[u8]) -> String {
@@ -893,14 +846,13 @@ mod tests {
             version: "1.0.0".into(),
             author: "Example Author".into(),
             license: "MIT".into(),
-            profile: "cua-driver-development-v1".into(),
+            profile: "cua-driver-development-v2".into(),
             source_hash: [7; 32],
             hotspot: [55, 30],
             actions: BTreeMap::from([
                 ("idle".into(), animation.clone()),
                 ("click".into(), animation),
             ]),
-            modifiers: BTreeMap::new(),
         }
     }
 
@@ -913,7 +865,16 @@ mod tests {
     }
 
     #[test]
-    fn full_profile_requires_every_action_and_modifier() {
+    fn rejects_v1_artifacts_with_rebuild_guidance() {
+        let mut bytes = encode_theme(&minimal_theme()).unwrap();
+        bytes[..LEGACY_MAGIC.len()].copy_from_slice(LEGACY_MAGIC);
+        let message = decode_theme(&bytes).unwrap_err().to_string();
+        assert!(message.contains("retired v1 contract"));
+        assert!(message.contains("cua.cursor-theme/2"));
+    }
+
+    #[test]
+    fn full_profile_requires_every_action() {
         let mut theme = minimal_theme();
         theme.profile = crate::THEME_PROFILE.into();
         assert!(validate_compiled_theme(&theme, true).is_err());
@@ -931,11 +892,9 @@ mod tests {
         let theme = embedded_default_theme();
         assert_eq!(theme.id, crate::DEFAULT_THEME_ID);
         assert_eq!(theme.actions.len(), CursorAction::ALL.len());
-        assert_eq!(theme.modifiers.len(), 6);
         assert!(theme
             .actions
             .values()
-            .chain(theme.modifiers.values())
             .flat_map(|animation| &animation.frames)
             .any(|frame| !frame.commands.is_empty()));
         validate_compiled_theme(&theme, true).unwrap();

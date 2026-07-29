@@ -12,7 +12,7 @@ The runtime applies two bounded effects after decoding the compiled theme:
 * the shared four-second float transform is applied to the composed theme.
 
 Those effects are runtime concerns because they must stay synchronized across
-the action, delivery, and target layers.
+all action layers. Delivery and target context is rendered by the host badge.
 """
 
 from __future__ import annotations
@@ -584,85 +584,8 @@ def action_system() -> dict[str, Any]:
     return lottie("action_system", frames, [*cursor_layers(frames), *cue])
 
 
-def modifier_layers(name: str, geometry: Sequence[dict[str, Any]], *, width: float = 2.5) -> dict[str, Any]:
-    return lottie(
-        f"modifier_{name}",
-        1,
-        cue_layers(1, name.title(), geometry, 1, width=width),
-    )
-
-
-def modifier_background() -> dict[str, Any]:
-    dots = [
-        ellipse(x, y, 3, 3, name=f"Background dot {index}")
-        for index, (x, y) in enumerate(
-            [(34, 23), (27, 28), (22, 35), (19, 44), (20, 54), (22, 64), (26, 74), (32, 84), (39, 94), (48, 102)]
-        )
-    ]
-    layers = [
-        shape_layer(1, "Background outline", [*dots, fill(WHITE)], 1),
-        shape_layer(2, "Background color", [*dots, fill(BLUE)], 1, scale=static([62, 62])),
-    ]
-    return lottie("modifier_background", 1, layers)
-
-
-def modifier_foreground() -> dict[str, Any]:
-    return modifier_layers("foreground", [ellipse(25, 90, 18, 18, name="Foreground ring")], width=3)
-
-
-def modifier_ax() -> dict[str, Any]:
-    geometry = [
-        ellipse(x, y, 6, 6, name=f"AX node {index}")
-        for index, (x, y) in enumerate([(104, 89), (94, 104), (114, 104)])
-    ]
-    geometry.extend(
-        [
-            points([(104, 92), (104, 97), (94, 101)], name="AX left"),
-            points([(104, 97), (114, 101)], name="AX right"),
-        ]
-    )
-    return modifier_layers("ax", geometry)
-
-
-def modifier_pixel() -> dict[str, Any]:
-    geometry = [
-        points(segment, name=f"Pixel segment {index}")
-        for index, segment in enumerate(
-            [
-                [(94, 91), (100, 91)],
-                [(106, 91), (113, 91)],
-                [(113, 91), (113, 98)],
-                [(113, 104), (113, 110)],
-                [(113, 110), (106, 110)],
-                [(100, 110), (94, 110)],
-                [(94, 110), (94, 104)],
-                [(94, 98), (94, 91)],
-            ]
-        )
-    ]
-    return modifier_layers("pixel", geometry)
-
-
-def modifier_browser() -> dict[str, Any]:
-    geometry = [
-        ellipse(104, 100, 20, 20, name="Browser globe"),
-        points([(94, 100), (114, 100)], name="Browser equator"),
-        points([(104, 90), (100, 100), (104, 110)], name="Browser left"),
-        points([(104, 90), (108, 100), (104, 110)], name="Browser right"),
-    ]
-    return modifier_layers("browser", geometry)
-
-
-def modifier_desktop() -> dict[str, Any]:
-    geometry = [
-        rectangle(103.5, 97.5, 21, 15, roundness=2, name="Desktop screen"),
-        points([(103.5, 105), (103.5, 110), (97, 110), (110, 110)], name="Desktop stand"),
-    ]
-    return modifier_layers("desktop", geometry)
-
-
 def all_animations() -> dict[str, dict[str, Any]]:
-    actions = {
+    return {
         "action_idle": action_idle(),
         "action_observe": action_observe(),
         "action_click": action_click(),
@@ -676,15 +599,6 @@ def all_animations() -> dict[str, dict[str, Any]]:
         "action_record": action_record(),
         "action_system": action_system(),
     }
-    modifiers = {
-        "modifier_background": modifier_background(),
-        "modifier_foreground": modifier_foreground(),
-        "modifier_ax": modifier_ax(),
-        "modifier_pixel": modifier_pixel(),
-        "modifier_browser": modifier_browser(),
-        "modifier_desktop": modifier_desktop(),
-    }
-    return {**actions, **modifiers}
 
 
 def semantic_manifest() -> dict[str, Any]:
@@ -707,20 +621,16 @@ def semantic_manifest() -> dict[str, Any]:
     }
     actions["click"]["still_frame"] = 8
     return {
-        "schema": "cua.cursor-theme/1",
+        "schema": "cua.cursor-theme/2",
         "id": "cua.default",
         "name": "Cua Default",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "author": "Cua",
         "license": "MIT",
-        "compatibility": {"profile": "cua-driver-full-v1", "semantics": 1},
+        "compatibility": {"profile": "cua-driver-actions-v2", "semantics": 2},
         "canvas": {"width": CANVAS, "height": CANVAS, "fps": FPS},
         "hotspot": {"x": 55, "y": 30},
         "actions": actions,
-        "modifiers": {
-            name: {"animation": f"modifier_{name}", "still_frame": 0}
-            for name in ["background", "foreground", "ax", "pixel", "browser", "desktop"]
-        },
     }
 
 

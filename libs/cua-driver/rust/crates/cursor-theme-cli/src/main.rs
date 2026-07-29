@@ -5,7 +5,7 @@ use cursor_overlay::{
     encode_theme, inspect_artifact, install_artifact, list_installed_themes, uninstall_theme,
     validate_compiled_theme, CompiledAnimation, CompiledDrawCommand, CompiledFrame,
     CompiledGeometry, CompiledStroke, CompiledTheme, CompiledTransform, CursorAction,
-    CursorVisualState, DeliveryModifier, ReducedMotion, TargetModifier, THEME_PROFILE,
+    CursorVisualState, ReducedMotion, THEME_PROFILE,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -30,6 +30,7 @@ type SourceArchiveEntries = BTreeMap<String, Vec<u8>>;
 type SourceArchive = (Vec<u8>, SourceArchiveEntries);
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ThemeManifest {
     schema: String,
     id: String,
@@ -41,7 +42,6 @@ struct ThemeManifest {
     canvas: Canvas,
     hotspot: Hotspot,
     actions: BTreeMap<String, AnimationRef>,
-    modifiers: BTreeMap<String, AnimationRef>,
     #[serde(default)]
     variants: BTreeMap<String, String>,
 }
@@ -111,11 +111,10 @@ fn run() -> Result<()> {
             let full = !args.iter().any(|value| value == "--development");
             let theme = compile_source(&source, full)?;
             println!(
-                "valid: {} {} ({} actions, {} modifiers, profile {})",
+                "valid: {} {} ({} actions, profile {})",
                 theme.id,
                 theme.version,
                 theme.actions.len(),
-                theme.modifiers.len(),
                 theme.profile
             );
         }
@@ -147,7 +146,6 @@ fn run() -> Result<()> {
                 println!("profile: {}", theme.profile);
                 println!("content hash: {}", theme.content_hash());
                 println!("actions: {}", theme.actions.len());
-                println!("modifiers: {}", theme.modifiers.len());
             }
         }
         "preview" => {
@@ -278,11 +276,22 @@ fn compile_source(path: &Path, full: bool) -> Result<CompiledTheme> {
     let manifest_bytes = entries
         .get("cua/theme.json")
         .ok_or_else(|| anyhow!("archive is missing cua/theme.json"))?;
-    let manifest: ThemeManifest = parse_json(manifest_bytes, "cua/theme.json")?;
-    if manifest.schema != "cua.cursor-theme/1" {
+    let manifest_value: Value = parse_json(manifest_bytes, "cua/theme.json")?;
+    let source_schema = manifest_value
+        .get("schema")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if source_schema == "cua.cursor-theme/1" {
+        bail!(
+            "cursor-theme source targets the retired v1 contract; remove `modifiers` and rebuild as cua.cursor-theme/2"
+        );
+    }
+    let manifest: ThemeManifest =
+        serde_json::from_value(manifest_value).context("parse cua/theme.json")?;
+    if manifest.schema != "cua.cursor-theme/2" {
         bail!("unsupported source schema `{}`", manifest.schema);
     }
-    if manifest.compatibility.semantics != 1 {
+    if manifest.compatibility.semantics != 2 {
         bail!(
             "unsupported cursor semantic version {}",
             manifest.compatibility.semantics
@@ -292,14 +301,14 @@ fn compile_source(path: &Path, full: bool) -> Result<CompiledTheme> {
         || manifest.canvas.height != CANVAS
         || (manifest.canvas.fps - FPS).abs() > f32::EPSILON
     {
-        bail!("Cua cursor profile v1 requires a 128×128 canvas at 30 fps");
+        bail!("Cua cursor profile v2 requires a 128×128 canvas at 30 fps");
     }
     if full && manifest.compatibility.profile != THEME_PROFILE {
         bail!("full validation requires profile `{THEME_PROFILE}`");
     }
     if !manifest.variants.is_empty() {
         bail!(
-            "cursor-theme variants are not supported by profile v1; publish each visual variant as a separate theme id"
+            "cursor-theme variants are not supported by profile v2; publish each visual variant as a separate theme id"
         );
     }
 
@@ -313,7 +322,6 @@ fn compile_source(path: &Path, full: bool) -> Result<CompiledTheme> {
     let referenced: BTreeSet<&str> = manifest
         .actions
         .values()
-        .chain(manifest.modifiers.values())
         .map(|item| item.animation.as_str())
         .collect();
     let standard_ids: BTreeSet<&str> = standard
@@ -357,30 +365,6 @@ fn compile_source(path: &Path, full: bool) -> Result<CompiledTheme> {
             )?,
         );
     }
-    let allowed_modifiers = [
-        "background",
-        "foreground",
-        "ax",
-        "pixel",
-        "browser",
-        "desktop",
-    ];
-    let mut modifiers = BTreeMap::new();
-    for (name, reference) in manifest.modifiers {
-        if !allowed_modifiers.contains(&name.as_str()) {
-            bail!("unknown modifier `{name}`");
-        }
-        modifiers.insert(
-            name,
-            with_still_frame(
-                compiled
-                    .get(&reference.animation)
-                    .cloned()
-                    .ok_or_else(|| anyhow!("missing compiled modifier"))?,
-                reference.still_frame,
-            )?,
-        );
-    }
     let mut hasher = Sha256::new();
     hasher.update(&source);
     let source_hash: [u8; 32] = hasher.finalize().into();
@@ -394,7 +378,6 @@ fn compile_source(path: &Path, full: bool) -> Result<CompiledTheme> {
         source_hash,
         hotspot: [manifest.hotspot.x, manifest.hotspot.y],
         actions,
-        modifiers,
     };
     validate_compiled_theme(&theme, full)?;
     Ok(theme)
@@ -903,7 +886,7 @@ fn compile_animation(bytes: &[u8], id: &str) -> Result<CompiledAnimation> {
 
 fn preview(theme: &CompiledTheme, output: &Path) -> Result<()> {
     fs::create_dir_all(output).with_context(|| format!("create {}", output.display()))?;
-    for name in theme.actions.keys().chain(theme.modifiers.keys()) {
+    for name in theme.actions.keys() {
         let mut visual = CursorVisualState {
             reduced_motion: ReducedMotion::On,
             ..CursorVisualState::default()
@@ -915,15 +898,7 @@ fn preview(theme: &CompiledTheme, output: &Path) -> Result<()> {
             visual.requested_action = action;
             visual.resolved_action = action;
         } else {
-            match name.as_str() {
-                "background" => visual.delivery = Some(DeliveryModifier::Background),
-                "foreground" => visual.delivery = Some(DeliveryModifier::Foreground),
-                "ax" => visual.target = Some(TargetModifier::Ax),
-                "pixel" => visual.target = Some(TargetModifier::Pixel),
-                "browser" => visual.target = Some(TargetModifier::Browser),
-                "desktop" => visual.target = Some(TargetModifier::Desktop),
-                _ => bail!("unknown compiled semantic `{name}`"),
-            }
+            bail!("unknown compiled action `{name}`");
         }
         let mut pixmap = tiny_skia::Pixmap::new(CANVAS, CANVAS)
             .ok_or_else(|| anyhow!("create preview pixmap"))?;
@@ -1000,6 +975,14 @@ mod tests {
     }
 
     fn source_archive(standard_id: &str, variants: &str) -> tempfile::NamedTempFile {
+        source_archive_with_schema(standard_id, variants, "cua.cursor-theme/2")
+    }
+
+    fn source_archive_with_schema(
+        standard_id: &str,
+        variants: &str,
+        schema: &str,
+    ) -> tempfile::NamedTempFile {
         let file = tempfile::Builder::new()
             .suffix(".lottie")
             .tempfile()
@@ -1007,22 +990,29 @@ mod tests {
         let mut archive = ZipWriter::new(file.reopen().unwrap());
         let options = SimpleFileOptions::default();
         let standard = format!(r#"{{"version":"2","animations":[{{"id":"{standard_id}"}}]}}"#);
+        let legacy = schema == "cua.cursor-theme/1";
+        let profile = if legacy {
+            "cua-driver-full-v1"
+        } else {
+            "cua-driver-development-v2"
+        };
+        let semantics = if legacy { 1 } else { 2 };
+        let modifiers = if legacy { r#","modifiers":{}"# } else { "" };
         let semantic = format!(
             r#"{{
-                "schema":"cua.cursor-theme/1",
+                "schema":"{schema}",
                 "id":"com.example.test",
                 "name":"Test",
                 "version":"1.0.0",
                 "author":"Example Author",
                 "license":"MIT",
-                "compatibility":{{"profile":"cua-driver-development-v1","semantics":1}},
+                "compatibility":{{"profile":"{profile}","semantics":{semantics}}},
                 "canvas":{{"width":128,"height":128,"fps":30}},
                 "hotspot":{{"x":55,"y":30}},
                 "actions":{{
                     "idle":{{"animation":"base","still_frame":0}},
                     "click":{{"animation":"base","still_frame":0}}
-                }},
-                "modifiers":{{}},
+                }}{modifiers},
                 "variants":{variants}
             }}"#
         );
@@ -1144,12 +1134,23 @@ mod tests {
     }
 
     #[test]
-    fn rejects_noop_variants_in_profile_v1() {
+    fn rejects_noop_variants_in_profile_v2() {
         let source = source_archive("base", r#"{"dark":"dark"}"#);
         assert!(compile_source(source.path(), false)
             .unwrap_err()
             .to_string()
             .contains("variants are not supported"));
+    }
+
+    #[test]
+    fn rejects_v1_sources_with_rebuild_guidance() {
+        let source = source_archive_with_schema("base", "{}", "cua.cursor-theme/1");
+        let message = compile_source(source.path(), false)
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("retired v1 contract"));
+        assert!(message.contains("remove `modifiers`"));
+        assert!(message.contains("cua.cursor-theme/2"));
     }
 
     #[test]

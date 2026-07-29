@@ -35,7 +35,7 @@ const DBUS_DEST: &str = "org.freedesktop.DBus";
 const DBUS_PATH: &str = "/org/freedesktop/DBus";
 const DBUS_IFACE: &str = "org.freedesktop.DBus";
 const BROWSER_HELPER_API_VERSION: u32 = 4;
-const SEMANTIC_CURSOR_API_VERSION: u32 = 7;
+const SEMANTIC_CURSOR_API_VERSION: u32 = 8;
 
 #[derive(Debug, Clone)]
 struct ShellWindow {
@@ -541,7 +541,7 @@ pub fn set_cursor_color(fill_color: &str) {
 
 /// Update the compositor-owned cursor's semantic action state.
 ///
-/// Callers gate this method on helper v5 so an older helper cannot silently
+/// Callers gate this method on helper v8 so an older helper cannot silently
 /// render the retired cursor artwork.
 pub fn set_cursor_state(action: &str, delivery: &str, target: &str, active: bool) {
     let _ = gdbus_call(
@@ -627,8 +627,9 @@ mod tests {
     }
 
     #[test]
-    fn bundled_helper_v7_uses_the_compact_semantic_cursor_and_session_badge() {
-        assert!(EXTENSION_SOURCE.contains("GetVersion() { return 7; }"));
+    fn bundled_helper_v8_uses_host_owned_modifier_badge_chips() {
+        assert!(EXTENSION_SOURCE.contains("GetVersion()"));
+        assert!(EXTENSION_SOURCE.contains("return 8;"));
         assert!(EXTENSION_SOURCE.contains("SetCursorState"));
         assert!(EXTENSION_SOURCE.contains("SetCursorColor"));
         assert!(EXTENSION_SOURCE.contains("SetSessionLabel"));
@@ -641,7 +642,18 @@ mod tests {
         assert!(EXTENSION_SOURCE.contains("width - 1"));
         assert!(EXTENSION_SOURCE.contains("createGlowSurface(this._fillColor)"));
         assert!(EXTENSION_SOURCE.contains("cr.translate(-GLOW_PADDING, -GLOW_PADDING);"));
-        assert!(EXTENSION_METADATA.contains("\"version\":7"));
+        assert!(EXTENSION_SOURCE.contains("function drawBadgeChip"));
+        assert!(EXTENSION_SOURCE.contains("this._badge.add_child(this._badgeDot)"));
+        assert!(EXTENSION_SOURCE.contains("this._badge.add_child(this._badgeLabel)"));
+        assert!(EXTENSION_SOURCE.contains("this._deliveryChip"));
+        assert!(EXTENSION_SOURCE.contains("this._targetChip"));
+        assert!(EXTENSION_SOURCE.contains("const badgeAlpha = Math.max(labelAlpha, chipAlpha)"));
+        assert!(EXTENSION_SOURCE.contains("this._badgeLabel.hide()"));
+        assert!(!EXTENSION_SOURCE.contains("this._badgeIdentity"));
+        assert!(!EXTENSION_SOURCE.contains("function drawModifiers"));
+        let metadata: serde_json::Value =
+            serde_json::from_str(EXTENSION_METADATA).expect("valid bundled helper metadata");
+        assert_eq!(metadata["version"], 8);
 
         for action in [
             "idle", "observe", "click", "drag", "scroll", "text", "key", "navigate", "app",

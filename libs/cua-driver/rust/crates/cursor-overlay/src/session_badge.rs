@@ -7,6 +7,10 @@
 //! private runtime key, so rendering a friendly name never weakens session
 //! isolation.
 
+use crate::{
+    badge_glyphs::{paint_badge_chip, BadgeChip, BadgeGlyph},
+    DeliveryModifier, TargetModifier,
+};
 use fontdue::layout::{CoordinateSystem, Layout, LayoutSettings, TextStyle};
 use std::sync::OnceLock;
 use tiny_skia::{
@@ -18,6 +22,9 @@ pub const MAX_SESSION_LABEL_CHARS: usize = 28;
 pub const BADGE_MAX_WIDTH: f32 = 188.0;
 pub const BADGE_HEIGHT: f32 = 28.0;
 pub const BADGE_CURSOR_GAP: f32 = 25.0;
+pub const BADGE_CHIP_SIZE: f32 = 18.0;
+pub const BADGE_CHIP_GAP: f32 = 4.0;
+pub const BADGE_CHIP_GROUP_GAP: f32 = 7.0;
 
 const FONT_BYTES: &[u8] = include_bytes!("../assets/Inter.ttf");
 const FONT_SIZE: f32 = 11.5;
@@ -25,6 +32,54 @@ const HORIZONTAL_PADDING: f32 = 10.0;
 const ORB_SIZE: f32 = 10.0;
 const ORB_GAP: f32 = 7.0;
 const TEXT_OPTICAL_Y_OFFSET: f32 = 1.0;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BadgeExtents {
+    pub horizontal: f32,
+    pub above: f32,
+    pub below: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BadgeLabelLayout {
+    pub text: String,
+    pub origin: (f32, f32),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionBadgeLayout {
+    pub rect: Rect,
+    pub corner_radius: f32,
+    pub orb_center: (f32, f32),
+    pub label: Option<BadgeLabelLayout>,
+    pub delivery_chip: Option<BadgeChip>,
+    pub target_chip: Option<BadgeChip>,
+    pub pill_alpha: f32,
+    pub label_alpha: f32,
+    pub chip_alpha: f32,
+    pub scale: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SessionBadgeInput<'a> {
+    pub label: Option<&'a str>,
+    pub delivery: Option<DeliveryModifier>,
+    pub target: Option<TargetModifier>,
+    pub cursor: (f32, f32),
+    pub backing_scale: f32,
+    pub label_alpha: f32,
+    pub chip_alpha: f32,
+    pub clip: Option<(f32, f32)>,
+}
+
+pub const fn session_badge_extents() -> BadgeExtents {
+    const GLOW_ALLOWANCE: f32 = 8.0;
+    BadgeExtents {
+        horizontal: BADGE_MAX_WIDTH * 0.5 + GLOW_ALLOWANCE,
+        above: GLOW_ALLOWANCE,
+        below: BADGE_CURSOR_GAP + BADGE_HEIGHT + GLOW_ALLOWANCE,
+    }
+}
 
 fn font() -> Option<&'static fontdue::Font> {
     static FONT: OnceLock<Option<fontdue::Font>> = OnceLock::new();
@@ -39,6 +94,79 @@ fn font() -> Option<&'static fontdue::Font> {
         .ok()
     })
     .as_ref()
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TextBounds {
+    min_x: f32,
+    min_y: f32,
+    width: f32,
+    height: f32,
+}
+
+fn text_layout(font: &fontdue::Font, text: &str, font_size: f32) -> Layout {
+    let mut layout = Layout::new(CoordinateSystem::PositiveYDown);
+    layout.reset(&LayoutSettings::default());
+    layout.append(&[font], &TextStyle::new(text, font_size, 0));
+    layout
+}
+
+fn text_bounds(layout: &Layout) -> Option<TextBounds> {
+    let glyphs = layout.glyphs();
+    if glyphs.is_empty() {
+        return None;
+    }
+    let min_x = glyphs
+        .iter()
+        .map(|glyph| glyph.x)
+        .fold(f32::INFINITY, f32::min);
+    let max_x = glyphs
+        .iter()
+        .map(|glyph| glyph.x + glyph.width as f32)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let min_y = glyphs
+        .iter()
+        .map(|glyph| glyph.y)
+        .fold(f32::INFINITY, f32::min);
+    let max_y = glyphs
+        .iter()
+        .map(|glyph| glyph.y + glyph.height as f32)
+        .fold(f32::NEG_INFINITY, f32::max);
+    Some(TextBounds {
+        min_x,
+        min_y,
+        width: max_x - min_x,
+        height: max_y - min_y,
+    })
+}
+
+fn ellipsize_to_width(
+    font: &fontdue::Font,
+    label: &str,
+    font_size: f32,
+    max_width: f32,
+) -> Option<(String, TextBounds)> {
+    let layout = text_layout(font, label, font_size);
+    let bounds = text_bounds(&layout)?;
+    if bounds.width <= max_width {
+        return Some((label.to_owned(), bounds));
+    }
+
+    let mut characters = label.chars().collect::<Vec<_>>();
+    if characters.last() == Some(&'…') {
+        characters.pop();
+    }
+    while !characters.is_empty() {
+        characters.pop();
+        let candidate = format!("{}…", characters.iter().collect::<String>());
+        let layout = text_layout(font, &candidate, font_size);
+        let bounds = text_bounds(&layout)?;
+        if bounds.width <= max_width {
+            return Some((candidate, bounds));
+        }
+    }
+    let layout = text_layout(font, "…", font_size);
+    text_bounds(&layout).map(|bounds| ("…".to_owned(), bounds))
 }
 
 /// Convert an untrusted public session label into compact display text.
@@ -188,82 +316,155 @@ fn paint_diffuse_glow(
     }
 }
 
-/// Paint the label below the cursor without rotating it with cursor heading.
+pub fn session_badge_layout(input: SessionBadgeInput<'_>) -> Option<SessionBadgeLayout> {
+    let Some(font) = font() else {
+        return None;
+    };
+    let scale = input.backing_scale.max(1.0);
+    let label_alpha = input.label_alpha.clamp(0.0, 1.0);
+    let chip_alpha = input.chip_alpha.clamp(0.0, 1.0);
+    let show_label = input.label.is_some() && label_alpha > 0.001;
+    let delivery = (chip_alpha > 0.001).then_some(input.delivery).flatten();
+    let target = (chip_alpha > 0.001).then_some(input.target).flatten();
+    let chip_count = usize::from(delivery.is_some()) + usize::from(target.is_some());
+    if !show_label && chip_count == 0 {
+        return None;
+    }
+
+    let font_size = FONT_SIZE * scale;
+    let chip_width = match chip_count {
+        0 => 0.0,
+        1 => BADGE_CHIP_SIZE,
+        _ => BADGE_CHIP_SIZE * 2.0 + BADGE_CHIP_GAP,
+    } * scale;
+    let fixed_width = (HORIZONTAL_PADDING * 2.0 + ORB_SIZE + ORB_GAP) * scale
+        + chip_width
+        + if show_label && chip_count > 0 {
+            BADGE_CHIP_GROUP_GAP * scale
+        } else {
+            0.0
+        };
+    let max_text_width = (BADGE_MAX_WIDTH * scale - fixed_width).max(0.0);
+    let label_data = if show_label {
+        input
+            .label
+            .and_then(|label| ellipsize_to_width(font, label, font_size, max_text_width))
+    } else {
+        None
+    };
+    let text_width = label_data.as_ref().map_or(0.0, |(_, bounds)| bounds.width);
+    let minimum_width = if show_label {
+        72.0 * scale
+    } else {
+        fixed_width
+    };
+    let badge_width = (fixed_width + text_width)
+        .min(BADGE_MAX_WIDTH * scale)
+        .max(minimum_width);
+    let badge_height = BADGE_HEIGHT * scale;
+    let unclamped_x = input.cursor.0 - badge_width * 0.5;
+    let unclamped_y = input.cursor.1 + BADGE_CURSOR_GAP * scale;
+    let (x, y) = if let Some((clip_width, clip_height)) = input.clip {
+        (
+            unclamped_x.clamp(
+                2.0 * scale,
+                (clip_width - badge_width - 2.0 * scale).max(2.0 * scale),
+            ),
+            unclamped_y.clamp(
+                2.0 * scale,
+                (clip_height - badge_height - 2.0 * scale).max(2.0 * scale),
+            ),
+        )
+    } else {
+        (unclamped_x, unclamped_y)
+    };
+    let rect = Rect::from_xywh(x, y, badge_width, badge_height)?;
+    let corner_radius = badge_height * 0.5;
+
+    let orb_center = (
+        x + HORIZONTAL_PADDING * scale + ORB_SIZE * scale * 0.5,
+        y + badge_height * 0.5,
+    );
+    let mut cursor_x = x + (HORIZONTAL_PADDING + ORB_SIZE + ORB_GAP) * scale;
+    let label = label_data.map(|(text, bounds)| {
+        let origin = (
+            cursor_x - bounds.min_x,
+            y + (badge_height - bounds.height) * 0.5 - bounds.min_y + TEXT_OPTICAL_Y_OFFSET * scale,
+        );
+        cursor_x += bounds.width + BADGE_CHIP_GROUP_GAP * scale;
+        BadgeLabelLayout { text, origin }
+    });
+    let chip_y = y + (badge_height - BADGE_CHIP_SIZE * scale) * 0.5;
+    let delivery_chip = delivery.and_then(|delivery| {
+        let rect = Rect::from_xywh(
+            cursor_x,
+            chip_y,
+            BADGE_CHIP_SIZE * scale,
+            BADGE_CHIP_SIZE * scale,
+        )?;
+        cursor_x += (BADGE_CHIP_SIZE + BADGE_CHIP_GAP) * scale;
+        Some(BadgeChip {
+            glyph: BadgeGlyph::from(delivery),
+            rect,
+            filled: true,
+        })
+    });
+    let target_chip = target.and_then(|target| {
+        let rect = Rect::from_xywh(
+            cursor_x,
+            chip_y,
+            BADGE_CHIP_SIZE * scale,
+            BADGE_CHIP_SIZE * scale,
+        )?;
+        Some(BadgeChip {
+            glyph: BadgeGlyph::from(target),
+            rect,
+            filled: false,
+        })
+    });
+
+    Some(SessionBadgeLayout {
+        rect,
+        corner_radius,
+        orb_center,
+        label,
+        delivery_chip,
+        target_chip,
+        pill_alpha: label_alpha.max(chip_alpha),
+        label_alpha,
+        chip_alpha,
+        scale,
+    })
+}
+
+/// Paint the badge below the cursor without rotating it with cursor heading.
 pub fn paint_session_badge(
     pixmap: &mut Pixmap,
-    label: &str,
-    cursor_x: f32,
-    cursor_y: f32,
-    backing_scale: f32,
-    alpha_scale: f32,
+    layout: &SessionBadgeLayout,
     session_fill: [u8; 4],
+    alpha_scale: f32,
 ) {
     let Some(font) = font() else {
         return;
     };
-    let scale = backing_scale.max(1.0);
-    let font_size = FONT_SIZE * scale;
-    let max_text_width = (BADGE_MAX_WIDTH - HORIZONTAL_PADDING * 2.0 - ORB_SIZE - ORB_GAP) * scale;
-
-    let mut layout = Layout::new(CoordinateSystem::PositiveYDown);
-    layout.reset(&LayoutSettings {
-        max_width: Some(max_text_width),
-        max_height: Some(BADGE_HEIGHT * scale),
-        ..Default::default()
-    });
-    layout.append(&[font], &TextStyle::new(label, font_size, 0));
-    let glyphs = layout.glyphs();
-    if glyphs.is_empty() {
-        return;
-    }
-    let glyph_min_x = glyphs
-        .iter()
-        .map(|glyph| glyph.x)
-        .fold(f32::INFINITY, f32::min);
-    let glyph_max_x = glyphs
-        .iter()
-        .map(|glyph| glyph.x + glyph.width as f32)
-        .fold(f32::NEG_INFINITY, f32::max);
-    let glyph_min_y = glyphs
-        .iter()
-        .map(|glyph| glyph.y)
-        .fold(f32::INFINITY, f32::min);
-    let glyph_max_y = glyphs
-        .iter()
-        .map(|glyph| glyph.y + glyph.height as f32)
-        .fold(f32::NEG_INFINITY, f32::max);
-    let text_width = (glyph_max_x - glyph_min_x).min(max_text_width);
-    let text_height = glyph_max_y - glyph_min_y;
-    let badge_width =
-        (HORIZONTAL_PADDING * 2.0 * scale + ORB_SIZE * scale + ORB_GAP * scale + text_width)
-            .min(BADGE_MAX_WIDTH * scale)
-            .max(72.0 * scale);
-    let badge_height = BADGE_HEIGHT * scale;
-    let x = (cursor_x - badge_width * 0.5).clamp(
-        2.0 * scale,
-        pixmap.width() as f32 - badge_width - 2.0 * scale,
-    );
-    let y = (cursor_y + BADGE_CURSOR_GAP * scale).clamp(
-        2.0 * scale,
-        pixmap.height() as f32 - badge_height - 2.0 * scale,
-    );
-    let Some(rect) = Rect::from_xywh(x, y, badge_width, badge_height) else {
-        return;
-    };
-    let corner_radius = badge_height * 0.5;
-    let Some(path) = rounded_rect(rect, corner_radius) else {
-        return;
-    };
-
-    let opacity = alpha_scale.clamp(0.0, 1.0);
+    let rect = layout.rect;
+    let x = rect.x();
+    let y = rect.y();
+    let badge_width = rect.width();
+    let badge_height = rect.height();
+    let scale = layout.scale;
+    let opacity = (alpha_scale * layout.pill_alpha).clamp(0.0, 1.0);
     if opacity <= 0.0 {
         return;
     }
+    let Some(path) = rounded_rect(rect, layout.corner_radius) else {
+        return;
+    };
 
     paint_diffuse_glow(
         pixmap,
         rect,
-        corner_radius,
+        layout.corner_radius,
         scale,
         [0, 0, 0],
         8.0 * opacity,
@@ -272,7 +473,7 @@ pub fn paint_session_badge(
     paint_diffuse_glow(
         pixmap,
         rect,
-        corner_radius,
+        layout.corner_radius,
         scale,
         [session_fill[0], session_fill[1], session_fill[2]],
         10.0 * opacity,
@@ -334,10 +535,11 @@ pub fn paint_session_badge(
         None,
     );
 
-    let orb_center_x = x + HORIZONTAL_PADDING * scale + ORB_SIZE * scale * 0.5;
-    let orb_center_y = y + badge_height * 0.5;
-    if let Some(orb) = PathBuilder::from_circle(orb_center_x, orb_center_y, ORB_SIZE * scale * 0.5)
-    {
+    if let Some(orb) = PathBuilder::from_circle(
+        layout.orb_center.0,
+        layout.orb_center.1,
+        ORB_SIZE * scale * 0.5,
+    ) {
         let orb_paint = Paint {
             shader: tiny_skia::Shader::SolidColor(Color::from_rgba8(
                 session_fill[0],
@@ -377,34 +579,42 @@ pub fn paint_session_badge(
         );
     }
 
-    let text_origin_x = x + HORIZONTAL_PADDING * scale + (ORB_SIZE + ORB_GAP) * scale - glyph_min_x;
-    let text_origin_y =
-        y + (badge_height - text_height) * 0.5 - glyph_min_y + TEXT_OPTICAL_Y_OFFSET * scale;
-    for glyph in glyphs {
-        let (metrics, bitmap) = font.rasterize_config(glyph.key);
-        if metrics.width == 0 || metrics.height == 0 {
-            continue;
+    if let Some(label) = &layout.label {
+        let label_opacity = (alpha_scale * layout.label_alpha).clamp(0.0, 1.0);
+        let text = text_layout(font, &label.text, FONT_SIZE * scale);
+        for glyph in text.glyphs() {
+            let (metrics, bitmap) = font.rasterize_config(glyph.key);
+            if metrics.width == 0 || metrics.height == 0 {
+                continue;
+            }
+            let Some(mut glyph_pixmap) = Pixmap::new(metrics.width as u32, metrics.height as u32)
+            else {
+                continue;
+            };
+            for (pixel, coverage) in glyph_pixmap
+                .data_mut()
+                .chunks_exact_mut(4)
+                .zip(bitmap.iter().copied())
+            {
+                let alpha = ((coverage as f32) * label_opacity) as u8;
+                pixel.copy_from_slice(&[alpha, alpha, alpha, alpha]);
+            }
+            pixmap.draw_pixmap(
+                (label.origin.0 + glyph.x).round() as i32,
+                (label.origin.1 + glyph.y).round() as i32,
+                glyph_pixmap.as_ref(),
+                &PixmapPaint::default(),
+                Transform::identity(),
+                None,
+            );
         }
-        let Some(mut glyph_pixmap) = Pixmap::new(metrics.width as u32, metrics.height as u32)
-        else {
-            continue;
-        };
-        for (pixel, coverage) in glyph_pixmap
-            .data_mut()
-            .chunks_exact_mut(4)
-            .zip(bitmap.iter().copied())
-        {
-            let alpha = ((coverage as f32) * opacity) as u8;
-            pixel.copy_from_slice(&[alpha, alpha, alpha, alpha]);
-        }
-        pixmap.draw_pixmap(
-            (text_origin_x + glyph.x).round() as i32,
-            (text_origin_y + glyph.y).round() as i32,
-            glyph_pixmap.as_ref(),
-            &PixmapPaint::default(),
-            Transform::identity(),
-            None,
-        );
+    }
+    let chip_opacity = (alpha_scale * layout.chip_alpha).clamp(0.0, 1.0);
+    if let Some(chip) = layout.delivery_chip {
+        paint_badge_chip(pixmap, chip, session_fill, chip_opacity);
+    }
+    if let Some(chip) = layout.target_chip {
+        paint_badge_chip(pixmap, chip, session_fill, chip_opacity);
     }
 }
 
@@ -428,15 +638,18 @@ mod tests {
     fn badge_paints_at_one_and_two_x_backing_scales() {
         for scale in [1.0, 2.0] {
             let mut pixmap = Pixmap::new((240.0 * scale) as u32, (160.0 * scale) as u32).unwrap();
-            paint_session_badge(
-                &mut pixmap,
-                "Research run",
-                120.0 * scale,
-                60.0 * scale,
-                scale,
-                1.0,
-                [94, 192, 232, 255],
-            );
+            let layout = session_badge_layout(SessionBadgeInput {
+                label: Some("Research run"),
+                delivery: Some(DeliveryModifier::Foreground),
+                target: Some(TargetModifier::Browser),
+                cursor: (120.0 * scale, 60.0 * scale),
+                backing_scale: scale,
+                label_alpha: 1.0,
+                chip_alpha: 1.0,
+                clip: Some((pixmap.width() as f32, pixmap.height() as f32)),
+            })
+            .unwrap();
+            paint_session_badge(&mut pixmap, &layout, [94, 192, 232, 255], 1.0);
             assert!(pixmap.data().chunks_exact(4).any(|pixel| pixel[3] > 0));
         }
     }
@@ -446,34 +659,60 @@ mod tests {
         let mut blue = Pixmap::new(240, 160).unwrap();
         let mut purple = Pixmap::new(240, 160).unwrap();
         let mut hidden = Pixmap::new(240, 160).unwrap();
-        paint_session_badge(
-            &mut blue,
-            "Research run",
-            120.0,
-            60.0,
-            1.0,
-            1.0,
-            [94, 192, 232, 255],
-        );
-        paint_session_badge(
-            &mut purple,
-            "Research run",
-            120.0,
-            60.0,
-            1.0,
-            1.0,
-            [178, 132, 255, 255],
-        );
-        paint_session_badge(
-            &mut hidden,
-            "Research run",
-            120.0,
-            60.0,
-            1.0,
-            0.0,
-            [94, 192, 232, 255],
-        );
+        let layout = session_badge_layout(SessionBadgeInput {
+            label: Some("Research run"),
+            delivery: None,
+            target: None,
+            cursor: (120.0, 60.0),
+            backing_scale: 1.0,
+            label_alpha: 1.0,
+            chip_alpha: 0.0,
+            clip: Some((240.0, 160.0)),
+        })
+        .unwrap();
+        paint_session_badge(&mut blue, &layout, [94, 192, 232, 255], 1.0);
+        paint_session_badge(&mut purple, &layout, [178, 132, 255, 255], 1.0);
+        paint_session_badge(&mut hidden, &layout, [94, 192, 232, 255], 0.0);
         assert_ne!(blue.data(), purple.data());
         assert!(hidden.data().chunks_exact(4).all(|pixel| pixel[3] == 0));
+    }
+
+    #[test]
+    fn modifier_only_badge_is_compact_and_keeps_delivery_before_target() {
+        let layout = session_badge_layout(SessionBadgeInput {
+            label: None,
+            delivery: Some(DeliveryModifier::Background),
+            target: Some(TargetModifier::Pixel),
+            cursor: (120.0, 60.0),
+            backing_scale: 1.0,
+            label_alpha: 0.0,
+            chip_alpha: 1.0,
+            clip: None,
+        })
+        .unwrap();
+        assert!(layout.label.is_none());
+        assert!(layout.rect.width() < 80.0);
+        let delivery = layout.delivery_chip.unwrap();
+        let target = layout.target_chip.unwrap();
+        assert!(delivery.filled);
+        assert!(!target.filled);
+        assert!(delivery.rect.x() < target.rect.x());
+    }
+
+    #[test]
+    fn long_label_stays_inside_the_bounded_badge() {
+        let layout = session_badge_layout(SessionBadgeInput {
+            label: Some("A very long public session label"),
+            delivery: Some(DeliveryModifier::Foreground),
+            target: Some(TargetModifier::Desktop),
+            cursor: (120.0, 60.0),
+            backing_scale: 1.0,
+            label_alpha: 1.0,
+            chip_alpha: 1.0,
+            clip: None,
+        })
+        .unwrap();
+        assert!(layout.rect.width() <= BADGE_MAX_WIDTH);
+        assert!(layout.label.unwrap().text.ends_with('…'));
     }
 }

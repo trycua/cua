@@ -168,7 +168,7 @@ default for declared sessions; anonymous actions remain cursor-less. Toggle with
 `set_agent_cursor_enabled` to hide or re-show it. The embedded
 `cua.default` theme uses a session-colored pointer over a larger,
 cursor-shaped glow in the same session color. The glow fades to transparent
-around the full silhouette. Action and modifier marks use the same
+around the full silhouette. Action marks use the same
 session-colored center and white-outline treatment, plus a tighter, softer
 glow. This pairing preserves contrast across varied backgrounds. It provides animations for
 idle, observe, click, drag, scroll, text, key, navigation, app, transfer,
@@ -176,6 +176,11 @@ recording, and system activity. Motion knobs:
 `set_agent_cursor_motion` takes any subset of `start_handle`,
 `end_handle`, `arc_size`, `arc_flow`, `spring` — tuneable at runtime,
 persisted to config.
+
+Delivery and target context is shown as host-owned chips inside the session
+badge. Themes own the twelve action animations only. The session name and
+context chips fade independently, so an active tool can show its execution
+context without revealing a session name that has already faded.
 
 **Per-session cursors.** Each MCP session automatically owns its own
 cursor, keyed by the session's id (the proxy mints one session id per

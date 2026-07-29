@@ -837,7 +837,7 @@ impl Tool for LaunchAppTool {
                 direct exec), bundle_id (ignored on Linux), or urls (list of URLs to open). \
                 Resolution precedence: launch_path > name > bundle_id.".into(),
             input_schema: json!({"type":"object","properties":{
-                "launch_path":{"type":"string","description":"Round-trip the `launch_path` returned by `list_apps` — the Exec= command from the .desktop file with XDG field codes already stripped. Highest precedence on Linux; spawned directly via the system shell."},
+                "launch_path":{"type":"string","description":"Round-trip the `launch_path` returned by `list_apps` — the Exec= command from the .desktop file with XDG field codes already stripped. Highest precedence on Linux; shell-style quoting is parsed before the program is spawned directly."},
                 "name":{"type":"string","description":"App name or command to launch."},
                 "bundle_id":{"type":"string","description":"Ignored on Linux (macOS/Windows concept)."},
                 "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open via xdg-open."},
@@ -875,7 +875,11 @@ impl Tool for LaunchAppTool {
         }
 
         let result = tokio::task::spawn_blocking(
-            move || -> anyhow::Result<(String, Option<u32>, String)> {
+            move || -> anyhow::Result<(
+                String,
+                Option<(u32, Option<super::process_control::ProcessObservation>)>,
+                String,
+            )> {
                 // Open URLs via xdg-open.
                 if !urls.is_empty() {
                     for url in &urls {
@@ -902,12 +906,13 @@ impl Tool for LaunchAppTool {
                     {
                         extra_args.push("--force-renderer-accessibility".to_owned());
                     }
-                    let child = super::process_control::spawn_shell_command(cmd, &extra_args)?;
+                    let child = super::process_control::spawn_launch_command(cmd, &extra_args)?;
                     let pid = child.id();
+                    let identity = super::process_control::observe_process(pid as i32)?;
                     super::process_control::track_child(child)?;
                     return Ok((
                         format!("✅ Launched {cmd} (pid {pid}) in background."),
-                        Some(pid),
+                        Some((pid, identity)),
                         cmd.to_owned(),
                     ));
                 }
@@ -936,10 +941,11 @@ impl Tool for LaunchAppTool {
                     match super::process_control::spawn_background(&mut launch) {
                         Ok(child) => {
                             let pid = child.id();
+                            let identity = super::process_control::observe_process(pid as i32)?;
                             super::process_control::track_child(child)?;
                             return Ok((
                                 format!("✅ Launched {cmd} (pid {pid}) in background."),
-                                Some(pid),
+                                Some((pid, identity)),
                                 cmd.to_owned(),
                             ));
                         }
@@ -964,26 +970,52 @@ impl Tool for LaunchAppTool {
         .await;
 
         match result {
-            Ok(Ok((message, pid_opt, name))) => {
-                if let Some(pid) = pid_opt {
-                    let windows = tokio::task::spawn_blocking(move || {
+            Ok(Ok((message, process, name))) => {
+                if let Some((pid, identity)) = process {
+                    let observation = tokio::task::spawn_blocking(move || {
                         let deadline =
                             std::time::Instant::now() + std::time::Duration::from_secs(3);
                         loop {
                             let windows = crate::wayland::list_windows_dispatch(Some(pid));
-                            if !windows.is_empty() || std::time::Instant::now() >= deadline {
-                                return windows.iter().map(window_record_json).collect::<Vec<_>>();
+                            let running = super::process_control::process_still_running(
+                                pid as i32, identity,
+                            )?;
+                            if !windows.is_empty()
+                                || !running
+                                || std::time::Instant::now() >= deadline
+                            {
+                                return std::io::Result::Ok((
+                                    windows.iter().map(window_record_json).collect::<Vec<_>>(),
+                                    running,
+                                ));
                             }
                             std::thread::sleep(std::time::Duration::from_millis(100));
                         }
                     })
-                    .await
-                    .unwrap_or_default();
+                    .await;
+                    let (windows, running) = match observation {
+                        Ok(Ok(observation)) => observation,
+                        Ok(Err(error)) => {
+                            return ToolResult::error(format!(
+                                "Failed to verify launched pid {pid}: {error}"
+                            ))
+                        }
+                        Err(error) => {
+                            return ToolResult::error(format!(
+                                "Launch observation task failed for pid {pid}: {error}"
+                            ))
+                        }
+                    };
+                    let message = if running {
+                        message
+                    } else {
+                        format!("{message} The process exited before creating a window.")
+                    };
                     ToolResult::text(message).with_structured(json!({
                         "pid": pid,
                         "bundle_id": Value::Null,
                         "name": name,
-                        "running": true,
+                        "running": running,
                         "active": false,
                         "windows": windows,
                     }))

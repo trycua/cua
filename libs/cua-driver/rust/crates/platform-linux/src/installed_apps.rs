@@ -221,9 +221,8 @@ fn bool_key(section: &str, key: &str) -> bool {
 }
 
 /// Strip XDG `Exec=` field codes (`%f`, `%F`, `%u`, `%U`, `%i`, `%c`, `%k`)
-/// and return only the program token. We deliberately don't try to honor
-/// quoted argv reconstruction — the caller passes the result to
-/// `launch_app(launch_path=...)`, which spawns it through `sh -c`.
+/// and return the remaining launch command. `launch_app(launch_path=...)`
+/// performs shell-style argv parsing before directly spawning the program.
 fn strip_exec_field_codes(exec: &str) -> String {
     let mut out = String::with_capacity(exec.len());
     let mut chars = exec.chars().peekable();

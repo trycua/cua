@@ -24,15 +24,23 @@ impl ProcessObservation {
     }
 }
 
-pub(super) fn spawn_shell_command(command: &str, additional_args: &[String]) -> io::Result<Child> {
-    let mut launch = Command::new("sh");
+pub(super) fn spawn_launch_command(command: &str, additional_args: &[String]) -> io::Result<Child> {
+    let mut argv = shlex::split(command).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "launch_path contains an unmatched shell quote",
+        )
+    })?;
+    if argv.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "launch_path must contain a program",
+        ));
+    }
+    let program = argv.remove(0);
+    let mut launch = Command::new(program);
     launch
-        .arg("-c")
-        // `exec` keeps the returned pid bound to the launched application for
-        // ordinary desktop-entry commands. `"$@"` appends caller-provided
-        // arguments without interpolating them into the shell program.
-        .arg(format!("exec {command} \"$@\""))
-        .arg("cua-driver-launch")
+        .args(argv)
         .args(additional_args)
         .env("ACCESSIBILITY_ENABLED", "1")
         .env("NO_AT_BRIDGE", "0");
@@ -117,6 +125,18 @@ pub(super) fn observe_process(pid: i32) -> io::Result<Option<ProcessObservation>
     }
 }
 
+#[cfg(target_os = "linux")]
+pub(super) fn process_still_running(
+    pid: i32,
+    expected: Option<ProcessObservation>,
+) -> io::Result<bool> {
+    let Some(expected) = expected else {
+        return Ok(false);
+    };
+    Ok(observe_process(pid)?
+        .is_some_and(|current| !current.is_terminal() && current.start_time == expected.start_time))
+}
+
 fn parse_proc_stat(stat: &str) -> io::Result<ProcessObservation> {
     let fields = stat
         .rfind(") ")
@@ -183,7 +203,7 @@ mod tests {
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use super::{
-        parse_proc_stat, spawn_shell_command, track_child, wait_for_termination_with,
+        parse_proc_stat, spawn_launch_command, track_child, wait_for_termination_with,
         ProcessObservation,
     };
 
@@ -197,11 +217,12 @@ mod tests {
                 .expect("system time after Unix epoch")
                 .as_nanos()
         ));
-        let command = format!(
+        let script = format!(
             "printf '%s' 'quoted value' > {}",
             shell_quote(output_path.to_str().expect("UTF-8 temp path"))
         );
-        let mut child = spawn_shell_command(&command, &[]).expect("spawn launch command");
+        let command = format!("sh -c {}", shell_quote(&script));
+        let mut child = spawn_launch_command(&command, &[]).expect("spawn launch command");
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
             if child.try_wait().expect("poll launch command").is_some() {
@@ -219,12 +240,13 @@ mod tests {
     fn launch_path_appends_arguments_without_shell_interpolation() {
         let output =
             std::env::temp_dir().join(format!("cua-driver-launch-args-{}", std::process::id()));
-        let command = format!(
-            "printf '%s' > {}",
+        let script = format!(
+            "printf '%s' \"$0\" > {}",
             shell_quote(output.to_str().expect("UTF-8 temp path"))
         );
+        let command = format!("sh -c {}", shell_quote(&script));
         let arguments = vec!["value with spaces; $(false)".to_owned()];
-        let mut child = spawn_shell_command(&command, &arguments).expect("spawn launch command");
+        let mut child = spawn_launch_command(&command, &arguments).expect("spawn launch command");
         assert!(
             child.wait().expect("wait for launch command").success(),
             "launch command failed"
@@ -238,7 +260,7 @@ mod tests {
 
     #[test]
     fn launched_children_are_reaped_after_exit() {
-        let child = spawn_shell_command("true", &[]).expect("spawn short-lived child");
+        let child = spawn_launch_command("true", &[]).expect("spawn short-lived child");
         let pid = child.id();
         track_child(child).expect("hand child to reaper");
 
@@ -247,6 +269,13 @@ mod tests {
             assert!(Instant::now() < deadline, "child {pid} was not reaped");
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    #[test]
+    fn launch_path_rejects_unmatched_quotes_before_spawning() {
+        let error = spawn_launch_command("sh -c 'unterminated", &[])
+            .expect_err("unmatched quote must fail");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
     }
 
     #[test]

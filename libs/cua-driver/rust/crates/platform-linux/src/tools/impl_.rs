@@ -875,11 +875,7 @@ impl Tool for LaunchAppTool {
         }
 
         let result = tokio::task::spawn_blocking(
-            move || -> anyhow::Result<(
-                String,
-                Option<(u32, Option<super::process_control::ProcessObservation>)>,
-                String,
-            )> {
+            move || -> anyhow::Result<(String, Option<std::process::Child>, String)> {
                 // Open URLs via xdg-open.
                 if !urls.is_empty() {
                     for url in &urls {
@@ -907,11 +903,10 @@ impl Tool for LaunchAppTool {
                         extra_args.push("--force-renderer-accessibility".to_owned());
                     }
                     let child = super::process_control::spawn_launch_command(cmd, &extra_args)?;
-                    let (pid, identity) =
-                        super::process_control::track_launched_child(child)?;
+                    let pid = child.id();
                     return Ok((
                         format!("✅ Launched {cmd} (pid {pid}) in background."),
-                        Some((pid, identity)),
+                        Some(child),
                         cmd.to_owned(),
                     ));
                 }
@@ -939,11 +934,10 @@ impl Tool for LaunchAppTool {
                     }
                     match super::process_control::spawn_background(&mut launch) {
                         Ok(child) => {
-                            let (pid, identity) =
-                                super::process_control::track_launched_child(child)?;
+                            let pid = child.id();
                             return Ok((
                                 format!("✅ Launched {cmd} (pid {pid}) in background."),
-                                Some((pid, identity)),
+                                Some(child),
                                 cmd.to_owned(),
                             ));
                         }
@@ -969,29 +963,24 @@ impl Tool for LaunchAppTool {
 
         match result {
             Ok(Ok((message, process, name))) => {
-                if let Some((pid, identity)) = process {
+                if let Some(child) = process {
+                    let pid = child.id();
                     let observation = tokio::task::spawn_blocking(move || {
-                        let deadline =
-                            std::time::Instant::now() + std::time::Duration::from_secs(3);
-                        loop {
-                            let windows = crate::wayland::list_windows_dispatch(Some(pid));
-                            let running = super::process_control::process_still_running(
-                                pid as i32, identity,
-                            )?;
-                            if !windows.is_empty()
-                                || !running
-                                || std::time::Instant::now() >= deadline
-                            {
-                                return std::io::Result::Ok((
-                                    windows.iter().map(window_record_json).collect::<Vec<_>>(),
-                                    running,
-                                ));
-                            }
-                            std::thread::sleep(std::time::Duration::from_millis(100));
-                        }
+                        super::process_control::observe_launched_child(
+                            child,
+                            std::time::Duration::from_secs(3),
+                            |pid| {
+                                let windows = crate::wayland::list_windows_dispatch(Some(pid))
+                                    .iter()
+                                    .map(window_record_json)
+                                    .collect::<Vec<_>>();
+                                let ready = !windows.is_empty();
+                                (windows, ready)
+                            },
+                        )
                     })
                     .await;
-                    let (windows, running) = match observation {
+                    let (windows, completion) = match observation {
                         Ok(Ok(observation)) => observation,
                         Ok(Err(error)) => {
                             return ToolResult::error(format!(
@@ -1004,19 +993,7 @@ impl Tool for LaunchAppTool {
                             ))
                         }
                     };
-                    let message = if running {
-                        message
-                    } else {
-                        format!("{message} The process exited before creating a window.")
-                    };
-                    ToolResult::text(message).with_structured(json!({
-                        "pid": pid,
-                        "bundle_id": Value::Null,
-                        "name": name,
-                        "running": running,
-                        "active": false,
-                        "windows": windows,
-                    }))
+                    launch_app_process_result(pid, name, message, windows, completion)
                 } else {
                     ToolResult::text(message).with_structured(json!({
                         "pid": Value::Null,
@@ -1031,6 +1008,164 @@ impl Tool for LaunchAppTool {
             Ok(Err(e)) => ToolResult::error(format!("Failed to launch: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
+    }
+}
+
+fn launch_app_process_result(
+    pid: u32,
+    name: String,
+    running_message: String,
+    windows: Vec<Value>,
+    completion: super::process_control::LaunchCompletion,
+) -> ToolResult {
+    use std::os::unix::process::ExitStatusExt;
+
+    match completion {
+        super::process_control::LaunchCompletion::Running => ToolResult::text(running_message)
+            .with_structured(json!({
+                "pid": pid,
+                "bundle_id": Value::Null,
+                "name": name,
+                "running": true,
+                "active": false,
+                "exit_code": Value::Null,
+                "term_signal": Value::Null,
+                "windows": windows,
+            })),
+        super::process_control::LaunchCompletion::Exited(status) => {
+            let exit_code = status.code();
+            let term_signal = status.signal();
+            let success = status.success();
+            let message = if success {
+                format!(
+                    "Launch command '{name}' (pid {pid}) completed successfully before creating a window."
+                )
+            } else {
+                format!(
+                    "Launch command '{name}' (pid {pid}) exited before creating a window \
+                     (exit_code={exit_code:?}, term_signal={term_signal:?})."
+                )
+            };
+            let structured = json!({
+                "pid": pid,
+                "bundle_id": Value::Null,
+                "name": name,
+                "running": false,
+                "active": false,
+                "exit_code": exit_code,
+                "term_signal": term_signal,
+                "windows": windows,
+            });
+            if success {
+                ToolResult::text(message).with_structured(structured)
+            } else {
+                ToolResult::error(message).with_structured(structured)
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod process_control_tool_tests {
+    use super::{KillAppTool, LaunchAppTool};
+    use cua_driver_core::tool::Tool;
+    use serde_json::json;
+    use std::process::{Command, Stdio};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[tokio::test]
+    async fn launch_app_executes_a_quoted_command_and_reports_its_exit() {
+        let output = std::env::temp_dir().join(format!(
+            "cua-driver-public-launch-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time after Unix epoch")
+                .as_nanos()
+        ));
+        let script = format!(
+            "printf '%s' 'quoted value' > {}",
+            output.to_str().expect("UTF-8 temp path")
+        );
+        let command = format!("sh -c {}", shell_quote(&script));
+
+        let result = LaunchAppTool.invoke(json!({"launch_path": command})).await;
+        assert!(result.is_error.is_none(), "{result:?}");
+        let structured = result.structured_content.expect("structured launch result");
+        assert_eq!(structured["running"], false);
+        assert_eq!(structured["exit_code"], 0);
+        assert_eq!(
+            std::fs::read_to_string(&output).expect("launch command output"),
+            "quoted value"
+        );
+        let _ = std::fs::remove_file(output);
+    }
+
+    #[tokio::test]
+    async fn launch_app_reports_a_nonzero_command_exit_as_an_error() {
+        let result = LaunchAppTool
+            .invoke(json!({"launch_path": "sh -c 'exit 17'"}))
+            .await;
+        assert_eq!(result.is_error, Some(true));
+        let structured = result
+            .structured_content
+            .expect("structured launch failure");
+        assert_eq!(structured["running"], false);
+        assert_eq!(structured["exit_code"], 17);
+    }
+
+    #[tokio::test]
+    async fn kill_app_returns_only_after_the_process_exits() {
+        let mut child = Command::new("sleep")
+            .arg("30")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn sleep process");
+        let pid = child.id();
+
+        let result = KillAppTool.invoke(json!({"pid": pid})).await;
+        assert!(result.is_error.is_none(), "{result:?}");
+        assert_eq!(
+            result.structured_content.expect("structured kill result")["terminated"],
+            true
+        );
+        child.wait().expect("reap terminated process");
+    }
+
+    #[tokio::test]
+    async fn kill_app_refuses_a_stale_approved_fingerprint_before_signaling() {
+        let mut child = Command::new("sleep")
+            .arg("30")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn sleep process");
+        let pid = child.id();
+
+        let result = KillAppTool
+            .invoke(json!({
+                "pid": pid,
+                "_protected_process_fingerprint": {
+                    "pid": pid,
+                    "start_time": "stale",
+                    "executable": "/not/the/process"
+                }
+            }))
+            .await;
+        assert_eq!(result.is_error, Some(true));
+        assert!(
+            child.try_wait().expect("poll refused process").is_none(),
+            "fingerprint refusal must not terminate the process"
+        );
+        child.kill().expect("clean up refused process");
+        child.wait().expect("reap refused process");
+    }
+
+    fn shell_quote(value: &str) -> String {
+        format!("'{}'", value.replace('\'', "'\\''"))
     }
 }
 
@@ -6790,6 +6925,25 @@ impl Tool for KillAppTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        let pid_i = match args.get("pid").and_then(|v| v.as_i64()) {
+            Some(p) if p > 0 && p <= i32::MAX as i64 => p as i32,
+            Some(_) => {
+                return ToolResult::error("kill_app: `pid` must be a positive integer".to_string())
+            }
+            None => {
+                return ToolResult::error(
+                    "kill_app: missing required integer field `pid`".to_string(),
+                )
+            }
+        };
+        // Bind the numeric pid to a kernel process reference before checking
+        // the approval fingerprint. If the pid was reused, the fingerprint
+        // check refuses the new process; if it exits later, this handle cannot
+        // redirect the signal to a replacement.
+        let process = match super::process_control::ProcessHandle::open(pid_i) {
+            Ok(process) => process,
+            Err(error) => return kill_app_system_failure(pid_i, error),
+        };
         if let Some(expected) = args.get("_protected_process_fingerprint") {
             let current = match self
                 .protected_resource_scope("process_control", &args)
@@ -6805,21 +6959,7 @@ impl Tool for KillAppTool {
                 );
             }
         }
-        let pid_i = match args.get("pid").and_then(|v| v.as_i64()) {
-            Some(p) if p > 0 && p <= i32::MAX as i64 => p as i32,
-            Some(_) => {
-                return ToolResult::error("kill_app: `pid` must be a positive integer".to_string())
-            }
-            None => {
-                return ToolResult::error(
-                    "kill_app: missing required integer field `pid`".to_string(),
-                )
-            }
-        };
-        let termination = tokio::task::spawn_blocking(move || -> std::io::Result<bool> {
-            super::process_control::terminate_process(pid_i)
-        })
-        .await;
+        let termination = tokio::task::spawn_blocking(move || process.terminate()).await;
         match termination {
             Ok(Ok(true)) => kill_app_success(pid_i),
             Ok(Ok(false)) => kill_app_failure(
@@ -6830,29 +6970,7 @@ impl Tool for KillAppTool {
                      was still alive after 2 seconds."
                 ),
             ),
-            Ok(Err(error)) => {
-                let unsupported = error.raw_os_error() == Some(libc::ENOSYS);
-                kill_app_failure(
-                    pid_i,
-                    if unsupported {
-                        "termination_unsupported"
-                    } else {
-                        "termination_failed"
-                    },
-                    if unsupported {
-                        format!(
-                            "kill_app: this Linux kernel or sandbox does not support \
-                             identity-bound pidfd termination for pid {pid_i}: {error}."
-                        )
-                    } else {
-                        format!(
-                            "kill_app: could not terminate pid {pid_i} through its identity-bound \
-                             pidfd: {error}. The process may not exist, or the daemon may lack \
-                             permission to signal it."
-                        )
-                    },
-                )
-            }
+            Ok(Err(error)) => kill_app_system_failure(pid_i, error),
             Err(error) => kill_app_failure(
                 pid_i,
                 "verification_task_failed",
@@ -6860,6 +6978,29 @@ impl Tool for KillAppTool {
             ),
         }
     }
+}
+
+fn kill_app_system_failure(pid: i32, error: std::io::Error) -> ToolResult {
+    let unsupported = error.raw_os_error() == Some(libc::ENOSYS);
+    kill_app_failure(
+        pid,
+        if unsupported {
+            "termination_unsupported"
+        } else {
+            "termination_failed"
+        },
+        if unsupported {
+            format!(
+                "kill_app: this Linux kernel or sandbox does not support identity-bound pidfd \
+                 termination for pid {pid}: {error}."
+            )
+        } else {
+            format!(
+                "kill_app: could not terminate pid {pid} through its identity-bound pidfd: \
+                 {error}. The process may not exist, or the daemon may lack permission to signal it."
+            )
+        },
+    )
 }
 
 fn kill_app_success(pid: i32) -> ToolResult {

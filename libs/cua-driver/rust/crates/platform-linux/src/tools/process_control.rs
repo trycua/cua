@@ -1,6 +1,8 @@
 use std::io;
 #[cfg(target_os = "linux")]
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+#[cfg(target_os = "linux")]
+use std::process::ExitStatus;
 use std::process::{Child, Command, Stdio};
 use std::sync::{
     mpsc::{self, Receiver, RecvTimeoutError, Sender},
@@ -18,6 +20,13 @@ const TERMINATION_TIMEOUT: Duration = Duration::from_secs(2);
 pub(super) struct ProcessObservation {
     pub(super) state: char,
     pub(super) start_time: u64,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug)]
+pub(super) enum LaunchCompletion {
+    Running,
+    Exited(ExitStatus),
 }
 
 impl ProcessObservation {
@@ -71,25 +80,6 @@ pub(super) fn track_child(child: Child) -> io::Result<()> {
             ))
         }
     }
-}
-
-#[cfg(target_os = "linux")]
-pub(super) fn track_launched_child(child: Child) -> io::Result<(u32, Option<ProcessObservation>)> {
-    track_launched_child_with(child, observe_process)
-}
-
-#[cfg(target_os = "linux")]
-fn track_launched_child_with<F>(
-    child: Child,
-    observe: F,
-) -> io::Result<(u32, Option<ProcessObservation>)>
-where
-    F: FnOnce(i32) -> io::Result<Option<ProcessObservation>>,
-{
-    let pid = child.id();
-    let identity = observe(pid as i32);
-    track_child(child)?;
-    Ok((pid, identity?))
 }
 
 fn child_reaper() -> io::Result<&'static Sender<Child>> {
@@ -148,15 +138,81 @@ pub(super) fn observe_process(pid: i32) -> io::Result<Option<ProcessObservation>
 }
 
 #[cfg(target_os = "linux")]
-pub(super) fn process_still_running(
-    pid: i32,
-    expected: Option<ProcessObservation>,
-) -> io::Result<bool> {
-    let Some(expected) = expected else {
-        return Ok(false);
-    };
-    Ok(observe_process(pid)?
-        .is_some_and(|current| !current.is_terminal() && current.start_time == expected.start_time))
+pub(super) fn observe_launched_child<T, F>(
+    child: Child,
+    timeout: Duration,
+    snapshot: F,
+) -> io::Result<(T, LaunchCompletion)>
+where
+    T: Default,
+    F: FnMut(u32) -> (T, bool),
+{
+    observe_launched_child_with(child, timeout, snapshot, observe_process)
+}
+
+#[cfg(target_os = "linux")]
+fn observe_launched_child_with<T, F, O>(
+    mut child: Child,
+    timeout: Duration,
+    mut snapshot: F,
+    mut observe: O,
+) -> io::Result<(T, LaunchCompletion)>
+where
+    T: Default,
+    F: FnMut(u32) -> (T, bool),
+    O: FnMut(i32) -> io::Result<Option<ProcessObservation>>,
+{
+    let pid = child.id();
+    let observation = (|| {
+        // Retaining Child prevents a completed process from being reaped and
+        // its numeric pid reused until the initial identity is captured.
+        let identity = observe(pid as i32)?;
+        let deadline = Instant::now() + timeout;
+        let mut latest_snapshot = T::default();
+        loop {
+            if let Some(status) = child.try_wait()? {
+                return Ok((latest_snapshot, LaunchCompletion::Exited(status)));
+            }
+
+            let (next_snapshot, ready) = snapshot(pid);
+            latest_snapshot = next_snapshot;
+            if ready {
+                return Ok((latest_snapshot, LaunchCompletion::Running));
+            }
+
+            let same_process = match identity {
+                Some(expected) => observe(pid as i32)?.is_some_and(|current| {
+                    !current.is_terminal() && current.start_time == expected.start_time
+                }),
+                None => false,
+            };
+            if !same_process {
+                if let Some(status) = child.try_wait()? {
+                    return Ok((latest_snapshot, LaunchCompletion::Exited(status)));
+                }
+                return Err(io::Error::other(format!(
+                    "launched pid {pid} could not be matched to its original process identity"
+                )));
+            }
+
+            if Instant::now() >= deadline {
+                return Ok((latest_snapshot, LaunchCompletion::Running));
+            }
+            std::thread::sleep(REAP_INTERVAL);
+        }
+    })();
+
+    match observation {
+        Ok((snapshot, LaunchCompletion::Running)) => {
+            track_child(child)?;
+            Ok((snapshot, LaunchCompletion::Running))
+        }
+        Ok(exited) => Ok(exited),
+        Err(observation_error) => {
+            track_child(child)?;
+            Err(observation_error)
+        }
+    }
 }
 
 fn parse_proc_stat(stat: &str) -> io::Result<ProcessObservation> {
@@ -184,17 +240,15 @@ fn parse_proc_stat(stat: &str) -> io::Result<ProcessObservation> {
 
 #[cfg(target_os = "linux")]
 pub(super) fn terminate_process(pid: i32) -> io::Result<bool> {
-    let process = PidFd::open(pid)?;
-    process.send_signal(libc::SIGKILL)?;
-    process.wait_for_exit(TERMINATION_TIMEOUT)
+    ProcessHandle::open(pid)?.terminate()
 }
 
 #[cfg(target_os = "linux")]
-struct PidFd(OwnedFd);
+pub(super) struct ProcessHandle(OwnedFd);
 
 #[cfg(target_os = "linux")]
-impl PidFd {
-    fn open(pid: i32) -> io::Result<Self> {
+impl ProcessHandle {
+    pub(super) fn open(pid: i32) -> io::Result<Self> {
         // SAFETY: pidfd_open takes a numeric pid and zero flags. On success the
         // returned descriptor is uniquely owned and transferred to OwnedFd.
         let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0u32) };
@@ -203,6 +257,11 @@ impl PidFd {
         }
         // SAFETY: the successful syscall returned a fresh owned descriptor.
         Ok(Self(unsafe { OwnedFd::from_raw_fd(fd as i32) }))
+    }
+
+    pub(super) fn terminate(&self) -> io::Result<bool> {
+        self.send_signal(libc::SIGKILL)?;
+        self.wait_for_exit(TERMINATION_TIMEOUT)
     }
 
     fn send_signal(&self, signal: i32) -> io::Result<()> {
@@ -375,12 +434,17 @@ mod tests {
     fn observation_failure_still_hands_child_to_reaper() {
         let child = spawn_launch_command("true", &[]).expect("spawn short-lived child");
         let pid = child.id();
-        let error = super::track_launched_child_with(child, |_| {
-            Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "simulated /proc restriction",
-            ))
-        })
+        let error = super::observe_launched_child_with(
+            child,
+            Duration::from_secs(2),
+            |_| ((), false),
+            |_| {
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "simulated /proc restriction",
+                ))
+            },
+        )
         .expect_err("observation failure must be returned");
         assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
 
@@ -392,6 +456,21 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn launch_observation_reports_nonzero_exit_status() {
+        use super::LaunchCompletion;
+
+        let child = spawn_launch_command("sh -c 'exit 17'", &[]).expect("spawn failing command");
+        let (_, completion) =
+            super::observe_launched_child(child, Duration::from_secs(2), |_| ((), false))
+                .expect("observe launch completion");
+        let LaunchCompletion::Exited(status) = completion else {
+            panic!("short-lived command remained running");
+        };
+        assert_eq!(status.code(), Some(17));
     }
 
     fn shell_quote(value: &str) -> String {

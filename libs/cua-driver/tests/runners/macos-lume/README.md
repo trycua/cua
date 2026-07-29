@@ -313,6 +313,100 @@ unidentified source, missing dependencies, ad-hoc signature, stale installed
 daemon, unusable TCC grants, or missing Terminal/CuaDriver Automation grants.
 It reinstalls the exact source commit and then runs the canonical macOS matrix.
 
+## Build isolation across reruns
+
+The entrypoint builds in a Cargo target directory owned by one invocation,
+nested under the exact source SHA:
+
+```
+~/Library/Caches/cua-driver-e2e/cargo-target/<source-sha>/<run-id>
+```
+
+Nothing is ever deleted to make that true. The seed image's `rust/target`, and
+every previous invocation's namespace stay untouched and unused. A rerun cannot
+inherit build state from another commit or an earlier run of the same commit,
+which is the shape that produced duplicate Swift bridge symbols during 0.13.0
+certification. The Tauri harness inherits the same run-owned Cargo namespace.
+The Electron harness archives any inherited `node_modules` tree and reinstalls
+from its lockfile for the current run.
+
+- `CUA_E2E_CARGO_TARGET_ROOT=<absolute dir>` moves the namespace root, for
+  example onto a larger volume.
+
+The runner records the namespace it used in
+`artifacts/cua-driver/macos/cargo-target-dir.txt`, and the matrix reads the
+built driver binary out of that same directory. Before a new invocation starts,
+the runner moves the previous canonical artifact directory to
+`artifacts/cua-driver/macos-history/<run-id>`, so logs and retry evidence from
+the prior run cannot be mistaken for the current run.
+
+## Retry exactly one flaky cell
+
+The runner has no automatic retries. A retry has to be authorized on the command
+line for one exact cell, and it can never convert a real persistent failure into
+a pass.
+
+```bash
+cd ~/cua
+# Full matrix, plus at most one retry of one cell if that cell is the only failure.
+libs/cua-driver/tests/runners/macos-lume/run-all.sh \
+  --retry-cell macos-electron-drag-px-foreground \
+  --retry-harness electron \
+  --retry-attempts 2
+```
+
+Cell ids are the ones in `results.jsonl` and `summary.md`, such as
+`macos-electron-drag-px-foreground`. `--retry-attempts` accepts 1-3 and defaults
+to 1. `--retry-harness` is optional and must match the failing row's harness.
+
+After a failing full matrix the runner retries only when all of these hold:
+
+- exactly one typed cell did not pass, and it is the `--retry-cell` selection;
+- the only failing lane is `shared-app-matrix`;
+- the environment preflight, typed report validation, and trajectory-video
+  checks all passed;
+- the failure record contains exactly one failure signal.
+
+Otherwise it prints why the retry was refused and exits with the matrix's
+failure. Only shared web-action cells are retryable: they are the cells a
+single-cell filter can select without leaving another lane with no cells to run.
+Reproduce a native, capture, or embedded-browser failure with a full rerun.
+
+To rerun just that cell later in the same booted worker after the first run
+already restored standard mode, use `--retry-only`. It reinstalls the exact
+commit, then starts and verifies the unrestricted worker daemon before running
+the selection, so the retry cannot silently execute against the standard daemon:
+
+```bash
+cd ~/cua
+libs/cua-driver/tests/runners/macos-lume/run-all.sh \
+  --retry-only \
+  --retry-cell macos-electron-drag-px-foreground \
+  --retry-harness electron \
+  --retry-attempts 3
+```
+
+Every attempt keeps its own evidence under `artifacts/cua-driver/macos/`:
+
+- `attempts/attempt-1-full-matrix/` holds the failing full matrix's typed rows,
+  summary, logs, and MP4 trajectories.
+- `attempts/retry-<n>/` holds each superseded retry attempt.
+- The artifact root holds the final attempt.
+- `retry-record.json` records the selection, the initial failing cells and
+  lanes, every attempt with its exit code and evidence path, and a
+  `final_status` of `pass-after-retry`, `fail-persistent`, `pass-retry-only`, or
+  `fail-retry-only`.
+- `summary.md` gains a **Retry provenance** section, so the human-facing report
+  still states the initial failure that a green retry followed.
+- `failures.json` classifies what failed in the last attempt: failing lanes,
+  video failures, preflight, and report validation.
+
+The run exits non-zero when the selected cell fails every allowed attempt.
+It also exits non-zero if the filter produces anything other than exactly that
+one cell, so the retry record never overstates the precision of the rerun.
+Report a retried pass as a retried pass, with the record above; a cell that
+needs a retry on every certification run is a defect, not a flake.
+
 Pull evidence before deleting the worker, even after a failed run:
 
 ```bash
@@ -328,9 +422,35 @@ lume delete "$WORKER" --force
 ```
 
 The host stores the pulled summary, typed JSONL rows, environment record, logs,
-screenshots, and MP4 trajectories under `artifacts/cua-driver/vm/`, which Git
-ignores. A setup failure is an environment failure, not permission to report a
-smaller green matrix.
+screenshots, MP4 trajectories, and any retry record under
+`artifacts/cua-driver/vm/`, which Git ignores. A setup failure is an environment
+failure, not permission to report a smaller green matrix.
+
+The runner owns the worker daemon's lifecycle through one code path: it unloads
+the standard autostart agent, starts the unrestricted daemon, verifies the mode,
+watchdogs it, and restores the standard autostart daemon from an `EXIT` trap
+after success or failure. A restoration that does not come back in standard mode
+fails an otherwise green run. Every matrix attempt, including a targeted retry,
+goes through that same owner.
+
+If the GUI login session ends while the trap is running, launchd has no GUI
+domain in which to start the daemon. The runner records
+`standard-daemon-restore-deferred.txt` and leaves the installed LaunchAgent in
+place so macOS loads it in standard mode at the next GUI login. This is the only
+deferred restoration case; a live GUI session that cannot return to standard
+mode still fails the run.
+
+## Test the runner itself
+
+The runner's shell helpers, including status matching, build-namespace selection,
+option validation, retry bookkeeping, evidence archiving, and daemon restoration, are
+covered by host-side tests that need no VM:
+
+```bash
+python -m pytest libs/cua-driver/scripts/tests/test_macos_lume_runner.py -v
+bash -n libs/cua-driver/tests/runners/macos-lume/run-all.sh
+bash -n scripts/ci/macos/run-rust-e2e.sh
+```
 
 ## Validate the SIP-on permission flow
 

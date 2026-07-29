@@ -20,6 +20,11 @@ on:
       - ".github/workflows/ci-contributor-attribution.yml"
       - "docs/release-backfill-runbook.md"
       - "libs/cua-driver/scripts/**"
+      - "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/build.sh"
+      - "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/package-lock.json"
+      - "libs/cua-driver/tests/fixtures/apps/cross-platform/tauri/build.sh"
+      - "libs/cua-driver/tests/runners/macos-lume/**"
+      - "scripts/ci/macos/run-rust-e2e.sh"
 
 jobs:
   test:

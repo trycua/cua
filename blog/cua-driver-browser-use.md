@@ -13,16 +13,22 @@ Browser use is already becoming part of coding agents. [Claude Code connects to 
 We wanted a different integration boundary. Cua Driver puts the bridge in an agent-neutral computer-use driver rather than a specific agent host or browser integration. It binds an operating-system process and native window to an exact Chrome or Edge tab, then keeps page-aware CDP actions and native desktop control inside the same named session. A connected agent can move from the document to browser chrome, permission UI, file pickers, terminals, editors, and other desktop apps without installing an extension or moving the workflow into an embedded browser.
 
 <div align="center">
-  <video src="https://github.com/user-attachments/assets/0b5bcc4d-eb43-41a7-b210-130567b467f3" poster="https://github.com/user-attachments/assets/7d84ad18-fdd6-448f-953b-485305359bfc" width="760" controls></video>
+  <video src="https://github.com/user-attachments/assets/224650a4-21ed-4bbb-8d32-2d9dfe4cf9b1" poster="https://github.com/user-attachments/assets/b01007af-ed8a-4ebd-b305-81594c8e9df1" width="760" controls></video>
 </div>
 
-_Cua Driver binds the exact Edge process and window, types through loopback CDP, and verifies the result without a browser extension._
+_Cua Driver launches an isolated Edge profile, binds its exact native window to loopback CDP, and verifies the result without a browser extension._
 
 ## From coding agents to agents that can do work
 
 Cua Driver started with coding agents, but I soon found myself using it from more general agent harnesses, including [the Codex app](https://openai.com/index/introducing-the-codex-app/) and [Claude Cowork](https://www.anthropic.com/product/claude-cowork). Once an agent can combine files, commands, native apps, and browser state, it becomes useful for much more than testing code.
 
 I have been using this setup for the mundane work that accumulates during a normal week: filling forms, working through payroll portals, and automating repetitive tasks in Slack and Discord. These workflows look simple to a person, but they rarely live inside one interface. The source data may be in a local file, the main task in an authenticated browser, a confirmation in a native dialog, and the follow-up in a messaging app. For consequential steps, I keep the final decision or submission behind an approval.
+
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/e35ac80b-ff3d-439d-8e48-891ade6dfa21" poster="https://github.com/user-attachments/assets/a52997f7-b854-46b2-a00b-e34f436a47e8" width="760" controls></video>
+</div>
+
+_Cua Driver operates Chrome while Terminal remains foreground and the physical mouse remains untouched._
 
 Cua Driver treats the browser as one part of that work. The agent harness can choose the right interface at each step:
 
@@ -77,12 +83,6 @@ No extension does not mean no consent. It means the connection uses the browser'
 
 This makes one of the release's most important capabilities possible: precise background computer use on inactive browser tabs. An agent can inspect and operate an exact tab without selecting it, foregrounding the browser, or disturbing the tab the person is using.
 
-<div align="center">
-  <video src="https://github.com/user-attachments/assets/44b85a9d-bb71-46d1-b591-43439d0f0fcc" poster="https://github.com/user-attachments/assets/8c0cf22e-6097-4238-8b92-5dfe73e4d74b" width="760" controls></video>
-</div>
-
-_Claude Code starts a video in Chrome while the browser stays behind the agent terminal._
-
 Once the native window and browser target are bound, `get_browser_state` returns the available tabs and their selection state.
 
 Cua Driver does not guess which tab is active from list order. If the native window title proves one selected tab, that tab reports `active: true`. If duplicate or empty titles make selection ambiguous, the candidates report `active: null`. The agent can still address a returned tab explicitly, but it cannot pretend an ambiguous tab is selected.
@@ -100,6 +100,12 @@ Browser automation is hard to understand when a recording shows a page changing 
 On macOS and Windows, typed browser actions now drive the same session-scoped cursor overlay as native Cua Driver actions. A browser click or type action moves the synthetic agent cursor to the live page target and pulses there. It does not move the user's physical pointer.
 
 For multi-tab workflows, each tab can use a separate declared session and a stable cursor color. The matching cursor appears while its tab is active. An agent can still inspect or act on an inactive tab through a supported background route, but Cua Driver does not paint that tab's cursor over the page the person is currently viewing.
+
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/c40e741c-1f73-4fa8-b4c4-3cf4efe65993" poster="https://github.com/user-attachments/assets/cc42349c-2cbb-4c3a-afd4-f5f62919ee8b" width="760" controls></video>
+</div>
+
+_One coding-agent loop crosses three real Chrome tabs, patches the component, and returns to two passing browser checks._
 
 This makes concurrent browser sessions easier to record and audit:
 

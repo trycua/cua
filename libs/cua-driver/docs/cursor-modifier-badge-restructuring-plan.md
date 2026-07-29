@@ -1,6 +1,6 @@
 # Cursor modifier badge restructuring plan
 
-**Status:** Draft for review
+**Status:** Implemented in [PR #2677](https://github.com/trycua/cua/pull/2677); validation complete
 **Base:** `main` at `b249df857994ebaebf9f02248e8312b3bd2a5dd2`
 **Scope:** Move delivery and target modifiers from around the agent pointer into the session badge while preserving action animations beside the pointer.
 
@@ -326,6 +326,10 @@ Keep the D-Bus action payload unchanged. Bump the bundled helper version and its
 | GNOME helper   | Version handshake; label and chip timing; empty-label capsule; parity recording                 |
 
 Use semantic and pixel oracles. A successful tool result alone is not visual proof.
+Cursor review media must come from the overlay-enabled
+`agent_cursor_showcase_test`. The shared behavior matrix intentionally launches
+its daemons with `--no-overlay` so cursor pixels cannot contaminate its action
+oracles; those recordings prove tool behavior, not cursor rendering.
 
 ## Documentation updates
 
@@ -363,18 +367,42 @@ Document clearly:
 
 ## Acceptance checklist
 
-- [ ] Pointer action animations are unchanged.
-- [ ] Pointer-relative modifier artwork is gone.
-- [ ] Delivery and target chips can appear together in the badge.
-- [ ] Session name and chips follow independent fade rules.
-- [ ] Compact chip layout works with and without a public label.
-- [ ] Badge height and maximum width remain unchanged.
-- [ ] Platform dirty regions derive from shared extents.
-- [ ] The v2 theme contract contains exactly twelve action animations.
-- [ ] V1 source and compiled themes fail with clear rebuild guidance.
-- [ ] Cursor overlay tests execute in CI.
-- [ ] macOS, Windows, X11, native Wayland, and GNOME paths are verified.
-- [ ] Gallery, public docs, personalization docs, and review media are updated.
+- [x] Pointer action animations are unchanged.
+- [x] Pointer-relative modifier artwork is gone.
+- [x] Delivery and target chips can appear together in the badge.
+- [x] Session name and chips follow independent fade rules.
+- [x] Compact chip layout works with and without a public label.
+- [x] Badge height and maximum width remain unchanged.
+- [x] Platform dirty regions derive from shared extents.
+- [x] The v2 theme contract contains exactly twelve action animations.
+- [x] V1 source and compiled themes fail with clear rebuild guidance.
+- [x] Cursor overlay tests execute in CI.
+- [x] macOS, Windows, X11, native Wayland, and GNOME implementation paths are verified.
+- [x] Gallery, public docs, personalization docs, and review media are updated.
+
+## Implementation evidence
+
+The implementation was validated from the PR source with no failed behavioral
+cells:
+
+| Platform                     | Result                                                                                                             |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| macOS Lume VM                | 151 pass-equivalent cells: 143 delivered and 8 expected refusals                                                   |
+| Windows GitHub runner        | 83 pass-equivalent cells: 61 delivered and 22 expected refusals                                                    |
+| Linux X11 GitHub runner      | 82 pass-equivalent cells: 47 delivered and 35 expected refusals                                                    |
+| Native Wayland GitHub runner | 82 pass-equivalent cells: 47 delivered and 35 expected refusals                                                    |
+| Native cursor showcase       | Overlay-enabled pixel oracle and move, click, type, scroll, and drag recording passed on Windows, X11, and Wayland |
+| GNOME helper                 | API version handshake, metadata, label and chip timing, compact layout, and Rust-to-helper parity tests passed     |
+
+The PR also passes the Linux and Windows Rust suites, portable contract parity
+on macOS, Linux, and Windows, Nix builds and tests, generated contract checks,
+documentation synchronization, link checks, and publish-bundle validation.
+
+Native review recordings are attached to the PR for macOS, Windows, X11, and
+Wayland. A live GNOME Shell recording was not captured in this PR. The GNOME
+renderer is verified through its versioned helper contract and automated parity
+tests, while the other Linux recording exercises the shared renderer used by
+native Wayland.
 
 ## Rollback
 

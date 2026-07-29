@@ -1,14 +1,16 @@
 use std::io;
+#[cfg(target_os = "linux")]
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::process::{Child, Command, Stdio};
 use std::sync::{
     mpsc::{self, Receiver, RecvTimeoutError, Sender},
     OnceLock,
 };
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(target_os = "linux")]
+use std::time::Instant;
 
 const REAP_INTERVAL: Duration = Duration::from_millis(50);
-#[cfg(target_os = "linux")]
-const TERMINATION_POLL_INTERVAL: Duration = Duration::from_millis(10);
 #[cfg(target_os = "linux")]
 const TERMINATION_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -19,6 +21,7 @@ pub(super) struct ProcessObservation {
 }
 
 impl ProcessObservation {
+    #[cfg(target_os = "linux")]
     fn is_terminal(self) -> bool {
         matches!(self.state, 'Z' | 'X' | 'x')
     }
@@ -161,51 +164,91 @@ fn parse_proc_stat(stat: &str) -> io::Result<ProcessObservation> {
 }
 
 #[cfg(target_os = "linux")]
-pub(super) fn wait_for_termination(pid: i32, expected: ProcessObservation) -> io::Result<bool> {
-    wait_for_termination_with(
-        Some(expected),
-        TERMINATION_TIMEOUT,
-        TERMINATION_POLL_INTERVAL,
-        || observe_process(pid),
-    )
+pub(super) fn terminate_process(pid: i32) -> io::Result<bool> {
+    let process = PidFd::open(pid)?;
+    process.send_signal(libc::SIGKILL)?;
+    process.wait_for_exit(TERMINATION_TIMEOUT)
 }
 
-fn wait_for_termination_with<F>(
-    expected: Option<ProcessObservation>,
-    timeout: Duration,
-    poll_interval: Duration,
-    mut observe: F,
-) -> io::Result<bool>
-where
-    F: FnMut() -> io::Result<Option<ProcessObservation>>,
-{
-    let deadline = Instant::now() + timeout;
-    loop {
-        let current = observe()?;
-        if current.is_none_or(|process| {
-            process.is_terminal()
-                || expected.is_some_and(|expected| process.start_time != expected.start_time)
-        }) {
-            return Ok(true);
+#[cfg(target_os = "linux")]
+struct PidFd(OwnedFd);
+
+#[cfg(target_os = "linux")]
+impl PidFd {
+    fn open(pid: i32) -> io::Result<Self> {
+        // SAFETY: pidfd_open takes a numeric pid and zero flags. On success the
+        // returned descriptor is uniquely owned and transferred to OwnedFd.
+        let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0u32) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
         }
-        let now = Instant::now();
-        if now >= deadline {
-            return Ok(false);
+        // SAFETY: the successful syscall returned a fresh owned descriptor.
+        Ok(Self(unsafe { OwnedFd::from_raw_fd(fd as i32) }))
+    }
+
+    fn send_signal(&self, signal: i32) -> io::Result<()> {
+        // SAFETY: the pidfd remains owned by self for the duration of the
+        // syscall; a null siginfo pointer and zero flags are the documented
+        // pidfd_send_signal form for ordinary signals.
+        let result = unsafe {
+            libc::syscall(
+                libc::SYS_pidfd_send_signal,
+                self.0.as_raw_fd(),
+                signal,
+                std::ptr::null::<libc::siginfo_t>(),
+                0u32,
+            )
+        };
+        if result < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
         }
-        std::thread::sleep(poll_interval.min(deadline - now));
+    }
+
+    fn wait_for_exit(&self, timeout: Duration) -> io::Result<bool> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let timeout_ms = if remaining.is_zero() {
+                0
+            } else {
+                remaining.as_millis().clamp(1, i32::MAX as u128) as i32
+            };
+            let mut descriptor = libc::pollfd {
+                fd: self.0.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            // SAFETY: descriptor points to one initialized pollfd for the
+            // duration of the call; the timeout is bounded to i32 milliseconds.
+            let result = unsafe { libc::poll(&mut descriptor, 1, timeout_ms) };
+            if result > 0 {
+                if descriptor.revents & libc::POLLNVAL != 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "pidfd became invalid while waiting for process exit",
+                    ));
+                }
+                return Ok(descriptor.revents & (libc::POLLIN | libc::POLLHUP) != 0);
+            }
+            if result == 0 {
+                return Ok(false);
+            }
+            let error = io::Error::last_os_error();
+            if error.kind() != io::ErrorKind::Interrupted {
+                return Err(error);
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::VecDeque;
     use std::io;
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-    use super::{
-        parse_proc_stat, spawn_launch_command, track_child, wait_for_termination_with,
-        ProcessObservation,
-    };
+    use super::{parse_proc_stat, spawn_launch_command, track_child, ProcessObservation};
 
     #[test]
     fn launch_path_preserves_shell_quoting() {
@@ -293,73 +336,16 @@ mod tests {
         );
     }
 
-    #[test]
-    fn termination_poll_accepts_terminal_state_and_pid_reuse() {
-        let original = ProcessObservation {
-            state: 'R',
-            start_time: 42,
-        };
-        let mut observations = VecDeque::from([
-            Some(original),
-            Some(ProcessObservation {
-                state: 'Z',
-                start_time: 42,
-            }),
-        ]);
-        assert!(wait_for_termination_with(
-            Some(original),
-            Duration::from_secs(1),
-            Duration::ZERO,
-            || Ok(observations.pop_front().expect("next observation")),
-        )
-        .expect("poll terminal process"));
-
-        assert!(
-            wait_for_termination_with(Some(original), Duration::ZERO, Duration::ZERO, || {
-                Ok(Some(ProcessObservation {
-                    state: 'R',
-                    start_time: 99,
-                }))
-            },)
-            .expect("detect pid reuse")
-        );
-    }
-
-    #[test]
-    fn termination_poll_reports_live_timeout_and_probe_errors() {
-        let original = ProcessObservation {
-            state: 'D',
-            start_time: 42,
-        };
-        assert!(
-            !wait_for_termination_with(Some(original), Duration::ZERO, Duration::ZERO, || Ok(
-                Some(original)
-            ),)
-            .expect("poll live process")
-        );
-        assert!(
-            wait_for_termination_with(Some(original), Duration::ZERO, Duration::ZERO, || Err(
-                io::Error::other("unreadable proc stat")
-            ),)
-            .is_err()
-        );
-    }
-
     #[cfg(target_os = "linux")]
     #[test]
-    fn sigkill_reaches_a_terminal_process_state() {
+    fn pidfd_sigkill_reaches_a_terminal_process_state() {
         let mut child = std::process::Command::new("sleep")
             .arg("30")
             .spawn()
             .expect("spawn sleep process");
         let pid = child.id() as i32;
-        let expected = super::observe_process(pid)
-            .expect("read process state")
-            .expect("sleep process exists");
-        // SAFETY: the test owns this child process and passes its valid pid.
-        assert_eq!(unsafe { libc::kill(pid, libc::SIGKILL) }, 0);
         assert!(
-            super::wait_for_termination(pid, expected).expect("verify process termination"),
+            super::terminate_process(pid).expect("terminate process through pidfd"),
             "SIGKILLed process remained live"
         );
         let _ = child.wait();

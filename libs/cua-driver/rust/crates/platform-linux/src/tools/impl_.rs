@@ -6819,18 +6819,7 @@ impl Tool for KillAppTool {
             }
         };
         let termination = tokio::task::spawn_blocking(move || -> std::io::Result<bool> {
-            let expected = super::process_control::observe_process(pid_i)?.ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("pid {pid_i} does not exist"),
-                )
-            })?;
-            // SAFETY: libc::kill is a thin syscall wrapper, no thread-safety concerns.
-            let rc = unsafe { libc::kill(pid_i, libc::SIGKILL) };
-            if rc != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            super::process_control::wait_for_termination(pid_i, expected)
+            super::process_control::terminate_process(pid_i)
         })
         .await;
         match termination {
@@ -6843,15 +6832,29 @@ impl Tool for KillAppTool {
                      was still alive after 2 seconds."
                 ),
             ),
-            Ok(Err(error)) => kill_app_failure(
-                pid_i,
-                "termination_failed",
-                format!(
-                    "kill_app: could not terminate pid {pid_i}: {error}. \
-                     The process may not exist, or the daemon may lack permission to inspect \
-                     or signal it."
-                ),
-            ),
+            Ok(Err(error)) => {
+                let unsupported = error.raw_os_error() == Some(libc::ENOSYS);
+                kill_app_failure(
+                    pid_i,
+                    if unsupported {
+                        "termination_unsupported"
+                    } else {
+                        "termination_failed"
+                    },
+                    if unsupported {
+                        format!(
+                            "kill_app: this Linux kernel or sandbox does not support \
+                             identity-bound pidfd termination for pid {pid_i}: {error}."
+                        )
+                    } else {
+                        format!(
+                            "kill_app: could not terminate pid {pid_i} through its identity-bound \
+                             pidfd: {error}. The process may not exist, or the daemon may lack \
+                             permission to signal it."
+                        )
+                    },
+                )
+            }
             Err(error) => kill_app_failure(
                 pid_i,
                 "verification_task_failed",

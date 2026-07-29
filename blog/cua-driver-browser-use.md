@@ -13,10 +13,10 @@ Browser use is already becoming part of coding agents. [Claude Code connects to 
 We wanted a different integration boundary. Cua Driver puts the bridge in an agent-neutral computer-use driver rather than a specific agent host or browser integration. It binds an operating-system process and native window to an exact Chrome or Edge tab, then keeps page-aware CDP actions and native desktop control inside the same named session. A connected agent can move from the document to browser chrome, permission UI, file pickers, terminals, editors, and other desktop apps without installing an extension or moving the workflow into an embedded browser.
 
 <div align="center">
-  <video src="https://github.com/user-attachments/assets/44b85a9d-bb71-46d1-b591-43439d0f0fcc" poster="https://github.com/user-attachments/assets/8c0cf22e-6097-4238-8b92-5dfe73e4d74b" width="760" controls></video>
+  <video src="https://github.com/user-attachments/assets/0b5bcc4d-eb43-41a7-b210-130567b467f3" poster="https://github.com/user-attachments/assets/7d84ad18-fdd6-448f-953b-485305359bfc" width="760" controls></video>
 </div>
 
-_Claude Code starts a video in Chrome while the browser stays behind the agent terminal._
+_Cua Driver binds the exact Edge process and window, types through loopback CDP, and verifies the result without a browser extension._
 
 ## From coding agents to agents that can do work
 
@@ -76,6 +76,12 @@ No extension does not mean no consent. It means the connection uses the browser'
 ## Exact tabs, including inactive ones
 
 This makes one of the release's most important capabilities possible: precise background computer use on inactive browser tabs. An agent can inspect and operate an exact tab without selecting it, foregrounding the browser, or disturbing the tab the person is using.
+
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/44b85a9d-bb71-46d1-b591-43439d0f0fcc" poster="https://github.com/user-attachments/assets/8c0cf22e-6097-4238-8b92-5dfe73e4d74b" width="760" controls></video>
+</div>
+
+_Claude Code starts a video in Chrome while the browser stays behind the agent terminal._
 
 Once the native window and browser target are bound, `get_browser_state` returns the available tabs and their selection state.
 

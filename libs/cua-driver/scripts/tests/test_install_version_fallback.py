@@ -26,7 +26,11 @@ import re
 import shutil
 import subprocess
 import textwrap
+import threading
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Iterator
 
 import pytest
 
@@ -81,6 +85,41 @@ def _run_powershell(tmp_path: Path, body: str) -> subprocess.CompletedProcess[st
         text=True,
         check=True,
     )
+
+
+@contextmanager
+def _powershell_download_server(
+    scenario: str,
+) -> Iterator[tuple[str, list[str]]]:
+    requests: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            requests.append(self.path)
+            if scenario == "network":
+                self.connection.close()
+                return
+            status = {
+                "missing": 404,
+                "server": 503,
+                "auth": 401,
+            }[scenario]
+            self.send_response(status)
+            self.end_headers()
+
+        def log_message(self, _format: str, *args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address
+        yield f"http://{host}:{port}", requests
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
 
 
 def test_windows_download_failure_is_recoverable_rather_than_fatal() -> None:
@@ -202,46 +241,29 @@ def test_windows_download_classifies_and_retries_failures_behaviorally(
     has_error: bool,
 ) -> None:
     source = _windows_source()
-    functions = "\n\n".join(
-        _extract_powershell_function(source, name)
-        for name in (
-            "Get-HttpStatusCode",
-            "Test-TransientDownloadFailure",
-            "Get-ReleaseZip",
+    with _powershell_download_server(scenario) as (base_url, requests):
+        functions = "\n\n".join(
+            _extract_powershell_function(source, name)
+            for name in (
+                "Get-HttpStatusCode",
+                "Test-TransientDownloadFailure",
+                "Get-ReleaseZip",
+            )
         )
-    )
-    result = _run_powershell(
-        tmp_path,
-        f"""
+        functions = functions.replace(
+            "https://github.com/$Repo/releases/download/",
+            f"{base_url}/",
+        ).replace(
+            "Start-Sleep -Seconds $delaySeconds",
+            "$null = $delaySeconds",
+        )
+        result = _run_powershell(
+            tmp_path,
+            f"""
 $Repo = 'trycua/cua'
 $TagPrefix = 'cua-driver-rs-v'
-$script:Calls = 0
 function Write-Step {{ param([string]$Message) }}
 function Write-WarningStep {{ param([string]$Message) }}
-function Start-Sleep {{ param([int]$Seconds) }}
-function Invoke-WebRequest {{
-    param(
-        [string]$Uri,
-        [string]$OutFile,
-        [switch]$UseBasicParsing
-    )
-    $script:Calls++
-    if ('{scenario}' -eq 'network') {{
-        throw [System.Net.Http.HttpRequestException]::new('mock network failure')
-    }}
-    $status = switch ('{scenario}') {{
-        'missing' {{ 404 }}
-        'server' {{ 503 }}
-        'auth' {{ 401 }}
-    }}
-    $response = [System.Net.Http.HttpResponseMessage]::new(
-        [System.Net.HttpStatusCode]$status
-    )
-    throw [Microsoft.PowerShell.Commands.HttpResponseException]::new(
-        "mock HTTP $status",
-        $response
-    )
-}}
 
 {functions}
 
@@ -250,17 +272,21 @@ $download = Get-ReleaseZip '1.2.3' 'windows-x86_64' '{tmp_path.as_posix()}'
     Missing = [bool]$download.Missing
     Attempts = [int]$download.Attempts
     HasError = [bool]$download.ErrorMessage
-    Calls = [int]$script:Calls
 }} | ConvertTo-Json -Compress
 """,
-    )
+        )
     observed = json.loads(result.stdout)
     assert observed == {
         "Missing": missing,
         "Attempts": attempts,
         "HasError": has_error,
-        "Calls": attempts,
     }
+    if scenario == "network":
+        # Invoke-WebRequest has its own transport retry on a dropped socket;
+        # the installer-level Attempts count must still remain bounded at three.
+        assert len(requests) >= attempts
+    else:
+        assert len(requests) == attempts
 
 
 @requires_powershell

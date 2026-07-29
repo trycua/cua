@@ -848,25 +848,30 @@ function Invoke-OldReleasesGc {
 
 # ---------- Release resolution --------------------------------------------
 
-function Resolve-Version {
-    if ($env:CUA_DRIVER_RS_VERSION) {
-        $v = $env:CUA_DRIVER_RS_VERSION -replace '^v', ''
-        Write-Step "using version from `$env:CUA_DRIVER_RS_VERSION: $v"
-        return $v
-    }
-    if ($Release -ne "latest") {
-        $v = $Release -replace '^v', ''
-        Write-Step "using -Release $v"
-        return $v
-    }
-    # Baked-version fallback — set by the CD workflow after each release
-    # so the default `irm | iex` install path doesn't hit the GitHub API.
-    # See the BAKED_VERSION sentinel-block near the top of this file.
-    if ($Script:CuaDriverRsBakedVersion) {
-        $v = $Script:CuaDriverRsBakedVersion -replace '^v', ''
-        Write-Step "using baked release: $TagPrefix$v"
-        return $v
-    }
+# Version-resolution provenance for this run, set by Resolve-Version and read
+# by the download path. The distinction matters when an asset is missing:
+#
+#   'env' / 'release-arg' — the user named an exact version. Installing some
+#       other version would silently defy an explicit instruction, so a
+#       missing asset must stay fatal.
+#   'baked'               — recoverable, and routinely wrong for a window on
+#       every release. Merging the Release Please pull request bumps the
+#       constant on `main` and creates the tag, but the release it creates is
+#       a *draft*: its assets only become downloadable when the CD workflow
+#       finishes building and publishes it. Since cua.ai serves this script
+#       from `main`, the public one-liner advertises a version nobody can
+#       download for the length of that build. Observed windows on
+#       cua-driver-rs releases range from ~12 minutes to ~3.5 hours. Falling
+#       back to the newest published release keeps installs working through it.
+#   'api'                 — already the API's answer; nothing left to fall
+#       back to.
+$Script:CuaDriverRsVersionSource = $null
+
+function Get-LatestVersionFromApi {
+    # Highest SemVer $TagPrefix* version published on the repo, or $null when
+    # the API is unreachable or has no matching tag. Never exits: callers
+    # decide whether a miss is fatal, because this runs both as the primary
+    # resolver (fatal) and as a recovery step (advisory).
     Write-Step "resolving latest $TagPrefix* release via GitHub API"
     # Paginate the /releases endpoint until we've seen every release or
     # collected enough $TagPrefix* matches to be confident the latest is
@@ -880,31 +885,72 @@ function Resolve-Version {
     #     ever hold, but cheap insurance against an unbounded loop.
     #   - stop early when a page comes back empty (we've exhausted the
     #     list).
-    $matches = @()
-    for ($page = 1; $page -le 10; $page++) {
-        $uri = "https://api.github.com/repos/$Repo/releases?per_page=100&page=$page"
-        $batch = Invoke-RestMethod -Uri $uri -UseBasicParsing
-        if (-not $batch -or $batch.Count -eq 0) { break }
-        $matches += @($batch | Where-Object { $_.tag_name -like "$TagPrefix*" })
-        if ($batch.Count -lt 100) { break }
+    #
+    # $releaseMatches, not $matches: the latter is a PowerShell automatic
+    # variable clobbered by every `-match` evaluation.
+    $releaseMatches = @()
+    try {
+        for ($page = 1; $page -le 10; $page++) {
+            $uri = "https://api.github.com/repos/$Repo/releases?per_page=100&page=$page"
+            $batch = Invoke-RestMethod -Uri $uri -UseBasicParsing
+            if (-not $batch -or $batch.Count -eq 0) { break }
+            $releaseMatches += @($batch | Where-Object { $_.tag_name -like "$TagPrefix*" })
+            if ($batch.Count -lt 100) { break }
+        }
     }
-    if (-not $matches -or $matches.Count -eq 0) {
-        Write-ErrorStep "no release matching $TagPrefix* found on $Repo"
-        exit 1
+    catch {
+        Write-WarningStep "GitHub Releases API query failed: $($_.Exception.Message)"
+        return $null
+    }
+    if (-not $releaseMatches -or $releaseMatches.Count -eq 0) {
+        return $null
     }
     # Sort by SemVer descending. [version] correctly orders dotted triples.
-    $latest = $matches | Sort-Object {
+    $latest = $releaseMatches | Sort-Object {
         $v = $_.tag_name.Substring($TagPrefix.Length)
         try { [version]$v } catch { [version]"0.0.0" }
     } -Descending | Select-Object -First 1
-    $version = $latest.tag_name.Substring($TagPrefix.Length)
     Write-Step "latest release: $($latest.tag_name)"
-    return $version
+    return $latest.tag_name.Substring($TagPrefix.Length)
+}
+
+function Resolve-Version {
+    if ($env:CUA_DRIVER_RS_VERSION) {
+        $v = $env:CUA_DRIVER_RS_VERSION -replace '^v', ''
+        Write-Step "using version from `$env:CUA_DRIVER_RS_VERSION: $v"
+        $Script:CuaDriverRsVersionSource = 'env'
+        return $v
+    }
+    if ($Release -ne "latest") {
+        $v = $Release -replace '^v', ''
+        Write-Step "using -Release $v"
+        $Script:CuaDriverRsVersionSource = 'release-arg'
+        return $v
+    }
+    # Baked-version fallback — set by the CD workflow after each release
+    # so the default `irm | iex` install path doesn't hit the GitHub API.
+    # See the BAKED_VERSION sentinel-block near the top of this file.
+    if ($Script:CuaDriverRsBakedVersion) {
+        $v = $Script:CuaDriverRsBakedVersion -replace '^v', ''
+        Write-Step "using baked release: $TagPrefix$v"
+        $Script:CuaDriverRsVersionSource = 'baked'
+        return $v
+    }
+    $v = Get-LatestVersionFromApi
+    if (-not $v) {
+        Write-ErrorStep "no release matching $TagPrefix* found on $Repo"
+        exit 1
+    }
+    $Script:CuaDriverRsVersionSource = 'api'
+    return $v
 }
 
 # ---------- Download + extract --------------------------------------------
 
-function Get-ReleaseAsset([string]$version, [string]$archLabel, [string]$destDir) {
+function Get-ReleaseZip([string]$version, [string]$archLabel, [string]$destDir) {
+    # Downloads one release zip and returns its path, or $null when the asset
+    # is not fetchable. Non-fatal by design so Get-ReleaseAsset can retry a
+    # different version.
     $zipName = "cua-driver-rs-$version-$archLabel.zip"
     $url     = "https://github.com/$Repo/releases/download/$TagPrefix$version/$zipName"
     $zipPath = Join-Path $destDir $zipName
@@ -914,10 +960,51 @@ function Get-ReleaseAsset([string]$version, [string]$archLabel, [string]$destDir
         Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
     }
     catch {
-        Write-ErrorStep "download failed: $($_.Exception.Message)"
+        Write-WarningStep "download failed: $($_.Exception.Message)"
+        return $null
+    }
+    return $zipPath
+}
+
+function Get-ReleaseAsset([string]$version, [string]$archLabel, [string]$destDir) {
+    # Returns @{ StageDir; Version }. Version can differ from the requested one
+    # when a baked version had no downloadable asset and the API named a
+    # different published release — so callers must re-read it rather than
+    # assuming the version they passed in is what landed on disk.
+    $resolvedVersion = $version
+    $zipPath = Get-ReleaseZip $resolvedVersion $archLabel $destDir
+
+    if (-not $zipPath -and $Script:CuaDriverRsVersionSource -eq 'baked') {
+        # Almost always the publish-lag window described above: the constant is
+        # already live on `main` while its release is still an unpublished
+        # draft. Without this recovery the default `irm | iex` install fails
+        # outright for the length of every release build, with no way through
+        # but an explicit version pin.
+        Write-WarningStep "baked release $TagPrefix$resolvedVersion has no downloadable $archLabel asset; falling back to the GitHub Releases API"
+        $apiVersion = Get-LatestVersionFromApi
+        if (-not $apiVersion) {
+            Write-ErrorStep "could not resolve any published $TagPrefix* release to fall back to"
+        }
+        elseif ($apiVersion -eq $resolvedVersion) {
+            # The API agrees this is the newest tag, so the tag exists but its
+            # assets do not. Retrying the identical URL would just 404 again.
+            Write-ErrorStep "$TagPrefix$apiVersion is the newest published release but is missing its $archLabel asset"
+        }
+        else {
+            Write-WarningStep "falling back to $TagPrefix$apiVersion"
+            $resolvedVersion = $apiVersion
+            $zipPath = Get-ReleaseZip $resolvedVersion $archLabel $destDir
+        }
+    }
+
+    if (-not $zipPath) {
+        Write-ErrorStep "could not download a $archLabel release asset for $TagPrefix$resolvedVersion."
         Write-ErrorStep "  Try pinning a known-good version via `$env:CUA_DRIVER_RS_VERSION = '<x.y.z>'`."
         exit 1
     }
+
+    $version = $resolvedVersion
+    $zipName = Split-Path -Leaf $zipPath
 
     Write-Step "extracting $zipName"
     $extractDir = Join-Path $destDir "extracted"
@@ -935,7 +1022,7 @@ function Get-ReleaseAsset([string]$version, [string]$archLabel, [string]$destDir
         Get-ChildItem $extractDir -Recurse | ForEach-Object { Write-Host "  $($_.FullName)" }
         exit 1
     }
-    return $stageDir
+    return @{ StageDir = $stageDir; Version = $version }
 }
 
 # ---------- Main -----------------------------------------------------------
@@ -1100,7 +1187,16 @@ if (-not $skipDownload) {
     $tmpRoot = Join-Path (Get-CuaDriverTempDir) ("cua-driver-rs-install-" + [Guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Force -Path $tmpRoot | Out-Null
     try {
-        $stageDir = Get-ReleaseAsset $version $archLabel $tmpRoot
+        $asset = Get-ReleaseAsset $version $archLabel $tmpRoot
+        # Get-ReleaseAsset may have recovered from a baked version with no
+        # published assets by downloading a different one. Adopt what actually
+        # landed before anything downstream derives a path or a capability
+        # check from $version.
+        if ($asset.Version -ne $version) {
+            $version = $asset.Version
+            $versionedDir = Join-Path $ReleasesDir "$version-$target"
+        }
+        $stageDir = $asset.StageDir
         New-Item -ItemType Directory -Force -Path $versionedDir | Out-Null
         Copy-Item -LiteralPath (Join-Path $stageDir $BinaryName) -Destination (Join-Path $versionedDir $BinaryName) -Force
         $themeStage = Join-Path $stageDir $ThemeBinaryName

@@ -508,34 +508,59 @@ done
 # The baked value is the common-case default: `curl ... | bash` against
 # `main` resolves the version locally with zero API calls, so an API
 # outage / rate limit / network blip can't break a default install. The
-# API fallback only fires when this script is run from a branch where
-# the baked line hasn't been updated yet (dev / pre-release checkouts).
+# API is consulted only when the baked line is absent (dev / pre-release
+# checkouts) or when the baked version turns out to have no downloadable
+# asset — see the recovery at the download step below.
 #
 # ~~~ BAKED_VERSION: auto-updated in the release PR — do not edit ~~~
 CUA_DRIVER_RS_BAKED_VERSION="0.14.0" # x-release-please-version
 # ~~~ END_BAKED_VERSION ~~~
 
-if [[ -n "${CUA_DRIVER_RS_VERSION:-}" ]]; then
-    TAG="${TAG_PREFIX}${CUA_DRIVER_RS_VERSION#v}"
-    log "using version from CUA_DRIVER_RS_VERSION: $TAG"
-elif [[ -n "${CUA_DRIVER_RS_BAKED_VERSION:-}" ]]; then
-    TAG="${TAG_PREFIX}${CUA_DRIVER_RS_BAKED_VERSION#v}"
-    log "using baked release: $TAG"
-else
-    log "resolving latest $TAG_PREFIX* release via GitHub API"
+# Highest SemVer ${TAG_PREFIX}* version published on the repo, printed bare
+# (no tag prefix) on stdout. Returns non-zero when the API is unreachable or
+# has no matching tag; callers decide whether that is fatal, because this runs
+# both as the primary resolver and as recovery for a bad baked version.
+#
+# per_page=100 (the API maximum): the repo interleaves lume, Python, and Swift
+# releases with these, so a smaller page can contain no ${TAG_PREFIX}* tag at
+# all and make a perfectly healthy repo look empty.
+resolve_latest_version_from_api() {
+    local version
     # Pinned to the exact `cua-driver-rs-v*` prefix so this script can never
     # accidentally pick up a Swift `cua-driver-v*` release.
-    TAG=$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=40" \
+    version=$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=100" \
         | grep -Eo '"tag_name":[[:space:]]*"'"${TAG_PREFIX}"'[^"]+"' \
         | sed -E 's/.*"'"${TAG_PREFIX}"'([0-9]+[.][0-9]+[.][0-9]+)"/\1/' \
         | sort -t. -k1,1nr -k2,2nr -k3,3nr \
-        | head -n 1 \
-        | sed -E 's/^/'"${TAG_PREFIX}"'/')
-    if [[ -z "$TAG" ]]; then
+        | head -n 1) || return 1
+    [[ -n "$version" ]] || return 1
+    printf '%s' "$version"
+}
+
+# Where VERSION came from. A missing asset is fatal for an explicit pin (the
+# user named that version) but recoverable for the baked constant, which is
+# routinely ahead of reality: merging the Release Please pull request bumps it
+# on `main` and creates the tag, yet the release starts as an unpublished draft
+# whose assets stay undownloadable until the CD build publishes it. cua.ai
+# serves this script from `main`, so the public one-liner points at a version
+# nobody can fetch for the length of every release build.
+if [[ -n "${CUA_DRIVER_RS_VERSION:-}" ]]; then
+    VERSION_SOURCE="pin"
+    TAG="${TAG_PREFIX}${CUA_DRIVER_RS_VERSION#v}"
+    log "using version from CUA_DRIVER_RS_VERSION: $TAG"
+elif [[ -n "${CUA_DRIVER_RS_BAKED_VERSION:-}" ]]; then
+    VERSION_SOURCE="baked"
+    TAG="${TAG_PREFIX}${CUA_DRIVER_RS_BAKED_VERSION#v}"
+    log "using baked release: $TAG"
+else
+    VERSION_SOURCE="api"
+    log "resolving latest $TAG_PREFIX* release via GitHub API"
+    if ! API_VERSION="$(resolve_latest_version_from_api)"; then
         err "no release matching ${TAG_PREFIX}* found on $REPO"
         err "  (cua-driver-rs is a BETA-stage cross-platform port; releases may not be published yet.)"
         exit 1
     fi
+    TAG="${TAG_PREFIX}${API_VERSION}"
     log "latest release: $TAG"
 fi
 
@@ -569,17 +594,57 @@ version_is_at_least() {
 #
 # Linux / Windows-via-WSL — use the bare-binary tarball. No bundle on
 #   these platforms, no TCC, no need to unpack a directory.
-case "$LABEL" in
-    darwin-*) TARBALL="cua-driver-rs-${VERSION}-darwin-universal.tar.gz" ;;
-    *)        TARBALL="cua-driver-rs-${VERSION}-${LABEL}-binary.tar.gz" ;;
-esac
-URL="https://github.com/$REPO/releases/download/$TAG/$TARBALL"
+release_tarball_name() {
+    case "$LABEL" in
+        darwin-*) printf 'cua-driver-rs-%s-darwin-universal.tar.gz' "$1" ;;
+        *)        printf 'cua-driver-rs-%s-%s-binary.tar.gz' "$1" "$LABEL" ;;
+    esac
+}
 
-log "downloading $URL"
-if ! curl -fsSL -o "$TMP_DIR/$TARBALL" "$URL"; then
-    err "download failed; try CUA_DRIVER_RS_VERSION=<version> to pin a specific release"
-    exit 1
+# Fetches one release tarball into $TMP_DIR. Returns non-zero instead of
+# exiting so the caller can try a different version.
+download_release_tarball() {
+    local version="$1" tarball url
+    tarball="$(release_tarball_name "$version")"
+    url="https://github.com/$REPO/releases/download/${TAG_PREFIX}${version}/$tarball"
+    log "downloading $url"
+    curl -fsSL -o "$TMP_DIR/$tarball" "$url"
+}
+
+if ! download_release_tarball "$VERSION"; then
+    # Almost always the publish-lag window described at the baked constant: it
+    # is already live on `main` while its release is still an unpublished draft.
+    # Without this recovery the default `curl | bash` install fails outright for
+    # the length of every release build, with no way through but a version pin.
+    if [[ "$VERSION_SOURCE" != "baked" ]]; then
+        err "download failed; try CUA_DRIVER_RS_VERSION=<version> to pin a specific release"
+        exit 1
+    fi
+    printf 'warning: baked release %s has no downloadable %s asset; falling back to the GitHub Releases API\n' \
+        "$TAG" "$LABEL" >&2
+    if ! API_VERSION="$(resolve_latest_version_from_api)"; then
+        err "could not resolve any published ${TAG_PREFIX}* release to fall back to"
+        err "  try CUA_DRIVER_RS_VERSION=<version> to pin a specific release"
+        exit 1
+    fi
+    if [[ "$API_VERSION" == "$VERSION" ]]; then
+        # The API agrees this is the newest tag, so the tag exists but its
+        # assets do not. Retrying the identical URL would just 404 again.
+        err "${TAG_PREFIX}${API_VERSION} is the newest published release but is missing its ${LABEL} asset"
+        err "  try CUA_DRIVER_RS_VERSION=<version> to pin an older release"
+        exit 1
+    fi
+    printf 'warning: falling back to %s%s\n' "$TAG_PREFIX" "$API_VERSION" >&2
+    # Adopt the recovered release before anything downstream derives a path,
+    # a stage directory, or a capability check from VERSION.
+    VERSION="$API_VERSION"
+    TAG="${TAG_PREFIX}${VERSION}"
+    if ! download_release_tarball "$VERSION"; then
+        err "download failed; try CUA_DRIVER_RS_VERSION=<version> to pin a specific release"
+        exit 1
+    fi
 fi
+TARBALL="$(release_tarball_name "$VERSION")"
 
 log "extracting"
 tar -xzf "$TMP_DIR/$TARBALL" -C "$TMP_DIR"

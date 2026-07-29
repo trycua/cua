@@ -848,25 +848,53 @@ function Invoke-OldReleasesGc {
 
 # ---------- Release resolution --------------------------------------------
 
-function Resolve-Version {
-    if ($env:CUA_DRIVER_RS_VERSION) {
-        $v = $env:CUA_DRIVER_RS_VERSION -replace '^v', ''
-        Write-Step "using version from `$env:CUA_DRIVER_RS_VERSION: $v"
-        return $v
+# Version-resolution provenance for this run, set by Resolve-Version and read
+# by the download path. The distinction matters when an asset is missing:
+#
+#   'env' / 'release-arg' — the user named an exact version. Installing some
+#       other version would silently defy an explicit instruction, so a
+#       missing asset must stay fatal.
+#   'baked'               — recoverable, and routinely wrong for a window on
+#       every release. Merging the Release Please pull request bumps the
+#       constant on `main` and creates the tag, but the release it creates is
+#       a *draft*: its assets only become downloadable when the CD workflow
+#       finishes building and publishes it. Since cua.ai serves this script
+#       from `main`, the public one-liner advertises a version nobody can
+#       download for the length of that build. Observed windows on
+#       cua-driver-rs releases range from ~12 minutes to ~3.5 hours. Falling
+#       back to the newest published release keeps installs working through it.
+#   'api'                 — already the API's answer; nothing left to fall
+#       back to.
+$Script:CuaDriverRsVersionSource = $null
+
+function Get-GitHubApiHeaders {
+    # GH_TOKEN matches the GitHub CLI's precedence. Keep the token in a header
+    # object only; never include it in installer diagnostics.
+    $token = $env:GH_TOKEN
+    if (-not $token) { $token = $env:GITHUB_TOKEN }
+
+    $headers = @{
+        Accept = "application/vnd.github+json"
+        "User-Agent" = "cua-driver-installer"
     }
-    if ($Release -ne "latest") {
-        $v = $Release -replace '^v', ''
-        Write-Step "using -Release $v"
-        return $v
+    if ($token) {
+        $headers["Authorization"] = "Bearer $token"
     }
-    # Baked-version fallback — set by the CD workflow after each release
-    # so the default `irm | iex` install path doesn't hit the GitHub API.
-    # See the BAKED_VERSION sentinel-block near the top of this file.
-    if ($Script:CuaDriverRsBakedVersion) {
-        $v = $Script:CuaDriverRsBakedVersion -replace '^v', ''
-        Write-Step "using baked release: $TagPrefix$v"
-        return $v
+    return $headers
+}
+
+function Assert-StableVersion([string]$version, [string]$source) {
+    if ($version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+        Write-ErrorStep "$source must be an exact stable x.y.z version (got '$version')"
+        exit 1
     }
+}
+
+function Get-LatestVersionFromApi {
+    # Highest SemVer $TagPrefix* version published on the repo, or $null when
+    # the API is unreachable or has no matching tag. Never exits: callers
+    # decide whether a miss is fatal, because this runs both as the primary
+    # resolver (fatal) and as a recovery step (advisory).
     Write-Step "resolving latest $TagPrefix* release via GitHub API"
     # Paginate the /releases endpoint until we've seen every release or
     # collected enough $TagPrefix* matches to be confident the latest is
@@ -880,44 +908,212 @@ function Resolve-Version {
     #     ever hold, but cheap insurance against an unbounded loop.
     #   - stop early when a page comes back empty (we've exhausted the
     #     list).
-    $matches = @()
-    for ($page = 1; $page -le 10; $page++) {
-        $uri = "https://api.github.com/repos/$Repo/releases?per_page=100&page=$page"
-        $batch = Invoke-RestMethod -Uri $uri -UseBasicParsing
-        if (-not $batch -or $batch.Count -eq 0) { break }
-        $matches += @($batch | Where-Object { $_.tag_name -like "$TagPrefix*" })
-        if ($batch.Count -lt 100) { break }
+    #
+    # $releaseMatches, not $matches: the latter is a PowerShell automatic
+    # variable clobbered by every `-match` evaluation.
+    $releaseMatches = @()
+    try {
+        for ($page = 1; $page -le 10; $page++) {
+            $uri = "https://api.github.com/repos/$Repo/releases?per_page=100&page=$page"
+            $batch = Invoke-RestMethod -Uri $uri -Headers (Get-GitHubApiHeaders) -UseBasicParsing
+            if (-not $batch -or $batch.Count -eq 0) { break }
+            $releaseMatches += @($batch | Where-Object {
+                (-not $_.draft) -and
+                ($_.tag_name -match "^$([regex]::Escape($TagPrefix))([0-9]+\.[0-9]+\.[0-9]+)$")
+            })
+            if ($batch.Count -lt 100) { break }
+        }
     }
-    if (-not $matches -or $matches.Count -eq 0) {
-        Write-ErrorStep "no release matching $TagPrefix* found on $Repo"
-        exit 1
+    catch {
+        Write-WarningStep "GitHub Releases API query failed: $($_.Exception.Message)"
+        return $null
+    }
+    if (-not $releaseMatches -or $releaseMatches.Count -eq 0) {
+        return $null
     }
     # Sort by SemVer descending. [version] correctly orders dotted triples.
-    $latest = $matches | Sort-Object {
+    $latest = $releaseMatches | Sort-Object {
         $v = $_.tag_name.Substring($TagPrefix.Length)
         try { [version]$v } catch { [version]"0.0.0" }
     } -Descending | Select-Object -First 1
-    $version = $latest.tag_name.Substring($TagPrefix.Length)
     Write-Step "latest release: $($latest.tag_name)"
-    return $version
+    return $latest.tag_name.Substring($TagPrefix.Length)
+}
+
+function Resolve-Version {
+    if ($env:CUA_DRIVER_RS_VERSION) {
+        $v = $env:CUA_DRIVER_RS_VERSION -replace '^v', ''
+        Assert-StableVersion $v 'CUA_DRIVER_RS_VERSION'
+        Write-Step "using version from `$env:CUA_DRIVER_RS_VERSION: $v"
+        $Script:CuaDriverRsVersionSource = 'env'
+        return $v
+    }
+    if ($Release -ne "latest") {
+        $v = $Release -replace '^v', ''
+        Assert-StableVersion $v '-Release'
+        Write-Step "using -Release $v"
+        $Script:CuaDriverRsVersionSource = 'release-arg'
+        return $v
+    }
+    # Baked-version fallback — set by the CD workflow after each release
+    # so the default `irm | iex` install path doesn't hit the GitHub API.
+    # See the BAKED_VERSION sentinel-block near the top of this file.
+    if ($Script:CuaDriverRsBakedVersion) {
+        $v = $Script:CuaDriverRsBakedVersion -replace '^v', ''
+        Assert-StableVersion $v 'baked release'
+        Write-Step "using baked release: $TagPrefix$v"
+        $Script:CuaDriverRsVersionSource = 'baked'
+        return $v
+    }
+    $v = Get-LatestVersionFromApi
+    if (-not $v) {
+        Write-ErrorStep "no release matching $TagPrefix* found on $Repo"
+        exit 1
+    }
+    $Script:CuaDriverRsVersionSource = 'api'
+    return $v
 }
 
 # ---------- Download + extract --------------------------------------------
 
-function Get-ReleaseAsset([string]$version, [string]$archLabel, [string]$destDir) {
+function Get-HttpStatusCode($exception) {
+    if ($null -eq $exception) {
+        return $null
+    }
+    try {
+        $response = $exception.Response
+        if ($null -eq $response) { return $null }
+        return [int]$response.StatusCode
+    }
+    catch {
+        return $null
+    }
+}
+
+function Test-TransientDownloadFailure($statusCode) {
+    # A missing status means the request failed below HTTP (DNS, connect,
+    # timeout, TLS, etc.). Retry those plus standard transient HTTP statuses.
+    if ($null -eq $statusCode) { return $true }
+    return ($statusCode -eq 408 -or $statusCode -eq 429 -or $statusCode -ge 500)
+}
+
+function Get-ReleaseZip([string]$version, [string]$archLabel, [string]$destDir) {
+    # Returns a structured result so a confirmed missing asset (HTTP 404) is
+    # never confused with a transient network, server, or authentication
+    # failure. Only the former may activate baked-version fallback.
     $zipName = "cua-driver-rs-$version-$archLabel.zip"
     $url     = "https://github.com/$Repo/releases/download/$TagPrefix$version/$zipName"
     $zipPath = Join-Path $destDir $zipName
+    $maxAttempts = 3
 
     Write-Step "downloading $url"
-    try {
-        Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
+            return @{
+                ZipPath = $zipPath
+                Missing = $false
+                ErrorMessage = $null
+                StatusCode = $null
+                Attempts = $attempt
+            }
+        }
+        catch {
+            Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue
+            $statusCode = Get-HttpStatusCode $_.Exception
+            if ($statusCode -eq 404) {
+                return @{
+                    ZipPath = $null
+                    Missing = $true
+                    ErrorMessage = $null
+                    StatusCode = 404
+                    Attempts = $attempt
+                }
+            }
+            $isTransient = Test-TransientDownloadFailure $statusCode
+            if ($isTransient -and $attempt -lt $maxAttempts) {
+                $delaySeconds = $attempt
+                Write-WarningStep "download attempt $attempt of $maxAttempts failed; retrying the same release in $delaySeconds second(s): $($_.Exception.Message)"
+                Start-Sleep -Seconds $delaySeconds
+                continue
+            }
+            return @{
+                ZipPath = $null
+                Missing = $false
+                ErrorMessage = $_.Exception.Message
+                StatusCode = $statusCode
+                Attempts = $attempt
+            }
+        }
     }
-    catch {
-        Write-ErrorStep "download failed: $($_.Exception.Message)"
+}
+
+function Get-ReleaseAsset([string]$version, [string]$archLabel, [string]$destDir) {
+    # Returns @{ StageDir; Version }. Version can differ from the requested one
+    # when a baked version had no downloadable asset and the API named a
+    # different published release — so callers must re-read it rather than
+    # assuming the version they passed in is what landed on disk.
+    $resolvedVersion = $version
+    $download = Get-ReleaseZip $resolvedVersion $archLabel $destDir
+    $missingDetail = $null
+
+    if ($download.ErrorMessage) {
+        if (Test-TransientDownloadFailure $download.StatusCode) {
+            Write-ErrorStep "download failed after $($download.Attempts) attempts for $TagPrefix$resolvedVersion ($archLabel): $($download.ErrorMessage)"
+        }
+        else {
+            Write-ErrorStep "download failed for $TagPrefix$resolvedVersion ($archLabel) with HTTP $($download.StatusCode): $($download.ErrorMessage)"
+        }
+        Write-ErrorStep "  The requested version was not changed. Check network access and GitHub credentials, then retry."
+        exit 1
+    }
+
+    if ($download.Missing -and $Script:CuaDriverRsVersionSource -eq 'baked') {
+        # Almost always the publish-lag window described above: the constant is
+        # already live on `main` while its release is still an unpublished
+        # draft. Without this recovery the default `irm | iex` install fails
+        # outright for the length of every release build, with no way through
+        # but an explicit version pin.
+        $apiVersion = Get-LatestVersionFromApi
+        if (-not $apiVersion) {
+            $missingDetail = "no published fallback could be resolved"
+        }
+        elseif ($apiVersion -eq $resolvedVersion) {
+            # The API agrees this is the newest tag, so the tag exists but its
+            # assets do not. Retrying the identical URL would just 404 again.
+            $missingDetail = "the API reports it as the latest published release, so there is no older version to select automatically"
+        }
+        else {
+            Write-WarningStep "temporary fallback: baked release $TagPrefix$resolvedVersion is missing its $archLabel asset (HTTP 404); installing latest published release $TagPrefix$apiVersion instead"
+            $resolvedVersion = $apiVersion
+            $download = Get-ReleaseZip $resolvedVersion $archLabel $destDir
+            if ($download.ErrorMessage) {
+                if (Test-TransientDownloadFailure $download.StatusCode) {
+                    Write-ErrorStep "fallback download failed after $($download.Attempts) attempts for $TagPrefix$resolvedVersion ($archLabel): $($download.ErrorMessage)"
+                }
+                else {
+                    Write-ErrorStep "fallback download failed for $TagPrefix$resolvedVersion ($archLabel) with HTTP $($download.StatusCode): $($download.ErrorMessage)"
+                }
+                Write-ErrorStep "  No further fallback was attempted. Check network access and GitHub credentials, then retry."
+                exit 1
+            }
+        }
+    }
+
+    if ($download.Missing) {
+        $message = "release asset for $TagPrefix$resolvedVersion ($archLabel) was not found (HTTP 404)"
+        if ($missingDetail) { $message += "; $missingDetail" }
+        Write-ErrorStep "$message."
+        if ($Script:CuaDriverRsVersionSource -in @('env', 'release-arg')) {
+            Write-ErrorStep "  Explicit version pins are not eligible for fallback."
+        }
         Write-ErrorStep "  Try pinning a known-good version via `$env:CUA_DRIVER_RS_VERSION = '<x.y.z>'`."
         exit 1
     }
+
+    $version = $resolvedVersion
+    $zipPath = $download.ZipPath
+    $zipName = Split-Path -Leaf $zipPath
 
     Write-Step "extracting $zipName"
     $extractDir = Join-Path $destDir "extracted"
@@ -935,7 +1131,7 @@ function Get-ReleaseAsset([string]$version, [string]$archLabel, [string]$destDir
         Get-ChildItem $extractDir -Recurse | ForEach-Object { Write-Host "  $($_.FullName)" }
         exit 1
     }
-    return $stageDir
+    return @{ StageDir = $stageDir; Version = $version }
 }
 
 # ---------- Main -----------------------------------------------------------
@@ -1100,28 +1296,45 @@ if (-not $skipDownload) {
     $tmpRoot = Join-Path (Get-CuaDriverTempDir) ("cua-driver-rs-install-" + [Guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Force -Path $tmpRoot | Out-Null
     try {
-        $stageDir = Get-ReleaseAsset $version $archLabel $tmpRoot
-        New-Item -ItemType Directory -Force -Path $versionedDir | Out-Null
-        Copy-Item -LiteralPath (Join-Path $stageDir $BinaryName) -Destination (Join-Path $versionedDir $BinaryName) -Force
-        $themeStage = Join-Path $stageDir $ThemeBinaryName
-        if (-not (Test-Path -LiteralPath $themeStage)) {
-            if ([version]$version -ge $CursorThemeRequiredFrom) {
-                throw "release archive is missing required $ThemeBinaryName"
-            }
-            Write-WarningStep "release $version predates $ThemeBinaryName; installing without custom cursor themes"
-        } else {
-            Copy-Item -LiteralPath $themeStage -Destination (Join-Path $versionedDir $ThemeBinaryName) -Force
+        $asset = Get-ReleaseAsset $version $archLabel $tmpRoot
+        # Get-ReleaseAsset may have recovered from a baked version with no
+        # published assets by downloading a different one. Adopt what actually
+        # landed before anything downstream derives a path or a capability
+        # check from $version.
+        if ($asset.Version -ne $version) {
+            $version = $asset.Version
+            $versionedDir = Join-Path $ReleasesDir "$version-$target"
         }
-        Write-Step "installed $versionedDir\$BinaryName (version $version, target $target)"
-        # Optional sibling: the reserved uiAccess worker
-        # (cua-driver-uia.exe). It started shipping with
-        # cua-driver-rs-v0.2.8 and is absent in earlier releases. Copy it when
-        # present for a future authenticated daemon-internal forwarding path;
-        # current autostart does not launch it. See #1602.
-        $uiaStage = Join-Path $stageDir 'cua-driver-uia.exe'
-        if (Test-Path -LiteralPath $uiaStage) {
-            Copy-Item -LiteralPath $uiaStage -Destination (Join-Path $versionedDir 'cua-driver-uia.exe') -Force
-            Write-Step "installed $versionedDir\cua-driver-uia.exe (uiAccess worker)"
+        $stageDir = $asset.StageDir
+        # A fallback can retarget us to a version that was already installed.
+        # Re-check after adopting that version so we do not overwrite a
+        # potentially running (and therefore locked) executable.
+        if (Test-Path -LiteralPath (Join-Path $versionedDir $BinaryName)) {
+            Write-Step "fallback release $version is already on disk at $versionedDir (skipping install copy)"
+        }
+        else {
+            New-Item -ItemType Directory -Force -Path $versionedDir | Out-Null
+            Copy-Item -LiteralPath (Join-Path $stageDir $BinaryName) -Destination (Join-Path $versionedDir $BinaryName) -Force
+            $themeStage = Join-Path $stageDir $ThemeBinaryName
+            if (-not (Test-Path -LiteralPath $themeStage)) {
+                if ([version]$version -ge $CursorThemeRequiredFrom) {
+                    throw "release archive is missing required $ThemeBinaryName"
+                }
+                Write-WarningStep "release $version predates $ThemeBinaryName; installing without custom cursor themes"
+            } else {
+                Copy-Item -LiteralPath $themeStage -Destination (Join-Path $versionedDir $ThemeBinaryName) -Force
+            }
+            Write-Step "installed $versionedDir\$BinaryName (version $version, target $target)"
+            # Optional sibling: the reserved uiAccess worker
+            # (cua-driver-uia.exe). It started shipping with
+            # cua-driver-rs-v0.2.8 and is absent in earlier releases. Copy it when
+            # present for a future authenticated daemon-internal forwarding path;
+            # current autostart does not launch it. See #1602.
+            $uiaStage = Join-Path $stageDir 'cua-driver-uia.exe'
+            if (Test-Path -LiteralPath $uiaStage) {
+                Copy-Item -LiteralPath $uiaStage -Destination (Join-Path $versionedDir 'cua-driver-uia.exe') -Force
+                Write-Step "installed $versionedDir\cua-driver-uia.exe (uiAccess worker)"
+            }
         }
     }
     finally {

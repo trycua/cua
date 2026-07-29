@@ -1,5 +1,12 @@
 use std::io;
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
+use std::sync::{
+    mpsc::{self, Receiver, RecvTimeoutError, Sender},
+    OnceLock,
+};
+use std::time::Duration;
+
+const REAP_INTERVAL: Duration = Duration::from_millis(50);
 
 pub(super) fn spawn_shell_command(command: &str, additional_args: &[String]) -> io::Result<Child> {
     let mut launch = Command::new("sh");
@@ -13,14 +20,83 @@ pub(super) fn spawn_shell_command(command: &str, additional_args: &[String]) -> 
         .args(additional_args)
         .env("ACCESSIBILITY_ENABLED", "1")
         .env("NO_AT_BRIDGE", "0");
-    launch.spawn()
+    spawn_background(&mut launch)
+}
+
+pub(super) fn spawn_background(command: &mut Command) -> io::Result<Child> {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+}
+
+pub(super) fn track_child(child: Child) -> io::Result<()> {
+    match child_reaper()?.send(child) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let mut child = error.0;
+            let _ = child.kill();
+            let _ = child.wait();
+            Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "Linux launch child reaper stopped",
+            ))
+        }
+    }
+}
+
+fn child_reaper() -> io::Result<&'static Sender<Child>> {
+    static REAPER: OnceLock<Result<Sender<Child>, String>> = OnceLock::new();
+    match REAPER.get_or_init(start_child_reaper) {
+        Ok(sender) => Ok(sender),
+        Err(message) => Err(io::Error::other(message.clone())),
+    }
+}
+
+fn start_child_reaper() -> Result<Sender<Child>, String> {
+    let (sender, receiver) = mpsc::channel();
+    std::thread::Builder::new()
+        .name("cua-driver-child-reaper".to_owned())
+        .spawn(move || child_reaper_loop(receiver))
+        .map_err(|error| format!("failed to start Linux launch child reaper: {error}"))?;
+    Ok(sender)
+}
+
+fn child_reaper_loop(receiver: Receiver<Child>) {
+    let mut children = Vec::new();
+    loop {
+        match receiver.recv_timeout(REAP_INTERVAL) {
+            Ok(child) => children.push(child),
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return,
+        }
+        children.extend(receiver.try_iter());
+        reap_finished_children(&mut children);
+    }
+}
+
+fn reap_finished_children(children: &mut Vec<Child>) {
+    let mut index = 0;
+    while index < children.len() {
+        match children[index].try_wait() {
+            Ok(Some(_)) => {
+                children.swap_remove(index);
+            }
+            Ok(None) => index += 1,
+            Err(error) => {
+                tracing::warn!(%error, "failed to poll directly launched child");
+                children.swap_remove(index);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-    use super::spawn_shell_command;
+    use super::{spawn_shell_command, track_child};
 
     #[test]
     fn launch_path_preserves_shell_quoting() {
@@ -71,7 +147,27 @@ mod tests {
         let _ = std::fs::remove_file(output);
     }
 
+    #[test]
+    fn launched_children_are_reaped_after_exit() {
+        let child = spawn_shell_command("true", &[]).expect("spawn short-lived child");
+        let pid = child.id();
+        track_child(child).expect("hand child to reaper");
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while process_exists(pid) {
+            assert!(Instant::now() < deadline, "child {pid} was not reaped");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     fn shell_quote(value: &str) -> String {
         format!("'{}'", value.replace('\'', "'\\''"))
+    }
+
+    fn process_exists(pid: u32) -> bool {
+        std::process::Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "state="])
+            .output()
+            .is_ok_and(|output| output.status.success() && !output.stdout.is_empty())
     }
 }

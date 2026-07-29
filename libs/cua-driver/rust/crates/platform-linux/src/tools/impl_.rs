@@ -879,7 +879,10 @@ impl Tool for LaunchAppTool {
                 // Open URLs via xdg-open.
                 if !urls.is_empty() {
                     for url in &urls {
-                        std::process::Command::new("xdg-open").arg(url).spawn()?;
+                        let mut launch = std::process::Command::new("xdg-open");
+                        launch.arg(url);
+                        let child = super::process_control::spawn_background(&mut launch)?;
+                        super::process_control::track_child(child)?;
                     }
                     return Ok((
                         format!("Opened {} URL(s) via xdg-open.", urls.len()),
@@ -901,6 +904,7 @@ impl Tool for LaunchAppTool {
                     }
                     let child = super::process_control::spawn_shell_command(cmd, &extra_args)?;
                     let pid = child.id();
+                    super::process_control::track_child(child)?;
                     return Ok((
                         format!("✅ Launched {cmd} (pid {pid}) in background."),
                         Some(pid),
@@ -929,9 +933,10 @@ impl Tool for LaunchAppTool {
                     {
                         launch.arg("--force-renderer-accessibility");
                     }
-                    match launch.spawn() {
+                    match super::process_control::spawn_background(&mut launch) {
                         Ok(child) => {
                             let pid = child.id();
+                            super::process_control::track_child(child)?;
                             return Ok((
                                 format!("✅ Launched {cmd} (pid {pid}) in background."),
                                 Some(pid),
@@ -941,7 +946,10 @@ impl Tool for LaunchAppTool {
                         Err(_) => {
                             // Fall back to xdg-open for .desktop app names. xdg-open may
                             // spawn a helper and exit, so do not claim its pid is the app pid.
-                            std::process::Command::new("xdg-open").arg(cmd).spawn()?;
+                            let mut fallback = std::process::Command::new("xdg-open");
+                            fallback.arg(cmd);
+                            let child = super::process_control::spawn_background(&mut fallback)?;
+                            super::process_control::track_child(child)?;
                             return Ok((
                                 format!("Opened '{cmd}' via xdg-open."),
                                 None,

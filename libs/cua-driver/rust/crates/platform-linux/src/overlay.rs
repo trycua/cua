@@ -24,6 +24,8 @@ use std::sync::{Mutex, OnceLock};
 #[cfg(target_os = "linux")]
 use std::time::{Duration, Instant};
 
+#[cfg(all(test, target_os = "linux"))]
+use cursor_overlay::CursorAction;
 #[cfg(target_os = "linux")]
 use cursor_overlay::ZOrderEnforcer;
 use cursor_overlay::{

@@ -19,6 +19,9 @@ tokio = { workspace = true, features = ["sync"] }
 uniffi.workspace = true
 url.workspace = true
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+reqwest.workspace = true
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 gloo-timers = { version = "0.3", features = ["futures"] }
 js-sys = "0.3"

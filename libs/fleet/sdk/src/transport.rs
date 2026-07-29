@@ -20,6 +20,14 @@ pub(crate) enum AuthenticatedRequestClass {
     ServiceProxy,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) struct NativeHttpClient { client: reqwest::Client }
+#[cfg(not(target_arch = "wasm32"))]
+impl NativeHttpClient { pub(crate) fn new() -> Result<Self, SdkError> { Ok(Self { client: reqwest::Client::builder().timeout(Duration::from_secs(30)).redirect(reqwest::redirect::Policy::none()).no_proxy().build().map_err(|error| SdkError::Configuration { reason: format!("could not create native HTTP client: {error}") })? }) } }
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait::async_trait]
+impl HttpClient for NativeHttpClient { async fn execute(&self, request: HttpRequest) -> Result<HttpResponse, HttpError> { let method=reqwest::Method::from_bytes(request.method.as_bytes()).map_err(|error| HttpError::Transport{reason:format!("invalid HTTP method: {error}")})?; let mut headers=reqwest::header::HeaderMap::new(); for header in request.headers { let name=reqwest::header::HeaderName::from_bytes(header.name.as_bytes()).map_err(|error| HttpError::Transport{reason:format!("invalid HTTP header name: {error}")})?; let value=reqwest::header::HeaderValue::from_str(&header.value).map_err(|error| HttpError::Transport{reason:format!("invalid HTTP header value: {error}")})?; headers.append(name,value); } let mut native=self.client.request(method,request.url).headers(headers); if let Some(body)=request.body {native=native.body(body);} let response=native.send().await.map_err(|error| HttpError::Transport{reason:format!("native HTTP request failed: {error}")})?; let status=response.status().as_u16(); let headers=response.headers().iter().map(|(name,value)|value.to_str().map(|value|HttpHeader{name:name.as_str().into(),value:value.into()}).map_err(|error|HttpError::Transport{reason:format!("native HTTP response contained a non-text header: {error}")})).collect::<Result<Vec<_>,_>>()?; let body=response.bytes().await.map_err(|error|HttpError::Transport{reason:format!("could not read native HTTP response body: {error}")})?; Ok(HttpResponse{status,headers,body:body.to_vec()}) } }
+
 #[uniffi::export(with_foreign)]
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]

@@ -3,49 +3,18 @@ import asyncio
 import json
 import os
 import time
-import urllib.error
-import urllib.request
-
 from cyclops_sdk import (
     CreateClaimRequest,
     CreatePoolRequest,
     CyclopsClient,
     CyclopsConfiguration,
     CyclopsCredentials,
-    HttpClient,
     HttpHeader,
     HttpRequest,
-    HttpResponse,
     PoolSpec,
     PoolTemplate,
     SandboxService,
 )
-
-
-class UrlLibHttpClient(HttpClient):
-    async def execute(self, request: HttpRequest) -> HttpResponse:
-        return await asyncio.to_thread(self._execute, request)
-
-    def _execute(self, request: HttpRequest) -> HttpResponse:
-        native = urllib.request.Request(
-            request.url,
-            data=request.body,
-            method=request.method,
-            headers={header.name: header.value for header in request.headers},
-        )
-        try:
-            with urllib.request.urlopen(native, timeout=60) as response:
-                return HttpResponse(
-                    status=response.status,
-                    headers=[HttpHeader(name=name, value=value) for name, value in response.headers.items()],
-                    body=response.read(),
-                )
-        except urllib.error.HTTPError as error:  # lint-ignore: swallowed-exception
-            return HttpResponse(
-                status=error.code,
-                headers=[HttpHeader(name=name, value=value) for name, value in error.headers.items()],
-                body=error.read(),
-            )
 
 
 def pool_spec(image: str, image_pull_secret: str) -> PoolSpec:
@@ -117,7 +86,7 @@ async def main() -> None:
     image_pull_secret = os.environ["CUA_IMAGE_PULL_SECRET"]
     image = os.environ["CUA_IMAGE"]
 
-    client = CyclopsClient.connect(
+    client = CyclopsClient.connect_with_native_http_client(
         CyclopsConfiguration(
             base_url=base_url,
             token_url=token_url,
@@ -126,8 +95,7 @@ async def main() -> None:
             pool_poll_limit=120,
             claim_poll_interval_ms=5000,
             claim_poll_limit=120,
-        ),
-        UrlLibHttpClient(),
+        )
     )
     pool = None
     claim = None

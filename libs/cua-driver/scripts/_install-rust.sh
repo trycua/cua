@@ -516,23 +516,87 @@ done
 CUA_DRIVER_RS_BAKED_VERSION="0.14.0" # x-release-please-version
 # ~~~ END_BAKED_VERSION ~~~
 
+# Run API requests with an optional token. Keep the header construction here
+# (rather than in loggable command text) so neither GH_TOKEN nor GITHUB_TOKEN
+# can appear in installer output. Release-asset downloads stay unauthenticated:
+# the repository is public and curl may redirect them to another GitHub host.
+# GH_TOKEN takes precedence, matching the GitHub CLI.
+github_api_curl() {
+    local token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+    if [[ -n "$token" ]]; then
+        curl -H "Authorization: Bearer $token" "$@"
+    else
+        curl "$@"
+    fi
+}
+
+# The authenticated releases endpoint can include drafts for maintainers.
+# Associate each top-level tag_name with its following draft field before
+# considering it. GitHub's REST response renders those top-level fields on
+# separate lines in that order; nested author/assets objects have no tag_name.
+extract_published_release_versions() {
+    awk -v prefix="$TAG_PREFIX" '
+        /"tag_name"[[:space:]]*:/ {
+            tag = $0
+            sub(/^.*"tag_name"[[:space:]]*:[[:space:]]*"/, "", tag)
+            sub(/".*$/, "", tag)
+            next
+        }
+        tag != "" && /"draft"[[:space:]]*:/ {
+            if ($0 ~ /"draft"[[:space:]]*:[[:space:]]*false/) {
+                version = tag
+                if (index(version, prefix) == 1) {
+                    version = substr(version, length(prefix) + 1)
+                    if (version ~ /^[0-9]+\.[0-9]+\.[0-9]+$/) {
+                        print version
+                    }
+                }
+            }
+            tag = ""
+        }
+    '
+}
+
 # Highest SemVer ${TAG_PREFIX}* version published on the repo, printed bare
 # (no tag prefix) on stdout. Returns non-zero when the API is unreachable or
 # has no matching tag; callers decide whether that is fatal, because this runs
 # both as the primary resolver and as recovery for a bad baked version.
 #
 # per_page=100 (the API maximum): the repo interleaves lume, Python, and Swift
-# releases with these, so a smaller page can contain no ${TAG_PREFIX}* tag at
-# all and make a perfectly healthy repo look empty.
+# releases with these. Walk up to ten pages so a busy repository cannot hide
+# cua-driver-rs behind the first page, but keep the request count bounded.
 resolve_latest_version_from_api() {
+    local page page_json page_count page_versions
+    local versions=""
+    for ((page=1; page<=10; page++)); do
+        page_json="$(github_api_curl -fsSL \
+            "https://api.github.com/repos/$REPO/releases?per_page=100&page=$page")" || return 1
+
+        # Extract only published exact stable x.y.z tags. Cua Driver's stable
+        # tags are marked prerelease in GitHub metadata, so the tag syntax —
+        # not the prerelease flag — decides semantic stability.
+        page_versions="$(printf '%s' "$page_json" | extract_published_release_versions)" || true
+        if [[ -n "$page_versions" ]]; then
+            versions="${versions}${versions:+$'\n'}${page_versions}"
+        fi
+
+        page_count="$(
+            printf '%s' "$page_json" \
+                | awk '{ count += gsub(/"tag_name"[[:space:]]*:/, "&") } END { print count + 0 }'
+        )"
+        [[ "$page_count" =~ ^[0-9]+$ ]] || return 1
+        if (( page_count < 100 )); then
+            break
+        fi
+    done
+
     local version
-    # Pinned to the exact `cua-driver-rs-v*` prefix so this script can never
-    # accidentally pick up a Swift `cua-driver-v*` release.
-    version=$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=100" \
-        | grep -Eo '"tag_name":[[:space:]]*"'"${TAG_PREFIX}"'[^"]+"' \
-        | sed -E 's/.*"'"${TAG_PREFIX}"'([0-9]+[.][0-9]+[.][0-9]+)"/\1/' \
-        | sort -t. -k1,1nr -k2,2nr -k3,3nr \
-        | head -n 1) || return 1
+    version="$(
+        printf '%s\n' "$versions" \
+            | sed '/^$/d' \
+            | sort -t. -k1,1nr -k2,2nr -k3,3nr \
+            | head -n 1
+    )"
     [[ -n "$version" ]] || return 1
     printf '%s' "$version"
 }
@@ -601,27 +665,62 @@ release_tarball_name() {
     esac
 }
 
-# Fetches one release tarball into $TMP_DIR. Returns non-zero instead of
-# exiting so the caller can try a different version.
+# Fetches one release tarball into $TMP_DIR. A confirmed HTTP 404 returns 44;
+# every other failure is retried at the same URL with bounded backoff, then
+# returns 1. This distinction is load-bearing: only a missing baked asset may
+# trigger release fallback. A timeout, TLS failure, rate limit, or server error
+# must never silently install an older version.
 download_release_tarball() {
-    local version="$1" tarball url
+    local version="$1" tarball url partial http_code curl_status attempt retryable
     tarball="$(release_tarball_name "$version")"
     url="https://github.com/$REPO/releases/download/${TAG_PREFIX}${version}/$tarball"
+    partial="$TMP_DIR/$tarball.partial"
     log "downloading $url"
-    curl -fsSL -o "$TMP_DIR/$tarball" "$url"
+    for attempt in 1 2 3; do
+        http_code=""
+        curl_status=0
+        http_code="$(
+            curl -sSL -o "$partial" -w '%{http_code}' "$url"
+        )" || curl_status=$?
+        if (( curl_status == 0 )) && [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+            mv "$partial" "$TMP_DIR/$tarball"
+            return 0
+        fi
+        rm -f "$partial" 2>/dev/null || true
+        if [[ "$http_code" == "404" ]]; then
+            return 44
+        fi
+        retryable=0
+        if (( curl_status != 0 )) \
+            || [[ "$http_code" == "408" || "$http_code" == "429" ]] \
+            || [[ "$http_code" =~ ^5[0-9][0-9]$ ]]; then
+            retryable=1
+        fi
+        if (( retryable == 1 && attempt < 3 )); then
+            err "download attempt $attempt failed (HTTP ${http_code:-unknown}, curl exit $curl_status); retrying the same release"
+            sleep "$attempt"
+            continue
+        fi
+        break
+    done
+    err "download failed after $attempt attempt(s) (HTTP ${http_code:-unknown}, curl exit $curl_status); refusing to fall back to an older release"
+    return 1
 }
 
-if ! download_release_tarball "$VERSION"; then
+DOWNLOAD_STATUS=0
+download_release_tarball "$VERSION" || DOWNLOAD_STATUS=$?
+if (( DOWNLOAD_STATUS != 0 )); then
     # Almost always the publish-lag window described at the baked constant: it
     # is already live on `main` while its release is still an unpublished draft.
     # Without this recovery the default `curl | bash` install fails outright for
     # the length of every release build, with no way through but a version pin.
-    if [[ "$VERSION_SOURCE" != "baked" ]]; then
+    if [[ "$VERSION_SOURCE" != "baked" || "$DOWNLOAD_STATUS" != "44" ]]; then
         err "download failed; try CUA_DRIVER_RS_VERSION=<version> to pin a specific release"
         exit 1
     fi
-    printf 'warning: baked release %s has no downloadable %s asset; falling back to the GitHub Releases API\n' \
+    printf 'warning: baked release %s has no downloadable %s asset (HTTP 404); this is usually a temporary publish lag\n' \
         "$TAG" "$LABEL" >&2
+    printf 'warning: temporarily falling back to the newest fully published release via the GitHub Releases API\n' >&2
     if ! API_VERSION="$(resolve_latest_version_from_api)"; then
         err "could not resolve any published ${TAG_PREFIX}* release to fall back to"
         err "  try CUA_DRIVER_RS_VERSION=<version> to pin a specific release"
@@ -639,7 +738,9 @@ if ! download_release_tarball "$VERSION"; then
     # a stage directory, or a capability check from VERSION.
     VERSION="$API_VERSION"
     TAG="${TAG_PREFIX}${VERSION}"
-    if ! download_release_tarball "$VERSION"; then
+    DOWNLOAD_STATUS=0
+    download_release_tarball "$VERSION" || DOWNLOAD_STATUS=$?
+    if (( DOWNLOAD_STATUS != 0 )); then
         err "download failed; try CUA_DRIVER_RS_VERSION=<version> to pin a specific release"
         exit 1
     fi

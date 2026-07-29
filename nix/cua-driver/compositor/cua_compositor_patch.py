@@ -57,8 +57,8 @@ INCLUDES = r"""#include <stdint.h>
 struct cua_devstate { struct wlr_surface *entered; };
 static struct cua_devstate cua_ptr[CUA_MAXDEV];
 static struct cua_devstate cua_kbd_state[CUA_MAXDEV];
-/* The physical compositor seat remains server->seat outside a command. Each
- * transient entry owns a wlroots seat and an isolated range in cua_ptr. */
+/* Transient entries retain lifecycle identity and isolated logical device ranges.
+ * Injection uses the physical seat because clients bind its wl_pointer/wl_keyboard. */
 struct cua_transient_seat {
 	char name[64];
 	struct wlr_seat *seat;
@@ -300,7 +300,7 @@ static const char *cua_transient_seat_create(struct tinywl_server *server, const
 		wlr_seat_set_capabilities(entry->seat,
 			WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_KEYBOARD);
 		snprintf(entry->name, sizeof entry->name, "%s", name);
-		entry->device_base = (i + 1) * CUA_TRANSIENT_SEAT_STRIDE;
+		entry->device_base = i * CUA_TRANSIENT_SEAT_STRIDE + 1;
 		return NULL;
 	}
 	return "seat-limit";
@@ -648,7 +648,6 @@ static const char *cua_handle_cmd(struct tinywl_server *server, char *line) {
 	} else if (!strcmp(cmd, "sm") || !strcmp(cmd, "sb") || !strcmp(cmd, "st")) {
 		char seat_name[64];
 		struct cua_transient_seat *entry;
-		struct wlr_seat *physical = server->seat;
 		int idx, device;
 		bool ok = false;
 		if (!strcmp(cmd, "sm")) {
@@ -657,7 +656,7 @@ static const char *cua_handle_cmd(struct tinywl_server *server, char *line) {
 			if (!(entry = cua_transient_seat_find(seat_name))) return "unknown-seat";
 			if (!cua_transient_device(entry, idx, &device)) return "bad-device";
 			if (!(t = cua_resolve_target(server, app, &err))) return err;
-			server->seat = entry->seat; ok = cua_motion(server, t, device, x, y); server->seat = physical;
+			ok = cua_motion(server, t, device, x, y);
 			return ok ? NULL : "no-pointer-resource";
 		}
 		if (!strcmp(cmd, "sb")) {
@@ -666,14 +665,14 @@ static const char *cua_handle_cmd(struct tinywl_server *server, char *line) {
 			if (!(entry = cua_transient_seat_find(seat_name))) return "unknown-seat";
 			if (!cua_transient_device(entry, idx, &device)) return "bad-device";
 			if (!(t = cua_resolve_target(server, app, &err))) return err;
-			server->seat = entry->seat; ok = cua_button(server, t, device, button, pressed != 0); server->seat = physical;
+			ok = cua_button(server, t, device, button, pressed != 0);
 			return ok ? NULL : "no-pointer-resource";
 		}
 		char hex[8192];
 		if (sscanf(line, "st %63s %127s %8191s", seat_name, app, hex) != 3) return "bad-args";
 		if (!(entry = cua_transient_seat_find(seat_name))) return "unknown-seat";
 		if (!(t = cua_resolve_target(server, app, &err))) return err;
-		server->seat = entry->seat; ok = cua_type_hex(server, t, hex); server->seat = physical;
+		ok = cua_type_hex(server, t, hex);
 		return ok ? NULL : "no-keyboard-resource";
 	} else if (!strcmp(cmd, "d")) {
 		double x, y; unsigned count, btn;

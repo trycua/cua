@@ -300,7 +300,7 @@ static const char *cua_transient_seat_create(struct tinywl_server *server, const
 		wlr_seat_set_capabilities(entry->seat,
 			WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_KEYBOARD);
 		snprintf(entry->name, sizeof entry->name, "%s", name);
-		entry->device_base = i * CUA_TRANSIENT_SEAT_STRIDE + 1;
+		entry->device_base = (i + 1) * CUA_TRANSIENT_SEAT_STRIDE;
 		return NULL;
 	}
 	return "seat-limit";

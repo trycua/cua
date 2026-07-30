@@ -33,6 +33,8 @@ class TestNixOsDesktopMatrix(unittest.TestCase):
         self.assertIn("sway-native-input", workflow)
         self.assertIn("desktop: [x11, xfce-labwc, xfce-sway, kde, gnome]", workflow)
         self.assertIn("if: always()", workflow)
+        self.assertIn("auto-allocate-uids = true", workflow)
+        self.assertIn("extra-system-features = uid-range", workflow)
         self.assertIn("actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08", workflow)
         self.assertIn("GITHUB_STEP_SUMMARY", workflow)
 

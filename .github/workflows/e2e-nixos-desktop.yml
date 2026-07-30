@@ -66,6 +66,10 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
+            # Container NixOS tests use systemd-nspawn and need a delegated UID range.
+            extra-experimental-features = auto-allocate-uids cgroups
+            auto-allocate-uids = true
+            extra-system-features = uid-range
       - name: Run bounded NixOS desktop gate
         id: test
         shell: bash
@@ -122,6 +126,10 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
+            # Container NixOS tests use systemd-nspawn and need a delegated UID range.
+            extra-experimental-features = auto-allocate-uids cgroups
+            auto-allocate-uids = true
+            extra-system-features = uid-range
       - name: Resolve full-matrix check
         id: check
         shell: bash

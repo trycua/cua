@@ -121,7 +121,13 @@ pkgs.writeText "driver_client.py" ''
                       str(w.get(k, "")) for k in ("title", "app_id", "app", "class")
                   ).lower()
                   if needle in hay:
-                      return int(w.get("pid") or 0), int(w["window_id"])
+                      # Native Wayland toplevel metadata can omit a process ID.
+                      # Preserve that absence as JSON null: the current driver
+                      # then resolves the target from the window instead of
+                      # rejecting the historical synthetic pid=0 value.
+                      raw_pid = w.get("pid")
+                      pid = int(raw_pid) if raw_pid not in (None, "", 0, "0") else None
+                      return pid, int(w["window_id"])
               time.sleep(interval)
           raise AssertionError(
               f"cua-driver never enumerated a Wayland window titled ~{title_substr!r}; "

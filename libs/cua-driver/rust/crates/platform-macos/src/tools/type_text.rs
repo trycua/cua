@@ -768,6 +768,7 @@ fn type_text_blocking(
         // dropped. 200ms covers that re-grab without penalizing an already
         // armed interactive stream on every text chunk.
         let foreground_settle_ms = foreground_settle_ms(pid, apps::frontmost_pid());
+        let screen_sharing_target = crate::input::keyboard::is_screen_sharing_pid(pid);
         let do_type = || {
             cgevent_type_verified(
                 pid,
@@ -779,6 +780,27 @@ fn type_text_blocking(
             )
         };
         let ((verified, delivered_chars), fronted) = match window_id {
+            Some(wid) if screen_sharing_target => {
+                // Screen Sharing forwards physical HID transitions to the
+                // guest. PID-routed Unicode events all carry keycode 0 (the A
+                // key), so a guest sees "aaaa"; modifier flags alone likewise
+                // turn Cmd+V into plain "v". The explicit foreground rung may
+                // safely use the global HID queue while the exact target is
+                // guarded and restored.
+                crate::input::skylight::with_foreground_hid_activation(
+                    pid as libc::pid_t,
+                    wid,
+                    || {
+                        if foreground_settle_ms > 0 {
+                            std::thread::sleep(std::time::Duration::from_millis(
+                                foreground_settle_ms,
+                            ));
+                        }
+                        crate::input::keyboard::type_text_physical_global(text, delay_ms)
+                    },
+                )?;
+                ((false, None), true)
+            }
             Some(wid) => {
                 // Front → type → restore. The closure returns the read-back
                 // result; with_foreground_assist returns whether it actually

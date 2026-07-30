@@ -11,6 +11,25 @@ use core_graphics::{
 };
 use foreign_types::ForeignType;
 
+const SCREEN_SHARING_BUNDLE_ID: &str = "com.apple.ScreenSharing";
+const SHIFT_KEY_CODE: u16 = 56;
+
+fn is_screen_sharing_bundle_id(bundle_id: &str) -> bool {
+    bundle_id == SCREEN_SHARING_BUNDLE_ID
+}
+
+/// Whether `pid` is Apple's Screen Sharing client.
+///
+/// Screen Sharing is an input forwarder rather than a text consumer: it relays
+/// physical virtual-key transitions to the guest and ignores the Unicode string
+/// attached to a synthetic keycode-0 event. Keep that special case explicit so
+/// ordinary PID-routed text input retains its layout-independent Unicode path.
+pub fn is_screen_sharing_pid(pid: i32) -> bool {
+    crate::apps::bundle_id_for_pid(pid)
+        .as_deref()
+        .is_some_and(is_screen_sharing_bundle_id)
+}
+
 /// Press and release a single key, delivered to `pid` without stealing focus.
 pub fn press_key(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
     // Handle "+" / "plus" → Shift+= (US keyboard layout).
@@ -264,6 +283,152 @@ pub fn type_text_global(text: &str, inter_char_delay_ms: u64) -> anyhow::Result<
     Ok(())
 }
 
+/// Type ASCII text through the global HID queue as physical US-keyboard
+/// transitions.
+///
+/// This is reserved for a caller that has guarded the exact target with
+/// `with_foreground_hid_activation`. Remote-input clients such as Screen
+/// Sharing forward virtual keycodes and modifier transitions, not the Unicode
+/// payload carried by keycode 0, so the ordinary text synthesis path cannot be
+/// used for them.
+pub fn type_text_physical_global(text: &str, inter_char_delay_ms: u64) -> anyhow::Result<()> {
+    use core_graphics::event::CGEventTapLocation;
+
+    // Validate the complete payload before posting its first event. A string
+    // containing an unsupported character must fail without partially typing.
+    let event_groups = text
+        .chars()
+        .map(physical_text_events)
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+    for events in event_groups {
+        for event in events {
+            let cg_event =
+                CGEvent::new_keyboard_event(source.clone(), event.key_code, event.key_down)
+                    .map_err(|_| anyhow::anyhow!("CGEvent keyboard event creation failed"))?;
+            if let Some(value) = event.text {
+                cg_event.set_string(&value.to_string());
+            }
+            cg_event.set_flags(if event.shift {
+                CGEventFlags::CGEventFlagShift
+            } else {
+                CGEventFlags::CGEventFlagNull
+            });
+            cg_event.post(CGEventTapLocation::HID);
+            std::thread::sleep(std::time::Duration::from_millis(8));
+        }
+        if inter_char_delay_ms > 8 {
+            std::thread::sleep(std::time::Duration::from_millis(inter_char_delay_ms - 8));
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PhysicalTextEvent {
+    key_code: u16,
+    key_down: bool,
+    shift: bool,
+    text: Option<char>,
+}
+
+fn physical_text_events(ch: char) -> anyhow::Result<Vec<PhysicalTextEvent>> {
+    let (key_code, shift) = physical_key_for_char(ch).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Screen Sharing physical text delivery does not support character U+{:04X}",
+            ch as u32
+        )
+    })?;
+    let mut events = Vec::with_capacity(if shift { 4 } else { 2 });
+    if shift {
+        events.push(PhysicalTextEvent {
+            key_code: SHIFT_KEY_CODE,
+            key_down: true,
+            shift: true,
+            text: None,
+        });
+    }
+    events.push(PhysicalTextEvent {
+        key_code,
+        key_down: true,
+        shift,
+        text: Some(ch),
+    });
+    events.push(PhysicalTextEvent {
+        key_code,
+        key_down: false,
+        shift,
+        text: Some(ch),
+    });
+    if shift {
+        events.push(PhysicalTextEvent {
+            key_code: SHIFT_KEY_CODE,
+            key_down: false,
+            shift: false,
+            text: None,
+        });
+    }
+    Ok(events)
+}
+
+/// Map printable ASCII to the physical key that produces it on the standard US
+/// layout. The Unicode payload remains attached to the base key for local event
+/// consumers, while forwarders can use the keycode and Shift transitions.
+fn physical_key_for_char(ch: char) -> Option<(u16, bool)> {
+    let lower = ch.to_ascii_lowercase();
+    if ch.is_ascii_alphabetic() {
+        return key_name_to_code(&lower.to_string())
+            .ok()
+            .map(|code| (code, ch.is_ascii_uppercase()));
+    }
+    if ch.is_ascii_digit() {
+        return key_name_to_code(&ch.to_string())
+            .ok()
+            .map(|code| (code, false));
+    }
+
+    let (base, shift) = match ch {
+        ' ' => ("space", false),
+        '\t' => ("tab", false),
+        '\n' | '\r' => ("return", false),
+        '-' => ("-", false),
+        '_' => ("-", true),
+        '=' => ("=", false),
+        '+' => ("=", true),
+        '[' => ("[", false),
+        '{' => ("[", true),
+        ']' => ("]", false),
+        '}' => ("]", true),
+        '\\' => ("\\", false),
+        '|' => ("\\", true),
+        ';' => (";", false),
+        ':' => (";", true),
+        '\'' => ("'", false),
+        '"' => ("'", true),
+        ',' => (",", false),
+        '<' => (",", true),
+        '.' => (".", false),
+        '>' => (".", true),
+        '/' => ("/", false),
+        '?' => ("/", true),
+        '`' => ("`", false),
+        '~' => ("`", true),
+        '!' => ("1", true),
+        '@' => ("2", true),
+        '#' => ("3", true),
+        '$' => ("4", true),
+        '%' => ("5", true),
+        '^' => ("6", true),
+        '&' => ("7", true),
+        '*' => ("8", true),
+        '(' => ("9", true),
+        ')' => ("0", true),
+        _ => return None,
+    };
+    key_name_to_code(base).ok().map(|code| (code, shift))
+}
+
 /// Post a keyboard event to `pid` via SLEventPostToPid (with auth message for
 /// Chromium/Electron support) or fall back to CGEvent::post_to_pid.
 pub(super) fn post_keyboard_event(pid: i32, event: &CGEvent) {
@@ -405,4 +570,93 @@ pub(super) fn key_name_to_code(key: &str) -> anyhow::Result<u16> {
         _ => anyhow::bail!("Unknown key name: {key}"),
     };
     Ok(code)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn physical_text_uses_mixed_keycodes_and_balanced_shift_transitions() {
+        assert_eq!(
+            physical_text_events('a').unwrap(),
+            vec![
+                PhysicalTextEvent {
+                    key_code: 0,
+                    key_down: true,
+                    shift: false,
+                    text: Some('a'),
+                },
+                PhysicalTextEvent {
+                    key_code: 0,
+                    key_down: false,
+                    shift: false,
+                    text: Some('a'),
+                },
+            ]
+        );
+        assert_eq!(
+            physical_text_events('Z').unwrap(),
+            vec![
+                PhysicalTextEvent {
+                    key_code: 56,
+                    key_down: true,
+                    shift: true,
+                    text: None,
+                },
+                PhysicalTextEvent {
+                    key_code: 6,
+                    key_down: true,
+                    shift: true,
+                    text: Some('Z'),
+                },
+                PhysicalTextEvent {
+                    key_code: 6,
+                    key_down: false,
+                    shift: true,
+                    text: Some('Z'),
+                },
+                PhysicalTextEvent {
+                    key_code: 56,
+                    key_down: false,
+                    shift: false,
+                    text: None,
+                },
+            ]
+        );
+        assert_eq!(physical_key_for_char('1'), Some((18, false)));
+        assert_eq!(physical_key_for_char('!'), Some((18, true)));
+        assert_eq!(physical_key_for_char('/'), Some((44, false)));
+        assert_eq!(physical_key_for_char('?'), Some((44, true)));
+    }
+
+    #[test]
+    fn physical_text_rejects_characters_without_a_lossless_keycode() {
+        let error = physical_text_events('🙂').unwrap_err().to_string();
+        assert!(error.contains("U+1F642"), "{error}");
+    }
+
+    #[test]
+    fn physical_text_covers_printable_ascii_and_common_text_whitespace() {
+        for byte in 0x20_u8..=0x7e {
+            let ch = char::from(byte);
+            assert!(
+                physical_key_for_char(ch).is_some(),
+                "missing physical key for ASCII {ch:?}"
+            );
+        }
+        for ch in ['\t', '\n', '\r'] {
+            assert!(
+                physical_key_for_char(ch).is_some(),
+                "missing physical key for whitespace {ch:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn screen_sharing_detection_is_exact_and_case_sensitive() {
+        assert!(is_screen_sharing_bundle_id("com.apple.ScreenSharing"));
+        assert!(!is_screen_sharing_bundle_id("com.apple.screensharing"));
+        assert!(!is_screen_sharing_bundle_id("com.microsoft.rdc.macos"));
+    }
 }

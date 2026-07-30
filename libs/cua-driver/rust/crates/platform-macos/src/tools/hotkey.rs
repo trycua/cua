@@ -249,6 +249,20 @@ impl Tool for HotkeyTool {
                             )?;
                             Ok(())
                         }
+                        // Screen Sharing is an input forwarder: modifier flags
+                        // on a PID-routed base-key event are not relayed to the
+                        // guest. Emit the physical modifier down/base/up
+                        // sequence through the guarded foreground HID path.
+                        (true, false, Some(wid))
+                            if crate::input::keyboard::is_screen_sharing_pid(pid) =>
+                        {
+                            crate::input::skylight::with_foreground_hid_activation(
+                                pid as libc::pid_t,
+                                wid,
+                                || crate::input::keyboard::press_key_global(&key, &m),
+                            )?;
+                            Ok(())
+                        }
                         // foreground rung: briefly front the window so NSMenu key
                         // equivalents dispatch, then restore prior frontmost.
                         (true, false, Some(wid)) => {

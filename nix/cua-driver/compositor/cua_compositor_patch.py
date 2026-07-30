@@ -109,9 +109,9 @@ static void cua_focus_toplevel(struct tinywl_toplevel *toplevel) {
 	 * logical focus without coupling it to the initial map/configure handshake. */
 	struct wlr_surface *surface = toplevel->xdg_toplevel->base->surface;
 	if (toplevel->server->seat->keyboard_state.focused_surface != surface) {
-		struct wlr_keyboard_modifiers modifiers = {0};
 		wlr_seat_keyboard_notify_enter(
-			toplevel->server->seat, surface, NULL, 0, &modifiers);
+			toplevel->server->seat, surface, g_keyboard.keycodes,
+			g_keyboard.num_keycodes, &g_keyboard.modifiers);
 	}
 }
 /* Chromium processes keyboard events through the physical seat's focused

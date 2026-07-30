@@ -130,15 +130,6 @@ fn wait_for_fixture(journal: &FixtureJournal, marker: &str) {
 #[test]
 #[ignore = "requires the cua-compositor nested Wayland E2E environment"]
 fn transient_seats_are_isolated_and_destroyable() {
-    // Electron discovers Wayland seats at startup, so create transient seats
-    // before each fixture binds the registry globals.
-    assert_eq!(
-        exchange(&["seat create agent-a".to_owned()]),
-        vec!["ok"],
-        "missing transient-seat lifecycle capability"
-    );
-    assert_eq!(exchange(&["seat create agent-b".to_owned()]), vec!["ok"]);
-
     let fixture_a = launch_fixture("agent-a");
     let fixture_b = launch_fixture("agent-b");
     wait_for_target(&fixture_a);
@@ -146,6 +137,13 @@ fn transient_seats_are_isolated_and_destroyable() {
     let target_a = target(&fixture_a);
     let target_b = target(&fixture_b);
     let default_focus_before = exchange(&["q 0".to_owned()]).remove(0);
+
+    assert_eq!(
+        exchange(&["seat create agent-a".to_owned()]),
+        vec!["ok"],
+        "missing transient-seat lifecycle capability"
+    );
+    assert_eq!(exchange(&["seat create agent-b".to_owned()]), vec!["ok"]);
 
     // The shared Electron fixture is a three-column grid. This point lands in
     // the third-column keyboard control instead of the older stacked layout's
@@ -162,6 +160,8 @@ fn transient_seats_are_isolated_and_destroyable() {
         vec!["ok"; 6],
         "seat-scoped pointer input must be accepted"
     );
+    // Chromium processes the Wayland pointer click asynchronously. Let it
+    // establish DOM focus before routing the typed strings.
     thread::sleep(Duration::from_millis(100));
     assert_eq!(
         exchange(&[

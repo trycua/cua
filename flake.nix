@@ -30,7 +30,8 @@
               ./libs/cua-driver/rust
               ./libs/cua-driver/wayland-helper
               ./libs/cua-driver/compat-fixtures
-              ./libs/cua-driver/tests/fixtures/shared/web/index.html
+              ./libs/cua-driver/tests/fixtures/shared/web
+              ./libs/cua-driver/tests/fixtures/apps/cross-platform/electron
             ];
           };
 
@@ -146,6 +147,11 @@
             cua-driver-policy-rego = import ./nix/cua-driver/tests/policy-rego.nix {
               inherit pkgs;
               cuaDriver = cuaDriverPackage;
+            };
+            cua-driver-transient-seat = import ./nix/cua-driver/tests/transient-seat.nix {
+              inherit pkgs;
+              src = rustTestSrc;
+              cuaCompositor = cuaCompositorPackage;
             };
           };
 

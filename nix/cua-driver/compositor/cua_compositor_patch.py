@@ -630,6 +630,9 @@ static bool cua_type_hex(struct tinywl_server *server, struct tinywl_toplevel *t
 		/* Send the focus transition before the injected key batch. Chromium drops
 		 * keys that arrive in the same unflushed compositor callback as focus. */
 		wl_display_flush_clients(server->wl_display);
+		/* Let the client consume wl_keyboard.enter before the first key. */
+		struct timespec settle = { .tv_sec = 0, .tv_nsec = 20 * 1000 * 1000 };
+		nanosleep(&settle, NULL);
 	}
 	bool ok = true;
 	for (const char *p = hex; p[0] && p[1]; p += 2) {

@@ -33,7 +33,9 @@ fn def() -> &'static ToolDef {
              Optional `additional_arguments`: extra argv strings appended after --args.\n\n\
              Returns the launched app's pid, bundle_id, name, and a `windows` array \
              (same shape as `list_windows`) so callers can skip an extra round-trip before \
-             `get_window_state(pid, window_id)`. When the focus-steal belt-and-braces \
+             `get_window_state(pid, window_id)`. `launch_state` distinguishes whether the \
+             request was sent, the process is running, and a window is ready. When the \
+             focus-steal belt-and-braces \
              demotion check ran (target pid ≠ prior frontmost), the response also includes \
              `self_activation_suppressed: bool` — true if focus stayed with the prior \
              frontmost, false if the launched app held focus despite the re-demote attempt."
@@ -472,6 +474,7 @@ impl Tool for LaunchAppTool {
                     "bundle_id": bid,
                     "name": app_name,
                     "windows": windows_json,
+                    "launch_state": launch_state(true, true, !windows.is_empty()),
                 });
                 // Only emit `self_activation_suppressed` when the
                 // belt-and-braces demotion check actually ran. `None`
@@ -483,7 +486,7 @@ impl Tool for LaunchAppTool {
                 }
                 ToolResult::text(summary).with_structured(structured)
             }
-            Ok(Err(e)) => ToolResult::error(format!("Launch failed: {e}")),
+            Ok(Err(e)) => structured_launch_failure(&e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
@@ -546,6 +549,37 @@ fn structured_launch_error(code: &str, message: String, details: serde_json::Val
     }
 
     ToolResult::error(message).with_structured(payload)
+}
+
+fn launch_state(requested: bool, process_running: bool, window_ready: bool) -> serde_json::Value {
+    serde_json::json!({
+        "requested": requested,
+        "process_running": process_running,
+        "window_ready": window_ready,
+    })
+}
+
+fn structured_launch_failure(error: &anyhow::Error) -> ToolResult {
+    use crate::apps::nsworkspace::LaunchError;
+
+    let (code, requested) = if let Some(launch_error) = error.downcast_ref::<LaunchError>() {
+        match launch_error {
+            LaunchError::Cocoa(_) => ("NSWORKSPACE_LAUNCH_FAILED", true),
+            LaunchError::NoApp => ("LAUNCH_RESULT_MISSING", true),
+            LaunchError::Timeout => ("LAUNCH_CALLBACK_TIMEOUT", true),
+            LaunchError::BadUrl(_) => ("APP_URL_INVALID", false),
+        }
+    } else {
+        ("LAUNCH_FAILED", false)
+    };
+
+    structured_launch_error(
+        code,
+        format!("Launch failed: {error:#}"),
+        serde_json::json!({
+            "launch_state": launch_state(requested, false, false),
+        }),
+    )
 }
 
 fn preflight_file_urls(urls: &[String]) -> Option<ToolResult> {
@@ -633,7 +667,7 @@ fn hex_value(byte: u8) -> Option<u8> {
 mod tests {
     use super::{
         contains_remote_debugging_flag, is_cua_driver_bundle_id, local_file_target,
-        preflight_file_urls, LaunchAppTool,
+        preflight_file_urls, structured_launch_failure, LaunchAppTool,
     };
     use cua_driver_core::tool::Tool;
     use serde_json::json;
@@ -698,6 +732,35 @@ mod tests {
         assert!(is_cua_driver_bundle_id("com.trycua.driver"));
         assert!(is_cua_driver_bundle_id("com.trycua.driver.local"));
         assert!(!is_cua_driver_bundle_id("com.trycua.harness.tauri"));
+    }
+
+    #[test]
+    fn launch_timeout_reports_requested_without_process_or_window() {
+        let error = anyhow::Error::new(crate::apps::nsworkspace::LaunchError::Timeout)
+            .context("Failed to launch com.example.App");
+        let result = structured_launch_failure(&error);
+        let structured = result.structured_content.expect("structured error");
+
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(structured["error"], "LAUNCH_CALLBACK_TIMEOUT");
+        assert_eq!(structured["launch_state"]["requested"], true);
+        assert_eq!(structured["launch_state"]["process_running"], false);
+        assert_eq!(structured["launch_state"]["window_ready"], false);
+    }
+
+    #[test]
+    fn invalid_url_reports_request_was_not_sent() {
+        let error = anyhow::Error::new(crate::apps::nsworkspace::LaunchError::BadUrl(
+            "bad url".to_owned(),
+        ))
+        .context("Failed to launch com.example.App");
+        let result = structured_launch_failure(&error);
+        let structured = result.structured_content.expect("structured error");
+
+        assert_eq!(structured["error"], "APP_URL_INVALID");
+        assert_eq!(structured["launch_state"]["requested"], false);
+        assert_eq!(structured["launch_state"]["process_running"], false);
+        assert_eq!(structured["launch_state"]["window_ready"], false);
     }
 
     #[tokio::test]

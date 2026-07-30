@@ -2,6 +2,7 @@
 
 pub mod nsworkspace;
 
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
@@ -98,7 +99,7 @@ pub fn launch_app(bundle_id: &str) -> anyhow::Result<i32> {
         ..Default::default()
     };
     let running = nsworkspace::open_application(bundle_id, &cfg)
-        .map_err(|e| anyhow::anyhow!("Failed to launch {bundle_id}: {e}"))?;
+        .with_context(|| format!("Failed to launch {bundle_id}"))?;
     let pid: i32 = unsafe { running.processIdentifier() };
     Ok(pid)
 }
@@ -118,7 +119,7 @@ pub fn launch_app_by_name(name: &str) -> anyhow::Result<i32> {
         ..Default::default()
     };
     let running = nsworkspace::open_application(&app_ref, &cfg)
-        .map_err(|e| anyhow::anyhow!("Failed to launch '{name}': {e}"))?;
+        .with_context(|| format!("Failed to launch '{name}'"))?;
     let pid: i32 = unsafe { running.processIdentifier() };
     Ok(pid)
 }
@@ -159,7 +160,7 @@ pub fn launch_with_urls_by_bundle(
     } else {
         nsworkspace::open_urls_with_application(urls, bundle_id, &cfg)
     }
-    .map_err(|e| anyhow::anyhow!("Failed to launch {bundle_id}: {e}"))?;
+    .with_context(|| format!("Failed to launch {bundle_id}"))?;
     let pid: i32 = unsafe { running.processIdentifier() };
     Ok(pid)
 }
@@ -190,7 +191,7 @@ pub fn launch_with_urls_by_name(
     } else {
         nsworkspace::open_urls_with_application(urls, &app_ref, &cfg)
     }
-    .map_err(|e| anyhow::anyhow!("Failed to launch '{name}': {e}"))?;
+    .with_context(|| format!("Failed to launch '{name}'"))?;
     let pid: i32 = unsafe { running.processIdentifier() };
     Ok(pid)
 }

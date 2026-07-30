@@ -731,7 +731,13 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token(
     ): Short
+    external fun uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_and_native_http_client(
+    ): Short
     external fun uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_constructor_cyclopscredentials_new(
     ): Short
@@ -766,7 +772,13 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token(`configuration`: RustBuffer.ByValue,`accessToken`: RustBuffer.ByValue,`httpClient`: Long,uniffi_out_err: UniffiRustCallStatus,
     ): Long
+    external fun uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_and_native_http_client(`configuration`: RustBuffer.ByValue,`accessToken`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    ): Long
     external fun uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider(`configuration`: RustBuffer.ByValue,`tokenProvider`: Long,`httpClient`: Long,uniffi_out_err: UniffiRustCallStatus,
+    ): Long
+    external fun uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client(`configuration`: RustBuffer.ByValue,`tokenProvider`: Long,uniffi_out_err: UniffiRustCallStatus,
+    ): Long
+    external fun uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_native_http_client(`configuration`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
     ): Long
     external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_create_claim(`ptr`: Long,`request`: RustBuffer.ByValue,
     ): Long
@@ -979,7 +991,16 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token() != 10148.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_and_native_http_client() != 42291.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider() != 58487.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client() != 62005.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client() != 49301.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_constructor_cyclopscredentials_new() != 25746.toShort()) {
@@ -2302,12 +2323,48 @@ open class CyclopsClient: Disposable, AutoCloseable, CyclopsClientInterface
 
 
 
+    @Throws(SdkException::class) fun `connectWithAccessTokenAndNativeHttpClient`(`configuration`: CyclopsTokenProviderConfiguration, `accessToken`: kotlin.String): CyclopsClient {
+            return FfiConverterTypeCyclopsClient.lift(
+    uniffiRustCallWithError(SdkException) { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_and_native_http_client(
+
+        FfiConverterTypeCyclopsTokenProviderConfiguration.lower(`configuration`),FfiConverterString.lower(`accessToken`),_status)
+}
+    )
+    }
+
+
+
     @Throws(SdkException::class) fun `connectWithAccessTokenProvider`(`configuration`: CyclopsTokenProviderConfiguration, `tokenProvider`: AccessTokenProvider, `httpClient`: HttpClient): CyclopsClient {
             return FfiConverterTypeCyclopsClient.lift(
     uniffiRustCallWithError(SdkException) { _status ->
     UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider(
 
         FfiConverterTypeCyclopsTokenProviderConfiguration.lower(`configuration`),FfiConverterTypeAccessTokenProvider.lower(`tokenProvider`),FfiConverterTypeHttpClient.lower(`httpClient`),_status)
+}
+    )
+    }
+
+
+
+    @Throws(SdkException::class) fun `connectWithAccessTokenProviderAndNativeHttpClient`(`configuration`: CyclopsTokenProviderConfiguration, `tokenProvider`: AccessTokenProvider): CyclopsClient {
+            return FfiConverterTypeCyclopsClient.lift(
+    uniffiRustCallWithError(SdkException) { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client(
+
+        FfiConverterTypeCyclopsTokenProviderConfiguration.lower(`configuration`),FfiConverterTypeAccessTokenProvider.lower(`tokenProvider`),_status)
+}
+    )
+    }
+
+
+
+    @Throws(SdkException::class) fun `connectWithNativeHttpClient`(`configuration`: CyclopsConfiguration): CyclopsClient {
+            return FfiConverterTypeCyclopsClient.lift(
+    uniffiRustCallWithError(SdkException) { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_native_http_client(
+
+        FfiConverterTypeCyclopsConfiguration.lower(`configuration`),_status)
 }
     )
     }

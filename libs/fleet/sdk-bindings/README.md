@@ -19,6 +19,10 @@ Generated binding source is committed so review and drift checks are
 reproducible. Native libraries, Cargo target output, Gradle caches, and staged
 language runtime directories are not committed.
 
+## Native HTTP transport
+
+Native bindings can call `CyclopsClient.connect_with_native_http_client(configuration)` instead of implementing a foreign `HttpClient`. Static-token and token-provider flows use `connect_with_access_token_and_native_http_client(configuration, access_token)` and `connect_with_access_token_provider_and_native_http_client(configuration, provider)`. Existing `http_client` constructors remain the advanced path for proxying, custom CA trust, TLS policy, and tests. The native transport uses `reqwest` with Rustls/platform trust roots, a 30-second whole-request timeout, direct connections without proxy environment variables, and no automatic redirects, so bearer credentials are not replayed to redirect hosts. Duplicate headers and status bodies are preserved. Browser/WASM continues to use `connect_browser_with_access_token`.
+
 ## Prerequisites
 
 - Rust `1.97.0` with `rustfmt` and `clippy` (`cyclops-cs/rust-toolchain.toml`).

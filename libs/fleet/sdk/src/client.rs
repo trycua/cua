@@ -67,6 +67,27 @@ impl CyclopsClient {
     }
 
     #[uniffi::constructor]
+    pub fn connect_with_native_http_client(
+        configuration: CyclopsConfiguration,
+    ) -> Result<Arc<Self>, SdkError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Self::connect(
+                configuration,
+                Arc::new(crate::transport::NativeHttpClient::new()?),
+            )
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = configuration;
+            Err(SdkError::Configuration {
+                reason: "connect_with_native_http_client is only available for non-wasm targets"
+                    .into(),
+            })
+        }
+    }
+
+    #[uniffi::constructor]
     pub fn connect_with_access_token_provider(
         configuration: CyclopsTokenProviderConfiguration,
         token_provider: Arc<dyn AccessTokenProvider>,
@@ -116,6 +137,46 @@ impl CyclopsClient {
             }),
             transport,
         }))
+    }
+
+    #[uniffi::constructor]
+    pub fn connect_with_access_token_and_native_http_client(
+        configuration: CyclopsTokenProviderConfiguration,
+        access_token: String,
+    ) -> Result<Arc<Self>, SdkError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Self::connect_with_access_token(
+                configuration,
+                access_token,
+                Arc::new(crate::transport::NativeHttpClient::new()?),
+            )
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (configuration, access_token);
+            Err(SdkError::Configuration { reason: "connect_with_access_token_and_native_http_client is only available for non-wasm targets".into() })
+        }
+    }
+
+    #[uniffi::constructor]
+    pub fn connect_with_access_token_provider_and_native_http_client(
+        configuration: CyclopsTokenProviderConfiguration,
+        token_provider: Arc<dyn AccessTokenProvider>,
+    ) -> Result<Arc<Self>, SdkError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Self::connect_with_access_token_provider(
+                configuration,
+                token_provider,
+                Arc::new(crate::transport::NativeHttpClient::new()?),
+            )
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (configuration, token_provider);
+            Err(SdkError::Configuration { reason: "connect_with_access_token_provider_and_native_http_client is only available for non-wasm targets".into() })
+        }
     }
 
     #[uniffi::constructor]

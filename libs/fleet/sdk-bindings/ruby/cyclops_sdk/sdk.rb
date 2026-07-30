@@ -1875,8 +1875,17 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token,
     [RustBuffer.by_value, RustBuffer.by_value, :uint64, RustCallStatus.by_ref],
     :uint64
+  attach_function :uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_and_native_http_client,
+    [RustBuffer.by_value, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
   attach_function :uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider,
     [RustBuffer.by_value, :uint64, :uint64, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client,
+    [RustBuffer.by_value, :uint64, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_native_http_client,
+    [RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_create_claim,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
@@ -2032,7 +2041,16 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token,
     [RustCallStatus.by_ref],
     :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_and_native_http_client,
+    [RustCallStatus.by_ref],
+    :uint16
   attach_function :uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client,
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_constructor_cyclopscredentials_new,
@@ -2440,6 +2458,16 @@ end
     # and just create a new instance with the required handle.
     return uniffi_allocate(CyclopsSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token,RustBuffer.alloc_from_TypeCyclopsTokenProviderConfiguration(configuration),RustBuffer.allocFromString(access_token),(HttpClient.uniffi_lower http_client)))
   end
+  def self.connect_with_access_token_and_native_http_client(configuration, access_token)
+        configuration = configuration
+        RustBuffer.check_lower_TypeCyclopsTokenProviderConfiguration(configuration)
+        access_token = CyclopsSdk::uniffi_utf8(access_token)
+
+    # Call the (fallible) function before creating any half-baked object instances.
+    # Lightly yucky way to bypass the usual "initialize" logic
+    # and just create a new instance with the required handle.
+    return uniffi_allocate(CyclopsSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_and_native_http_client,RustBuffer.alloc_from_TypeCyclopsTokenProviderConfiguration(configuration),RustBuffer.allocFromString(access_token)))
+  end
   def self.connect_with_access_token_provider(configuration, token_provider, http_client)
         configuration = configuration
         RustBuffer.check_lower_TypeCyclopsTokenProviderConfiguration(configuration)
@@ -2451,6 +2479,24 @@ end
     # Lightly yucky way to bypass the usual "initialize" logic
     # and just create a new instance with the required handle.
     return uniffi_allocate(CyclopsSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider,RustBuffer.alloc_from_TypeCyclopsTokenProviderConfiguration(configuration),(AccessTokenProvider.uniffi_lower token_provider),(HttpClient.uniffi_lower http_client)))
+  end
+  def self.connect_with_access_token_provider_and_native_http_client(configuration, token_provider)
+        configuration = configuration
+        RustBuffer.check_lower_TypeCyclopsTokenProviderConfiguration(configuration)
+        token_provider = token_provider
+        (AccessTokenProvider.uniffi_check_lower token_provider)
+    # Call the (fallible) function before creating any half-baked object instances.
+    # Lightly yucky way to bypass the usual "initialize" logic
+    # and just create a new instance with the required handle.
+    return uniffi_allocate(CyclopsSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client,RustBuffer.alloc_from_TypeCyclopsTokenProviderConfiguration(configuration),(AccessTokenProvider.uniffi_lower token_provider)))
+  end
+  def self.connect_with_native_http_client(configuration)
+        configuration = configuration
+        RustBuffer.check_lower_TypeCyclopsConfiguration(configuration)
+    # Call the (fallible) function before creating any half-baked object instances.
+    # Lightly yucky way to bypass the usual "initialize" logic
+    # and just create a new instance with the required handle.
+    return uniffi_allocate(CyclopsSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_native_http_client,RustBuffer.alloc_from_TypeCyclopsConfiguration(configuration)))
   end
 
 

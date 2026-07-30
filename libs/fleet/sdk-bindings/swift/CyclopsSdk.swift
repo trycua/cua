@@ -874,12 +874,38 @@ public static func connectWithAccessToken(configuration: CyclopsTokenProviderCon
 })
 }
 
+public static func connectWithAccessTokenAndNativeHttpClient(configuration: CyclopsTokenProviderConfiguration, accessToken: String)throws  -> CyclopsClient  {
+    return try  FfiConverterTypeCyclopsClient_lift(try rustCallWithError(FfiConverterTypeSdkError_lift) {
+    uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_and_native_http_client(
+        FfiConverterTypeCyclopsTokenProviderConfiguration_lower(configuration),
+        FfiConverterString.lower(accessToken),$0
+    )
+})
+}
+
 public static func connectWithAccessTokenProvider(configuration: CyclopsTokenProviderConfiguration, tokenProvider: AccessTokenProvider, httpClient: HttpClient)throws  -> CyclopsClient  {
     return try  FfiConverterTypeCyclopsClient_lift(try rustCallWithError(FfiConverterTypeSdkError_lift) {
     uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider(
         FfiConverterTypeCyclopsTokenProviderConfiguration_lower(configuration),
         FfiConverterTypeAccessTokenProvider_lower(tokenProvider),
         FfiConverterTypeHttpClient_lower(httpClient),$0
+    )
+})
+}
+
+public static func connectWithAccessTokenProviderAndNativeHttpClient(configuration: CyclopsTokenProviderConfiguration, tokenProvider: AccessTokenProvider)throws  -> CyclopsClient  {
+    return try  FfiConverterTypeCyclopsClient_lift(try rustCallWithError(FfiConverterTypeSdkError_lift) {
+    uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client(
+        FfiConverterTypeCyclopsTokenProviderConfiguration_lower(configuration),
+        FfiConverterTypeAccessTokenProvider_lower(tokenProvider),$0
+    )
+})
+}
+
+public static func connectWithNativeHttpClient(configuration: CyclopsConfiguration)throws  -> CyclopsClient  {
+    return try  FfiConverterTypeCyclopsClient_lift(try rustCallWithError(FfiConverterTypeSdkError_lift) {
+    uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_native_http_client(
+        FfiConverterTypeCyclopsConfiguration_lower(configuration),$0
     )
 })
 }
@@ -2894,7 +2920,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token() != 10148) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_and_native_http_client() != 42291) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider() != 58487) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client() != 62005) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client() != 49301) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_constructor_cyclopscredentials_new() != 25746) {

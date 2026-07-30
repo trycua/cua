@@ -51,6 +51,8 @@ fn generated_bindings_hide_raw_credentials_and_claim_update() {
     assert!(!python.contains("PoolFailed"));
     assert!(!kotlin.contains("PoolTimeout"));
     assert!(!kotlin.contains("PoolFailed"));
+    assert!(python.contains("def connect_with_native_http_client"));
+    assert!(python.contains("def connect_with_access_token_and_native_http_client"));
 
     fs::remove_dir_all(output).unwrap();
 }

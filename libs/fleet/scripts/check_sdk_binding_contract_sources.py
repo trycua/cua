@@ -273,7 +273,7 @@ def check(root: Path) -> None:
     ])
     require(files["python_live"].read_text(encoding="utf-8"), "Python live environment", r"os\.environ\[\"CUA_CLIENT_ID\"\].*os\.environ\[\"CUA_IMAGE\"\]", files["python_live"])
     require_all(source["python_live"], files["python_live"], [
-        ("Python live HTTP callback", r"class\s+UrlLibHttpClient\(HttpClient\).*async\s+def\s+execute"),
+        ("Python live native HTTP constructor", r"CyclopsClient\.connect_with_native_http_client\("),
         ("Python live typed pool", r"PoolSpec\(.*SandboxService\(.*target_port=3000"),
         ("Python live typed claim", r"CreateClaimRequest\(pool=pool,\s*spec=None\)"),
         ("Python live MCP retry", r"response\.status\s+in\s+\(502,\s*503,\s*504\)"),

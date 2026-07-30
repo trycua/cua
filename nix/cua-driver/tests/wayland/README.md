@@ -16,8 +16,7 @@ The full matrix is exposed from `flake.nix` as:
 - representative foot, GTK, and Qt background-GUI rows.
 
 KWin and Mutter entries intentionally exercise their real host socket rather
-than the historical nested labwc workaround. This keeps portal/libei and native
-input/capture regressions visible. `xfce-wayfire` remains excluded because the
+than the historical nested labwc workaround. This keeps native input and capture behavior observable in artifact evidence. `xfce-wayfire` remains excluded because the
 pinned nixpkgs lineage cannot build its `wf-config` dependency; labwc and Sway
 continue to cover the wlroots session family.
 

@@ -8,7 +8,7 @@
 # can drive the host compositor, but compositor-specific focus heuristics make
 # virtual-keyboard delivery after a click unreliable in headless CI. This visual
 # test therefore uses the same EIS-backed nested compositor as the background
-# terminal test so it remains a deterministic click+type regression guard across
+# terminal test so it remains a deterministic click+type coverage guard across
 # labwc, sway, KDE, and GNOME hosts.
 #
 # To run: nix build .#checks.x86_64-linux.cua-driver-wayland-<desktop>-cursor-click-gif

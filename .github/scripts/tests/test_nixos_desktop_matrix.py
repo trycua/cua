@@ -1,4 +1,4 @@
-"""Static regression guards for NixOS Linux desktop coverage."""
+"""Static wiring guards for NixOS Linux desktop coverage."""
 
 from pathlib import Path
 import unittest

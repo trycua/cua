@@ -3,8 +3,7 @@
 The NixOS checks exercise the packaged driver in disposable desktop sessions.
 They keep session start-up, the MCP service, real input, capture, and visual
 artifacts covered independently from the Ubuntu-hosted Rust E2E runners. Rust
-owns the shared typed behavior contract; these checks prevent a NixOS or
-compositor integration regression from silently removing that coverage.
+owns the shared typed behavior contract; these checks prevent NixOS or compositor integration coverage from silently disappearing.
 
 | Coverage | Flake attributes | Automatic CI |
 | --- | --- | --- |
@@ -31,11 +30,13 @@ not buildable in the pinned nixpkgs lineage, while labwc and Sway cover the same
 wlroots family. This is an upstream packaging limitation, not an equivalence
 claim for Wayfire.
 
-## Regression map
+## Observable behavior goals
 
-- `#2328`, `#2331`, and `#2631`: X11 cursor/click, desktop lock, and uinput/MPX rows.
-- `#2565`, `#2573`, `#2574`, and `#2597`: GNOME/KDE native-Wayland input and GUI rows.
-- `#2226` and likely `#2552`: native-Wayland screenshot/capture rows.
+The matrix preserves observable behavior and failure evidence for X11 and
+Wayland sessions: cursor movement/clicking, background terminal input,
+parallel drag, screenshot/capture, and toolkit-specific GUI interaction. It
+does not assert that a historical issue would necessarily have been prevented
+or caught unless that issue is linked to the exact scenario and assertion.
 
 Run a single check locally with, for example:
 

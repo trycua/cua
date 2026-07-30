@@ -148,13 +148,16 @@ fn transient_seats_are_isolated_and_destroyable() {
     );
     assert_eq!(exchange(&["seat create agent-b".to_owned()]), vec!["ok"]);
 
+    // The shared Electron fixture is a three-column grid. This point lands in
+    // the third-column keyboard control instead of the older stacked layout's
+    // now-unrelated lower-left position.
     assert_eq!(
         exchange(&[
-            format!("sm agent-a {target_a} 0 160 420"),
+            format!("sm agent-a {target_a} 0 700 95"),
             format!("sb agent-a {target_a} 0 272 1"),
             format!("sb agent-a {target_a} 0 272 0"),
             format!("st agent-a {target_a} {}", hex("seat-a")),
-            format!("sm agent-b {target_b} 0 160 420"),
+            format!("sm agent-b {target_b} 0 700 95"),
             format!("sb agent-b {target_b} 0 272 1"),
             format!("sb agent-b {target_b} 0 272 0"),
             format!("st agent-b {target_b} {}", hex("seat-b")),

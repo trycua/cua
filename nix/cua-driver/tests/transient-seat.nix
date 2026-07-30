@@ -112,6 +112,7 @@ pkgs.testers.nixosTest {
     machine.wait_for_unit("multi-user.target")
 
     machine.succeed("install -d -m 700 /tmp/cua-runtime /tmp/transient-seat-evidence")
+    machine.succeed("dbus-daemon --session --address=unix:path=/tmp/cua-session-bus --fork")
     machine.execute(
         "env XDG_RUNTIME_DIR=/tmp/cua-runtime WLR_BACKENDS=headless WLR_RENDERER=pixman "
         "WLR_RENDERER_ALLOW_SOFTWARE=1 WLR_LIBINPUT_NO_DEVICES=1 WLR_HEADLESS_OUTPUTS=1 "
@@ -137,6 +138,8 @@ pkgs.testers.nixosTest {
     )
     status, output = machine.execute(
         "env XDG_RUNTIME_DIR=/tmp/cua-runtime WAYLAND_DISPLAY=" + wayland_display + " "
+        "DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/cua-session-bus XDG_SESSION_TYPE=wayland "
+        "XDG_CURRENT_DESKTOP=sway XDG_SESSION_DESKTOP=sway CUA_DRIVER_RS_ENABLE_WAYLAND=1 "
         "CUA_INJECT_SOCKET=/tmp/cua-runtime/cua-inject.sock "
         "CUA_TEST_APPS_ROOT=${electronFixture} "
         "ELECTRON_OZONE_PLATFORM_HINT=wayland "

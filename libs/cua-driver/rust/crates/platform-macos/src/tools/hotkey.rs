@@ -214,8 +214,9 @@ impl Tool for HotkeyTool {
         // background combo (matches click/type_text).
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
         let fg = delivery_mode.is_foreground();
+        let screen_sharing_target = crate::input::keyboard::is_screen_sharing_pid(pid);
         if let Some(error) = screen_sharing_modifier_delivery_error(
-            crate::input::keyboard::is_screen_sharing_pid(pid),
+            screen_sharing_target,
             !modifiers.is_empty(),
             fg,
             window_id,
@@ -280,7 +281,13 @@ impl Tool for HotkeyTool {
                             crate::input::skylight::with_foreground_hid_activation(
                                 pid as libc::pid_t,
                                 wid,
-                                || crate::input::keyboard::press_key_global(&key, &m),
+                                || {
+                                    if screen_sharing_target {
+                                        crate::input::keyboard::press_key_bare_global(&key, &m)
+                                    } else {
+                                        crate::input::keyboard::press_key_global(&key, &m)
+                                    }
+                                },
                             )?;
                             Ok(())
                         }
@@ -294,7 +301,7 @@ impl Tool for HotkeyTool {
                             crate::input::skylight::with_foreground_hid_activation(
                                 pid as libc::pid_t,
                                 wid,
-                                || crate::input::keyboard::press_key_global(&key, &m),
+                                || crate::input::keyboard::press_key_bare_global(&key, &m),
                             )?;
                             Ok(())
                         }

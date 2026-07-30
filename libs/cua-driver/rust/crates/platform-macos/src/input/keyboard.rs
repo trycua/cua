@@ -6,7 +6,7 @@
 //! (required on macOS 14+ for VS Code, Chrome, Electron apps).
 
 use core_graphics::{
-    event::{CGEvent, CGEventFlags, CGEventType},
+    event::{CGEvent, CGEventFlags},
     event_source::{CGEventSource, CGEventSourceStateID},
 };
 use foreign_types::ForeignType;
@@ -176,7 +176,6 @@ pub fn press_key_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
             true,
             active_flags,
             CGEventTapLocation::HID,
-            Some(CGEventType::FlagsChanged),
         ) {
             release_global_modifiers(
                 &source,
@@ -197,7 +196,6 @@ pub fn press_key_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
             true,
             active_flags,
             CGEventTapLocation::HID,
-            None,
         )?;
         std::thread::sleep(std::time::Duration::from_millis(8));
         post_global_key(
@@ -206,7 +204,6 @@ pub fn press_key_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
             false,
             active_flags,
             CGEventTapLocation::HID,
-            None,
         )
     })();
 
@@ -225,27 +222,12 @@ fn post_global_key(
     key_down: bool,
     flags: CGEventFlags,
     tap: core_graphics::event::CGEventTapLocation,
-    event_type: Option<CGEventType>,
 ) -> anyhow::Result<()> {
-    let event = create_global_key_event(source, key_code, key_down, flags, event_type)?;
-    event.post(tap);
-    Ok(())
-}
-
-fn create_global_key_event(
-    source: &CGEventSource,
-    key_code: u16,
-    key_down: bool,
-    flags: CGEventFlags,
-    event_type: Option<CGEventType>,
-) -> anyhow::Result<CGEvent> {
     let event = CGEvent::new_keyboard_event(source.clone(), key_code, key_down)
         .map_err(|_| anyhow::anyhow!("CGEvent keyboard event creation failed"))?;
-    if let Some(event_type) = event_type {
-        event.set_type(event_type);
-    }
     event.set_flags(flags);
-    Ok(event)
+    event.post(tap);
+    Ok(())
 }
 
 fn release_global_modifiers(
@@ -256,13 +238,8 @@ fn release_global_modifiers(
 ) {
     for &(key_code, flag) in pressed.iter().rev() {
         active_flags.remove(flag);
-        if let Ok(event) = create_global_key_event(
-            source,
-            key_code,
-            false,
-            active_flags,
-            Some(CGEventType::FlagsChanged),
-        ) {
+        if let Ok(event) = CGEvent::new_keyboard_event(source.clone(), key_code, false) {
+            event.set_flags(active_flags);
             event.post(tap);
         }
         std::thread::sleep(std::time::Duration::from_millis(8));
@@ -323,26 +300,12 @@ pub fn type_text_physical_global(text: &str, inter_char_delay_ms: u64) -> anyhow
         .chars()
         .map(physical_text_events)
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
-        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     for events in event_groups {
-        for event in events {
-            let cg_event =
-                CGEvent::new_keyboard_event(source.clone(), event.key_code, event.key_down)
-                    .map_err(|_| anyhow::anyhow!("CGEvent keyboard event creation failed"))?;
-            if let Some(value) = event.text {
-                cg_event.set_string(&value.to_string());
-            }
-            cg_event.set_type(match event.event_type {
-                PhysicalEventType::KeyDown => CGEventType::KeyDown,
-                PhysicalEventType::KeyUp => CGEventType::KeyUp,
-                PhysicalEventType::FlagsChanged => CGEventType::FlagsChanged,
-            });
-            cg_event.set_flags(if event.shift {
-                CGEventFlags::CGEventFlagShift
-            } else {
-                CGEventFlags::CGEventFlagNull
-            });
+        let native_events = events
+            .iter()
+            .map(|event| create_bare_keyboard_event(event.key_code, event.key_down))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        for cg_event in native_events {
             cg_event.post(CGEventTapLocation::HID);
             std::thread::sleep(std::time::Duration::from_millis(8));
         }
@@ -351,6 +314,64 @@ pub fn type_text_physical_global(text: &str, inter_char_delay_ms: u64) -> anyhow
         }
     }
     Ok(())
+}
+
+/// Send a physical key chord using the exact bare-event sequence documented by
+/// Apple for `CGEventCreateKeyboardEvent`: NULL source, modifier downs, base
+/// down/up, then modifier ups in reverse order. No flags, Unicode payload, or
+/// event-type overrides are applied; CoreGraphics derives those from the
+/// virtual key transitions and its default source state.
+pub fn press_key_bare_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
+    use core_graphics::event::CGEventTapLocation;
+
+    let key_code = key_name_to_code(key)?;
+    let mut modifier_codes = Vec::new();
+    for modifier in modifiers {
+        let Some((modifier_code, _)) = modifier_key_code_and_flag(modifier) else {
+            continue;
+        };
+        if !modifier_codes.contains(&modifier_code) {
+            modifier_codes.push(modifier_code);
+        }
+    }
+
+    let events = bare_chord_transitions(key_code, &modifier_codes)
+        .into_iter()
+        .map(|(code, down)| create_bare_keyboard_event(code, down))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    for event in events {
+        event.post(CGEventTapLocation::HID);
+        std::thread::sleep(std::time::Duration::from_millis(8));
+    }
+    Ok(())
+}
+
+fn bare_chord_transitions(key_code: u16, modifier_codes: &[u16]) -> Vec<(u16, bool)> {
+    let mut transitions = Vec::with_capacity(modifier_codes.len() * 2 + 2);
+    transitions.extend(modifier_codes.iter().map(|&code| (code, true)));
+    transitions.push((key_code, true));
+    transitions.push((key_code, false));
+    transitions.extend(modifier_codes.iter().rev().map(|&code| (code, false)));
+    transitions
+}
+
+fn create_bare_keyboard_event(key_code: u16, key_down: bool) -> anyhow::Result<CGEvent> {
+    unsafe {
+        let event_ref = CGEventCreateKeyboardEvent(std::ptr::null_mut(), key_code, key_down);
+        if event_ref.is_null() {
+            anyhow::bail!("CGEventCreateKeyboardEvent with default source failed");
+        }
+        Ok(CGEvent::from_ptr(event_ref))
+    }
+}
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGEventCreateKeyboardEvent(
+        source: core_graphics::sys::CGEventSourceRef,
+        key_code: u16,
+        key_down: bool,
+    ) -> core_graphics::sys::CGEventRef;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -413,8 +434,8 @@ fn physical_text_events(ch: char) -> anyhow::Result<Vec<PhysicalTextEvent>> {
 }
 
 /// Map printable ASCII to the physical key that produces it on the standard US
-/// layout. The Unicode payload remains attached to the base key for local event
-/// consumers, while forwarders can use the keycode and Shift transitions.
+/// layout. The Screen Sharing path intentionally sends only the returned
+/// keycode and the required bare Shift transitions.
 fn physical_key_for_char(ch: char) -> Option<(u16, bool)> {
     let lower = ch.to_ascii_lowercase();
     if ch.is_ascii_alphabetic() {
@@ -615,6 +636,7 @@ pub(super) fn key_name_to_code(key: &str) -> anyhow::Result<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core_graphics::event::CGEventType;
 
     #[test]
     fn physical_text_uses_flags_changed_for_balanced_shift_transitions() {
@@ -677,32 +699,60 @@ mod tests {
     }
 
     #[test]
-    fn global_modifier_event_has_flags_changed_type_and_active_flags() {
-        let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState).unwrap();
-        let shift_down = create_global_key_event(
-            &source,
-            SHIFT_KEY_CODE,
-            true,
-            CGEventFlags::CGEventFlagShift,
-            Some(CGEventType::FlagsChanged),
-        )
-        .unwrap();
+    fn bare_modifier_events_derive_type_and_flags_from_default_source() {
+        let shift_down = create_bare_keyboard_event(SHIFT_KEY_CODE, true).unwrap();
         assert_eq!(
             shift_down.get_type() as u32,
             CGEventType::FlagsChanged as u32
         );
-        assert_eq!(shift_down.get_flags(), CGEventFlags::CGEventFlagShift);
+        assert!(
+            shift_down
+                .get_flags()
+                .contains(CGEventFlags::CGEventFlagShift),
+            "bare Shift down must derive the active Shift flag"
+        );
+        assert_eq!(
+            shift_down
+                .get_integer_value_field(core_graphics::event::EventField::EVENT_SOURCE_STATE_ID),
+            CGEventSourceStateID::CombinedSessionState as i64,
+            "NULL source must resolve to the default combined-session state, not HID state"
+        );
 
-        let shift_up = create_global_key_event(
-            &source,
-            SHIFT_KEY_CODE,
-            false,
-            CGEventFlags::CGEventFlagNull,
-            Some(CGEventType::FlagsChanged),
-        )
-        .unwrap();
+        let shift_up = create_bare_keyboard_event(SHIFT_KEY_CODE, false).unwrap();
         assert_eq!(shift_up.get_type() as u32, CGEventType::FlagsChanged as u32);
-        assert_eq!(shift_up.get_flags(), CGEventFlags::CGEventFlagNull);
+        assert!(
+            !shift_up
+                .get_flags()
+                .contains(CGEventFlags::CGEventFlagShift),
+            "bare Shift up must derive cleared Shift state"
+        );
+
+        let z_down = create_bare_keyboard_event(6, true).unwrap();
+        assert_eq!(z_down.get_type() as u32, CGEventType::KeyDown as u32);
+        assert_eq!(
+            z_down
+                .get_integer_value_field(core_graphics::event::EventField::KEYBOARD_EVENT_KEYCODE),
+            6
+        );
+    }
+
+    #[test]
+    fn bare_command_chord_orders_modifier_base_and_reverse_release() {
+        assert_eq!(
+            bare_chord_transitions(9, &[55]),
+            vec![(55, true), (9, true), (9, false), (55, false)]
+        );
+        let command_down = create_bare_keyboard_event(55, true).unwrap();
+        assert_eq!(
+            command_down.get_type() as u32,
+            CGEventType::FlagsChanged as u32
+        );
+        assert!(
+            command_down
+                .get_flags()
+                .contains(CGEventFlags::CGEventFlagCommand),
+            "bare Command down must derive the active Command flag"
+        );
     }
 
     #[test]

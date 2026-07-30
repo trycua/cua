@@ -115,6 +115,7 @@ pkgs.testers.nixosTest {
     machine.execute(
         "env XDG_RUNTIME_DIR=/tmp/cua-runtime WLR_BACKENDS=headless WLR_RENDERER=pixman "
         "WLR_RENDERER_ALLOW_SOFTWARE=1 WLR_LIBINPUT_NO_DEVICES=1 WLR_HEADLESS_OUTPUTS=1 "
+        "CUA_INJECT_SOCKET=/tmp/cua-runtime/cua-inject.sock "
         "cua-compositor >/tmp/transient-seat-compositor.log 2>&1 & echo $! >/tmp/cua-compositor.pid"
     )
     machine.sleep(1)

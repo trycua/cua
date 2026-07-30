@@ -6,7 +6,7 @@
 //! (required on macOS 14+ for VS Code, Chrome, Electron apps).
 
 use core_graphics::{
-    event::{CGEvent, CGEventFlags},
+    event::{CGEvent, CGEventFlags, CGEventType},
     event_source::{CGEventSource, CGEventSourceStateID},
 };
 use foreign_types::ForeignType;
@@ -176,6 +176,7 @@ pub fn press_key_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
             true,
             active_flags,
             CGEventTapLocation::HID,
+            Some(CGEventType::FlagsChanged),
         ) {
             release_global_modifiers(
                 &source,
@@ -196,6 +197,7 @@ pub fn press_key_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
             true,
             active_flags,
             CGEventTapLocation::HID,
+            None,
         )?;
         std::thread::sleep(std::time::Duration::from_millis(8));
         post_global_key(
@@ -204,6 +206,7 @@ pub fn press_key_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
             false,
             active_flags,
             CGEventTapLocation::HID,
+            None,
         )
     })();
 
@@ -222,12 +225,27 @@ fn post_global_key(
     key_down: bool,
     flags: CGEventFlags,
     tap: core_graphics::event::CGEventTapLocation,
+    event_type: Option<CGEventType>,
 ) -> anyhow::Result<()> {
-    let event = CGEvent::new_keyboard_event(source.clone(), key_code, key_down)
-        .map_err(|_| anyhow::anyhow!("CGEvent keyboard event creation failed"))?;
-    event.set_flags(flags);
+    let event = create_global_key_event(source, key_code, key_down, flags, event_type)?;
     event.post(tap);
     Ok(())
+}
+
+fn create_global_key_event(
+    source: &CGEventSource,
+    key_code: u16,
+    key_down: bool,
+    flags: CGEventFlags,
+    event_type: Option<CGEventType>,
+) -> anyhow::Result<CGEvent> {
+    let event = CGEvent::new_keyboard_event(source.clone(), key_code, key_down)
+        .map_err(|_| anyhow::anyhow!("CGEvent keyboard event creation failed"))?;
+    if let Some(event_type) = event_type {
+        event.set_type(event_type);
+    }
+    event.set_flags(flags);
+    Ok(event)
 }
 
 fn release_global_modifiers(
@@ -238,8 +256,13 @@ fn release_global_modifiers(
 ) {
     for &(key_code, flag) in pressed.iter().rev() {
         active_flags.remove(flag);
-        if let Ok(event) = CGEvent::new_keyboard_event(source.clone(), key_code, false) {
-            event.set_flags(active_flags);
+        if let Ok(event) = create_global_key_event(
+            source,
+            key_code,
+            false,
+            active_flags,
+            Some(CGEventType::FlagsChanged),
+        ) {
             event.post(tap);
         }
         std::thread::sleep(std::time::Duration::from_millis(8));
@@ -310,6 +333,11 @@ pub fn type_text_physical_global(text: &str, inter_char_delay_ms: u64) -> anyhow
             if let Some(value) = event.text {
                 cg_event.set_string(&value.to_string());
             }
+            cg_event.set_type(match event.event_type {
+                PhysicalEventType::KeyDown => CGEventType::KeyDown,
+                PhysicalEventType::KeyUp => CGEventType::KeyUp,
+                PhysicalEventType::FlagsChanged => CGEventType::FlagsChanged,
+            });
             cg_event.set_flags(if event.shift {
                 CGEventFlags::CGEventFlagShift
             } else {
@@ -329,8 +357,16 @@ pub fn type_text_physical_global(text: &str, inter_char_delay_ms: u64) -> anyhow
 struct PhysicalTextEvent {
     key_code: u16,
     key_down: bool,
+    event_type: PhysicalEventType,
     shift: bool,
     text: Option<char>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PhysicalEventType {
+    KeyDown,
+    KeyUp,
+    FlagsChanged,
 }
 
 fn physical_text_events(ch: char) -> anyhow::Result<Vec<PhysicalTextEvent>> {
@@ -345,6 +381,7 @@ fn physical_text_events(ch: char) -> anyhow::Result<Vec<PhysicalTextEvent>> {
         events.push(PhysicalTextEvent {
             key_code: SHIFT_KEY_CODE,
             key_down: true,
+            event_type: PhysicalEventType::FlagsChanged,
             shift: true,
             text: None,
         });
@@ -352,12 +389,14 @@ fn physical_text_events(ch: char) -> anyhow::Result<Vec<PhysicalTextEvent>> {
     events.push(PhysicalTextEvent {
         key_code,
         key_down: true,
+        event_type: PhysicalEventType::KeyDown,
         shift,
         text: Some(ch),
     });
     events.push(PhysicalTextEvent {
         key_code,
         key_down: false,
+        event_type: PhysicalEventType::KeyUp,
         shift,
         text: Some(ch),
     });
@@ -365,6 +404,7 @@ fn physical_text_events(ch: char) -> anyhow::Result<Vec<PhysicalTextEvent>> {
         events.push(PhysicalTextEvent {
             key_code: SHIFT_KEY_CODE,
             key_down: false,
+            event_type: PhysicalEventType::FlagsChanged,
             shift: false,
             text: None,
         });
@@ -577,19 +617,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn physical_text_uses_mixed_keycodes_and_balanced_shift_transitions() {
+    fn physical_text_uses_flags_changed_for_balanced_shift_transitions() {
         assert_eq!(
             physical_text_events('a').unwrap(),
             vec![
                 PhysicalTextEvent {
                     key_code: 0,
                     key_down: true,
+                    event_type: PhysicalEventType::KeyDown,
                     shift: false,
                     text: Some('a'),
                 },
                 PhysicalTextEvent {
                     key_code: 0,
                     key_down: false,
+                    event_type: PhysicalEventType::KeyUp,
                     shift: false,
                     text: Some('a'),
                 },
@@ -601,24 +643,28 @@ mod tests {
                 PhysicalTextEvent {
                     key_code: 56,
                     key_down: true,
+                    event_type: PhysicalEventType::FlagsChanged,
                     shift: true,
                     text: None,
                 },
                 PhysicalTextEvent {
                     key_code: 6,
                     key_down: true,
+                    event_type: PhysicalEventType::KeyDown,
                     shift: true,
                     text: Some('Z'),
                 },
                 PhysicalTextEvent {
                     key_code: 6,
                     key_down: false,
+                    event_type: PhysicalEventType::KeyUp,
                     shift: true,
                     text: Some('Z'),
                 },
                 PhysicalTextEvent {
                     key_code: 56,
                     key_down: false,
+                    event_type: PhysicalEventType::FlagsChanged,
                     shift: false,
                     text: None,
                 },
@@ -628,6 +674,35 @@ mod tests {
         assert_eq!(physical_key_for_char('!'), Some((18, true)));
         assert_eq!(physical_key_for_char('/'), Some((44, false)));
         assert_eq!(physical_key_for_char('?'), Some((44, true)));
+    }
+
+    #[test]
+    fn global_modifier_event_has_flags_changed_type_and_active_flags() {
+        let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState).unwrap();
+        let shift_down = create_global_key_event(
+            &source,
+            SHIFT_KEY_CODE,
+            true,
+            CGEventFlags::CGEventFlagShift,
+            Some(CGEventType::FlagsChanged),
+        )
+        .unwrap();
+        assert_eq!(
+            shift_down.get_type() as u32,
+            CGEventType::FlagsChanged as u32
+        );
+        assert_eq!(shift_down.get_flags(), CGEventFlags::CGEventFlagShift);
+
+        let shift_up = create_global_key_event(
+            &source,
+            SHIFT_KEY_CODE,
+            false,
+            CGEventFlags::CGEventFlagNull,
+            Some(CGEventType::FlagsChanged),
+        )
+        .unwrap();
+        assert_eq!(shift_up.get_type() as u32, CGEventType::FlagsChanged as u32);
+        assert_eq!(shift_up.get_flags(), CGEventFlags::CGEventFlagNull);
     }
 
     #[test]

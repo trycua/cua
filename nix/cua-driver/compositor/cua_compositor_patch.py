@@ -627,6 +627,9 @@ static bool cua_type_hex(struct tinywl_server *server, struct tinywl_toplevel *t
 		if (cua_pending_restore.pending && cua_pending_restore.server == server)
 			restore_toplevel = cua_pending_restore.toplevel;
 		cua_focus_toplevel(t);
+		/* Send the focus transition before the injected key batch. Chromium drops
+		 * keys that arrive in the same unflushed compositor callback as focus. */
+		wl_display_flush_clients(server->wl_display);
 	}
 	bool ok = true;
 	for (const char *p = hex; p[0] && p[1]; p += 2) {
@@ -634,7 +637,11 @@ static bool cua_type_hex(struct tinywl_server *server, struct tinywl_toplevel *t
 		int lo = (p[1] <= '9') ? p[1] - '0' : (p[1] | 0x20) - 'a' + 10;
 		if (!cua_type_cp(server, t, idx, (uint32_t)((hi << 4) | lo))) { ok = false; break; }
 	}
-	if (restore_focus) cua_defer_default_focus(server, restore_toplevel);
+	if (restore_focus) {
+		/* Flush key delivery before the deferred physical-focus restoration. */
+		wl_display_flush_clients(server->wl_display);
+		cua_defer_default_focus(server, restore_toplevel);
+	}
 	return ok;
 }
 

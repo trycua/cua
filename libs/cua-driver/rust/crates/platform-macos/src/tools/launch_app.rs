@@ -33,7 +33,9 @@ fn def() -> &'static ToolDef {
              Optional `additional_arguments`: extra argv strings appended after --args.\n\n\
              Returns the launched app's pid, bundle_id, name, and a `windows` array \
              (same shape as `list_windows`) so callers can skip an extra round-trip before \
-             `get_window_state(pid, window_id)`. When the focus-steal belt-and-braces \
+             `get_window_state(pid, window_id)`. `launch_state` distinguishes whether the \
+             request was sent, the process is running, and a window is ready. When the \
+             focus-steal belt-and-braces \
              demotion check ran (target pid ≠ prior frontmost), the response also includes \
              `self_activation_suppressed: bool` — true if focus stayed with the prior \
              frontmost, false if the launched app held focus despite the re-demote attempt."
@@ -87,6 +89,8 @@ impl Tool for LaunchAppTool {
         use cua_driver_core::tool_args::ArgsExt;
         let bundle_id = args.opt_str("bundle_id");
         let name = args.opt_str("name");
+        let mut response_bundle_id = bundle_id.clone();
+        let response_requested_name = name.clone();
         let urls: Vec<String> = args.str_array("urls");
         if args.get("cdp_debugging_port").is_some() {
             return ToolResult::error(
@@ -136,6 +140,7 @@ impl Tool for LaunchAppTool {
                 );
             };
             let (_, resolved_bundle_id) = locator.app_ref_and_bundle_id();
+            response_bundle_id = resolved_bundle_id.clone();
             if resolved_bundle_id
                 .as_deref()
                 .is_some_and(is_cua_driver_bundle_id)
@@ -426,11 +431,11 @@ impl Tool for LaunchAppTool {
 
         match launch_result {
             Ok(Ok((pid, app_info, windows))) => {
-                let app_name = app_info.as_ref().map(|a| a.name.as_str()).unwrap_or("?");
-                let bid = app_info
-                    .as_ref()
-                    .and_then(|a| a.bundle_id.as_deref())
-                    .unwrap_or("?");
+                let (app_name, bid) = response_identity(
+                    app_info.as_ref(),
+                    response_bundle_id.as_deref(),
+                    response_requested_name.as_deref(),
+                );
 
                 let mut summary =
                     format!("Launched {app_name} (pid {pid}) in background.{port_summary}");
@@ -472,6 +477,7 @@ impl Tool for LaunchAppTool {
                     "bundle_id": bid,
                     "name": app_name,
                     "windows": windows_json,
+                    "launch_state": launch_state(true, true, !windows.is_empty()),
                 });
                 // Only emit `self_activation_suppressed` when the
                 // belt-and-braces demotion check actually ran. `None`
@@ -483,7 +489,7 @@ impl Tool for LaunchAppTool {
                 }
                 ToolResult::text(summary).with_structured(structured)
             }
-            Ok(Err(e)) => ToolResult::error(format!("Launch failed: {e}")),
+            Ok(Err(e)) => structured_launch_failure(&e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
@@ -546,6 +552,77 @@ fn structured_launch_error(code: &str, message: String, details: serde_json::Val
     }
 
     ToolResult::error(message).with_structured(payload)
+}
+
+fn launch_state(requested: bool, process_running: bool, window_ready: bool) -> serde_json::Value {
+    serde_json::json!({
+        "requested": requested,
+        "process_running": process_running,
+        "window_ready": window_ready,
+    })
+}
+
+fn response_identity(
+    app_info: Option<&crate::apps::AppInfo>,
+    requested_bundle_id: Option<&str>,
+    requested_name: Option<&str>,
+) -> (String, String) {
+    let bundle_id = app_info
+        .and_then(|app| app.bundle_id.as_deref())
+        .filter(|value| !value.is_empty())
+        .or(requested_bundle_id)
+        .unwrap_or("?")
+        .to_owned();
+
+    let name = app_info
+        .map(|app| app.name.as_str())
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| requested_app_name(requested_name, requested_bundle_id));
+
+    (name, bundle_id)
+}
+
+fn requested_app_name(requested_name: Option<&str>, requested_bundle_id: Option<&str>) -> String {
+    if let Some(name) = requested_name.filter(|name| Some(*name) != requested_bundle_id) {
+        let file_name = std::path::Path::new(name)
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or(name);
+        return file_name
+            .strip_suffix(".app")
+            .unwrap_or(file_name)
+            .to_owned();
+    }
+
+    requested_bundle_id
+        .and_then(|bundle_id| bundle_id.rsplit('.').next())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("?")
+        .to_owned()
+}
+
+fn structured_launch_failure(error: &anyhow::Error) -> ToolResult {
+    use crate::apps::nsworkspace::LaunchError;
+
+    let (code, requested) = if let Some(launch_error) = error.downcast_ref::<LaunchError>() {
+        match launch_error {
+            LaunchError::Cocoa(_) => ("NSWORKSPACE_LAUNCH_FAILED", true),
+            LaunchError::NoApp => ("LAUNCH_RESULT_MISSING", true),
+            LaunchError::Timeout => ("LAUNCH_CALLBACK_TIMEOUT", true),
+            LaunchError::BadUrl(_) => ("APP_URL_INVALID", false),
+        }
+    } else {
+        ("LAUNCH_FAILED", false)
+    };
+
+    structured_launch_error(
+        code,
+        format!("Launch failed: {error:#}"),
+        serde_json::json!({
+            "launch_state": launch_state(requested, false, false),
+        }),
+    )
 }
 
 fn preflight_file_urls(urls: &[String]) -> Option<ToolResult> {
@@ -633,7 +710,7 @@ fn hex_value(byte: u8) -> Option<u8> {
 mod tests {
     use super::{
         contains_remote_debugging_flag, is_cua_driver_bundle_id, local_file_target,
-        preflight_file_urls, LaunchAppTool,
+        preflight_file_urls, response_identity, structured_launch_failure, LaunchAppTool,
     };
     use cua_driver_core::tool::Tool;
     use serde_json::json;
@@ -698,6 +775,51 @@ mod tests {
         assert!(is_cua_driver_bundle_id("com.trycua.driver"));
         assert!(is_cua_driver_bundle_id("com.trycua.driver.local"));
         assert!(!is_cua_driver_bundle_id("com.trycua.harness.tauri"));
+    }
+
+    #[test]
+    fn launch_timeout_reports_requested_without_process_or_window() {
+        let error = anyhow::Error::new(crate::apps::nsworkspace::LaunchError::Timeout)
+            .context("Failed to launch com.example.App");
+        let result = structured_launch_failure(&error);
+        let structured = result.structured_content.expect("structured error");
+
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(structured["error"], "LAUNCH_CALLBACK_TIMEOUT");
+        assert_eq!(structured["launch_state"]["requested"], true);
+        assert_eq!(structured["launch_state"]["process_running"], false);
+        assert_eq!(structured["launch_state"]["window_ready"], false);
+    }
+
+    #[test]
+    fn invalid_url_reports_request_was_not_sent() {
+        let error = anyhow::Error::new(crate::apps::nsworkspace::LaunchError::BadUrl(
+            "bad url".to_owned(),
+        ))
+        .context("Failed to launch com.example.App");
+        let result = structured_launch_failure(&error);
+        let structured = result.structured_content.expect("structured error");
+
+        assert_eq!(structured["error"], "APP_URL_INVALID");
+        assert_eq!(structured["launch_state"]["requested"], false);
+        assert_eq!(structured["launch_state"]["process_running"], false);
+        assert_eq!(structured["launch_state"]["window_ready"], false);
+    }
+
+    #[test]
+    fn process_only_response_falls_back_to_requested_identity() {
+        assert_eq!(
+            response_identity(None, Some("com.apple.Safari"), None),
+            ("Safari".to_owned(), "com.apple.Safari".to_owned())
+        );
+        assert_eq!(
+            response_identity(
+                None,
+                Some("com.example.Editor"),
+                Some("/Applications/Example Editor.app"),
+            ),
+            ("Example Editor".to_owned(), "com.example.Editor".to_owned())
+        );
     }
 
     #[tokio::test]

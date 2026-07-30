@@ -133,6 +133,7 @@ fn def() -> &'static ToolDef {
             // cua_driver_core::tool_schema.)
             "required": [],
             "properties": {
+                "observe_window_changes": { "type": "boolean", "default": true, "description": "Set false to skip the post-action window-change poll (up to ~1s) — for deterministic callers (macro replay, harnesses) that already know what the next action expects. The result then omits new-window/foreground-change notes." },
                 "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
                 "pid":           { "type": "integer", "description": "Target process ID." },
                 "window_id":     { "type": "integer", "description": "Target window ID. Required for element_index. Optional when element_token is supplied (the token carries it)." },

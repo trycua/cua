@@ -109,10 +109,22 @@ pub(crate) async fn finish_window_observation(
     snapshot: crate::window_change_detector::Snapshot,
     args: &serde_json::Value,
 ) -> crate::window_change_detector::Changes {
-    if args
-        .get("_skip_window_change_detection")
+    // Public per-call opt-out: deterministic callers (macro replayers, test
+    // harnesses) know what the next action expects and don't need the
+    // up-to-1s post-action window-change poll — for them it is pure latency
+    // on every input action. Additive and backwards-compatible: omitted or
+    // true keeps today's behavior. Distinct from the transport-reserved
+    // underscore flag below, which public callers cannot send
+    // (sanitize_reserved_args strips it).
+    let observe = args
+        .get("observe_window_changes")
         .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false)
+        .unwrap_or(true);
+    if !observe
+        || args
+            .get("_skip_window_change_detection")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
     {
         drop(snapshot);
         crate::window_change_detector::Changes::no_change()
@@ -134,6 +146,25 @@ mod interactive_observation_tests {
         )
         .await;
         assert!(!changes.needs_restore());
+    }
+
+    /// The public opt-out must skip the poll exactly like the internal flag:
+    /// a caller passing observe_window_changes:false gets an immediate
+    /// no-change result instead of the up-to-1s detect poll.
+    #[tokio::test]
+    async fn public_observe_window_changes_false_skips_polling() {
+        let snapshot = crate::window_change_detector::WindowChangeDetector::snapshot(None);
+        let started = std::time::Instant::now();
+        let changes = finish_window_observation(
+            snapshot,
+            &serde_json::json!({"observe_window_changes": false}),
+        )
+        .await;
+        assert!(!changes.needs_restore());
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(500),
+            "opt-out must not run the detect poll"
+        );
     }
 }
 

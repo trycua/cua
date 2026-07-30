@@ -160,6 +160,8 @@ pkgs.testers.nixosTest {
     machine.copy_from_machine("/tmp/transient-seat-evidence/compositor.log", "")
     machine.copy_from_machine("/tmp/transient-seat-evidence/test.log", "")
     machine.copy_from_machine("/tmp/transient-seat-evidence/test-status", "")
+    machine.copy_from_machine("/tmp/transient-seat-evidence/wayland-agent-a.log", "")
+    machine.copy_from_machine("/tmp/transient-seat-evidence/wayland-agent-b.log", "")
     if machine.execute("test -s /tmp/transient-seat-evidence/transient-seat.gif")[0] == 0:
         machine.copy_from_machine("/tmp/transient-seat-evidence/transient-seat.gif", "")
     else:

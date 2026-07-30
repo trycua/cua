@@ -5,6 +5,7 @@
 
 #![cfg(target_os = "linux")]
 
+use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::process::{Child, Command, Stdio};
@@ -67,7 +68,8 @@ fn launch_fixture(label: &str) -> Fixture {
     );
     let journal = FixtureJournal::start();
     let fixture_stderr = if std::env::var_os("CUA_TRANSIENT_SEAT_WAYLAND_DEBUG").is_some() {
-        Stdio::inherit()
+        let path = format!("/tmp/transient-seat-evidence/wayland-{label}.log");
+        Stdio::from(File::create(path).expect("create per-fixture Wayland protocol log"))
     } else {
         Stdio::null()
     };

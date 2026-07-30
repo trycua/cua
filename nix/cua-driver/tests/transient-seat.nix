@@ -47,7 +47,7 @@ let
     installPhase = ''
       runHook preInstall
       mkdir -p "$out/bin"
-      test_binary="$(find target/debug/deps -maxdepth 1 -type f -name 'transient_seat_behavior_test-*' -perm -u+x -print -quit)"
+      test_binary="$(find target -type f -path '*/release/deps/transient_seat_behavior_test-*' -perm -u+x -print -quit)"
       test -n "$test_binary"
       install -Dm755 "$test_binary" "$out/bin/transient-seat-behavior"
       runHook postInstall

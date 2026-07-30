@@ -5,6 +5,7 @@
     "index",
     "driver",
     "sandbox",
+    "configure-run-cua-fleets",
     "lume",
     "cua-bench",
     "recipes",

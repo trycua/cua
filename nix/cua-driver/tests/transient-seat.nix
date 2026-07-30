@@ -114,8 +114,11 @@ pkgs.testers.nixosTest {
     machine.succeed("install -d -m 700 /tmp/cua-runtime /tmp/transient-seat-evidence")
     machine.execute(
         "env XDG_RUNTIME_DIR=/tmp/cua-runtime WLR_BACKENDS=headless WLR_RENDERER=pixman "
-        "cua-compositor >/tmp/transient-seat-compositor.log 2>&1 &"
+        "WLR_RENDERER_ALLOW_SOFTWARE=1 WLR_LIBINPUT_NO_DEVICES=1 WLR_HEADLESS_OUTPUTS=1 "
+        "cua-compositor >/tmp/transient-seat-compositor.log 2>&1 & echo $! >/tmp/cua-compositor.pid"
     )
+    machine.sleep(1)
+    machine.succeed("kill -0 $(cat /tmp/cua-compositor.pid)")
     machine.wait_until_succeeds(
         "test -S /tmp/cua-runtime/cua-inject.sock "
         "&& find /tmp/cua-runtime -maxdepth 1 -type s -name 'wayland-*' | grep -q .",

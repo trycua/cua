@@ -125,6 +125,32 @@ fn def() -> &'static ToolDef {
     })
 }
 
+fn screen_sharing_delivery_error(
+    is_screen_sharing: bool,
+    foreground: bool,
+    window_id: Option<u32>,
+) -> Option<ToolResult> {
+    if !is_screen_sharing || (foreground && window_id.is_some()) {
+        return None;
+    }
+    Some(
+        ToolResult::error(
+            "Screen Sharing text input requires delivery_mode:\"foreground\" and window_id \
+             so Cua Driver can deliver physical HID key transitions safely.",
+        )
+        .with_structured(serde_json::json!({
+            "code": "SCREEN_SHARING_REQUIRES_FOREGROUND_HID",
+            "effect": "refused",
+            "escalation": {
+                "recommended": "foreground",
+                "reason": "Screen Sharing forwards physical keycodes; background PID-routed \
+                           Unicode events can corrupt guest text.",
+                "requires": ["window_id"]
+            }
+        })),
+    )
+}
+
 #[async_trait]
 impl Tool for TypeTextTool {
     fn def(&self) -> &ToolDef {
@@ -198,6 +224,13 @@ impl Tool for TypeTextTool {
         };
         let delay_ms = args.u64_or("delay_ms", 30);
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
+        if let Some(error) = screen_sharing_delivery_error(
+            crate::input::keyboard::is_screen_sharing_pid(pid),
+            delivery_mode.is_foreground(),
+            window_id,
+        ) {
+            return error;
+        }
 
         // ── px form: focus by pixel-click, then type into the focused element ──
         // Pass x,y (no element_index) for an *element px action*: pixel-click the
@@ -768,6 +801,7 @@ fn type_text_blocking(
         // dropped. 200ms covers that re-grab without penalizing an already
         // armed interactive stream on every text chunk.
         let foreground_settle_ms = foreground_settle_ms(pid, apps::frontmost_pid());
+        let screen_sharing_target = crate::input::keyboard::is_screen_sharing_pid(pid);
         let do_type = || {
             cgevent_type_verified(
                 pid,
@@ -779,6 +813,27 @@ fn type_text_blocking(
             )
         };
         let ((verified, delivered_chars), fronted) = match window_id {
+            Some(wid) if screen_sharing_target => {
+                // Screen Sharing forwards physical HID transitions to the
+                // guest. PID-routed Unicode events all carry keycode 0 (the A
+                // key), so a guest sees "aaaa"; modifier flags alone likewise
+                // turn Cmd+V into plain "v". The explicit foreground rung may
+                // safely use the global HID queue while the exact target is
+                // guarded and restored.
+                crate::input::skylight::with_foreground_hid_activation(
+                    pid as libc::pid_t,
+                    wid,
+                    || {
+                        if foreground_settle_ms > 0 {
+                            std::thread::sleep(std::time::Duration::from_millis(
+                                foreground_settle_ms,
+                            ));
+                        }
+                        crate::input::keyboard::type_text_physical_global(text, delay_ms)
+                    },
+                )?;
+                ((false, None), true)
+            }
             Some(wid) => {
                 // Front → type → restore. The closure returns the read-back
                 // result; with_foreground_assist returns whether it actually
@@ -1064,5 +1119,21 @@ mod tests {
         assert_eq!(foreground_settle_ms(42, Some(42)), 20);
         assert_eq!(foreground_settle_ms(42, Some(7)), 200);
         assert_eq!(foreground_settle_ms(42, None), 200);
+    }
+
+    #[test]
+    fn screen_sharing_text_fails_closed_without_foreground_window() {
+        for (foreground, window_id) in [(false, None), (false, Some(7)), (true, None)] {
+            let result = screen_sharing_delivery_error(true, foreground, window_id)
+                .expect("unsafe Screen Sharing route must be refused");
+            assert_eq!(result.is_error, Some(true));
+            let structured = result.structured_content.unwrap();
+            assert_eq!(structured["code"], "SCREEN_SHARING_REQUIRES_FOREGROUND_HID");
+            assert_eq!(structured["effect"], "refused");
+            assert_eq!(structured["escalation"]["recommended"], "foreground");
+            assert_eq!(structured["escalation"]["requires"][0], "window_id");
+        }
+        assert!(screen_sharing_delivery_error(true, true, Some(7)).is_none());
+        assert!(screen_sharing_delivery_error(false, false, None).is_none());
     }
 }

@@ -46,7 +46,6 @@ INCLUDES = r"""#include <stdint.h>
 #include <wayland-server-protocol.h>
 #include <xkbcommon/xkbcommon.h>
 #include <wlr/interfaces/wlr_keyboard.h>
-#include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_foreign_toplevel_management_v1.h>
 #include <wlr/types/wlr_screencopy_v1.h>
 #include <wlr/types/wlr_xdg_output_v1.h>
@@ -551,9 +550,8 @@ static void cua_kbd_key(struct wlr_seat_client *sc, uint32_t keycode, bool press
 			pressed ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED);
 }
 /* Preserve compositor-native keyboard delivery when the addressed surface is
- * already the logical seat focus. wlroots' keyboard event source updates the focused seat exactly as a real
- * keyboard would. Background targets retain the direct resource path that makes
- * focus-free input possible. */
+ * already the logical seat focus. Background targets retain the direct resource
+ * path that makes focus-free input possible. */
 static void cua_kbd_key_target(struct tinywl_server *server, struct tinywl_toplevel *t,
 		struct wlr_seat_client *sc, int idx, uint32_t keycode, bool pressed) {
 	struct wlr_surface *target = wlr_surface_get_root_surface(t->xdg_toplevel->base->surface);
@@ -563,14 +561,8 @@ static void cua_kbd_key_target(struct tinywl_server *server, struct tinywl_tople
 		idx, target == focused_root ? "seat" : "direct", target, focused_root, sc,
 		server->seat->keyboard_state.focused_client, keycode, pressed);
 	if (target == focused_root) {
-		struct wlr_keyboard_key_event event = {
-			.time_msec = cua_now_ms(),
-			.keycode = keycode,
-			.update_state = true,
-			.state = pressed ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED,
-		};
-		wlr_keyboard_notify_key(&g_keyboard, &event);
-		wlr_seat_keyboard_notify_key(server->seat, event.time_msec, event.keycode, event.state);
+		wlr_seat_keyboard_notify_key(server->seat, cua_now_ms(), keycode,
+			pressed ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED);
 	} else {
 		cua_kbd_key(sc, keycode, pressed);
 	}

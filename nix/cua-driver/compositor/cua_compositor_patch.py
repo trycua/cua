@@ -587,7 +587,7 @@ static void cua_kbd_key_target(struct tinywl_server *server, struct tinywl_tople
 	struct wlr_surface *focused = server->seat->keyboard_state.focused_surface;
 	struct wlr_surface *focused_root = focused ? wlr_surface_get_root_surface(focused) : NULL;
 	if (target == focused_root) {
-		struct wlr_event_keyboard_key event = {
+		struct wlr_keyboard_key_event event = {
 			.time_msec = cua_now_ms(),
 			.keycode = keycode,
 			.update_state = true,

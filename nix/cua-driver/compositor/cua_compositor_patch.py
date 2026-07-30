@@ -58,7 +58,8 @@ struct cua_devstate { struct wlr_surface *entered; };
 static struct cua_devstate cua_ptr[CUA_MAXDEV];
 static struct cua_devstate cua_kbd_state[CUA_MAXDEV];
 /* Transient entries retain lifecycle identity and isolated logical device ranges.
- * Injection uses the physical seat because clients bind its wl_pointer/wl_keyboard. */
+ * Pointer injection uses each transient seat; keyboard injection temporarily borrows
+ * the physical seat so Chromium receives its focused-seat event path. */
 struct cua_transient_seat {
 	char name[64];
 	struct wlr_seat *seat;
@@ -367,10 +368,10 @@ static void cua_ptr_leave(struct wlr_seat *seat, struct wlr_surface *surf) {
 }
 /* Inject pointer motion from logical cursor `idx` into window `t` at window-
  * local (x,y). enter/leave is tracked per idx, so several idx values can drive
- * independent cursors against the same or different surfaces. Focus-free: we
- * write straight to the client's wl_pointer resources, never touching the seat
- * focus or any real cursor. */
-static bool cua_motion(struct tinywl_server *server, struct tinywl_toplevel *t, int idx, double x, double y) {
+ * independent cursors against the same or different surfaces. The normal and
+ * transient paths update only their own wl_seat pointer state. */
+static bool cua_motion(struct tinywl_server *server, struct wlr_seat *seat,
+		struct tinywl_toplevel *t, int idx, double x, double y) {
 	if (!t || idx < 0 || idx >= CUA_MAXDEV) return false;
 	/* Public PX coordinates come from the cropped root-surface screenshot. Hit
 	 * test that point through the scene so Chromium/WebKit child surfaces receive
@@ -387,14 +388,14 @@ static bool cua_motion(struct tinywl_server *server, struct tinywl_toplevel *t, 
 	struct wlr_scene_surface *scene_surface = wlr_scene_surface_try_from_buffer(buffer);
 	if (!scene_surface) return false;
 	struct wlr_surface *surface = scene_surface->surface;
-	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(server->seat, wl_resource_get_client(surface->resource));
+	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(seat, wl_resource_get_client(surface->resource));
 	if (!sc || wl_list_empty(&sc->pointers)) {
 		/* Chromium can compose a renderer-owned child surface whose wl_client
 		 * never bound wl_pointer while the owning toplevel client did. Use that
 		 * target root while retaining the caller's screenshot-local point. */
 		surface = t->xdg_toplevel->base->surface;
 		local_x = x; local_y = y;
-		sc = wlr_seat_client_for_wl_client(server->seat, wl_resource_get_client(surface->resource));
+		sc = wlr_seat_client_for_wl_client(seat, wl_resource_get_client(surface->resource));
 		if (!sc || wl_list_empty(&sc->pointers)) return false;
 	}
 	/* Chromium consumes pointer input through wlroots' seat pointer state. Raw
@@ -403,9 +404,9 @@ static bool cua_motion(struct tinywl_server *server, struct tinywl_toplevel *t, 
 	 * focus/grab state was never updated. Device 0 is the normal single-pointer
 	 * route, so use the protocol-complete seat notifications there. Higher
 	 * logical device indices retain direct delivery for independent cursors. */
-	if (idx % CUA_TRANSIENT_SEAT_STRIDE == 0) {
-		wlr_seat_pointer_notify_enter(server->seat, surface, local_x, local_y);
-		wlr_seat_pointer_notify_motion(server->seat, cua_now_ms(), local_x, local_y);
+	if (seat != server->seat || idx % CUA_TRANSIENT_SEAT_STRIDE == 0) {
+		wlr_seat_pointer_notify_enter(seat, surface, local_x, local_y);
+		wlr_seat_pointer_notify_motion(seat, cua_now_ms(), local_x, local_y);
 		/* Real cursors emit a separate frame event after the motion callback.
 		 * Synthetic commands have no cursor-frame signal, so terminate the
 		 * protocol batch here; Chromium buffers motion/button events until it. */
@@ -444,15 +445,16 @@ static struct tinywl_toplevel *cua_desktop_motion(struct tinywl_server *server, 
 	cua_ptr[0].entered = surface;
 	return t;
 }
-static bool cua_button(struct tinywl_server *server, struct tinywl_toplevel *t, int idx, uint32_t button, bool pressed) {
+static bool cua_button(struct tinywl_server *server, struct wlr_seat *seat,
+		struct tinywl_toplevel *t, int idx, uint32_t button, bool pressed) {
 	if (!t || idx < 0 || idx >= CUA_MAXDEV) return false;
 	/* `cua_motion` establishes the exact child or root surface for this logical
 	 * pointer. Button and axis events must use that same wl_pointer resource. */
 	struct wlr_surface *surface = cua_ptr[idx].entered ? cua_ptr[idx].entered : t->xdg_toplevel->base->surface;
-	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(server->seat, wl_resource_get_client(surface->resource));
+	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(seat, wl_resource_get_client(surface->resource));
 	if (!sc || wl_list_empty(&sc->pointers)) return false;
-	if (idx % CUA_TRANSIENT_SEAT_STRIDE == 0) {
-		wlr_seat_pointer_notify_button(server->seat, cua_now_ms(), button,
+	if (seat != server->seat || idx % CUA_TRANSIENT_SEAT_STRIDE == 0) {
+		wlr_seat_pointer_notify_button(seat, cua_now_ms(), button,
 			pressed ? WLR_BUTTON_PRESSED : WLR_BUTTON_RELEASED);
 		/* See cua_motion: there is no hardware cursor-frame callback for the
 		 * virtual device, so each injected command must close its own batch. */
@@ -731,7 +733,7 @@ static const char *cua_handle_cmd(struct tinywl_server *server, char *line) {
 			if (!(entry = cua_transient_seat_find(seat_name))) return "unknown-seat";
 			if (!cua_transient_device(entry, idx, &device)) return "bad-device";
 			if (!(t = cua_resolve_target(server, app, &err))) return err;
-			ok = cua_motion(server, t, device, x, y);
+			ok = cua_motion(server, entry->seat, t, device, x, y);
 			return ok ? NULL : "no-pointer-resource";
 		}
 		if (!strcmp(cmd, "sb")) {
@@ -740,7 +742,7 @@ static const char *cua_handle_cmd(struct tinywl_server *server, char *line) {
 			if (!(entry = cua_transient_seat_find(seat_name))) return "unknown-seat";
 			if (!cua_transient_device(entry, idx, &device)) return "bad-device";
 			if (!(t = cua_resolve_target(server, app, &err))) return err;
-			ok = cua_button(server, t, device, button, pressed != 0);
+			ok = cua_button(server, entry->seat, t, device, button, pressed != 0);
 			return ok ? NULL : "no-pointer-resource";
 		}
 		char hex[8192];
@@ -754,21 +756,21 @@ static const char *cua_handle_cmd(struct tinywl_server *server, char *line) {
 		if (sscanf(line, "d %lf %lf %u %u", &x, &y, &count, &btn) != 4) return "bad-args";
 		if (!(t = cua_desktop_motion(server, x, y))) return "no-surface-at-point";
 		for (unsigned i = 0; i < (count ? count : 1); i++) {
-			if (!cua_button(server, t, 0, btn, true)) return "no-pointer-resource";
-			if (!cua_button(server, t, 0, btn, false)) return "no-pointer-resource";
+			if (!cua_button(server, server->seat, t, 0, btn, true)) return "no-pointer-resource";
+			if (!cua_button(server, server->seat, t, 0, btn, false)) return "no-pointer-resource";
 		}
 		return NULL;
 	} else if (!strcmp(cmd, "m")) {
 		int idx; double x, y;
 		if (sscanf(line, "m %127s %d %lf %lf", app, &idx, &x, &y) != 4) return "bad-args";
 		if (!(t = cua_resolve_target(server, app, &err))) return err;
-		if (!cua_motion(server, t, idx, x, y)) return "no-pointer-resource";
+		if (!cua_motion(server, server->seat, t, idx, x, y)) return "no-pointer-resource";
 		return NULL;
 	} else if (!strcmp(cmd, "b")) {
 		int idx; unsigned btn, pr;
 		if (sscanf(line, "b %127s %d %u %u", app, &idx, &btn, &pr) != 4) return "bad-args";
 		if (!(t = cua_resolve_target(server, app, &err))) return err;
-		if (!cua_button(server, t, idx, btn, pr != 0)) return "no-pointer-resource";
+		if (!cua_button(server, server->seat, t, idx, btn, pr != 0)) return "no-pointer-resource";
 		return NULL;
 	} else if (!strcmp(cmd, "t")) {
 		char hex[8192];

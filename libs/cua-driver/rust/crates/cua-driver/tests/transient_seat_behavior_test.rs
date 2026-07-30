@@ -130,6 +130,15 @@ fn wait_for_fixture(journal: &FixtureJournal, marker: &str) {
 #[test]
 #[ignore = "requires the cua-compositor nested Wayland E2E environment"]
 fn transient_seats_are_isolated_and_destroyable() {
+    // Electron discovers Wayland seats at startup, so create transient seats
+    // before each fixture binds the registry globals.
+    assert_eq!(
+        exchange(&["seat create agent-a".to_owned()]),
+        vec!["ok"],
+        "missing transient-seat lifecycle capability"
+    );
+    assert_eq!(exchange(&["seat create agent-b".to_owned()]), vec!["ok"]);
+
     let fixture_a = launch_fixture("agent-a");
     let fixture_b = launch_fixture("agent-b");
     wait_for_target(&fixture_a);
@@ -137,16 +146,6 @@ fn transient_seats_are_isolated_and_destroyable() {
     let target_a = target(&fixture_a);
     let target_b = target(&fixture_b);
     let default_focus_before = exchange(&["q 0".to_owned()]).remove(0);
-
-    // Intentional RED assertion: current cua-compositor only has its physical
-    // seat0, so this must fail as `err unknown-command` until lifecycle support
-    // is implemented.
-    assert_eq!(
-        exchange(&["seat create agent-a".to_owned()]),
-        vec!["ok"],
-        "missing transient-seat lifecycle capability"
-    );
-    assert_eq!(exchange(&["seat create agent-b".to_owned()]), vec!["ok"]);
 
     // The shared Electron fixture is a three-column grid. This point lands in
     // the third-column keyboard control instead of the older stacked layout's
@@ -156,14 +155,21 @@ fn transient_seats_are_isolated_and_destroyable() {
             format!("sm agent-a {target_a} 0 700 95"),
             format!("sb agent-a {target_a} 0 272 1"),
             format!("sb agent-a {target_a} 0 272 0"),
-            format!("st agent-a {target_a} {}", hex("seat-a")),
             format!("sm agent-b {target_b} 0 700 95"),
             format!("sb agent-b {target_b} 0 272 1"),
             format!("sb agent-b {target_b} 0 272 0"),
+        ]),
+        vec!["ok"; 6],
+        "seat-scoped pointer input must be accepted"
+    );
+    thread::sleep(Duration::from_millis(100));
+    assert_eq!(
+        exchange(&[
+            format!("st agent-a {target_a} {}", hex("seat-a")),
             format!("st agent-b {target_b} {}", hex("seat-b")),
         ]),
-        vec!["ok"; 8],
-        "seat-scoped clicks and typing must be accepted"
+        vec!["ok"; 2],
+        "seat-scoped keyboard input must be accepted"
     );
     wait_for_fixture(&fixture_a.journal, "seat-a");
     wait_for_fixture(&fixture_b.journal, "seat-b");

@@ -80,6 +80,13 @@ static void cua_ftl_request_activate(struct wl_listener *listener, void *data);
 static void cua_maybe_focus_new_toplevel(struct tinywl_toplevel *toplevel);
 static pid_t cua_toplevel_pid(struct tinywl_toplevel *t);
 static bool cua_pid_in_family(pid_t pid, pid_t root_pid);
+struct cua_focus_restore {
+	struct tinywl_server *server;
+	struct tinywl_toplevel *toplevel;
+	struct wl_event_source *timer;
+	bool pending;
+};
+static struct cua_focus_restore cua_pending_restore;
 
 """
 
@@ -106,6 +113,35 @@ static void cua_focus_toplevel(struct tinywl_toplevel *toplevel) {
 		wlr_seat_keyboard_notify_enter(
 			toplevel->server->seat, surface, NULL, 0, &modifiers);
 	}
+}
+/* Chromium processes keyboard events through the physical seat's focused
+ * client. Keep its temporary focus through one event-loop turn so it consumes
+ * the flushed key batch before the default focus is restored. */
+static int cua_restore_default_focus(void *data) {
+	struct cua_focus_restore *restore = data;
+	if (!restore->pending) return 0;
+	restore->pending = false;
+	if (restore->toplevel) cua_focus_toplevel(restore->toplevel);
+	else wlr_seat_keyboard_notify_clear_focus(restore->server->seat);
+	return 0;
+}
+static void cua_defer_default_focus(struct tinywl_server *server,
+		struct tinywl_toplevel *toplevel) {
+	struct cua_focus_restore *restore = &cua_pending_restore;
+	restore->server = server;
+	restore->toplevel = toplevel;
+	restore->pending = true;
+	if (!restore->timer) {
+		restore->timer = wl_event_loop_add_timer(
+			wl_display_get_event_loop(server->wl_display),
+			cua_restore_default_focus, restore);
+	}
+	if (restore->timer) wl_event_source_timer_update(restore->timer, 1);
+}
+static void cua_settle_default_focus(struct tinywl_server *server) {
+	struct cua_focus_restore *restore = &cua_pending_restore;
+	if (!restore->pending || restore->server != server) return;
+	cua_restore_default_focus(restore);
 }
 /* New child toplevels may request focus as part of their normal map sequence.
  * Preserve that behavior only when the current keyboard focus belongs to the
@@ -585,17 +621,20 @@ static bool cua_type_hex(struct tinywl_server *server, struct tinywl_toplevel *t
 		if (surface == restore_root) { restore_toplevel = candidate; break; }
 	}
 	bool restore_focus = idx != 0 && restore_root != target_root;
-	if (restore_focus) cua_focus_toplevel(t);
+	if (restore_focus) {
+		/* Coalesce consecutive logical-seat strings so they restore the original
+		 * physical focus rather than an intermediate transient target. */
+		if (cua_pending_restore.pending && cua_pending_restore.server == server)
+			restore_toplevel = cua_pending_restore.toplevel;
+		cua_focus_toplevel(t);
+	}
 	bool ok = true;
 	for (const char *p = hex; p[0] && p[1]; p += 2) {
 		int hi = (p[0] <= '9') ? p[0] - '0' : (p[0] | 0x20) - 'a' + 10;
 		int lo = (p[1] <= '9') ? p[1] - '0' : (p[1] | 0x20) - 'a' + 10;
 		if (!cua_type_cp(server, t, idx, (uint32_t)((hi << 4) | lo))) { ok = false; break; }
 	}
-	if (restore_focus) {
-		if (restore_toplevel) cua_focus_toplevel(restore_toplevel);
-		else wlr_seat_keyboard_notify_clear_focus(server->seat);
-	}
+	if (restore_focus) cua_defer_default_focus(server, restore_toplevel);
 	return ok;
 }
 
@@ -783,6 +822,7 @@ static int cua_conn_readable(int fd, uint32_t mask, void *data) {
 		} else {
 			int query_pid, geometry_pid, activate_pid;
 			if (sscanf(p, "q %d", &query_pid) == 1) {
+				cua_settle_default_focus(c->server);
 				char msg[128]; cua_query_state(c->server, (pid_t)query_pid, msg, sizeof msg);
 				cua_reply(fd, msg);
 			} else if (sscanf(p, "g %d", &geometry_pid) == 1) {

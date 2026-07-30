@@ -594,6 +594,7 @@ static void cua_kbd_key_target(struct tinywl_server *server, struct tinywl_tople
 			.state = pressed ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED,
 		};
 		wlr_keyboard_notify_key(&g_keyboard, &event);
+		wlr_seat_keyboard_notify_key(server->seat, event.time_msec, event.keycode, event.state);
 	} else {
 		cua_kbd_key(sc, keycode, pressed);
 	}

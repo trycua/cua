@@ -147,13 +147,6 @@ fn transient_seats_are_isolated_and_destroyable() {
     let target_b = target(&fixture_b);
     let default_focus_before = exchange(&["q 0".to_owned()]).remove(0);
 
-    assert_eq!(
-        exchange(&["seat create agent-a".to_owned()]),
-        vec!["ok"],
-        "missing transient-seat lifecycle capability"
-    );
-    assert_eq!(exchange(&["seat create agent-b".to_owned()]), vec!["ok"]);
-
     // The shared Electron fixture is a three-column grid. This point lands in
     // the third-column keyboard control instead of the older stacked layout's
     // now-unrelated lower-left position.

@@ -147,7 +147,64 @@
               inherit pkgs;
               cuaDriver = cuaDriverPackage;
             };
-          };
+          }
+          // pkgs.lib.optionalAttrs (system == "x86_64-linux") (
+            let
+              cuaDriverModule = {
+                imports = [ ./nix/cua-driver/module.nix ];
+                services.cua-driver.package = cuaDriverPackage;
+              };
+              x11Check = file: import file {
+                inherit pkgs cuaDriverModule;
+                inherit (pkgs) lib;
+              };
+              waylandDesktops = [ "xfce-labwc" "xfce-sway" "kde" "gnome" ];
+              waylandScenarios = {
+                integration = ./nix/cua-driver/tests/wayland/integration.nix;
+                screenshot = ./nix/cua-driver/tests/wayland/screenshot.nix;
+                cursor-click-gif = ./nix/cua-driver/tests/wayland/cursor-click-gif.nix;
+                background-terminal-gif = ./nix/cua-driver/tests/wayland/background-terminal-gif.nix;
+                parallel-drag = ./nix/cua-driver/tests/wayland/parallel-drag.nix;
+              };
+              waylandChecks = pkgs.lib.listToAttrs (pkgs.lib.concatMap (
+                desktop: map (scenario: pkgs.lib.nameValuePair
+                  "cua-driver-wayland-${desktop}-${scenario}"
+                  (import waylandScenarios.${scenario} {
+                    inherit pkgs desktop cuaDriverModule;
+                    inherit (pkgs) lib;
+                  })
+                ) (builtins.attrNames waylandScenarios)
+              ) waylandDesktops);
+              waylandGuiChecks = pkgs.lib.listToAttrs (pkgs.lib.concatMap (
+                desktop: map (app: pkgs.lib.nameValuePair
+                  "cua-driver-wayland-${desktop}-background-gui-${app}"
+                  (import ./nix/cua-driver/tests/wayland/background-gui.nix {
+                    inherit pkgs desktop app cuaDriverModule;
+                    inherit (pkgs) lib;
+                  })
+                ) [ "foot" "gtk3-gedit" "qt6-kcalc" ]
+              ) waylandDesktops);
+              x11GuiChecks = pkgs.lib.listToAttrs (map (app: pkgs.lib.nameValuePair
+                "cua-driver-linux-background-gui-${app}"
+                (import ./nix/cua-driver/tests/linux-background-gui.nix {
+                  inherit pkgs app cuaDriverModule;
+                  inherit (pkgs) lib;
+                })
+              ) [ "gtk4-characters" "qt6-kcalc" "electron-zettlr" ]);
+            in
+            {
+              # Rust owns behavior assertions; these NixOS checks certify the
+              # package in desktop sessions and preserve visual evidence.
+              cua-driver-integration = x11Check ./nix/cua-driver/tests/integration.nix;
+              cua-driver-screenshot = x11Check ./nix/cua-driver/tests/screenshot.nix;
+              cua-driver-linux-cursor-click-gif = x11Check ./nix/cua-driver/tests/linux-cursor-click-gif.nix;
+              cua-driver-linux-background-terminal-gif = x11Check ./nix/cua-driver/tests/linux-background-terminal-gif.nix;
+              cua-driver-linux-parallel-drag-xserver = x11Check ./nix/cua-driver/tests/linux-parallel-drag-xserver.nix;
+            }
+            // x11GuiChecks
+            // waylandChecks
+            // waylandGuiChecks
+          );
 
           devShells.cua-driver-wayland-e2e = waylandE2eShell [ ];
           devShells.cua-driver-inject-e2e = waylandE2eShell [ cuaCompositorPackage ];

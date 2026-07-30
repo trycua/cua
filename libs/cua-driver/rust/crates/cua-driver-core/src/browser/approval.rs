@@ -17,6 +17,10 @@ use super::platform::{PrepareProfile, PrepareProfileMode};
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 
 pub const MCP_HOST_APPROVAL_ARG: &str = "_cua_browser_prepare_mcp_host_approved";
+/// Session-bound existing-profile authorization injected only by a trusted
+/// embedding host after reserved caller arguments have been stripped.
+pub const TRUSTED_HOST_EXISTING_PROFILE_APPROVAL_ARG: &str =
+    "_cua_browser_prepare_trusted_host_existing_profile_approved";
 pub const MAX_APPROVAL_TTL: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Debug, Serialize, Deserialize)]

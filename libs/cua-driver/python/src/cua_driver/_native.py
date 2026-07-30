@@ -482,9 +482,15 @@ def _uniffi_check_contract_api_version(lib):
 def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cua_driver_sdk_checksum_func_create_trusted_session() != 50573:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_func_create_trusted_session_with_resources() != 8021:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_func_current_mac_os_permission_status() != 22890:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_func_driver_skill_profile() != 60319:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_func_open_mac_os_screen_recording_settings() != 6663:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_func_read_driver_skill_resource() != 13250:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_func_request_mac_os_permissions() != 61823:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -987,14 +993,33 @@ _UniffiLib.uniffi_cua_driver_sdk_fn_func_create_trusted_session.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_func_create_trusted_session.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_func_create_trusted_session_with_resources.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_func_create_trusted_session_with_resources.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_driver_sdk_fn_func_current_mac_os_permission_status.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_func_current_mac_os_permission_status.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_driver_sdk_fn_func_driver_skill_profile.argtypes = (
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_func_driver_skill_profile.restype = _UniffiRustBuffer
 _UniffiLib.uniffi_cua_driver_sdk_fn_func_open_mac_os_screen_recording_settings.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_func_open_mac_os_screen_recording_settings.restype = None
+_UniffiLib.uniffi_cua_driver_sdk_fn_func_read_driver_skill_resource.argtypes = (
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_func_read_driver_skill_resource.restype = _UniffiRustBuffer
 _UniffiLib.uniffi_cua_driver_sdk_fn_func_request_mac_os_permissions.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
@@ -1368,12 +1393,21 @@ _UniffiLib.ffi_cua_driver_sdk_uniffi_contract_version.restype = ctypes.c_uint32
 _UniffiLib.uniffi_cua_driver_sdk_checksum_func_create_trusted_session.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_func_create_trusted_session.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_func_create_trusted_session_with_resources.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_func_create_trusted_session_with_resources.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_driver_sdk_checksum_func_current_mac_os_permission_status.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_func_current_mac_os_permission_status.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_func_driver_skill_profile.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_func_driver_skill_profile.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_driver_sdk_checksum_func_open_mac_os_screen_recording_settings.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_func_open_mac_os_screen_recording_settings.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_func_read_driver_skill_resource.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_func_read_driver_skill_resource.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_driver_sdk_checksum_func_request_mac_os_permissions.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_func_request_mac_os_permissions.restype = ctypes.c_uint16
@@ -2489,6 +2523,197 @@ class _UniffiFfiConverterTypeDriverOptions(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.write(value.claude_code_compatibility, buf)
 
 @dataclass
+class DriverSkillResourceDescriptor:
+    def __init__(self, *, name:str, sha256:str, platform:typing.Optional[str], capability:typing.Optional[str]):
+        self.name = name
+        self.sha256 = sha256
+        self.platform = platform
+        self.capability = capability
+
+
+
+
+    def __str__(self):
+        return "DriverSkillResourceDescriptor(name={}, sha256={}, platform={}, capability={})".format(self.name, self.sha256, self.platform, self.capability)
+    def __eq__(self, other):
+        if self.name != other.name:
+            return False
+        if self.sha256 != other.sha256:
+            return False
+        if self.platform != other.platform:
+            return False
+        if self.capability != other.capability:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeDriverSkillResourceDescriptor(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return DriverSkillResourceDescriptor(
+            name=_UniffiFfiConverterString.read(buf),
+            sha256=_UniffiFfiConverterString.read(buf),
+            platform=_UniffiFfiConverterOptionalString.read(buf),
+            capability=_UniffiFfiConverterOptionalString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.name)
+        _UniffiFfiConverterString.check_lower(value.sha256)
+        _UniffiFfiConverterOptionalString.check_lower(value.platform)
+        _UniffiFfiConverterOptionalString.check_lower(value.capability)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.name, buf)
+        _UniffiFfiConverterString.write(value.sha256, buf)
+        _UniffiFfiConverterOptionalString.write(value.platform, buf)
+        _UniffiFfiConverterOptionalString.write(value.capability, buf)
+
+class _UniffiFfiConverterSequenceTypeDriverSkillResourceDescriptor(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeDriverSkillResourceDescriptor.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeDriverSkillResourceDescriptor.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeDriverSkillResourceDescriptor.read(buf) for i in range(count)
+        ]
+
+@dataclass
+class DriverSkillProfile:
+    def __init__(self, *, profile_id:str, schema_version:str, driver_version:str, compatible_driver_requirement:str, tool_schema_profile:str, bundle_sha256:str, resources:typing.List[DriverSkillResourceDescriptor], required_capabilities:typing.List[str]):
+        self.profile_id = profile_id
+        self.schema_version = schema_version
+        self.driver_version = driver_version
+        self.compatible_driver_requirement = compatible_driver_requirement
+        self.tool_schema_profile = tool_schema_profile
+        self.bundle_sha256 = bundle_sha256
+        self.resources = resources
+        self.required_capabilities = required_capabilities
+
+
+
+
+    def __str__(self):
+        return "DriverSkillProfile(profile_id={}, schema_version={}, driver_version={}, compatible_driver_requirement={}, tool_schema_profile={}, bundle_sha256={}, resources={}, required_capabilities={})".format(self.profile_id, self.schema_version, self.driver_version, self.compatible_driver_requirement, self.tool_schema_profile, self.bundle_sha256, self.resources, self.required_capabilities)
+    def __eq__(self, other):
+        if self.profile_id != other.profile_id:
+            return False
+        if self.schema_version != other.schema_version:
+            return False
+        if self.driver_version != other.driver_version:
+            return False
+        if self.compatible_driver_requirement != other.compatible_driver_requirement:
+            return False
+        if self.tool_schema_profile != other.tool_schema_profile:
+            return False
+        if self.bundle_sha256 != other.bundle_sha256:
+            return False
+        if self.resources != other.resources:
+            return False
+        if self.required_capabilities != other.required_capabilities:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeDriverSkillProfile(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return DriverSkillProfile(
+            profile_id=_UniffiFfiConverterString.read(buf),
+            schema_version=_UniffiFfiConverterString.read(buf),
+            driver_version=_UniffiFfiConverterString.read(buf),
+            compatible_driver_requirement=_UniffiFfiConverterString.read(buf),
+            tool_schema_profile=_UniffiFfiConverterString.read(buf),
+            bundle_sha256=_UniffiFfiConverterString.read(buf),
+            resources=_UniffiFfiConverterSequenceTypeDriverSkillResourceDescriptor.read(buf),
+            required_capabilities=_UniffiFfiConverterSequenceString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.profile_id)
+        _UniffiFfiConverterString.check_lower(value.schema_version)
+        _UniffiFfiConverterString.check_lower(value.driver_version)
+        _UniffiFfiConverterString.check_lower(value.compatible_driver_requirement)
+        _UniffiFfiConverterString.check_lower(value.tool_schema_profile)
+        _UniffiFfiConverterString.check_lower(value.bundle_sha256)
+        _UniffiFfiConverterSequenceTypeDriverSkillResourceDescriptor.check_lower(value.resources)
+        _UniffiFfiConverterSequenceString.check_lower(value.required_capabilities)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.profile_id, buf)
+        _UniffiFfiConverterString.write(value.schema_version, buf)
+        _UniffiFfiConverterString.write(value.driver_version, buf)
+        _UniffiFfiConverterString.write(value.compatible_driver_requirement, buf)
+        _UniffiFfiConverterString.write(value.tool_schema_profile, buf)
+        _UniffiFfiConverterString.write(value.bundle_sha256, buf)
+        _UniffiFfiConverterSequenceTypeDriverSkillResourceDescriptor.write(value.resources, buf)
+        _UniffiFfiConverterSequenceString.write(value.required_capabilities, buf)
+
+@dataclass
+class DriverSkillResource:
+    def __init__(self, *, profile_id:str, name:str, sha256:str, content:str):
+        self.profile_id = profile_id
+        self.name = name
+        self.sha256 = sha256
+        self.content = content
+
+
+
+
+    def __str__(self):
+        return "DriverSkillResource(profile_id={}, name={}, sha256={}, content={})".format(self.profile_id, self.name, self.sha256, self.content)
+    def __eq__(self, other):
+        if self.profile_id != other.profile_id:
+            return False
+        if self.name != other.name:
+            return False
+        if self.sha256 != other.sha256:
+            return False
+        if self.content != other.content:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeDriverSkillResource(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return DriverSkillResource(
+            profile_id=_UniffiFfiConverterString.read(buf),
+            name=_UniffiFfiConverterString.read(buf),
+            sha256=_UniffiFfiConverterString.read(buf),
+            content=_UniffiFfiConverterString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.profile_id)
+        _UniffiFfiConverterString.check_lower(value.name)
+        _UniffiFfiConverterString.check_lower(value.sha256)
+        _UniffiFfiConverterString.check_lower(value.content)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.profile_id, buf)
+        _UniffiFfiConverterString.write(value.name, buf)
+        _UniffiFfiConverterString.write(value.sha256, buf)
+        _UniffiFfiConverterString.write(value.content, buf)
+
+@dataclass
 class EmbeddedEnvironmentVariable:
     def __init__(self, *, name:str, value:str):
         self.name = name
@@ -3197,6 +3422,78 @@ class _UniffiFfiConverterTypeToolResult(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.write(value.raw_json, buf)
 
 @dataclass
+class TrustedResourceDirectory:
+    def __init__(self, *, resource_id:str, path:str):
+        self.resource_id = resource_id
+        self.path = path
+
+
+
+
+    def __str__(self):
+        return "TrustedResourceDirectory(resource_id={}, path={})".format(self.resource_id, self.path)
+    def __eq__(self, other):
+        if self.resource_id != other.resource_id:
+            return False
+        if self.path != other.path:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeTrustedResourceDirectory(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return TrustedResourceDirectory(
+            resource_id=_UniffiFfiConverterString.read(buf),
+            path=_UniffiFfiConverterString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.resource_id)
+        _UniffiFfiConverterString.check_lower(value.path)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.resource_id, buf)
+        _UniffiFfiConverterString.write(value.path, buf)
+
+@dataclass
+class TrustedResourceFile:
+    def __init__(self, *, resource_id:str, path:str):
+        self.resource_id = resource_id
+        self.path = path
+
+
+
+
+    def __str__(self):
+        return "TrustedResourceFile(resource_id={}, path={})".format(self.resource_id, self.path)
+    def __eq__(self, other):
+        if self.resource_id != other.resource_id:
+            return False
+        if self.path != other.path:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeTrustedResourceFile(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return TrustedResourceFile(
+            resource_id=_UniffiFfiConverterString.read(buf),
+            path=_UniffiFfiConverterString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.resource_id)
+        _UniffiFfiConverterString.check_lower(value.path)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.resource_id, buf)
+        _UniffiFfiConverterString.write(value.path, buf)
+
+@dataclass
 class TrustedSessionOptions:
     """
     Trusted host request for one immutable, connection-bound action surface.
@@ -3252,6 +3549,112 @@ class _UniffiFfiConverterTypeTrustedSessionOptions(_UniffiConverterRustBuffer):
         _UniffiFfiConverterUInt64.write(value.ttl_seconds, buf)
         _UniffiFfiConverterUInt64.write(value.idle_ttl_seconds, buf)
         _UniffiFfiConverterOptionalString.write(value.bounded_manifest_path, buf)
+
+class _UniffiFfiConverterSequenceTypeTrustedResourceFile(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeTrustedResourceFile.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeTrustedResourceFile.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeTrustedResourceFile.read(buf) for i in range(count)
+        ]
+
+class _UniffiFfiConverterSequenceTypeTrustedResourceDirectory(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeTrustedResourceDirectory.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeTrustedResourceDirectory.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeTrustedResourceDirectory.read(buf) for i in range(count)
+        ]
+
+@dataclass
+class TrustedSessionResources:
+    def __init__(self, *, recording_root:typing.Optional[str], browser_download_root:typing.Optional[str], upload_files:typing.List[TrustedResourceFile], replay_directories:typing.List[TrustedResourceDirectory], ffmpeg_path:typing.Optional[str], browser_existing_profile_approved:bool):
+        self.recording_root = recording_root
+        self.browser_download_root = browser_download_root
+        self.upload_files = upload_files
+        self.replay_directories = replay_directories
+        self.ffmpeg_path = ffmpeg_path
+        self.browser_existing_profile_approved = browser_existing_profile_approved
+
+
+
+
+    def __str__(self):
+        return "TrustedSessionResources(recording_root={}, browser_download_root={}, upload_files={}, replay_directories={}, ffmpeg_path={}, browser_existing_profile_approved={})".format(self.recording_root, self.browser_download_root, self.upload_files, self.replay_directories, self.ffmpeg_path, self.browser_existing_profile_approved)
+    def __eq__(self, other):
+        if self.recording_root != other.recording_root:
+            return False
+        if self.browser_download_root != other.browser_download_root:
+            return False
+        if self.upload_files != other.upload_files:
+            return False
+        if self.replay_directories != other.replay_directories:
+            return False
+        if self.ffmpeg_path != other.ffmpeg_path:
+            return False
+        if self.browser_existing_profile_approved != other.browser_existing_profile_approved:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeTrustedSessionResources(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return TrustedSessionResources(
+            recording_root=_UniffiFfiConverterOptionalString.read(buf),
+            browser_download_root=_UniffiFfiConverterOptionalString.read(buf),
+            upload_files=_UniffiFfiConverterSequenceTypeTrustedResourceFile.read(buf),
+            replay_directories=_UniffiFfiConverterSequenceTypeTrustedResourceDirectory.read(buf),
+            ffmpeg_path=_UniffiFfiConverterOptionalString.read(buf),
+            browser_existing_profile_approved=_UniffiFfiConverterBoolean.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterOptionalString.check_lower(value.recording_root)
+        _UniffiFfiConverterOptionalString.check_lower(value.browser_download_root)
+        _UniffiFfiConverterSequenceTypeTrustedResourceFile.check_lower(value.upload_files)
+        _UniffiFfiConverterSequenceTypeTrustedResourceDirectory.check_lower(value.replay_directories)
+        _UniffiFfiConverterOptionalString.check_lower(value.ffmpeg_path)
+        _UniffiFfiConverterBoolean.check_lower(value.browser_existing_profile_approved)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterOptionalString.write(value.recording_root, buf)
+        _UniffiFfiConverterOptionalString.write(value.browser_download_root, buf)
+        _UniffiFfiConverterSequenceTypeTrustedResourceFile.write(value.upload_files, buf)
+        _UniffiFfiConverterSequenceTypeTrustedResourceDirectory.write(value.replay_directories, buf)
+        _UniffiFfiConverterOptionalString.write(value.ffmpeg_path, buf)
+        _UniffiFfiConverterBoolean.write(value.browser_existing_profile_approved, buf)
 
 
 
@@ -5908,6 +6311,30 @@ def create_trusted_session(driver: CuaDriver,options: TrustedSessionOptions) -> 
         *_uniffi_lowered_args,
     )
     return _uniffi_lift_return(_uniffi_ffi_result)
+def create_trusted_session_with_resources(driver: CuaDriver,options: TrustedSessionOptions,resources: TrustedSessionResources) -> CuaDriverSession:
+    """
+    Generated-language host factory for a session-bound action surface whose
+    native resources are injected by trusted host code.
+"""
+
+    _UniffiFfiConverterTypeCuaDriver.check_lower(driver)
+
+    _UniffiFfiConverterTypeTrustedSessionOptions.check_lower(options)
+
+    _UniffiFfiConverterTypeTrustedSessionResources.check_lower(resources)
+    _uniffi_lowered_args = (
+        _UniffiFfiConverterTypeCuaDriver.lower(driver),
+        _UniffiFfiConverterTypeTrustedSessionOptions.lower(options),
+        _UniffiFfiConverterTypeTrustedSessionResources.lower(resources),
+    )
+    _uniffi_lift_return = _UniffiFfiConverterTypeCuaDriverSession.lift
+    _uniffi_error_converter = _UniffiFfiConverterTypeDriverError
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cua_driver_sdk_fn_func_create_trusted_session_with_resources,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
 def current_mac_os_permission_status() -> MacOsPermissionStatus:
     _uniffi_lowered_args = (
     )
@@ -5919,6 +6346,20 @@ def current_mac_os_permission_status() -> MacOsPermissionStatus:
         *_uniffi_lowered_args,
     )
     return _uniffi_lift_return(_uniffi_ffi_result)
+def driver_skill_profile(profile_id: str) -> DriverSkillProfile:
+
+    _UniffiFfiConverterString.check_lower(profile_id)
+    _uniffi_lowered_args = (
+        _UniffiFfiConverterString.lower(profile_id),
+    )
+    _uniffi_lift_return = _UniffiFfiConverterTypeDriverSkillProfile.lift
+    _uniffi_error_converter = _UniffiFfiConverterTypeDriverError
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cua_driver_sdk_fn_func_driver_skill_profile,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
 def open_mac_os_screen_recording_settings() -> None:
     _uniffi_lowered_args = (
     )
@@ -5927,6 +6368,26 @@ def open_mac_os_screen_recording_settings() -> None:
     _uniffi_ffi_result = _uniffi_rust_call_with_error(
         _uniffi_error_converter,
         _UniffiLib.uniffi_cua_driver_sdk_fn_func_open_mac_os_screen_recording_settings,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
+def read_driver_skill_resource(profile_id: str,name: str,expected_sha256: str) -> DriverSkillResource:
+
+    _UniffiFfiConverterString.check_lower(profile_id)
+
+    _UniffiFfiConverterString.check_lower(name)
+
+    _UniffiFfiConverterString.check_lower(expected_sha256)
+    _uniffi_lowered_args = (
+        _UniffiFfiConverterString.lower(profile_id),
+        _UniffiFfiConverterString.lower(name),
+        _UniffiFfiConverterString.lower(expected_sha256),
+    )
+    _uniffi_lift_return = _UniffiFfiConverterTypeDriverSkillResource.lift
+    _uniffi_error_converter = _UniffiFfiConverterTypeDriverError
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cua_driver_sdk_fn_func_read_driver_skill_resource,
         *_uniffi_lowered_args,
     )
     return _uniffi_lift_return(_uniffi_ffi_result)
@@ -5962,6 +6423,9 @@ __all__ = [
     "DriverAuthorizationRequest",
     "DriverMetadata",
     "DriverOptions",
+    "DriverSkillResourceDescriptor",
+    "DriverSkillProfile",
+    "DriverSkillResource",
     "EmbeddedEnvironmentVariable",
     "EmbeddedMcpConfiguration",
     "EmbeddedDriverConnection",
@@ -5971,10 +6435,16 @@ __all__ = [
     "MacOsPermissionStatus",
     "PrivateWorkerOptions",
     "ToolResult",
+    "TrustedResourceDirectory",
+    "TrustedResourceFile",
     "TrustedSessionOptions",
+    "TrustedSessionResources",
     "create_trusted_session",
+    "create_trusted_session_with_resources",
     "current_mac_os_permission_status",
+    "driver_skill_profile",
     "open_mac_os_screen_recording_settings",
+    "read_driver_skill_resource",
     "request_mac_os_permissions",
     "CuaDriver",
     "CuaDriverProtocol",

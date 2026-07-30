@@ -259,6 +259,21 @@ impl RecordingSession {
         record_video: bool,
         owner: Option<&str>,
     ) -> anyhow::Result<()> {
+        self.start_with_helper(output_dir, record_video, owner, None)
+    }
+
+    /// Start recording with an optional trusted absolute video helper.
+    ///
+    /// Managed SDK sessions supply this through constructor-owned context. It
+    /// never comes from the public tool schema. Native backends ignore it;
+    /// the Windows/Linux ffmpeg backend uses it without ambient PATH lookup.
+    pub fn start_with_helper(
+        &self,
+        output_dir: &str,
+        record_video: bool,
+        owner: Option<&str>,
+        trusted_video_helper: Option<&std::path::Path>,
+    ) -> anyhow::Result<()> {
         let mut inner = self.inner.lock().unwrap();
         // Write-boundary resurrection guard — checked INSIDE the lock so the
         // is_session_ended test is atomic with the enabled/owner write below.
@@ -298,7 +313,7 @@ impl RecordingSession {
         let mut video_error: Option<String> = None;
         if record_video {
             let path = dir.join("recording.mp4");
-            match video::start_video(&path) {
+            match video::start_video(&path, trusted_video_helper) {
                 Ok(rec) => {
                     inner.video = Some(rec);
                     video_present = true;

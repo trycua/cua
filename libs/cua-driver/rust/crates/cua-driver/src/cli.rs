@@ -1440,6 +1440,7 @@ pub fn build_manifest() -> serde_json::Value {
         .ok()
         .and_then(|p| p.to_str().map(str::to_owned))
         .unwrap_or_else(|| "cua-driver".to_owned());
+    let openclaw_profile = cua_driver_sdk::driver_skill_profile("openclaw-mcp".to_owned()).ok();
 
     serde_json::json!({
         // `schema_version` is bumped only on a breaking change to the
@@ -1451,6 +1452,19 @@ pub fn build_manifest() -> serde_json::Value {
         "mcp_invocation": {
             "command": binary,
             "args": ["mcp"]
+        },
+        "skill_profiles": openclaw_profile.into_iter().collect::<Vec<_>>(),
+        "trusted_host_capabilities": {
+            "authorization": ["trusted_session_authorization_v1", "trusted_sdk_authorization_host_v1"],
+            "resources": [
+                "trusted_recording_root_v1",
+                "trusted_browser_download_root_v1",
+                "trusted_upload_files_v1",
+                "trusted_replay_artifacts_v1",
+                "managed_file_output_suppression_v1",
+                "trusted_existing_profile_authorization_v1"
+            ],
+            "helpers": ["trusted_ffmpeg_path_v1"]
         },
         // Subcommand catalog — keep in sync with `parse_command` above.
         // `args` is a hint shape for consumers; the canonical source is
@@ -4086,6 +4100,23 @@ mod tests {
             .expect("mcp_invocation.args is an array");
         assert_eq!(args.len(), 1);
         assert_eq!(args[0].as_str(), Some("mcp"));
+
+        let profile = obj
+            .get("skill_profiles")
+            .and_then(|value| value.as_array())
+            .and_then(|profiles| profiles.first())
+            .expect("OpenClaw skill profile is present");
+        assert_eq!(profile["profile_id"], "openclaw-mcp");
+        assert_eq!(profile["driver_version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(profile["bundle_sha256"].as_str().map(str::len), Some(64));
+
+        let trusted = obj
+            .get("trusted_host_capabilities")
+            .and_then(|value| value.as_object())
+            .expect("trusted host capability map is present");
+        assert!(trusted["resources"]
+            .as_array()
+            .is_some_and(|resources| !resources.is_empty()));
 
         // subcommands — non-empty array with the canonical entries.
         let subs = obj

@@ -328,14 +328,29 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_driver_sdk_fn_func_create_trusted_session_with_resources": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_driver_sdk_fn_func_current_mac_os_permission_status": {
       args: [],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_func_driver_skill_profile": {
+      args: [FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
     "uniffi_cua_driver_sdk_fn_func_open_mac_os_screen_recording_settings": {
       args: [],
       ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_func_read_driver_skill_resource": {
+      args: [FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
     "uniffi_cua_driver_sdk_fn_func_request_mac_os_permissions": {
@@ -703,12 +718,27 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_driver_sdk_checksum_func_create_trusted_session_with_resources": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_driver_sdk_checksum_func_current_mac_os_permission_status": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_driver_sdk_checksum_func_driver_skill_profile": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_driver_sdk_checksum_func_open_mac_os_screen_recording_settings": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_func_read_driver_skill_resource": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -1202,8 +1232,11 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_init_callback_vtable_driveractivityobserver(vtable: UniffiVTableCallbackInterfaceCuaDriverSdkDriverActivityObserver): void;
     uniffi_cua_driver_sdk_fn_init_callback_vtable_driverauthorizationhost(vtable: UniffiVTableCallbackInterfaceCuaDriverSdkDriverAuthorizationHost): void;
     uniffi_cua_driver_sdk_fn_func_create_trusted_session(driver: bigint, options: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cua_driver_sdk_fn_func_create_trusted_session_with_resources(driver: bigint, options: Uint8Array, resources: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_func_current_mac_os_permission_status(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_driver_sdk_fn_func_driver_skill_profile(profileId: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_func_open_mac_os_screen_recording_settings(uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cua_driver_sdk_fn_func_read_driver_skill_resource(profileId: Uint8Array, name: Uint8Array, expectedSha256: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_func_request_mac_os_permissions(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_constructor_cuadriver_connect(socketPath: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_constructor_cuadriver_connect_with_client_kind(socketPath: Uint8Array, clientKind: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
@@ -1277,8 +1310,11 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_wait_for_exit(uniffiSelf: bigint, generation: Uint8Array): bigint;
     ffi_cua_driver_sdk_uniffi_contract_version(): number;
     uniffi_cua_driver_sdk_checksum_func_create_trusted_session(): number;
+    uniffi_cua_driver_sdk_checksum_func_create_trusted_session_with_resources(): number;
     uniffi_cua_driver_sdk_checksum_func_current_mac_os_permission_status(): number;
+    uniffi_cua_driver_sdk_checksum_func_driver_skill_profile(): number;
     uniffi_cua_driver_sdk_checksum_func_open_mac_os_screen_recording_settings(): number;
+    uniffi_cua_driver_sdk_checksum_func_read_driver_skill_resource(): number;
     uniffi_cua_driver_sdk_checksum_func_request_mac_os_permissions(): number;
     uniffi_cua_driver_sdk_checksum_constructor_cuadriver_connect(): number;
     uniffi_cua_driver_sdk_checksum_constructor_cuadriver_connect_with_client_kind(): number;

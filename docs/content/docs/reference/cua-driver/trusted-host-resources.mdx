@@ -1,0 +1,119 @@
+---
+title: 'Trusted host resources'
+description: 'Reference for binding native files, directories, and helper executables to an SDK-owned Cua Driver session.'
+---
+
+`create_trusted_session_with_resources()` /
+`createTrustedSessionWithResources()` is the managed-host variant of
+`create_trusted_session()` / `createTrustedSession()`.
+
+It accepts native resources only from trusted SDK host code. The record is not
+registered as a tool, does not appear in MCP schemas, and is never a bearer
+credential. The existing session constructor remains unchanged.
+
+## Resource record
+
+| Field                                                                  | Type                               | Effect                                                                                                                               |
+| ---------------------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `recording_root` / `recordingRoot`                                     | optional absolute directory        | Replaces any model-supplied `start_recording.output_dir`.                                                                            |
+| `browser_download_root` / `browserDownloadRoot`                        | optional absolute directory        | Replaces any model-supplied `browser_download.destination_root` and supplies host approval for downloads during the session.         |
+| `upload_files` / `uploadFiles`                                         | list of `TrustedResourceFile`      | Maps opaque IDs in `browser_set_input_files.files` to exact staged files.                                                            |
+| `replay_directories` / `replayDirectories`                             | list of `TrustedResourceDirectory` | Maps the opaque `replay_trajectory.dir` ID to one exact artifact directory.                                                          |
+| `ffmpeg_path` / `ffmpegPath`                                           | optional absolute executable       | Selects the exact Windows or Linux recording helper.                                                                                 |
+| `browser_existing_profile_approved` / `browserExistingProfileApproved` | boolean                            | States that the trusted host already collected the residual authorization required to attach an existing logged-in Chromium profile. |
+
+Dependency installation is refused in a managed-resource session. Recording
+uses the exact accepted `ffmpeg` path and never substitutes an ambient helper.
+The SDK session does not advertise a managed `ffprobe` helper. Rendering or
+probing a completed recording remains a separate host-owned operation.
+
+`browser_existing_profile_approved` is trusted only because the record is
+accepted through the host-only session constructor. It is not consent by
+itself. Set it only after the host has collected explicit authorization outside
+the model-visible action stream. A model-supplied reserved approval field is
+stripped at the core dispatch boundary.
+
+Both browser authorizations are session-scoped. A download root approves
+downloads into that root for the lifetime of the session.
+`browser_existing_profile_approved` applies to existing-profile attach requests
+until the session ends. It is distinct from the standalone CLI's single-use,
+five-minute approval artifact.
+
+## Dispatch behavior
+
+The session rewrites trusted resource arguments immediately before platform
+dispatch:
+
+- recording and downloads require their matching host-owned root;
+- uploads and replay require a known opaque resource ID;
+- desktop and window screenshots remain inline by removing
+  `screenshot_out_file`, and click debug-image output is disabled;
+- native `launch_app` and dependency installation are refused;
+- public native paths cannot redirect an injected operation; and
+- missing trusted context fails before file creation, helper launch, or browser
+  mutation.
+
+The same policy is inherited by nested dispatch. A trajectory replay cannot
+escape the session policy by replaying a different native path, application
+launch, or dependency installation.
+
+The ordinary standalone CLI and MCP behavior is unchanged outside a
+managed-resource session.
+
+The managed policy applies only through the returned bound session. A host must
+not expose its unbound driver `call_tool` / `callTool` method to the model as an
+alternate action path.
+
+## Validation
+
+Cua Driver validates each binding when the trusted session is created and
+again immediately before use:
+
+- paths must be absolute and canonicalizable;
+- files and directories must be direct entries, not symbolic links;
+- uploads and helpers must be regular files;
+- helpers must be executable where the platform exposes executable bits;
+- opaque IDs must be unique, 1 to 128 characters long, and use only ASCII
+  letters, digits, `.`, `_`, or `-`;
+- one session may bind at most 32 upload files and 64 replay artifacts;
+- file and directory identity changes fail closed; and
+- Cua Driver preserves the exact accepted helper path instead of substituting
+  an ambient `PATH` result.
+
+The embedding host remains responsible for authenticating its artifact store
+and verifying helper digests and publishers before it creates the session.
+
+## Status and redaction
+
+`health_report` and `get_session_state` add a `trusted_resources` object:
+
+```json
+{
+  "schema_version": "1",
+  "managed": true,
+  "recording_root_ready": true,
+  "browser_download_root_ready": true,
+  "upload_file_count": 2,
+  "replay_artifact_count": 1,
+  "file_output_suppression_ready": true,
+  "ffmpeg_helper_ready": true,
+  "browser_existing_profile_approved": false
+}
+```
+
+Status never returns native paths. Managed recording and replay results replace
+path fields, nested summaries, and human-readable path text with host-managed
+summaries while preserving success or failure status. Application-listing
+results also redact executable paths.
+
+## Transport coverage
+
+The same resource binding works for:
+
+- direct embedded runtimes;
+- supervised private workers;
+- the original authenticated connection to an embedded service.
+
+Native paths are deliberately not added to the remote carrier contract. A
+remote Gateway sends opaque product resources to its trusted node host. The
+node resolves them locally, then creates the resource-bound Cua session.

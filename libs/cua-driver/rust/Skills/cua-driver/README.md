@@ -65,6 +65,9 @@ Use `--all-platforms` when the agent assists users across operating systems.
   page refs, trust-classified click/type/navigation, and native fallbacks.
 - `RECORDING.md`: trajectory evidence, MP4 capture, and replay.
 - `EMBEDDING.md`: embedding the driver into another host application.
+- `OPENCLAW.md`: managed OpenClaw provider profile. It is transport-free and
+  uses the matching `OPENCLAW_<PLATFORM>.md` companion plus the browser or
+  recording companion only when those capabilities are exposed.
 
 The agent should load `SKILL.md`, the current platform guide, and only the
 cross-cutting guide needed for the task.

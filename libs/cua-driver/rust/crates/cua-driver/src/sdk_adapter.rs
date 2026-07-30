@@ -9,7 +9,7 @@ use std::{
 };
 
 use cua_driver_core::{server::ToolProvider, CaptureScope};
-use cua_driver_sdk::{CuaDriver, CuaDriverSession, TrustedSessionOptions};
+use cua_driver_sdk::{CuaDriver, CuaDriverSession, TrustedSessionOptions, TrustedSessionResources};
 use serde_json::{json, Value};
 
 #[derive(Default)]
@@ -285,6 +285,16 @@ impl SdkAdapter {
     ) -> Result<Arc<CuaDriverSession>, String> {
         self.driver
             .create_trusted_session(options)
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn create_trusted_session_with_resources(
+        &self,
+        options: TrustedSessionOptions,
+        resources: TrustedSessionResources,
+    ) -> Result<Arc<CuaDriverSession>, String> {
+        self.driver
+            .create_trusted_session_with_resources(options, resources)
             .map_err(|error| error.to_string())
     }
 

@@ -4,7 +4,10 @@
 //! objects and the daemon host construct the same runtime here; transport
 //! adapters are downstream consumers of `CuaDriver`.
 
-use crate::{DriverActivityEvent, DriverActivityKind, DriverActivityObserver};
+use crate::{
+    trusted_resources::ValidatedTrustedSessionResources, DriverActivityEvent, DriverActivityKind,
+    DriverActivityObserver,
+};
 use cua_driver_core::{
     authorization::PermissionMode,
     protocol::ToolResult as CoreToolResult,
@@ -104,11 +107,21 @@ pub(crate) struct RuntimeSession {
     connection: AuthenticatedActionConnection,
     context: Arc<EffectiveAuthorizationContext>,
     public_session: String,
+    resources: Option<Arc<ValidatedTrustedSessionResources>>,
 }
 
 impl RuntimeSession {
     pub(crate) async fn invoke(&self, name: &str, mut args: Value) -> Option<CoreToolResult> {
         cua_driver_core::tool_args::sanitize_reserved_args(&mut args);
+        let evidence = self
+            .resources
+            .as_ref()
+            .map(|resources| {
+                cua_driver_core::tool::TrustedInvocationEvidence::with_argument_policy(
+                    resources.clone(),
+                )
+            })
+            .unwrap_or_default();
         let Some(arguments) = args.as_object_mut() else {
             return Some(permission_denied_result(
                 "session-bound actions require an object argument".to_owned(),
@@ -128,10 +141,13 @@ impl RuntimeSession {
             "session".to_owned(),
             Value::String(self.public_session.clone()),
         );
-        let result = self
+        let mut result = self
             .runtime
-            .invoke_with_context(name, args, self.context.clone())
+            .invoke_with_context_and_evidence(name, args, self.context.clone(), evidence)
             .await;
+        if let (Some(resources), Some(result)) = (&self.resources, result.as_mut()) {
+            resources.augment_result(name, result);
+        }
         if name == "end_session" && result.is_some() {
             self.authorization_registry
                 .revoke_connection(&self.connection);
@@ -369,6 +385,7 @@ impl DriverRuntime {
     pub(crate) fn create_trusted_session(
         self: &Arc<Self>,
         request: DelegatedSessionRequest,
+        resources: Option<Arc<ValidatedTrustedSessionResources>>,
     ) -> Result<Arc<RuntimeSession>, SessionAuthorizationError> {
         if !self.is_running() {
             return Err(SessionAuthorizationError::RuntimeUnavailable);
@@ -390,6 +407,7 @@ impl DriverRuntime {
             connection,
             context,
             public_session,
+            resources,
         }))
     }
 }

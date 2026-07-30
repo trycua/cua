@@ -14,6 +14,10 @@ Background computer-use driver for any agents. Speaks MCP over stdio; drives nat
   the same in-process native runtime through generated UniFFI bindings. The
   safe Rust SDK and generated bindings sit above a versioned C ABI; they do not
   require a daemon for direct application use.
+- **Cua as a managed agent provider:** a trusted host can bind one SDK-owned
+  session to one execution lease, load the digest-bound `openclaw-mcp` skill
+  profile, and inject host-owned native resources without exposing paths or
+  permission choices to the model.
 
 The language packages are for client applications, not agents. They contain no
 language-native MCP facade and have no `/sdk`, `/mcp`, or `/native` public

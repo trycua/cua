@@ -23,8 +23,13 @@ use crate::video::{VideoBackend, VideoBackendFactory, VideoMetadata};
 pub struct FfmpegVideoBackendFactory;
 
 impl VideoBackendFactory for FfmpegVideoBackendFactory {
-    fn start(&self, output_path: &Path) -> anyhow::Result<Box<dyn VideoBackend>> {
-        FfmpegVideoBackend::start(output_path).map(|b| Box::new(b) as Box<dyn VideoBackend>)
+    fn start(
+        &self,
+        output_path: &Path,
+        trusted_helper: Option<&Path>,
+    ) -> anyhow::Result<Box<dyn VideoBackend>> {
+        FfmpegVideoBackend::start(output_path, trusted_helper)
+            .map(|b| Box::new(b) as Box<dyn VideoBackend>)
     }
 }
 
@@ -39,10 +44,10 @@ pub struct FfmpegVideoBackend {
 }
 
 impl FfmpegVideoBackend {
-    fn start(output_path: &Path) -> anyhow::Result<Self> {
+    fn start(output_path: &Path, trusted_helper: Option<&Path>) -> anyhow::Result<Self> {
         let output_path = output_path.to_path_buf();
 
-        let ffmpeg = match find_ffmpeg() {
+        let ffmpeg = match trusted_helper.map(Path::to_path_buf).or_else(find_ffmpeg) {
             Some(p) => p,
             None => anyhow::bail!(
                 "ffmpeg not found on PATH. Install with: \

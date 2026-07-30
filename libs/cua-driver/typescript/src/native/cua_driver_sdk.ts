@@ -43,6 +43,24 @@ export function createTrustedSession(driver: CuaDriverLike, options: TrustedSess
     ));
     }
 
+/**
+ * Generated-language host factory for a session-bound action surface whose
+ * native resources are injected by trusted host code.
+ */
+export function createTrustedSessionWithResources(driver: CuaDriverLike, options: TrustedSessionOptions, resources: TrustedSessionResources): CuaDriverSessionLike /*throws*/ {
+    return FfiConverterTypeCuaDriverSession.lift(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeDriverError.lift.bind(FfiConverterTypeDriverError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_func_create_trusted_session_with_resources(
+        FfiConverterTypeCuaDriver.lower(driver, nativeModule().rustbuffer_alloc),
+        FfiConverterTypeTrustedSessionOptions.lower(options, nativeModule().rustbuffer_alloc),
+        FfiConverterTypeTrustedSessionResources.lower(resources, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
 export function currentMacOsPermissionStatus(): MacOsPermissionStatus {
     return ((__rb: Uint8Array) => {
         try {
@@ -59,6 +77,24 @@ export function currentMacOsPermissionStatus(): MacOsPermissionStatus {
     ));
     }
 
+export function driverSkillProfile(profileId: string): DriverSkillProfile /*throws*/ {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeDriverSkillProfile.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeDriverError.lift.bind(FfiConverterTypeDriverError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_func_driver_skill_profile(
+        FfiConverterString.lower(profileId, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
 export function openMacOsScreenRecordingSettings(): void /*throws*/ {uniffiCaller.rustCallWithError(
             /*liftError:*/ FfiConverterTypeDriverError.lift.bind(FfiConverterTypeDriverError),
             /*caller:*/ (callStatus) => { nativeModule().uniffi_cua_driver_sdk_fn_func_open_mac_os_screen_recording_settings(
@@ -66,6 +102,26 @@ export function openMacOsScreenRecordingSettings(): void /*throws*/ {uniffiCalle
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
     );
+    }
+
+export function readDriverSkillResource(profileId: string, name: string, expectedSha256: string): DriverSkillResource /*throws*/ {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeDriverSkillResource.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeDriverError.lift.bind(FfiConverterTypeDriverError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_func_read_driver_skill_resource(
+        FfiConverterString.lower(profileId, nativeModule().rustbuffer_alloc),
+        FfiConverterString.lower(name, nativeModule().rustbuffer_alloc),
+        FfiConverterString.lower(expectedSha256, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
     }
 
 export function requestMacOsPermissions(): MacOsPermissionStatus {
@@ -661,6 +717,175 @@ const FfiConverterTypeDriverOptions = (() => {
     return new FFIConverter();
 })();
 
+export type DriverSkillResourceDescriptor = {
+    name: string,
+    sha256: string,
+    platform?: string,
+    capability?: string
+}
+
+/**
+ * Generated factory for {@link DriverSkillResourceDescriptor} record objects.
+ */
+export const DriverSkillResourceDescriptor = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<DriverSkillResourceDescriptor, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<DriverSkillResourceDescriptor>,
+    });
+})();
+
+const FfiConverterTypeDriverSkillResourceDescriptor = (() => {
+    type TypeName = DriverSkillResourceDescriptor;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                name: FfiConverterString.read(from),
+                sha256: FfiConverterString.read(from),
+                platform: FfiConverterOptionalString.read(from),
+                capability: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.name, into);
+            FfiConverterString.write(value.sha256, into);
+            FfiConverterOptionalString.write(value.platform, into);
+            FfiConverterOptionalString.write(value.capability, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.name) +
+             FfiConverterString.allocationSize(value.sha256) +
+             FfiConverterOptionalString.allocationSize(value.platform) +
+             FfiConverterOptionalString.allocationSize(value.capability);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type DriverSkillProfile = {
+    profileId: string,
+    schemaVersion: string,
+    driverVersion: string,
+    compatibleDriverRequirement: string,
+    toolSchemaProfile: string,
+    bundleSha256: string,
+    resources: Array<DriverSkillResourceDescriptor>,
+    requiredCapabilities: Array<string>
+}
+
+/**
+ * Generated factory for {@link DriverSkillProfile} record objects.
+ */
+export const DriverSkillProfile = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<DriverSkillProfile, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<DriverSkillProfile>,
+    });
+})();
+
+const FfiConverterTypeDriverSkillProfile = (() => {
+    type TypeName = DriverSkillProfile;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                profileId: FfiConverterString.read(from),
+                schemaVersion: FfiConverterString.read(from),
+                driverVersion: FfiConverterString.read(from),
+                compatibleDriverRequirement: FfiConverterString.read(from),
+                toolSchemaProfile: FfiConverterString.read(from),
+                bundleSha256: FfiConverterString.read(from),
+                resources: FfiConverterSequenceTypeDriverSkillResourceDescriptor.read(from),
+                requiredCapabilities: FfiConverterSequenceString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.profileId, into);
+            FfiConverterString.write(value.schemaVersion, into);
+            FfiConverterString.write(value.driverVersion, into);
+            FfiConverterString.write(value.compatibleDriverRequirement, into);
+            FfiConverterString.write(value.toolSchemaProfile, into);
+            FfiConverterString.write(value.bundleSha256, into);
+            FfiConverterSequenceTypeDriverSkillResourceDescriptor.write(value.resources, into);
+            FfiConverterSequenceString.write(value.requiredCapabilities, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.profileId) +
+             FfiConverterString.allocationSize(value.schemaVersion) +
+             FfiConverterString.allocationSize(value.driverVersion) +
+             FfiConverterString.allocationSize(value.compatibleDriverRequirement) +
+             FfiConverterString.allocationSize(value.toolSchemaProfile) +
+             FfiConverterString.allocationSize(value.bundleSha256) +
+             FfiConverterSequenceTypeDriverSkillResourceDescriptor.allocationSize(value.resources) +
+             FfiConverterSequenceString.allocationSize(value.requiredCapabilities);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type DriverSkillResource = {
+    profileId: string,
+    name: string,
+    sha256: string,
+    content: string
+}
+
+/**
+ * Generated factory for {@link DriverSkillResource} record objects.
+ */
+export const DriverSkillResource = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<DriverSkillResource, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<DriverSkillResource>,
+    });
+})();
+
+const FfiConverterTypeDriverSkillResource = (() => {
+    type TypeName = DriverSkillResource;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                profileId: FfiConverterString.read(from),
+                name: FfiConverterString.read(from),
+                sha256: FfiConverterString.read(from),
+                content: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.profileId, into);
+            FfiConverterString.write(value.name, into);
+            FfiConverterString.write(value.sha256, into);
+            FfiConverterString.write(value.content, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.profileId) +
+             FfiConverterString.allocationSize(value.name) +
+             FfiConverterString.allocationSize(value.sha256) +
+             FfiConverterString.allocationSize(value.content);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type EmbeddedEnvironmentVariable = {
     name: string,
     value: string
@@ -1203,6 +1428,92 @@ const FfiConverterTypeToolResult = (() => {
     return new FFIConverter();
 })();
 
+export type TrustedResourceDirectory = {
+    resourceId: string,
+    path: string
+}
+
+/**
+ * Generated factory for {@link TrustedResourceDirectory} record objects.
+ */
+export const TrustedResourceDirectory = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<TrustedResourceDirectory, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<TrustedResourceDirectory>,
+    });
+})();
+
+const FfiConverterTypeTrustedResourceDirectory = (() => {
+    type TypeName = TrustedResourceDirectory;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                resourceId: FfiConverterString.read(from),
+                path: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.resourceId, into);
+            FfiConverterString.write(value.path, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.resourceId) +
+             FfiConverterString.allocationSize(value.path);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type TrustedResourceFile = {
+    resourceId: string,
+    path: string
+}
+
+/**
+ * Generated factory for {@link TrustedResourceFile} record objects.
+ */
+export const TrustedResourceFile = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<TrustedResourceFile, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<TrustedResourceFile>,
+    });
+})();
+
+const FfiConverterTypeTrustedResourceFile = (() => {
+    type TypeName = TrustedResourceFile;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                resourceId: FfiConverterString.read(from),
+                path: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.resourceId, into);
+            FfiConverterString.write(value.path, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.resourceId) +
+             FfiConverterString.allocationSize(value.path);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 /**
  * Trusted host request for one immutable, connection-bound action surface.
  */
@@ -1255,6 +1566,65 @@ const FfiConverterTypeTrustedSessionOptions = (() => {
              FfiConverterUInt64.allocationSize(value.ttlSeconds) +
              FfiConverterUInt64.allocationSize(value.idleTtlSeconds) +
              FfiConverterOptionalString.allocationSize(value.boundedManifestPath);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type TrustedSessionResources = {
+    recordingRoot?: string,
+    browserDownloadRoot?: string,
+    uploadFiles: Array<TrustedResourceFile>,
+    replayDirectories: Array<TrustedResourceDirectory>,
+    ffmpegPath?: string,
+    browserExistingProfileApproved: boolean
+}
+
+/**
+ * Generated factory for {@link TrustedSessionResources} record objects.
+ */
+export const TrustedSessionResources = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<TrustedSessionResources, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<TrustedSessionResources>,
+    });
+})();
+
+const FfiConverterTypeTrustedSessionResources = (() => {
+    type TypeName = TrustedSessionResources;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                recordingRoot: FfiConverterOptionalString.read(from),
+                browserDownloadRoot: FfiConverterOptionalString.read(from),
+                uploadFiles: FfiConverterSequenceTypeTrustedResourceFile.read(from),
+                replayDirectories: FfiConverterSequenceTypeTrustedResourceDirectory.read(from),
+                ffmpegPath: FfiConverterOptionalString.read(from),
+                browserExistingProfileApproved: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalString.write(value.recordingRoot, into);
+            FfiConverterOptionalString.write(value.browserDownloadRoot, into);
+            FfiConverterSequenceTypeTrustedResourceFile.write(value.uploadFiles, into);
+            FfiConverterSequenceTypeTrustedResourceDirectory.write(value.replayDirectories, into);
+            FfiConverterOptionalString.write(value.ffmpegPath, into);
+            FfiConverterBool.write(value.browserExistingProfileApproved, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalString.allocationSize(value.recordingRoot) +
+             FfiConverterOptionalString.allocationSize(value.browserDownloadRoot) +
+             FfiConverterSequenceTypeTrustedResourceFile.allocationSize(value.uploadFiles) +
+             FfiConverterSequenceTypeTrustedResourceDirectory.allocationSize(value.replayDirectories) +
+             FfiConverterOptionalString.allocationSize(value.ffmpegPath) +
+             FfiConverterBool.allocationSize(value.browserExistingProfileApproved);
 
         }
     };
@@ -5123,6 +5493,9 @@ const FfiConverterOptionalString = new FfiConverterOptional(FfiConverterString);
 // FfiConverter for Array<string>
 const FfiConverterSequenceString = new FfiConverterArray(FfiConverterString);
 
+// FfiConverter for Array<DriverSkillResourceDescriptor>
+const FfiConverterSequenceTypeDriverSkillResourceDescriptor = new FfiConverterArray(FfiConverterTypeDriverSkillResourceDescriptor);
+
 // FfiConverter for Array<EmbeddedEnvironmentVariable>
 const FfiConverterSequenceTypeEmbeddedEnvironmentVariable = new FfiConverterArray(FfiConverterTypeEmbeddedEnvironmentVariable);
 
@@ -5140,6 +5513,12 @@ const FfiConverterSequenceTypeImageContent = new FfiConverterArray(FfiConverterT
 
 // FfiConverter for boolean | undefined
 const FfiConverterOptionalBoolean = new FfiConverterOptional(FfiConverterBool);
+
+// FfiConverter for Array<TrustedResourceFile>
+const FfiConverterSequenceTypeTrustedResourceFile = new FfiConverterArray(FfiConverterTypeTrustedResourceFile);
+
+// FfiConverter for Array<TrustedResourceDirectory>
+const FfiConverterSequenceTypeTrustedResourceDirectory = new FfiConverterArray(FfiConverterTypeTrustedResourceDirectory);
 
 // FfiConverter for EmbeddedDriverConnection | undefined
 const FfiConverterOptionalTypeEmbeddedDriverConnection = new FfiConverterOptional(FfiConverterTypeEmbeddedDriverConnection);
@@ -5169,11 +5548,20 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_driver_sdk_checksum_func_create_trusted_session() !== 50573) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_func_create_trusted_session");
     }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_func_create_trusted_session_with_resources() !== 8021) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_func_create_trusted_session_with_resources");
+    }
     if (nativeModule().uniffi_cua_driver_sdk_checksum_func_current_mac_os_permission_status() !== 22890) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_func_current_mac_os_permission_status");
     }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_func_driver_skill_profile() !== 60319) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_func_driver_skill_profile");
+    }
     if (nativeModule().uniffi_cua_driver_sdk_checksum_func_open_mac_os_screen_recording_settings() !== 6663) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_func_open_mac_os_screen_recording_settings");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_func_read_driver_skill_resource() !== 13250) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_func_read_driver_skill_resource");
     }
     if (nativeModule().uniffi_cua_driver_sdk_checksum_func_request_mac_os_permissions() !== 61823) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_func_request_mac_os_permissions");
@@ -5412,6 +5800,9 @@ export default Object.freeze({
     FfiConverterTypeDriverExecutionMode,
     FfiConverterTypeDriverMetadata,
     FfiConverterTypeDriverOptions,
+    FfiConverterTypeDriverSkillProfile,
+    FfiConverterTypeDriverSkillResource,
+    FfiConverterTypeDriverSkillResourceDescriptor,
     FfiConverterTypeEmbeddedCuaDriverHost,
     FfiConverterTypeEmbeddedDriverConnection,
     FfiConverterTypeEmbeddedDriverError,
@@ -5428,6 +5819,9 @@ export default Object.freeze({
     FfiConverterTypeSdkClientKind,
     FfiConverterTypeSessionPermissionMode,
     FfiConverterTypeToolResult,
+    FfiConverterTypeTrustedResourceDirectory,
+    FfiConverterTypeTrustedResourceFile,
     FfiConverterTypeTrustedSessionOptions,
+    FfiConverterTypeTrustedSessionResources,
   }
 });

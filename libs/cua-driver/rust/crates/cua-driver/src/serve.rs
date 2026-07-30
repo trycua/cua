@@ -39,6 +39,75 @@ fn is_active_proxy_session(session: Option<&str>) -> bool {
     session.is_some_and(|session| active_proxy_sessions().lock().unwrap().contains(session))
 }
 
+trait TrustedServiceSessionHost {
+    fn create_service_trusted_session(
+        &self,
+        options: cua_driver_sdk::TrustedSessionOptions,
+    ) -> Result<std::sync::Arc<cua_driver_sdk::CuaDriverSession>, String>;
+
+    fn create_service_trusted_session_with_resources(
+        &self,
+        options: cua_driver_sdk::TrustedSessionOptions,
+        resources: cua_driver_sdk::TrustedSessionResources,
+    ) -> Result<std::sync::Arc<cua_driver_sdk::CuaDriverSession>, String>;
+}
+
+impl TrustedServiceSessionHost for cua_driver_sdk::CuaDriver {
+    fn create_service_trusted_session(
+        &self,
+        options: cua_driver_sdk::TrustedSessionOptions,
+    ) -> Result<std::sync::Arc<cua_driver_sdk::CuaDriverSession>, String> {
+        self.create_trusted_session(options)
+            .map_err(|error| error.to_string())
+    }
+
+    fn create_service_trusted_session_with_resources(
+        &self,
+        options: cua_driver_sdk::TrustedSessionOptions,
+        resources: cua_driver_sdk::TrustedSessionResources,
+    ) -> Result<std::sync::Arc<cua_driver_sdk::CuaDriverSession>, String> {
+        self.create_trusted_session_with_resources(options, resources)
+            .map_err(|error| error.to_string())
+    }
+}
+
+impl TrustedServiceSessionHost for crate::sdk_adapter::SdkAdapter {
+    fn create_service_trusted_session(
+        &self,
+        options: cua_driver_sdk::TrustedSessionOptions,
+    ) -> Result<std::sync::Arc<cua_driver_sdk::CuaDriverSession>, String> {
+        self.create_trusted_session(options)
+    }
+
+    fn create_service_trusted_session_with_resources(
+        &self,
+        options: cua_driver_sdk::TrustedSessionOptions,
+        resources: cua_driver_sdk::TrustedSessionResources,
+    ) -> Result<std::sync::Arc<cua_driver_sdk::CuaDriverSession>, String> {
+        self.create_trusted_session_with_resources(options, resources)
+    }
+}
+
+fn bind_trusted_service_session(
+    driver: &dyn TrustedServiceSessionHost,
+    value: serde_json::Value,
+) -> Result<std::sync::Arc<cua_driver_sdk::CuaDriverSession>, String> {
+    if value.get("session").is_some() {
+        let binding: cua_driver_sdk::TrustedSessionBindingOptions =
+            serde_json::from_value(value)
+                .map_err(|error| format!("invalid trusted session binding: {error}"))?;
+        return match binding.resources {
+            Some(resources) => {
+                driver.create_service_trusted_session_with_resources(binding.session, resources)
+            }
+            None => driver.create_service_trusted_session(binding.session),
+        };
+    }
+    let options: cua_driver_sdk::TrustedSessionOptions = serde_json::from_value(value)
+        .map_err(|error| format!("invalid trusted session options: {error}"))?;
+    driver.create_service_trusted_session(options)
+}
+
 fn inject_browser_approvals(tool_name: &str, args: &mut serde_json::Value, session: Option<&str>) {
     if tool_name == "browser_prepare" && is_active_proxy_session(session) {
         if let Some(arguments) = args.as_object_mut() {
@@ -701,13 +770,10 @@ pub async fn run_serve(
                                         65,
                                     )
                                 } else {
-                                    let options = req.args
+                                    let session = req.args
                                         .ok_or_else(|| "trusted_session_begin omitted options".to_owned())
-                                        .and_then(|value| {
-                                            serde_json::from_value(value)
-                                                .map_err(|error| format!("invalid trusted session options: {error}"))
-                                        });
-                                    match options.and_then(|options| reg.create_trusted_session(options)) {
+                                        .and_then(|value| bind_trusted_service_session(reg.as_ref(), value));
+                                    match session {
                                         Ok(session) => {
                                             trusted_session = Some(session);
                                             DaemonResponse::ok(serde_json::json!({
@@ -1332,13 +1398,10 @@ pub async fn run_serve(
                                         65,
                                     )
                                 } else {
-                                    let options = req.args
+                                    let session = req.args
                                         .ok_or_else(|| "trusted_session_begin omitted options".to_owned())
-                                        .and_then(|value| {
-                                            serde_json::from_value(value)
-                                                .map_err(|error| format!("invalid trusted session options: {error}"))
-                                        });
-                                    match options.and_then(|options| reg.create_trusted_session(options)) {
+                                        .and_then(|value| bind_trusted_service_session(reg.as_ref(), value));
+                                    match session {
                                         Ok(session) => {
                                             trusted_session = Some(session);
                                             DaemonResponse::ok(serde_json::json!({

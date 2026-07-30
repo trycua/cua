@@ -672,6 +672,12 @@ impl BrowserEngine {
         validate_profile(profile_request)?;
         match request.authorization.as_ref() {
             Some(PrepareAuthorization::McpHost) => {}
+            Some(PrepareAuthorization::TrustedHostExistingProfile) => {
+                return Err(refusal(
+                    BrowserRefusalCode::BrowserConsentRequired,
+                    "existing-profile host authorization cannot approve isolated browser launch",
+                ))
+            }
             Some(PrepareAuthorization::ApprovalArtifact(token)) => {
                 consume_prepare_approval(token, request.pid, profile_request)?;
             }
@@ -768,6 +774,7 @@ impl BrowserEngine {
         enum ConsentPath {
             Protected,
             BoundedManifest,
+            TrustedHost,
             LaunchGrant,
             LegacyArtifact,
             Unrestricted,
@@ -820,6 +827,8 @@ impl BrowserEngine {
                 )
                 .map_err(|message| refusal(BrowserRefusalCode::BrowserConsentRequired, message))?;
             ConsentPath::BoundedManifest
+        } else if request.authorization == Some(PrepareAuthorization::TrustedHostExistingProfile) {
+            ConsentPath::TrustedHost
         } else if crate::authorization::launch_grant_enabled("existing_profile") {
             ConsentPath::LaunchGrant
         } else if self.approval_broker.provider_id().is_some() {
@@ -833,7 +842,9 @@ impl BrowserEngine {
                 // The ordinary MCP destructive-tool marker proves transport
                 // provenance, not a person's approval of their authenticated
                 // profile. It is deliberately insufficient here.
-                Some(PrepareAuthorization::McpHost) | None => {
+                Some(PrepareAuthorization::McpHost)
+                | Some(PrepareAuthorization::TrustedHostExistingProfile)
+                | None => {
                     return Err(refusal(
                         BrowserRefusalCode::BrowserConsentRequired,
                         "legacy existing-profile compatibility requires a fresh operation-bound browser-approve artifact",

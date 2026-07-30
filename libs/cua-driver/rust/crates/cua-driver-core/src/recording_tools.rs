@@ -120,10 +120,15 @@ impl Tool for StartRecordingTool {
         // (session_end) only stops the recording its own session started.
         let owner = args.opt_str("_session_id");
 
-        match self.session.start(
+        let trusted_ffmpeg = args
+            .get("_cua_trusted_ffmpeg_path")
+            .and_then(Value::as_str)
+            .map(std::path::Path::new);
+        match self.session.start_with_helper(
             output_dir.as_deref().unwrap(),
             record_video,
             owner.as_deref(),
+            trusted_ffmpeg,
         ) {
             Ok(()) => {
                 let state = self.session.current_state();

@@ -7,7 +7,7 @@
 use crate::{
     embedded::{allowed_environment_name, safe_environment},
     ConfiguredDriverOptions, DriverError, DriverMetadata, EmbeddedEnvironmentVariable,
-    TrustedSessionOptions,
+    TrustedSessionBindingOptions, TrustedSessionOptions, TrustedSessionResources,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -251,8 +251,16 @@ impl PrivateWorkerClient {
     pub(crate) fn bind_session(
         self: &Arc<Self>,
         options: TrustedSessionOptions,
+        resources: Option<TrustedSessionResources>,
     ) -> Result<String, DriverError> {
-        let arguments = serde_json::to_value(options).map_err(|error| DriverError::Protocol {
+        let arguments = match resources {
+            Some(resources) => serde_json::to_value(TrustedSessionBindingOptions {
+                session: options,
+                resources: Some(resources),
+            }),
+            None => serde_json::to_value(options),
+        }
+        .map_err(|error| DriverError::Protocol {
             reason: format!("serialize private worker session options: {error}"),
         })?;
         let response = self.request_sync("bind_session", None, Some(arguments), None)?;

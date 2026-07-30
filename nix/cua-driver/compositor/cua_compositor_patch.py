@@ -108,11 +108,11 @@ static void cua_focus_toplevel(struct tinywl_toplevel *toplevel) {
 	 * attached. Headless CI has none, so explicit activation establishes the
 	 * logical focus without coupling it to the initial map/configure handshake. */
 	struct wlr_surface *surface = toplevel->xdg_toplevel->base->surface;
-	if (toplevel->server->seat->keyboard_state.focused_surface != surface) {
-		wlr_seat_keyboard_notify_enter(
-			toplevel->server->seat, surface, g_keyboard.keycodes,
-			g_keyboard.num_keycodes, &g_keyboard.modifiers);
-	}
+	// Always resend enter after focus_toplevel(): tinywl can update focused_surface
+	// without a wl_keyboard.enter when the synthetic keyboard has no backend.
+	wlr_seat_keyboard_notify_enter(
+		toplevel->server->seat, surface, g_keyboard.keycodes,
+		g_keyboard.num_keycodes, &g_keyboard.modifiers);
 }
 /* Chromium processes keyboard events through the physical seat's focused
  * client. Keep its temporary focus through one event-loop turn so it consumes

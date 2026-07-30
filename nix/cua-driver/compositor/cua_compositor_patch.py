@@ -596,6 +596,8 @@ static void cua_kbd_key_target(struct tinywl_server *server, struct tinywl_tople
 static bool cua_type_cp(struct tinywl_server *server, struct tinywl_toplevel *t, int idx, uint32_t cp) {
 	if (cp >= 128 || !g_chartab[cp].valid) return false;
 	struct wlr_seat_client *sc = cua_kbd_enter(server, t, idx);
+	wlr_log(WLR_INFO, "[cua] key idx=%d target=%d keyboard-client=%s", idx,
+		(int)cua_toplevel_pid(t), sc ? "yes" : "no");
 	if (!sc) return false;
 	struct cua_keyent e = g_chartab[cp];
 	if (e.shift) cua_kbd_mods(sc, g_shift_mask);
@@ -621,6 +623,8 @@ static bool cua_type_hex(struct tinywl_server *server, struct tinywl_toplevel *t
 		if (surface == restore_root) { restore_toplevel = candidate; break; }
 	}
 	bool restore_focus = idx != 0 && restore_root != target_root;
+	wlr_log(WLR_INFO, "[cua] type idx=%d target=%d restore=%d", idx,
+		(int)cua_toplevel_pid(t), restore_focus);
 	if (restore_focus) {
 		/* Coalesce consecutive logical-seat strings so they restore the original
 		 * physical focus rather than an intermediate transient target. */

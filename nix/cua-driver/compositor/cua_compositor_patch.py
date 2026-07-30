@@ -109,6 +109,9 @@ static void cua_focus_toplevel(struct tinywl_toplevel *toplevel) {
 	 * attached. Headless CI has none, so explicit activation establishes the
 	 * logical focus without coupling it to the initial map/configure handshake. */
 	struct wlr_surface *surface = toplevel->xdg_toplevel->base->surface;
+	wlr_log(WLR_INFO, "[cua] focus target=%p focused=%p client=%p", surface,
+		toplevel->server->seat->keyboard_state.focused_surface,
+		toplevel->server->seat->keyboard_state.focused_client);
 	// Always resend enter after focus_toplevel(): tinywl can update focused_surface
 	// without a wl_keyboard.enter when the synthetic keyboard has no backend.
 	wlr_seat_keyboard_notify_enter(
@@ -586,6 +589,9 @@ static void cua_kbd_key_target(struct tinywl_server *server, struct tinywl_tople
 	struct wlr_surface *target = wlr_surface_get_root_surface(t->xdg_toplevel->base->surface);
 	struct wlr_surface *focused = server->seat->keyboard_state.focused_surface;
 	struct wlr_surface *focused_root = focused ? wlr_surface_get_root_surface(focused) : NULL;
+	wlr_log(WLR_INFO, "[cua] key idx=%d route=%s target=%p focused=%p entry-client=%p focused-client=%p key=%u state=%u",
+		idx, target == focused_root ? "seat" : "direct", target, focused_root, sc,
+		server->seat->keyboard_state.focused_client, keycode, pressed);
 	if (target == focused_root) {
 		struct wlr_keyboard_key_event event = {
 			.time_msec = cua_now_ms(),

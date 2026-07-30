@@ -306,6 +306,7 @@ static const char *cua_transient_seat_create(struct tinywl_server *server, const
 		if (entry->seat) continue;
 		entry->seat = wlr_seat_create(server->wl_display, name);
 		if (!entry->seat) return "seat-create-failed";
+		wlr_seat_set_keyboard(entry->seat, &g_keyboard);
 		wlr_seat_set_capabilities(entry->seat,
 			WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_KEYBOARD);
 		snprintf(entry->name, sizeof entry->name, "%s", name);
@@ -695,6 +696,7 @@ static const char *cua_handle_cmd(struct tinywl_server *server, char *line) {
 	} else if (!strcmp(cmd, "sm") || !strcmp(cmd, "sb") || !strcmp(cmd, "st")) {
 		char seat_name[64];
 		struct cua_transient_seat *entry;
+		struct wlr_seat *physical = server->seat;
 		int idx, device;
 		bool ok = false;
 		if (!strcmp(cmd, "sm")) {
@@ -703,7 +705,9 @@ static const char *cua_handle_cmd(struct tinywl_server *server, char *line) {
 			if (!(entry = cua_transient_seat_find(seat_name))) return "unknown-seat";
 			if (!cua_transient_device(entry, idx, &device)) return "bad-device";
 			if (!(t = cua_resolve_target(server, app, &err))) return err;
+			server->seat = entry->seat;
 			ok = cua_motion(server, t, device, x, y);
+			server->seat = physical;
 			return ok ? NULL : "no-pointer-resource";
 		}
 		if (!strcmp(cmd, "sb")) {
@@ -712,14 +716,18 @@ static const char *cua_handle_cmd(struct tinywl_server *server, char *line) {
 			if (!(entry = cua_transient_seat_find(seat_name))) return "unknown-seat";
 			if (!cua_transient_device(entry, idx, &device)) return "bad-device";
 			if (!(t = cua_resolve_target(server, app, &err))) return err;
+			server->seat = entry->seat;
 			ok = cua_button(server, t, device, button, pressed != 0);
+			server->seat = physical;
 			return ok ? NULL : "no-pointer-resource";
 		}
 		char hex[8192];
 		if (sscanf(line, "st %63s %127s %8191s", seat_name, app, hex) != 3) return "bad-args";
 		if (!(entry = cua_transient_seat_find(seat_name))) return "unknown-seat";
 		if (!(t = cua_resolve_target(server, app, &err))) return err;
+		server->seat = entry->seat;
 		ok = cua_type_hex(server, t, entry->device_base, hex);
+		server->seat = physical;
 		return ok ? NULL : "no-keyboard-resource";
 	} else if (!strcmp(cmd, "d")) {
 		double x, y; unsigned count, btn;

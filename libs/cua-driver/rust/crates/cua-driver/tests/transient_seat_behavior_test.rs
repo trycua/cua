@@ -132,6 +132,13 @@ fn wait_for_fixture(journal: &FixtureJournal, marker: &str) {
 fn transient_seats_are_isolated_and_destroyable() {
     // Electron binds its Wayland globals at startup, so the transient seats
     // must exist before either fixture initializes its registry.
+    assert_eq!(
+        exchange(&["seat create agent-a".to_owned()]),
+        vec!["ok"],
+        "missing transient-seat lifecycle capability"
+    );
+    assert_eq!(exchange(&["seat create agent-b".to_owned()]), vec!["ok"]);
+
     let fixture_a = launch_fixture("agent-a");
     let fixture_b = launch_fixture("agent-b");
     wait_for_target(&fixture_a);

@@ -401,9 +401,9 @@ static bool cua_motion(struct tinywl_server *server, struct wlr_seat *seat,
 	/* Chromium consumes pointer input through wlroots' seat pointer state. Raw
 	 * wl_pointer resource sends are sufficient for GTK, but Chromium can ACK
 	 * them without dispatching DOM mouse events because the compositor-side
-	 * focus/grab state was never updated. Device 0 is the normal single-pointer
-	 * route, so use the protocol-complete seat notifications there. Higher
-	 * logical device indices retain direct delivery for independent cursors. */
+	 * focus/grab state was never updated. Each transient wl_seat and physical
+	 * device zero use the protocol-complete notification path; other physical
+	 * logical devices retain direct delivery for independent cursors. */
 	if (seat != server->seat || idx % CUA_TRANSIENT_SEAT_STRIDE == 0) {
 		wlr_seat_pointer_notify_enter(seat, surface, local_x, local_y);
 		wlr_seat_pointer_notify_motion(seat, cua_now_ms(), local_x, local_y);

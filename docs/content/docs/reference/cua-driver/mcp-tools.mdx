@@ -164,7 +164,7 @@ Optional `creates_new_application_instance`: when true, forces a new app instanc
 
 Optional `additional_arguments`: extra argv strings appended after --args.
 
-Returns the launched app's pid, bundle_id, name, and a `windows` array (same shape as `list_windows`) so callers can skip an extra round-trip before `get_window_state(pid, window_id)`. When the focus-steal belt-and-braces demotion check ran (target pid ≠ prior frontmost), the response also includes `self_activation_suppressed: bool` — true if focus stayed with the prior frontmost, false if the launched app held focus despite the re-demote attempt.
+Returns the launched app's pid, bundle_id, name, and a `windows` array (same shape as `list_windows`) so callers can skip an extra round-trip before `get_window_state(pid, window_id)`. `launch_state` distinguishes whether the request was sent, the process is running, and a window is ready. When the focus-steal belt-and-braces demotion check ran (target pid ≠ prior frontmost), the response also includes `self_activation_suppressed: bool` — true if focus stayed with the prior frontmost, false if the launched app held focus despite the re-demote attempt.
 
 **Arguments:**
 

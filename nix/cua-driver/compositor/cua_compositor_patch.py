@@ -577,18 +577,22 @@ static void cua_kbd_key(struct wlr_seat_client *sc, uint32_t keycode, bool press
 			pressed ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED);
 }
 /* Preserve compositor-native keyboard delivery when the addressed surface is
- * already the logical seat focus. Chromium relies on wlroots' focused-seat
- * state for foreground keyboard events; sending a raw wl_keyboard.key to its
- * resource can be acknowledged while never reaching the renderer. Background
- * targets retain the direct resource path that makes focus-free input possible. */
+ * already the logical seat focus. wlroots' keyboard event source updates the focused seat exactly as a real
+ * keyboard would. Background targets retain the direct resource path that makes
+ * focus-free input possible. */
 static void cua_kbd_key_target(struct tinywl_server *server, struct tinywl_toplevel *t,
 		struct wlr_seat_client *sc, int idx, uint32_t keycode, bool pressed) {
 	struct wlr_surface *target = wlr_surface_get_root_surface(t->xdg_toplevel->base->surface);
 	struct wlr_surface *focused = server->seat->keyboard_state.focused_surface;
 	struct wlr_surface *focused_root = focused ? wlr_surface_get_root_surface(focused) : NULL;
 	if (target == focused_root) {
-		wlr_seat_keyboard_notify_key(server->seat, cua_now_ms(), keycode,
-			pressed ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED);
+		struct wlr_event_keyboard_key event = {
+			.time_msec = cua_now_ms(),
+			.keycode = keycode,
+			.update_state = true,
+			.state = pressed ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED,
+		};
+		wlr_keyboard_notify_key(&g_keyboard, &event);
 	} else {
 		cua_kbd_key(sc, keycode, pressed);
 	}

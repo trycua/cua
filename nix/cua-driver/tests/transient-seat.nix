@@ -142,6 +142,7 @@ pkgs.testers.nixosTest {
         "XDG_CURRENT_DESKTOP=sway XDG_SESSION_DESKTOP=sway CUA_DRIVER_RS_ENABLE_WAYLAND=1 "
         "CUA_INJECT_SOCKET=/tmp/cua-runtime/cua-inject.sock "
         "CUA_TEST_APPS_ROOT=${electronFixture} "
+        "CUA_TRANSIENT_SEAT_WAYLAND_DEBUG=1 WAYLAND_DEBUG=client "
         "ELECTRON_OZONE_PLATFORM_HINT=wayland "
         "transient-seat-behavior --ignored --nocapture --test-threads=1 "
         ">/tmp/transient-seat-evidence/test.log 2>&1"

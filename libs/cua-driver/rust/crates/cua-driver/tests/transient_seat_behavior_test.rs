@@ -66,6 +66,11 @@ fn launch_fixture(label: &str) -> Fixture {
         "required Electron fixture is missing: {executable:?}"
     );
     let journal = FixtureJournal::start();
+    let fixture_stderr = if std::env::var_os("CUA_TRANSIENT_SEAT_WAYLAND_DEBUG").is_some() {
+        Stdio::inherit()
+    } else {
+        Stdio::null()
+    };
     let child = Command::new(executable)
         .args([
             "--no-sandbox",
@@ -76,7 +81,7 @@ fn launch_fixture(label: &str) -> Fixture {
         .env("CUA_E2E_TRANSIENT_SEAT_LABEL", label)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(fixture_stderr)
         .spawn()
         .expect("launch Electron fixture");
     Fixture {

@@ -57,6 +57,12 @@ class TestNixOsDesktopMatrix(unittest.TestCase):
         for relative in required:
             self.assertTrue((REPO_ROOT / relative).is_file(), relative)
 
+    def test_wayland_client_uses_launch_pid_when_window_metadata_omits_it(self) -> None:
+        client = (REPO_ROOT / "nix/cua-driver/tests/wayland/driver-client.nix").read_text()
+        self.assertIn("launch_app returned no positive pid", client)
+        self.assertIn('structured.get("pid")', client)
+        self.assertNotIn('return int(w.get("pid") or 0)', client)
+
 
 if __name__ == "__main__":
     unittest.main()

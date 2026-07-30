@@ -27,8 +27,8 @@ let
     d = Driver()
     try:
         d.initialize("nixos-wayland-screenshot")
-        d.launch_app("foot --app-id=cua-wayland-foot --title=cua-wayland-foot")
-        pid, wid = d.find_window("cua-wayland-foot", timeout=40)
+        pid = d.launch_app("foot --app-id=cua-wayland-foot --title=cua-wayland-foot")
+        _, wid = d.find_window("cua-wayland-foot", timeout=40)
         print(f"window pid={pid} window_id={wid}", flush=True)
         resp = d.call("get_window_state", {
             "pid": pid, "window_id": wid, "capture_mode": "vision"}, timeout=30)

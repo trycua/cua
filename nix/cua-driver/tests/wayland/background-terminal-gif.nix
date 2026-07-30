@@ -31,11 +31,11 @@ let
         d.initialize("nixos-wayland-bg-terminal")
         # Launch the TARGET first, then the CONTROL — so control holds focus and
         # the target is the inactive window we must type into focus-free.
-        d.launch_app("foot --app-id=cua-wayland-target --title=cua-wayland-target")
+        tpid = d.launch_app("foot --app-id=cua-wayland-target --title=cua-wayland-target")
         time.sleep(1.2)
-        d.launch_app("foot --app-id=cua-wayland-control --title=cua-wayland-control")
-        tpid, twid = d.find_window("cua-wayland-target", timeout=40)
-        cpid, cwid = d.find_window("cua-wayland-control", timeout=40)
+        cpid = d.launch_app("foot --app-id=cua-wayland-control --title=cua-wayland-control")
+        _, twid = d.find_window("cua-wayland-target", timeout=40)
+        _, cwid = d.find_window("cua-wayland-control", timeout=40)
         print(f"target pid={tpid} window_id={twid} control pid={cpid} window_id={cwid}", flush=True)
         d.call("set_agent_cursor_enabled", {"enabled": True})
         # Focus-free type into the INACTIVE target while control stays focused.

@@ -29,8 +29,8 @@ let
     d = Driver()
     try:
         d.initialize("nixos-wayland-parallel-drag")
-        d.launch_app("foot --app-id=cua-wayland-paint --title=cua-wayland-paint")
-        pid, wid = d.find_window("cua-wayland-paint", timeout=40)
+        pid = d.launch_app("foot --app-id=cua-wayland-paint --title=cua-wayland-paint")
+        _, wid = d.find_window("cua-wayland-paint", timeout=40)
         print(f"target pid={pid} window_id={wid}", flush=True)
         d.call("parallel_mouse_drag", {"drags": [
             {"session": "agent-1", "window_id": wid, "from_x": 100.0, "from_y": 100.0, "to_x": 380.0, "to_y": 420.0, "duration_ms": 2000, "steps": 60},

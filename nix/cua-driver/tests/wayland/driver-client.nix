@@ -76,10 +76,20 @@ pkgs.writeText "driver_client.py" ''
           return resp
 
       def launch_app(self, command):
-          """Launch an app THROUGH cua-driver so it lands in whatever Wayland
-          session the driver owns — the host compositor (native desktops) or the
-          selected host compositor session. Returns the launch response."""
-          return self.call("launch_app", {"name": command})
+          """Launch an app through cua-driver and return its canonical PID.
+
+          Native Wayland window metadata can omit pid, but launch_app publishes
+          the spawned process ID in structuredContent. Fixture scenarios retain
+          that PID for tools whose current MCP schema requires an integer target.
+          """
+          resp = self.call("launch_app", {"name": command})
+          structured = resp.get("result", {}).get("structuredContent")
+          if not isinstance(structured, dict):
+              raise AssertionError(f"launch_app returned no structured result: {resp}")
+          pid = structured.get("pid")
+          if not isinstance(pid, int) or pid <= 0:
+              raise AssertionError(f"launch_app returned no positive pid: {resp}")
+          return pid
 
       def list_windows(self):
           resp = self.call("list_windows", {})

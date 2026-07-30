@@ -39,10 +39,10 @@ let
 
         # Launch foot through cua-driver so it lands in the session the driver
         # owns in the selected host compositor session.
-        d.launch_app("foot --app-id=cua-wayland-foot --title=cua-wayland-foot")
+        pid = d.launch_app("foot --app-id=cua-wayland-foot --title=cua-wayland-foot")
 
-        # list_windows must surface the foot terminal the driver just launched.
-        pid, wid = d.find_window("cua-wayland-foot", timeout=40)
+        # list_windows locates the native window; launch_app owns its PID.
+        _, wid = d.find_window("cua-wayland-foot", timeout=40)
         print(f"RESOLVED native wayland window pid={pid} window_id={wid}", flush=True)
         print("integration test complete", flush=True)
     finally:

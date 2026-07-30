@@ -47,8 +47,8 @@ let
         # test flaky.
         d.launch_app("foot --app-id=cua-wayland-control --title=cua-wayland-control")
         time.sleep(1)
-        d.launch_app("foot --app-id=cua-wayland-target --title=cua-wayland-target")
-        pid, wid = d.find_window("cua-wayland-target", timeout=40)
+        pid = d.launch_app("foot --app-id=cua-wayland-target --title=cua-wayland-target")
+        _, wid = d.find_window("cua-wayland-target", timeout=40)
         print(f"target pid={pid} window_id={wid}", flush=True)
         d.call("set_agent_cursor_enabled", {"enabled": True})
         d.call("move_cursor", {"x": 1100.0, "y": 900.0})

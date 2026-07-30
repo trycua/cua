@@ -78,8 +78,8 @@ let
         d.initialize("nixos-wayland-bg-gui")
         # Launch through cua-driver so the app lands in the session it owns
         # selected host compositor session.
-        d.launch_app(LAUNCH)
-        pid, wid = d.find_window(MATCH, timeout=50)
+        pid = d.launch_app(LAUNCH)
+        _, wid = d.find_window(MATCH, timeout=50)
         print(f"app window pid={pid} window_id={wid}", flush=True)
         resp = d.call("get_window_state", {
             "pid": pid, "window_id": wid, "capture_mode": "vision"}, timeout=45)

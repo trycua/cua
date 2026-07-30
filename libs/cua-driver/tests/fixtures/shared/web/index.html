@@ -232,9 +232,11 @@
     }
   });
 
-  window.addEventListener("focus", () => {
+  const focusKeyboardInput = () => {
     $("keyboard-input").focus();
-  });
+  };
+  window.addEventListener("DOMContentLoaded", focusKeyboardInput);
+  window.addEventListener("focus", focusKeyboardInput);
 
   $('sld-value').addEventListener('input', e => {
     $('lbl-slider-value').textContent = `slider_value=${e.target.value}`;

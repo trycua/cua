@@ -48,7 +48,7 @@
   },
   "homepage": "https://github.com/trycua/cloud/tree/main/cyclops-cs/js-sdk#readme",
   "devDependencies": {
-    "swagger-typescript-api": "13.2.7",
+    "swagger-typescript-api": "13.12.2",
     "typescript": "5.7.2"
   }
 }

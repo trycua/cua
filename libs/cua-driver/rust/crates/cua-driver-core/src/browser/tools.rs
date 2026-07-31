@@ -609,7 +609,11 @@ impl BrowserPrepareTool {
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "pid": { "type": "integer", "description": "Browser process id to prepare." },
+                    "pid": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Browser process id to prepare."
+                    },
                     "window_id": { "type": "integer", "description": "Exact native window approval anchor; required for strategy.kind=existing_profile." },
                     "approval_token": {
                         "type": "string",
@@ -658,7 +662,12 @@ impl Tool for BrowserPrepareTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         let pid = match args.require_i64("pid") {
-            Ok(v) => v,
+            Ok(v) if v > 0 => v,
+            Ok(v) => {
+                return ToolResult::error(format!(
+                    "Field pid is out of range for a process id: {v}"
+                ))
+            }
             Err(e) => return e,
         };
         let session = match require_explicit_session(&args) {

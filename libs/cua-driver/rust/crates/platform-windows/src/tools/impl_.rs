@@ -1050,6 +1050,7 @@ impl Tool for GetWindowStateTool {
                 let mut structured = json!({ "window_id": hwnd, "pid": pid });
 
                 if let Some(tr) = tree_opt {
+                    let is_msaa = tr.nodes.iter().any(|n| n.msaa_role.is_some());
                     let count = tr
                         .nodes
                         .iter()
@@ -1064,7 +1065,6 @@ impl Tool for GetWindowStateTool {
                     // walker, so the entire snapshot must Drop via
                     // IAccessible and click must dispatch through MSAA.
                     if !observation_only {
-                        let is_msaa = tr.nodes.iter().any(|n| n.msaa_role.is_some());
                         if is_msaa {
                             state.element_cache.update_msaa(pid, hwnd, &tr.nodes);
                         } else {

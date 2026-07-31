@@ -6,7 +6,8 @@
 //! non-Rust native core can reproduce without implementing UniFFI internals.
 
 use crate::runtime::{DriverRuntime, RuntimeCreateError, RuntimeOptions, RuntimeSession};
-use crate::{DriverError, DriverMetadata};
+use crate::trusted_resources::ValidatedTrustedSessionResources;
+use crate::{DriverError, DriverMetadata, TrustedSessionResources};
 use cua_driver_core::{
     authorization::{
         PermissionMode, DANGEROUS_BYPASS_ENV, DISABLE_UNRESTRICTED_ENV,
@@ -329,6 +330,8 @@ struct AbiTrustedSessionOptions {
     ttl_seconds: u64,
     idle_ttl_seconds: u64,
     bounded_manifest_path: Option<String>,
+    #[serde(default)]
+    resources: Option<TrustedSessionResources>,
 }
 
 fn with_ffi_guard(
@@ -780,9 +783,14 @@ pub unsafe extern "C" fn cua_driver_session_create_v1(
             idle_ttl: Duration::from_secs(options.idle_ttl_seconds),
             bounded_manifest,
         };
+        let resources = options
+            .resources
+            .map(ValidatedTrustedSessionResources::validate)
+            .transpose()
+            .map_err(|error| AbiFailure::new(CuaDriverStatus::InvalidArgument, error))?;
         let session = driver
             .runtime
-            .create_trusted_session(request)
+            .create_trusted_session(request, resources)
             .map_err(|error| {
                 let status = if matches!(
                     error,

@@ -80,6 +80,12 @@ const SKILL_FILES: &[&str] = &[
     "BROWSER.md",
     "RECORDING.md",
     "EMBEDDING.md",
+    "OPENCLAW.md",
+    "OPENCLAW_MACOS.md",
+    "OPENCLAW_WINDOWS.md",
+    "OPENCLAW_LINUX.md",
+    "OPENCLAW_BROWSER.md",
+    "OPENCLAW_RECORDING.md",
 ];
 
 /// Per-host filter: returns the platform-specific docs that should NOT
@@ -98,15 +104,30 @@ fn excluded_platform_docs(all_platforms: bool) -> &'static [&'static str] {
     }
     #[cfg(target_os = "windows")]
     {
-        &["LINUX.md", "MACOS.md"]
+        &[
+            "LINUX.md",
+            "MACOS.md",
+            "OPENCLAW_LINUX.md",
+            "OPENCLAW_MACOS.md",
+        ]
     }
     #[cfg(target_os = "linux")]
     {
-        &["WINDOWS.md", "MACOS.md"]
+        &[
+            "WINDOWS.md",
+            "MACOS.md",
+            "OPENCLAW_WINDOWS.md",
+            "OPENCLAW_MACOS.md",
+        ]
     }
     #[cfg(target_os = "macos")]
     {
-        &["WINDOWS.md", "LINUX.md"]
+        &[
+            "WINDOWS.md",
+            "LINUX.md",
+            "OPENCLAW_WINDOWS.md",
+            "OPENCLAW_LINUX.md",
+        ]
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {

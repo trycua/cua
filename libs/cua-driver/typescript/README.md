@@ -94,6 +94,14 @@ content-free action, refusal, grant, and session events. The observer cannot
 change authorization or tool results. Use
 `createConfiguredWithHostIntegrations` when the application needs both.
 
+Managed agent hosts can read the digest-bound `openclaw-mcp` profile with
+`driverSkillProfile` and `readDriverSkillResource`. Bind one execution lease
+to one path-free action surface with `createTrustedSessionWithResources`.
+Trusted host code supplies native recording/download roots, opaque
+upload/replay resources, and an exact `ffmpeg` helper. The host can also bind
+proof that it already collected authorization for an existing logged-in
+Chromium profile. These values never become model-visible tools.
+
 See the [SDK reference](https://cua.ai/docs/reference/cua-driver/sdk-reference)
 for complete examples and the callback trust rules.
 

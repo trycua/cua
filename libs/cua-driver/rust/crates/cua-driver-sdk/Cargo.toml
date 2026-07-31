@@ -17,6 +17,8 @@ cua-driver-contract = { path = "../cua-driver-contract" }
 cua-driver-core = { path = "../cua-driver-core", default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
+same-file = "1.0"
+sha2 = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

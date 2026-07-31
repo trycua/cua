@@ -67,6 +67,22 @@ Daemon `connect()` clients retain the daemon compatibility mode. An embedded
 host may create a trusted session only over its original authenticated service
 connection; an ordinary or standalone daemon client cannot.
 
+Managed hosts may instead call
+`create_trusted_session_with_resources(driver, options, resources)` /
+`createTrustedSessionWithResources(driver, options, resources)`. This additive
+factory binds host-owned recording and download roots, opaque upload and replay
+artifacts, an exact `ffmpeg` helper, and host-collected existing-profile
+authorization outside model-visible tool arguments. See
+[Trusted host resources](/reference/cua-driver/trusted-host-resources).
+
+`driver_skill_profile("openclaw-mcp")` /
+`driverSkillProfile("openclaw-mcp")` returns the versioned provider-native
+OpenClaw profile, exact compatible driver requirement, bundle digest, resource
+digests, and required capabilities.
+`read_driver_skill_resource(profile_id, name, expected_sha256)` /
+`readDriverSkillResource(profileId, name, expectedSha256)` returns one embedded
+resource only when its advertised digest matches.
+
 ## Authorization host
 
 Routine standard-mode automation does not call the authorization host. The

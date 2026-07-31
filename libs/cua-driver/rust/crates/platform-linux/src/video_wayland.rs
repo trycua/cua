@@ -16,7 +16,11 @@ use cua_driver_core::video::{VideoBackend, VideoBackendFactory, VideoMetadata};
 pub struct WfRecorderVideoBackendFactory;
 
 impl VideoBackendFactory for WfRecorderVideoBackendFactory {
-    fn start(&self, output_path: &Path) -> anyhow::Result<Box<dyn VideoBackend>> {
+    fn start(
+        &self,
+        output_path: &Path,
+        _trusted_helper: Option<&Path>,
+    ) -> anyhow::Result<Box<dyn VideoBackend>> {
         if let Some(first_frame) = crate::wayland::shell_helper::trusted_screenshot_display() {
             return GnomeShellVideoBackend::start(output_path, first_frame)
                 .map(|backend| Box::new(backend) as Box<dyn VideoBackend>);

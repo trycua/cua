@@ -3,7 +3,9 @@
 //! The accepted service connection owns exactly one trusted session. Authority
 //! is never returned as a bearer value and cannot move to another connection.
 
-use crate::{DriverError, TrustedSessionOptions};
+use crate::{
+    DriverError, TrustedSessionBindingOptions, TrustedSessionOptions, TrustedSessionResources,
+};
 use cua_driver_core::daemon::{DaemonClientKind, DaemonRequest, DaemonResponse};
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
@@ -34,6 +36,7 @@ impl ServiceSessionClient {
     pub(crate) fn connect_and_bind(
         socket_path: String,
         options: TrustedSessionOptions,
+        resources: Option<TrustedSessionResources>,
         client_kind: DaemonClientKind,
     ) -> Result<Arc<Self>, DriverError> {
         let metadata =
@@ -57,7 +60,14 @@ impl ServiceSessionClient {
                 closed: false,
             }),
         });
-        let arguments = serde_json::to_value(options).map_err(|error| DriverError::Protocol {
+        let arguments = match resources {
+            Some(resources) => serde_json::to_value(TrustedSessionBindingOptions {
+                session: options,
+                resources: Some(resources),
+            }),
+            None => serde_json::to_value(options),
+        }
+        .map_err(|error| DriverError::Protocol {
             reason: format!("serialize trusted service session options: {error}"),
         })?;
         client.request(DaemonRequest {
@@ -384,6 +394,7 @@ mod tests {
                 idle_ttl_seconds: 30,
                 bounded_manifest_path: None,
             },
+            None,
             DaemonClientKind::Unknown,
         )
         .unwrap();
@@ -445,6 +456,7 @@ mod tests {
                 idle_ttl_seconds: 30,
                 bounded_manifest_path: None,
             },
+            None,
             DaemonClientKind::Unknown,
         )
         .unwrap();

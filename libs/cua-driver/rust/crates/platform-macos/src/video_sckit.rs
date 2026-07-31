@@ -38,7 +38,11 @@ use screencapturekit::recording_output::{
 pub struct SckitVideoBackendFactory;
 
 impl VideoBackendFactory for SckitVideoBackendFactory {
-    fn start(&self, output_path: &Path) -> anyhow::Result<Box<dyn VideoBackend>> {
+    fn start(
+        &self,
+        output_path: &Path,
+        _trusted_helper: Option<&Path>,
+    ) -> anyhow::Result<Box<dyn VideoBackend>> {
         SckitVideoBackend::start(output_path).map(|b| Box::new(b) as Box<dyn VideoBackend>)
     }
 }

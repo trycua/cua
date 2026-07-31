@@ -1,7 +1,8 @@
 use cua_driver_sdk::{
     ConfiguredDriverOptions, DriverExecutionMode, EmbeddedDriverHostOptions,
     EmbeddedEnvironmentVariable, EmbeddedPermissionMode, PrivateWorkerOptions,
-    RuntimeAuthorizationOptions, SessionPermissionMode, TrustedSessionOptions,
+    RuntimeAuthorizationOptions, SessionPermissionMode, TrustedResourceDirectory,
+    TrustedSessionOptions, TrustedSessionResources,
 };
 
 fn worker_options() -> PrivateWorkerOptions {
@@ -44,20 +45,74 @@ async fn private_worker_owns_one_runtime_without_a_reconnect_endpoint() {
         .as_array()
         .is_some_and(|tools| !tools.is_empty()));
 
+    let managed_root = tempfile::tempdir().unwrap();
+    let recording_root = managed_root.path().join("recordings");
+    let download_root = managed_root.path().join("downloads");
+    std::fs::create_dir_all(&recording_root).unwrap();
+    std::fs::create_dir_all(&download_root).unwrap();
     let session = driver
-        .create_trusted_session(TrustedSessionOptions {
-            public_session: "worker-trusted".into(),
-            mode: SessionPermissionMode::Standard,
-            ttl_seconds: 60,
-            idle_ttl_seconds: 30,
-            bounded_manifest_path: None,
-        })
+        .create_trusted_session_with_resources(
+            TrustedSessionOptions {
+                public_session: "worker-trusted".into(),
+                mode: SessionPermissionMode::Standard,
+                ttl_seconds: 60,
+                idle_ttl_seconds: 30,
+                bounded_manifest_path: None,
+            },
+            TrustedSessionResources {
+                recording_root: Some(recording_root.to_string_lossy().into_owned()),
+                browser_download_root: Some(download_root.to_string_lossy().into_owned()),
+                upload_files: Vec::new(),
+                replay_directories: Vec::new(),
+                ffmpeg_path: None,
+                browser_existing_profile_approved: false,
+            },
+        )
         .unwrap();
     let healthy = session
         .call_tool("health_report".into(), "{}".into())
         .await
         .unwrap();
     assert_ne!(healthy.error_code.as_deref(), Some("permission_denied"));
+    let health: serde_json::Value =
+        serde_json::from_str(healthy.structured_json.as_deref().unwrap()).unwrap();
+    assert_eq!(health["trusted_resources"]["managed"], true);
+    assert_eq!(health["trusted_resources"]["recording_root_ready"], true);
+    assert!(
+        !healthy
+            .raw_json
+            .contains(&recording_root.to_string_lossy().as_ref()),
+        "managed status must not disclose native paths"
+    );
+    for check in health["checks"].as_array().into_iter().flatten() {
+        if let Some(executable_path) = check.pointer("/data/executable_path") {
+            assert_eq!(executable_path, "[host-managed]");
+        }
+    }
+
+    let started = session
+        .call_tool(
+            "start_recording".into(),
+            serde_json::json!({
+                "output_dir": managed_root.path().join("model-selected"),
+                "record_video": false
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+    assert!(!started.is_error, "{}", started.text);
+    assert_eq!(
+        started.text,
+        "Recording started in the host-managed session root."
+    );
+    assert!(!managed_root.path().join("model-selected").exists());
+    assert!(recording_root.join("session.json").exists());
+    let stopped = session
+        .call_tool("stop_recording".into(), "{}".into())
+        .await
+        .unwrap();
+    assert!(!stopped.is_error, "{}", stopped.text);
 
     let substituted = session
         .call_tool(
@@ -69,6 +124,86 @@ async fn private_worker_owns_one_runtime_without_a_reconnect_endpoint() {
     assert_eq!(substituted.error_code.as_deref(), Some("permission_denied"));
 
     session.close();
+
+    let replay_root = managed_root.path().join("replay-artifact");
+    let replay_recording_root = managed_root.path().join("replay-recordings");
+    std::fs::create_dir_all(&replay_recording_root).unwrap();
+    let model_selected_replay_root = managed_root.path().join("model-selected-replay");
+    let replay_turn = replay_root.join("turn-00001");
+    std::fs::create_dir_all(&replay_turn).unwrap();
+    std::fs::write(
+        replay_turn.join("action.json"),
+        serde_json::json!({
+            "tool": "start_recording",
+            "arguments": {
+                "output_dir": model_selected_replay_root,
+                "record_video": false
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let replay_session = driver
+        .create_trusted_session_with_resources(
+            TrustedSessionOptions {
+                public_session: "worker-replay".into(),
+                mode: SessionPermissionMode::Unrestricted,
+                ttl_seconds: 60,
+                idle_ttl_seconds: 30,
+                bounded_manifest_path: None,
+            },
+            TrustedSessionResources {
+                recording_root: Some(replay_recording_root.to_string_lossy().into_owned()),
+                browser_download_root: Some(download_root.to_string_lossy().into_owned()),
+                upload_files: Vec::new(),
+                replay_directories: vec![TrustedResourceDirectory {
+                    resource_id: "fixture-replay".into(),
+                    path: replay_root.to_string_lossy().into_owned(),
+                }],
+                ffmpeg_path: None,
+                browser_existing_profile_approved: false,
+            },
+        )
+        .unwrap();
+    let replayed = replay_session
+        .call_tool(
+            "replay_trajectory".into(),
+            serde_json::json!({
+                "dir": "fixture-replay",
+                "delay_ms": 0,
+                "stop_on_error": true
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+    let replayed_structured: serde_json::Value =
+        serde_json::from_str(replayed.structured_json.as_deref().unwrap()).unwrap();
+    assert_eq!(replayed_structured["attempted"], 1);
+    assert_eq!(replayed_structured["succeeded"], 1);
+    assert_eq!(replayed_structured["failed"], 0);
+    assert_eq!(
+        replayed_structured["turns"][0]["result_summary"],
+        "[host-managed result]"
+    );
+    assert!(
+        !replayed
+            .raw_json
+            .contains(replay_root.to_string_lossy().as_ref()),
+        "managed replay must not disclose the native artifact path"
+    );
+    assert!(
+        !model_selected_replay_root.exists(),
+        "nested replay dispatch accepted a model-selected native path"
+    );
+    assert!(replay_recording_root.join("session.json").exists());
+    let stopped = replay_session
+        .call_tool("stop_recording".into(), "{}".into())
+        .await
+        .unwrap();
+    assert!(!stopped.is_error, "{}", stopped.text);
+    replay_session.close();
+
     driver.shutdown().await.unwrap();
     assert!(!driver.is_available());
 }
@@ -251,20 +386,38 @@ async fn embedded_service_binds_authority_to_the_original_host_connection() {
     let connection = host.clone().start().await.unwrap();
     let driver = cua_driver_sdk::CuaDriver::connect(Some(connection.socket_path));
     let driver = driver.unwrap();
+    let managed_root = tempfile::tempdir().unwrap();
+    let recording_root = managed_root.path().join("recordings");
+    let download_root = managed_root.path().join("downloads");
+    std::fs::create_dir_all(&recording_root).unwrap();
+    std::fs::create_dir_all(&download_root).unwrap();
     let session = driver
-        .create_trusted_session(TrustedSessionOptions {
-            public_session: "service-trusted".into(),
-            mode: SessionPermissionMode::Standard,
-            ttl_seconds: 60,
-            idle_ttl_seconds: 30,
-            bounded_manifest_path: None,
-        })
+        .create_trusted_session_with_resources(
+            TrustedSessionOptions {
+                public_session: "service-trusted".into(),
+                mode: SessionPermissionMode::Standard,
+                ttl_seconds: 60,
+                idle_ttl_seconds: 30,
+                bounded_manifest_path: None,
+            },
+            TrustedSessionResources {
+                recording_root: Some(recording_root.to_string_lossy().into_owned()),
+                browser_download_root: Some(download_root.to_string_lossy().into_owned()),
+                upload_files: Vec::new(),
+                replay_directories: Vec::new(),
+                ffmpeg_path: None,
+                browser_existing_profile_approved: false,
+            },
+        )
         .unwrap();
     let result = session
         .call_tool("health_report".into(), "{}".into())
         .await
         .unwrap();
     assert_ne!(result.error_code.as_deref(), Some("permission_denied"));
+    let health: serde_json::Value =
+        serde_json::from_str(result.structured_json.as_deref().unwrap()).unwrap();
+    assert_eq!(health["trusted_resources"]["managed"], true);
 
     let child = std::process::Command::new(std::env::current_exe().unwrap())
         .args([

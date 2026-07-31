@@ -41,6 +41,7 @@ pub enum PrepareStrategy {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrepareAuthorization {
     McpHost,
+    TrustedHostExistingProfile,
     ApprovalArtifact(String),
 }
 

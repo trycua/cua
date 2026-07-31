@@ -42,7 +42,11 @@ pub trait VideoBackend: Send {
 /// Spawns a fresh `VideoBackend` writing to `output_path`. Registered
 /// once at startup via `set_video_backend_factory`.
 pub trait VideoBackendFactory: Send + Sync {
-    fn start(&self, output_path: &Path) -> anyhow::Result<Box<dyn VideoBackend>>;
+    fn start(
+        &self,
+        output_path: &Path,
+        trusted_helper: Option<&Path>,
+    ) -> anyhow::Result<Box<dyn VideoBackend>>;
 }
 
 static VIDEO_BACKEND_FACTORY: OnceLock<Box<dyn VideoBackendFactory>> = OnceLock::new();
@@ -57,9 +61,12 @@ pub fn set_video_backend_factory(factory: Box<dyn VideoBackendFactory>) {
 /// when no backend has been registered for this platform (treated by
 /// `RecordingSession` as "video failed to start" — the per-turn pipeline
 /// keeps running).
-pub fn start_video(output_path: &Path) -> anyhow::Result<Box<dyn VideoBackend>> {
+pub fn start_video(
+    output_path: &Path,
+    trusted_helper: Option<&Path>,
+) -> anyhow::Result<Box<dyn VideoBackend>> {
     let factory = VIDEO_BACKEND_FACTORY
         .get()
         .ok_or_else(|| anyhow::anyhow!("no video backend registered for this platform"))?;
-    factory.start(output_path)
+    factory.start(output_path, trusted_helper)
 }

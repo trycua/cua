@@ -8,7 +8,10 @@ use cua_driver_sdk::worker::{
     ActionCompletion, ChannelRequest, ChannelResponse, WorkerInitialization,
     PRIVATE_WORKER_PROTOCOL_VERSION,
 };
-use cua_driver_sdk::{CuaDriver, CuaDriverSession, DriverHostOptions};
+use cua_driver_sdk::{
+    CuaDriver, CuaDriverSession, DriverHostOptions, TrustedSessionBindingOptions,
+    TrustedSessionOptions,
+};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
@@ -271,19 +274,35 @@ async fn handle_request(
                 })
         }
         "bind_session" => {
-            let options = request
+            let binding = request
                 .arguments
                 .ok_or_else(|| "bind_session omitted options".to_owned())
-                .and_then(|value| serde_json::from_value(value).map_err(|error| error.to_string()));
-            match options {
-                Ok(options) => match driver.create_trusted_session(options) {
-                    Ok(session) => {
-                        let handle = uuid::Uuid::new_v4().to_string();
-                        sessions.insert(handle.clone(), session);
-                        Ok(serde_json::json!({"session_handle": handle}))
+                .and_then(|value| {
+                    if value.get("session").is_some() {
+                        serde_json::from_value::<TrustedSessionBindingOptions>(value)
+                            .map_err(|error| error.to_string())
+                    } else {
+                        serde_json::from_value::<TrustedSessionOptions>(value)
+                            .map(|session| TrustedSessionBindingOptions {
+                                session,
+                                resources: None,
+                            })
+                            .map_err(|error| error.to_string())
                     }
-                    Err(error) => Err(error.to_string()),
-                },
+                });
+            match binding {
+                Ok(binding) => match binding.resources {
+                    Some(resources) => {
+                        driver.create_trusted_session_with_resources(binding.session, resources)
+                    }
+                    None => driver.create_trusted_session(binding.session),
+                }
+                .and_then(|session| {
+                    let handle = uuid::Uuid::new_v4().to_string();
+                    sessions.insert(handle.clone(), session);
+                    Ok(serde_json::json!({"session_handle": handle}))
+                })
+                .map_err(|error| error.to_string()),
                 Err(error) => Err(error),
             }
         }

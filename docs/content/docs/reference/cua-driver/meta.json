@@ -3,6 +3,7 @@
   "pages": [
     "cli-reference",
     "sdk-reference",
+    "trusted-host-resources",
     "telemetry",
     "macos-permissions",
     "embedding",

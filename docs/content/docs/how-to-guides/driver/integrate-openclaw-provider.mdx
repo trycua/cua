@@ -1,0 +1,161 @@
+---
+title: 'Integrate a managed OpenClaw provider'
+description: 'Bind each OpenClaw execution lease to one trusted Cua Driver session without exposing transport, permissions, or native paths to the model.'
+---
+
+Use this pattern when an OpenClaw node host owns Cua Driver. It is different
+from registering the standalone `cua-driver mcp` command in a personal
+OpenClaw installation.
+
+The trusted node host owns:
+
+- the embedded or private-worker runtime;
+- the maximum permission modes that runtime accepts;
+- the permission mode and TTL for each execution lease;
+- the native machine and capture scope;
+- recording, download, upload, and replay resources; and
+- native helper binaries.
+
+The model receives only the action surface already bound to the lease. It
+cannot choose a runtime, transport, permission mode, native session handle, or
+native path.
+
+## 1. Accept the driver and skill profile
+
+Read `driver_skill_profile("openclaw-mcp")` /
+`driverSkillProfile("openclaw-mcp")` from the accepted driver generation.
+Require:
+
+- the exact accepted driver version;
+- the `cua-driver-provider-native-v1` tool-schema profile;
+- every capability your provider needs; and
+- the advertised bundle and resource SHA-256 digests.
+
+Read each companion document with
+`read_driver_skill_resource()` / `readDriverSkillResource()` and pass its
+advertised digest back to the reader. A missing resource or digest mismatch is
+a compatibility failure. Do not fall back to generic computer-use guidance.
+
+The selected bundle contains the core OpenClaw profile, one host-platform
+companion, and capability companions for browser and recording behavior.
+
+## 2. Create one runtime per trusted node host
+
+Use `CuaDriver.create_configured()` / `CuaDriver.createConfigured()` when the
+node process can own the runtime directly. Use a private worker when the host
+needs crash or process isolation. Keep standalone CLI and MCP configuration for
+personal installations, not the managed provider.
+
+Set the runtime authorization ceiling before accepting work. The model must
+never construct or edit this configuration.
+
+## 3. Bind one session to one execution lease
+
+Map the OpenClaw execution lease to a Cua trusted session in host code. The
+public session string is a display and lifecycle label, not authority.
+
+Python:
+
+```python
+from cua_driver import (
+    SessionPermissionMode,
+    TrustedSessionOptions,
+    TrustedSessionResources,
+    create_trusted_session_with_resources,
+)
+
+session = create_trusted_session_with_resources(
+    driver,
+    TrustedSessionOptions(
+        public_session=execution_lease_id,
+        mode=SessionPermissionMode.BOUNDED,
+        ttl_seconds=3600,
+        idle_ttl_seconds=300,
+        bounded_manifest_path=approved_manifest_path,
+    ),
+    TrustedSessionResources(
+        recording_root=lease_recording_root,
+        browser_download_root=lease_download_root,
+        upload_files=approved_upload_files,
+        replay_directories=approved_replay_artifacts,
+        ffmpeg_path=managed_ffmpeg_path,
+        # Set only after trusted host UI collected explicit authorization.
+        browser_existing_profile_approved=existing_profile_consent,
+    ),
+)
+```
+
+TypeScript:
+
+```ts
+import { SessionPermissionMode, createTrustedSessionWithResources } from '@trycua/cua-driver';
+
+const session = createTrustedSessionWithResources(
+  driver,
+  {
+    publicSession: executionLeaseId,
+    mode: SessionPermissionMode.Bounded,
+    ttlSeconds: 3600,
+    idleTtlSeconds: 300,
+    boundedManifestPath: approvedManifestPath,
+  },
+  {
+    recordingRoot: leaseRecordingRoot,
+    browserDownloadRoot: leaseDownloadRoot,
+    uploadFiles: approvedUploadFiles,
+    replayDirectories: approvedReplayArtifacts,
+    ffmpegPath: managedFfmpegPath,
+    // Set only after trusted host UI collected explicit authorization.
+    browserExistingProfileApproved: existingProfileConsent,
+  }
+);
+```
+
+Use `standard` when the host will resolve residual protected boundaries.
+Use `bounded` for unattended work inside an approved manifest. Use
+`unrestricted` only when trusted host policy explicitly accepts the broader
+risk and the runtime ceiling allows it.
+
+## 4. Assemble the provider-native tools
+
+Expose methods from the bound `CuaDriverSession`, not the unbound driver.
+Generate the live tool set from the accepted driver schema, then apply
+OpenClaw's policy and lease-specific allowlist.
+
+For host-owned resources:
+
+- expose opaque upload and replay resource IDs, never native paths;
+- omit model-selected recording and download directories, because the session
+  injects the host roots;
+- keep desktop and window screenshots inline, and do not expose click
+  debug-image output paths;
+- omit `launch_app` entirely and consume redacted application-list results;
+- omit `install_ffmpeg`; and
+- fail the provider binding when a required resource capability is absent.
+
+Do not let the model set `browserExistingProfileApproved`. The provider may set
+it only after trusted host UI has collected explicit authorization for the
+existing logged-in Chromium profile.
+
+If the product needs application launch, expose a separate host-owned operation
+whose allowlist and arguments are validated by the Gateway. The managed Cua
+session refuses the native `launch_app` tool rather than accepting executable
+names, URLs, or command-line arguments from the model.
+
+Load `OPENCLAW.md` and only the applicable companion resources into the
+provider instructions. The model should use the normal snapshot, action,
+verification ladder, but it should never shell out to Cua Driver.
+
+## 5. End with the lease
+
+Call the bound `end_session` method when the execution lease ends or is
+revoked. It runs Cua Driver's session cleanup and then closes the SDK authority.
+Use `session.close()` only as the idempotent revocation fallback when an orderly
+async teardown cannot run. The bound session cannot be moved to another
+connection or widened by changing a public tool argument.
+
+Use `health_report` or `get_session_state` to inspect path-free
+`trusted_resources` readiness. Native paths are intentionally absent.
+
+See [Trusted host resources](/reference/cua-driver/trusted-host-resources) for
+the full validation and rewriting contract.

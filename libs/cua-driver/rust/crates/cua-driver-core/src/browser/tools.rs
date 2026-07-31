@@ -14,7 +14,7 @@ use crate::protocol::{Content, ToolResult};
 use crate::tool::{ProtectedResourceOwnership, Tool, ToolDef, ToolRegistry};
 use crate::tool_args::ArgsExt;
 
-use super::approval::MCP_HOST_APPROVAL_ARG;
+use super::approval::{MCP_HOST_APPROVAL_ARG, TRUSTED_HOST_EXISTING_PROFILE_APPROVAL_ARG};
 use super::cdp_ws::CdpConnection;
 use super::download::BrowserDownloadTool;
 use super::engine::{BrowserEngine, BrowserTabScreenshot};
@@ -687,7 +687,15 @@ impl Tool for BrowserPrepareTool {
         };
         let approval_token = args.opt_str("approval_token");
         let authorization = if strategy == Some(PrepareStrategy::ExistingProfile) {
-            approval_token.map(PrepareAuthorization::ApprovalArtifact)
+            if args
+                .get(TRUSTED_HOST_EXISTING_PROFILE_APPROVAL_ARG)
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                Some(PrepareAuthorization::TrustedHostExistingProfile)
+            } else {
+                approval_token.map(PrepareAuthorization::ApprovalArtifact)
+            }
         } else if args
             .get(MCP_HOST_APPROVAL_ARG)
             .and_then(Value::as_bool)
@@ -2854,6 +2862,22 @@ mod tests {
         assert!(structured["refusal"]["detail"]["approval_request_id"]
             .as_str()
             .is_some());
+    }
+
+    #[tokio::test]
+    async fn trusted_host_marker_passes_the_existing_profile_consent_gate() {
+        let tool = BrowserPrepareTool::new(engine());
+        let result = tool
+            .invoke(json!({
+                "pid": 1,
+                "window_id": 7,
+                "strategy": { "kind": "existing_profile" },
+                "session": "trusted-existing-profile-run",
+                TRUSTED_HOST_EXISTING_PROFILE_APPROVAL_ARG: true
+            }))
+            .await;
+        let structured = structured(&result);
+        assert_ne!(structured["refusal"]["code"], "browser_consent_required");
     }
 
     #[tokio::test]

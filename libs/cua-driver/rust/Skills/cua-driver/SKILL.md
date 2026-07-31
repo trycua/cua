@@ -151,6 +151,7 @@ cua-driver launch_app '{"bundle_id":"..."}'
 # → {pid: 844, windows: [{window_id: 10725, ...}]}
 cua-driver get_window_state '{"pid":844,"window_id":10725}'
 cua-driver click '{"pid":844,"window_id":10725,"element_index":14}'
+cua-driver verify_state '{"pid":844,"window_id":10725,"expect":[{"element":{"selector":{"label_contains":"Saved"},"exists":true}}]}'
 cua-driver stop
 ```
 
@@ -213,11 +214,14 @@ a certified host main-thread adapter returns a structured
 successful cursor move. One-shot CLI adapters do not own an overlay
 themselves.
 
-## The core invariant — snapshot before AND after every action
+## The core invariant — snapshot before and verify after every action
 
-**Every action MUST be bracketed by the state tool for the session's effective
-scope**: `get_window_state(pid, window_id)` in window scope, or
-`get_desktop_state(session)` in desktop scope.
+**Every action MUST be bracketed by observation for the session's effective
+scope.** Use `get_window_state(pid, window_id)` before a window action (or
+`get_desktop_state(session)` in desktop scope), then use `verify_state` for an
+expressible window-scoped postcondition. In effective desktop scope,
+`verify_state` is intentionally refused with `window_scope_disabled`; verify
+with a fresh `get_desktop_state` result and agent-owned visual/semantic reading.
 
 - **Before** — the pre-action snapshot resolves the `element_index`
   you're about to use. Indices from previous turns are stale; the
@@ -226,15 +230,24 @@ scope**: `get_window_state(pid, window_id)` in window scope, or
   N+1, and indices from window A don't resolve against window B of
   the same app. Skip this and element-indexed actions fail with
   `No cached AX state`.
-- **After** — the post-action snapshot verifies the action actually
-  landed. Without it you can't tell a silent no-op from a real
-  effect. The accessibility-tree change (new value, new window,
-  disappeared menu, disabled button, etc.) is your evidence that
-  the action fired. If nothing changed, the action probably failed
-  silently — say so, don't assume success.
+- **After** — `verify_state(pid, window_id, expect)` checks a bounded,
+  deterministic postcondition. Results are `satisfied`, `unsatisfied`, or
+  `unknown`; `unknown` never means success. Set `include_screenshot:true` when
+  the outcome also needs visual reading. The driver returns that final image
+  without interpreting it. A multimodal agent harness reads the image and owns
+  the stop/retry/ladder decision.
 
-This applies to pixel clicks and desktop actions too — re-snapshot after to
-confirm the action landed on the intended target.
+`unknown_reason` distinguishes invalid/unsupported predicates, untrusted web
+content, ambiguous matches, missing targets, unavailable observations, and
+`stability_unproven`. A positive final sample that was not observed for the
+requested consecutive sample count is `stability_unproven`, not success.
+Negative element existence is conservative: when an accessibility projection
+cannot prove its search domain exhaustive, absence remains `unknown`.
+
+Do not make the driver invent task meaning or retry actions automatically.
+For postconditions not expressible by `verify_state`, take a fresh state
+snapshot and let the agent judge the tree and/or image explicitly. This applies
+to pixel clicks and desktop actions too.
 
 ## Choose capture scope when the session starts
 
@@ -409,21 +422,30 @@ _dispatch rung_ on a real signal. Walk the rungs:
 # Rung 1 — element ax action, backgrounded (the cheap default)
 get_window_state(pid, window_id)            # tree + screenshot, both, always
 resp = click(pid, window_id, element_index) # or type_text / set_value / press_key
-get_window_state(pid, window_id)            # re-snapshot — did the tree change?
+check = verify_state(                       # bounded structured read-back
+    pid, window_id,
+    expect=[...],
+    include_screenshot=true                 # optional evidence for multimodal harness
+)
 
-if resp.effect == "confirmed" and tree changed:
+if check.status == "satisfied":
     done                                    # driver-verified
+
+if check.status == "unknown" and check has an image:
+    harness reads the image                  # model-owned visual interpretation
+    if visual outcome is satisfied: done
 
 # escalate only on a real signal
 if resp.effect == "suspected_noop"
    or resp.escalation.recommended == "px"
    or get_window_state.degraded            # empty tree → non-AX surface
+   or check.status != "satisfied"
    or the tree looks wrong vs the screenshot:   # e.g. an h:1 / off-viewport row
 
     # Rung 2 — element px action off the SAME screenshot
     pick the target pixel from the screenshot already in the response
     click(pid, x, y)                        # background pixel — still no foreground
-    get_window_state(pid, window_id)        # re-snapshot, eyeball the result
+    verify_state(..., include_screenshot=true)
     if it landed: done
 
 # Rung 2b — exact browser page tools, when get_browser_state can bind this window
@@ -486,7 +508,7 @@ launch_app(target)
     (or call list_windows(pid) separately)
   → get_window_state(pid, window_id)
     → [act]  # every action also takes (pid, window_id) + your `session`
-  → get_window_state(pid, window_id) → verify
+  → verify_state(pid, window_id, expect)  # structured check; optional image
 end_session(session)              # when the run finishes
 ```
 
@@ -633,6 +655,7 @@ against a specific window.
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | List an app's windows            | `list_windows({pid})`                                                                                           | returns `window_id`, `title`, `bounds`, `z_index`, `is_on_screen`, `on_current_space`. Already included in `launch_app`'s response — only call this for long-lived pids                                               |
 | Snapshot a window                | `get_window_state({pid, window_id})`                                                                            | returns `tree_markdown` + `screenshot_*`; populates the `(pid, window_id)` element_index cache                                                                                                                        |
+| Verify a postcondition           | `verify_state({pid, window_id, expect, include_screenshot?})`                                                   | polls bounded structured predicates; returns `satisfied`, `unsatisfied`, or `unknown`. Optional final image is interpreted by the agent harness, never by the driver                                                 |
 | Left click                       | `click({pid, window_id, element_index})`                                                                        | default `action: "press"`. Pixel form: `click({pid, x, y})` (window_id optional) — `modifier: ["cmd"\|"ctrl"]`                                                                                                        |
 | Double-click / open              | `double_click({pid, window_id, element_index})`                                                                 | Default action when the element advertises one (Open on Finder items / openable rows), else stamped pixel double-click at the element's center                                                                        |
 | Right click / context menu       | `right_click({pid, window_id, element_index})` or `click({pid, window_id, element_index, action: "show_menu"})` | Browser page content should use the typed route where available; see `BROWSER.md`                                                                                                                                     |
@@ -796,23 +819,28 @@ embedded webview for which exact browser binding is unavailable. The legacy
 `page` tool remains a compatibility surface; do not use it as the starting
 point for new browser workflows.
 
-## Re-snapshot and verify — mandatory
+## Verify after every action — mandatory
 
-**Always** call `get_window_state({pid, window_id})` after the
-action. This isn't optional verification — it's the second half of
-the snapshot invariant.
+**Always** verify after an action. Prefer
+`verify_state({pid, window_id, expect})` for structured state such as a
+window's existence/bounds or a semantic element's existence, value, enabled
+state, or selected state. Use its bounded poll and stable-sample requirement
+instead of hand-written sleeps. `unknown` means the driver could not establish
+the predicate; it is not success. Once a session has effective desktop scope,
+use a fresh `get_desktop_state(session)` result instead—window-scoped
+`verify_state` is denied by that capture policy.
 
-Check the tree diff: a changed value, a new element, a new window,
-or the disappearance of the thing you just clicked (menus collapse
-after selection, buttons may become disabled, etc.). The re-snapshot
-gives you both the tree and the screenshot, so you cross-check the tree
-diff against the pixels in one call — and when you're only confirming a
-tree change, `include_screenshot:false` skips the grab.
+Pass `include_screenshot:true` when visual evidence is useful. The same result
+then contains a fresh final window image. The driver still evaluates only the
+structured predicates; the multimodal agent harness reads the pixels and
+decides whether to stop, retry, or advance the ladder. For a postcondition not
+expressible by the tool, explicitly take a fresh `get_window_state` snapshot
+and have the harness judge its tree and image.
 
 Switch to an **element px action** only on a real signal: the action
-response carried `effect:"suspected_noop"`, the re-snapshot came back
-`degraded` (empty tree → non-AX surface), the tree looks
-unchanged/unreadable or disagrees with the screenshot, or
+response carried `effect:"suspected_noop"`, verification returned
+`unsatisfied`/`unknown`, the snapshot came back `degraded` (empty tree →
+non-AX surface), the tree looks unchanged/unreadable or disagrees with the screenshot, or
 `escalation.recommended` points you there (`px`). That's the
 verify-then-escalate ladder in the behavior-matrix section. If the tree
 is unchanged AND the screenshot confirms nothing moved, the action

@@ -11,6 +11,7 @@ use cua_driver_contract::{
     GetSessionStateInput, HotkeyInput, MoveCursorInput, PressKeyInput, ScrollInput,
     SessionStateOutput, SetAgentCursorEnabledInput, SetAgentCursorMotionInput,
     SetAgentCursorThemeInput, StartSessionInput, StartSessionOutput, ToolInput, TypeTextInput,
+    VerifyStateInput,
 };
 use cua_driver_core::daemon::{
     is_daemon_listening, request_daemon_metadata, send_request, socket_path_for_namespace,
@@ -552,6 +553,7 @@ macro_rules! desktop_tool_methods {
             get_desktop_state: GetDesktopStateInput,
             get_screen_size: GetScreenSizeInput,
             get_cursor_position: GetCursorPositionInput,
+            verify_state: VerifyStateInput,
             move_cursor: MoveCursorInput,
             click: ClickInput,
             drag: DragInput,

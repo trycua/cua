@@ -685,6 +685,76 @@ fn harness_gtk3_ax_tree() {
     );
 }
 
+#[test]
+#[ignore]
+fn harness_gtk3_verify_state() {
+    run_case(
+        native_readonly_case(
+            "gtk3",
+            "verify_state",
+            Targeting::Ax,
+            DriverRoute::AxRead,
+            vec![OracleKind::AxState],
+        ),
+        |pid, window_id, driver| {
+            let verified = driver.call(
+                "verify_state",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": window_id,
+                    "expect": [
+                        {"window": {"exists": true}},
+                        {"element": {
+                            "selector": {"label_contains": "btn-increment"},
+                            "exists": true,
+                            "enabled": true
+                        }},
+                        {"element": {
+                            "selector": {"label_contains": "chk-agree"},
+                            "exists": true,
+                            "selected": false
+                        }}
+                    ],
+                    "timeout_ms": 10_000,
+                    "stable_samples": 2,
+                    "include_screenshot": true
+                }),
+            );
+            assert!(
+                !verified.is_error(),
+                "GTK3 verify_state failed: {}",
+                verified.text()
+            );
+            assert_eq!(
+                verified.structured()["status"],
+                "satisfied",
+                "verify_state outcome: {}",
+                verified.structured()
+            );
+            assert_eq!(
+                verified.structured()["stable"],
+                true,
+                "verify_state outcome: {}",
+                verified.structured()
+            );
+            assert!(
+                verified.structured()["samples"].as_u64().unwrap_or(0) >= 2,
+                "verify_state did not enforce consecutive stable samples: {}",
+                verified.structured()
+            );
+            assert!(
+                verified.raw["result"]["content"]
+                    .as_array()
+                    .is_some_and(|content| content.iter().any(|item| {
+                        item["type"] == "image" && item["mimeType"] == "image/png"
+                    })),
+                "verify_state did not return final visual evidence"
+            );
+            Observation::delivered(vec![OracleKind::AxState], Evidence::default())
+        },
+    );
+}
+
 macro_rules! catalog_test {
     ($name:ident, $row:expr) => {
         #[test]

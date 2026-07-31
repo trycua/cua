@@ -44,6 +44,18 @@ Cursor artwork is selected by installed theme ID. Theme installation and
 dotLottie compilation are intentionally local CLI operations, not SDK or MCP
 tool calls.
 
+The checked-observation slice is also shared by MCP and both generated SDKs:
+
+- `verify_state` evaluates one to eight ANDed predicates against one exact
+  `(pid, window_id)`.
+- Window existence/bounds and semantic accessibility element
+  existence/value/enabled/selected predicates return `satisfied`,
+  `unsatisfied`, or `unknown`.
+- A bounded poll can require consecutive stable samples. `unknown` never
+  implies success.
+- `include_screenshot=true` adds final image content for a multimodal agent
+  harness to interpret. Cua Driver does not OCR or assign task meaning to it.
+
 Session contracts are marked `canonical_runtime`: the same typed Rust input,
 output, and metadata declaration builds the live MCP tool. Desktop contracts
 are marked `portable_subset`: their typed Rust inputs are a deliberately
@@ -68,7 +80,7 @@ Compatibility is tracked separately at each boundary:
 
 | Field | Current | Meaning |
 | --- | --- | --- |
-| `contract_version` | `0.2.0` | Generated manifest and typed SDK shape |
+| `contract_version` | `0.3.0` | Generated manifest and typed SDK shape |
 | `tools_list_schema_version` | `1` | cua-driver `tools/list` extension shape |
 | `capability_version` | `1` | Additive capability-token vocabulary |
 | `mcp_protocol_version` | `2025-06-18` | MCP initialization protocol served to agent runtimes |

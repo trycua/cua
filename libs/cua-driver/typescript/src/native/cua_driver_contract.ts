@@ -6,7 +6,7 @@
 import nativeModule from "./cua_driver_contract-ffi.js";
 import { type UniffiRustFutureContinuationCallback, type UniffiForeignFutureDroppedCallback, type UniffiForeignFutureDroppedCallbackStruct,
 } from "./cua_driver_contract-ffi.js";
-import { type UniffiByteArray, AbstractFfiConverterByteArray, FfiConverterArray, FfiConverterBool, FfiConverterFloat64, FfiConverterInt32, FfiConverterOptional, FfiConverterUInt32, FfiConverterUInt64, FfiConverterUInt8, RustBuffer, UniffiEnum, UniffiInternalError, UniffiRustCaller, uniffiCreateFfiConverterString, uniffiCreateRecord,
+import { type UniffiByteArray, AbstractFfiConverterByteArray, FfiConverterArray, FfiConverterBool, FfiConverterFloat64, FfiConverterInt32, FfiConverterInt64, FfiConverterOptional, FfiConverterUInt32, FfiConverterUInt64, FfiConverterUInt8, RustBuffer, UniffiEnum, UniffiInternalError, UniffiRustCaller, uniffiCreateFfiConverterString, uniffiCreateRecord,
 } from "@ubjs/core";
 const uniffiCaller = new UniffiRustCaller(() => ({ code: 0 }));
 
@@ -18,6 +18,61 @@ const uniffiIsDebug =
   false;
 
 // Public interface members begin here.
+
+export type BoundsExpectation = {
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    tolerancePx?: number
+}
+
+/**
+ * Generated factory for {@link BoundsExpectation} record objects.
+ */
+export const BoundsExpectation = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<BoundsExpectation, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<BoundsExpectation>,
+    });
+})();
+
+const FfiConverterTypeBoundsExpectation = (() => {
+    type TypeName = BoundsExpectation;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                x: FfiConverterFloat64.read(from),
+                y: FfiConverterFloat64.read(from),
+                width: FfiConverterFloat64.read(from),
+                height: FfiConverterFloat64.read(from),
+                tolerancePx: FfiConverterOptionalFloat64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterFloat64.write(value.x, into);
+            FfiConverterFloat64.write(value.y, into);
+            FfiConverterFloat64.write(value.width, into);
+            FfiConverterFloat64.write(value.height, into);
+            FfiConverterOptionalFloat64.write(value.tolerancePx, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterFloat64.allocationSize(value.x) +
+             FfiConverterFloat64.allocationSize(value.y) +
+             FfiConverterFloat64.allocationSize(value.width) +
+             FfiConverterFloat64.allocationSize(value.height) +
+             FfiConverterOptionalFloat64.allocationSize(value.tolerancePx);
+
+        }
+    };
+    return new FFIConverter();
+})();
 
 export enum DesktopScope {
     Desktop
@@ -600,6 +655,111 @@ const FfiConverterTypeDragInput = (() => {
     return new FFIConverter();
 })();
 
+export type ElementSelector = {
+    role?: string,
+    labelContains?: string
+}
+
+/**
+ * Generated factory for {@link ElementSelector} record objects.
+ */
+export const ElementSelector = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ElementSelector, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ElementSelector>,
+    });
+})();
+
+const FfiConverterTypeElementSelector = (() => {
+    type TypeName = ElementSelector;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                role: FfiConverterOptionalString.read(from),
+                labelContains: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalString.write(value.role, into);
+            FfiConverterOptionalString.write(value.labelContains, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalString.allocationSize(value.role) +
+             FfiConverterOptionalString.allocationSize(value.labelContains);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type ElementPredicate = {
+    selector: ElementSelector,
+    /**
+     * Assert that at least one trusted element matches the selector.
+     *
+     * Element walks are not yet exhaustive on every platform, so absence
+     * cannot be proven. `false` is rejected instead of returning an
+     * indefinitely-unknown predicate.
+     */
+    exists?: boolean,
+    valueEquals?: string,
+    enabled?: boolean,
+    selected?: boolean
+}
+
+/**
+ * Generated factory for {@link ElementPredicate} record objects.
+ */
+export const ElementPredicate = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ElementPredicate, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ElementPredicate>,
+    });
+})();
+
+const FfiConverterTypeElementPredicate = (() => {
+    type TypeName = ElementPredicate;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                selector: FfiConverterTypeElementSelector.read(from),
+                exists: FfiConverterOptionalBoolean.read(from),
+                valueEquals: FfiConverterOptionalString.read(from),
+                enabled: FfiConverterOptionalBoolean.read(from),
+                selected: FfiConverterOptionalBoolean.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeElementSelector.write(value.selector, into);
+            FfiConverterOptionalBoolean.write(value.exists, into);
+            FfiConverterOptionalString.write(value.valueEquals, into);
+            FfiConverterOptionalBoolean.write(value.enabled, into);
+            FfiConverterOptionalBoolean.write(value.selected, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeElementSelector.allocationSize(value.selector) +
+             FfiConverterOptionalBoolean.allocationSize(value.exists) +
+             FfiConverterOptionalString.allocationSize(value.valueEquals) +
+             FfiConverterOptionalBoolean.allocationSize(value.enabled) +
+             FfiConverterOptionalBoolean.allocationSize(value.selected);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type EndSessionInput = {
     /**
      * The session id to end.
@@ -1144,6 +1304,136 @@ const FfiConverterTypeMoveCursorInput = (() => {
              FfiConverterFloat64.allocationSize(value.y) +
              FfiConverterTypeDesktopScope.allocationSize(value.scope) +
              FfiConverterOptionalString.allocationSize(value.session);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export enum VerificationStatus {
+    Satisfied,
+    Unsatisfied,
+    Unknown
+}
+
+const FfiConverterTypeVerificationStatus = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = VerificationStatus;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return VerificationStatus.Satisfied;
+                case 2: return VerificationStatus.Unsatisfied;
+                case 3: return VerificationStatus.Unknown;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case VerificationStatus.Satisfied: return ordinalConverter.write(1, into);
+                case VerificationStatus.Unsatisfied: return ordinalConverter.write(2, into);
+                case VerificationStatus.Unknown: return ordinalConverter.write(3, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export enum UnknownReason {
+    InvalidPredicate,
+    UnsupportedPredicate,
+    UntrustedSource,
+    MultiMatch,
+    TargetMissing,
+    ObservationUnavailable,
+    StabilityUnproven
+}
+
+const FfiConverterTypeUnknownReason = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = UnknownReason;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return UnknownReason.InvalidPredicate;
+                case 2: return UnknownReason.UnsupportedPredicate;
+                case 3: return UnknownReason.UntrustedSource;
+                case 4: return UnknownReason.MultiMatch;
+                case 5: return UnknownReason.TargetMissing;
+                case 6: return UnknownReason.ObservationUnavailable;
+                case 7: return UnknownReason.StabilityUnproven;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case UnknownReason.InvalidPredicate: return ordinalConverter.write(1, into);
+                case UnknownReason.UnsupportedPredicate: return ordinalConverter.write(2, into);
+                case UnknownReason.UntrustedSource: return ordinalConverter.write(3, into);
+                case UnknownReason.MultiMatch: return ordinalConverter.write(4, into);
+                case UnknownReason.TargetMissing: return ordinalConverter.write(5, into);
+                case UnknownReason.ObservationUnavailable: return ordinalConverter.write(6, into);
+                case UnknownReason.StabilityUnproven: return ordinalConverter.write(7, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export type PredicateOutcome = {
+    index: bigint,
+    status: VerificationStatus,
+    unknownReason?: UnknownReason,
+    /**
+     * Normalized, bounded JSON projection of the matched state.
+     */
+    observedJson?: string
+}
+
+/**
+ * Generated factory for {@link PredicateOutcome} record objects.
+ */
+export const PredicateOutcome = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<PredicateOutcome, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<PredicateOutcome>,
+    });
+})();
+
+const FfiConverterTypePredicateOutcome = (() => {
+    type TypeName = PredicateOutcome;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                index: FfiConverterUInt64.read(from),
+                status: FfiConverterTypeVerificationStatus.read(from),
+                unknownReason: FfiConverterOptionalTypeUnknownReason.read(from),
+                observedJson: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterUInt64.write(value.index, into);
+            FfiConverterTypeVerificationStatus.write(value.status, into);
+            FfiConverterOptionalTypeUnknownReason.write(value.unknownReason, into);
+            FfiConverterOptionalString.write(value.observedJson, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterUInt64.allocationSize(value.index) +
+             FfiConverterTypeVerificationStatus.allocationSize(value.status) +
+             FfiConverterOptionalTypeUnknownReason.allocationSize(value.unknownReason) +
+             FfiConverterOptionalString.allocationSize(value.observedJson);
 
         }
     };
@@ -1858,6 +2148,92 @@ const FfiConverterTypeStartSessionOutput = (() => {
     return new FFIConverter();
 })();
 
+export type WindowPredicate = {
+    exists?: boolean,
+    bounds?: BoundsExpectation
+}
+
+/**
+ * Generated factory for {@link WindowPredicate} record objects.
+ */
+export const WindowPredicate = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<WindowPredicate, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<WindowPredicate>,
+    });
+})();
+
+const FfiConverterTypeWindowPredicate = (() => {
+    type TypeName = WindowPredicate;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                exists: FfiConverterOptionalBoolean.read(from),
+                bounds: FfiConverterOptionalTypeBoundsExpectation.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalBoolean.write(value.exists, into);
+            FfiConverterOptionalTypeBoundsExpectation.write(value.bounds, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalBoolean.allocationSize(value.exists) +
+             FfiConverterOptionalTypeBoundsExpectation.allocationSize(value.bounds);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type StatePredicate = {
+    window?: WindowPredicate,
+    element?: ElementPredicate
+}
+
+/**
+ * Generated factory for {@link StatePredicate} record objects.
+ */
+export const StatePredicate = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<StatePredicate, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<StatePredicate>,
+    });
+})();
+
+const FfiConverterTypeStatePredicate = (() => {
+    type TypeName = StatePredicate;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                window: FfiConverterOptionalTypeWindowPredicate.read(from),
+                element: FfiConverterOptionalTypeElementPredicate.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalTypeWindowPredicate.write(value.window, into);
+            FfiConverterOptionalTypeElementPredicate.write(value.element, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalTypeWindowPredicate.allocationSize(value.window) +
+             FfiConverterOptionalTypeElementPredicate.allocationSize(value.element);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type TypeTextInput = {
     text: string,
     scope: DesktopScope,
@@ -1908,6 +2284,146 @@ const FfiConverterTypeTypeTextInput = (() => {
     return new FFIConverter();
 })();
 
+export type VerifyStateInput = {
+    /**
+     * Exact process whose window may be observed.
+     */
+    pid: bigint,
+    /**
+     * Exact native window identifier.
+     */
+    windowId: bigint,
+    /**
+     * One to eight predicates, combined with logical AND.
+     */
+    expect: Array<StatePredicate>,
+    /**
+     * Optional session id for capture-scope and authorization continuity.
+     */
+    session?: string,
+    /**
+     * Bounded wait. Zero performs one sample.
+     */
+    timeoutMs?: bigint,
+    /**
+     * Consecutive satisfied samples required before returning success.
+     */
+    stableSamples?: bigint,
+    /**
+     * Return the final window screenshot as image content for a multimodal
+     * caller. The driver does not interpret that image.
+     */
+    includeScreenshot?: boolean
+}
+
+/**
+ * Generated factory for {@link VerifyStateInput} record objects.
+ */
+export const VerifyStateInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<VerifyStateInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<VerifyStateInput>,
+    });
+})();
+
+const FfiConverterTypeVerifyStateInput = (() => {
+    type TypeName = VerifyStateInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                pid: FfiConverterInt64.read(from),
+                windowId: FfiConverterUInt64.read(from),
+                expect: FfiConverterSequenceTypeStatePredicate.read(from),
+                session: FfiConverterOptionalString.read(from),
+                timeoutMs: FfiConverterOptionalUInt64.read(from),
+                stableSamples: FfiConverterOptionalUInt64.read(from),
+                includeScreenshot: FfiConverterOptionalBoolean.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterInt64.write(value.pid, into);
+            FfiConverterUInt64.write(value.windowId, into);
+            FfiConverterSequenceTypeStatePredicate.write(value.expect, into);
+            FfiConverterOptionalString.write(value.session, into);
+            FfiConverterOptionalUInt64.write(value.timeoutMs, into);
+            FfiConverterOptionalUInt64.write(value.stableSamples, into);
+            FfiConverterOptionalBoolean.write(value.includeScreenshot, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterInt64.allocationSize(value.pid) +
+             FfiConverterUInt64.allocationSize(value.windowId) +
+             FfiConverterSequenceTypeStatePredicate.allocationSize(value.expect) +
+             FfiConverterOptionalString.allocationSize(value.session) +
+             FfiConverterOptionalUInt64.allocationSize(value.timeoutMs) +
+             FfiConverterOptionalUInt64.allocationSize(value.stableSamples) +
+             FfiConverterOptionalBoolean.allocationSize(value.includeScreenshot);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type VerifyStateOutput = {
+    status: VerificationStatus,
+    stable: boolean,
+    elapsedMs: bigint,
+    samples: bigint,
+    predicates: Array<PredicateOutcome>
+}
+
+/**
+ * Generated factory for {@link VerifyStateOutput} record objects.
+ */
+export const VerifyStateOutput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<VerifyStateOutput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<VerifyStateOutput>,
+    });
+})();
+
+const FfiConverterTypeVerifyStateOutput = (() => {
+    type TypeName = VerifyStateOutput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                status: FfiConverterTypeVerificationStatus.read(from),
+                stable: FfiConverterBool.read(from),
+                elapsedMs: FfiConverterUInt64.read(from),
+                samples: FfiConverterUInt64.read(from),
+                predicates: FfiConverterSequenceTypePredicateOutcome.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeVerificationStatus.write(value.status, into);
+            FfiConverterBool.write(value.stable, into);
+            FfiConverterUInt64.write(value.elapsedMs, into);
+            FfiConverterUInt64.write(value.samples, into);
+            FfiConverterSequenceTypePredicateOutcome.write(value.predicates, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeVerificationStatus.allocationSize(value.status) +
+             FfiConverterBool.allocationSize(value.stable) +
+             FfiConverterUInt64.allocationSize(value.elapsedMs) +
+             FfiConverterUInt64.allocationSize(value.samples) +
+             FfiConverterSequenceTypePredicateOutcome.allocationSize(value.predicates);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export enum Platform {
     Macos,
     Windows,
@@ -1940,6 +2456,9 @@ const FfiConverterTypePlatform = (() => {
     return new FFIConverter();
 })();
 
+// FfiConverter for number | undefined
+const FfiConverterOptionalFloat64 = new FfiConverterOptional(FfiConverterFloat64);
+
 // FfiConverter for string | undefined
 const FfiConverterOptionalString = new FfiConverterOptional(FfiConverterString);
 
@@ -1958,8 +2477,14 @@ const FfiConverterOptionalUInt64 = new FfiConverterOptional(FfiConverterUInt64);
 // FfiConverter for Array<string> | undefined
 const FfiConverterOptionalSequenceString = new FfiConverterOptional(FfiConverterSequenceString);
 
+// FfiConverter for boolean | undefined
+const FfiConverterOptionalBoolean = new FfiConverterOptional(FfiConverterBool);
+
 // FfiConverter for CursorPointOutput | undefined
 const FfiConverterOptionalTypeCursorPointOutput = new FfiConverterOptional(FfiConverterTypeCursorPointOutput);
+
+// FfiConverter for UnknownReason | undefined
+const FfiConverterOptionalTypeUnknownReason = new FfiConverterOptional(FfiConverterTypeUnknownReason);
 
 // FfiConverter for ScrollBy | undefined
 const FfiConverterOptionalTypeScrollBy = new FfiConverterOptional(FfiConverterTypeScrollBy);
@@ -1967,14 +2492,26 @@ const FfiConverterOptionalTypeScrollBy = new FfiConverterOptional(FfiConverterTy
 // FfiConverter for EscalationReason | undefined
 const FfiConverterOptionalTypeEscalationReason = new FfiConverterOptional(FfiConverterTypeEscalationReason);
 
-// FfiConverter for number | undefined
-const FfiConverterOptionalFloat64 = new FfiConverterOptional(FfiConverterFloat64);
-
 // FfiConverter for CaptureScope | undefined
 const FfiConverterOptionalTypeCaptureScope = new FfiConverterOptional(FfiConverterTypeCaptureScope);
 
 // FfiConverter for CursorThemeSelection | undefined
 const FfiConverterOptionalTypeCursorThemeSelection = new FfiConverterOptional(FfiConverterTypeCursorThemeSelection);
+
+// FfiConverter for BoundsExpectation | undefined
+const FfiConverterOptionalTypeBoundsExpectation = new FfiConverterOptional(FfiConverterTypeBoundsExpectation);
+
+// FfiConverter for WindowPredicate | undefined
+const FfiConverterOptionalTypeWindowPredicate = new FfiConverterOptional(FfiConverterTypeWindowPredicate);
+
+// FfiConverter for ElementPredicate | undefined
+const FfiConverterOptionalTypeElementPredicate = new FfiConverterOptional(FfiConverterTypeElementPredicate);
+
+// FfiConverter for Array<StatePredicate>
+const FfiConverterSequenceTypeStatePredicate = new FfiConverterArray(FfiConverterTypeStatePredicate);
+
+// FfiConverter for Array<PredicateOutcome>
+const FfiConverterSequenceTypePredicateOutcome = new FfiConverterArray(FfiConverterTypePredicateOutcome);
 
 
 /**
@@ -2001,6 +2538,7 @@ function uniffiEnsureInitialized() {
 export default Object.freeze({
   initialize: uniffiEnsureInitialized,
   converters: {
+    FfiConverterTypeBoundsExpectation,
     FfiConverterTypeCaptureScope,
     FfiConverterTypeClickButton,
     FfiConverterTypeClickInput,
@@ -2014,6 +2552,8 @@ export default Object.freeze({
     FfiConverterTypeDesktopScope,
     FfiConverterTypeDragInput,
     FfiConverterTypeEffectiveScope,
+    FfiConverterTypeElementPredicate,
+    FfiConverterTypeElementSelector,
     FfiConverterTypeEndSessionInput,
     FfiConverterTypeEndSessionOutput,
     FfiConverterTypeEscalateSessionInput,
@@ -2027,6 +2567,7 @@ export default Object.freeze({
     FfiConverterTypeHotkeyInput,
     FfiConverterTypeMoveCursorInput,
     FfiConverterTypePlatform,
+    FfiConverterTypePredicateOutcome,
     FfiConverterTypePressKeyInput,
     FfiConverterTypeScrollBy,
     FfiConverterTypeScrollDirection,
@@ -2040,6 +2581,12 @@ export default Object.freeze({
     FfiConverterTypeSetAgentCursorThemeOutput,
     FfiConverterTypeStartSessionInput,
     FfiConverterTypeStartSessionOutput,
+    FfiConverterTypeStatePredicate,
     FfiConverterTypeTypeTextInput,
+    FfiConverterTypeUnknownReason,
+    FfiConverterTypeVerificationStatus,
+    FfiConverterTypeVerifyStateInput,
+    FfiConverterTypeVerifyStateOutput,
+    FfiConverterTypeWindowPredicate,
   }
 });

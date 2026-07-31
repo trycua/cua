@@ -209,6 +209,13 @@ impl Tool for GetWindowStateTool {
         // still forces a capture (an explicit "write the frame to disk").
         let include_screenshot = args.get("include_screenshot").and_then(|v| v.as_bool());
         let should_capture = include_screenshot != Some(false) || screenshot_out_file.is_some();
+        // Internal direct-tool mode used by verify_state. Registry ingress
+        // strips underscore-prefixed arguments before public dispatch; only
+        // a trusted direct in-process invocation can enable this mode.
+        let observation_only = args
+            .get("_observation_only")
+            .and_then(|value| value.as_bool())
+            == Some(true);
         // Optional caps — when omitted, fall back to the defaults baked into
         // the AX walker (#22865). minimum:1 keyed in the schema, but defend
         // against 0 here as well so a misbehaving client can't disable the
@@ -275,11 +282,13 @@ impl Tool for GetWindowStateTool {
         // click(element_index=N) picked whatever the walk happened to return.
         // For an unresolved scope, replace any prior entry with an empty
         // snapshot so a stale index map cannot be clicked through either.
-        if let Some(ref r) = tree_result {
-            if scope_matched {
-                self.state.element_cache.update(pid, window_id, &r.nodes);
-            } else {
-                self.state.element_cache.update(pid, window_id, &[]);
+        if !observation_only {
+            if let Some(ref r) = tree_result {
+                if scope_matched {
+                    self.state.element_cache.update(pid, window_id, &r.nodes);
+                } else {
+                    self.state.element_cache.update(pid, window_id, &[]);
+                }
             }
         }
 
@@ -373,16 +382,18 @@ impl Tool for GetWindowStateTool {
                     // different ratios (only the large one downscales), and a
                     // pid-only key leaked one window's ratio into the other's
                     // pixel clicks.
-                    if let Some(ow) = orig_w {
-                        if w > 0 {
-                            self.state.resize_registry.set_ratio(
-                                pid,
-                                window_id,
-                                ow as f64 / w as f64,
-                            );
+                    if !observation_only {
+                        if let Some(ow) = orig_w {
+                            if w > 0 {
+                                self.state.resize_registry.set_ratio(
+                                    pid,
+                                    window_id,
+                                    ow as f64 / w as f64,
+                                );
+                            }
+                        } else {
+                            self.state.resize_registry.clear_ratio(pid, window_id);
                         }
-                    } else {
-                        self.state.resize_registry.clear_ratio(pid, window_id);
                     }
                     Some((b64, file_path, w, h, bounds, scale))
                 }
@@ -390,7 +401,9 @@ impl Tool for GetWindowStateTool {
                     tracing::warn!(
                         "Screenshot frame could not be verified for window {window_id}: {e:?}"
                     );
-                    self.state.resize_registry.clear_ratio(pid, window_id);
+                    if !observation_only {
+                        self.state.resize_registry.clear_ratio(pid, window_id);
+                    }
                     screenshot_frame_error = Some(e);
                     None
                 }
@@ -421,7 +434,10 @@ impl Tool for GetWindowStateTool {
             }
 
             // Summary text line (matching Swift reference format).
-            let element_count = self.state.element_cache.element_count(pid, window_id);
+            let element_count = tree_result
+                .as_ref()
+                .map(|r| r.nodes.iter().filter(|n| n.element_index.is_some()).count())
+                .unwrap_or(0);
             let summary = if let Some(ref r) = tree_result {
                 format!(
                     "window_id={window_id} pid={pid} size={}x{} elements={element_count}\n\n{}",
@@ -432,7 +448,7 @@ impl Tool for GetWindowStateTool {
             };
             content.push(Content::text(summary));
         } else if let Some(ref r) = tree_result {
-            let element_count = self.state.element_cache.element_count(pid, window_id);
+            let element_count = r.nodes.iter().filter(|n| n.element_index.is_some()).count();
             content.push(Content::text(format!(
                 "window_id={window_id} pid={pid} elements={element_count}\n\n{}",
                 r.tree_markdown
@@ -445,7 +461,10 @@ impl Tool for GetWindowStateTool {
             );
         }
 
-        let element_count = self.state.element_cache.element_count(pid, window_id);
+        let element_count = tree_result
+            .as_ref()
+            .map(|r| r.nodes.iter().filter(|n| n.element_index.is_some()).count())
+            .unwrap_or(0);
         let tree_md = tree_result
             .as_ref()
             .map(|r| r.tree_markdown.clone())
@@ -466,7 +485,7 @@ impl Tool for GetWindowStateTool {
             .as_ref()
             .map(|r| r.nodes.iter().filter(|n| n.element_index.is_some()).count())
             .unwrap_or(0);
-        let snapshot_id = if scope_matched {
+        let snapshot_id = if scope_matched && !observation_only {
             Some(cua_driver_core::element_token::global().register_snapshot(
                 pid,
                 window_id,
@@ -484,13 +503,20 @@ impl Tool for GetWindowStateTool {
         // preferred-for-back-compat-only via the `_note` field below.
         let elements_json: Vec<serde_json::Value> = match (snapshot_id, tree_result.as_ref()) {
             (Some(sid), Some(r)) => build_elements_array_with_token(&r.nodes, sid),
+            (None, Some(r)) if scope_matched => build_elements_array(&r.nodes),
             _ => Vec::new(),
         };
+        // The structured array intentionally contains only actionable nodes,
+        // and AX child reads can fail independently of the element/depth caps.
+        // Until the walker exposes a proof over the projected search domain,
+        // absence must remain unknown rather than being claimed complete.
+        let elements_complete = false;
 
         let mut structured = serde_json::json!({
             "window_id": window_id,
             "pid": pid,
             "element_count": element_count,
+            "elements_complete": elements_complete,
             "tree_markdown": tree_md,
             "elements": elements_json,
             "_note": "Prefer `elements` — `tree_markdown` will continue to work \
@@ -771,8 +797,23 @@ pub(crate) fn build_elements_array_with_token(
             if let Some(enabled) = node.enabled {
                 entry["enabled"] = serde_json::Value::Bool(enabled);
             }
-            if let Some(selected) = node.selected {
+            let selected = node.selected.or_else(|| {
+                let role = node.role.to_ascii_lowercase();
+                if role.contains("checkbox") || role.contains("radiobutton") {
+                    node.value_state.as_deref().and_then(|value| match value {
+                        "1" | "true" | "on" => Some(true),
+                        "0" | "false" | "off" => Some(false),
+                        _ => None,
+                    })
+                } else {
+                    None
+                }
+            });
+            if let Some(selected) = selected {
                 entry["selected"] = serde_json::Value::Bool(selected);
+            }
+            if node.in_web_content {
+                entry["in_web_content"] = serde_json::Value::Bool(true);
             }
             if let Some(frame) = frame {
                 entry["frame"] = frame;
@@ -954,6 +995,7 @@ mod tests {
             max_value: None,
             enabled: None,
             selected: None,
+            in_web_content: false,
         }
     }
 
@@ -1077,6 +1119,29 @@ mod tests {
         assert_eq!(entry["min"], 2.0);
         assert_eq!(entry["max"], 8.0);
         assert_eq!(entry["enabled"], true);
+        assert_eq!(entry["selected"], false);
+    }
+
+    #[test]
+    fn elements_surface_inherited_web_content_trust_marker() {
+        let mut nodes = vec![node(
+            Some(0),
+            "AXButton",
+            Some("Renderer button"),
+            2,
+            None,
+            None,
+        )];
+        nodes[0].in_web_content = true;
+        let entry = &build_elements_array(&nodes)[0];
+        assert_eq!(entry["in_web_content"], true);
+    }
+
+    #[test]
+    fn checkbox_value_state_normalizes_to_selected() {
+        let mut nodes = vec![node(Some(0), "AXCheckBox", Some("I agree"), 0, None, None)];
+        nodes[0].value_state = Some("0".into());
+        let entry = &build_elements_array(&nodes)[0];
         assert_eq!(entry["selected"], false);
     }
 

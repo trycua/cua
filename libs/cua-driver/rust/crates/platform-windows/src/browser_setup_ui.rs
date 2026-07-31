@@ -614,6 +614,8 @@ mod tests {
             automation_id: None,
             help_text: None,
             actions: actions.iter().map(|value| (*value).to_owned()).collect(),
+            enabled: None,
+            selected: None,
             element_ptr: 7,
             center_x: 0,
             center_y: 0,

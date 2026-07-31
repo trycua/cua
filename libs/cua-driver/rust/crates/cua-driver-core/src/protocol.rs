@@ -356,17 +356,16 @@ fn agent_instructions() -> String {
     format!(
         r#"cua-driver: cross-platform background computer-use automation.
 
-Tools let you interact with any app without stealing keyboard focus or moving the visible cursor. Prefer element_index ({tree_kind}) paths over pixel coordinates — they work on backgrounded/hidden windows.
+Tools operate apps without stealing focus or moving the real pointer. Prefer `element_index` ({tree_kind}) over pixels; it works on backgrounded or hidden windows.
 
 Workflow per turn:
-0. start_session(session) once at the start of a run → declares THIS run's identity (a stable id you choose, e.g. "research-1"). Pass that same `session` on every action below. It owns your agent cursor (a distinct color per id) and follows the run across apps/windows. End with end_session(session) when done. Concurrent runs/subagents each use their OWN `session`. (Omitting `session` still works, just with no cursor.)
-1. launch_app  → idempotent, returns pid + windows array in one call. Pass creates_new_application_instance:true if another run may touch the same app, so you get your own window.
-2. (skip list_windows when launch_app already returned a single window)
-3. get_window_state(pid, window_id) → refresh the {tree_kind} snapshot, get element indices
-4. click/type_text/press_key using element_index from step 3 (+ your `session`)
-5. get_window_state(pid, window_id) again → verify the action landed
+0. `start_session(session)` once per run; reuse that id on actions. Concurrent runs use distinct ids. End it when done.
+1. `launch_app` returns pid and windows. Use `creates_new_application_instance:true` when another run may touch the app.
+2. `get_window_state(pid, window_id)` refreshes the tree and element indices.
+3. Act with the fresh index.
+4. `verify_state(pid, window_id, expect)` checks bounded structured postconditions. `unknown` is not success. Set `include_screenshot:true` when the multimodal agent should also read visual evidence and decide whether to stop, retry, or advance the ladder.
 
-Agent cursor: a per-SESSION overlay cursor visualises where a run is acting without moving the real pointer. It is shown only for a DECLARED session (pass `session`), is color-coded by the session id, and is removed by end_session or the idle-TTL. The same id over MCP, the CLI, or the raw socket drives the same cursor. set_agent_cursor_* tools hide/show/customise it. Note: a pure accessibility-action (element_index) click snaps the cursor with a brief pulse on its first action rather than a long glide, so it can be easy to miss — issue a pixel click or move_cursor first for a visibly gliding demo/recording.
+A declared session owns a colored agent-cursor overlay; it never moves the real pointer. Pure accessibility actions show only a brief first pulse. Use `move_cursor` or a pixel action first when a recording needs a visible glide.
 
 If a `cua-driver` skill is loaded in your harness (Claude Code / Codex / OpenClaw / OpenCode dirs), prefer its detailed workflow — SKILL.md plus {platform_skill_pointer}. Install with `cua-driver skills install` if not yet present."#
     )
@@ -414,6 +413,23 @@ mod image_mime_type_tests {
         assert!(
             v.get("mimeType").is_none(),
             "text content must not carry mimeType"
+        );
+    }
+}
+
+#[cfg(test)]
+mod agent_instruction_tests {
+    use super::agent_instructions;
+
+    #[test]
+    fn instructions_route_structured_and_visual_verification_to_the_right_owner() {
+        let instructions = agent_instructions();
+        assert!(instructions.contains("verify_state"));
+        assert!(instructions.contains("`unknown` is not success"));
+        assert!(instructions.contains("multimodal agent"));
+        assert!(
+            instructions.split_whitespace().count() <= 200,
+            "initialize instructions should stay within the documented context budget"
         );
     }
 }

@@ -828,6 +828,7 @@ pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
                 "parallel_mouse_drag",
                 "get_accessibility_tree",
                 "get_window_state",
+                "verify_state",
                 "get_desktop_state",
             ];
             if let Some(tool) = ORIGIN_BYPASS_TOOLS
@@ -1693,8 +1694,9 @@ allow:
         assert!(loaded.is_idle_expired());
         assert!(loaded.authorize_dispatch().is_err());
 
-        assert!(manifest(
-            r#"
+        for bypass_tool in ["page", "verify_state"] {
+            let policy = format!(
+                r#"
 version: 1
 mode: bounded
 expires_after: 1h
@@ -1703,11 +1705,16 @@ resources:
   browser:
     origins: [https://app.example.com]
 allow:
-  tools: [browser_navigate, page]
-"#,
-        )
-        .unwrap_err()
-        .contains("bypasses the typed browser origin adapter"));
+  tools: [browser_navigate, {bypass_tool}]
+"#
+            );
+            assert!(
+                manifest(&policy)
+                    .unwrap_err()
+                    .contains("bypasses the typed browser origin adapter"),
+                "{bypass_tool} must not bypass origin-scoped browser policy"
+            );
+        }
     }
 
     #[cfg(feature = "yaml")]

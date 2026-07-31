@@ -18,6 +18,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use crate::{
     protocol::{Content, ToolResult},
     tool::{Tool, ToolDef},
+    tool_args::parse_typed_input,
 };
 
 const DEFAULT_TIMEOUT_MS: u64 = 2_000;
@@ -223,11 +224,9 @@ impl Tool for VerifyStateTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let input: VerifyStateInput = match serde_json::from_value(args) {
+        let input: VerifyStateInput = match parse_typed_input("verify_state", args) {
             Ok(input) => input,
-            Err(error) => {
-                return ToolResult::error(format!("Invalid verify_state arguments: {error}"))
-            }
+            Err(error) => return error,
         };
         if input.pid <= 0 {
             return ToolResult::error("verify_state requires pid > 0");
@@ -1136,6 +1135,35 @@ mod tests {
             .content
             .iter()
             .any(|content| matches!(content, Content::Image { .. })));
+    }
+
+    #[tokio::test]
+    async fn verify_tool_ignores_trusted_transport_metadata() {
+        let provider = Arc::new(FakeProvider {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            snapshot: ObservationSnapshot {
+                window: Some(window()),
+                elements: None,
+                element_source_trusted: false,
+                elements_complete: false,
+            },
+        });
+        let result = VerifyStateTool::new(provider)
+            .invoke(json!({
+                "pid": 42,
+                "window_id": 7,
+                "expect": [{"window": {"exists": true}}],
+                "timeout_ms": 0,
+                "stable_samples": 1,
+                "_session_id": "injected-by-daemon",
+                "_transport_session_id": "injected-by-daemon"
+            }))
+            .await;
+        assert_ne!(result.is_error, Some(true));
+        assert_eq!(
+            result.structured_content.as_ref().unwrap()["status"],
+            json!("satisfied")
+        );
     }
 
     #[tokio::test]

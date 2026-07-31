@@ -369,18 +369,19 @@ fn agent_instructions() -> String {
     format!(
         r#"cua-driver: cross-platform background computer-use automation.
 
-Tools operate apps without stealing focus or moving the real pointer. Prefer `element_index` ({tree_kind}) over pixels; it works on backgrounded or hidden windows.
+Tools operate apps without stealing focus or moving the pointer. Prefer `element_index` ({tree_kind}) over pixels; it works on backgrounded or hidden windows.
 
 Workflow per turn:
 0. `start_session(session)` once per run; reuse that id on actions. Concurrent runs use distinct ids. End it when done.
 1. `launch_app` returns pid and windows. Use `creates_new_application_instance:true` when another run may touch the app.
 2. `get_window_state(pid, window_id)` refreshes the tree and element indices.
-3. Act with the fresh index.
-4. `verify_state(pid, window_id, expect)` checks bounded structured postconditions. `unknown` is not success. Set `include_screenshot:true` when the multimodal agent should also read visual evidence and decide whether to stop, retry, or advance the ladder.
+3. Act with that index.
+4. On `rebind`, refresh its window without activation.
+5. `verify_state(pid, window_id, expect)` checks bounded structured postconditions. `unknown` is not success. Set `include_screenshot:true` when the multimodal agent should also read visual evidence and decide whether to stop, retry, or advance the ladder.
 
 A declared session owns a colored agent-cursor overlay; it never moves the real pointer. Pure accessibility actions show only a brief first pulse. Use `move_cursor` or a pixel action first when a recording needs a visible glide.
 
-If a `cua-driver` skill is loaded in your harness (Claude Code / Codex / OpenClaw / OpenCode dirs), prefer its detailed workflow — SKILL.md plus {platform_skill_pointer}. Install with `cua-driver skills install` if not yet present."#
+If a `cua-driver` skill is loaded, prefer SKILL.md plus {platform_skill_pointer}. Install with `cua-driver skills install` if not yet present."#
     )
 }
 

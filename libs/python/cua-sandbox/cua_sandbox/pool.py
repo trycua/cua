@@ -7,12 +7,11 @@ from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from typing import Any, cast
 
-from cyclops_sdk import CreateClaimRequest
-
 from cua_sandbox.image import Image
 from cua_sandbox.sandbox import Sandbox
 from cua_sandbox.transport.fleet import FleetTransport
 from cua_sandbox.transport.fleet_cloud import FleetCloudTransport, _FleetClient
+from cyclops_sdk import CreateClaimRequest
 
 logger = logging.getLogger(__name__)
 

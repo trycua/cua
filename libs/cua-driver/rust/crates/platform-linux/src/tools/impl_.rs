@@ -844,6 +844,7 @@ impl Tool for GetWindowStateTool {
                     content,
                     is_error: None,
                     structured_content: Some(structured),
+                    action_record: None,
                 }
             }
             Ok(Err(e)) => ToolResult::error(format!("Capture error: {e}")),
@@ -1141,9 +1142,10 @@ fn non_ax_escalation() -> Value {
 
 /// Structured payload for a `type_text` response. Keeps the legacy
 /// `path`/`characters`/`verified` fields for back-compat and adds the cross-tool
-/// `effect` tri-state: a read-back-confirmed insert (the AT-SPI `insertText`
-/// rung) is `"confirmed"`; every keystroke / XSendEvent / XTest / Wayland rung
-/// is `"unverifiable"` (no read-back — the caller confirms via screenshot) and
+/// `effect` tri-state. Linux's AT-SPI `insertText` return value acknowledges
+/// the method call but does not read the widget value back, so it and every
+/// keystroke / XSendEvent / XTest / Wayland rung are `"unverifiable"` (the
+/// caller confirms through a separate observation) and
 /// carries a `foreground` escalation, because the field IS in the AT-SPI tree —
 /// it's a delivery/focus problem, not a missing element. The foreground rung
 /// itself (`key_events_fg`) is already the last resort, so it emits no
@@ -1189,16 +1191,12 @@ fn type_text_structured_electron(text_len: usize) -> Value {
     })
 }
 
-/// Build the success `ToolResult` for an AT-SPI insert that the driver would
-/// otherwise mark `verified:true` (path=="ax"). Applies the Electron/Chromium
-/// AX-echo suppression: when `pid` is a Chromium embedder, the a11y layer can
-/// echo the `insertText` write back while the renderer ignores it, so we refuse
-/// to claim a confirmed insert — downgrade to effect:"unverifiable" +
-/// escalation:{recommended:"px"} and tell the agent to confirm via screenshot.
-/// Probe ONLY here, on the rung that would otherwise confirm, so native AT-SPI
-/// types pay nothing. `route` is the human route phrase, e.g. "via AT-SPI".
-/// Mirrors macOS `type_text`'s `ax_echo_surface` gate.
-fn type_text_ax_confirm_result(pid: u32, text_len: usize, route: &str) -> ToolResult {
+/// Build the success `ToolResult` for an AT-SPI insert. The EditableText
+/// method's boolean is a delivery acknowledgement, not a fresh value readback,
+/// so native widgets remain `unverifiable`. Chromium embedders additionally
+/// recommend the pixel rung because their accessibility bridge can acknowledge
+/// a write the renderer never observes.
+fn type_text_ax_result(pid: u32, text_len: usize, route: &str) -> ToolResult {
     if is_chromium_embedder(pid) {
         return ToolResult::text(format!(
             "📨 Sent (unverified) {text_len} character(s) ({route}). — Electron/web \
@@ -1210,14 +1208,14 @@ fn type_text_ax_confirm_result(pid: u32, text_len: usize, route: &str) -> ToolRe
         .with_structured(type_text_structured_electron(text_len));
     }
     ToolResult::text(format!("Typed {text_len} character(s) ({route})."))
-        .with_structured(type_text_structured("ax", text_len, true))
+        .with_structured(type_text_structured("ax", text_len, false))
 }
 
 /// True when `pid` is a Chromium-based embedder — a Chrome/Chromium browser or
 /// any Electron/CEF app. On these surfaces an AT-SPI `EditableText.insertText`
 /// can succeed at the bridge while the Chromium *renderer* never observes it,
 /// so the AT-SPI "ax" rung must not be trusted as a confirmed insert (see
-/// [`type_text_ax_confirm_result`]).
+/// [`type_text_ax_result`]).
 ///
 /// This is the Linux analogue of macOS `ElectronJs::is_electron` (which checks
 /// for a bundled Electron Framework). Linux has no bundle, so the signal is
@@ -2421,7 +2419,7 @@ impl Tool for TypeTextTool {
             })
             .await;
             if let Ok(Ok(())) = targeted {
-                return type_text_ax_confirm_result(pid, text_len, "via targeted AT-SPI");
+                return type_text_ax_result(pid, text_len, "via targeted AT-SPI");
             }
         }
         // The private nested compositor can target the owning Wayland client
@@ -2540,7 +2538,7 @@ impl Tool for TypeTextTool {
             .await;
             match targeted {
                 Ok(Ok(())) => {
-                    return type_text_ax_confirm_result(pid, text_len, "via targeted AT-SPI");
+                    return type_text_ax_result(pid, text_len, "via targeted AT-SPI");
                 }
                 Ok(Err(_)) | Err(_)
                     if !delivery.is_foreground() && crate::wayland::wayland_input_enabled() =>
@@ -2727,7 +2725,7 @@ impl Tool for TypeTextTool {
                 // AT-SPI succeeded — focus-free typing worked (Qt6, GTK4, etc.)!
                 // Electron/Chromium can echo this write without the renderer
                 // observing it, so the confirm is suppressed there (mirrors macOS).
-                return type_text_ax_confirm_result(pid, text_len, "via AT-SPI");
+                return type_text_ax_result(pid, text_len, "via AT-SPI");
             }
             _ => {
                 // AT-SPI failed (no editable exposed). Qt5 doesn't expose widgets
@@ -2756,11 +2754,7 @@ impl Tool for TypeTextTool {
 
         match qt5_result {
             Ok(Ok(())) => {
-                return type_text_ax_confirm_result(
-                    pid,
-                    text_len,
-                    "via AT-SPI with focus workaround",
-                );
+                return type_text_ax_result(pid, text_len, "via AT-SPI with focus workaround");
             }
             _ => {
                 // AT-SPI still didn't work. Fall back to X11 XSendEvent.
@@ -2808,15 +2802,10 @@ impl Tool for TypeTextTool {
             "background"
         };
         match result {
-            // Read-back verdict: the AT-SPI EditableText.insertText path ("ax") is
-            // the driver-verifiable rung on Linux — the a11y layer confirms the
-            // insert into the widget model (truthful on GTK/Qt). The keystroke /
-            // XSendEvent / XTest rungs aren't read-back-confirmed (verified:false;
-            // caller confirms via screenshot).
-            // Only the AT-SPI ("ax") rung is read-back-confirmable; route it
-            // through the Electron/Chromium AX-echo suppression (mirrors macOS).
-            // Every other rung is already verified:false.
-            Ok(Ok("ax")) => type_text_ax_confirm_result(
+            // AT-SPI's boolean acknowledges the EditableText call; it is not a
+            // fresh value readback. Keep the result unverifiable and apply the
+            // stricter Chromium escalation where appropriate.
+            Ok(Ok("ax")) => type_text_ax_result(
                 pid,
                 text_len,
                 &format!("via X11, delivery_mode={mode_label}"),
@@ -5850,6 +5839,7 @@ impl Tool for GetDesktopStateTool {
                     content,
                     is_error: None,
                     structured_content: Some(structured),
+                    action_record: None,
                 }
             }
             Ok(Err(e)) => ToolResult::error(format!("Capture error: {e}")),
@@ -5951,7 +5941,13 @@ impl Tool for MoveCursorTool {
             let (x, y) = (input.x, input.y);
             let xi = x.round() as i32;
             let yi = y.round() as i32;
-            let result = if crate::wayland::wayland_input_enabled() {
+            let wayland = crate::wayland::wayland_input_enabled();
+            let path = if wayland {
+                "wayland_desktop"
+            } else {
+                "xtest_desktop"
+            };
+            let result = if wayland {
                 tokio::task::spawn_blocking(move || {
                     crate::wayland::move_cursor_absolute(None, xi, yi)
                 })
@@ -5961,12 +5957,12 @@ impl Tool for MoveCursorTool {
                     .await
             };
             return match result {
-                Ok(Ok(())) => {
-                    ToolResult::text(format!("Moved the real desktop pointer to ({xi}, {yi})."))
-                        .with_structured(
-                            json!({"scope":"desktop","x":xi,"y":yi,"effect":"unverifiable"}),
-                        )
-                }
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "Moved the real desktop pointer to ({xi}, {yi})."
+                ))
+                .with_structured(
+                    json!({"scope":"desktop","path":path,"x":xi,"y":yi,"effect":"unverifiable"}),
+                ),
                 Ok(Err(error)) => ToolResult::error(error.to_string()),
                 Err(error) => ToolResult::error(format!("Task error: {error}")),
             };
@@ -6677,6 +6673,7 @@ impl Tool for ZoomTool {
                         "width": w, "height": h, "format": "jpeg",
                         "mime_type": "image/jpeg"
                     })),
+                    action_record: None,
                 }
             }
             Ok(Err(e)) => ToolResult::error(format!("Zoom failed: {e}")),

@@ -573,6 +573,18 @@ impl RecordingSession {
 
     /// Finalize a previously reserved turn after tool dispatch.
     pub fn finish_turn(&self, pending: PendingTurn, result_text: &str) {
+        self.finish_turn_with_action(pending, result_text, None);
+    }
+
+    /// Finalize a turn while retaining the daemon's rich, non-wire action
+    /// truth in the recording artifact. Existing trajectory readers can ignore
+    /// the additive `action_truth` key.
+    pub fn finish_turn_with_action(
+        &self,
+        pending: PendingTurn,
+        result_text: &str,
+        action_record: Option<&crate::action_record::ActionExecutionRecord>,
+    ) {
         let mut inner = self.inner.lock().unwrap();
         if !inner.enabled || inner.generation != pending.generation {
             tracing::warn!(
@@ -581,7 +593,7 @@ impl RecordingSession {
             );
             return;
         }
-        if let Err(error) = write_turn(pending, result_text) {
+        if let Err(error) = write_turn(pending, result_text, action_record) {
             inner.last_error = Some(error.to_string());
         }
     }
@@ -721,7 +733,11 @@ fn strip_internal_keys(args: &Value) -> std::borrow::Cow<'_, Value> {
     }
 }
 
-fn write_turn(pending: PendingTurn, result_text: &str) -> anyhow::Result<()> {
+fn write_turn(
+    pending: PendingTurn,
+    result_text: &str,
+    action_record: Option<&crate::action_record::ActionExecutionRecord>,
+) -> anyhow::Result<()> {
     let PendingTurn {
         generation: _,
         turn_dir,
@@ -758,6 +774,9 @@ fn write_turn(pending: PendingTurn, result_text: &str) -> anyhow::Result<()> {
     });
     if let Some((cx, cy)) = click_point {
         payload["click_point"] = serde_json::json!({"x": cx, "y": cy});
+    }
+    if let Some(action_record) = action_record {
+        payload["action_truth"] = action_record.debug_json();
     }
     write_json_atomic(&turn_dir.join("action.json"), &payload)?;
     write_phase_artifacts(&turn_dir, "after", &after)?;
@@ -938,7 +957,15 @@ mod tests {
         assert_eq!(std::fs::read(turn.join("before.png")).unwrap(), b"before");
         assert!(!turn.join("after.png").exists());
 
-        session.finish_turn(pending, "clicked");
+        let action_record = crate::action_record::ActionExecutionRecord::builder(
+            crate::action_record::ActionEffect::Unverifiable,
+            crate::action_record::ActionTransport::MacosCgEventPid,
+            crate::action_record::RequestedDelivery::Background,
+        )
+        .actual_delivery(crate::action_record::ActualDelivery::Background)
+        .build()
+        .expect("valid action record");
+        session.finish_turn_with_action(pending, "clicked", Some(&action_record));
         assert_eq!(std::fs::read(turn.join("after.png")).unwrap(), b"after");
         assert_eq!(
             std::fs::read(turn.join("screenshot.png")).unwrap(),
@@ -949,6 +976,13 @@ mod tests {
             std::fs::read(turn.join("after_state.json")).unwrap()
         );
         assert_eq!(std::fs::read(turn.join("click.png")).unwrap(), b"click");
+        let action: Value = serde_json::from_slice(
+            &std::fs::read(turn.join("action.json")).expect("read action truth"),
+        )
+        .expect("parse action truth");
+        assert_eq!(action["action_truth"]["effect"], "unverifiable");
+        assert_eq!(action["action_truth"]["route"], "synthetic_events");
+        assert_eq!(action["action_truth"]["requested_delivery"], "background");
 
         let snapshot_id = crate::element_token::global().register_snapshot(1, 77, 1);
         let token = crate::element_token::token_for(snapshot_id, 0);

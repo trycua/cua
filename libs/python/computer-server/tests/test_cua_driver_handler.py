@@ -59,7 +59,6 @@ class _Result:
         self.is_error = error is not None
         self.text = error or "ok"
         self.error_code = "test_error" if error else None
-        self.verified = True
         self.degraded = False
 
 
@@ -120,33 +119,43 @@ class _Driver:
         self.calls.append(("get_cursor_position", input))
         return _Result({"x": 12, "y": 34, "available": True})
 
+    @staticmethod
+    def _action_result():
+        return _Result(
+            {
+                "effect": "unverifiable",
+                "route": "global_input",
+                "delivery": {"mode": "not_applicable"},
+            }
+        )
+
     async def move_cursor(self, input):
         self.calls.append(("move_cursor", input))
-        return _Result({})
+        return self._action_result()
 
     async def click(self, input):
         self.calls.append(("click", input))
-        return _Result({})
+        return self._action_result()
 
     async def drag(self, input):
         self.calls.append(("drag", input))
-        return _Result({})
+        return self._action_result()
 
     async def scroll(self, input):
         self.calls.append(("scroll", input))
-        return _Result({})
+        return self._action_result()
 
     async def type_text(self, input):
         self.calls.append(("type_text", input))
-        return _Result({})
+        return self._action_result()
 
     async def press_key(self, input):
         self.calls.append(("press_key", input))
-        return _Result({})
+        return self._action_result()
 
     async def hotkey(self, input):
         self.calls.append(("hotkey", input))
-        return _Result({})
+        return self._action_result()
 
     async def shutdown(self):
         self.shutdown_count += 1
@@ -211,6 +220,8 @@ async def test_desktop_actions_share_one_typed_session(sdk, fallback):
     assert desktop["image_data"] == "cG5n"
     assert desktop["screen_width"] == 1280
     assert click["success"] is True
+    assert click["effect"] == "unverifiable"
+    assert click["verified"] is False
     assert scroll["success"] is True
     assert [name for name, _ in driver.calls].count("start_session") == 1
     start = next(value for name, value in driver.calls if name == "start_session")

@@ -249,6 +249,38 @@ For postconditions not expressible by `verify_state`, take a fresh state
 snapshot and let the agent judge the tree and/or image explicitly. This applies
 to pixel clicks and desktop actions too.
 
+### Read action facts without confusing them with task success
+
+A successful action returns `effect` and `route`, with optional typed
+`delivery`, `evidence`, and `escalation`. These fields describe the actuator;
+they do not declare the user's task complete.
+
+- `confirmed` means the driver has publishable value readback or window-change
+  evidence for that action.
+- `partial` means only `delivery.delivered_count` was delivered.
+- `unverifiable` means the driver cannot prove the effect.
+- `suspected_noop` means available evidence suggests no useful change.
+- `refused` means the selected route deliberately did not deliver.
+
+The route vocabulary is intentionally cross-platform:
+`accessibility`, `synthetic_events`, `global_input`, `dom`, and
+`trusted_input`. Do not branch on private OS transport names.
+
+An optional escalation is a harness instruction, never an automatic retry:
+
+- `pixel`: refresh visual state and choose an exact pixel target;
+- `foreground`: explicitly select foreground delivery if session policy allows;
+- `page`: bind the native window to a supported browser page route;
+- `session`: prepare or explicitly widen the session only when policy permits.
+
+Branch on the closed reason vocabulary:
+`route_unavailable`, `delivery_failed`, `effect_unconfirmed`,
+`suspected_noop`, and `permission_required`.
+
+After any action, keep using `verify_state` or a fresh state snapshot for the
+actual task postcondition. The multimodal harness owns visual reading and the
+decision to stop, retry, or advance the ladder.
+
 ## Choose capture scope when the session starts
 
 `capture_scope` is a per-session policy, not persistent configuration. Declare
@@ -362,8 +394,9 @@ for Chromium/Electron inputs the AX path can't reach, and
 **Typing default (the ladder).** Call `type_text` directly with
 `element_index` (ax) — it targets the field, no pre-click. On
 Electron/Catalyst the AX layer echoes the write without rendering it,
-so the driver returns `effect:"unverifiable"` + `escalation:"px"`
-there (never a false `verified:true`) — follow it, and cross-check the
+so the driver returns `effect:"unverifiable"` with
+`escalation.target:"pixel"` there (never a false `effect:"confirmed"`) —
+follow it, and cross-check the
 screenshot in the response (the only ground truth). Escalate to the px
 form — `type_text({pid, window_id, x, y, text})` — which pixel-clicks
 to focus, then types. **If the target control is closed** (a search
@@ -378,37 +411,25 @@ pixel counterpart is a `click`/`drag` on the control, not a "set value
 at a pixel." So: text → `type_text` (ax+px); non-text control values →
 `set_value`; pixel-manipulate a control → `click`/`drag`.
 
-**Action responses carry an effect/escalation verdict**
+**Action responses carry closed action facts**
 
-Every action response keeps `verified` (did the driver read back a
-post-condition?) and adds two machine-readable fields so you know
-whether — and where — to climb the ladder:
-
-- `effect`: one of
-  - `"confirmed"` — the driver read back the effect (`ax` rung only).
-  - `"unverifiable"` — dispatched, but the driver has no handle to
-    read back (every `px`/CGEvent path; foreground rung). **You**
-    confirm it off the screenshot — it is not a failure.
-  - `"suspected_noop"` — the `ax` action **likely did nothing** (the
-    element didn't actually advertise the action, or you hit a passive
-    label). This is the explicit **"cross to `px`"** trigger.
-- `escalation`: `{recommended, reason}` when the driver thinks you
-  should change rung —
-  - `"px"` — the element isn't really actionable in `ax`; do an
-    **element px action** off the screenshot you already have.
-  - `"foreground"` — a background insert/click was _dropped_ on
-    delivery; re-call the same action with `delivery_mode:"foreground"`.
+Use the `effect`, `route`, optional `delivery`, `evidence`, and
+`escalation` rules in “Read action facts without confusing them with task
+success” above. The old `verified`, `path`, coordinates, scope, and
+`escalation.recommended` response fields no longer exist.
+The full wire contract and 0.14 migration notes are in
+`../../../docs/action-result-contract.md`.
 
 `get_window_state` itself, when the AX tree comes back empty (a non-AX
 surface like Electron/Chromium/canvas), returns `degraded: true`
-**plus the same `escalation` hint** — normally pointing at `px` (you
+plus an observation-specific escalation hint — normally pointing at pixels (you
 still have the screenshot from the same call to click off).
 
-**Platform nuance for `escalation`.** On **Wayland** an unfocused
+**Platform nuance for action escalation.** On **Wayland** an unfocused
 window cannot be pixel-targeted in the background (libei →
-`background_unavailable`), so there the recommendation is
-**`foreground`, not `px`**. macOS, X11, and most Windows surfaces
-_can_ pixel-target in the background, so they recommend `px`. See
+`background_unavailable`), so the action target is
+**`foreground`, not `pixel`**. macOS, X11, and most Windows surfaces
+can pixel-target in the background, so they target `pixel`. See
 `LINUX.md` / `WINDOWS.md`.
 
 ## The verify-then-escalate ladder (algorithm)
@@ -437,7 +458,7 @@ if check.status == "unknown" and check has an image:
 
 # escalate only on a real signal
 if resp.effect == "suspected_noop"
-   or resp.escalation.recommended == "px"
+   or resp.escalation.target == "pixel"
    or get_window_state.degraded            # empty tree → non-AX surface
    or check.status != "satisfied"
    or the tree looks wrong vs the screenshot:   # e.g. an h:1 / off-viewport row
@@ -456,7 +477,7 @@ get_browser_state(session, pid, window_id)     # verify with fresh refs
 if it landed: done
 
 # Rung 3 — background delivery was dropped (insert/click never arrived)
-if resp.escalation.recommended == "foreground"
+if resp.escalation.target == "foreground"
    or the px action still did nothing:
     re-call the same action with delivery_mode:"foreground"
     # on Wayland this is the ONLY escalation — px-bg can't target an
@@ -712,8 +733,10 @@ Two consequences for callers:
   prior frontmost: the explicit last resort when a background attempt
   didn't land. **`foreground` is a reaction, never a prediction.** Always
   fire the `background` default first and let the driver tell you it
-  can't (a `background_unavailable` error or `escalation.recommended ==
-"foreground"`) — or observe a verified no-op — _before_ you escalate.
+  can't (a `background_unavailable` error with
+  `escalation.recommended == "foreground"`, or a successful action result
+  with `escalation.target == "foreground"`) — or observe a confirmed no-op —
+  _before_ you escalate.
   Do **not** reason "it's a GTK/Chromium/Electron app, so background will
   drop, so I'll front up-front": the toolkit lists in the tool schemas
   are the _driver's_ internal detectors, not a checklist for you to front
@@ -841,12 +864,12 @@ Switch to an **element px action** only on a real signal: the action
 response carried `effect:"suspected_noop"`, verification returned
 `unsatisfied`/`unknown`, the snapshot came back `degraded` (empty tree →
 non-AX surface), the tree looks unchanged/unreadable or disagrees with the screenshot, or
-`escalation.recommended` points you there (`px`). That's the
+`escalation.target` points you there (`pixel`). That's the
 verify-then-escalate ladder in the behavior-matrix section. If the tree
 is unchanged AND the screenshot confirms nothing moved, the action
 likely failed silently — **tell the user what you attempted and what
 you observed**, don't paper over with "done" language (and consider
-`delivery_mode:"foreground"` when `escalation.recommended ==
+`delivery_mode:"foreground"` when `escalation.target ==
 "foreground"`). Agents that skip this step report success on
 silently-dropped actions — the single most common failure mode.
 

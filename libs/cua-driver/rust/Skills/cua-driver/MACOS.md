@@ -376,7 +376,8 @@ so a naive read-back "confirms" a value that isn't really there.
 
 The driver **detects Electron and refuses to trust that echo**: an
 AX-path `type_text` on an Electron app returns `effect:"unverifiable"` +
-`escalation:{recommended:"px"}`, **never** a false `verified:true`.
+`escalation:{target:"pixel",reason:"effect_unconfirmed"}`, **never** a
+false `effect:"confirmed"`.
 (On Catalyst the AX value reads back unreadable, so it reports
 unverified too.) Bottom line: on these surfaces **do not trust the AX
 confirm — the screenshot in the same response is the only truth.**

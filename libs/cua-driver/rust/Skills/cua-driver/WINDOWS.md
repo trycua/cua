@@ -89,11 +89,11 @@ costlier path; only use it for surfaces with no UIA peer.
 }
 ```
 
-The `escalation` field is the same machine-readable hint the action
-responses carry (see `SKILL.md` → behavior matrix). On Windows the
-recommendation is `"foreground"` because the dropped event needs the fronting
-rung. (Contrast macOS / X11, where a background px click can still land
-in the background, so there the hint is `px`.)
+Errors retain their diagnostic `escalation.recommended` hint. Successful
+action results use the narrower `escalation.target` contract instead (see
+`SKILL.md` → behavior matrix). On Windows this error recommendation is
+`"foreground"` because the dropped event needs the fronting rung. (Contrast
+macOS / X11, where a background pixel click can still land in the background.)
 
 The normal flow when an agent gets that error:
 
@@ -559,9 +559,9 @@ Canonical multi-step workflow:
   effect. The UIA tree change (new value, new window, disappeared
   menu, disabled button, etc.) is your evidence that the action
   registered. **Especially important on Windows** because the
-  layered click path can return "✅ Posted click to pid X" even when
-  the click did nothing (UWP target, PostMessage silently no-ops):
-  the success message reports the mechanism, not the outcome. Only
+  layered click path can return `effect:"unverifiable"` after
+  PostMessage even when the click did nothing (UWP silently no-ops):
+  the action result reports the route, not the task outcome. Only
   the re-snapshot tells you if the state changed.
 
 ## Click semantics on Windows
@@ -594,9 +594,9 @@ Properties:
   child HWND** when the cached element doesn't expose
   `InvokePattern` (most edit fields, custom-drawn widgets,
   non-actionable elements). The fallback works for plain Win32 but
-  silently no-ops on UWP. The success message tells you which path
-  ran: `"✅ Performed UIA Invoke on [N] ..."` vs `"✅ Performed
-PostMessage click on [N] ..."`.
+  silently no-ops on UWP. Read the closed action `route`:
+  `accessibility` means UIA/MSAA and `synthetic_events` means the
+  targeted event fallback. Do not parse the human-readable text.
 
 This is the right path for **any** "click button N" / "click menu
 item X" / "click checkbox Y" intent.
@@ -657,9 +657,8 @@ steal focus from whatever the user is doing.
 `button: "right"` and `count > 1` **skip the UIA Invoke step** and
 go directly through the PostMessage path. Reason: UIA has no clean
 by-coord equivalent of `ShowContextMenu`, and `Invoke()` is single-
-fire by definition. The success message will read
-`"✅ Posted click/double-click/triple-click to pid X"` (PostMessage
-path) regardless of the target's UWP-ness — this is expected and
+fire by definition. The action result reports `route:"synthetic_events"`
+regardless of the target's UWP-ness — this is expected and
 **will not work for UWP context menus**. To open a UWP context menu,
 prefer `hotkey({pid, keys: ["shift", "f10"]})` against the focused
 UWP element.
@@ -758,8 +757,8 @@ typed browser tools yet.
 - **Calc display stuck at "0" after pixel clicks** — the (x,y) UIA
   hit-test missed and PostMessage fell through (PostMessage is a
   silent no-op on UWP). Switch to `element_index` mode. Symptom:
-  success messages say `Posted click to pid N` instead of
-  `Performed UIA Invoke at (sx,sy) ...`.
+  the action result reports `route:"synthetic_events"` instead of
+  `route:"accessibility"`.
 - **LibreOffice (VCL) `type_text` / `hotkey` reported success but
   nothing happened** — VCL/SAL apps route accelerators through
   `TranslateAccelerator` (reads `GetKeyState`, which PostMessage doesn't
@@ -769,21 +768,22 @@ typed browser tools yet.
   blind success:
   - **`hotkey` / `press_key`** (keystroke + key-combo): `delivery_mode:"background"`
     surfaces a `background_unavailable` error for VCL.
-  - **`type_text`** does a **UIA read-back** and returns a three-way `verify`
-    in structured output: `confirmed` (✅, value reflects the text),
-    `unchanged` (📨, read OK but value didn't change → likely dropped, retry
-    foreground), or `unreadable` (✅ "delivered, not verified"). **Pass an
+  - **`type_text`** does a **UIA read-back** and returns the shared
+    `ActionResult`: `effect:"confirmed"` with `evidence:[{"kind":
+    "value_readback"}]` when the value reflects the text, and
+    `effect:"unverifiable"` when the value is unchanged or unreadable. Use the
+    optional `escalation` to choose the next rung. **Pass an
     `element_index`** for reliable verification: the read-back then reads
     _that specific element_ by handle (ValuePattern → TextPattern), which is
-    **focus-independent** — it reaches `confirmed`/`unchanged` whether or not
+    **focus-independent** — it can confirm or disprove a change whether or not
     the target is foreground. (Verified live against the WPF harness: typed
-    via element_index, read back `confirmed`, value independently present in
+    via element_index, read back confirmed, value independently present in
     the next snapshot — app never fronted.) **Without** an element_index it
     falls back to system-wide `GetFocusedElement`, which on Windows only
     resolves when the target is the **foreground** app (no per-app
     `AXFocusedUIElement` like macOS); a backgrounded target then reads
-    `unreadable` even when the text actually landed — so `unreadable` is NOT a
-    failure signal, verify via screenshot if it matters.
+    an unverifiable result even when the text actually landed — so it is NOT a
+    failure signal; call `verify_state` or inspect a fresh screenshot.
     Escalate to `delivery_mode:"foreground"` for both (SendInput Unicode /
     accelerator). **But** foreground needs the swap to actually land — if the
     daemon lacks UIAccess and `bring_to_front` returns `landed_on_target:false`

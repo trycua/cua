@@ -19,6 +19,399 @@ const uniffiIsDebug =
 
 // Public interface members begin here.
 
+export enum ActionDeliveryMode {
+    Background,
+    Foreground,
+    NotApplicable,
+    Unknown
+}
+
+const FfiConverterTypeActionDeliveryMode = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = ActionDeliveryMode;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return ActionDeliveryMode.Background;
+                case 2: return ActionDeliveryMode.Foreground;
+                case 3: return ActionDeliveryMode.NotApplicable;
+                case 4: return ActionDeliveryMode.Unknown;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case ActionDeliveryMode.Background: return ordinalConverter.write(1, into);
+                case ActionDeliveryMode.Foreground: return ordinalConverter.write(2, into);
+                case ActionDeliveryMode.NotApplicable: return ordinalConverter.write(3, into);
+                case ActionDeliveryMode.Unknown: return ordinalConverter.write(4, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export type ActionDelivery = {
+    mode: ActionDeliveryMode,
+    deliveredCount?: number
+}
+
+/**
+ * Generated factory for {@link ActionDelivery} record objects.
+ */
+export const ActionDelivery = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ActionDelivery, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ActionDelivery>,
+    });
+})();
+
+const FfiConverterTypeActionDelivery = (() => {
+    type TypeName = ActionDelivery;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                mode: FfiConverterTypeActionDeliveryMode.read(from),
+                deliveredCount: FfiConverterOptionalUInt32.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeActionDeliveryMode.write(value.mode, into);
+            FfiConverterOptionalUInt32.write(value.deliveredCount, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeActionDeliveryMode.allocationSize(value.mode) +
+             FfiConverterOptionalUInt32.allocationSize(value.deliveredCount);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export enum ActionEscalationTarget {
+    Pixel,
+    Foreground,
+    Page,
+    Session
+}
+
+const FfiConverterTypeActionEscalationTarget = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = ActionEscalationTarget;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return ActionEscalationTarget.Pixel;
+                case 2: return ActionEscalationTarget.Foreground;
+                case 3: return ActionEscalationTarget.Page;
+                case 4: return ActionEscalationTarget.Session;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case ActionEscalationTarget.Pixel: return ordinalConverter.write(1, into);
+                case ActionEscalationTarget.Foreground: return ordinalConverter.write(2, into);
+                case ActionEscalationTarget.Page: return ordinalConverter.write(3, into);
+                case ActionEscalationTarget.Session: return ordinalConverter.write(4, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export enum ActionEscalationReason {
+    RouteUnavailable,
+    DeliveryFailed,
+    EffectUnconfirmed,
+    SuspectedNoop,
+    PermissionRequired
+}
+
+const FfiConverterTypeActionEscalationReason = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = ActionEscalationReason;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return ActionEscalationReason.RouteUnavailable;
+                case 2: return ActionEscalationReason.DeliveryFailed;
+                case 3: return ActionEscalationReason.EffectUnconfirmed;
+                case 4: return ActionEscalationReason.SuspectedNoop;
+                case 5: return ActionEscalationReason.PermissionRequired;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case ActionEscalationReason.RouteUnavailable: return ordinalConverter.write(1, into);
+                case ActionEscalationReason.DeliveryFailed: return ordinalConverter.write(2, into);
+                case ActionEscalationReason.EffectUnconfirmed: return ordinalConverter.write(3, into);
+                case ActionEscalationReason.SuspectedNoop: return ordinalConverter.write(4, into);
+                case ActionEscalationReason.PermissionRequired: return ordinalConverter.write(5, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export type ActionEscalation = {
+    target: ActionEscalationTarget,
+    reason: ActionEscalationReason
+}
+
+/**
+ * Generated factory for {@link ActionEscalation} record objects.
+ */
+export const ActionEscalation = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ActionEscalation, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ActionEscalation>,
+    });
+})();
+
+const FfiConverterTypeActionEscalation = (() => {
+    type TypeName = ActionEscalation;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                target: FfiConverterTypeActionEscalationTarget.read(from),
+                reason: FfiConverterTypeActionEscalationReason.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeActionEscalationTarget.write(value.target, into);
+            FfiConverterTypeActionEscalationReason.write(value.reason, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeActionEscalationTarget.allocationSize(value.target) +
+             FfiConverterTypeActionEscalationReason.allocationSize(value.reason);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export enum ActionEvidenceKind {
+    ValueReadback,
+    WindowChange
+}
+
+const FfiConverterTypeActionEvidenceKind = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = ActionEvidenceKind;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return ActionEvidenceKind.ValueReadback;
+                case 2: return ActionEvidenceKind.WindowChange;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case ActionEvidenceKind.ValueReadback: return ordinalConverter.write(1, into);
+                case ActionEvidenceKind.WindowChange: return ordinalConverter.write(2, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export type ActionEvidence = {
+    kind: ActionEvidenceKind
+}
+
+/**
+ * Generated factory for {@link ActionEvidence} record objects.
+ */
+export const ActionEvidence = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ActionEvidence, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ActionEvidence>,
+    });
+})();
+
+const FfiConverterTypeActionEvidence = (() => {
+    type TypeName = ActionEvidence;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                kind: FfiConverterTypeActionEvidenceKind.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeActionEvidenceKind.write(value.kind, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeActionEvidenceKind.allocationSize(value.kind);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export enum ActionEffect {
+    Confirmed,
+    Partial,
+    Unverifiable,
+    SuspectedNoop,
+    Refused
+}
+
+const FfiConverterTypeActionEffect = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = ActionEffect;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return ActionEffect.Confirmed;
+                case 2: return ActionEffect.Partial;
+                case 3: return ActionEffect.Unverifiable;
+                case 4: return ActionEffect.SuspectedNoop;
+                case 5: return ActionEffect.Refused;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case ActionEffect.Confirmed: return ordinalConverter.write(1, into);
+                case ActionEffect.Partial: return ordinalConverter.write(2, into);
+                case ActionEffect.Unverifiable: return ordinalConverter.write(3, into);
+                case ActionEffect.SuspectedNoop: return ordinalConverter.write(4, into);
+                case ActionEffect.Refused: return ordinalConverter.write(5, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export enum ActionRoute {
+    Accessibility,
+    SyntheticEvents,
+    GlobalInput,
+    Dom,
+    TrustedInput
+}
+
+const FfiConverterTypeActionRoute = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = ActionRoute;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return ActionRoute.Accessibility;
+                case 2: return ActionRoute.SyntheticEvents;
+                case 3: return ActionRoute.GlobalInput;
+                case 4: return ActionRoute.Dom;
+                case 5: return ActionRoute.TrustedInput;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case ActionRoute.Accessibility: return ordinalConverter.write(1, into);
+                case ActionRoute.SyntheticEvents: return ordinalConverter.write(2, into);
+                case ActionRoute.GlobalInput: return ordinalConverter.write(3, into);
+                case ActionRoute.Dom: return ordinalConverter.write(4, into);
+                case ActionRoute.TrustedInput: return ordinalConverter.write(5, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export type ActionResult = {
+    effect: ActionEffect,
+    route: ActionRoute,
+    delivery?: ActionDelivery,
+    evidence?: Array<ActionEvidence>,
+    escalation?: ActionEscalation
+}
+
+/**
+ * Generated factory for {@link ActionResult} record objects.
+ */
+export const ActionResult = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ActionResult, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ActionResult>,
+    });
+})();
+
+const FfiConverterTypeActionResult = (() => {
+    type TypeName = ActionResult;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                effect: FfiConverterTypeActionEffect.read(from),
+                route: FfiConverterTypeActionRoute.read(from),
+                delivery: FfiConverterOptionalTypeActionDelivery.read(from),
+                evidence: FfiConverterOptionalSequenceTypeActionEvidence.read(from),
+                escalation: FfiConverterOptionalTypeActionEscalation.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeActionEffect.write(value.effect, into);
+            FfiConverterTypeActionRoute.write(value.route, into);
+            FfiConverterOptionalTypeActionDelivery.write(value.delivery, into);
+            FfiConverterOptionalSequenceTypeActionEvidence.write(value.evidence, into);
+            FfiConverterOptionalTypeActionEscalation.write(value.escalation, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeActionEffect.allocationSize(value.effect) +
+             FfiConverterTypeActionRoute.allocationSize(value.route) +
+             FfiConverterOptionalTypeActionDelivery.allocationSize(value.delivery) +
+             FfiConverterOptionalSequenceTypeActionEvidence.allocationSize(value.evidence) +
+             FfiConverterOptionalTypeActionEscalation.allocationSize(value.escalation);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type BoundsExpectation = {
     x: number,
     y: number,
@@ -2457,6 +2850,21 @@ const FfiConverterTypePlatform = (() => {
 })();
 
 // FfiConverter for number | undefined
+const FfiConverterOptionalUInt32 = new FfiConverterOptional(FfiConverterUInt32);
+
+// FfiConverter for ActionDelivery | undefined
+const FfiConverterOptionalTypeActionDelivery = new FfiConverterOptional(FfiConverterTypeActionDelivery);
+
+// FfiConverter for Array<ActionEvidence>
+const FfiConverterSequenceTypeActionEvidence = new FfiConverterArray(FfiConverterTypeActionEvidence);
+
+// FfiConverter for Array<ActionEvidence> | undefined
+const FfiConverterOptionalSequenceTypeActionEvidence = new FfiConverterOptional(FfiConverterSequenceTypeActionEvidence);
+
+// FfiConverter for ActionEscalation | undefined
+const FfiConverterOptionalTypeActionEscalation = new FfiConverterOptional(FfiConverterTypeActionEscalation);
+
+// FfiConverter for number | undefined
 const FfiConverterOptionalFloat64 = new FfiConverterOptional(FfiConverterFloat64);
 
 // FfiConverter for string | undefined
@@ -2464,9 +2872,6 @@ const FfiConverterOptionalString = new FfiConverterOptional(FfiConverterString);
 
 // FfiConverter for ClickButton | undefined
 const FfiConverterOptionalTypeClickButton = new FfiConverterOptional(FfiConverterTypeClickButton);
-
-// FfiConverter for number | undefined
-const FfiConverterOptionalUInt32 = new FfiConverterOptional(FfiConverterUInt32);
 
 // FfiConverter for Array<string>
 const FfiConverterSequenceString = new FfiConverterArray(FfiConverterString);
@@ -2538,6 +2943,16 @@ function uniffiEnsureInitialized() {
 export default Object.freeze({
   initialize: uniffiEnsureInitialized,
   converters: {
+    FfiConverterTypeActionDelivery,
+    FfiConverterTypeActionDeliveryMode,
+    FfiConverterTypeActionEffect,
+    FfiConverterTypeActionEscalation,
+    FfiConverterTypeActionEscalationReason,
+    FfiConverterTypeActionEscalationTarget,
+    FfiConverterTypeActionEvidence,
+    FfiConverterTypeActionEvidenceKind,
+    FfiConverterTypeActionResult,
+    FfiConverterTypeActionRoute,
     FfiConverterTypeBoundsExpectation,
     FfiConverterTypeCaptureScope,
     FfiConverterTypeClickButton,

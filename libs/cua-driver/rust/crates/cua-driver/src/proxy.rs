@@ -498,10 +498,10 @@ fn fetch_tools_list_from_daemon(
         .and_then(|v| v.as_array())
         .ok_or_else(|| anyhow::anyhow!("daemon list response missing `tools` array"))?;
 
-    // Reshape the daemon's `{name, description, input_schema, read_only,
-    // ..., capabilities}` envelope into MCP's `{name, description,
-    // inputSchema, annotations: {...}, capabilities}` shape. Same
-    // translation `ToolDef::to_list_entry` defines for the core protocol.
+    // Reshape the daemon's `{name, description, input_schema, output_schema,
+    // read_only, ..., capabilities}` envelope into MCP's `{name, description,
+    // inputSchema, outputSchema, annotations: {...}, capabilities}` shape.
+    // Same translation `ToolDef::to_list_entry` defines for the core protocol.
     //
     // `capabilities` is passed through verbatim when the daemon
     // provides it; older daemons that don't emit the field fall back
@@ -564,7 +564,7 @@ fn fetch_tools_list_from_daemon(
                         })
                     })
             });
-            serde_json::json!({
+            let mut tool = serde_json::json!({
                 "name": name,
                 "description": description,
                 "inputSchema": input_schema,
@@ -576,7 +576,16 @@ fn fetch_tools_list_from_daemon(
                 },
                 "capabilities": capabilities,
                 "risk": risk,
-            })
+            });
+            // Do not derive a new schema when an older daemon omitted it:
+            // mixed-version proxies must advertise only the result contract
+            // that the executing daemon actually owns.
+            if let Some(output_schema) = t.get("output_schema") {
+                tool.as_object_mut()
+                    .expect("MCP tool entry is an object")
+                    .insert("outputSchema".into(), output_schema.clone());
+            }
+            tool
         })
         .collect();
 

@@ -27,7 +27,7 @@ const server = net.createServer(socket => {
     const request = JSON.parse(buffer.split("\\n", 1)[0]);
     const result = request.method === "metadata" ? {
       driver_version: ${JSON.stringify(packageVersion)},
-      contract_version: hostBundleId.endsWith(".failure") ? "incompatible" : "0.3.0",
+      contract_version: hostBundleId.endsWith(".failure") ? "incompatible" : "0.4.0",
       tools_list_schema_version: "1",
       capability_version: "1",
       mcp_protocol_version: "2025-06-18",

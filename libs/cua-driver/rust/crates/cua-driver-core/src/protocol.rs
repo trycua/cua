@@ -289,6 +289,11 @@ pub struct ToolResult {
     pub is_error: Option<bool>,
     #[serde(rename = "structuredContent", skip_serializing_if = "Option::is_none")]
     pub structured_content: Option<Value>,
+    /// Rich actuator facts retained inside the daemon. This is deliberately
+    /// skipped by serde so the nonbreaking truth-layer migration cannot alter
+    /// the MCP result envelope or its legacy structured payload.
+    #[serde(skip)]
+    pub action_record: Option<crate::action_record::ActionExecutionRecord>,
 }
 
 impl ToolResult {
@@ -309,6 +314,14 @@ impl ToolResult {
 
     pub fn with_structured(mut self, v: Value) -> Self {
         self.structured_content = Some(v);
+        self
+    }
+
+    pub fn with_action_record(
+        mut self,
+        record: crate::action_record::ActionExecutionRecord,
+    ) -> Self {
+        self.action_record = Some(record);
         self
     }
 }
@@ -413,6 +426,40 @@ mod image_mime_type_tests {
         assert!(
             v.get("mimeType").is_none(),
             "text content must not carry mimeType"
+        );
+    }
+}
+
+#[cfg(test)]
+mod action_record_wire_tests {
+    use super::ToolResult;
+    use crate::action_record::{
+        ActionEffect, ActionExecutionRecord, ActionTransport, ActualDelivery, RequestedDelivery,
+    };
+
+    #[test]
+    fn internal_action_record_never_changes_mcp_serialization() {
+        let legacy = serde_json::json!({
+            "path": "cgevent",
+            "verified": false,
+            "effect": "unverifiable",
+        });
+        let plain = ToolResult::text("clicked").with_structured(legacy.clone());
+        let with_truth = ToolResult::text("clicked")
+            .with_structured(legacy)
+            .with_action_record(
+                ActionExecutionRecord::builder(
+                    ActionEffect::Unverifiable,
+                    ActionTransport::MacosCgEventPid,
+                    RequestedDelivery::Background,
+                )
+                .actual_delivery(ActualDelivery::Background)
+                .build()
+                .expect("valid action record"),
+            );
+        assert_eq!(
+            serde_json::to_value(plain).expect("serialize plain result"),
+            serde_json::to_value(with_truth).expect("serialize result with internal truth"),
         );
     }
 }

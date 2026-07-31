@@ -377,8 +377,8 @@ fn harness_webview_left_click_px_background() {
                 click.text()
             );
             assert_eq!(
-                click.structured()["path"].as_str(),
-                Some("ax"),
+                click.action_route(),
+                Some("accessibility"),
                 "WebView2 PX background click used an unexpected driver route: {}",
                 click.text()
             );

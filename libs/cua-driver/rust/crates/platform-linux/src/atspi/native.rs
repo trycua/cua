@@ -368,6 +368,46 @@ async fn pid_of(
     dbus.get_connection_unix_process_id(bus).await.ok()
 }
 
+/// Keep the first matching application as a compatibility fallback, but allow
+/// a later registration with a real child tree to win. Some Qt processes
+/// publish an empty application object before their populated one (#2678,
+/// #2706).
+struct ApplicationSelection<T> {
+    target_pid: u32,
+    fallback: Option<T>,
+}
+
+impl<T> ApplicationSelection<T> {
+    fn new(target_pid: u32) -> Self {
+        Self {
+            target_pid,
+            fallback: None,
+        }
+    }
+
+    fn matches_pid(&self, candidate_pid: Option<u32>) -> bool {
+        candidate_pid == Some(self.target_pid)
+    }
+
+    /// Return an informative candidate immediately. Childless or temporarily
+    /// unreadable candidates remain eligible only when no informative match is
+    /// found, preserving the old first-match behavior for genuinely empty apps.
+    fn consider_matching(&mut self, candidate: T, has_children: bool) -> Option<T> {
+        if has_children {
+            Some(candidate)
+        } else {
+            if self.fallback.is_none() {
+                self.fallback = Some(candidate);
+            }
+            None
+        }
+    }
+
+    fn into_fallback(self) -> Option<T> {
+        self.fallback
+    }
+}
+
 /// Locate the application accessible whose backing process is `pid`.
 async fn app_for_pid<'a>(
     conn: &'a AccessibilityConnection,
@@ -404,6 +444,7 @@ async fn app_for_pid<'a>(
         "registry root has {} application(s); seeking pid {pid}",
         apps.len()
     );
+    let mut selection = ApplicationSelection::new(pid);
     for child in apps {
         // A modal-grabbed app can't answer the pid query; skip it after
         // CALL_TIMEOUT rather than blocking the whole walk on it.
@@ -418,22 +459,46 @@ async fn app_for_pid<'a>(
             }
         };
         dlog!("  app bus={:?} pid={:?}", child.name_as_str(), cpid);
-        if cpid == Some(pid) {
-            let child = match RawObjectRef::from_atspi(&child) {
-                Some(child) => child,
-                None => continue,
-            };
-            return match call(accessible_for(conn, &child)).await {
-                Some(r) => r.map(Some),
-                None => {
-                    dlog!("  accessible_for timed out for pid {pid}");
-                    Ok(None)
-                }
-            };
+        if !selection.matches_pid(cpid) {
+            continue;
+        }
+        let child = match RawObjectRef::from_atspi(&child) {
+            Some(child) => child,
+            None => continue,
+        };
+        let app = match call(accessible_for(conn, &child)).await {
+            Some(Ok(app)) => app,
+            Some(Err(error)) => {
+                dlog!("  accessible_for failed for pid {pid}: {error:#}");
+                continue;
+            }
+            None => {
+                dlog!("  accessible_for timed out for pid {pid}");
+                continue;
+            }
+        };
+        let has_children = match call(app.get_children()).await {
+            Some(Ok(children)) => !children.is_empty(),
+            Some(Err(error)) => {
+                dlog!("  get_children failed for pid {pid}: {error:#}");
+                false
+            }
+            None => {
+                dlog!("  get_children timed out for pid {pid}");
+                false
+            }
+        };
+        dlog!("  matching app has_children={has_children}");
+        if let Some(app) = selection.consider_matching(app, has_children) {
+            return Ok(Some(app));
         }
     }
-    dlog!("no application accessible matched pid {pid}");
-    Ok(None)
+    if selection.fallback.is_some() {
+        dlog!("using first childless application accessible for pid {pid}");
+    } else {
+        dlog!("no application accessible matched pid {pid}");
+    }
+    Ok(selection.into_fallback())
 }
 
 /// Depth-first, pre-order walk of an application's windows. Mirrors the old
@@ -2588,8 +2653,34 @@ mod coord_tests {
         activation_index, combine_wayland_content_offsets, is_activation_action,
         is_indexable_capabilities, is_passive_role, is_web_process_bus,
         prefer_authoritative_wayland_origin, rebase_renderer_window_offset, screen_extent_rebase,
-        select_click_target,
+        select_click_target, ApplicationSelection,
     };
+
+    #[test]
+    fn duplicate_pid_prefers_populated_application_after_empty_registration() {
+        let target_pid = 4242;
+        let candidates = [
+            (Some(9000), "other-process", true),
+            (Some(target_pid), "empty-root", false),
+            (Some(target_pid), "live-tree", true),
+        ];
+        let mut selection = ApplicationSelection::new(target_pid);
+        let mut selected = None;
+
+        for (pid, app, has_children) in candidates {
+            if selection.matches_pid(pid) {
+                if let Some(app) = selection.consider_matching(app, has_children) {
+                    selected = Some(app);
+                    break;
+                }
+            }
+        }
+
+        assert_eq!(
+            selected.or_else(|| selection.into_fallback()),
+            Some("live-tree")
+        );
+    }
 
     #[test]
     fn operable_nodes_are_addressable() {

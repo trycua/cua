@@ -315,7 +315,9 @@ def main():
         "--force", action="store_true", help="Force re-authentication even if already logged in"
     )
     login_parser.add_argument(
-        "--auth-url", dest="auth_url", help="Custom auth URL (default: https://cua.ai/cli-auth)"
+        "--no-browser",
+        action="store_true",
+        help="Do not try to open the verification URL automatically",
     )
 
     args = parser.parse_args()

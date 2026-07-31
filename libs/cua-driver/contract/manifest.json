@@ -1670,10 +1670,11 @@
                       ]
                     },
                     "exists": {
-                      "type": [
-                        "boolean",
-                        "null"
-                      ]
+                      "description": "Assert that at least one trusted element matches the selector.\n\nElement walks are not yet exhaustive on every platform, so absence\ncannot be proven. `false` is rejected instead of returning an\nindefinitely-unknown predicate.",
+                      "enum": [
+                        true
+                      ],
+                      "type": "boolean"
                     },
                     "selected": {
                       "type": [

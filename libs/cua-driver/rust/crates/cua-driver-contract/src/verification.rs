@@ -51,6 +51,10 @@ fn nonempty_string_schema(_: &mut SchemaGenerator) -> Schema {
     json_schema!({ "type": "string", "minLength": 1 })
 }
 
+fn true_only_boolean_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({ "type": "boolean", "enum": [true] })
+}
+
 fn nullable_string_schema(_: &mut SchemaGenerator) -> Schema {
     json_schema!({ "anyOf": [{ "type": "string" }, { "type": "null" }] })
 }
@@ -115,7 +119,13 @@ pub struct WindowPredicate {
 #[serde(deny_unknown_fields)]
 pub struct ElementPredicate {
     pub selector: ElementSelector,
+    /// Assert that at least one trusted element matches the selector.
+    ///
+    /// Element walks are not yet exhaustive on every platform, so absence
+    /// cannot be proven. `false` is rejected instead of returning an
+    /// indefinitely-unknown predicate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "true_only_boolean_schema")]
     pub exists: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value_equals: Option<String>,

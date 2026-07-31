@@ -260,6 +260,11 @@ mod tests {
             contract.input_schema["required"],
             serde_json::json!(["pid", "window_id", "expect"])
         );
+        assert_eq!(
+            contract.input_schema["properties"]["expect"]["items"]["properties"]["element"]
+                ["properties"]["exists"]["enum"],
+            serde_json::json!([true])
+        );
     }
 
     #[test]

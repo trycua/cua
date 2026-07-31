@@ -339,6 +339,11 @@ impl Tool for VerifyStateTool {
 fn invalid_predicate_message(expect: &[StatePredicate]) -> Option<String> {
     for (index, predicate) in expect.iter().enumerate() {
         if let Some(element) = predicate.element.as_ref() {
+            if element.exists == Some(false) {
+                return Some(format!(
+                    "verify_state predicate {index} element.exists=false is unsupported because element snapshots are not exhaustive"
+                ));
+            }
             for (name, value) in [
                 ("role", element.selector.role.as_deref()),
                 ("label_contains", element.selector.label_contains.as_deref()),
@@ -490,6 +495,13 @@ fn evaluate_element(
     predicate: &ElementPredicate,
     snapshot: &ObservationSnapshot,
 ) -> (VerificationStatus, Option<UnknownReason>, Option<Value>) {
+    if predicate.exists == Some(false) {
+        return (
+            VerificationStatus::Unknown,
+            Some(UnknownReason::InvalidPredicate),
+            None,
+        );
+    }
     if (predicate.selector.role.is_none() && predicate.selector.label_contains.is_none())
         || predicate
             .selector
@@ -554,17 +566,6 @@ fn evaluate_element(
             );
         }
         return match predicate.exists {
-            Some(false)
-                if predicate.value_equals.is_none()
-                    && predicate.enabled.is_none()
-                    && predicate.selected.is_none() =>
-            {
-                (
-                    VerificationStatus::Satisfied,
-                    None,
-                    Some(json!({"matches": 0})),
-                )
-            }
             Some(true) => (
                 VerificationStatus::Unsatisfied,
                 None,
@@ -587,13 +588,6 @@ fn evaluate_element(
             VerificationStatus::Unknown,
             Some(UnknownReason::UntrustedSource),
             Some(json!({"matches": matches.len()})),
-        );
-    }
-    if predicate.exists == Some(false) {
-        return (
-            VerificationStatus::Unsatisfied,
-            None,
-            Some(json!({"matches": trusted_matches.len()})),
         );
     }
     if trusted_matches.len() > 1
@@ -993,7 +987,7 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_walk_cannot_prove_element_absence() {
+    fn negative_element_existence_is_invalid_even_for_incomplete_walks() {
         let predicate = StatePredicate {
             window: None,
             element: Some(ElementPredicate {
@@ -1019,7 +1013,7 @@ mod tests {
         assert_eq!(outcomes[0].status, VerificationStatus::Unknown);
         assert_eq!(
             outcomes[0].unknown_reason,
-            Some(UnknownReason::ObservationUnavailable)
+            Some(UnknownReason::InvalidPredicate)
         );
     }
 
@@ -1204,6 +1198,13 @@ mod tests {
                 "pid": 42, "window_id": 7,
                 "expect": [{"element": {
                     "selector": {"label_contains": ""}
+                }}]
+            }),
+            json!({
+                "pid": 42, "window_id": 7,
+                "expect": [{"element": {
+                    "selector": {"role": "button"},
+                    "exists": false
                 }}]
             }),
         ] {

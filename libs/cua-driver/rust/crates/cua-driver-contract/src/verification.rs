@@ -12,8 +12,15 @@ use serde::{Deserialize, Serialize};
 
 const ALL_PLATFORMS: [Platform; 3] = [Platform::Macos, Platform::Windows, Platform::Linux];
 
+pub const VERIFY_STATE_DEFAULT_TIMEOUT_MS: u64 = 5_000;
+
 fn timeout_schema(_: &mut SchemaGenerator) -> Schema {
-    json_schema!({ "type": "integer", "minimum": 0, "maximum": 10000, "default": 2000 })
+    json_schema!({
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 10000,
+        "default": VERIFY_STATE_DEFAULT_TIMEOUT_MS
+    })
 }
 
 fn stable_samples_schema(_: &mut SchemaGenerator) -> Schema {
@@ -215,6 +222,10 @@ mod tests {
         let schema = VerifyStateInput::input_schema();
         assert_eq!(schema["properties"]["expect"]["minItems"], 1);
         assert_eq!(schema["properties"]["expect"]["maxItems"], 8);
+        assert_eq!(
+            schema["properties"]["timeout_ms"]["default"],
+            VERIFY_STATE_DEFAULT_TIMEOUT_MS
+        );
         assert_eq!(schema["properties"]["timeout_ms"]["maximum"], 10_000);
         assert_eq!(schema["properties"]["stable_samples"]["maximum"], 5);
         let selector = &schema["properties"]["expect"]["items"]["properties"]["element"]

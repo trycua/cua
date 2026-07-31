@@ -11,6 +11,7 @@ use async_trait::async_trait;
 use cua_driver_contract::{
     ElementPredicate, PredicateOutcome, StatePredicate, ToolInput, UnknownReason,
     VerificationStatus, VerifyStateInput, VerifyStateOutput, WindowPredicate,
+    VERIFY_STATE_DEFAULT_TIMEOUT_MS,
 };
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc, time::Duration};
@@ -21,7 +22,6 @@ use crate::{
     tool_args::parse_typed_input,
 };
 
-const DEFAULT_TIMEOUT_MS: u64 = 2_000;
 const MAX_TIMEOUT_MS: u64 = 10_000;
 const DEFAULT_STABLE_SAMPLES: u64 = 2;
 const MAX_STABLE_SAMPLES: u64 = 5;
@@ -243,7 +243,7 @@ impl Tool for VerifyStateTool {
         {
             return ToolResult::error("verify_state stable_samples must be between 1 and 5");
         }
-        let timeout_ms = input.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
+        let timeout_ms = input.timeout_ms.unwrap_or(VERIFY_STATE_DEFAULT_TIMEOUT_MS);
         if timeout_ms == 0 && input.stable_samples.is_some_and(|samples| samples > 1) {
             return ToolResult::error(
                 "verify_state timeout_ms=0 requires stable_samples=1 because only one sample is possible",

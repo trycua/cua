@@ -210,6 +210,7 @@ fn harness_swiftui_verify_state() {
                             "selected": false
                         }}
                     ],
+                    "timeout_ms": 10_000,
                     "stable_samples": 2,
                     "include_screenshot": true
                 }),
@@ -219,8 +220,18 @@ fn harness_swiftui_verify_state() {
                 "SwiftUI verify_state failed: {}",
                 verified.text()
             );
-            assert_eq!(verified.structured()["status"], "satisfied");
-            assert_eq!(verified.structured()["stable"], true);
+            assert_eq!(
+                verified.structured()["status"],
+                "satisfied",
+                "verify_state outcome: {}",
+                verified.structured()
+            );
+            assert_eq!(
+                verified.structured()["stable"],
+                true,
+                "verify_state outcome: {}",
+                verified.structured()
+            );
             assert!(
                 verified.structured()["samples"].as_u64().unwrap_or(0) >= 2,
                 "verify_state did not enforce consecutive stable samples: {}",

@@ -1789,7 +1789,7 @@
             "type": "integer"
           },
           "timeout_ms": {
-            "default": 2000,
+            "default": 5000,
             "description": "Bounded wait. Zero performs one sample.",
             "maximum": 10000,
             "minimum": 0,

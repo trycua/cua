@@ -4,34 +4,34 @@
 /release-please-config.json @f-trycua
 
 # Core products and SDKs.
-/libs/cua-driver/ @f-trycua @injaneity
+/libs/cua-driver/ @f-trycua
 /libs/lume/ @f-trycua
 /libs/python/ @ddupont808
 /libs/cua-bench/ @ddupont808
 
 # Cua Driver documentation and driver-only release/CI automation.
-/docs/content/docs/reference/cua-driver/ @f-trycua @injaneity
-/scripts/docs-generators/cua-driver.ts @f-trycua @injaneity
-/.github/release-notes/cua-driver-rs.md @f-trycua @injaneity
-/.github/scripts/sync_driver_release_docs.py @f-trycua @injaneity
-/.github/scripts/verify_cua_driver_release_archives.py @f-trycua @injaneity
-/.github/scripts/tests/test_cua_driver_release_wiring.py @f-trycua @injaneity
-/.github/scripts/tests/test_sync_driver_release_docs.py @f-trycua @injaneity
-/.github/scripts/tests/test_verify_cua_driver_release_archives.py @f-trycua @injaneity
-/.github/workflows/cd-cua-driver-docs.yml @f-trycua @injaneity
-/.github/workflows/cd-py-cua-driver.yml @f-trycua @injaneity
-/.github/workflows/cd-rust-cua-driver.yml @f-trycua @injaneity
-/.github/workflows/ci-cua-driver-contract-clients.yml @f-trycua @injaneity
-/.github/workflows/ci-cua-driver-installer-compat.yml @f-trycua @injaneity
-/.github/workflows/ci-distro-compat-cua-driver.yml @f-trycua @injaneity
-/.github/workflows/ci-rust-format.yml @f-trycua @injaneity
-/.github/workflows/ci-rust-linux.yml @f-trycua @injaneity
-/.github/workflows/ci-rust-windows.yml @f-trycua @injaneity
-/.github/workflows/clawhub-cua-driver.yml @f-trycua @injaneity
-/.github/workflows/e2e-rust-linux-wayland.yml @f-trycua @injaneity
-/.github/workflows/e2e-rust-linux.yml @f-trycua @injaneity
-/.github/workflows/e2e-rust-standalone-browsers.yml @f-trycua @injaneity
-/.github/workflows/e2e-rust-windows.yml @f-trycua @injaneity
+/docs/content/docs/reference/cua-driver/ @f-trycua
+/scripts/docs-generators/cua-driver.ts @f-trycua
+/.github/release-notes/cua-driver-rs.md @f-trycua
+/.github/scripts/sync_driver_release_docs.py @f-trycua
+/.github/scripts/verify_cua_driver_release_archives.py @f-trycua
+/.github/scripts/tests/test_cua_driver_release_wiring.py @f-trycua
+/.github/scripts/tests/test_sync_driver_release_docs.py @f-trycua
+/.github/scripts/tests/test_verify_cua_driver_release_archives.py @f-trycua
+/.github/workflows/cd-cua-driver-docs.yml @f-trycua
+/.github/workflows/cd-py-cua-driver.yml @f-trycua
+/.github/workflows/cd-rust-cua-driver.yml @f-trycua
+/.github/workflows/ci-cua-driver-contract-clients.yml @f-trycua
+/.github/workflows/ci-cua-driver-installer-compat.yml @f-trycua
+/.github/workflows/ci-distro-compat-cua-driver.yml @f-trycua
+/.github/workflows/ci-rust-format.yml @f-trycua
+/.github/workflows/ci-rust-linux.yml @f-trycua
+/.github/workflows/ci-rust-windows.yml @f-trycua
+/.github/workflows/clawhub-cua-driver.yml @f-trycua
+/.github/workflows/e2e-rust-linux-wayland.yml @f-trycua
+/.github/workflows/e2e-rust-linux.yml @f-trycua
+/.github/workflows/e2e-rust-standalone-browsers.yml @f-trycua
+/.github/workflows/e2e-rust-windows.yml @f-trycua
 
 # Platform infrastructure.
 /libs/fleet/ @r33drichards

@@ -126,6 +126,10 @@ static UINPUT_POINTERS: OnceLock<Mutex<HashMap<String, Arc<Mutex<VirtualDevice>>
     OnceLock::new();
 static XLIB_THREADS_READY: OnceLock<Result<(), String>> = OnceLock::new();
 static MPX_NAME_COUNTER: AtomicU64 = AtomicU64::new(1);
+// evdev 0.12.2 asserts `name.len() + 1 < UINPUT_MAX_NAME_SIZE` while building
+// a device. Linux defines UINPUT_MAX_NAME_SIZE as 80, leaving 78 usable bytes.
+const EVDEV_UINPUT_NAME_MAX_BYTES: usize = 78;
+const UINPUT_POINTER_SUFFIX: &str = " uinput pointer";
 
 fn mpx_pointers() -> &'static Mutex<HashMap<String, MasterPointerIds>> {
     MPX_POINTERS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -137,11 +141,19 @@ fn uinput_pointers() -> &'static Mutex<HashMap<String, Arc<Mutex<VirtualDevice>>
 
 fn master_pointer_name(cursor_id: &str) -> String {
     let nonce = MPX_NAME_COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("CUA {cursor_id} mp-{}-{nonce}", std::process::id())
+    let prefix = "CUA ";
+    let suffix = format!(" mp-{}-{nonce}", std::process::id());
+    let max_cursor_bytes = EVDEV_UINPUT_NAME_MAX_BYTES
+        .saturating_sub(prefix.len() + suffix.len() + UINPUT_POINTER_SUFFIX.len());
+    let mut cursor_end = cursor_id.len().min(max_cursor_bytes);
+    while !cursor_id.is_char_boundary(cursor_end) {
+        cursor_end -= 1;
+    }
+    format!("{prefix}{}{suffix}", &cursor_id[..cursor_end])
 }
 
 fn slave_pointer_name(master_name: &str) -> String {
-    format!("{master_name} uinput pointer")
+    format!("{master_name}{UINPUT_POINTER_SUFFIX}")
 }
 
 fn master_pointer_device_name(master_name: &str) -> String {
@@ -2660,8 +2672,8 @@ exit 0"#,
 #[cfg(test)]
 mod path_tests {
     use super::{
-        modifiers_to_state, path_cumulative, point_on_path, real_pointer_capabilities_available,
-        sample_function,
+        master_pointer_name, modifiers_to_state, path_cumulative, point_on_path,
+        real_pointer_capabilities_available, sample_function, slave_pointer_name,
     };
     use x11rb::protocol::xproto::KeyButMask;
 
@@ -2677,6 +2689,23 @@ mod path_tests {
             modifiers_to_state(&["control", "alt"]),
             KeyButMask::from(u16::from(KeyButMask::CONTROL) | u16::from(KeyButMask::MOD1))
         );
+    }
+
+    #[test]
+    fn slave_pointer_name_fits_evdev_uinput_limit() {
+        for cursor_id in ["m".repeat(200), "cursor-鼠".repeat(50)] {
+            let name = slave_pointer_name(&master_pointer_name(&cursor_id));
+            assert!(
+                name.len() <= 78,
+                "evdev 0.12 requires uinput names to be at most 78 bytes, got {}",
+                name.len()
+            );
+        }
+
+        let cursor_id = "same-long-cursor".repeat(20);
+        let first = slave_pointer_name(&master_pointer_name(&cursor_id));
+        let second = slave_pointer_name(&master_pointer_name(&cursor_id));
+        assert_ne!(first, second, "truncation must retain the unique nonce");
     }
 
     #[test]

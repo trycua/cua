@@ -700,6 +700,13 @@ const FfiConverterTypeElementSelector = (() => {
 
 export type ElementPredicate = {
     selector: ElementSelector,
+    /**
+     * Assert that at least one trusted element matches the selector.
+     *
+     * Element walks are not yet exhaustive on every platform, so absence
+     * cannot be proven. `false` is rejected instead of returning an
+     * indefinitely-unknown predicate.
+     */
     exists?: boolean,
     valueEquals?: string,
     enabled?: boolean,

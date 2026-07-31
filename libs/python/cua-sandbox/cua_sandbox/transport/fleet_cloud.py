@@ -95,6 +95,9 @@ class _FleetClient:
     async def delete_pool(self, pool: Any) -> None:
         await self._client.delete_pool(pool)
 
+    async def update_pool(self, pool: Any) -> Any:
+        return await self._client.update_pool(pool)
+
     async def service_request(
         self, sandbox: Any, service: str, path: str, request: HttpRequest
     ) -> Any:

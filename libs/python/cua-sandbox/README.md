@@ -93,6 +93,33 @@ Fleet is the OAuth cloud backend. Configure OAuth credentials once; Fleet uses `
 
 Fleet does not support snapshots or custom disks, and currently supports only `us-east-1`. `await sb.tunnel.forward(3000)` returns the authenticated Fleet service URL for an exposed port; it does not open a local SSH tunnel.
 
+## Fleet pools
+
+Use a pool to keep reusable registry-image sandboxes warm. Reconciliation is idempotent: it creates a missing pool or updates the existing pool with the same name. Each claim is released when the context exits, including when the block raises.
+
+```python
+from cua_sandbox import Image, Pool
+
+pool = await Pool.reconcile({
+    "name": "foo",
+    "image": Image.from_registry("registry.example/workspace:latest"),
+})
+
+async with pool.claim() as sb:
+    result = await sb.shell.run("echo hello")
+```
+
+For scripts that use the synchronous facade:
+
+```python
+from cua_sandbox import Image
+from cua_sandbox.sync import Pool
+
+pool = Pool.reconcile({"name": "foo", "image": Image.from_registry("example:latest")})
+with pool.claim() as sb:
+    result = sb.shell.run("echo hello")
+```
+
 ```python
 import os
 

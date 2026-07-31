@@ -6,6 +6,7 @@ settings:
 
 overrides:
   postcss: 8.5.10
+  tar: 7.5.18
 
 importers:
 
@@ -2075,8 +2076,8 @@ packages:
     resolution: {integrity: sha512-Re10+NauLTMCudc7T5WLFLAwDhQ0JWdrMK+9B2M8zR5hRExKmsRDCBA7/aV/pNJFltmBFO5BAMlQFi/vq3nKOg==}
     engines: {node: '>=6'}
 
-  tar@7.5.16:
-    resolution: {integrity: sha512-56adEpPMouktRlBLXiaYFFzZ/3+JXa8P9n7WbR+ibIjtviN55mEaOkiysCnPnWm+7kkui1Dn8J9l+g6zV8731w==}
+  tar@7.5.18:
+    resolution: {integrity: sha512-PwA+nJl+AzsS9hRqtNRRq8/kTdNPoOLEPXpz9WBaErNm4+TFedJyQFJLITWdsmIBnwNS/TwXf1NV5Ak1KITc8g==}
     engines: {node: '>=18'}
 
   tinyexec@1.0.2:
@@ -3020,7 +3021,7 @@ snapshots:
   '@tailwindcss/oxide@4.1.10':
     dependencies:
       detect-libc: 2.0.4
-      tar: 7.5.16
+      tar: 7.5.18
     optionalDependencies:
       '@tailwindcss/oxide-android-arm64': 4.1.10
       '@tailwindcss/oxide-darwin-arm64': 4.1.10
@@ -4337,7 +4338,7 @@ snapshots:
 
   tapable@2.2.2: {}
 
-  tar@7.5.16:
+  tar@7.5.18:
     dependencies:
       '@isaacs/fs-minipass': 4.0.1
       chownr: 3.0.0

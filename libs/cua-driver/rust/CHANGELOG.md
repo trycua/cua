@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.15.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.14.2...cua-driver-rs-v0.15.0) (2026-07-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cua-driver:** standardize action results ([#2713](https://github.com/trycua/cua/issues/2713))
+
+### Features
+
+* **cua-driver:** add checked state verification ([#2705](https://github.com/trycua/cua/issues/2705)) ([84440dd](https://github.com/trycua/cua/commit/84440ddc6d42accb629f2289012241ed512e1aea))
+* **cua-driver:** standardize action results ([#2713](https://github.com/trycua/cua/issues/2713)) ([8e0a92e](https://github.com/trycua/cua/commit/8e0a92e3dbf20134be9922f9e0dc847addcc92fa))
+
 ## [0.14.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.14.1...cua-driver-rs-v0.14.2) (2026-07-31)
 
 

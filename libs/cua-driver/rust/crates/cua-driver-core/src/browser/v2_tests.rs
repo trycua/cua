@@ -55,6 +55,7 @@ struct FixtureState {
     fail_key_down_after: Option<usize>,
     completed_key_pairs: usize,
     semantic_large_page: bool,
+    semantic_unbacked_action: bool,
     semantic_full_dom_fails: bool,
     semantic_full_dom_times_out: bool,
     semantic_truncated_dom: bool,
@@ -81,6 +82,7 @@ impl Default for FixtureState {
             fail_key_down_after: None,
             completed_key_pairs: 0,
             semantic_large_page: false,
+            semantic_unbacked_action: false,
             semantic_full_dom_fails: false,
             semantic_full_dom_times_out: false,
             semantic_truncated_dom: false,
@@ -368,6 +370,33 @@ fn large_semantic_ax_tree(frame_id: &str) -> Value {
     json!({"nodes": nodes})
 }
 
+fn unbacked_action_ax_tree(frame_id: &str) -> Value {
+    if frame_id != "F_MAIN" {
+        return json!({"nodes": []});
+    }
+    json!({"nodes": [
+        {
+            "nodeId": "root-main",
+            "ignored": false,
+            "role": {"value": "RootWebArea"},
+            "name": {"value": "Fixture form"},
+            "childIds": ["submit"]
+        },
+        {
+            "nodeId": "submit",
+            "parentId": "root-main",
+            "ignored": false,
+            "role": {"value": "button"},
+            "name": {"value": "SUBMIT"},
+            "properties": [
+                {"name": "disabled", "value": {"value": false}},
+                {"name": "focusable", "value": {"value": true}}
+            ],
+            "childIds": []
+        }
+    ]})
+}
+
 fn semantic_layout_snapshot(backends: &[i64], bounds: &[[f64; 4]]) -> Value {
     let styles = (0..backends.len())
         .map(|_| json!([0, 1, 2, 3, 3]))
@@ -492,6 +521,8 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 let frame_id = call.params["frameId"].as_str().unwrap_or("F_MAIN");
                 if st.semantic_large_page {
                     MockReply::ok(large_semantic_ax_tree(frame_id))
+                } else if st.semantic_unbacked_action {
+                    MockReply::ok(unbacked_action_ax_tree(frame_id))
                 } else {
                     MockReply::ok(json!({"nodes": []}))
                 }
@@ -1365,6 +1396,30 @@ async fn semantic_snapshot_keeps_visible_content_after_hidden_node_pressure() {
         "CSS-hidden retained controls leaked into refs: {snap}"
     );
     assert_eq!(snap["snapshot"]["omitted"]["css_hidden"], 320);
+}
+
+#[tokio::test]
+async fn semantic_snapshot_explains_actionable_outline_nodes_without_refs() {
+    let f = fixture_with(|st| {
+        st.semantic_unbacked_action = true;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot(&f, &target, &tab).await;
+
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["snapshot"]["complete"], true, "{snap}");
+    assert!(
+        snap["outline"].as_str().is_some_and(|outline| outline
+            .contains("button \"SUBMIT\" [disabled=false,focusable=true,ref_excluded=\"backend_node_unavailable\"]")),
+        "enabled actionable control must identify why it has no ref: {snap}"
+    );
+    assert!(
+        snap["refs"]
+            .as_array()
+            .is_some_and(|refs| refs.iter().all(|entry| entry["name"] != "SUBMIT")),
+        "an unproven backend identity must not mint a guessed ref: {snap}"
+    );
 }
 
 #[tokio::test]

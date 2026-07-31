@@ -199,7 +199,9 @@ the driver cannot return valid viewport metrics and a valid bounded PNG.
 `semantic_v2` composes the page accessibility tree, pierced DOM, layout, and
 viewport state. Read the compact `outline` for page content, use `refs` only
 for actions declared in each entry's `actions` array, and use `content_refs`
-only to scope later reads. A content ref is not an action capability.
+only to scope later reads. A content ref is not an action capability. An
+actionable outline node that lacks a provable DOM identity is annotated with
+`ref_excluded="backend_node_unavailable"` instead of receiving a guessed ref.
 
 The snapshot ranks active dialogs and visible controls before near-viewport
 and offscreen content. It excludes CSS-hidden retained state before applying

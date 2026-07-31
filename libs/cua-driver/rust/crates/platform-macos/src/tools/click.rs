@@ -746,6 +746,7 @@ impl Tool for ClickTool {
                                        screenshot from get_window_state."
                         });
                     }
+                    changes.add_to_structured(&mut structured);
                     ToolResult::text(msg).with_structured(structured)
                 }
                 Ok(Err(e)) => ToolResult::error(format!("AX action failed: {e}")),
@@ -1168,17 +1169,19 @@ impl Tool for ClickTool {
                     } else {
                         ("cgevent", "background CGEvent")
                     };
+                    let mut structured = serde_json::json!({
+                        "path": path,
+                        "verified": false,
+                        "effect": "unverifiable",
+                        "focus_without_raise": focus_without_raise
+                    });
+                    changes.add_to_structured(&mut structured);
                     ToolResult::text(format!(
                         "✅ Posted {button_label} to pid {pid} ({mode_label}; \
                          not driver-verified — confirm via screenshot).{}",
                         changes.result_suffix()
                     ))
-                    .with_structured(serde_json::json!({
-                        "path": path,
-                        "verified": false,
-                        "effect": "unverifiable",
-                        "focus_without_raise": focus_without_raise
-                    }))
+                    .with_structured(structured)
                 }
                 Ok(Err(e)) => ToolResult::error(format!("{button_label} failed: {e}")),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),

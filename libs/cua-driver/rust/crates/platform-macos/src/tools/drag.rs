@@ -421,23 +421,33 @@ impl Tool for DragTool {
             ""
         };
         match result {
-            Ok(Ok(())) => ToolResult::text(format!(
-                "✅ Posted drag{btn_suffix}{mod_suffix} to pid {pid} \
-                 from window-pixel ({}, {}) → ({}, {}), \
-                 screen ({}, {}) → ({}, {}) \
-                 in {duration_ms}ms / {steps} steps{mode_label} \
-                 (background CGEvent; not driver-verified — confirm via screenshot).{}",
-                from_x as i64, from_y as i64,
-                to_x   as i64, to_y   as i64,
-                from_sx as i64, from_sy as i64,
-                to_sx   as i64, to_sy   as i64,
-                changes.result_suffix(),
-            ))
-            .with_structured(serde_json::json!({
-                "path": if fg { "cgevent_fg" } else { "cgevent" }, "verified": false, "effect": "unverifiable"
-            })),
+            Ok(Ok(())) => {
+                let mut structured = serde_json::json!({
+                    "path": if fg { "cgevent_fg" } else { "cgevent" },
+                    "verified": false,
+                    "effect": "unverifiable"
+                });
+                changes.add_to_structured(&mut structured);
+                ToolResult::text(format!(
+                    "✅ Posted drag{btn_suffix}{mod_suffix} to pid {pid} \
+                     from window-pixel ({}, {}) → ({}, {}), \
+                     screen ({}, {}) → ({}, {}) \
+                     in {duration_ms}ms / {steps} steps{mode_label} \
+                     (background CGEvent; not driver-verified — confirm via screenshot).{}",
+                    from_x as i64,
+                    from_y as i64,
+                    to_x as i64,
+                    to_y as i64,
+                    from_sx as i64,
+                    from_sy as i64,
+                    to_sx as i64,
+                    to_sy as i64,
+                    changes.result_suffix(),
+                ))
+                .with_structured(structured)
+            }
             Ok(Err(e)) => ToolResult::error(format!("drag failed: {e}")),
-            Err(e)     => ToolResult::error(format!("Task error: {e}")),
+            Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
 }

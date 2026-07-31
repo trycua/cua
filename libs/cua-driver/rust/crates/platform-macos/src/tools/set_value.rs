@@ -246,6 +246,7 @@ impl Tool for SetValueTool {
                                    manipulate the control through its pixel action."
                     });
                 }
+                changes.add_to_structured(&mut structured);
                 ToolResult::text(msg).with_structured(structured)
             }
             Ok(Err(e)) => ToolResult::error(format!("set_value failed: {e}")),

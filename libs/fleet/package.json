@@ -31,14 +31,15 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
-    "swagger-typescript-api": "13.2.7",
+    "swagger-typescript-api": "13.12.2",
     "typescript": "^5.7.2",
     "vite": "^6.4.3"
   },
   "pnpm": {
     "overrides": {
       "@babel/core": "7.29.6",
-      "js-yaml": "4.2.0"
+      "js-yaml": "4.3.0",
+      "postcss": "8.5.18"
     },
     "patchedDependencies": {
       "@novnc/novnc@1.7.0": "patches/@novnc__novnc@1.7.0.patch"

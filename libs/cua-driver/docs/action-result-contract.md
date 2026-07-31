@@ -31,8 +31,9 @@ Every successful action returns a closed `structuredContent` object:
 | `route` | `accessibility`, `synthetic_events`, `global_input`, `dom`, `trusted_input` |
 | `delivery.mode` | `background`, `foreground`, `not_applicable`, `unknown` |
 | `evidence[].kind` | `value_readback`, `window_change` |
-| `escalation.target` | `pixel`, `foreground`, `page`, `session` |
-| `escalation.reason` | `route_unavailable`, `delivery_failed`, `effect_unconfirmed`, `suspected_noop`, `permission_required` |
+| `window_change` | read-only `new_windows` plus `foreground_changed` topology facts |
+| `escalation.target` | `pixel`, `foreground`, `page`, `session`, `rebind` |
+| `escalation.reason` | `route_unavailable`, `delivery_failed`, `effect_unconfirmed`, `suspected_noop`, `permission_required`, `surface_changed` |
 
 The action-result tools are:
 
@@ -45,9 +46,11 @@ The action-result tools are:
 Other mutating tools such as application launch, window activation, browser
 navigation, dialogs, uploads, and downloads retain their own typed results.
 
-The contract is deliberately closed. It does not echo selectors, coordinates,
-scope, targets, platform transport names, diagnostic pointers, or the old
-`verified` boolean.
+The contract is deliberately closed. It does not echo request selectors,
+coordinates, scope, platform transport names, diagnostic pointers, or the old
+`verified` boolean. A post-action `window_change` is the one target-bearing
+exception: it reports newly observed native windows so a caller can leave a
+stale or blocked anchor without activating the replacement surface.
 
 The invariants are:
 
@@ -123,6 +126,13 @@ An optional escalation is advice, not an automatic retry:
 | `foreground` | explicitly select foreground delivery when session policy permits |
 | `page` | bind the native window to a supported browser page route |
 | `session` | prepare or explicitly widen the session only when policy permits |
+| `rebind` | bind to `escalation.window` when present, otherwise correlate `window_change.new_windows` with `list_windows`; refresh window state before acting |
+
+Handle `rebind` before pixel, page, or foreground retries. The driver discovers
+the new surface through a read-only post-action window diff and preserves the
+existing focus guard; rebinding is logical and must not raise the window. When
+multiple candidates are reported, refresh `list_windows`, select the blocking
+surface, and resume background window-scoped interaction.
 
 SDK integrators, OpenClaw, Hermes, and other agent hosts can implement different
 policies above this same narrow fact contract without duplicating platform

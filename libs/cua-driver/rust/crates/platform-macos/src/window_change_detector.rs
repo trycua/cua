@@ -144,6 +144,31 @@ impl Changes {
             "\n\n🔀 Action caused a different app to become frontmost.".to_string()
         }
     }
+
+    /// Attach the platform-neutral post-action topology record consumed by
+    /// the shared `ActionResult` adapter. This does not activate or raise any
+    /// discovered window; it only publishes the identifiers already observed
+    /// by the read-only window-list diff.
+    pub fn add_to_structured(&self, structured: &mut serde_json::Value) {
+        if !self.needs_restore() {
+            return;
+        }
+        let Some(object) = structured.as_object_mut() else {
+            return;
+        };
+        object.insert(
+            "window_change".to_owned(),
+            serde_json::json!({
+                "new_windows": self.new_windows.iter().map(|window| serde_json::json!({
+                    "window_id": u64::from(window.window_id),
+                    "pid": i64::from(window.pid),
+                    "app_name": window.app_name,
+                    "title": window.title,
+                })).collect::<Vec<_>>(),
+                "foreground_changed": self.foreground_changed,
+            }),
+        );
+    }
 }
 
 /// Default poll deadline — new windows triggered by a click typically
@@ -509,6 +534,37 @@ mod tests {
             c.result_suffix(),
             "\n\n🪟 Action opened new window(s): Finder."
         );
+    }
+
+    #[test]
+    fn changes_attach_machine_readable_rebind_metadata_without_mutating_no_change() {
+        let changes = Changes {
+            new_windows: vec![WindowEvent {
+                window_id: 41,
+                pid: 123,
+                app_name: "TextEdit".to_owned(),
+                title: "Open".to_owned(),
+            }],
+            foreground_changed: false,
+        };
+        let mut structured = serde_json::json!({"path": "ax"});
+        changes.add_to_structured(&mut structured);
+        assert_eq!(
+            structured["window_change"],
+            serde_json::json!({
+                "new_windows": [{
+                    "window_id": 41,
+                    "pid": 123,
+                    "app_name": "TextEdit",
+                    "title": "Open",
+                }],
+                "foreground_changed": false,
+            })
+        );
+
+        let mut unchanged = serde_json::json!({"path": "ax"});
+        Changes::no_change().add_to_structured(&mut unchanged);
+        assert!(unchanged.get("window_change").is_none());
     }
 
     /// Regression: `snapshot(prior_front)` must store the caller's

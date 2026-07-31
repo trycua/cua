@@ -597,17 +597,23 @@ impl Tool for ScrollTool {
                 ""
             };
             return match result {
-                Ok(Ok(())) => ToolResult::text(format!(
-                    "✅ Sent {direction} scroll by {by} × {amount} via pixel wheel at \
-                     ({screen_x:.0}, {screen_y:.0}){mode_label} (background CGEvent; not \
-                     driver-verified — confirm via screenshot).{}",
-                    changes.result_suffix()
-                ))
-                .with_structured(serde_json::json!({
-                    "path": if fg { "cgevent_fg" } else { "cgevent" }, "verified": false, "effect": "unverifiable"
-                })),
+                Ok(Ok(())) => {
+                    let mut structured = serde_json::json!({
+                        "path": if fg { "cgevent_fg" } else { "cgevent" },
+                        "verified": false,
+                        "effect": "unverifiable"
+                    });
+                    changes.add_to_structured(&mut structured);
+                    ToolResult::text(format!(
+                        "✅ Sent {direction} scroll by {by} × {amount} via pixel wheel at \
+                         ({screen_x:.0}, {screen_y:.0}){mode_label} (background CGEvent; not \
+                         driver-verified — confirm via screenshot).{}",
+                        changes.result_suffix()
+                    ))
+                    .with_structured(structured)
+                }
                 Ok(Err(e)) => ToolResult::error(format!("Wheel scroll failed: {e}")),
-                Err(e)     => ToolResult::error(format!("Task error: {e}")),
+                Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
 
@@ -692,12 +698,16 @@ impl Tool for ScrollTool {
         let changes = super::finish_window_observation(snapshot, &args).await;
 
         match result {
-            Ok(Ok(())) => ToolResult::text(format!(
-                "✅ Sent {direction} scroll by {by} × {amount} via keystroke \
-                 (background; not driver-verified — confirm via screenshot).{}",
-                changes.result_suffix()
-            ))
-            .with_structured(serde_json::json!({ "path": "key_events", "verified": false })),
+            Ok(Ok(())) => {
+                let mut structured = serde_json::json!({ "path": "key_events", "verified": false });
+                changes.add_to_structured(&mut structured);
+                ToolResult::text(format!(
+                    "✅ Sent {direction} scroll by {by} × {amount} via keystroke \
+                     (background; not driver-verified — confirm via screenshot).{}",
+                    changes.result_suffix()
+                ))
+                .with_structured(structured)
+            }
             Ok(Err(e)) => ToolResult::error(format!("Scroll failed: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }

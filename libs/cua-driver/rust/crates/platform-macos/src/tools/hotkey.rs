@@ -505,6 +505,7 @@ impl Tool for HotkeyTool {
                                    pixel-click to focus then type_text instead.)"
                     });
                 }
+                changes.add_to_structured(&mut structured);
                 ToolResult::text(format!(
                     "Pressed {key_display} on pid {pid}{label}.{}",
                     changes.result_suffix()

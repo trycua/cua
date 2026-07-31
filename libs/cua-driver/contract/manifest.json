@@ -172,7 +172,8 @@
                   "delivery_failed",
                   "effect_unconfirmed",
                   "suspected_noop",
-                  "permission_required"
+                  "permission_required",
+                  "surface_changed"
                 ],
                 "type": "string"
               },
@@ -181,9 +182,37 @@
                   "pixel",
                   "foreground",
                   "page",
-                  "session"
+                  "session",
+                  "rebind"
                 ],
                 "type": "string"
+              },
+              "window": {
+                "additionalProperties": false,
+                "properties": {
+                  "app_name": {
+                    "type": "string"
+                  },
+                  "pid": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "window_id": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "pid",
+                  "window_id",
+                  "app_name",
+                  "title"
+                ],
+                "type": [
+                  "object",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -227,6 +256,49 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "window_change": {
+            "additionalProperties": false,
+            "properties": {
+              "foreground_changed": {
+                "type": "boolean"
+              },
+              "new_windows": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "app_name": {
+                      "type": "string"
+                    },
+                    "pid": {
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "window_id": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "pid",
+                    "window_id",
+                    "app_name",
+                    "title"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "new_windows",
+              "foreground_changed"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           }
         },
         "required": [
@@ -575,7 +647,8 @@
                   "delivery_failed",
                   "effect_unconfirmed",
                   "suspected_noop",
-                  "permission_required"
+                  "permission_required",
+                  "surface_changed"
                 ],
                 "type": "string"
               },
@@ -584,9 +657,37 @@
                   "pixel",
                   "foreground",
                   "page",
-                  "session"
+                  "session",
+                  "rebind"
                 ],
                 "type": "string"
+              },
+              "window": {
+                "additionalProperties": false,
+                "properties": {
+                  "app_name": {
+                    "type": "string"
+                  },
+                  "pid": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "window_id": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "pid",
+                  "window_id",
+                  "app_name",
+                  "title"
+                ],
+                "type": [
+                  "object",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -630,6 +731,49 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "window_change": {
+            "additionalProperties": false,
+            "properties": {
+              "foreground_changed": {
+                "type": "boolean"
+              },
+              "new_windows": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "app_name": {
+                      "type": "string"
+                    },
+                    "pid": {
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "window_id": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "pid",
+                    "window_id",
+                    "app_name",
+                    "title"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "new_windows",
+              "foreground_changed"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           }
         },
         "required": [
@@ -1573,7 +1717,8 @@
                   "delivery_failed",
                   "effect_unconfirmed",
                   "suspected_noop",
-                  "permission_required"
+                  "permission_required",
+                  "surface_changed"
                 ],
                 "type": "string"
               },
@@ -1582,9 +1727,37 @@
                   "pixel",
                   "foreground",
                   "page",
-                  "session"
+                  "session",
+                  "rebind"
                 ],
                 "type": "string"
+              },
+              "window": {
+                "additionalProperties": false,
+                "properties": {
+                  "app_name": {
+                    "type": "string"
+                  },
+                  "pid": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "window_id": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "pid",
+                  "window_id",
+                  "app_name",
+                  "title"
+                ],
+                "type": [
+                  "object",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -1628,6 +1801,49 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "window_change": {
+            "additionalProperties": false,
+            "properties": {
+              "foreground_changed": {
+                "type": "boolean"
+              },
+              "new_windows": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "app_name": {
+                      "type": "string"
+                    },
+                    "pid": {
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "window_id": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "pid",
+                    "window_id",
+                    "app_name",
+                    "title"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "new_windows",
+              "foreground_changed"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           }
         },
         "required": [
@@ -2096,7 +2312,8 @@
                   "delivery_failed",
                   "effect_unconfirmed",
                   "suspected_noop",
-                  "permission_required"
+                  "permission_required",
+                  "surface_changed"
                 ],
                 "type": "string"
               },
@@ -2105,9 +2322,37 @@
                   "pixel",
                   "foreground",
                   "page",
-                  "session"
+                  "session",
+                  "rebind"
                 ],
                 "type": "string"
+              },
+              "window": {
+                "additionalProperties": false,
+                "properties": {
+                  "app_name": {
+                    "type": "string"
+                  },
+                  "pid": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "window_id": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "pid",
+                  "window_id",
+                  "app_name",
+                  "title"
+                ],
+                "type": [
+                  "object",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -2151,6 +2396,49 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "window_change": {
+            "additionalProperties": false,
+            "properties": {
+              "foreground_changed": {
+                "type": "boolean"
+              },
+              "new_windows": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "app_name": {
+                      "type": "string"
+                    },
+                    "pid": {
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "window_id": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "pid",
+                    "window_id",
+                    "app_name",
+                    "title"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "new_windows",
+              "foreground_changed"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           }
         },
         "required": [
@@ -2313,7 +2601,8 @@
                   "delivery_failed",
                   "effect_unconfirmed",
                   "suspected_noop",
-                  "permission_required"
+                  "permission_required",
+                  "surface_changed"
                 ],
                 "type": "string"
               },
@@ -2322,9 +2611,37 @@
                   "pixel",
                   "foreground",
                   "page",
-                  "session"
+                  "session",
+                  "rebind"
                 ],
                 "type": "string"
+              },
+              "window": {
+                "additionalProperties": false,
+                "properties": {
+                  "app_name": {
+                    "type": "string"
+                  },
+                  "pid": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "window_id": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "pid",
+                  "window_id",
+                  "app_name",
+                  "title"
+                ],
+                "type": [
+                  "object",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -2368,6 +2685,49 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "window_change": {
+            "additionalProperties": false,
+            "properties": {
+              "foreground_changed": {
+                "type": "boolean"
+              },
+              "new_windows": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "app_name": {
+                      "type": "string"
+                    },
+                    "pid": {
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "window_id": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "pid",
+                    "window_id",
+                    "app_name",
+                    "title"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "new_windows",
+              "foreground_changed"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           }
         },
         "required": [
@@ -2550,7 +2910,8 @@
                   "delivery_failed",
                   "effect_unconfirmed",
                   "suspected_noop",
-                  "permission_required"
+                  "permission_required",
+                  "surface_changed"
                 ],
                 "type": "string"
               },
@@ -2559,9 +2920,37 @@
                   "pixel",
                   "foreground",
                   "page",
-                  "session"
+                  "session",
+                  "rebind"
                 ],
                 "type": "string"
+              },
+              "window": {
+                "additionalProperties": false,
+                "properties": {
+                  "app_name": {
+                    "type": "string"
+                  },
+                  "pid": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "window_id": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "pid",
+                  "window_id",
+                  "app_name",
+                  "title"
+                ],
+                "type": [
+                  "object",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -2605,6 +2994,49 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "window_change": {
+            "additionalProperties": false,
+            "properties": {
+              "foreground_changed": {
+                "type": "boolean"
+              },
+              "new_windows": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "app_name": {
+                      "type": "string"
+                    },
+                    "pid": {
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "window_id": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "pid",
+                    "window_id",
+                    "app_name",
+                    "title"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "new_windows",
+              "foreground_changed"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           }
         },
         "required": [
@@ -3034,7 +3466,8 @@
                   "delivery_failed",
                   "effect_unconfirmed",
                   "suspected_noop",
-                  "permission_required"
+                  "permission_required",
+                  "surface_changed"
                 ],
                 "type": "string"
               },
@@ -3043,9 +3476,37 @@
                   "pixel",
                   "foreground",
                   "page",
-                  "session"
+                  "session",
+                  "rebind"
                 ],
                 "type": "string"
+              },
+              "window": {
+                "additionalProperties": false,
+                "properties": {
+                  "app_name": {
+                    "type": "string"
+                  },
+                  "pid": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "window_id": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "pid",
+                  "window_id",
+                  "app_name",
+                  "title"
+                ],
+                "type": [
+                  "object",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -3442,6 +3903,49 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "window_change": {
+            "additionalProperties": false,
+            "properties": {
+              "foreground_changed": {
+                "type": "boolean"
+              },
+              "new_windows": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "app_name": {
+                      "type": "string"
+                    },
+                    "pid": {
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "window_id": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "pid",
+                    "window_id",
+                    "app_name",
+                    "title"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "new_windows",
+              "foreground_changed"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           }
         },
         "required": [

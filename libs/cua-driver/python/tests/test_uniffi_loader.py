@@ -113,6 +113,7 @@ except FileNotFoundError:
             EffectiveScope,
             StatePredicate,
             StartSessionOutput,
+            TypeTextInput,
             VerificationStatus,
             VerifyStateInput,
             WindowPredicate,
@@ -134,7 +135,7 @@ except FileNotFoundError:
             captured: list[dict[str, object]] = []
 
             def serve() -> None:
-                while len(captured) < 2:
+                while len(captured) < 3:
                     connection, _ = listener.accept()
                     with connection:
                         line = connection.makefile("r", encoding="utf-8").readline()
@@ -231,6 +232,16 @@ except FileNotFoundError:
                     )
                 )
             )
+            long_text = "x" * 16_000
+            long_type_result = asyncio.run(
+                driver.type_text(
+                    TypeTextInput(
+                        text=long_text,
+                        scope=DesktopScope.DESKTOP,
+                        session="python-run",
+                    )
+                )
+            )
             server.join(timeout=5)
             listener.close()
 
@@ -243,6 +254,7 @@ except FileNotFoundError:
         self.assertIsNone(action_result.verification)
         self.assertEqual(action_result.action.effect, ActionEffect.UNVERIFIABLE)
         self.assertEqual(action_result.action.route, ActionRoute.GLOBAL_INPUT)
+        self.assertEqual(long_type_result.action.route, ActionRoute.GLOBAL_INPUT)
         self.assertFalse(hasattr(action_result, "verified"))
         self.assertEqual(captured[0]["name"], "verify_state")
         self.assertEqual(
@@ -270,6 +282,9 @@ except FileNotFoundError:
                 "count": 1,
             },
         )
+        self.assertEqual(captured[2]["name"], "type_text")
+        self.assertEqual(captured[2]["args"]["text"], "x" * 16_000)
+        self.assertEqual(captured[2]["client_kind"], "python_sdk")
 
     def test_generated_python_sdk_can_own_the_runtime_in_process(self) -> None:
         from cua_driver import CuaDriver, DriverExecutionMode

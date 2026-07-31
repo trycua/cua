@@ -105,6 +105,13 @@ for complete examples and the callback trust rules.
 migrate. It exposes the same methods over the installed daemon, but it does not
 provide a second SDK contract.
 
+Unix daemon-backed calls normally wait up to 120 seconds for a response. On
+Linux, long `type_text` calls automatically receive additional time for the
+platform's paced keyboard delivery. Applications with a slower target can set
+`CUA_DRIVER_DAEMON_RESPONSE_TIMEOUT_MS` to a positive millisecond deadline
+before making daemon-backed calls; the setting does not affect same-process
+`CuaDriver.create()` runtimes.
+
 `shutdown()` closes admission, waits for already admitted operations to finish,
 and is idempotent. Calls started after shutdown fail with `DriverError.Shutdown`.
 Destroying a binding handle releases native resources, but orderly applications

@@ -15,6 +15,7 @@ use windows::Win32::System::Com::{
 };
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationCacheRequest, IUIAutomationElement,
+    IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern, ToggleState_Off, ToggleState_On,
     TreeScope_Children, TreeScope_Subtree, UIA_AutomationIdPropertyId,
     UIA_BoundingRectanglePropertyId, UIA_ControlTypePropertyId, UIA_ExpandCollapsePatternId,
     UIA_HelpTextPropertyId, UIA_InvokePatternId, UIA_IsEnabledPropertyId,
@@ -57,6 +58,11 @@ pub struct UiaNode {
     pub automation_id: Option<String>,
     pub help_text: Option<String>,
     pub actions: Vec<String>,
+    /// Enabled state reported by UIA. `None` is reserved for fallback
+    /// backends that cannot establish it.
+    pub enabled: Option<bool>,
+    /// Toggle/selection state when the element exposes one of those patterns.
+    pub selected: Option<bool>,
     /// Raw COM pointer (IUIAutomationElement for UIA path, IAccessible for
     /// MSAA path) as usize. Retained — `ElementCache` Drop releases it via
     /// the `kind`-appropriate vtable.
@@ -535,7 +541,11 @@ unsafe fn walk_cached_bounded(
     let value = read_cached_bstr_value(element);
     let automation_id = read_cached_bstr(element, UIA_AutomationIdPropertyId);
     let help_text = read_cached_bstr(element, UIA_HelpTextPropertyId);
-    let is_enabled = read_cached_bool(element, UIA_IsEnabledPropertyId).unwrap_or(true);
+    let enabled = read_cached_bool(element, UIA_IsEnabledPropertyId);
+    // Missing UIA state must remain unknown on the structured observation
+    // surface. Action discovery keeps its historical best-effort assumption.
+    let is_enabled = enabled.unwrap_or(true);
+    let selected = read_cached_selected(element);
     let actions = detect_cached_actions(element, &control_type, is_enabled);
     let is_actionable = !actions.is_empty() && is_enabled;
     let has_content = name
@@ -566,6 +576,8 @@ unsafe fn walk_cached_bounded(
                 automation_id: automation_id.clone(),
                 help_text: help_text.clone(),
                 actions: actions.clone(),
+                enabled,
+                selected,
                 element_ptr: ptr,
                 center_x,
                 center_y,
@@ -584,6 +596,8 @@ unsafe fn walk_cached_bounded(
                 automation_id: automation_id.clone(),
                 help_text: help_text.clone(),
                 actions: vec![],
+                enabled,
+                selected,
                 element_ptr: ptr,
                 center_x: 0,
                 center_y: 0,
@@ -750,6 +764,29 @@ fn detect_cached_actions(
         actions.push("invoke".into());
     }
     actions
+}
+
+fn read_cached_selected(element: &IUIAutomationElement) -> Option<bool> {
+    unsafe {
+        if let Ok(pattern) = element.GetCachedPattern(UIA_TogglePatternId) {
+            if let Ok(toggle) = pattern.cast::<IUIAutomationTogglePattern>() {
+                return match toggle.CachedToggleState() {
+                    Ok(state) if state == ToggleState_On => Some(true),
+                    Ok(state) if state == ToggleState_Off => Some(false),
+                    _ => None,
+                };
+            }
+        }
+        if let Ok(pattern) = element.GetCachedPattern(UIA_SelectionItemPatternId) {
+            if let Ok(selection) = pattern.cast::<IUIAutomationSelectionItemPattern>() {
+                return selection
+                    .CachedIsSelected()
+                    .ok()
+                    .map(|selected| selected.as_bool());
+            }
+        }
+    }
+    None
 }
 
 fn control_type_name(id: i32) -> String {

@@ -639,6 +639,14 @@ pub fn register_all(
     registry.register(Box::new(get_window_state::GetWindowStateTool::new(
         state.clone(),
     )));
+    registry.register(Box::new(
+        cua_driver_core::expectation::VerifyStateTool::new(Arc::new(
+            cua_driver_core::expectation::ToolObservationProvider::new(
+                Arc::new(list_windows::ListWindowsTool),
+                Arc::new(get_window_state::GetWindowStateTool::new(state.clone())),
+            ),
+        )),
+    ));
     registry.register(Box::new(launch_app::LaunchAppTool));
     registry.register(Box::new(kill_app::KillAppTool));
     registry.register(Box::new(bring_to_front::BringToFrontTool));

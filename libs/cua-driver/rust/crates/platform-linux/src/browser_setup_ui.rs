@@ -522,6 +522,8 @@ mod tests {
             name: Some(name.to_owned()),
             value: value.map(str::to_owned),
             checked: None,
+            enabled: None,
+            selected: None,
             description: None,
             actions: actions.iter().map(|value| (*value).to_owned()).collect(),
             element_key: 0,

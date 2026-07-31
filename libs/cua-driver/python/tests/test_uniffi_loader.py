@@ -58,7 +58,7 @@ while True:
             if request["method"] == "metadata":
                 result = {
                     "driver_version": "0.10.0",
-                    "contract_version": "0.2.0",
+                    "contract_version": "0.3.0",
                     "tools_list_schema_version": "1",
                     "capability_version": "1",
                     "mcp_protocol_version": "2025-06-18",
@@ -106,8 +106,10 @@ except FileNotFoundError:
         from cua_driver import (
             CuaDriver,
             EffectiveScope,
-            GetDesktopStateInput,
+            StatePredicate,
             StartSessionOutput,
+            VerifyStateInput,
+            WindowPredicate,
         )
 
         self.assertIsNotNone(EffectiveScope)
@@ -134,7 +136,7 @@ except FileNotFoundError:
                         if request["method"] == "metadata":
                             result = {
                                 "driver_version": "0.12.6",
-                                "contract_version": "0.2.0",
+                                "contract_version": "0.3.0",
                                 "tools_list_schema_version": "1",
                                 "capability_version": "1",
                                 "mcp_protocol_version": "2025-06-18",
@@ -176,12 +178,24 @@ except FileNotFoundError:
                 "type_text",
                 "press_key",
                 "hotkey",
+                "verify_state",
             }
             self.assertTrue(all(hasattr(driver, name) for name in expected_methods))
             result = asyncio.run(
-                driver.get_desktop_state(
-                    GetDesktopStateInput(
-                        session="python-run", screenshot_out_file=None
+                driver.verify_state(
+                    VerifyStateInput(
+                        pid=123,
+                        window_id=456,
+                        expect=[
+                            StatePredicate(
+                                window=WindowPredicate(exists=True, bounds=None),
+                                element=None,
+                            )
+                        ],
+                        session="python-run",
+                        timeout_ms=0,
+                        stable_samples=1,
+                        include_screenshot=True,
                     )
                 )
             )
@@ -191,8 +205,19 @@ except FileNotFoundError:
         self.assertEqual(result.text, "python ffi")
         self.assertEqual(result.images[0].mime_type, "image/png")
         self.assertTrue(result.verified)
-        self.assertEqual(captured[0]["name"], "get_desktop_state")
-        self.assertEqual(captured[0]["args"], {"session": "python-run"})
+        self.assertEqual(captured[0]["name"], "verify_state")
+        self.assertEqual(
+            captured[0]["args"],
+            {
+                "pid": 123,
+                "window_id": 456,
+                "expect": [{"window": {"exists": True}}],
+                "session": "python-run",
+                "timeout_ms": 0,
+                "stable_samples": 1,
+                "include_screenshot": True,
+            },
+        )
         self.assertEqual(captured[0]["client_kind"], "python_sdk")
 
     def test_generated_python_sdk_can_own_the_runtime_in_process(self) -> None:

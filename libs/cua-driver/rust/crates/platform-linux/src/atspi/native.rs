@@ -129,6 +129,8 @@ struct Visited<'a> {
     name: String,
     value: Option<String>,
     checked: Option<bool>,
+    enabled: Option<bool>,
+    selected: Option<bool>,
     actions: Vec<String>,
     has_editable: bool,
     has_value: bool,
@@ -488,11 +490,30 @@ async fn collect_visited_bounded<'a>(
             _ => String::new(),
         };
         let focused = matches!(state_r.as_ref(), Some(Ok(s)) if s.contains(State::Focused));
-        let checked = if role.to_ascii_lowercase().contains("check") {
+        let role_lower = role.to_ascii_lowercase();
+        let checked = if role_lower.contains("check") {
             state_r
                 .as_ref()
                 .and_then(|state| state.as_ref().ok())
                 .map(|state| state.contains(State::Checked))
+        } else {
+            None
+        };
+        let enabled = state_r
+            .as_ref()
+            .and_then(|state| state.as_ref().ok())
+            .map(|state| state.contains(State::Enabled));
+        let selected = if role_lower.contains("check") {
+            checked
+        } else if role_lower.contains("radio")
+            || role_lower.contains("list item")
+            || role_lower.contains("menu item")
+            || role_lower.contains("tab")
+        {
+            state_r
+                .as_ref()
+                .and_then(|state| state.as_ref().ok())
+                .map(|state| state.contains(State::Selected) || state.contains(State::Checked))
         } else {
             None
         };
@@ -580,6 +601,8 @@ async fn collect_visited_bounded<'a>(
             name,
             value,
             checked,
+            enabled,
+            selected,
             actions,
             has_editable,
             has_value,
@@ -645,6 +668,8 @@ fn render(visited: &[Visited<'_>]) -> (String, Vec<AtspiNode>) {
                 },
                 value: v.value.clone().filter(|s| !s.is_empty()),
                 checked: v.checked,
+                enabled: v.enabled,
+                selected: v.selected,
                 description: None,
                 actions: v.actions.clone(),
                 element_key: idx as u64,

@@ -212,6 +212,7 @@ const PRIVATE_OBSERVATION_OPERATIONS: &[&str] = &[
     "get_desktop_state",
     "get_accessibility_tree",
     "get_window_state",
+    "verify_state",
     "list_apps",
     "list_windows",
     "debug_window_info",
@@ -689,6 +690,7 @@ pub fn enforcement_adapters_for_call(
         "get_desktop_state"
             | "get_accessibility_tree"
             | "get_window_state"
+            | "verify_state"
             | "list_apps"
             | "list_windows"
             | "debug_window_info"
@@ -844,6 +846,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "debug_window_info"
         | "check_permissions"
         | "get_accessibility_tree"
+        | "verify_state"
         | "set_config"
         | "escalate_session"
         | "start_recording"
@@ -942,6 +945,11 @@ pub fn classify_tool_call(tool: &str, args: &Value) -> RiskAssessment {
             },
             // Screenshot-to-file composes the active observation and exact
             // file-output adapters at the canonical dispatch boundary.
+            enforcement: RiskEnforcement::Active,
+            operation_sensitive: true,
+        },
+        "verify_state" => RiskAssessment {
+            class: RiskClass::R2,
             enforcement: RiskEnforcement::Active,
             operation_sensitive: true,
         },
@@ -1113,6 +1121,7 @@ fn enforce_hard_invariants(
             | "bring_to_front"
             | "get_accessibility_tree"
             | "get_window_state"
+            | "verify_state"
             | "page"
             | "browser_prepare"
     );
@@ -1478,6 +1487,19 @@ mod tests {
             assert!(egress.operation_sensitive);
             assert_eq!(advertised_risk_for(tool).class, RiskClass::R3);
         }
+    }
+
+    #[test]
+    fn verify_state_is_bounded_observation_not_file_egress() {
+        for args in [
+            serde_json::json!({}),
+            serde_json::json!({"include_screenshot": true}),
+        ] {
+            let observation = classify_tool_call("verify_state", &args);
+            assert_eq!(observation.class, RiskClass::R2);
+            assert_eq!(observation.enforcement, RiskEnforcement::Active);
+        }
+        assert_eq!(advertised_risk_for("verify_state").class, RiskClass::R2);
     }
 
     #[test]

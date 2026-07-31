@@ -839,8 +839,9 @@ impl Tool for GetWindowStateTool {
                 any element-indexed action against that window. The index map is replaced by \
                 the next snapshot of the same (pid, window_id).\n\n\
                 PREFERRED CONSUMERS read `structuredContent.elements` (one entry per \
-                indexed row with `element_index`, `role`, `label`, `frame: {x,y,w,h}`, \
-                `parent_index`, `depth`). The markdown `tree_markdown` stays available \
+                indexed row with `element_index`, `role`, `label`, `value`, `enabled`, \
+                `selected`, `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown \
+                `tree_markdown` stays available \
                 and unchanged in shape for existing text-parsing callers — but new \
                 fields will only be added to the structured side.\n\n\
                 The UIA tree walked is the window's tree (HWND-scoped); the screenshot and \
@@ -962,6 +963,10 @@ impl Tool for GetWindowStateTool {
         // `screenshot_out_file` the bytes go to disk and the path is surfaced
         // instead of embedding base64; otherwise the base64 PNG is embedded.
         let include_screenshot = args.get("include_screenshot").and_then(|v| v.as_bool());
+        let observation_only = args
+            .get("observation_only")
+            .and_then(|value| value.as_bool())
+            == Some(true);
         let do_tree = true;
         let do_shot = include_screenshot != Some(false) || screenshot_out_file.is_some();
 
@@ -1058,13 +1063,19 @@ impl Tool for GetWindowStateTool {
                     // node whose msaa_role is Some came from the MSAA
                     // walker, so the entire snapshot must Drop via
                     // IAccessible and click must dispatch through MSAA.
-                    let is_msaa = tr.nodes.iter().any(|n| n.msaa_role.is_some());
-                    if is_msaa {
-                        state.element_cache.update_msaa(pid, hwnd, &tr.nodes);
-                    } else {
-                        state.element_cache.update(pid, hwnd, &tr.nodes);
+                    if !observation_only {
+                        let is_msaa = tr.nodes.iter().any(|n| n.msaa_role.is_some());
+                        if is_msaa {
+                            state.element_cache.update_msaa(pid, hwnd, &tr.nodes);
+                        } else {
+                            state.element_cache.update(pid, hwnd, &tr.nodes);
+                        }
                     }
                     structured["element_count"] = json!(count);
+                    // UIA currently does not expose whether a bounded walk
+                    // exhausted every subtree. Keep negative existence
+                    // conservative until that proof is available.
+                    structured["elements_complete"] = json!(false);
                     structured["tree_markdown"] = json!(tr.tree_markdown);
 
                     // Surface 6: register a snapshot in the global token
@@ -1072,11 +1083,13 @@ impl Tool for GetWindowStateTool {
                     // stores u32 — truncate (HWND fits in 32-bit on
                     // every supported edition; the upper 32 bits are
                     // zero in user-space).
-                    let snapshot_id = cua_driver_core::element_token::global().register_snapshot(
-                        pid as i32,
-                        hwnd as u32,
-                        count,
-                    );
+                    let snapshot_id = (!observation_only).then(|| {
+                        cua_driver_core::element_token::global().register_snapshot(
+                            pid as i32,
+                            hwnd as u32,
+                            count,
+                        )
+                    });
 
                     // Structured `elements` array — preferred consumption
                     // path. Shape matches the cross-platform spec:
@@ -1089,20 +1102,25 @@ impl Tool for GetWindowStateTool {
                         .filter_map(|n| {
                             let idx = n.element_index?;
                             // `label`: name → value → automation_id → help_text.
-                            let label = n.name.clone()
+                            let label = n
+                                .name
+                                .clone()
                                 .or_else(|| n.value.clone())
                                 .or_else(|| n.automation_id.clone())
                                 .or_else(|| n.help_text.clone());
                             let mut entry = json!({
                                 "element_index": idx,
-                                // Surface 6: opaque token paired to the
-                                // integer index. See cua-driver-core's
-                                // `element_token` module for the format
-                                // and validity contract.
-                                "element_token": cua_driver_core::element_token::token_for(snapshot_id, idx),
                                 "role": n.control_type,
                                 "depth": n.depth,
                             });
+                            if let Some(snapshot_id) = snapshot_id {
+                                entry["element_token"] = json!(
+                                    cua_driver_core::element_token::token_for(snapshot_id, idx)
+                                );
+                            }
+                            if n.in_web_content {
+                                entry["in_web_content"] = json!(true);
+                            }
                             if let Some(label) = label {
                                 entry["label"] = json!(label);
                             }
@@ -1114,6 +1132,12 @@ impl Tool for GetWindowStateTool {
                             // the macOS get_window_state builder for the rationale.
                             if let Some(value) = n.value.clone().filter(|v| !v.is_empty()) {
                                 entry["value"] = json!(value);
+                            }
+                            if let Some(enabled) = n.enabled {
+                                entry["enabled"] = json!(enabled);
+                            }
+                            if let Some(selected) = n.selected {
+                                entry["selected"] = json!(selected);
                             }
                             if let Some(parent) = n.parent_element_index {
                                 entry["parent_index"] = json!(parent);
@@ -1131,10 +1155,12 @@ impl Tool for GetWindowStateTool {
                         .collect();
                     structured["elements"] = json!(elements);
                     // Surface 6: snapshot id mirror for debug correlation.
-                    structured["snapshot_id"] =
-                        json!(cua_driver_core::element_token::token_for(snapshot_id, 0)
-                            .trim_end_matches(":0")
-                            .to_string());
+                    if let Some(snapshot_id) = snapshot_id {
+                        structured["snapshot_id"] =
+                            json!(cua_driver_core::element_token::token_for(snapshot_id, 0)
+                                .trim_end_matches(":0")
+                                .to_string());
+                    }
                     structured["_note"] = json!(
                         "Prefer `elements` — `tree_markdown` will continue to work \
                          but new fields will only be added to the structured side. \
@@ -8549,6 +8575,16 @@ pub fn build_registry_with_provider(
     r.register(Box::new(GetWindowStateTool {
         state: state.clone(),
     }));
+    r.register(Box::new(
+        cua_driver_core::expectation::VerifyStateTool::new(std::sync::Arc::new(
+            cua_driver_core::expectation::ToolObservationProvider::new(
+                std::sync::Arc::new(ListWindowsTool),
+                std::sync::Arc::new(GetWindowStateTool {
+                    state: state.clone(),
+                }),
+            ),
+        )),
+    ));
     r.register(Box::new(LaunchAppTool));
     r.register(Box::new(KillAppTool));
     r.register(Box::new(BringToFrontTool));

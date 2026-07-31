@@ -178,6 +178,65 @@ fn harness_winui3_smoke() {
 
 #[test]
 #[ignore]
+fn harness_winui3_verify_state() {
+    run_case(
+        native_readonly_case(
+            "winui3",
+            "verify_state",
+            Targeting::Ax,
+            DriverRoute::AxRead,
+            vec![OracleKind::AxState],
+        ),
+        |pid, wid, driver| {
+            let verified = driver.call(
+                "verify_state",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "expect": [
+                        {"window": {"exists": true}},
+                        {"element": {
+                            "selector": {"label_contains": "Increment"},
+                            "exists": true,
+                            "enabled": true
+                        }},
+                        {"element": {
+                            "selector": {"label_contains": "I agree"},
+                            "exists": true,
+                            "selected": false
+                        }}
+                    ],
+                    "stable_samples": 2,
+                    "include_screenshot": true
+                }),
+            );
+            assert!(
+                !verified.is_error(),
+                "WinUI3 verify_state failed: {}",
+                verified.text()
+            );
+            assert_eq!(verified.structured()["status"], "satisfied");
+            assert_eq!(verified.structured()["stable"], true);
+            assert!(
+                verified.structured()["samples"].as_u64().unwrap_or(0) >= 2,
+                "verify_state did not enforce consecutive stable samples: {}",
+                verified.structured()
+            );
+            assert!(
+                verified.raw["result"]["content"]
+                    .as_array()
+                    .is_some_and(|content| content.iter().any(|item| {
+                        item["type"] == "image" && item["mimeType"] == "image/png"
+                    })),
+                "verify_state did not return final visual evidence"
+            );
+            Observation::delivered(vec![OracleKind::AxState], Evidence::default())
+        },
+    );
+}
+
+#[test]
+#[ignore]
 fn harness_winui3_type_text() {
     run_background_case("type_text", DriverRoute::UiaValue, |pid, wid, driver| {
         let snap = driver.call(

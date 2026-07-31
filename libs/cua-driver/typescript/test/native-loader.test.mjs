@@ -53,7 +53,7 @@ const server = net.createServer(socket => {
     const request = JSON.parse(buffer.split("\\n", 1)[0]);
     const result = request.method === "metadata" ? {
       driver_version: "0.10.0",
-      contract_version: "0.2.0",
+      contract_version: "0.3.0",
       tools_list_schema_version: "1",
       capability_version: "1",
       mcp_protocol_version: "2025-06-18",
@@ -121,7 +121,7 @@ test(
       await readyPromise
       assert.equal(existsSync(socketPath), true)
       const sdk = await import("@trycua/cua-driver")
-      const { CuaDriver, GetDesktopStateInput } = sdk
+      const { CuaDriver, StatePredicate, VerifyStateInput, WindowPredicate } = sdk
       assert.equal("StdioMcpTransport" in sdk, false)
       await assert.rejects(
         import("@trycua/cua-driver/sdk"),
@@ -147,13 +147,26 @@ test(
         "typeText",
         "pressKey",
         "hotkey",
+        "verifyState",
       ]
       assert.equal(
         expectedMethods.every((name) => typeof driver[name] === "function"),
         true,
       )
-      const result = await driver.getDesktopState(
-        GetDesktopStateInput.new({ session: "node-run" }),
+      const result = await driver.verifyState(
+        VerifyStateInput.new({
+          pid: 123n,
+          windowId: 456n,
+          expect: [
+            StatePredicate.new({
+              window: WindowPredicate.new({ exists: true }),
+            }),
+          ],
+          session: "node-run",
+          timeoutMs: 0n,
+          stableSamples: 1n,
+          includeScreenshot: true,
+        }),
       )
       const request = await requestPromise
       driver.uniffiDestroy()
@@ -161,8 +174,16 @@ test(
       assert.equal(result.text, "node ffi")
       assert.equal(result.images[0].mimeType, "image/png")
       assert.equal(result.verified, true)
-      assert.equal(request.name, "get_desktop_state")
-      assert.deepEqual(request.args, { session: "node-run" })
+      assert.equal(request.name, "verify_state")
+      assert.deepEqual(request.args, {
+        pid: 123,
+        window_id: 456,
+        expect: [{ window: { exists: true } }],
+        session: "node-run",
+        timeout_ms: 0,
+        stable_samples: 1,
+        include_screenshot: true,
+      })
       assert.equal(request.client_kind, "typescript_sdk")
     } finally {
       fixture.kill()

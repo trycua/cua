@@ -14,7 +14,8 @@
 //! permissions, or display, so it runs in normal CI.
 
 use cua_driver_contract::{
-    compatibility::schema_subset_violations, manifest, Platform, SchemaMode,
+    compatibility::schema_subset_violations, is_action_result_tool, manifest, ActionResult,
+    Platform, SchemaMode, ToolOutput,
 };
 use cua_driver_core::tool::advertised_capabilities_for;
 use cua_driver_core::tool_schema::shared_schema_violations;
@@ -80,6 +81,15 @@ fn registered_tool_contracts_match_on_active_backend() {
                 "{name}: delivery_mode schema={schema_accepts_delivery_mode} but \
                  input.delivery_mode capability={advertises_delivery_mode}"
             ));
+        }
+
+        if is_action_result_tool(name) {
+            let expected = ActionResult::output_schema();
+            if tool.get("outputSchema") != Some(&expected) {
+                violations.push(format!(
+                    "{name}: live outputSchema does not equal the shared ActionResult schema"
+                ));
+            }
         }
     }
 

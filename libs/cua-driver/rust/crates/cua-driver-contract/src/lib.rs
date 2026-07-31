@@ -35,11 +35,13 @@ pub use inputs::{
     TypeTextInput,
 };
 pub use outputs::{
-    ClickOutput, CursorMotionOutput, CursorPointOutput, CursorPositionOutput, CursorThemeOutput,
-    CursorVisualOutput, DesktopActionOutput, DesktopStateOutput, EffectiveScope, EndSessionOutput,
-    GetAgentCursorStateOutput, MoveCursorOutput, ScreenSizeOutput, SessionStateOutput,
-    SetAgentCursorEnabledOutput, SetAgentCursorMotionOutput, SetAgentCursorThemeOutput,
-    StartSessionOutput, ToolOutput,
+    ActionDelivery, ActionDeliveryMode, ActionEffect, ActionEscalation, ActionEscalationReason,
+    ActionEscalationTarget, ActionEvidence, ActionEvidenceKind, ActionResult,
+    ActionResultValidationError, ActionRoute, CursorMotionOutput, CursorPointOutput,
+    CursorPositionOutput, CursorThemeOutput, CursorVisualOutput, DesktopStateOutput,
+    EffectiveScope, EndSessionOutput, GetAgentCursorStateOutput, ScreenSizeOutput,
+    SessionStateOutput, SetAgentCursorEnabledOutput, SetAgentCursorMotionOutput,
+    SetAgentCursorThemeOutput, StartSessionOutput, ToolOutput,
 };
 pub use verification::{
     BoundsExpectation, ElementPredicate, ElementSelector, PredicateOutcome, StatePredicate,
@@ -54,10 +56,39 @@ pub const TOOLS_LIST_SCHEMA_VERSION: &str = "1";
 pub const CAPABILITY_VERSION: &str = "1";
 
 /// Shape version for the checked-in generated client contract.
-pub const CONTRACT_VERSION: &str = "0.3.0";
+pub const CONTRACT_VERSION: &str = "0.4.0";
 
 /// MCP protocol version used by current cua-driver clients.
 pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
+
+/// Tools whose successful result is the shared closed [`ActionResult`].
+///
+/// Keep this vocabulary in the contract crate so MCP schema advertising,
+/// runtime validation, SDK normalization, and the execution seam cannot drift.
+pub const ACTION_RESULT_TOOLS: &[&str] = &[
+    "click",
+    "double_click",
+    "right_click",
+    "scroll",
+    "drag",
+    "mouse_drag",
+    "parallel_mouse_drag",
+    "move_cursor",
+    "mouse_button_down",
+    "mouse_button_up",
+    "type_text",
+    "type_text_chars",
+    "press_key",
+    "hotkey",
+    "set_value",
+    "browser_click",
+    "browser_pointer",
+    "browser_type",
+];
+
+pub fn is_action_result_tool(name: &str) -> bool {
+    ACTION_RESULT_TOOLS.contains(&name)
+}
 
 #[derive(
     Debug,
@@ -124,8 +155,8 @@ pub struct ToolContract {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor_semantics: Option<CursorSemantics>,
     pub input_schema: Value,
-    /// Schema for successful `structuredContent` only. It is experimental and
-    /// is not advertised as MCP `outputSchema` until transport parity is proven.
+    /// Schema for successful `structuredContent`. The live MCP surface
+    /// advertises this as `outputSchema`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub success_output_schema: Option<Value>,
     /// Runtime-only validator bound to the same Rust output type that produced
@@ -219,6 +250,10 @@ pub fn tool_input_fields(name: &str) -> Option<&'static BTreeSet<String>> {
 /// Validate a successful structured payload against the Rust output type that
 /// also generates its SDK schema. Returns `Ok(false)` for non-SDK tools.
 pub fn validate_success_output(name: &str, value: Value) -> Result<bool, String> {
+    if is_action_result_tool(name) {
+        validate_typed_output::<ActionResult>(value)?;
+        return Ok(true);
+    }
     if let Some(entry) = tool_index().get(name) {
         (entry.output_validator)(value)?;
         Ok(true)
@@ -242,8 +277,32 @@ mod tests {
         let mut sorted = names.clone();
         sorted.sort_unstable();
         assert_eq!(names, sorted);
-        assert_eq!(manifest.contract_version, "0.3.0");
+        assert_eq!(manifest.contract_version, "0.4.0");
         assert!(manifest.experimental);
+    }
+
+    #[test]
+    fn every_action_result_tool_uses_the_closed_runtime_validator() {
+        let valid = serde_json::json!({
+            "effect": "unverifiable",
+            "route": "synthetic_events"
+        });
+        let legacy = serde_json::json!({
+            "path": "ax",
+            "verified": true
+        });
+
+        for name in ACTION_RESULT_TOOLS {
+            assert_eq!(
+                validate_success_output(name, valid.clone()),
+                Ok(true),
+                "{name} must accept the shared ActionResult"
+            );
+            assert!(
+                validate_success_output(name, legacy.clone()).is_err(),
+                "{name} must reject a legacy action payload"
+            );
+        }
     }
 
     #[test]
@@ -296,6 +355,32 @@ mod tests {
             assert_eq!(
                 tool_contract(name).expect("desktop contract").schema_mode,
                 SchemaMode::PortableSubset,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn desktop_action_contracts_share_the_strict_action_result() {
+        let expected = ActionResult::output_schema();
+        for name in [
+            "click",
+            "drag",
+            "hotkey",
+            "move_cursor",
+            "press_key",
+            "scroll",
+            "type_text",
+        ] {
+            let contract = tool_contract(name).expect("desktop action contract");
+            assert_eq!(
+                contract.success_output_schema,
+                Some(expected.clone()),
+                "{name}"
+            );
+            assert_eq!(
+                contract.success_output_schema.as_ref().expect("schema")["additionalProperties"],
+                false,
                 "{name}"
             );
         }

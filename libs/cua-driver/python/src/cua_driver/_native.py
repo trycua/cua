@@ -3115,11 +3115,13 @@ class _UniffiFfiConverterSequenceTypeImageContent(_UniffiConverterRustBuffer):
             _UniffiFfiConverterTypeImageContent.read(buf) for i in range(count)
         ]
 
-class _UniffiFfiConverterOptionalBoolean(_UniffiConverterRustBuffer):
+
+
+class _UniffiFfiConverterOptionalTypeActionResult(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
         if value is not None:
-            _UniffiFfiConverterBoolean.check_lower(value)
+            cua_driver._native_contract._UniffiFfiConverterTypeActionResult.check_lower(value)
 
     @classmethod
     def write(cls, value, buf):
@@ -3128,7 +3130,7 @@ class _UniffiFfiConverterOptionalBoolean(_UniffiConverterRustBuffer):
             return
 
         buf.write_u8(1)
-        _UniffiFfiConverterBoolean.write(value, buf)
+        cua_driver._native_contract._UniffiFfiConverterTypeActionResult.write(value, buf)
 
     @classmethod
     def read(cls, buf):
@@ -3136,7 +3138,34 @@ class _UniffiFfiConverterOptionalBoolean(_UniffiConverterRustBuffer):
         if flag == 0:
             return None
         elif flag == 1:
-            return _UniffiFfiConverterBoolean.read(buf)
+            return cua_driver._native_contract._UniffiFfiConverterTypeActionResult.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+
+
+class _UniffiFfiConverterOptionalTypeVerifyStateOutput(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            cua_driver._native_contract._UniffiFfiConverterTypeVerifyStateOutput.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        cua_driver._native_contract._UniffiFfiConverterTypeVerifyStateOutput.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return cua_driver._native_contract._UniffiFfiConverterTypeVerifyStateOutput.read(buf)
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
@@ -3146,13 +3175,14 @@ class ToolResult:
     Transport-neutral result envelope used for open-ended tool calls and
     desktop tools whose platform extensions are intentionally preserved as JSON.
 """
-    def __init__(self, *, text:str, images:typing.List[ImageContent], structured_json:typing.Optional[str], is_error:bool, error_code:typing.Optional[str], verified:typing.Optional[bool], degraded:bool, raw_json:str):
+    def __init__(self, *, text:str, images:typing.List[ImageContent], structured_json:typing.Optional[str], is_error:bool, error_code:typing.Optional[str], action:typing.Optional[cua_driver._native_contract.ActionResult], verification:typing.Optional[cua_driver._native_contract.VerifyStateOutput], degraded:bool, raw_json:str):
         self.text = text
         self.images = images
         self.structured_json = structured_json
         self.is_error = is_error
         self.error_code = error_code
-        self.verified = verified
+        self.action = action
+        self.verification = verification
         self.degraded = degraded
         self.raw_json = raw_json
 
@@ -3160,7 +3190,7 @@ class ToolResult:
 
 
     def __str__(self):
-        return "ToolResult(text={}, images={}, structured_json={}, is_error={}, error_code={}, verified={}, degraded={}, raw_json={})".format(self.text, self.images, self.structured_json, self.is_error, self.error_code, self.verified, self.degraded, self.raw_json)
+        return "ToolResult(text={}, images={}, structured_json={}, is_error={}, error_code={}, action={}, verification={}, degraded={}, raw_json={})".format(self.text, self.images, self.structured_json, self.is_error, self.error_code, self.action, self.verification, self.degraded, self.raw_json)
     def __eq__(self, other):
         if self.text != other.text:
             return False
@@ -3172,7 +3202,9 @@ class ToolResult:
             return False
         if self.error_code != other.error_code:
             return False
-        if self.verified != other.verified:
+        if self.action != other.action:
+            return False
+        if self.verification != other.verification:
             return False
         if self.degraded != other.degraded:
             return False
@@ -3189,7 +3221,8 @@ class _UniffiFfiConverterTypeToolResult(_UniffiConverterRustBuffer):
             structured_json=_UniffiFfiConverterOptionalString.read(buf),
             is_error=_UniffiFfiConverterBoolean.read(buf),
             error_code=_UniffiFfiConverterOptionalString.read(buf),
-            verified=_UniffiFfiConverterOptionalBoolean.read(buf),
+            action=_UniffiFfiConverterOptionalTypeActionResult.read(buf),
+            verification=_UniffiFfiConverterOptionalTypeVerifyStateOutput.read(buf),
             degraded=_UniffiFfiConverterBoolean.read(buf),
             raw_json=_UniffiFfiConverterString.read(buf),
         )
@@ -3201,7 +3234,8 @@ class _UniffiFfiConverterTypeToolResult(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.check_lower(value.structured_json)
         _UniffiFfiConverterBoolean.check_lower(value.is_error)
         _UniffiFfiConverterOptionalString.check_lower(value.error_code)
-        _UniffiFfiConverterOptionalBoolean.check_lower(value.verified)
+        _UniffiFfiConverterOptionalTypeActionResult.check_lower(value.action)
+        _UniffiFfiConverterOptionalTypeVerifyStateOutput.check_lower(value.verification)
         _UniffiFfiConverterBoolean.check_lower(value.degraded)
         _UniffiFfiConverterString.check_lower(value.raw_json)
 
@@ -3212,7 +3246,8 @@ class _UniffiFfiConverterTypeToolResult(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.structured_json, buf)
         _UniffiFfiConverterBoolean.write(value.is_error, buf)
         _UniffiFfiConverterOptionalString.write(value.error_code, buf)
-        _UniffiFfiConverterOptionalBoolean.write(value.verified, buf)
+        _UniffiFfiConverterOptionalTypeActionResult.write(value.action, buf)
+        _UniffiFfiConverterOptionalTypeVerifyStateOutput.write(value.verification, buf)
         _UniffiFfiConverterBoolean.write(value.degraded, buf)
         _UniffiFfiConverterString.write(value.raw_json, buf)
 

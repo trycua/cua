@@ -48,6 +48,16 @@ from ._native import (
     request_mac_os_permissions,
 )
 from ._native_contract import (
+    ActionDelivery,
+    ActionDeliveryMode,
+    ActionEffect,
+    ActionEscalation,
+    ActionEscalationReason,
+    ActionEscalationTarget,
+    ActionEvidence,
+    ActionEvidenceKind,
+    ActionResult,
+    ActionRoute,
     BoundsExpectation,
     CaptureScope,
     ClickButton,
@@ -158,6 +168,16 @@ CuaDriver = _NativeCuaDriver
 
 __all__ = [
     "ActionCompletion",
+    "ActionDelivery",
+    "ActionDeliveryMode",
+    "ActionEffect",
+    "ActionEscalation",
+    "ActionEscalationReason",
+    "ActionEscalationTarget",
+    "ActionEvidence",
+    "ActionEvidenceKind",
+    "ActionResult",
+    "ActionRoute",
     "BoundsExpectation",
     "CaptureScope",
     "ClickButton",

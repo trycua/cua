@@ -120,7 +120,7 @@ impl ToolDef {
         // contract. The legacy map remains only for runtime-only tools.
         let caps = advertised_capabilities_for(&self.name, &self.input_schema);
         let risk = crate::authorization::risk_metadata_json(&self.name);
-        serde_json::json!({
+        let mut entry = serde_json::json!({
             "name": self.name,
             "description": self.description,
             "inputSchema": self.input_schema,
@@ -132,7 +132,23 @@ impl ToolDef {
             },
             "capabilities": caps,
             "risk": risk,
-        })
+        });
+        let output_schema = if crate::action_record::is_action_tool(&self.name) {
+            Some(
+                <cua_driver_contract::ActionResult as cua_driver_contract::ToolOutput>::output_schema(
+                ),
+            )
+        } else {
+            cua_driver_contract::tool_contract(&self.name)
+                .and_then(|contract| contract.success_output_schema)
+        };
+        if let Some(output_schema) = output_schema {
+            entry
+                .as_object_mut()
+                .expect("tool list entry is an object")
+                .insert("outputSchema".into(), output_schema);
+        }
+        entry
     }
 }
 
@@ -1288,14 +1304,30 @@ impl ToolRegistry {
             crate::session::touch_session(session);
         }
         restore_public_runtime_result(&mut result, &runtime_prefix);
-        let validate_portable_output = match resolved_name {
-            "get_desktop_state" | "get_screen_size" | "get_cursor_position" => true,
-            "move_cursor" | "click" | "drag" | "scroll" | "type_text" | "press_key" | "hotkey" => {
-                args.get("scope").and_then(Value::as_str) == Some("desktop")
+        // Preserve the producer's private summary for recording/replay before
+        // the public ActionResult projection deliberately replaces legacy
+        // prose. Coordinate recovery and other internal diagnostics must not
+        // depend on the narrowed MCP text surface.
+        let recording_result_text = result.content.iter().find_map(|content| {
+            if let Content::Text { text, .. } = content {
+                Some(text.clone())
+            } else {
+                None
             }
-            _ => true,
-        };
-        if result.is_error != Some(true) && validate_portable_output {
+        });
+        if result.is_error != Some(true) && crate::action_record::is_action_tool(resolved_name) {
+            if let Err(error) = publish_action_result(&mut result) {
+                result = ToolResult::error(format!(
+                    "internal action outcome mismatch for {resolved_name}: {error}"
+                ))
+                .with_structured(serde_json::json!({
+                    "code": "action_outcome_mismatch",
+                    "tool": resolved_name,
+                    "detail": error,
+                }));
+            }
+        }
+        if result.is_error != Some(true) {
             if let Some(structured) = result.structured_content.clone() {
                 if let Err(error) =
                     cua_driver_contract::validate_success_output(resolved_name, structured)
@@ -1321,20 +1353,9 @@ impl ToolRegistry {
         // stream stays the actual user-action sequence (not the meta
         // start/stop frames).
         if let Some(pending_turn) = pending_turn {
-            let result_text = result
-                .content
-                .iter()
-                .find_map(|c| {
-                    if let Content::Text { text, .. } = c {
-                        Some(text.as_str())
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or("");
             self.recording.finish_turn_with_action(
                 pending_turn,
-                result_text,
+                recording_result_text.as_deref().unwrap_or(""),
                 result.action_record.as_ref(),
             );
         }
@@ -2176,6 +2197,27 @@ fn namespace_runtime_args(
     runtime_prefix
 }
 
+fn publish_action_result(result: &mut ToolResult) -> Result<(), String> {
+    let action = result
+        .action_record
+        .as_ref()
+        .ok_or_else(|| "successful action omitted its internal execution record".to_owned())?;
+    let public = action
+        .public_result()
+        .map_err(|error| format!("invalid internal execution record: {error:?}"))?;
+    public
+        .validate_invariants()
+        .map_err(|error| format!("invalid public projection: {error}"))?;
+    let structured =
+        serde_json::to_value(public).map_err(|error| format!("projection failed: {error}"))?;
+    // The breaking contract narrows machine-readable structured content. Keep
+    // the outer ToolResult text/images intact for human diagnostics, refusal
+    // messages, recording/replay, and clients that intentionally degrade to
+    // raw content.
+    result.structured_content = Some(structured);
+    Ok(())
+}
+
 fn restore_public_runtime_result(result: &mut ToolResult, runtime_prefix: &str) {
     for content in &mut result.content {
         if let Content::Text { text, .. } = content {
@@ -2228,7 +2270,8 @@ fn restore_public_runtime_value(value: &mut Value, runtime_prefix: &str) -> bool
 mod runtime_isolation_tests {
     use super::{
         canonical_proposed_path, desktop_action_coordinator, namespace_runtime_args,
-        restore_public_runtime_result, TrustedInvocationEvidence, DISPATCH_RUNTIME_SCOPE,
+        publish_action_result, restore_public_runtime_result, TrustedInvocationEvidence,
+        DISPATCH_RUNTIME_SCOPE,
     };
     use crate::{
         authorization::PermissionMode,
@@ -3333,6 +3376,89 @@ resources:
     }
 
     #[tokio::test]
+    async fn canonical_dispatch_replaces_legacy_action_payload_with_the_closed_outcome() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let registry = input_registry(None, hits.clone());
+        let context = standard_context();
+        let runtime_session = context.runtime_session_key("projection");
+        registry
+            .protected_resource_ownership()
+            .mark_driver_owned_pid(&runtime_session, 42);
+
+        let result = registry
+            .invoke_with_context(
+                "click",
+                serde_json::json!({
+                    "pid": 42,
+                    "window_id": 7,
+                    "session": "projection",
+                    "x": 10,
+                    "y": 20
+                }),
+                context,
+            )
+            .await;
+
+        assert_ne!(result.is_error, Some(true));
+        let structured = result
+            .structured_content
+            .expect("successful actions publish an ActionResult");
+        let object = structured.as_object().expect("ActionResult is an object");
+        assert_eq!(
+            object.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["delivery", "effect", "route"]
+        );
+        assert_eq!(structured["effect"], "unverifiable");
+        assert_eq!(structured["delivery"]["mode"], "unknown");
+        assert!(matches!(
+            structured["route"].as_str(),
+            Some("accessibility" | "synthetic_events" | "global_input" | "dom" | "trusted_input")
+        ));
+        assert!(structured.get("snapshot_id").is_none());
+        assert!(structured.get("x").is_none());
+        assert!(structured.get("y").is_none());
+        assert!(structured.get("scope").is_none());
+        assert!(structured.get("verified").is_none());
+        cua_driver_contract::validate_success_output("click", structured)
+            .expect("the projected action must satisfy the public contract");
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn action_projection_keeps_browser_refusal_diagnostics_and_closes_structured_content() {
+        let legacy = serde_json::json!({
+            "status": "refused",
+            "refusal": {
+                "code": "browser_ref_stale",
+                "message": "take a fresh browser snapshot"
+            }
+        });
+        let mut result = crate::protocol::ToolResult::text(
+            "refused (browser_ref_stale): take a fresh browser snapshot",
+        )
+        .with_structured(legacy.clone());
+        result.action_record = crate::action_record::ActionExecutionRecord::from_legacy(
+            "browser_click",
+            &serde_json::json!({"input_route": "trusted"}),
+            &legacy,
+        );
+
+        publish_action_result(&mut result).expect("browser refusal should project");
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["effect"], "refused");
+        assert_eq!(structured["route"], "trusted_input");
+        assert_eq!(structured["escalation"]["target"], "page");
+        assert!(structured.get("refusal").is_none());
+        assert!(result.content.iter().any(|content| {
+            matches!(
+                content,
+                crate::protocol::Content::Text { text, .. }
+                    if text.contains("browser_ref_stale")
+            )
+        }));
+    }
+
+    #[tokio::test]
     async fn element_tokens_are_bound_to_the_dispatch_runtime_generation() {
         let pid = 8_675_309;
         let token = DISPATCH_RUNTIME_SCOPE
@@ -4113,6 +4239,56 @@ mod capability_tests {
         assert_eq!(entry["annotations"]["openWorldHint"], true);
         // New key — the whole point of this PR.
         assert!(entry["capabilities"].is_array());
+    }
+
+    #[test]
+    fn action_tools_advertise_the_same_closed_output_schema() {
+        let expected =
+            <cua_driver_contract::ActionResult as cua_driver_contract::ToolOutput>::output_schema();
+        for name in ["click", "browser_click", "browser_pointer", "browser_type"] {
+            let def = ToolDef {
+                name: name.into(),
+                description: "Action.".into(),
+                input_schema: serde_json::json!({"type":"object","properties":{}}),
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: true,
+            };
+            let entry = def.to_list_entry();
+            assert_eq!(entry["outputSchema"], expected, "{name}");
+            assert_eq!(
+                entry["outputSchema"]["additionalProperties"], false,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn typed_non_action_tools_advertise_outputs_without_inventing_runtime_schemas() {
+        let verify = ToolDef {
+            name: "verify_state".into(),
+            description: "Verify.".into(),
+            input_schema: serde_json::json!({"type":"object","properties":{}}),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        }
+        .to_list_entry();
+        assert!(verify["outputSchema"].is_object());
+
+        let runtime_only = ToolDef {
+            name: "runtime_only_probe".into(),
+            description: "Probe.".into(),
+            input_schema: serde_json::json!({"type":"object","properties":{}}),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        }
+        .to_list_entry();
+        assert!(runtime_only.get("outputSchema").is_none());
     }
 
     #[test]

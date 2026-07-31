@@ -3549,7 +3549,7 @@ impl Tool for TypeTextTool {
                     "pid":{"type":"integer","description":"Target process ID."},
                     "text":{"type":"string","description":"Text to insert at the focused element's cursor."},
                     "window_id":{"type":"integer","description":"HWND of the target window. Required when element_index is used. Optional when element_token is supplied (the token carries it)."},
-                    "element_index":{"type":"integer","description":"Element index from the last get_window_state for the same (pid, window_id). When supplied, type_text (1) writes via UIA ValuePattern.SetValue on that element (works for WPF/WinForms/UWP/XAML without focus steal) and (2) verifies by reading that element's value back by handle — focus-independent, so the structured `verify` reaches `confirmed`/`unchanged` even when the target isn't foreground. Strongly preferred over typing into 'whatever is focused' (no element_index), which falls back to PostMessage WM_CHAR + a foreground-only focused-element read-back. Requires window_id."},
+                    "element_index":{"type":"integer","description":"Element index from the last get_window_state for the same (pid, window_id). When supplied, type_text (1) writes via UIA ValuePattern.SetValue on that element (works for WPF/WinForms/UWP/XAML without focus steal) and (2) confirms by reading that element's value back by handle — focus-independent. A matching read-back produces effect:\"confirmed\" with value_readback evidence; an unchanged or unreadable value remains effect:\"unverifiable\". Strongly preferred over typing into 'whatever is focused' (no element_index), which falls back to PostMessage WM_CHAR plus a foreground-only focused-element read-back. Requires window_id."},
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "x":{"type":"number","description":"Window-local screenshot-pixel X of the field to type into — the element px action form. Pass x,y (no element_index) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the UIA/WM_CHAR path can't reach. Read straight off the get_window_state PNG, same convention as click."},
                     "y":{"type":"number","description":"Window-local screenshot-pixel Y of the field (see x)."},
@@ -4055,11 +4055,13 @@ impl Tool for TypeTextTool {
             let post_res = crate::input::post_type_text(hwnd, &text_for_post);
             std::thread::sleep(std::time::Duration::from_millis(40));
             let after = read(verify_idx);
-            (post_res, before, after)
+            let confirmed =
+                post_message_readback_confirms(before.as_deref(), after.as_deref(), &text_for_post);
+            (post_res, before, after, confirmed)
         })
         .await;
         match result {
-            Ok((Ok(()), before, after)) => {
+            Ok((Ok(()), before, after, confirmed)) => {
                 // Three-way verdict. Crucially, "couldn't read the field" is NOT
                 // the same as "the text didn't land": on Windows, UIA's
                 // GetFocusedElement is system-wide (unlike macOS's per-app
@@ -4067,10 +4069,11 @@ impl Tool for TypeTextTool {
                 // app we cannot read it back even though a PostMessage WM_CHAR
                 // may have landed fine. Treating unreadable as failure would
                 // spuriously push agents to foreground and break the
-                // background-first contract. So only DOWNGRADE on positive
-                // evidence (read OK both times, value unchanged).
+                // background-first contract. Confirm only when the value
+                // changed and the resulting value contains the requested
+                // text; every other readable result remains unverified.
                 match (&before, &after) {
-                    (Some(b), Some(a)) if a != b => ToolResult::text(format!(
+                    (Some(_), Some(_)) if confirmed => ToolResult::text(format!(
                         "✅ Typed {text_len} char(s) on pid {raw_pid} via PostMessage \
                          ({_delay_ms}ms delay; verified via UIA read-back)."
                     ))
@@ -4081,8 +4084,9 @@ impl Tool for TypeTextTool {
                     })),
                     (Some(_), Some(_)) => ToolResult::text(format!(
                         "📨 Sent {text_len} char(s) to pid {raw_pid} via PostMessage, but \
-                         the focused field's value did not change — the text was likely \
-                         dropped (e.g. a VCL/LibreOffice grid not in cell-edit mode). \
+                         the focused field's value did not contain the requested text \
+                         after dispatch — delivery was incomplete or dropped (e.g. a \
+                         VCL/LibreOffice grid not in cell-edit mode). \
                          Retry with delivery_mode:\"foreground\"."
                     ))
                     .with_structured(serde_json::json!({
@@ -4116,9 +4120,51 @@ impl Tool for TypeTextTool {
                     })),
                 }
             }
-            Ok((Err(e), _, _)) => ToolResult::error(e.to_string()),
+            Ok((Err(e), _, _, _)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
+    }
+}
+
+fn post_message_readback_confirms(
+    before: Option<&str>,
+    after: Option<&str>,
+    requested_text: &str,
+) -> bool {
+    matches!(
+        (before, after),
+        (Some(before), Some(after))
+            if before != after && after.contains(requested_text)
+    )
+}
+
+#[cfg(test)]
+mod post_message_readback_tests {
+    use super::post_message_readback_confirms;
+
+    #[test]
+    fn confirms_only_a_changed_value_containing_the_requested_text() {
+        assert!(post_message_readback_confirms(
+            Some("prefix"),
+            Some("prefixhello"),
+            "hello"
+        ));
+        assert!(!post_message_readback_confirms(None, None, "hello"));
+        assert!(!post_message_readback_confirms(
+            Some("hello"),
+            Some("hello"),
+            "hello"
+        ));
+        assert!(!post_message_readback_confirms(
+            Some(""),
+            Some("h"),
+            "hello"
+        ));
+        assert!(!post_message_readback_confirms(
+            Some("before"),
+            Some("different"),
+            "hello"
+        ));
     }
 }
 

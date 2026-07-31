@@ -61,6 +61,7 @@ pub enum ActionTransport {
     WindowsShellExecute,
     LinuxAtSpiAction,
     LinuxAtSpiValue,
+    LinuxPty,
     LinuxXSendEvent,
     LinuxXTest,
     LinuxLibei,
@@ -93,6 +94,7 @@ impl ActionTransport {
         Self::WindowsShellExecute,
         Self::LinuxAtSpiAction,
         Self::LinuxAtSpiValue,
+        Self::LinuxPty,
         Self::LinuxXSendEvent,
         Self::LinuxXTest,
         Self::LinuxLibei,
@@ -118,9 +120,10 @@ impl ActionTransport {
             | Self::WindowsMsaaAction
             | Self::LinuxAtSpiAction
             | Self::LinuxAtSpiValue => ActionRoute::Accessibility,
-            Self::MacosCgEventPid | Self::WindowsPostMessage | Self::LinuxXSendEvent => {
-                ActionRoute::SyntheticEvents
-            }
+            Self::MacosCgEventPid
+            | Self::WindowsPostMessage
+            | Self::LinuxPty
+            | Self::LinuxXSendEvent => ActionRoute::SyntheticEvents,
             Self::MacosCgEventHid
             | Self::WindowsTargetedInjection
             | Self::WindowsSendInput
@@ -192,9 +195,11 @@ pub enum EscalationKind {
     ActivateTarget,
     RetryWithPixelTarget,
     RetryWithPageAction,
+    RefreshPageState,
     RequestPermission,
     ElevateAccess,
     ExpandCaptureScope,
+    PrepareSession,
     RetryWithForegroundDelivery,
 }
 
@@ -246,7 +251,9 @@ impl ActionExecutionRecord {
             ActionEffect::Confirmed if projected_evidence(&self.evidence).is_none() => {
                 Err(ActionRecordValidationError::ConfirmedRequiresEvidence)
             }
-            ActionEffect::Partial if self.delivered_count.is_none() => {
+            ActionEffect::Partial
+                if self.actual_delivery.is_none() || self.delivered_count.is_none() =>
+            {
                 Err(ActionRecordValidationError::PartialRequiresDeliveredCount)
             }
             ActionEffect::Refused if self.actual_delivery.is_some() => {
@@ -275,8 +282,114 @@ impl ActionExecutionRecord {
         })
     }
 
+    /// Build the closed public action contract from the validated internal
+    /// record. This is intentionally constructive: request data, raw
+    /// transports, diagnostic detail, and non-publishable evidence never
+    /// enter the value that is serialized for MCP or SDK clients.
+    pub fn public_result(
+        &self,
+    ) -> Result<cua_driver_contract::ActionResult, ActionRecordValidationError> {
+        let projection = self.stable_projection()?;
+        Ok(cua_driver_contract::ActionResult {
+            effect: match projection.effect {
+                ActionEffect::Confirmed => cua_driver_contract::ActionEffect::Confirmed,
+                ActionEffect::Partial => cua_driver_contract::ActionEffect::Partial,
+                ActionEffect::Unverifiable => cua_driver_contract::ActionEffect::Unverifiable,
+                ActionEffect::SuspectedNoop => cua_driver_contract::ActionEffect::SuspectedNoop,
+                ActionEffect::Refused => cua_driver_contract::ActionEffect::Refused,
+            },
+            route: match projection.route {
+                ActionRoute::Accessibility => cua_driver_contract::ActionRoute::Accessibility,
+                ActionRoute::SyntheticEvents => cua_driver_contract::ActionRoute::SyntheticEvents,
+                ActionRoute::GlobalInput => cua_driver_contract::ActionRoute::GlobalInput,
+                ActionRoute::Dom => cua_driver_contract::ActionRoute::Dom,
+                ActionRoute::TrustedInput => cua_driver_contract::ActionRoute::TrustedInput,
+            },
+            delivery: projection
+                .delivery
+                .map(|delivery| cua_driver_contract::ActionDelivery {
+                    mode: match delivery.actual {
+                        ActualDelivery::Background => {
+                            cua_driver_contract::ActionDeliveryMode::Background
+                        }
+                        ActualDelivery::Foreground => {
+                            cua_driver_contract::ActionDeliveryMode::Foreground
+                        }
+                        ActualDelivery::NotApplicable => {
+                            cua_driver_contract::ActionDeliveryMode::NotApplicable
+                        }
+                        ActualDelivery::Unknown => cua_driver_contract::ActionDeliveryMode::Unknown,
+                    },
+                    delivered_count: delivery.delivered_count,
+                }),
+            evidence: projection.evidence.map(|evidence| {
+                evidence
+                    .into_iter()
+                    .map(|evidence| cua_driver_contract::ActionEvidence {
+                        kind: match evidence.kind {
+                            ProjectedEvidenceKind::AccessibilityReadback
+                            | ProjectedEvidenceKind::BrowserReadback => {
+                                cua_driver_contract::ActionEvidenceKind::ValueReadback
+                            }
+                            ProjectedEvidenceKind::WindowChange => {
+                                cua_driver_contract::ActionEvidenceKind::WindowChange
+                            }
+                        },
+                    })
+                    .collect()
+            }),
+            escalation: projection.escalation.map(|escalation| {
+                use cua_driver_contract::{
+                    ActionEscalation, ActionEscalationReason, ActionEscalationTarget,
+                };
+
+                let (target, reason) = match escalation.kind {
+                    EscalationKind::ActivateTarget
+                    | EscalationKind::RetryWithForegroundDelivery => (
+                        ActionEscalationTarget::Foreground,
+                        ActionEscalationReason::DeliveryFailed,
+                    ),
+                    EscalationKind::RetryWithPixelTarget => (
+                        ActionEscalationTarget::Pixel,
+                        ActionEscalationReason::EffectUnconfirmed,
+                    ),
+                    EscalationKind::RetryWithPageAction => (
+                        ActionEscalationTarget::Page,
+                        ActionEscalationReason::EffectUnconfirmed,
+                    ),
+                    EscalationKind::RefreshPageState => (
+                        ActionEscalationTarget::Page,
+                        ActionEscalationReason::RouteUnavailable,
+                    ),
+                    EscalationKind::RequestPermission | EscalationKind::ElevateAccess => (
+                        ActionEscalationTarget::Session,
+                        ActionEscalationReason::PermissionRequired,
+                    ),
+                    EscalationKind::ExpandCaptureScope => (
+                        ActionEscalationTarget::Session,
+                        ActionEscalationReason::RouteUnavailable,
+                    ),
+                    EscalationKind::PrepareSession => (
+                        ActionEscalationTarget::Session,
+                        ActionEscalationReason::RouteUnavailable,
+                    ),
+                };
+                ActionEscalation {
+                    target,
+                    reason: if projection.effect == ActionEffect::SuspectedNoop
+                        && reason != ActionEscalationReason::PermissionRequired
+                    {
+                        ActionEscalationReason::SuspectedNoop
+                    } else {
+                        reason
+                    },
+                }
+            }),
+        })
+    }
+
     /// Normalize the legacy hand-written payload at the canonical dispatch
-    /// seam without changing the MCP bytes returned by the tool.
+    /// seam before replacing it with the closed public action contract.
     ///
     /// This compatibility adapter is intentionally conservative: it reports
     /// `Unknown` rather than copying a requested delivery mode when the old
@@ -298,22 +411,17 @@ impl ActionExecutionRecord {
         let transport = transport_from_legacy(tool_name, args, raw_path)?;
         let effect = legacy_effect(structured);
         let actual_delivery =
-            actual_delivery_from_legacy(tool_name, args, raw_path, transport, effect);
+            actual_delivery_from_legacy(tool_name, args, structured, raw_path, transport, effect);
 
         let mut record = Self::new(effect, transport, requested_delivery);
         record.actual_delivery = actual_delivery;
         record.delivered_count = structured
             .get("delivered_chars")
-            .or_else(|| structured.get("characters"))
-            .or_else(|| structured.get("chars"))
+            .or_else(|| structured.pointer("/refusal/detail/delivered_chars"))
             .and_then(serde_json::Value::as_u64)
             .and_then(|count| u32::try_from(count).ok());
 
-        if structured
-            .get("verified")
-            .and_then(serde_json::Value::as_bool)
-            == Some(true)
-        {
+        if legacy_has_publishable_readback(tool_name, structured) {
             record.evidence.push(ActionEvidence {
                 kind: if matches!(
                     transport,
@@ -352,6 +460,11 @@ impl ActionExecutionRecord {
                         .map(str::to_owned),
                 });
             }
+        } else if let Some(code) = structured
+            .pointer("/refusal/code")
+            .and_then(serde_json::Value::as_str)
+        {
+            record.escalation = browser_refusal_escalation(code);
         }
         if effect == ActionEffect::Partial && record.delivered_count.is_none() {
             return None;
@@ -400,26 +513,7 @@ impl ActionExecutionRecord {
 }
 
 pub fn is_action_tool(tool_name: &str) -> bool {
-    matches!(
-        tool_name,
-        "click"
-            | "double_click"
-            | "right_click"
-            | "scroll"
-            | "drag"
-            | "mouse_drag"
-            | "parallel_mouse_drag"
-            | "move_cursor"
-            | "mouse_button_down"
-            | "mouse_button_up"
-            | "type_text"
-            | "type_text_chars"
-            | "press_key"
-            | "hotkey"
-            | "set_value"
-            | "browser_click"
-            | "browser_type"
-    )
+    cua_driver_contract::is_action_result_tool(tool_name)
 }
 
 fn requested_delivery(tool_name: &str, args: &serde_json::Value) -> RequestedDelivery {
@@ -432,7 +526,11 @@ fn requested_delivery(tool_name: &str, args: &serde_json::Value) -> RequestedDel
         _ if args.get("scope").and_then(serde_json::Value::as_str) == Some("desktop") => {
             RequestedDelivery::NotApplicable
         }
-        _ if matches!(tool_name, "browser_click" | "browser_type") => {
+        _ if matches!(
+            tool_name,
+            "browser_click" | "browser_pointer" | "browser_type"
+        ) =>
+        {
             RequestedDelivery::NotApplicable
         }
         _ => RequestedDelivery::Background,
@@ -440,6 +538,21 @@ fn requested_delivery(tool_name: &str, args: &serde_json::Value) -> RequestedDel
 }
 
 fn legacy_effect(structured: &serde_json::Value) -> ActionEffect {
+    if structured.get("status").and_then(serde_json::Value::as_str) == Some("refused") {
+        let is_partial = structured
+            .pointer("/refusal/code")
+            .and_then(serde_json::Value::as_str)
+            == Some("browser_input_incomplete")
+            && structured
+                .pointer("/refusal/detail/delivered_chars")
+                .and_then(serde_json::Value::as_u64)
+                .is_some_and(|count| count > 0);
+        return if is_partial {
+            ActionEffect::Partial
+        } else {
+            ActionEffect::Refused
+        };
+    }
     match structured.get("effect").and_then(serde_json::Value::as_str) {
         Some("confirmed") => ActionEffect::Confirmed,
         Some("partial") => ActionEffect::Partial,
@@ -447,6 +560,45 @@ fn legacy_effect(structured: &serde_json::Value) -> ActionEffect {
         Some("refused") => ActionEffect::Refused,
         _ => ActionEffect::Unverifiable,
     }
+}
+
+fn browser_refusal_escalation(code: &str) -> Option<ActionEscalation> {
+    let kind = match code {
+        "browser_consent_required" | "browser_consent_revoked" | "browser_origin_outside_scope" => {
+            EscalationKind::RequestPermission
+        }
+        "browser_requires_setup"
+        | "browser_route_unavailable"
+        | "browser_endpoint_owner_mismatch"
+        | "browser_reconnect_exhausted" => EscalationKind::PrepareSession,
+        "browser_binding_ambiguous"
+        | "browser_binding_stale"
+        | "browser_wrong_target_refused"
+        | "browser_tab_required"
+        | "browser_tab_not_found"
+        | "browser_ref_stale"
+        | "browser_input_trust_unavailable"
+        | "browser_action_unavailable" => EscalationKind::RefreshPageState,
+        // A delivered prefix is already represented by `effect: partial` and
+        // `delivery.delivered_count`; verification decides whether to stop.
+        "browser_input_incomplete" => return None,
+        _ => return None,
+    };
+    Some(ActionEscalation { kind, detail: None })
+}
+
+/// Legacy `verified` was not a sufficient proof by itself: some action
+/// producers used it as a delivery acknowledgement, and clicks have no
+/// independent postcondition read-back. Only value-changing tools whose
+/// platform implementations compare a fresh value against the request may
+/// promote that legacy bit to publishable evidence.
+fn legacy_has_publishable_readback(tool_name: &str, structured: &serde_json::Value) -> bool {
+    matches!(tool_name, "type_text" | "type_text_chars" | "set_value")
+        && structured
+            .get("verified")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true)
+        && structured.get("effect").and_then(serde_json::Value::as_str) == Some("confirmed")
 }
 
 fn transport_from_legacy(
@@ -477,6 +629,7 @@ fn transport_from_legacy(
                 }
             }
         }
+        "uia" if tool_name == "scroll" => ActionTransport::WindowsUiaScroll,
         "uia" => ActionTransport::WindowsUiaInvoke,
         "uia_expand_collapse" => ActionTransport::WindowsUiaExpandCollapse,
         "msaa" => ActionTransport::WindowsMsaaAction,
@@ -484,6 +637,7 @@ fn transport_from_legacy(
         "SendInput" => ActionTransport::WindowsSendInput,
         "SetCursorPos" => ActionTransport::WindowsSetCursorPos,
         "atspi" | "wayland_atspi" | "x11_atspi" => ActionTransport::LinuxAtSpiAction,
+        "pty" => ActionTransport::LinuxPty,
         "x11_pixel" | "x11_pixel_fg" | "x11_xtest_fg" | "xtest" | "xtest_desktop" => {
             ActionTransport::LinuxXTest
         }
@@ -493,12 +647,52 @@ fn transport_from_legacy(
             ActionTransport::LinuxCuaCompositorInject
         }
         "hid" | "cgevent_hid" | "cgevent_fg" => ActionTransport::MacosCgEventHid,
-        "cgevent" => ActionTransport::MacosCgEventPid,
+        "cgevent" => {
+            if args
+                .get("delivery_mode")
+                .and_then(serde_json::Value::as_str)
+                == Some("foreground")
+            {
+                ActionTransport::MacosCgEventHid
+            } else {
+                ActionTransport::MacosCgEventPid
+            }
+        }
         "dom_event" => ActionTransport::BrowserCdpRuntimeFunction,
         "trusted" => ActionTransport::BrowserCdpInputMouse,
         "key_events" | "key_events_fg" => {
+            let foreground = path.ends_with("_fg")
+                || args
+                    .get("delivery_mode")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("foreground");
             if cfg!(target_os = "macos") {
-                if path.ends_with("_fg") {
+                if foreground {
+                    ActionTransport::MacosCgEventHid
+                } else {
+                    ActionTransport::MacosCgEventPid
+                }
+            } else if cfg!(target_os = "windows") {
+                if foreground {
+                    ActionTransport::WindowsSendInput
+                } else {
+                    ActionTransport::WindowsPostMessage
+                }
+            } else {
+                if foreground {
+                    ActionTransport::LinuxXTest
+                } else {
+                    ActionTransport::LinuxXSendEvent
+                }
+            }
+        }
+        "pixel" => {
+            if cfg!(target_os = "macos") {
+                if args
+                    .get("delivery_mode")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("foreground")
+                {
                     ActionTransport::MacosCgEventHid
                 } else {
                     ActionTransport::MacosCgEventPid
@@ -511,26 +705,13 @@ fn transport_from_legacy(
                 {
                     ActionTransport::WindowsSendInput
                 } else {
-                    ActionTransport::WindowsPostMessage
+                    ActionTransport::WindowsTargetedInjection
                 }
-            } else {
-                if path.ends_with("_fg") {
-                    ActionTransport::LinuxXTest
-                } else {
-                    ActionTransport::LinuxXSendEvent
-                }
-            }
-        }
-        "pixel" => {
-            if cfg!(target_os = "macos") {
-                ActionTransport::MacosCgEventPid
-            } else if cfg!(target_os = "windows") {
-                ActionTransport::WindowsTargetedInjection
             } else {
                 ActionTransport::LinuxXTest
             }
         }
-        "" if tool_name == "browser_click" => {
+        "" if matches!(tool_name, "browser_click" | "browser_pointer") => {
             if args.get("input_route").and_then(serde_json::Value::as_str) == Some("dom_event") {
                 ActionTransport::BrowserCdpRuntimeFunction
             } else {
@@ -596,9 +777,25 @@ fn transport_from_legacy(
         ) =>
         {
             if cfg!(target_os = "macos") {
-                ActionTransport::MacosCgEventPid
+                if args
+                    .get("delivery_mode")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("foreground")
+                {
+                    ActionTransport::MacosCgEventHid
+                } else {
+                    ActionTransport::MacosCgEventPid
+                }
             } else if cfg!(target_os = "windows") {
-                ActionTransport::WindowsTargetedInjection
+                if args
+                    .get("delivery_mode")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("foreground")
+                {
+                    ActionTransport::WindowsSendInput
+                } else {
+                    ActionTransport::WindowsTargetedInjection
+                }
             } else {
                 ActionTransport::LinuxXTest
             }
@@ -611,6 +808,7 @@ fn transport_from_legacy(
 fn actual_delivery_from_legacy(
     tool_name: &str,
     args: &serde_json::Value,
+    structured: &serde_json::Value,
     raw_path: Option<&str>,
     transport: ActionTransport,
     effect: ActionEffect,
@@ -618,13 +816,20 @@ fn actual_delivery_from_legacy(
     if effect == ActionEffect::Refused {
         return None;
     }
-    if matches!(tool_name, "browser_click" | "browser_type") {
+    if matches!(
+        tool_name,
+        "browser_click" | "browser_pointer" | "browser_type"
+    ) {
         return Some(ActualDelivery::Background);
     }
     if transport == ActionTransport::AgentCursorOverlay
         || args.get("scope").and_then(serde_json::Value::as_str) == Some("desktop")
     {
         return Some(ActualDelivery::NotApplicable);
+    }
+    match structured_delivery_mode(args, structured) {
+        Some(delivery) => return Some(delivery),
+        None => {}
     }
     match raw_path {
         Some(path) if path.ends_with("_fg") => Some(ActualDelivery::Foreground),
@@ -633,6 +838,31 @@ fn actual_delivery_from_legacy(
         }
         Some(_) => Some(ActualDelivery::Background),
         None => Some(ActualDelivery::Unknown),
+    }
+}
+
+/// Successful legacy foreground branches either complete their activation and
+/// dispatch or return an error. The request therefore identifies the executed
+/// branch even when the old payload omitted a path or reused a background path
+/// label such as Windows `pixel`. Prefer an explicit producer-emitted mode when
+/// one exists.
+fn structured_delivery_mode(
+    args: &serde_json::Value,
+    structured: &serde_json::Value,
+) -> Option<ActualDelivery> {
+    let mode = structured
+        .get("delivery_mode")
+        .or_else(|| args.get("delivery_mode"))
+        .and_then(serde_json::Value::as_str);
+    match mode {
+        Some("foreground") => Some(ActualDelivery::Foreground),
+        Some("background") if structured.get("delivery_mode").is_some() => {
+            Some(ActualDelivery::Background)
+        }
+        // A requested background mode alone is not proof when the legacy
+        // producer returned no route. Keep it unknown until the path branch
+        // below establishes background delivery.
+        _ => None,
     }
 }
 
@@ -712,9 +942,11 @@ fn escalation_kind_name(kind: EscalationKind) -> &'static str {
         EscalationKind::ActivateTarget => "activate_target",
         EscalationKind::RetryWithPixelTarget => "retry_with_pixel_target",
         EscalationKind::RetryWithPageAction => "retry_with_page_action",
+        EscalationKind::RefreshPageState => "refresh_page_state",
         EscalationKind::RequestPermission => "request_permission",
         EscalationKind::ElevateAccess => "elevate_access",
         EscalationKind::ExpandCaptureScope => "expand_capture_scope",
+        EscalationKind::PrepareSession => "prepare_session",
         EscalationKind::RetryWithForegroundDelivery => "retry_with_foreground_delivery",
     }
 }
@@ -741,6 +973,7 @@ fn transport_name(transport: ActionTransport) -> &'static str {
         ActionTransport::WindowsShellExecute => "windows_shell_execute",
         ActionTransport::LinuxAtSpiAction => "linux_at_spi_action",
         ActionTransport::LinuxAtSpiValue => "linux_at_spi_value",
+        ActionTransport::LinuxPty => "linux_pty",
         ActionTransport::LinuxXSendEvent => "linux_x_send_event",
         ActionTransport::LinuxXTest => "linux_x_test",
         ActionTransport::LinuxLibei => "linux_libei",
@@ -916,6 +1149,18 @@ mod tests {
             .validate(),
             Err(ActionRecordValidationError::PartialRequiresDeliveredCount)
         );
+
+        let mut record = ActionExecutionRecord::new(
+            ActionEffect::Partial,
+            ActionTransport::WindowsSendInput,
+            RequestedDelivery::Foreground,
+        );
+        record.delivered_count = Some(1);
+        assert_eq!(
+            record.validate(),
+            Err(ActionRecordValidationError::PartialRequiresDeliveredCount),
+            "a count without an actual delivery cannot form a valid public partial result"
+        );
     }
 
     #[test]
@@ -991,6 +1236,130 @@ mod tests {
     }
 
     #[test]
+    fn escalation_projection_preserves_decision_critical_reasons() {
+        use cua_driver_contract::{ActionEscalationReason, ActionEscalationTarget};
+
+        let cases = [
+            (
+                EscalationKind::RetryWithPixelTarget,
+                ActionEscalationTarget::Pixel,
+                ActionEscalationReason::EffectUnconfirmed,
+            ),
+            (
+                EscalationKind::RetryWithPageAction,
+                ActionEscalationTarget::Page,
+                ActionEscalationReason::EffectUnconfirmed,
+            ),
+            (
+                EscalationKind::RefreshPageState,
+                ActionEscalationTarget::Page,
+                ActionEscalationReason::RouteUnavailable,
+            ),
+            (
+                EscalationKind::RetryWithForegroundDelivery,
+                ActionEscalationTarget::Foreground,
+                ActionEscalationReason::DeliveryFailed,
+            ),
+            (
+                EscalationKind::RequestPermission,
+                ActionEscalationTarget::Session,
+                ActionEscalationReason::PermissionRequired,
+            ),
+            (
+                EscalationKind::ExpandCaptureScope,
+                ActionEscalationTarget::Session,
+                ActionEscalationReason::RouteUnavailable,
+            ),
+            (
+                EscalationKind::PrepareSession,
+                ActionEscalationTarget::Session,
+                ActionEscalationReason::RouteUnavailable,
+            ),
+        ];
+
+        for (kind, target, reason) in cases {
+            let result = ActionExecutionRecord::builder(
+                ActionEffect::Unverifiable,
+                ActionTransport::MacosCgEventPid,
+                RequestedDelivery::Background,
+            )
+            .escalation(ActionEscalation { kind, detail: None })
+            .build()
+            .unwrap()
+            .public_result()
+            .unwrap();
+            assert_eq!(
+                result.escalation,
+                Some(cua_driver_contract::ActionEscalation { target, reason })
+            );
+        }
+
+        let permission = ActionExecutionRecord::builder(
+            ActionEffect::SuspectedNoop,
+            ActionTransport::MacosCgEventPid,
+            RequestedDelivery::Background,
+        )
+        .escalation(ActionEscalation {
+            kind: EscalationKind::RequestPermission,
+            detail: None,
+        })
+        .build()
+        .unwrap()
+        .public_result()
+        .unwrap();
+        assert_eq!(
+            permission.escalation.unwrap().reason,
+            ActionEscalationReason::PermissionRequired,
+            "suspected-noop classification must not hide a permission blocker"
+        );
+    }
+
+    #[test]
+    fn public_result_is_the_closed_contract_not_a_serialized_debug_record() {
+        let result = ActionExecutionRecord::builder(
+            ActionEffect::Confirmed,
+            ActionTransport::MacosAxValue,
+            RequestedDelivery::Background,
+        )
+        .actual_delivery(ActualDelivery::Background)
+        .evidence(ActionEvidence {
+            kind: EvidenceKind::AccessibilityReadback,
+            detail: "secret request-adjacent diagnostic".to_owned(),
+        })
+        .detail("pid=42 window_id=7 x=10 y=20")
+        .build()
+        .unwrap()
+        .public_result()
+        .unwrap();
+
+        let value = serde_json::to_value(result).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "effect": "confirmed",
+                "route": "accessibility",
+                "delivery": {"mode": "background"},
+                "evidence": [{"kind": "value_readback"}]
+            })
+        );
+        let rendered = value.to_string();
+        for forbidden in [
+            "secret",
+            "pid",
+            "window_id",
+            "\"x\"",
+            "\"y\"",
+            "macos_ax_value",
+            "requested_delivery",
+        ] {
+            assert!(
+                !rendered.contains(forbidden),
+                "public ActionResult leaked {forbidden}: {rendered}"
+            );
+        }
+    }
+
+    #[test]
     fn confirmed_rejects_debug_only_evidence() {
         let record = ActionExecutionRecord::builder(
             ActionEffect::Confirmed,
@@ -1009,7 +1378,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_normalization_preserves_wire_facts_without_echoing_target() {
+    fn legacy_value_readback_preserves_truth_without_echoing_target() {
         let args = serde_json::json!({
             "pid": 42,
             "window_id": 77,
@@ -1023,7 +1392,7 @@ mod tests {
             "verify": "confirmed",
             "effect": "confirmed",
         });
-        let record = ActionExecutionRecord::from_legacy("click", &args, &structured)
+        let record = ActionExecutionRecord::from_legacy("type_text", &args, &structured)
             .expect("legacy action should normalize");
         assert_eq!(record.effect, ActionEffect::Confirmed);
         assert_eq!(record.requested_delivery, RequestedDelivery::Background);
@@ -1034,6 +1403,189 @@ mod tests {
         assert!(!rendered.contains("\"window_id\""));
         assert!(!rendered.contains("\"x\""));
         assert!(!rendered.contains("\"y\""));
+    }
+
+    #[test]
+    fn legacy_pointer_and_key_acknowledgements_cannot_become_confirmed() {
+        for tool in [
+            "click",
+            "double_click",
+            "right_click",
+            "scroll",
+            "drag",
+            "mouse_drag",
+            "parallel_mouse_drag",
+            "mouse_button_down",
+            "mouse_button_up",
+            "press_key",
+            "hotkey",
+        ] {
+            let record = ActionExecutionRecord::from_legacy(
+                tool,
+                &serde_json::json!({"delivery_mode": "background"}),
+                &serde_json::json!({
+                    "path": "ax",
+                    "verified": true,
+                    "verify": "confirmed",
+                    "effect": "confirmed",
+                }),
+            )
+            .unwrap_or_else(|| panic!("{tool} legacy action should normalize"));
+            assert_eq!(
+                record.effect,
+                ActionEffect::Unverifiable,
+                "{tool} cannot confirm from a delivery acknowledgement"
+            );
+            assert!(record.evidence.is_empty());
+        }
+    }
+
+    #[test]
+    fn browser_pointer_routes_share_the_closed_action_contract() {
+        for (input_route, expected_route) in [
+            ("trusted", cua_driver_contract::ActionRoute::TrustedInput),
+            ("dom_event", cua_driver_contract::ActionRoute::Dom),
+        ] {
+            let args = serde_json::json!({
+                "session": "browser-test",
+                "target_id": "secret-target",
+                "tab_id": "secret-tab",
+                "action": "drag",
+                "ref": "secret-ref",
+                "destination_ref": "secret-destination",
+                "input_route": input_route,
+            });
+            let structured = serde_json::json!({
+                "status": "ok",
+                "route": input_route,
+                "target_id": "secret-target",
+                "tab_id": "secret-tab",
+                "ref": "secret-ref",
+                "destination_ref": "secret-destination",
+                "x": 10,
+                "y": 20,
+            });
+            let record = ActionExecutionRecord::from_legacy("browser_pointer", &args, &structured)
+                .expect("browser pointer action should normalize");
+            let public = record
+                .public_result()
+                .expect("browser pointer action should publish");
+            assert_eq!(
+                public.effect,
+                cua_driver_contract::ActionEffect::Unverifiable
+            );
+            assert_eq!(public.route, expected_route);
+            assert_eq!(
+                public.delivery.as_ref().map(|delivery| delivery.mode),
+                Some(cua_driver_contract::ActionDeliveryMode::Background)
+            );
+            let rendered = serde_json::to_string(&public).expect("serialize ActionResult");
+            for forbidden in [
+                "secret-target",
+                "secret-tab",
+                "secret-ref",
+                "secret-destination",
+                "\"x\"",
+                "\"y\"",
+            ] {
+                assert!(
+                    !rendered.contains(forbidden),
+                    "browser ActionResult leaked {forbidden}: {rendered}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn browser_refusals_and_partial_delivery_survive_projection() {
+        let refused = ActionExecutionRecord::from_legacy(
+            "browser_click",
+            &serde_json::json!({"input_route": "trusted"}),
+            &serde_json::json!({
+                "status": "refused",
+                "refusal": {
+                    "code": "browser_ref_stale",
+                    "message": "refresh browser state"
+                }
+            }),
+        )
+        .expect("browser refusal should normalize");
+        let refused = refused.public_result().expect("refusal should project");
+        assert_eq!(refused.effect, cua_driver_contract::ActionEffect::Refused);
+        assert!(refused.delivery.is_none());
+        assert_eq!(
+            refused.escalation,
+            Some(cua_driver_contract::ActionEscalation {
+                target: cua_driver_contract::ActionEscalationTarget::Page,
+                reason: cua_driver_contract::ActionEscalationReason::RouteUnavailable,
+            })
+        );
+
+        let partial = ActionExecutionRecord::from_legacy(
+            "browser_type",
+            &serde_json::json!({}),
+            &serde_json::json!({
+                "status": "refused",
+                "refusal": {
+                    "code": "browser_input_incomplete",
+                    "message": "typing stopped",
+                    "detail": {
+                        "requested_chars": 4,
+                        "delivered_chars": 2
+                    }
+                }
+            }),
+        )
+        .expect("partial browser input should normalize");
+        let partial = partial.public_result().expect("partial should project");
+        assert_eq!(partial.effect, cua_driver_contract::ActionEffect::Partial);
+        assert_eq!(
+            partial
+                .delivery
+                .as_ref()
+                .and_then(|delivery| delivery.delivered_count),
+            Some(2)
+        );
+        assert!(partial.escalation.is_none());
+    }
+
+    #[test]
+    fn successful_foreground_pixel_branch_reports_actual_global_delivery() {
+        let record = ActionExecutionRecord::from_legacy(
+            "click",
+            &serde_json::json!({"delivery_mode": "foreground"}),
+            &serde_json::json!({
+                "path": "pixel",
+                "verified": false,
+                "effect": "unverifiable",
+            }),
+        )
+        .expect("foreground pixel action should normalize");
+        assert_eq!(record.actual_delivery, Some(ActualDelivery::Foreground));
+        assert_eq!(record.transport.route(), ActionRoute::GlobalInput);
+        let public = record.public_result().expect("public ActionResult");
+        assert_eq!(
+            public.delivery.map(|delivery| delivery.mode),
+            Some(cua_driver_contract::ActionDeliveryMode::Foreground)
+        );
+        assert_eq!(public.route, cua_driver_contract::ActionRoute::GlobalInput);
+    }
+
+    #[test]
+    fn producer_emitted_delivery_wins_over_requested_delivery() {
+        let record = ActionExecutionRecord::from_legacy(
+            "scroll",
+            &serde_json::json!({"delivery_mode": "foreground"}),
+            &serde_json::json!({
+                "path": "uia",
+                "delivery_mode": "background",
+                "verified": false,
+                "effect": "unverifiable",
+            }),
+        )
+        .expect("producer delivery fact should normalize");
+        assert_eq!(record.actual_delivery, Some(ActualDelivery::Background));
+        assert_eq!(record.transport.route(), ActionRoute::Accessibility);
     }
 
     #[test]
@@ -1050,6 +1602,41 @@ mod tests {
         .expect("legacy action should normalize");
         assert_eq!(record.effect, ActionEffect::Unverifiable);
         assert!(record.evidence.is_empty());
+        assert_eq!(
+            record.delivered_count, None,
+            "legacy request-count echoes are not delivery evidence"
+        );
+    }
+
+    #[test]
+    fn legacy_partial_requires_an_explicit_delivered_count() {
+        assert!(
+            ActionExecutionRecord::from_legacy(
+                "browser_type",
+                &serde_json::json!({}),
+                &serde_json::json!({
+                    "route": "trusted",
+                    "effect": "partial",
+                    "chars": 3,
+                    "requested_chars": 3,
+                }),
+            )
+            .is_none(),
+            "requested character counts must not be published as delivered counts"
+        );
+
+        let record = ActionExecutionRecord::from_legacy(
+            "browser_type",
+            &serde_json::json!({}),
+            &serde_json::json!({
+                "route": "trusted",
+                "effect": "partial",
+                "requested_chars": 3,
+                "delivered_chars": 2,
+            }),
+        )
+        .expect("an explicit delivered count should normalize");
+        assert_eq!(record.delivered_count, Some(2));
     }
 
     #[test]
@@ -1067,6 +1654,7 @@ mod tests {
             "atspi",
             "wayland_atspi",
             "x11_atspi",
+            "pty",
             "x11_pixel",
             "x11_pixel_fg",
             "x11_xtest_fg",

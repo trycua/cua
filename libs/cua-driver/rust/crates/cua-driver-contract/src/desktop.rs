@@ -8,11 +8,11 @@
 //! do not replace the richer platform-owned runtime schemas.
 
 use crate::{
-    ClickInput, ClickOutput, CursorAction, CursorPositionOutput, CursorSemantics,
-    DesktopActionOutput, DesktopStateOutput, DragInput, GetCursorPositionInput,
-    GetDesktopStateInput, GetScreenSizeInput, HotkeyInput, MoveCursorInput, MoveCursorOutput,
-    Platform, PressKeyInput, SchemaMode, ScreenSizeOutput, ScrollInput, ToolAnnotations,
-    ToolContract, ToolInput, ToolOutput, TypeTextInput,
+    ActionResult, ClickInput, CursorAction, CursorPositionOutput, CursorSemantics,
+    DesktopStateOutput, DragInput, GetCursorPositionInput, GetDesktopStateInput,
+    GetScreenSizeInput, HotkeyInput, MoveCursorInput, Platform, PressKeyInput, SchemaMode,
+    ScreenSizeOutput, ScrollInput, ToolAnnotations, ToolContract, ToolInput, ToolOutput,
+    TypeTextInput,
 };
 
 const ALL_PLATFORMS: [Platform; 3] = [Platform::Macos, Platform::Windows, Platform::Linux];
@@ -101,7 +101,7 @@ fn get_cursor_position() -> ToolContract {
 }
 
 fn move_cursor() -> ToolContract {
-    contract::<MoveCursorInput, MoveCursorOutput>(
+    contract::<MoveCursorInput, ActionResult>(
         "move_cursor",
         "Move the real OS pointer in get_desktop_state coordinates.",
         &["agent_cursor.move", "input.pointer.move"],
@@ -116,7 +116,7 @@ fn move_cursor() -> ToolContract {
 }
 
 fn click() -> ToolContract {
-    contract::<ClickInput, ClickOutput>(
+    contract::<ClickInput, ActionResult>(
         "click",
         "Click an absolute point in get_desktop_state coordinates without targeting a window.",
         &[
@@ -135,7 +135,7 @@ fn click() -> ToolContract {
 }
 
 fn drag() -> ToolContract {
-    contract::<DragInput, DesktopActionOutput>(
+    contract::<DragInput, ActionResult>(
         "drag",
         "Drag between two absolute points in get_desktop_state coordinates.",
         &["input.pointer.drag"],
@@ -150,7 +150,7 @@ fn drag() -> ToolContract {
 }
 
 fn scroll() -> ToolContract {
-    contract::<ScrollInput, DesktopActionOutput>(
+    contract::<ScrollInput, ActionResult>(
         "scroll",
         "Scroll at an absolute point in get_desktop_state coordinates.",
         &["input.pointer.scroll", "accessibility.element_tokens"],
@@ -165,7 +165,7 @@ fn scroll() -> ToolContract {
 }
 
 fn type_text() -> ToolContract {
-    contract::<TypeTextInput, DesktopActionOutput>(
+    contract::<TypeTextInput, ActionResult>(
         "type_text",
         "Type text into the current foreground desktop application.",
         &[
@@ -184,7 +184,7 @@ fn type_text() -> ToolContract {
 }
 
 fn press_key() -> ToolContract {
-    contract::<PressKeyInput, DesktopActionOutput>(
+    contract::<PressKeyInput, ActionResult>(
         "press_key",
         "Press one key, with optional modifiers, in the foreground desktop application.",
         &["input.keyboard.press", "accessibility.element_tokens"],
@@ -199,7 +199,7 @@ fn press_key() -> ToolContract {
 }
 
 fn hotkey() -> ToolContract {
-    contract::<HotkeyInput, DesktopActionOutput>(
+    contract::<HotkeyInput, ActionResult>(
         "hotkey",
         "Press a key chord in the foreground desktop application.",
         &["input.keyboard.hotkey"],

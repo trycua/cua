@@ -6,12 +6,12 @@
 import nativeModule from "./cua_driver_sdk-ffi.js";
 import { type UniffiRustFutureContinuationCallback, type UniffiForeignFutureDroppedCallback, type UniffiForeignFutureDroppedCallbackStruct, type UniffiVTableCallbackInterfaceCuaDriverSdkDriverActivityObserver, type UniffiForeignFutureResultRustBuffer, type UniffiForeignFutureCompleterustBuffer, type UniffiVTableCallbackInterfaceCuaDriverSdkDriverAuthorizationHost,
 } from "./cua_driver_sdk-ffi.js";
-import { type ClickInput, type DragInput, type EndSessionInput, type EndSessionOutput, type EscalateSessionInput, type GetAgentCursorStateInput, type GetCursorPositionInput, type GetDesktopStateInput, type GetScreenSizeInput, type GetSessionStateInput, type HotkeyInput, type MoveCursorInput, type PressKeyInput, type ScrollInput, type SessionStateOutput, type SetAgentCursorEnabledInput, type SetAgentCursorMotionInput, type SetAgentCursorThemeInput, type StartSessionInput, type StartSessionOutput, type TypeTextInput, type VerifyStateInput,
+import { type ActionResult, type ClickInput, type DragInput, type EndSessionInput, type EndSessionOutput, type EscalateSessionInput, type GetAgentCursorStateInput, type GetCursorPositionInput, type GetDesktopStateInput, type GetScreenSizeInput, type GetSessionStateInput, type HotkeyInput, type MoveCursorInput, type PressKeyInput, type ScrollInput, type SessionStateOutput, type SetAgentCursorEnabledInput, type SetAgentCursorMotionInput, type SetAgentCursorThemeInput, type StartSessionInput, type StartSessionOutput, type TypeTextInput, type VerifyStateInput, type VerifyStateOutput,
 } from "./cua_driver_contract.js";
 import { type FfiConverter, type UniffiByteArray, type UniffiGcObject, type UniffiHandle, type UniffiObjectFactory, type UniffiReferenceHolder, type UniffiRustCallStatus, AbstractFfiConverterByteArray, FfiConverterArray, FfiConverterBool, FfiConverterInt32, FfiConverterObject, FfiConverterObjectWithCallbacks, FfiConverterOptional, FfiConverterUInt32, FfiConverterUInt64, FfiConverterUInt8, RustBuffer, UniffiAbstractObject, UniffiEnum, UniffiError, UniffiInternalError, UniffiResult, UniffiRustCaller, destructorGuardSymbol, pointerLiteralSymbol, uniffiCreateFfiConverterString, uniffiCreateRecord, uniffiRustCallAsync, uniffiTraitInterfaceCall, uniffiTraitInterfaceCallAsyncWithError, uniffiTypeNameSymbol, variantOrdinalSymbol,
 } from "@ubjs/core";
 import uniffiCuaDriverContractModule from "./cua_driver_contract.js";
-const { FfiConverterTypeClickInput, FfiConverterTypeDragInput, FfiConverterTypeEndSessionInput, FfiConverterTypeEndSessionOutput, FfiConverterTypeEscalateSessionInput, FfiConverterTypeGetAgentCursorStateInput, FfiConverterTypeGetCursorPositionInput, FfiConverterTypeGetDesktopStateInput, FfiConverterTypeGetScreenSizeInput, FfiConverterTypeGetSessionStateInput, FfiConverterTypeHotkeyInput, FfiConverterTypeMoveCursorInput, FfiConverterTypePressKeyInput, FfiConverterTypeScrollInput, FfiConverterTypeSessionStateOutput, FfiConverterTypeSetAgentCursorEnabledInput, FfiConverterTypeSetAgentCursorMotionInput, FfiConverterTypeSetAgentCursorThemeInput, FfiConverterTypeStartSessionInput, FfiConverterTypeStartSessionOutput, FfiConverterTypeTypeTextInput, FfiConverterTypeVerifyStateInput } = uniffiCuaDriverContractModule.converters;
+const { FfiConverterTypeActionResult, FfiConverterTypeClickInput, FfiConverterTypeDragInput, FfiConverterTypeEndSessionInput, FfiConverterTypeEndSessionOutput, FfiConverterTypeEscalateSessionInput, FfiConverterTypeGetAgentCursorStateInput, FfiConverterTypeGetCursorPositionInput, FfiConverterTypeGetDesktopStateInput, FfiConverterTypeGetScreenSizeInput, FfiConverterTypeGetSessionStateInput, FfiConverterTypeHotkeyInput, FfiConverterTypeMoveCursorInput, FfiConverterTypePressKeyInput, FfiConverterTypeScrollInput, FfiConverterTypeSessionStateOutput, FfiConverterTypeSetAgentCursorEnabledInput, FfiConverterTypeSetAgentCursorMotionInput, FfiConverterTypeSetAgentCursorThemeInput, FfiConverterTypeStartSessionInput, FfiConverterTypeStartSessionOutput, FfiConverterTypeTypeTextInput, FfiConverterTypeVerifyStateInput, FfiConverterTypeVerifyStateOutput } = uniffiCuaDriverContractModule.converters;
 const uniffiCaller = new UniffiRustCaller(() => ({ code: 0 }));
 
 const uniffiIsDebug =
@@ -1142,7 +1142,8 @@ export type ToolResult = {
     structuredJson?: string,
     isError: boolean,
     errorCode?: string,
-    verified?: boolean,
+    action?: ActionResult,
+    verification?: VerifyStateOutput,
     degraded: boolean,
     rawJson: string
 }
@@ -1173,7 +1174,8 @@ const FfiConverterTypeToolResult = (() => {
                 structuredJson: FfiConverterOptionalString.read(from),
                 isError: FfiConverterBool.read(from),
                 errorCode: FfiConverterOptionalString.read(from),
-                verified: FfiConverterOptionalBoolean.read(from),
+                action: FfiConverterOptionalTypeActionResult.read(from),
+                verification: FfiConverterOptionalTypeVerifyStateOutput.read(from),
                 degraded: FfiConverterBool.read(from),
                 rawJson: FfiConverterString.read(from)
             };
@@ -1184,7 +1186,8 @@ const FfiConverterTypeToolResult = (() => {
             FfiConverterOptionalString.write(value.structuredJson, into);
             FfiConverterBool.write(value.isError, into);
             FfiConverterOptionalString.write(value.errorCode, into);
-            FfiConverterOptionalBoolean.write(value.verified, into);
+            FfiConverterOptionalTypeActionResult.write(value.action, into);
+            FfiConverterOptionalTypeVerifyStateOutput.write(value.verification, into);
             FfiConverterBool.write(value.degraded, into);
             FfiConverterString.write(value.rawJson, into);
         }
@@ -1194,7 +1197,8 @@ const FfiConverterTypeToolResult = (() => {
              FfiConverterOptionalString.allocationSize(value.structuredJson) +
              FfiConverterBool.allocationSize(value.isError) +
              FfiConverterOptionalString.allocationSize(value.errorCode) +
-             FfiConverterOptionalBoolean.allocationSize(value.verified) +
+             FfiConverterOptionalTypeActionResult.allocationSize(value.action) +
+             FfiConverterOptionalTypeVerifyStateOutput.allocationSize(value.verification) +
              FfiConverterBool.allocationSize(value.degraded) +
              FfiConverterString.allocationSize(value.rawJson);
 
@@ -5204,8 +5208,11 @@ const FfiConverterOptionalTypeEmbeddedPermissionMode = new FfiConverterOptional(
 // FfiConverter for Array<ImageContent>
 const FfiConverterSequenceTypeImageContent = new FfiConverterArray(FfiConverterTypeImageContent);
 
-// FfiConverter for boolean | undefined
-const FfiConverterOptionalBoolean = new FfiConverterOptional(FfiConverterBool);
+// FfiConverter for ActionResult | undefined
+const FfiConverterOptionalTypeActionResult = new FfiConverterOptional(FfiConverterTypeActionResult);
+
+// FfiConverter for VerifyStateOutput | undefined
+const FfiConverterOptionalTypeVerifyStateOutput = new FfiConverterOptional(FfiConverterTypeVerifyStateOutput);
 
 // FfiConverter for EmbeddedDriverConnection | undefined
 const FfiConverterOptionalTypeEmbeddedDriverConnection = new FfiConverterOptional(FfiConverterTypeEmbeddedDriverConnection);

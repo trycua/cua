@@ -5,8 +5,10 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  postcss: 8.5.10
+  js-yaml: 4.3.0
+  postcss: 8.5.18
   sharp: 0.35.0
+  tar: 7.5.18
 
 importers:
 
@@ -65,8 +67,8 @@ importers:
         specifier: ^1.6.6
         version: 1.6.6(@types/mdast@4.0.4)(@types/unist@3.0.3)
       postcss:
-        specifier: 8.5.10
-        version: 8.5.10
+        specifier: 8.5.18
+        version: 8.5.18
       prettier:
         specifier: ^3.6.2
         version: 3.6.2
@@ -1529,8 +1531,8 @@ packages:
     resolution: {integrity: sha512-rg9zJN+G4n2nfJl5MW3BMygZX56zKPNVEYYqq7adpmMh4Jn2QNEwhvQlFy6jPVdcod7txZtKHWnyZiA3a0zP7A==}
     hasBin: true
 
-  js-yaml@4.2.0:
-    resolution: {integrity: sha512-ePWsvanv0DWuDRsW8dnt+R4jQ31SCRCQ7hhNcPXZPsoBZiemuZNYGf7adZdqX2D86j6rvKp3RpCxVTSb8WQlOw==}
+  js-yaml@4.3.0:
+    resolution: {integrity: sha512-1td788aAnnZ5qs7V2QIRl1owjtYpbKt749Y3xauqQgwIIGF/xXWz1wMTEBx5O3LK3lXLVuqXPdPxj2BoFHaW9Q==}
     hasBin: true
 
   lightningcss-darwin-arm64@1.30.1:
@@ -1875,8 +1877,8 @@ packages:
     resolution: {integrity: sha512-8sLjZwK0R+JlxlYcTuVnyT2v+htpdrjDOKuMcOVdYjt52Lh8hWRYpxBPoKx/Zg+bcjc3wx6fmQevMmUztS/ccA==}
     engines: {node: '>=4'}
 
-  postcss@8.5.10:
-    resolution: {integrity: sha512-pMMHxBOZKFU6HgAZ4eyGnwXF/EvPGGqUr0MnZ5+99485wwW41kW91A4LOGxSHhgugZmSChL5AlElNdwlNgcnLQ==}
+  postcss@8.5.18:
+    resolution: {integrity: sha512-xdB1oSLHbz1vRWgCDalrCqEFTWzFlhqFC5tIHLMOSUIjhm3XXQ1qrFy8S/ESr1JYRRXqM3c1QFiMZUJdUTqyMQ==}
     engines: {node: ^10 || ^12 || >=14}
 
   prettier@3.6.2:
@@ -2057,8 +2059,8 @@ packages:
     resolution: {integrity: sha512-Re10+NauLTMCudc7T5WLFLAwDhQ0JWdrMK+9B2M8zR5hRExKmsRDCBA7/aV/pNJFltmBFO5BAMlQFi/vq3nKOg==}
     engines: {node: '>=6'}
 
-  tar@7.5.16:
-    resolution: {integrity: sha512-56adEpPMouktRlBLXiaYFFzZ/3+JXa8P9n7WbR+ibIjtviN55mEaOkiysCnPnWm+7kkui1Dn8J9l+g6zV8731w==}
+  tar@7.5.18:
+    resolution: {integrity: sha512-PwA+nJl+AzsS9hRqtNRRq8/kTdNPoOLEPXpz9WBaErNm4+TFedJyQFJLITWdsmIBnwNS/TwXf1NV5Ak1KITc8g==}
     engines: {node: '>=18'}
 
   tinyexec@1.0.2:
@@ -3012,7 +3014,7 @@ snapshots:
   '@tailwindcss/oxide@4.1.10':
     dependencies:
       detect-libc: 2.0.4
-      tar: 7.5.16
+      tar: 7.5.18
     optionalDependencies:
       '@tailwindcss/oxide-android-arm64': 4.1.10
       '@tailwindcss/oxide-darwin-arm64': 4.1.10
@@ -3032,7 +3034,7 @@ snapshots:
       '@alloc/quick-lru': 5.2.0
       '@tailwindcss/node': 4.1.10
       '@tailwindcss/oxide': 4.1.10
-      postcss: 8.5.10
+      postcss: 8.5.18
       tailwindcss: 4.1.10
 
   '@types/debug@4.1.12':
@@ -3332,7 +3334,7 @@ snapshots:
       esbuild: 0.25.12
       estree-util-value-to-estree: 3.5.0
       fumadocs-core: 16.0.8(@types/react@19.1.8)(lucide-react@0.525.0(react@19.2.0))(next@16.2.6(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
-      js-yaml: 4.2.0
+      js-yaml: 4.3.0
       lru-cache: 11.2.2
       mdast-util-to-markdown: 2.1.2
       picocolors: 1.1.1
@@ -3493,7 +3495,7 @@ snapshots:
 
   jiti@2.4.2: {}
 
-  js-yaml@4.2.0:
+  js-yaml@4.3.0:
     dependencies:
       argparse: 2.0.1
 
@@ -4013,7 +4015,7 @@ snapshots:
 
   next-validate-link@1.6.6(@types/mdast@4.0.4)(@types/unist@3.0.3):
     dependencies:
-      js-yaml: 4.2.0
+      js-yaml: 4.3.0
       picocolors: 1.1.1
       remark: 15.0.1
       remark-gfm: 4.0.1
@@ -4033,7 +4035,7 @@ snapshots:
       '@swc/helpers': 0.5.15
       baseline-browser-mapping: 2.10.38
       caniuse-lite: 1.0.30001799
-      postcss: 8.5.10
+      postcss: 8.5.18
       react: 19.2.0
       react-dom: 19.2.0(react@19.2.0)
       styled-jsx: 5.1.6(react@19.2.0)
@@ -4084,7 +4086,7 @@ snapshots:
       cssesc: 3.0.0
       util-deprecate: 1.0.2
 
-  postcss@8.5.10:
+  postcss@8.5.18:
     dependencies:
       nanoid: 3.3.15
       picocolors: 1.1.1
@@ -4330,7 +4332,7 @@ snapshots:
 
   tapable@2.2.2: {}
 
-  tar@7.5.16:
+  tar@7.5.18:
     dependencies:
       '@isaacs/fs-minipass': 4.0.1
       chownr: 3.0.0

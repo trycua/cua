@@ -47,8 +47,10 @@
   },
   "pnpm": {
     "overrides": {
-      "postcss": "8.5.10",
-      "sharp": "0.35.0"
+      "js-yaml": "4.3.0",
+      "postcss": "8.5.18",
+      "sharp": "0.35.0",
+      "tar": "7.5.18"
     }
   }
 }

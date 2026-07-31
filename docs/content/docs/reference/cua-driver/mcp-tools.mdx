@@ -12,7 +12,7 @@ description: Reference for every MCP tool Cua Driver exposes
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-`cua-driver` exposes 49 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
+`cua-driver` exposes 50 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
 
 Tool names are `snake_case`. Responses are MCP `CallTool.Result` envelopes: a text content block prefixed with a `✅` summary (or the error reason on failure), plus optional image or structured-content blocks on tools that produce them. See the [CLI reference](/reference/cua-driver/cli-reference) for CLI-specific options like `--socket` and `--screenshot-out-file`.
 
@@ -727,6 +727,25 @@ Install the ffmpeg binary used by start_recording's video capture (Linux/Windows
 - `confirm` (boolean, optional): Run the install command. Without it, only the planned command is reported.
 
 ## Other tools
+
+### `verify_state`
+
+Deterministically verify bounded predicates against one exact window. The driver evaluates structured window/accessibility state and may return the final screenshot as uninterpreted visual evidence for a multimodal caller. Predicate results are satisfied, unsatisfied, or unknown; unknown never implies success.
+
+**Arguments:**
+
+- `expect` (array of object, required): One to eight predicates, combined with logical AND.
+- `include_screenshot` (boolean,null, optional): Return the final window screenshot as image content for a multimodal
+caller. The driver does not interpret that image.
+- `pid` (integer, required): Exact process whose window may be observed.
+- `session` (string, optional): Optional session id for capture-scope and authorization continuity.
+- `stable_samples` (integer, optional): Consecutive satisfied samples required before returning success.
+- `timeout_ms` (integer, optional): Bounded wait. Zero performs one sample.
+- `window_id` (integer, required): Exact native window identifier.
+
+```json
+{"expect":["example"],"pid":844,"window_id":10725}
+```
 
 ### `set_agent_cursor_theme`
 

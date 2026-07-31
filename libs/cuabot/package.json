@@ -51,7 +51,7 @@
       "@hono/node-server": "1.19.13",
       "@modelcontextprotocol/sdk": "1.26.0",
       "ajv": "8.18.0",
-      "brace-expansion": "2.0.3",
+      "brace-expansion": "5.0.8",
       "fast-uri": "3.1.2",
       "hono": "4.12.25",
       "ip-address": "10.1.1",

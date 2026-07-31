@@ -18,6 +18,8 @@
 
 use cua_driver_core::tool::ToolRegistry;
 
+mod foreground_activation;
+
 pub mod diagnostics;
 pub mod health_report;
 pub mod overlay;

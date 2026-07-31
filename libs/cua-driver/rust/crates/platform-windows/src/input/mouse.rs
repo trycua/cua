@@ -18,8 +18,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::WindowsAndMessaging::{
     ChildWindowFromPointEx, GetAncestor, GetClassLongPtrW, GetCursorPos, GetForegroundWindow,
     GetSystemMetrics, GetWindowLongPtrW, PostMessageW, SetCursorPos, SetWindowPos, CS_DBLCLKS,
-    CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, CWP_SKIPTRANSPARENT, GA_ROOT, GCL_STYLE, GWL_EXSTYLE,
-    HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+    CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, CWP_SKIPTRANSPARENT, GA_ROOT, GA_ROOTOWNER, GCL_STYLE,
+    GWL_EXSTYLE, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
     SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WM_LBUTTONDBLCLK,
     WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE,
     WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WS_EX_TOPMOST,
@@ -661,7 +661,14 @@ fn send_click_synthesized_mods_impl(
         if activate {
             let foreground_root = GetAncestor(GetForegroundWindow(), GA_ROOT);
             let target_root = GetAncestor(target, GA_ROOT);
-            if foreground_root != target_root {
+            let foreground_root_owner = GetAncestor(foreground_root, GA_ROOTOWNER);
+            let target_root_owner = GetAncestor(target_root, GA_ROOTOWNER);
+            if !crate::foreground_activation::matches_target_family(
+                target_root.0 as usize,
+                target_root_owner.0 as usize,
+                foreground_root.0 as usize,
+                foreground_root_owner.0 as usize,
+            ) {
                 bail!("The foreground click did not activate its target window.");
             }
         }

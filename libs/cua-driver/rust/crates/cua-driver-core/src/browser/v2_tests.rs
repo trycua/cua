@@ -43,6 +43,7 @@ use super::types::{
 /// navigations, frame removal, and capability regression.
 #[derive(Debug)]
 struct FixtureState {
+    chrome_tab_window_routing: bool,
     oopif_supported: bool,
     oopif_present: bool,
     emit_rogue_attach: bool,
@@ -69,6 +70,7 @@ struct FixtureState {
 impl Default for FixtureState {
     fn default() -> Self {
         Self {
+            chrome_tab_window_routing: false,
             oopif_supported: true,
             oopif_present: true,
             emit_rogue_attach: false,
@@ -423,6 +425,19 @@ fn fixture_handler(state: SharedState) -> MockHandler {
         let is_oopif = sess.starts_with("oopif-sess-");
 
         match call.method.as_str() {
+            "Target.getTargets"
+                if st.chrome_tab_window_routing && call.params["filter"][0]["type"] == "tab" =>
+            {
+                MockReply::ok(json!({
+                    "targetInfos": [{
+                        "targetId": "TAB1",
+                        "type": "tab",
+                        "title": "Fixture",
+                        "url": "https://fixture.test/",
+                        "attached": false,
+                    }]
+                }))
+            }
             "Target.getTargets" => MockReply::ok(json!({
                 "targetInfos": [{
                     "targetId": "T1",
@@ -432,6 +447,11 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     "attached": false,
                 }]
             })),
+            "Browser.getWindowForTarget"
+                if st.chrome_tab_window_routing && call.params["targetId"] == "T1" =>
+            {
+                MockReply::err(-32000, "Browser window not found")
+            }
             "Browser.getWindowForTarget" => MockReply::ok(json!({ "windowId": 11 })),
             "Browser.getWindowBounds" => MockReply::ok(json!({
                 "bounds": { "left": 0.0, "top": 0.0, "width": 800.0, "height": 600.0 }
@@ -886,7 +906,13 @@ async fn fixture() -> Fixture {
 }
 
 async fn existing_profile_only_fixture() -> Fixture {
-    let state = Arc::new(StdMutex::new(FixtureState::default()));
+    existing_profile_only_fixture_with(|_| {}).await
+}
+
+async fn existing_profile_only_fixture_with(configure: impl FnOnce(&mut FixtureState)) -> Fixture {
+    let mut initial = FixtureState::default();
+    configure(&mut initial);
+    let state = Arc::new(StdMutex::new(initial));
     let server = MockCdpServer::start(fixture_handler(state.clone())).await;
     let setup_invoked = Arc::new(AtomicBool::new(false));
     let engine = BrowserEngine::new(Arc::new(FixturePlatform {
@@ -1045,6 +1071,46 @@ async fn approved_existing_profile_attach_claims_then_binds_one_generation() {
         .await;
     assert_eq!(structured(&state)["status"], "ok", "{}", structured(&state));
     crate::session::fire_session_end("transport-v2-attach");
+}
+
+#[tokio::test]
+async fn existing_profile_uses_chrome_tab_target_for_window_correlation() {
+    let f = existing_profile_only_fixture_with(|state| {
+        state.chrome_tab_window_routing = true;
+    })
+    .await;
+    let token = super::approval::mint_existing_profile_approval(
+        super::approval::ExistingProfileApprovalScope {
+            pid: 1,
+            window_id: 7,
+            session: SESSION.to_owned(),
+        },
+    )
+    .unwrap();
+    let prepared = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" },
+            "approval_token": token
+        }))
+        .await;
+    assert_eq!(structured(&prepared)["status"], "ok");
+
+    let state = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(json!({ "pid": 1, "window_id": 7, "session": SESSION }))
+        .await;
+    assert_eq!(structured(&state)["status"], "ok", "{}", structured(&state));
+    assert_eq!(structured(&state)["binding_quality"], "exact");
+
+    let calls = f.state.lock().unwrap().calls.clone();
+    assert!(calls.iter().any(|(_, method, params)| {
+        method == "Browser.getWindowForTarget" && params["targetId"] == "T1"
+    }));
+    assert!(calls.iter().any(|(_, method, params)| {
+        method == "Browser.getWindowForTarget" && params["targetId"] == "TAB1"
+    }));
 }
 
 #[tokio::test]

@@ -239,6 +239,14 @@ fn is_method_unsupported(error: &anyhow::Error) -> bool {
     error.to_string().contains("(-32601)")
 }
 
+/// Chrome 151 routes browser-window identity through the stable `tab` target
+/// while retaining `page` targets for renderer commands. The old page lookup
+/// now returns this exact server error instead of a window id.
+fn is_page_window_lookup_unsupported(error: &anyhow::Error) -> bool {
+    let message = error.to_string();
+    message.contains("(-32000)") && message.contains("Browser window not found")
+}
+
 fn is_semantic_document_size_error(error: &anyhow::Error) -> bool {
     let message = error.to_string().to_ascii_lowercase();
     [
@@ -972,6 +980,7 @@ impl BrowserEngine {
             })?;
 
         let mut out = Vec::new();
+        let mut tab_infos: Option<Vec<Value>> = None;
         for info in infos {
             if info.get("type").and_then(Value::as_str) != Some("page") {
                 continue;
@@ -1058,6 +1067,118 @@ impl BrowserEngine {
                 // shape; every transient/vanished-target error fails the
                 // whole proof rather than shrinking it to a false unique set.
                 Err(error) if is_method_unsupported(&error) => None,
+                Err(error) if is_page_window_lookup_unsupported(&error) => {
+                    let tabs = match &tab_infos {
+                        Some(tabs) => tabs,
+                        None => {
+                            let response = conn
+                                .call(
+                                    None,
+                                    "Target.getTargets",
+                                    json!({
+                                        "filter": [{ "type": "tab", "exclude": false }]
+                                    }),
+                                )
+                                .await
+                                .map_err(|error| {
+                                    route_err(
+                                        "Target.getTargets failed while resolving Chrome tab targets",
+                                        error,
+                                    )
+                                })?;
+                            let tabs = response
+                                .get("targetInfos")
+                                .and_then(Value::as_array)
+                                .cloned()
+                                .ok_or_else(|| {
+                                    refuse(
+                                        BrowserRefusalCode::BrowserRouteUnavailable,
+                                        "Target.getTargets returned no tab targetInfos array",
+                                    )
+                                })?;
+                            tab_infos.insert(tabs)
+                        }
+                    };
+                    let page_context = info.get("browserContextId").and_then(Value::as_str);
+                    let matches = tabs
+                        .iter()
+                        .filter(|tab| {
+                            tab.get("type").and_then(Value::as_str) == Some("tab")
+                                && tab.get("title").and_then(Value::as_str)
+                                    == info.get("title").and_then(Value::as_str)
+                                && tab.get("url").and_then(Value::as_str)
+                                    == info.get("url").and_then(Value::as_str)
+                                && tab.get("browserContextId").and_then(Value::as_str)
+                                    == page_context
+                        })
+                        .filter_map(|tab| tab.get("targetId").and_then(Value::as_str))
+                        .collect::<Vec<_>>();
+                    let [tab_target_id] = matches.as_slice() else {
+                        return Err(refuse(
+                            BrowserRefusalCode::BrowserRouteUnavailable,
+                            format!(
+                                "Chrome page target {target_id} has {} matching tab targets; exact window correlation requires one",
+                                matches.len()
+                            ),
+                        ));
+                    };
+                    let win = conn
+                        .call(
+                            None,
+                            "Browser.getWindowForTarget",
+                            json!({ "targetId": tab_target_id }),
+                        )
+                        .await
+                        .map_err(|error| {
+                            route_err(
+                                "Browser.getWindowForTarget failed for Chrome tab target",
+                                error,
+                            )
+                        })?;
+                    let window_id =
+                        win.get("windowId").and_then(Value::as_i64).ok_or_else(|| {
+                            refuse(
+                                BrowserRefusalCode::BrowserRouteUnavailable,
+                                "Browser.getWindowForTarget returned no windowId for Chrome tab target",
+                            )
+                        })?;
+                    let bounds_v = conn
+                        .call(
+                            None,
+                            "Browser.getWindowBounds",
+                            json!({ "windowId": window_id }),
+                        )
+                        .await
+                        .map_err(|error| {
+                            route_err(
+                                "Browser.getWindowBounds failed while proving the native window",
+                                error,
+                            )
+                        })?;
+                    let bounds = bounds_v.get("bounds").ok_or_else(|| {
+                        refuse(
+                            BrowserRefusalCode::BrowserRouteUnavailable,
+                            "Browser.getWindowBounds returned no bounds object",
+                        )
+                    })?;
+                    let number = |field: &str| {
+                        bounds.get(field).and_then(Value::as_f64).ok_or_else(|| {
+                            refuse(
+                                BrowserRefusalCode::BrowserRouteUnavailable,
+                                format!("Browser.getWindowBounds returned no numeric {field}"),
+                            )
+                        })
+                    };
+                    Some((
+                        window_id,
+                        Rect::new(
+                            number("left")?,
+                            number("top")?,
+                            number("width")?,
+                            number("height")?,
+                        ),
+                    ))
+                }
                 Err(error) => {
                     return Err(route_err(
                         "Browser.getWindowForTarget failed while proving the native window",

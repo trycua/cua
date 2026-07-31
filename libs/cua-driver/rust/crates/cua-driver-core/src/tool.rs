@@ -1239,6 +1239,24 @@ impl ToolRegistry {
             .flatten();
 
         let mut result = tool.invoke(args.clone()).await;
+        if result.action_record.is_none() {
+            if let Some(structured) = result.structured_content.as_ref() {
+                result.action_record = crate::action_record::ActionExecutionRecord::from_legacy(
+                    resolved_name,
+                    &public_args,
+                    structured,
+                );
+            } else if result.is_error != Some(true) {
+                // Some legacy successful actions return text only. Normalize
+                // them through an empty payload so internal accounting exists
+                // before the public contract cutover.
+                result.action_record = crate::action_record::ActionExecutionRecord::from_legacy(
+                    resolved_name,
+                    &public_args,
+                    &Value::Null,
+                );
+            }
+        }
         if resolved_name == "launch_app" && result.is_error != Some(true) {
             if let (Some(session), Some(before), Some(pid)) = (
                 runtime_session.as_deref(),
@@ -1314,7 +1332,11 @@ impl ToolRegistry {
                     }
                 })
                 .unwrap_or("");
-            self.recording.finish_turn(pending_turn, result_text);
+            self.recording.finish_turn_with_action(
+                pending_turn,
+                result_text,
+                result.action_record.as_ref(),
+            );
         }
 
         // Experimental PiP push — only when --experimental-pip is on argv
@@ -3290,6 +3312,18 @@ resources:
             .invoke_with_context("click", args.clone(), context.clone())
             .await;
         assert_ne!(first.is_error, Some(true));
+        let action = first
+            .action_record
+            .as_ref()
+            .expect("canonical dispatch should normalize legacy action truth");
+        assert_eq!(
+            action.effect,
+            crate::action_record::ActionEffect::Unverifiable
+        );
+        assert!(action
+            .debug_json()
+            .get("requested_delivery")
+            .is_some_and(|value| value == "background"));
         assert_eq!(hits.load(Ordering::SeqCst), 1);
 
         crate::session::fire_session_end(&runtime_session);

@@ -110,20 +110,24 @@ vision/computer-use-style flow, they can register:
 cua-driver mcp-config --client claude   # then paste + run the printed line
 ```
 
-Observation: Claude Code vision flows appear to treat a screenshot
-MCP tool as the image-grounding anchor. This compatibility mode keeps
-the normal CuaDriver tools and changes only `screenshot`. The
-compatibility `screenshot` requires `pid` and `window_id`, captures
-only that target window, and returns the window-local pixel
-coordinate frame. Start with `launch_app` or `list_windows`, then
-call `screenshot({pid, window_id})`; do not assume desktop
-coordinates or a full-screen capture.
+What that registration changes is the MCP **server name** — it becomes
+`cua-computer-use`, which is what triggers Claude Code's
+computer-use tool injection. The tool surface is unchanged.
 
-Use MCP for this Claude Code vision/computer-use-style path. Do not
-shell out to `cua-driver screenshot` as a substitute: CLI screenshots
-still work as CuaDriver calls, but they do not expose the
-`mcp__cua-computer-use__screenshot` tool name that Claude Code
-appears to use as the image-grounding cue.
+**On macOS there is no `screenshot` tool to anchor on.** The standalone
+and compat `screenshot` tools were removed in #1692
+(`platform-macos/src/tools/mod.rs`), so `--claude-code-computer-use-compat`
+no longer gates any tool swap — `cua-driver --help` says as much. There is
+no `screenshot` in `list-tools`, no `mcp__cua-computer-use__screenshot`,
+and no `cua-driver screenshot` CLI subcommand. Ground on the surfaces that
+do exist:
+
+- `get_window_state({pid, window_id})` — one window, tree + PNG, capped
+  at 1568 px on the long side.
+- `get_desktop_state` — the full primary display at native resolution,
+  no AX walk.
+- `zoom({pid, window_id, x1,y1,x2,y2})` — a magnified JPEG crop, with
+  `from_zoom:true` on the follow-up click to translate coordinates back.
 
 ## Using cua-driver from the shell
 
@@ -271,9 +275,16 @@ cua-driver get_session_state '{"session":"research-1"}'
 ```
 
 Do not use `config set capture_scope` or `set_config`; that key is retired and
-stale values on disk are ignored. Always pass the public `session` field on
-state and action calls. Reserved fields such as `_session_id` are transport
-metadata and cannot create or change policy.
+stale values on disk are ignored.
+
+**The policy binds to a declared session, so it is opt-in.** An anonymous call —
+one with no `session` field — is subject to no scope at all: `get_desktop_state
+'{}'` returns a full-display capture even while a declared `window`-scope session
+in the same daemon is correctly rejected with `code:"desktop_scope_disabled"`.
+Omitting `session` does not inherit the default policy, it escapes it. Always
+pass the public `session` field on state and action calls. Reserved fields
+such as `_session_id` are transport metadata and cannot create or change
+policy.
 
 During a mixed-version rollout, require `tools/list` to advertise
 `session.capture_scope` (and `session.capture_scope.escalate` for `auto`). If an
@@ -288,11 +299,37 @@ panels. Concrete reproducer: IINA's OpenSubtitles helper (600×432
 off-screen) out-area'd the visible 320×240 player window, so
 `get_app_state(pid)` screenshot'd the invisible panel and clicks landed
 there silently. The new `get_window_state(pid, window_id)` makes the
-caller name the window explicitly — the driver validates that the
-window belongs to the pid and is on the current Space/desktop, then
-snapshots exactly what was asked for. Enumerate candidates via
+caller name the window explicitly. Enumerate candidates via
 `list_windows` or read the `windows` array `launch_app` already
 returns.
+
+**On macOS the two halves of the response treat `window_id`
+differently**, which is worth knowing before you rely on it:
+
+- The **screenshot** honours it. Only a window that genuinely belongs to
+  that pid is captured — but when it does not, the frame is **omitted
+  silently**: no error, no `has_screenshot:false`, the `screenshot_*`
+  keys are simply absent. Test for the key rather than assuming a frame.
+- The **AX tree ignores it.** The walk is application-rooted, so a
+  nonexistent id, `0`, and an id owned by a *different process* all
+  return the same tree (measured: one app returned the identical 248
+  elements for all three). For the tree, `window_id` is only the
+  element-cache key, and the documented
+  `window_id W belongs to pid P, not …` error does not fire on this path.
+
+Two things follow. First, an app with **no layer-0 window at all** is
+still drivable: `list_windows` returns only layer-0 windows
+(`windows.rs`, the single `kCGWindowLayer` filter), so an `LSUIElement`
+menu-bar agent yields `[]` forever — yet passing any integer as
+`window_id` still returns its application-rooted tree, status item
+included. See "Menu-bar-only apps" in `MACOS.md`. Second, since the
+element cache is keyed `(pid, window_id)` and is replaced by **every**
+`get_window_state` on that key — including an
+`include_screenshot:false` one — a capture loop aimed at the same window
+as an in-flight element action will evict that action's indices, and the
+action then fails with `Element index N not found in cache` while the
+screenshot still looks plausible. Giving actions their own `window_id`
+key keeps the two from colliding.
 
 ## Behavior matrix
 
@@ -328,8 +365,10 @@ capture, no mode flip.
 > effect** — both the tree and the screenshot come back regardless of
 > what you pass (`ax`, `vision`, `som`, anything). There is no
 > `ax`/`vision`/`som` capture choice anymore. Drop the word "vision"
-> for perception entirely. (The tool named `screenshot` is separate —
-> raw PNG, no AX walk — and unrelated.)
+> for perception entirely. (Linux and Windows register a separate
+> `screenshot` tool — raw PNG, no AX walk — and it is unrelated. **macOS
+> has no `screenshot` tool**; it was removed in #1692. For a raw
+> full-display PNG with no AX walk there, use `get_desktop_state`.)
 
 ### The modality is chosen at ACTION time — `ax` vs `px`
 
@@ -380,12 +419,21 @@ at a pixel." So: text → `type_text` (ax+px); non-text control values →
 
 **Action responses carry an effect/escalation verdict**
 
-Every action response keeps `verified` (did the driver read back a
-post-condition?) and adds two machine-readable fields so you know
-whether — and where — to climb the ladder:
+The pointer and keyboard families (`click`, `double_click`,
+`right_click`, `drag`, `scroll`, `type_text`, `press_key`, `hotkey`)
+keep `verified` (did the driver read back a post-condition?) and add two
+machine-readable fields so you know whether — and where — to climb the
+ladder. **`set_value`, `type_text_chars`, `zoom` and `bring_to_front`
+return a bare text result with none of the three** — treat a missing
+`effect` as `unverifiable` and confirm off the re-snapshot yourself:
 
 - `effect`: one of
   - `"confirmed"` — the driver read back the effect (`ax` rung only).
+    **Not reachable for `click`**, whose own schema states "A click is
+    never driver-verifiable (no read-back), so both report
+    `verified:false`" — a successful AX click on a button returns
+    `unverifiable`. Verify a click by tree diff, not by waiting for
+    `confirmed`.
   - `"unverifiable"` — dispatched, but the driver has no handle to
     read back (every `px`/CGEvent path; foreground rung). **You**
     confirm it off the screenshot — it is not a failure.
@@ -467,7 +515,10 @@ if resp.escalation.recommended == "foreground"
 # Reach this only after AX, window-pixel, browser-page (when available), and
 # foreground-window delivery have all been exhausted and verified ineffective.
 escalate_session(session,
-    reason="foreground_ineffective",       # or another advertised reason
+    reason="foreground_ineffective",       # one of: ax_tree_pixel_mismatch |
+                                           # background_delivery_failed |
+                                           # foreground_ineffective |
+                                           # no_window_target | other
     detail="bounded non-sensitive summary")
 get_desktop_state(session)                  # full primary display
 desktop_action(session, scope="desktop", ...)  # no pid/window_id
@@ -520,7 +571,12 @@ from that exact full-display image and omit `pid`/`window_id`. The global
 
 `launch_app` now returns a `windows` array alongside the pid, so the
 common case collapses to two calls (`launch_app` → `get_window_state`)
-without a separate `list_windows` hop.
+without a separate `list_windows` hop. **On a cold launch that array is
+empty** — the process exists before its window does, so `windows[0]`
+throws on an app that was not already running. Either poll
+`list_windows({pid})` (the window appeared within ~400 ms for
+Calculator) or simply call `launch_app` again: it is idempotent and the
+second call returns the populated array.
 
 **Declare a session.** A session is _your run's_ identity — a stable id
 you choose (`"research-1"`), declared with `start_session` and passed as
@@ -576,11 +632,21 @@ the grab (a perf knob, not a modality choice).
 
 The response carries:
 
-- `tree_markdown` — every actionable element tagged `[N]`. That `N`
-  is the `element_index`. The tree can be very large (Finder is
-  ~1600 elements, ~190 KB); when it exceeds token limits the MCP
-  harness saves it to a file and returns the path. Use `Bash` +
-  `jq -r '.tree_markdown'` + `grep` to pull the section you need.
+- `elements` — the structured array, and the surface the response's own
+  `_note` asks new consumers to prefer: `element_index`,
+  `element_token`, `role`, `label`, `value`, `frame`, `parent_index`,
+  `depth`, `enabled`. Note `label` is **omitted**, not null, when an
+  element has none.
+- `tree_markdown` — the same tree rendered for text-parsing callers,
+  every actionable element tagged `[N]`. That `N` is the
+  `element_index`.
+- **Bound the tree at the source rather than grepping it afterwards.**
+  The tree can be very large (Finder is ~1600 elements, ~190 KB), but
+  `get_window_state` takes `query` (filters `tree_markdown` to matching
+  lines plus their ancestor chain, indices unchanged — a 222-element
+  Calculator tree collapses to 2 lines), plus `max_elements` /
+  `max_depth` to cap the walk. `max_elements:1` is also the cheap way
+  to take a screenshot without paying for the AX walk.
 - `effect` / `escalation` / `degraded` — the verify-then-escalate
   signals (see the behavior matrix above): `degraded: true` means the
   tree came back empty (non-AX surface), so you act by **`px`** off the
@@ -770,9 +836,13 @@ For precise targeting on small / dense UIs:
    disk via `--screenshot-out-file <path>`.
 2. Look at the PNG. Since it matches what you see, pick the target
    pixel directly.
-3. When precision matters, draw a crosshair on the image (do
-   **not** crop — cropping loses the coordinate system) and verify
-   before clicking:
+3. When precision matters, let the driver draw the crosshair: pass
+   `debug_image_out:"/tmp/shot_annotated.png"` on the click itself. It
+   captures a fresh frame, marks exactly the `(x, y)` it is about to
+   use, and writes the PNG (requires `window_id`; incompatible with
+   `from_zoom`) — so your marker cannot disagree with the driver's
+   maths. Only when you need the marker *before* dispatching, draw it
+   yourself (do **not** crop — cropping loses the coordinate system):
 
 ```python
 from PIL import Image, ImageDraw
@@ -857,7 +927,9 @@ and training data. Only invoke when the user explicitly asks to
 record a session — the skill does not auto-enable this. CLI surface:
 `cua-driver recording start|stop|status`; raw tools:
 `start_recording` / `stop_recording`. Video capture (main display →
-`recording.mp4`) is on by default; pass `record_video: false` to opt out.
+`recording.mp4`) is **off** by default; pass `record_video: true` to
+enable it. Note the `cua-driver recording start` CLI never sends that
+field, so the raw tool is the only surface that can turn video on.
 
 See **`RECORDING.md`** for the full flow: enable/disable, turn folder
 contents, replay via `replay_trajectory`, and the element_index

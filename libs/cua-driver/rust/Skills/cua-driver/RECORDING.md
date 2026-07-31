@@ -17,10 +17,14 @@ turn folder under a caller-chosen output directory. Read-only tools
 permission probes, agent-cursor getters / setters, and the recording
 controls themselves) are not recorded.
 
-**Video on by default.** `start_recording` also captures the main
-display to `<output_dir>/recording.mp4` (H.264 / 30 fps) for the
-lifetime of the session. The mp4 is finalized on `stop_recording`. Opt
-out with `record_video: false` when you don't want video.
+**Video is opt-in — it is OFF by default.** Pass `record_video: true`
+to `start_recording` to also capture the main display to
+`<output_dir>/recording.mp4` (H.264). The mp4 is finalized on
+`stop_recording`.
+
+`recording_tools.rs` takes `args.bool_or("record_video", false)`, the
+tool's own description says "**Video is off by default.**", and a live
+run without the flag returns `last_video_path: null` and writes no mp4.
 
 **macOS — native ScreenCaptureKit, zero-config.** On macOS the daemon's
 recorder uses `SCStream` + `SCRecordingOutput`, so it inherits the daemon's
@@ -45,7 +49,7 @@ tools, or the friendlier `cua-driver recording` subcommand group
 cua-driver recording start ~/cua-trajectories/run-1
 # … run the workflow …
 cua-driver recording status    # -> enabled / disabled, next_turn, output_dir
-cua-driver recording stop      # -> "Recording stopped. (video → recording.mp4)"
+cua-driver recording stop      # -> "Recording stopped."
 ```
 
 Raw-tool equivalent:

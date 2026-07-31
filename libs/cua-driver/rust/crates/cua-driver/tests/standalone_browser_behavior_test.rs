@@ -2800,10 +2800,10 @@ fn run_stale_ref(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
-            assert_eq!(
-                refused.structured()["refusal"]["code"],
-                "browser_ref_stale",
-                "{}",
+            assert_eq!(refused.action_effect(), Some("refused"), "{}", refused.raw);
+            assert!(
+                refused.text().contains("browser_ref_stale"),
+                "stale-ref refusal diagnostics must retain the precise code: {}",
                 refused.raw
             );
             wait_for_text(&fixture.server, "lbl-counter", "counter=0");

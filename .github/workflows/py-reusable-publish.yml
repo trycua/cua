@@ -50,7 +50,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Create root pdm.lock file
         run: |
@@ -60,7 +60,7 @@ jobs:
       - name: Install PDM
         uses: pdm-project/setup-pdm@v3
         with:
-          python-version: "3.11"
+          python-version: "3.12"
           cache: true
 
       - name: Set version

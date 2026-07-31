@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.14.1...cua-driver-rs-v0.14.2) (2026-07-31)
+
+
+### Bug Fixes
+
+* **cua-driver:** preserve Screen Sharing keyboard input ([#2698](https://github.com/trycua/cua/issues/2698)) ([61b1a84](https://github.com/trycua/cua/commit/61b1a84c9ede937fcc3f0c8a78aa78ac79d1421e))
+* **cua-driver:** reconcile macOS launch readiness ([#2697](https://github.com/trycua/cua/issues/2697)) ([771e016](https://github.com/trycua/cua/commit/771e0165e7ecd2566cbb17b793a863755a8d651f))
+
 ## [0.14.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.14.0...cua-driver-rs-v0.14.1) (2026-07-29)
 
 

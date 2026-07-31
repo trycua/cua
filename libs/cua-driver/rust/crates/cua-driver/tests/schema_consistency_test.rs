@@ -85,9 +85,12 @@ fn registered_tool_contracts_match_on_active_backend() {
 
         if is_action_result_tool(name) {
             let expected = ActionResult::output_schema();
-            if tool.get("outputSchema") != Some(&expected) {
+            let actual = tool.get("outputSchema");
+            if actual != Some(&expected) {
                 violations.push(format!(
-                    "{name}: live outputSchema does not equal the shared ActionResult schema"
+                    "{name}: live outputSchema does not equal the shared ActionResult schema; \
+                     actual={} expected={expected}",
+                    actual.unwrap_or(&Value::Null)
                 ));
             }
         }

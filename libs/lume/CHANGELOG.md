@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/trycua/cua/compare/lume-v0.5.0...lume-v0.5.1) (2026-07-31)
+
+
+### Bug Fixes
+
+* **lume:** run macos installer on vm queue ([#2708](https://github.com/trycua/cua/issues/2708)) ([c4e150c](https://github.com/trycua/cua/commit/c4e150cd90151ad2330aad10e9e23c7cec507167))
+
 ## [0.5.0](https://github.com/trycua/cua/compare/lume-v0.4.0...lume-v0.5.0) (2026-07-28)
 
 

@@ -519,32 +519,33 @@ final class DarwinVirtualizationService: BaseVirtualizationService {
 
     func installMacOS(imagePath: Path, progressHandler: (@Sendable (Double) -> Void)?) async throws
     {
-        var observers: [NSKeyValueObservation] = []  // must hold observer references during installation to print process
+        let handle = virtualMachineHandle
         try await withCheckedThrowingContinuation {
             (continuation: CheckedContinuation<Void, Error>) in
-            Task {
+            handle.queue.async {
                 let installer = VZMacOSInstaller(
-                    virtualMachine: virtualMachine, restoringFromImageAt: imagePath.url)
+                    virtualMachine: handle.machine, restoringFromImageAt: imagePath.url)
                 Logger.info("Starting macOS installation")
 
-                if let progressHandler = progressHandler {
-                    let observer = installer.progress.observe(
+                let progressObserver = progressHandler.map { progressHandler in
+                    installer.progress.observe(
                         \.fractionCompleted, options: [.initial, .new]
                     ) { (progress, change) in
                         if let newValue = change.newValue {
                             progressHandler(newValue)
                         }
                     }
-                    observers.append(observer)
                 }
 
                 installer.install { result in
-                    switch result {
-                    case .success:
-                        continuation.resume()
-                    case .failure(let error):
-                        Logger.error("Failed to install, error=\(error))")
-                        continuation.resume(throwing: error)
+                    withExtendedLifetime(progressObserver) {
+                        switch result {
+                        case .success:
+                            continuation.resume()
+                        case .failure(let error):
+                            Logger.error("Failed to install, error=\(error))")
+                            continuation.resume(throwing: error)
+                        }
                     }
                 }
             }

@@ -14,6 +14,10 @@ Background computer-use driver for any agents. Speaks MCP over stdio; drives nat
   the same in-process native runtime through generated UniFFI bindings. The
   safe Rust SDK and generated bindings sit above a versioned C ABI; they do not
   require a daemon for direct application use.
+- **Cua as a background UI test driver:** Python tests import
+  `cua_driver.testing` for app lifecycle, stable accessibility selectors,
+  waits, assertions, and failure artifacts. The test layer permits only
+  window-scoped background actions.
 
 The language packages are for client applications, not agents. They contain no
 language-native MCP facade and have no `/sdk`, `/mcp`, or `/native` public
@@ -87,6 +91,7 @@ Contributor documentation:
 - `docs/test-matrix.md` maps unit and canonical harness E2E suites.
 - `docs/action-support.md` is the empirical platform behavior ledger.
 - `docs/test-harnesses-guide.md` explains fixture and runner ownership.
+- `docs/ui-testing.md` documents the background-safe Python test layer.
 - `docs/linux-desktop-validation.md` covers representative Linux sessions.
 - `docs/linux-support-completion-plan.md` preserves the historical Linux plan.
 

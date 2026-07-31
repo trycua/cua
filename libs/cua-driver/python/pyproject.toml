@@ -39,6 +39,7 @@ dependencies = []
 
 [project.optional-dependencies]
 test = ["pytest"]
+uitest = ["pytest>=8", "pytest-asyncio>=0.23"]
 
 [project.urls]
 Homepage = "https://github.com/trycua/cua"

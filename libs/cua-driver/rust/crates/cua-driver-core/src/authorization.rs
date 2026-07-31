@@ -212,6 +212,7 @@ const PRIVATE_OBSERVATION_OPERATIONS: &[&str] = &[
     "get_desktop_state",
     "get_accessibility_tree",
     "get_window_state",
+    "get_frontmost_app",
     "list_apps",
     "list_windows",
     "debug_window_info",
@@ -253,6 +254,8 @@ const DESKTOP_INPUT_OPERATIONS: &[&str] = &[
     "hotkey",
     "set_value",
     "bring_to_front",
+    "move_window",
+    "launch_app[with_initial_window_position]",
 ];
 const DESKTOP_INPUT_SCOPE_KEYS: &[&str] = &[
     "daemon_generation",
@@ -689,6 +692,7 @@ pub fn enforcement_adapters_for_call(
         "get_desktop_state"
             | "get_accessibility_tree"
             | "get_window_state"
+            | "get_frontmost_app"
             | "list_apps"
             | "list_windows"
             | "debug_window_info"
@@ -707,7 +711,9 @@ pub fn enforcement_adapters_for_call(
         add("private_observation");
     }
 
-    if DESKTOP_INPUT_OPERATIONS.contains(&tool) {
+    if DESKTOP_INPUT_OPERATIONS.contains(&tool)
+        || (tool == "launch_app" && args.get("initial_window_position").is_some())
+    {
         add("desktop_input");
     }
 
@@ -829,6 +835,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "set_value"
         | "launch_app"
         | "bring_to_front"
+        | "move_window"
         | "start_session"
         | "end_session"
         | "set_agent_cursor_enabled"
@@ -839,6 +846,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         // state. Active adapters still decide their exact resource scope at
         // the canonical registry boundary before platform dispatch.
         "zoom"
+        | "get_frontmost_app"
         | "list_apps"
         | "list_windows"
         | "debug_window_info"
@@ -883,6 +891,15 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
 /// retained by the returned value.
 pub fn classify_tool_call(tool: &str, args: &Value) -> RiskAssessment {
     match tool {
+        "launch_app" => RiskAssessment {
+            class: RiskClass::R1,
+            enforcement: if args.get("initial_window_position").is_some() {
+                RiskEnforcement::Active
+            } else {
+                RiskEnforcement::MetadataOnly
+            },
+            operation_sensitive: true,
+        },
         "browser_prepare" => {
             let existing =
                 args.pointer("/strategy/kind").and_then(Value::as_str) == Some("existing_profile");
@@ -946,6 +963,7 @@ pub fn classify_tool_call(tool: &str, args: &Value) -> RiskAssessment {
             operation_sensitive: true,
         },
         "get_accessibility_tree"
+        | "get_frontmost_app"
         | "list_apps"
         | "list_windows"
         | "debug_window_info"
@@ -1111,6 +1129,7 @@ fn enforce_hard_invariants(
             | "set_value"
             | "kill_app"
             | "bring_to_front"
+            | "move_window"
             | "get_accessibility_tree"
             | "get_window_state"
             | "page"
@@ -1659,6 +1678,16 @@ mod tests {
         );
         assert_eq!(
             ids("type_text_chars", serde_json::json!({})),
+            vec!["desktop_input"]
+        );
+        assert!(ids("launch_app", serde_json::json!({})).is_empty());
+        assert_eq!(
+            ids(
+                "launch_app",
+                serde_json::json!({
+                    "initial_window_position": {"x": 10, "y": 20}
+                })
+            ),
             vec!["desktop_input"]
         );
         assert_eq!(

@@ -111,12 +111,40 @@ pub unsafe fn element_at_screen_position(pid: i32, x: f64, y: f64) -> Option<AXU
 // ── AXValue functions ────────────────────────────────────────────────────────
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
+    pub fn AXValueCreate(the_type: AXValueType, value_ptr: *const c_void) -> AXValueRef;
     pub fn AXValueGetType(value: AXValueRef) -> AXValueType;
     pub fn AXValueGetValue(
         value: AXValueRef,
         the_type: AXValueType,
         value_ptr: *mut c_void,
     ) -> bool;
+}
+
+/// Set a CGPoint-valued AX attribute.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
+pub unsafe fn set_point_attr(element: AXUIElementRef, attr_name: &str, x: f64, y: f64) -> AXError {
+    #[repr(C)]
+    struct CGPoint {
+        x: f64,
+        y: f64,
+    }
+
+    let point = CGPoint { x, y };
+    let value = AXValueCreate(
+        kAXValueCGPointType,
+        &point as *const CGPoint as *const c_void,
+    );
+    if value.is_null() {
+        return kAXErrorFailure;
+    }
+    let attr = CFStr::new(attr_name);
+    let error =
+        AXUIElementSetAttributeValue(element, attr.as_concrete_TypeRef(), value as CFTypeRef);
+    CFRelease(value as CFTypeRef);
+    error
 }
 
 // ── Helper functions ──────────────────────────────────────────────────────────

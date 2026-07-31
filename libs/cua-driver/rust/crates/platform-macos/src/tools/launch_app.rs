@@ -31,6 +31,10 @@ fn def() -> &'static ToolDef {
              shared instance. Without it, single-instance apps (Calculator, many utilities) hand \
              every caller the same window, so two sessions fight over it.\n\n\
              Optional `additional_arguments`: extra argv strings appended after --args.\n\n\
+             Optional `initial_window_position`: move the first matching window as soon as \
+             WindowServer publishes it, before the post-launch focus-suppression window \
+             finishes. The move uses AXPosition and does not activate or raise the app. \
+             Include `title` to require an exact window-title match.\n\n\
              Returns the launched app's pid, bundle_id, name, and a `windows` array \
              (same shape as `list_windows`) so callers can skip an extra round-trip before \
              `get_window_state(pid, window_id)`. `launch_state` distinguishes whether the \
@@ -68,6 +72,26 @@ fn def() -> &'static ToolDef {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "Extra arguments appended after --args when launching."
+                },
+                "initial_window_position": {
+                    "type": "object",
+                    "required": ["x", "y"],
+                    "properties": {
+                        "x": {
+                            "type": "number",
+                            "description": "Requested global left edge in logical points."
+                        },
+                        "y": {
+                            "type": "number",
+                            "description": "Requested global top edge in logical points."
+                        },
+                        "title": {
+                            "type": "string",
+                            "description": "Optional exact window title to wait for and move."
+                        }
+                    },
+                    "additionalProperties": false,
+                    "description": "Move the first matching window at launch without activating or raising it."
                 }
             },
             "additionalProperties": false
@@ -100,6 +124,10 @@ impl Tool for LaunchAppTool {
         let webkit_inspector_port = args.opt_u64("webkit_inspector_port").map(|v| v as u16);
         let creates_new_instance = args.bool_or("creates_new_application_instance", false);
         let additional_arguments: Vec<String> = args.str_array("additional_arguments");
+        let initial_window_position = match parse_initial_window_position(&args) {
+            Ok(value) => value,
+            Err(error) => return error,
+        };
         if additional_arguments
             .iter()
             .any(|argument| argument == super::check_permissions::PERMISSIONS_HOST_REQUEST_ARG)
@@ -205,10 +233,11 @@ impl Tool for LaunchAppTool {
         let slow_launch_path = !urls.is_empty()
             || !additional_arguments.is_empty()
             || !env.is_empty()
-            || creates_new_instance;
+            || creates_new_instance
+            || initial_window_position.is_some();
 
         // Move the launch closure inputs into spawn_blocking. The
-        // blocking task returns (pid, app_info, windows). Suppression
+        // blocking task returns pid, app info, windows, and optional placement. Suppression
         // upgrade happens AFTER the blocking call returns (back on the
         // async runtime), then we sleep holding the targeted lease.
         let launch_result = tokio::task::spawn_blocking(move || {
@@ -247,16 +276,20 @@ impl Tool for LaunchAppTool {
                 }
             };
 
-            // Retry loop: LaunchServices returns before WindowServer has
-            // registered the new windows. Poll up to 5x100ms.
-            let windows = resolve_windows_for_pid(pid);
+            let (windows, initial_window_placement) = if let Some(request) = initial_window_position
+            {
+                let (windows, placement) = place_initial_window(pid, request);
+                (windows, Some(placement))
+            } else {
+                (resolve_windows_for_pid(pid), None)
+            };
 
             let app_info: Option<crate::apps::AppInfo> = {
                 let apps = crate::apps::list_running_apps();
                 apps.into_iter().find(|a| a.pid == pid)
             };
 
-            Ok::<_, anyhow::Error>((pid, app_info, windows))
+            Ok::<_, anyhow::Error>((pid, app_info, windows, initial_window_placement))
         })
         .await;
 
@@ -273,7 +306,7 @@ impl Tool for LaunchAppTool {
         // Surfaced in the structured response so callers can observe
         // whether focus-steal prevention actually held.
         let mut self_activation_suppressed: Option<bool> = None;
-        if let Ok(Ok((pid, _, _))) = &launch_result {
+        if let Ok(Ok((pid, _, _, _))) = &launch_result {
             if let Some(prior) = prior_frontmost {
                 if *pid != prior {
                     let targeted_lease = crate::focus_steal::FocusStealPreventer::begin_suppression(
@@ -430,7 +463,7 @@ impl Tool for LaunchAppTool {
         }
 
         match launch_result {
-            Ok(Ok((pid, app_info, windows))) => {
+            Ok(Ok((pid, app_info, windows, initial_window_placement))) => {
                 let (app_name, bid) = response_identity(
                     app_info.as_ref(),
                     response_bundle_id.as_deref(),
@@ -453,6 +486,16 @@ impl Tool for LaunchAppTool {
                     summary.push_str(&format!(
                         "\n→ Call get_window_state(pid: {pid}, window_id) to inspect."
                     ));
+                }
+                if let Some(placement) = &initial_window_placement {
+                    if placement.verified {
+                        summary.push_str("\nInitial window placement verified.");
+                    } else {
+                        summary.push_str(&format!(
+                            "\nInitial window placement was not verified: {}",
+                            placement.error.as_deref().unwrap_or("unknown error")
+                        ));
+                    }
                 }
 
                 let windows_json: Vec<Value> = windows
@@ -487,6 +530,9 @@ impl Tool for LaunchAppTool {
                 if let Some(suppressed) = self_activation_suppressed {
                     structured["self_activation_suppressed"] = serde_json::Value::Bool(suppressed);
                 }
+                if let Some(placement) = initial_window_placement {
+                    structured["initial_window_placement"] = placement.to_json();
+                }
                 ToolResult::text(summary).with_structured(structured)
             }
             Ok(Err(e)) => structured_launch_failure(&e),
@@ -514,15 +560,163 @@ fn protected_host_launch_refusal() -> ToolResult {
 
 // ── Blocking helpers ──────────────────────────────────────────────────────────
 
+#[derive(Debug, Clone, PartialEq)]
+struct InitialWindowPosition {
+    x: f64,
+    y: f64,
+    title: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct InitialWindowPlacement {
+    request: InitialWindowPosition,
+    window_id: Option<u32>,
+    before: Option<crate::windows::WindowBounds>,
+    after: Option<crate::windows::WindowBounds>,
+    verified: bool,
+    error: Option<String>,
+}
+
+impl InitialWindowPlacement {
+    fn to_json(&self) -> Value {
+        let mut value = serde_json::json!({
+            "requested_position": {
+                "x": self.request.x,
+                "y": self.request.y,
+                "title": self.request.title.clone(),
+            },
+            "verified": self.verified,
+            "activated": false,
+        });
+        if let Some(window_id) = self.window_id {
+            value["window_id"] = serde_json::json!(window_id);
+        }
+        if let Some(before) = &self.before {
+            value["before_bounds"] = window_bounds_json(before);
+        }
+        if let Some(after) = &self.after {
+            value["after_bounds"] = window_bounds_json(after);
+        }
+        if let Some(error) = &self.error {
+            value["error"] = serde_json::json!(error);
+        }
+        value
+    }
+}
+
+fn parse_initial_window_position(
+    args: &Value,
+) -> Result<Option<InitialWindowPosition>, ToolResult> {
+    let Some(value) = args.get("initial_window_position") else {
+        return Ok(None);
+    };
+    let Some(object) = value.as_object() else {
+        return Err(ToolResult::error(
+            "launch_app `initial_window_position` must be an object",
+        ));
+    };
+    let Some(x) = object
+        .get("x")
+        .and_then(Value::as_f64)
+        .filter(|x| x.is_finite())
+    else {
+        return Err(ToolResult::error(
+            "launch_app `initial_window_position.x` must be a finite number",
+        ));
+    };
+    let Some(y) = object
+        .get("y")
+        .and_then(Value::as_f64)
+        .filter(|y| y.is_finite())
+    else {
+        return Err(ToolResult::error(
+            "launch_app `initial_window_position.y` must be a finite number",
+        ));
+    };
+    let title = match object.get("title") {
+        None => None,
+        Some(Value::String(title)) if !title.is_empty() => Some(title.clone()),
+        Some(_) => {
+            return Err(ToolResult::error(
+                "launch_app `initial_window_position.title` must be a non-empty string",
+            ))
+        }
+    };
+    Ok(Some(InitialWindowPosition { x, y, title }))
+}
+
+fn place_initial_window(
+    pid: i32,
+    request: InitialWindowPosition,
+) -> (Vec<crate::windows::WindowInfo>, InitialWindowPlacement) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(2500);
+    let mut last_window = None;
+    let mut last_error = None;
+
+    loop {
+        let windows = windows_for_pid(pid);
+        let candidate = windows.iter().find(|window| match &request.title {
+            Some(title) => window.title == title.as_str(),
+            None => true,
+        });
+        if let Some(window) = candidate {
+            last_window = Some((window.window_id, window.bounds.clone()));
+            match super::move_window::move_window(pid, window.window_id, request.x, request.y) {
+                Ok((before, after)) => {
+                    return (
+                        windows_for_pid(pid),
+                        InitialWindowPlacement {
+                            request,
+                            window_id: Some(window.window_id),
+                            before: Some(before),
+                            after: Some(after),
+                            verified: true,
+                            error: None,
+                        },
+                    );
+                }
+                Err(error) => last_error = Some(error.to_string()),
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            let (window_id, before) = last_window
+                .map(|(window_id, bounds)| (Some(window_id), Some(bounds)))
+                .unwrap_or((None, None));
+            let error = last_error.unwrap_or_else(|| match &request.title {
+                Some(title) => {
+                    format!("no window with title {title:?} was ready for background placement")
+                }
+                None => "no window was ready for background placement".to_owned(),
+            });
+            return (
+                windows,
+                InitialWindowPlacement {
+                    request,
+                    window_id,
+                    before,
+                    after: None,
+                    verified: false,
+                    error: Some(error),
+                },
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+fn windows_for_pid(pid: i32) -> Vec<crate::windows::WindowInfo> {
+    crate::windows::all_windows()
+        .into_iter()
+        .filter(|window| window.pid == pid && window.layer == 0)
+        .filter(|window| window.bounds.width > 1.0 && window.bounds.height > 1.0)
+        .collect()
+}
+
 /// Poll for the pid's layer-0 windows, retrying up to 5x100ms to absorb
 /// LaunchServices → WindowServer latency (mirrors the Swift reference).
 fn resolve_windows_for_pid(pid: i32) -> Vec<crate::windows::WindowInfo> {
     for attempt in 0..5 {
-        let found: Vec<_> = crate::windows::all_windows()
-            .into_iter()
-            .filter(|w| w.pid == pid && w.layer == 0)
-            .filter(|w| w.bounds.width > 1.0 && w.bounds.height > 1.0)
-            .collect();
+        let found = windows_for_pid(pid);
         if !found.is_empty() {
             return found;
         }
@@ -531,6 +725,15 @@ fn resolve_windows_for_pid(pid: i32) -> Vec<crate::windows::WindowInfo> {
         }
     }
     vec![]
+}
+
+fn window_bounds_json(bounds: &crate::windows::WindowBounds) -> Value {
+    serde_json::json!({
+        "x": bounds.x,
+        "y": bounds.y,
+        "width": bounds.width,
+        "height": bounds.height,
+    })
 }
 
 fn structured_launch_error(code: &str, message: String, details: serde_json::Value) -> ToolResult {
@@ -710,7 +913,8 @@ fn hex_value(byte: u8) -> Option<u8> {
 mod tests {
     use super::{
         contains_remote_debugging_flag, is_cua_driver_bundle_id, local_file_target,
-        preflight_file_urls, response_identity, structured_launch_failure, LaunchAppTool,
+        parse_initial_window_position, preflight_file_urls, response_identity,
+        structured_launch_failure, InitialWindowPosition, LaunchAppTool,
     };
     use cua_driver_core::tool::Tool;
     use serde_json::json;
@@ -726,6 +930,37 @@ mod tests {
             local_file_target("relative/path.md"),
             Some(PathBuf::from("relative/path.md"))
         );
+    }
+
+    #[test]
+    fn initial_window_position_requires_finite_coordinates_and_optional_title() {
+        assert_eq!(
+            parse_initial_window_position(&json!({
+                "initial_window_position": {
+                    "x": -1728.0,
+                    "y": 24.0,
+                    "title": "Test window",
+                }
+            }))
+            .unwrap(),
+            Some(InitialWindowPosition {
+                x: -1728.0,
+                y: 24.0,
+                title: Some("Test window".to_owned()),
+            })
+        );
+
+        let missing_y = parse_initial_window_position(&json!({
+            "initial_window_position": {"x": 10.0}
+        }))
+        .unwrap_err();
+        assert_eq!(missing_y.is_error, Some(true));
+
+        let empty_title = parse_initial_window_position(&json!({
+            "initial_window_position": {"x": 10.0, "y": 20.0, "title": ""}
+        }))
+        .unwrap_err();
+        assert_eq!(empty_title.is_error, Some(true));
     }
 
     #[test]

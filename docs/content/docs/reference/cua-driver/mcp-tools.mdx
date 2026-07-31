@@ -12,7 +12,7 @@ description: Reference for every MCP tool Cua Driver exposes
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-`cua-driver` exposes 49 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
+`cua-driver` exposes 51 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
 
 Tool names are `snake_case`. Responses are MCP `CallTool.Result` envelopes: a text content block prefixed with a `✅` summary (or the error reason on failure), plus optional image or structured-content blocks on tools that produce them. See the [CLI reference](/reference/cua-driver/cli-reference) for CLI-specific options like `--socket` and `--screenshot-out-file`.
 
@@ -61,7 +61,7 @@ Walk a running app's AX tree and return BOTH a structured `elements` array (pref
 
 INVARIANT: call get_window_state once per turn per (pid, window_id) before any element-indexed action. The index map is replaced by the next snapshot.
 
-PREFERRED CONSUMERS read `structuredContent.elements` (one entry per indexed row with `element_index`, `role`, `label`, `value` (the element's text/AXValue when present — use it to verify what a field holds), `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown `tree_markdown` stays available and unchanged in shape for existing text-parsing callers — but new fields will only be added to the structured side.
+PREFERRED CONSUMERS read `structuredContent.elements` (one entry per indexed row with `element_index`, `role`, `label`, `identifier` (AXIdentifier when present), `value` (the element's text/AXValue when present, used to verify what a field holds), `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown `tree_markdown` stays available and unchanged in shape for existing text-parsing callers — but new fields will only be added to the structured side.
 
 Always returns BOTH the element tree AND a screenshot — ground on both and cross-check (the tree lies on some surfaces: Electron echo-confirms, Catalyst null values, virtualized off-viewport rows with `h:1` frames). You choose the modality at ACTION time, not here: an element ax action (pass `element_index`/`element_token` → the accessibility rung) or an element px action (pass `x`,`y` → the pixel rung, read straight off this screenshot). `capture_mode` is deprecated and ignored. Pass `include_screenshot:false` to skip the grab and get the tree only — the cheap path when you're just re-indexing before an element ax action.
 
@@ -106,7 +106,7 @@ Capture a full-display vision screenshot in true screen pixels (no downscale), f
 
 ### `get_screen_size`
 
-Return the logical size of the main display in points plus its backing scale factor. Agents click in points; Retina displays have scale_factor 2.0. Requires no TCC permissions.
+Return every active display's global logical bounds, backing scale, and main/built-in/mirroring state. Top-level width, height, and scale_factor retain the main-display contract. Agents click in logical points; Retina displays commonly have scale_factor 2.0. Requires no TCC permissions.
 
 **Arguments:**
 
@@ -164,6 +164,8 @@ Optional `creates_new_application_instance`: when true, forces a new app instanc
 
 Optional `additional_arguments`: extra argv strings appended after --args.
 
+Optional `initial_window_position`: move the first matching window as soon as WindowServer publishes it, before the post-launch focus-suppression window finishes. The move uses AXPosition and does not activate or raise the app. Include `title` to require an exact window-title match.
+
 Returns the launched app's pid, bundle_id, name, and a `windows` array (same shape as `list_windows`) so callers can skip an extra round-trip before `get_window_state(pid, window_id)`. `launch_state` distinguishes whether the request was sent, the process is running, and a window is ready. When the focus-steal belt-and-braces demotion check ran (target pid ≠ prior frontmost), the response also includes `self_activation_suppressed: bool` — true if focus stayed with the prior frontmost, false if the launched app held focus despite the re-demote attempt.
 
 **Arguments:**
@@ -171,6 +173,7 @@ Returns the launched app's pid, bundle_id, name, and a `windows` array (same sha
 - `additional_arguments` (array of string, optional): Extra arguments appended after --args when launching.
 - `bundle_id` (string, optional): App bundle identifier, e.g. com.apple.calculator. Preferred over name.
 - `creates_new_application_instance` (boolean, optional): When true, force a new app instance even if already running (open -n). Use for concurrent multi-agent/multi-session work so each session gets an isolated instance + window instead of sharing one — on single-instance apps (e.g. Calculator) every caller otherwise gets the same window and the sessions clobber each other.
+- `initial_window_position` (object, optional): Move the first matching window at launch without activating or raising it.
 - `name` (string, optional): App display name. Used only when bundle_id is absent.
 - `urls` (array of string, optional): Optional file paths or URLs to open with the app (e.g. a folder path for Finder).
 - `webkit_inspector_port` (integer, optional): Open a WebKit inspector server on this port (sets WEBKIT_INSPECTOR_SERVER env var).
@@ -727,6 +730,27 @@ Install the ffmpeg binary used by start_recording's video capture (Linux/Windows
 - `confirm` (boolean, optional): Run the install command. Without it, only the planned command is reported.
 
 ## Other tools
+
+### `get_frontmost_app`
+
+Return the current frontmost macOS application's pid, name, and bundle identifier. This reads NSWorkspace directly and does not scan installed applications.
+
+**Arguments:** none.
+
+### `move_window`
+
+Move one macOS window to a global screen position without activating, raising, resizing, or changing the real cursor. The target is scoped by both pid and window_id. Coordinates use the same top-left global point space as list_windows and get_screen_size.displays.
+
+**Arguments:**
+
+- `pid` (integer, required): PID that owns the target window.
+- `window_id` (integer, required): CGWindowID from list_windows.
+- `x` (number, required): Requested global left edge in logical points.
+- `y` (number, required): Requested global top edge in logical points.
+
+```json
+{"pid":844,"window_id":10725,"x":100,"y":200}
+```
 
 ### `set_agent_cursor_theme`
 

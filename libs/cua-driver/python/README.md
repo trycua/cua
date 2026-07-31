@@ -72,6 +72,49 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+## Background UI tests
+
+`cua_driver.testing` provides a pytest-friendly UI test layer for macOS apps.
+It launches a separate app instance in the background, resolves controls by
+accessibility identifier, polls the live accessibility tree, and saves a
+window screenshot plus tree on failure. When a non-main display is available,
+the runner asks `launch_app` to move the window there as soon as it appears,
+then re-verifies the final position before acting.
+
+```bash
+pip install "cua-driver[uitest]"
+```
+
+```python
+import pytest
+
+from cua_driver.testing import CuaTestSession
+
+
+@pytest.mark.asyncio
+async def test_increment_stays_in_background() -> None:
+    async with CuaTestSession.create() as cua:
+        app = await cua.launch(
+            bundle_id="com.example.Counter",
+            window_title="Counter",
+        )
+
+        await app.buttons.by_id("btn-increment").tap()
+
+        await app.wait_for_text("counter=1")
+```
+
+The test API does not expose `bring_to_front`, desktop-scoped input, or
+foreground delivery. Every action carries the target PID, window ID, and fresh
+element token. Clicks and keyboard input explicitly request background
+delivery. The test fails if the target becomes the active app. Window placement
+uses the driver's background-only `move_window` action and verifies that the
+window landed on the secondary display. A bound Cua session gives launch,
+actions, and process cleanup one identity, so teardown cannot terminate a
+foreign process or leave its own test app running. See
+[`docs/ui-testing.md`](../docs/ui-testing.md) for lifecycle, selectors, and
+failure artifacts.
+
 SDK operations are asynchronous. Desktop calls return a typed `ToolResult` with
 text, images, verification/error metadata, and `structured_json` / `raw_json`
 for platform-extensible results. Session lifecycle calls return dedicated

@@ -28,6 +28,53 @@ fn pin_overlay_above(key: &str, hwnd: u64) {
     );
 }
 
+fn structured_uia_elements(
+    nodes: &[crate::uia::UiaNode],
+    snapshot_id: u32,
+) -> Vec<serde_json::Value> {
+    use serde_json::json;
+
+    nodes
+        .iter()
+        .filter_map(|node| {
+            let index = node.element_index?;
+            let label = node
+                .name
+                .clone()
+                .or_else(|| node.value.clone())
+                .or_else(|| node.automation_id.clone())
+                .or_else(|| node.help_text.clone());
+            let mut entry = json!({
+                "element_index": index,
+                "element_token": cua_driver_core::element_token::token_for(snapshot_id, index),
+                "role": node.control_type,
+                "depth": node.depth,
+            });
+            if let Some(label) = label {
+                entry["label"] = json!(label);
+            }
+            if let Some(identifier) = node.automation_id.clone().filter(|value| !value.is_empty()) {
+                entry["identifier"] = json!(identifier);
+            }
+            if let Some(value) = node.value.clone().filter(|value| !value.is_empty()) {
+                entry["value"] = json!(value);
+            }
+            if let Some(parent) = node.parent_element_index {
+                entry["parent_index"] = json!(parent);
+            }
+            if let Some((left, top, right, bottom)) = node.rect {
+                entry["frame"] = json!({
+                    "x": left,
+                    "y": top,
+                    "w": (right - left).max(0),
+                    "h": (bottom - top).max(0),
+                });
+            }
+            Some(entry)
+        })
+        .collect()
+}
+
 /// Resolve the screen point a coordinate action should actuate at, scrolling
 /// the target element into view first when its cached center lands off-screen.
 ///
@@ -839,8 +886,9 @@ impl Tool for GetWindowStateTool {
                 any element-indexed action against that window. The index map is replaced by \
                 the next snapshot of the same (pid, window_id).\n\n\
                 PREFERRED CONSUMERS read `structuredContent.elements` (one entry per \
-                indexed row with `element_index`, `role`, `label`, `frame: {x,y,w,h}`, \
-                `parent_index`, `depth`). The markdown `tree_markdown` stays available \
+                indexed row with `element_index`, `role`, `label`, `identifier` \
+                (UIA AutomationId when present), `frame: {x,y,w,h}`, `parent_index`, \
+                `depth`). The markdown `tree_markdown` stays available \
                 and unchanged in shape for existing text-parsing callers — but new \
                 fields will only be added to the structured side.\n\n\
                 The UIA tree walked is the window's tree (HWND-scoped); the screenshot and \
@@ -1080,55 +1128,10 @@ impl Tool for GetWindowStateTool {
 
                     // Structured `elements` array — preferred consumption
                     // path. Shape matches the cross-platform spec:
-                    // `{element_index, element_token, role, label, depth,
+                    // `{element_index, element_token, role, label, identifier, depth,
                     // parent_index?, frame?: {x,y,w,h}}`. Frame is
                     // included when UIA reported a usable BoundingRectangle.
-                    let elements: Vec<serde_json::Value> = tr
-                        .nodes
-                        .iter()
-                        .filter_map(|n| {
-                            let idx = n.element_index?;
-                            // `label`: name → value → automation_id → help_text.
-                            let label = n.name.clone()
-                                .or_else(|| n.value.clone())
-                                .or_else(|| n.automation_id.clone())
-                                .or_else(|| n.help_text.clone());
-                            let mut entry = json!({
-                                "element_index": idx,
-                                // Surface 6: opaque token paired to the
-                                // integer index. See cua-driver-core's
-                                // `element_token` module for the format
-                                // and validity contract.
-                                "element_token": cua_driver_core::element_token::token_for(snapshot_id, idx),
-                                "role": n.control_type,
-                                "depth": n.depth,
-                            });
-                            if let Some(label) = label {
-                                entry["label"] = json!(label);
-                            }
-                            // Surface the element's value separately from `label`
-                            // (which collapses name→value→automation_id→help): a
-                            // control with both a name AND text (a ValuePattern
-                            // edit holding typed content) would otherwise hide the
-                            // text from a caller reading the structured side. See
-                            // the macOS get_window_state builder for the rationale.
-                            if let Some(value) = n.value.clone().filter(|v| !v.is_empty()) {
-                                entry["value"] = json!(value);
-                            }
-                            if let Some(parent) = n.parent_element_index {
-                                entry["parent_index"] = json!(parent);
-                            }
-                            if let Some((l, t, r, b)) = n.rect {
-                                entry["frame"] = json!({
-                                    "x": l,
-                                    "y": t,
-                                    "w": (r - l).max(0),
-                                    "h": (b - t).max(0),
-                                });
-                            }
-                            Some(entry)
-                        })
-                        .collect();
+                    let elements = structured_uia_elements(&tr.nodes, snapshot_id);
                     structured["elements"] = json!(elements);
                     // Surface 6: snapshot id mirror for debug correlation.
                     structured["snapshot_id"] =
@@ -8839,6 +8842,44 @@ mod launch_focus_restore_decision_tests {
         // Empty params (validated as an error before launch dispatch) — no
         // restore needed because nothing was launched.
         assert!(!should_restore_foreground_after_launch(empty()));
+    }
+}
+
+#[cfg(test)]
+mod structured_uia_element_tests {
+    use super::structured_uia_elements;
+
+    fn node(automation_id: Option<&str>) -> crate::uia::UiaNode {
+        crate::uia::UiaNode {
+            element_index: Some(7),
+            control_type: "Button".into(),
+            name: Some("Localized title".into()),
+            value: None,
+            automation_id: automation_id.map(str::to_owned),
+            help_text: None,
+            actions: vec!["Invoke".into()],
+            element_ptr: 0,
+            center_x: 20,
+            center_y: 30,
+            rect: Some((10, 20, 30, 40)),
+            msaa_role: None,
+            depth: 1,
+            parent_element_index: Some(0),
+            in_web_content: false,
+        }
+    }
+
+    #[test]
+    fn surfaces_automation_id_separately_from_label() {
+        let elements = structured_uia_elements(&[node(Some("stable.submit.button"))], 1);
+        assert_eq!(elements[0]["label"], "Localized title");
+        assert_eq!(elements[0]["identifier"], "stable.submit.button");
+    }
+
+    #[test]
+    fn omits_identifier_when_automation_id_is_missing() {
+        let elements = structured_uia_elements(&[node(None)], 1);
+        assert!(elements[0].get("identifier").is_none());
     }
 }
 

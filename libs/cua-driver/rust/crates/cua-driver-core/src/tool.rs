@@ -161,8 +161,8 @@ impl ToolDef {
 ///   `accessibility.tree.bounded`, `accessibility.window_state`,
 ///   `accessibility.element_tokens` (Surface 6 — tool accepts the
 ///   opaque `element_token` arg alongside the integer `element_index`)
-/// - `app.launch`, `app.list`, `app.kill`, `window.list`,
-///   `window.activate`, `window.debug_info`
+/// - `app.launch`, `app.frontmost`, `app.list`, `app.kill`, `window.list`,
+///   `window.activate`, `window.move`, `window.debug_info`
 /// - `system.permissions.tcc`,
 ///   `system.permissions.tcc.accessibility`,
 ///   `system.permissions.tcc.screen_recording`
@@ -265,10 +265,12 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
 
         // ── apps / windows ───────────────────────────────────────────
         "launch_app" => &["app.launch"],
+        "get_frontmost_app" => &["app.frontmost"],
         "list_apps" => &["app.list"],
         "kill_app" => &["app.kill"],
         "list_windows" => &["window.list"],
         "bring_to_front" => &["window.activate"],
+        "move_window" => &["window.move"],
         "debug_window_info" => &["window.debug_info"],
 
         // ── permissions / config ─────────────────────────────────────
@@ -347,6 +349,13 @@ pub fn advertised_capabilities_for(tool_name: &str, input_schema: &Value) -> Vec
             .any(|capability| capability == "input.delivery_mode")
     {
         capabilities.push("input.delivery_mode".into());
+    }
+    let accepts_initial_window_position = tool_name == "launch_app"
+        && input_schema
+            .pointer("/properties/initial_window_position")
+            .is_some_and(Value::is_object);
+    if accepts_initial_window_position {
+        capabilities.push("window.move".into());
     }
     capabilities
 }
@@ -3734,10 +3743,12 @@ mod capability_tests {
         "get_window_state",
         // app / window
         "launch_app",
+        "get_frontmost_app",
         "list_apps",
         "kill_app",
         "list_windows",
         "bring_to_front",
+        "move_window",
         "debug_window_info",
         // permissions / config
         "check_permissions",
@@ -3811,10 +3822,12 @@ mod capability_tests {
         "accessibility.element_tokens",
         // app / window
         "app.launch",
+        "app.frontmost",
         "app.list",
         "app.kill",
         "window.list",
         "window.activate",
+        "window.move",
         "window.debug_info",
         // permissions
         "system.permissions.tcc",
@@ -3925,6 +3938,28 @@ mod capability_tests {
             !advertised_capabilities_for("press_key", &without_delivery_mode)
                 .iter()
                 .any(|capability| capability == "input.delivery_mode")
+        );
+    }
+
+    #[test]
+    fn launch_window_move_capability_is_derived_from_the_runtime_schema() {
+        let with_initial_position = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "initial_window_position": {"type": "object"}
+            }
+        });
+        let without_initial_position = serde_json::json!({"type": "object", "properties": {}});
+
+        assert!(
+            advertised_capabilities_for("launch_app", &with_initial_position)
+                .iter()
+                .any(|capability| capability == "window.move")
+        );
+        assert!(
+            !advertised_capabilities_for("launch_app", &without_initial_position)
+                .iter()
+                .any(|capability| capability == "window.move")
         );
     }
 

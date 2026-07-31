@@ -26,9 +26,11 @@ mod get_accessibility_tree;
 mod get_config;
 mod get_cursor_position;
 mod get_desktop_state;
+mod get_frontmost_app;
 pub(crate) mod get_screen_size;
 mod health_report;
 mod move_cursor;
+mod move_window;
 mod page;
 pub(crate) mod px_frame;
 mod set_config;
@@ -635,6 +637,7 @@ pub fn register_all(
     }
 
     registry.register(Box::new(list_apps::ListAppsTool));
+    registry.register(Box::new(get_frontmost_app::GetFrontmostAppTool));
     registry.register(Box::new(list_windows::ListWindowsTool));
     registry.register(Box::new(get_window_state::GetWindowStateTool::new(
         state.clone(),
@@ -642,6 +645,7 @@ pub fn register_all(
     registry.register(Box::new(launch_app::LaunchAppTool));
     registry.register(Box::new(kill_app::KillAppTool));
     registry.register(Box::new(bring_to_front::BringToFrontTool));
+    registry.register(Box::new(move_window::MoveWindowTool));
     registry.register(Box::new(click::ClickTool::new(state.clone())));
     registry.register(Box::new(double_click::DoubleClickTool::new(state.clone())));
     registry.register(Box::new(right_click::RightClickTool::new(state.clone())));

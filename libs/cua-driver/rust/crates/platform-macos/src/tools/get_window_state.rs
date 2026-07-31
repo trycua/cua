@@ -31,9 +31,10 @@ fn def() -> &'static ToolDef {
             INVARIANT: call get_window_state once per turn per (pid, window_id) before any \
             element-indexed action. The index map is replaced by the next snapshot.\n\n\
             PREFERRED CONSUMERS read `structuredContent.elements` (one entry per \
-            indexed row with `element_index`, `role`, `label`, `value` (the \
-            element's text/AXValue when present — use it to verify what a field \
-            holds), `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown \
+            indexed row with `element_index`, `role`, `label`, `identifier` \
+            (AXIdentifier when present), `value` (the element's text/AXValue \
+            when present, used to verify what a field holds), \
+            `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown \
             `tree_markdown` stays available \
             and unchanged in shape for existing text-parsing callers — but new \
             fields will only be added to the structured side.\n\n\
@@ -694,8 +695,8 @@ fn degradation_for(
 /// Render the actionable nodes from the AX walk into the
 /// `structuredContent.elements` array shape described on the tool: one entry
 /// per node with an `element_index`, carrying role, label (built from
-/// title/description/value/identifier), frame, parent_index, depth, and —
-/// Surface 6 — an opaque `element_token` for the same row.
+/// title/description/value/identifier), identifier, frame, parent_index, depth, and
+/// an opaque `element_token` for the same row.
 ///
 /// Order matches the markdown rendering exactly (DFS, same indices). Only
 /// nodes that received an `element_index` (i.e. are addressable via
@@ -734,6 +735,11 @@ pub(crate) fn build_elements_array_with_token(
             });
             if let Some(label) = label {
                 entry["label"] = serde_json::Value::String(label);
+            }
+            // Keep the stable AXIdentifier separate from the human-readable
+            // label so UI tests survive localization and copy edits.
+            if let Some(identifier) = node.identifier.clone().filter(|value| !value.is_empty()) {
+                entry["identifier"] = serde_json::Value::String(identifier);
             }
             // Surface the element's AXValue separately from `label`. `label`
             // collapses title→description→value→identifier into one display
@@ -1134,6 +1140,10 @@ mod tests {
             "frame must be omitted when no rect was captured"
         );
         assert!(
+            entry.get("identifier").is_none(),
+            "identifier must be omitted when AXIdentifier is unavailable"
+        );
+        assert!(
             entry.get("parent_index").is_none(),
             "parent_index must be omitted at the root"
         );
@@ -1157,6 +1167,22 @@ mod tests {
         assert_eq!(elements[0]["label"], "from-desc");
         assert_eq!(elements[1]["label"], "from-val");
         assert_eq!(elements[2]["label"], "from-id");
+    }
+
+    #[test]
+    fn elements_surface_identifier_separately_from_label() {
+        let mut nodes = vec![node(
+            Some(0),
+            "AXButton",
+            Some("Localized title"),
+            1,
+            None,
+            None,
+        )];
+        nodes[0].identifier = Some("stable.submit.button".into());
+        let entry = &build_elements_array(&nodes)[0];
+        assert_eq!(entry["label"], "Localized title");
+        assert_eq!(entry["identifier"], "stable.submit.button");
     }
 
     /// Surface 6: every element entry must carry a non-empty

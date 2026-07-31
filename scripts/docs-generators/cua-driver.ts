@@ -73,11 +73,15 @@ export interface MCPInputSchema {
 }
 
 export interface MCPPropertyDoc {
-  type: string;
+  type: string | string[];
   description: string;
   items?: { type: string };
   enum?: string[];
   minItems?: number;
+  maxItems?: number;
+  minimum?: number;
+  maximum?: number;
+  default?: unknown;
 }
 
 export interface MCPDocumentation {
@@ -718,7 +722,16 @@ export function generateMCPToolDoc(tool: MCPToolDoc): string[] {
       const requiredLabel = isRequired ? 'required' : 'optional';
       const typeLabel = formatPropertyType(prop);
       const description = escapeMdxText(prop.description ?? '');
-      const suffix = description ? `: ${description}` : '';
+      const details: string[] = [];
+      if (prop.default !== undefined) details.push(`default: \`${JSON.stringify(prop.default)}\``);
+      if (prop.minimum !== undefined || prop.maximum !== undefined) {
+        details.push(`range: ${prop.minimum ?? 'unbounded'}–${prop.maximum ?? 'unbounded'}`);
+      }
+      if (prop.minItems !== undefined || prop.maxItems !== undefined) {
+        details.push(`items: ${prop.minItems ?? 0}–${prop.maxItems ?? 'unbounded'}`);
+      }
+      const prose = [description, details.join('; ')].filter(Boolean).join(' ');
+      const suffix = prose ? `: ${prose}` : '';
       lines.push(`- \`${propName}\` (${typeLabel}, ${requiredLabel})${suffix}`);
     }
     lines.push('');
@@ -771,7 +784,7 @@ function formatPropertyType(prop: MCPPropertyDoc): string {
     const itemType = prop.items?.type ?? 'unknown';
     return `array of ${itemType}`;
   }
-  return prop.type;
+  return Array.isArray(prop.type) ? prop.type.join(' or ') : prop.type;
 }
 
 function syntheticExampleValue(name: string, prop: MCPPropertyDoc): unknown {
@@ -799,6 +812,7 @@ function syntheticExampleValue(name: string, prop: MCPPropertyDoc): unknown {
     case 'array':
       if (name === 'keys') return ['cmd', 'c'];
       if (name === 'modifiers') return ['cmd'];
+      if (name === 'expect') return [{ window: { exists: true } }];
       if (name === 'files' || (prop.minItems ?? 0) > 0) return ['example'];
       return [];
     case 'string':

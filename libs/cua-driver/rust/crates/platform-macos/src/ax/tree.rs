@@ -105,6 +105,10 @@ pub struct AXNode {
     pub enabled: Option<bool>,
     /// AXSelected. `None` when the app doesn't report the attribute.
     pub selected: Option<bool>,
+    /// True when this node is an AX web-document root or descends from one.
+    /// This trust marker is independent of actionable ancestry because
+    /// AXWebArea is commonly non-actionable and therefore has no element index.
+    pub in_web_content: bool,
 }
 
 #[derive(Default)]
@@ -298,6 +302,7 @@ pub fn walk_tree_bounded(
                 child,
                 0,
                 None,
+                false,
                 &mut nodes,
                 &mut lines,
                 &mut index_counter,
@@ -346,6 +351,7 @@ unsafe fn walk_element(
     element: AXUIElementRef,
     depth: usize,
     parent_index: Option<usize>,
+    in_web_content: bool,
     nodes: &mut Vec<AXNode>,
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
@@ -371,6 +377,8 @@ unsafe fn walk_element(
 
     let role = copy_string_attr(element, "AXRole").unwrap_or_else(|| "AXUnknown".into());
 
+    let in_web_content = in_web_content || is_web_content_role(&role);
+
     // Skip pure layout containers that have no interesting content.
     if role == "AXScrollArea" || role == "AXGroup" {
         // Still recurse — children may be interesting. Layout containers
@@ -382,6 +390,7 @@ unsafe fn walk_element(
                 child,
                 depth,
                 parent_index,
+                in_web_content,
                 nodes,
                 lines,
                 counter,
@@ -431,6 +440,7 @@ unsafe fn walk_element(
                 child,
                 depth + 1,
                 parent_index,
+                in_web_content,
                 nodes,
                 lines,
                 counter,
@@ -500,6 +510,7 @@ unsafe fn walk_element(
             max_value: control_state.max_value,
             enabled: control_state.enabled,
             selected: control_state.selected,
+            in_web_content,
         }
     } else {
         AXNode {
@@ -533,6 +544,7 @@ unsafe fn walk_element(
             max_value: control_state.max_value,
             enabled: control_state.enabled,
             selected: control_state.selected,
+            in_web_content,
         }
     };
 
@@ -551,6 +563,7 @@ unsafe fn walk_element(
             child,
             depth + 1,
             next_parent,
+            in_web_content,
             nodes,
             lines,
             counter,
@@ -560,6 +573,30 @@ unsafe fn walk_element(
             max_depth,
         );
         CFRelease(child as CFTypeRef);
+    }
+}
+
+fn is_web_content_role(role: &str) -> bool {
+    let normalized = role
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+    normalized.contains("webarea") || normalized.contains("documentweb") || normalized == "document"
+}
+
+#[cfg(test)]
+mod web_content_role_tests {
+    use super::is_web_content_role;
+
+    #[test]
+    fn recognizes_native_web_document_roles_without_marking_app_chrome() {
+        for role in ["AXWebArea", "AXDocumentWeb", "document"] {
+            assert!(is_web_content_role(role), "{role} must start web trust");
+        }
+        for role in ["AXWindow", "AXButton", "AXToolbar"] {
+            assert!(!is_web_content_role(role), "{role} stays native");
+        }
     }
 }
 

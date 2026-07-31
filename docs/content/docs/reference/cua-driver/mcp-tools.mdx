@@ -75,8 +75,8 @@ Optional `max_elements` / `max_depth` bound the AX walk to mitigate context-wind
 
 - `capture_mode` (string, optional): DEPRECATED and ignored. get_window_state always returns BOTH the element tree and a screenshot — ground on both. The modality is chosen at action time by how you address the target: an element ax action (element_index/element_token) or an element px action (x,y). Any value (including the old "som"/"screenshot" aliases) is accepted but has no effect.
 - `include_screenshot` (boolean, optional): Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return the tree only (the cheap path when you're just re-indexing before an element ax action; saves the image tokens + screen-grab latency). screenshot_out_file still forces a capture to disk.
-- `max_depth` (integer, optional): Cap on the AX-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower this for deep menu/Electron trees.
-- `max_elements` (integer, optional): Cap on the total number of AX nodes walked. Truncates depth-first; markdown and structured elements truncate together. Omit for the default (2 000). Lower this for Electron / Obsidian / large web apps that produce 10k+ element trees and blow context windows.
+- `max_depth` (integer, optional): Cap on the AX-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower this for deep menu/Electron trees. range: 1–unbounded
+- `max_elements` (integer, optional): Cap on the total number of AX nodes walked. Truncates depth-first; markdown and structured elements truncate together. Omit for the default (2 000). Lower this for Electron / Obsidian / large web apps that produce 10k+ element trees and blow context windows. range: 1–unbounded
 - `pid` (integer, required): Target process ID.
 - `query` (string, optional): Case-insensitive filter for tree_markdown.
 - `screenshot_out_file` (string, optional): When set, write the PNG to this file path (~ expanded) instead of embedding base64 in the response. The structured output will contain screenshot_file_path instead.
@@ -297,15 +297,15 @@ When `from_zoom` is true, coordinates are in the last zoom image for this pid; t
 
 - `button` (string, optional): Mouse button used for the drag. Default: left.
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": inject without fronting or raising the target — no focus steal. "foreground": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with "foreground" only for the action that needs it.
-- `duration_ms` (integer, optional): Wall-clock duration of the drag path between mouseDown and mouseUp. Default: 500.
+- `duration_ms` (integer, optional): Wall-clock duration of the drag path between mouseDown and mouseUp. Default: 500. range: 0–10000
 - `from_x` (number, required): Drag-start X in window-local screenshot pixels. Top-left origin.
 - `from_y` (number, required): Drag-start Y in window-local screenshot pixels. Top-left origin.
 - `from_zoom` (boolean, optional): When true, coordinates are in the last zoom image for this pid; driver maps back to window coordinates.
 - `modifier` (array of string, optional): Modifier keys held across the entire gesture: cmd/shift/option/ctrl.
 - `pid` (integer, optional): Target process ID.
-- `scope` (string, optional): Use desktop with no pid/window_id for native get_desktop_state screenshot coordinates.
+- `scope` (string, optional): Use desktop with no pid/window_id for native get_desktop_state screenshot coordinates. default: `"window"`
 - `session` (string, optional): Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.
-- `steps` (integer, optional): Number of intermediate mouseDragged events linearly interpolated along the path. Default: 20.
+- `steps` (integer, optional): Number of intermediate mouseDragged events linearly interpolated along the path. Default: 20. range: 1–200
 - `to_x` (number, required): Drag-end X in window-local screenshot pixels.
 - `to_y` (number, required): Drag-end Y in window-local screenshot pixels.
 - `window_id` (integer, optional): CGWindowID for the window the pixel coordinates were measured against. Optional — when omitted the driver picks the frontmost window of pid.
@@ -324,12 +324,12 @@ WEB CONTENT (Chromium/WebKit/Electron — browser tabs, Slack, VS Code, X's comp
 
 **Arguments:**
 
-- `delay_ms` (integer, optional): Milliseconds between characters in the CGEvent fallback path. Default 30. Ignored when the AX path succeeds.
+- `delay_ms` (integer, optional): Milliseconds between characters in the CGEvent fallback path. Default 30. Ignored when the AX path succeeds. range: 0–200
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": AX insert, then CGEvent keystrokes if needed — no focus steal; native controls can be verified via AXValue read-back, while web-content read-back remains unverified. "foreground": briefly front the window, type, restore the prior frontmost — the explicit last resort for focus-sensitive surfaces (e.g. WhatsApp/Catalyst) where background keystrokes don't land. Re-call with "foreground" when a background attempt returns `verified:false` and a screenshot shows the text didn't appear.
 - `element_index` (integer, optional): Element index from last get_window_state. Directs the write to a specific field. REQUIRES `pid` and `window_id` to be passed alongside it — element_index alone (no pid) fails fast with "Missing required integer field: pid"; it is not a silent no-op.
 - `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit "stale" error if the snapshot has been superseded.
 - `pid` (integer, optional): Target process ID.
-- `scope` (string, optional): Use desktop with no pid/window_id to type into the frontmost application.
+- `scope` (string, optional): Use desktop with no pid/window_id to type into the frontmost application. default: `"window"`
 - `session` (string, optional): Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.
 - `text` (string, required): Text to insert at the target's cursor.
 - `window_id` (integer, optional): CGWindowID. Required when element_index is used. Optional when element_token is supplied (the token carries it).
@@ -356,7 +356,7 @@ A key press is never driver-verifiable → effect:"unverifiable"; confirm via sc
 - `key` (string, required): Key name: return, tab, escape, up, down, etc.
 - `modifiers` (array of string, optional): Modifier keys: cmd, shift, option/alt, ctrl, fn.
 - `pid` (integer, optional)
-- `scope` (string, optional): Use desktop with no pid/window_id to send the key to the frontmost application.
+- `scope` (string, optional): Use desktop with no pid/window_id to send the key to the frontmost application. default: `"window"`
 - `session` (string, optional): Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.
 - `window_id` (integer, optional): Target window. Required for delivery_mode:"foreground". Does NOT itself raise the window — raising is gated on delivery_mode.
 - `x` (number, optional): Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_index.
@@ -379,9 +379,9 @@ Recognized modifiers: cmd/command, shift, option/alt, ctrl/control, fn. Non-modi
 **Arguments:**
 
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": inject without fronting or raising the target — no focus steal. "foreground": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with "foreground" only for the action that needs it.
-- `keys` (array of string, required): Modifier(s) and one non-modifier key, e.g. ["cmd", "c"].
+- `keys` (array of string, required): Modifier(s) and one non-modifier key, e.g. ["cmd", "c"]. items: 2–unbounded
 - `pid` (integer, optional): Target process ID.
-- `scope` (string, optional): Use desktop with no pid/window_id to send the chord to the frontmost application.
+- `scope` (string, optional): Use desktop with no pid/window_id to send the chord to the frontmost application. default: `"window"`
 - `session` (string, optional): Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.
 - `window_id` (integer, optional): Target window. Required for delivery_mode:"foreground" (the NSMenu activation needs a window). Does NOT itself raise the window — raising is gated on delivery_mode.
 - `x` (number, optional): Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the combo (so e.g. Cmd+V pastes into that field). Pass with y. Use for Chromium/Electron surfaces the background combo can't reach.
@@ -426,14 +426,14 @@ Mapping: by='page' → larger step; by='line' → smaller step; amount = number 
 
 **Arguments:**
 
-- `amount` (integer, optional): Pixel-wheel path: number of wheel notches. Keystroke path: number of keystroke repetitions. Default: 3.
+- `amount` (integer, optional): Pixel-wheel path: number of wheel notches. Keystroke path: number of keystroke repetitions. Default: 3. range: 1–50
 - `by` (string, optional): Scroll granularity. Default: line.
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": inject without fronting or raising the target — no focus steal. "foreground": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with "foreground" only for the action that needs it.
 - `direction` (string, required): Scroll direction.
 - `element_index` (integer, optional): Element from last get_window_state. Routes through the pixel-wheel path AT this element's center — use it to scroll a nested overflow region you located in the AX tree.
 - `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit "stale" error if the snapshot has been superseded. Routes through the pixel-wheel path at the element's center.
 - `pid` (integer, optional)
-- `scope` (string, optional): Use desktop with x,y and no pid/window_id for native get_desktop_state screenshot coordinates.
+- `scope` (string, optional): Use desktop with x,y and no pid/window_id for native get_desktop_state screenshot coordinates. default: `"window"`
 - `session` (string, optional): Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.
 - `window_id` (integer, optional)
 - `x` (number, optional): Window-local screenshot X (top-left origin of the PNG from get_window_state). With `y`, routes through the pixel-wheel path at this point — use for a scrollable surface that isn't in the AX tree. Requires window_id to anchor the window→screen conversion.
@@ -450,7 +450,7 @@ Move a cursor to (x, y). In window scope (default), moves only the agent cursor 
 **Arguments:**
 
 - `cursor_id` (string, optional): Cursor instance to move. Default: 'default'.
-- `scope` (string, optional)
+- `scope` (string, optional): default: `"window"`
 - `session` (string, optional): Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.
 - `x` (number, required)
 - `y` (number, required)
@@ -498,7 +498,7 @@ Actions:
 - `action` (string, required): Action to perform.
 - `attributes` (array of string, optional): Element attributes to include in query_dom results.
 - `bundle_id` (string, optional): Bundle ID of the browser. Required for enable_javascript_apple_events (macOS only).
-- `cdp_port` (integer, optional): Optional, for execute_javascript/insert_text/type_keystrokes: use this exact CDP port instead of auto-discovering one from pid. Needed when the port was opened via the browser's own remote-debugging toggle rather than a launch-time flag, since that path may not answer the auto-discovery probe.
+- `cdp_port` (integer, optional): Optional, for execute_javascript/insert_text/type_keystrokes: use this exact CDP port instead of auto-discovering one from pid. Needed when the port was opened via the browser's own remote-debugging toggle rather than a launch-time flag, since that path may not answer the auto-discovery probe. range: 1–65535
 - `css_selector` (string, optional): CSS selector for query_dom (e.g. 'a', 'button', 'input', 'h1'-'h6', 'p', 'img', 'select', '*').
 - `javascript` (string, optional): JavaScript to execute. Required for execute_javascript.
 - `pid` (integer, optional): Target process ID.
@@ -564,7 +564,7 @@ Caveats:
 
 **Arguments:**
 
-- `delay_ms` (integer, optional): Milliseconds to sleep between turns, for human-observable pacing. Default 500.
+- `delay_ms` (integer, optional): Milliseconds to sleep between turns, for human-observable pacing. Default 500. range: 0–10000
 - `dir` (string, required): Trajectory directory previously written by `start_recording`. Absolute or ~-rooted.
 - `stop_on_error` (boolean, optional): Stop replay on the first tool-call error. Default true — set false to best-effort through the full trajectory.
 
@@ -594,8 +594,8 @@ Declare a session — a named, color-coded identity for THIS agent run. Pass a s
 
 **Arguments:**
 
-- `capture_scope` (string, optional): Per-session perception/action modality. auto starts window-only and requires explicit escalation before desktop tools; window and desktop are strict. Immutable for the live session.
-- `cursor_theme` (object,null, optional): Optional initial cursor theme. The host applies it before the cursor is
+- `capture_scope` (string, optional): Per-session perception/action modality. auto starts window-only and requires explicit escalation before desktop tools; window and desktop are strict. Immutable for the live session. default: `"auto"`
+- `cursor_theme` (object or null, optional): Optional initial cursor theme. The host applies it before the cursor is
 first made visible, avoiding a flash of the default theme.
 - `session` (string, required): Stable session id for this run (e.g. "research-run-1").
 
@@ -634,16 +634,16 @@ Configure only movement physics and visibility timing for a session cursor.
 
 **Arguments:**
 
-- `arc_flow` (number,null, optional)
-- `arc_size` (number,null, optional)
-- `dwell_after_click_ms` (number,null, optional)
-- `end_handle` (number,null, optional)
-- `glide_duration_ms` (number,null, optional)
-- `idle_hide_ms` (number,null, optional)
+- `arc_flow` (number or null, optional)
+- `arc_size` (number or null, optional)
+- `dwell_after_click_ms` (number or null, optional)
+- `end_handle` (number or null, optional)
+- `glide_duration_ms` (number or null, optional)
+- `idle_hide_ms` (number or null, optional)
 - `session` (string, required)
-- `spring` (number,null, optional)
-- `start_handle` (number,null, optional)
-- `turn_radius` (number,null, optional)
+- `spring` (number or null, optional)
+- `start_handle` (number or null, optional)
+- `turn_radius` (number or null, optional)
 
 ```json
 {"session":"example"}
@@ -660,7 +660,7 @@ Returns: `accessibility` + `screen_recording` (booleans from the TCC preflight A
 **Arguments:**
 
 - `probe_direct_capture` (boolean, optional): When prompting and Screen Recording is granted, also run the live ScreenCaptureKit probe that may raise Tahoe's direct-capture consent. Default true. Set false for a staged Accessibility/Screen Recording request.
-- `prompt` (boolean, optional): Raise the system permission prompts for missing grants. Default false; only a trusted host setup route may set true.
+- `prompt` (boolean, optional): Raise the system permission prompts for missing grants. Default false; only a trusted host setup route may set true. default: `false`
 
 ### `health_report`
 
@@ -730,21 +730,21 @@ Install the ffmpeg binary used by start_recording's video capture (Linux/Windows
 
 ### `verify_state`
 
-Deterministically verify bounded predicates against one exact window. The driver evaluates structured window/accessibility state and may return the final screenshot as uninterpreted visual evidence for a multimodal caller. Predicate results are satisfied, unsatisfied, or unknown; unknown never implies success.
+Deterministically verify bounded predicates against one exact window. The driver evaluates structured window/accessibility state and may return the final screenshot as uninterpreted visual evidence for a multimodal caller. Predicate results are satisfied, unsatisfied, or unknown; unknown never implies success. Accessibility projections are conservative: absence remains unknown unless the observed search domain is proven exhaustive.
 
 **Arguments:**
 
-- `expect` (array of object, required): One to eight predicates, combined with logical AND.
-- `include_screenshot` (boolean,null, optional): Return the final window screenshot as image content for a multimodal
+- `expect` (array of object, required): One to eight predicates, combined with logical AND. items: 1–8
+- `include_screenshot` (boolean or null, optional): Return the final window screenshot as image content for a multimodal
 caller. The driver does not interpret that image.
-- `pid` (integer, required): Exact process whose window may be observed.
+- `pid` (integer, required): Exact process whose window may be observed. range: 1–unbounded
 - `session` (string, optional): Optional session id for capture-scope and authorization continuity.
-- `stable_samples` (integer, optional): Consecutive satisfied samples required before returning success.
-- `timeout_ms` (integer, optional): Bounded wait. Zero performs one sample.
+- `stable_samples` (integer, optional): Consecutive satisfied samples required before returning success. default: `2`; range: 1–5
+- `timeout_ms` (integer, optional): Bounded wait. Zero performs one sample. default: `5000`; range: 0–10000
 - `window_id` (integer, required): Exact native window identifier.
 
 ```json
-{"expect":["example"],"pid":844,"window_id":10725}
+{"expect":[{"window":{"exists":true}}],"pid":844,"window_id":10725}
 ```
 
 ### `set_agent_cursor_theme`
@@ -753,7 +753,7 @@ Select an already-installed cursor theme for a session.
 
 **Arguments:**
 
-- `reduced_motion` (string, optional)
+- `reduced_motion` (string, optional): default: `"auto"`
 - `session` (string, required)
 - `theme_id` (string, required)
 
@@ -768,7 +768,7 @@ Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native br
 **Arguments:**
 
 - `continuation` (string, optional): Opaque continuation minted by an earlier semantic_v2 response.
-- `include_screenshot` (boolean, optional): Capture the exact tab viewport as PNG through CDP without selecting the tab or foregrounding its native window. The request refuses if capture cannot be completed.
+- `include_screenshot` (boolean, optional): Capture the exact tab viewport as PNG through CDP without selecting the tab or foregrounding its native window. The request refuses if capture cannot be completed. default: `false`
 - `pid` (integer, optional): Native browser process id (bind mode).
 - `query` (string, optional): Read-only semantic match over role, accessible name, and visible text.
 - `scope_ref` (string, optional): Current semantic/content ref whose subtree should be observed.
@@ -854,7 +854,7 @@ Inspect or resolve a page-owned JavaScript alert, confirm, prompt, or beforeunlo
 **Arguments:**
 
 - `action` (string, required)
-- `delivery_mode` (string, optional): Requested foreground posture for accept/dismiss. Linux Chromium requires foreground; inspect is read-only.
+- `delivery_mode` (string, optional): Requested foreground posture for accept/dismiss. Linux Chromium requires foreground; inspect is read-only. default: `"background"`
 - `dialog_id` (string, optional): Opaque current dialog generation returned by action=inspect.
 - `prompt_text` (string, optional): Sensitive response text, valid only when accepting a prompt dialog.
 - `session` (string, optional): Stable caller-declared session id. Browser targets, tabs, and refs are scoped to this session.
@@ -871,7 +871,7 @@ Assign one or more explicit absolute local files to an exact live &lt;input type
 
 **Arguments:**
 
-- `files` (array of string, required)
+- `files` (array of string, required): items: 1–32
 - `ref` (string, required): Page element ref in the p&lt;snapshot&gt;:&lt;index&gt; namespace from get_browser_state. Refs are invalidated by navigation and by newer snapshots of the same tab.
 - `session` (string, optional): Stable caller-declared session id. Browser targets, tabs, and refs are scoped to this session.
 - `tab_id` (string, required): Opaque tab id from get_browser_state (session-scoped).
@@ -907,7 +907,7 @@ Perform hover, right-click, double-click, scroll, or drag in an exactly-bound br
 - `delta_x` (number, optional): Horizontal scroll delta in CSS pixels.
 - `delta_y` (number, optional): Vertical scroll delta in CSS pixels.
 - `destination_ref` (string, optional): Drag destination page ref in the exact same frame.
-- `input_route` (string, optional)
+- `input_route` (string, optional): default: `"trusted"`
 - `ref` (string, optional): Origin page ref. Alternative to x/y.
 - `session` (string, required): Explicit caller session owning the browser capabilities.
 - `tab_id` (string, required): Opaque tab id minted by get_browser_state.

@@ -609,7 +609,7 @@ impl Tool for GetWindowStateTool {
         // skips the grab to return tree only.
         let should_capture = include_screenshot != Some(false) || screenshot_out_file.is_some();
         let observation_only = args
-            .get("observation_only")
+            .get("_observation_only")
             .and_then(|value| value.as_bool())
             == Some(true);
         let state = self.state.clone();
@@ -671,6 +671,7 @@ impl Tool for GetWindowStateTool {
                 let mut structured = json!({ "window_id": xid, "pid": pid });
 
                 if let Some(tr) = tree_opt {
+                    let source_trusted = tr.trusted;
                     let count = tr
                         .nodes
                         .iter()
@@ -785,7 +786,14 @@ impl Tool for GetWindowStateTool {
                     // daemon isn't on the desktop session bus so the registry is
                     // empty), or it's a non-AX surface (canvas/WebGL). Mark it
                     // degraded so callers don't read `elements: []` as authoritative.
-                    if count == 0 {
+                    if !source_trusted {
+                        structured["degraded"] = json!(true);
+                        structured["degraded_reason"] = json!(
+                            "x11_property_fallback_partial: AT-SPI was unavailable and \
+                             Cua Driver only recovered window metadata. Treat it as \
+                             discovery evidence; it cannot prove checked state."
+                        );
+                    } else if count == 0 {
                         structured["degraded"] = json!(true);
                         structured["degraded_reason"] = json!(
                             "atspi_tree_empty: the AT-SPI walk returned no actionable \
@@ -807,12 +815,14 @@ impl Tool for GetWindowStateTool {
                 }
 
                 if let Some((b64_opt, file_path, w, h, orig_w)) = shot_opt {
-                    if let Some(ow) = orig_w {
-                        if w > 0 {
-                            state.resize_registry.set_ratio(pid, ow as f64 / w as f64);
+                    if !observation_only {
+                        if let Some(ow) = orig_w {
+                            if w > 0 {
+                                state.resize_registry.set_ratio(pid, ow as f64 / w as f64);
+                            }
+                        } else {
+                            state.resize_registry.clear_ratio(pid);
                         }
-                    } else {
-                        state.resize_registry.clear_ratio(pid);
                     }
                     // ax mode + screenshot_out_file writes the PNG to disk and
                     // returns b64=None — never embed the image bytes in that case.

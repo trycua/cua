@@ -219,7 +219,9 @@ themselves.
 **Every action MUST be bracketed by observation for the session's effective
 scope.** Use `get_window_state(pid, window_id)` before a window action (or
 `get_desktop_state(session)` in desktop scope), then use `verify_state` for an
-expressible structured postcondition.
+expressible window-scoped postcondition. In effective desktop scope,
+`verify_state` is intentionally refused with `window_scope_disabled`; verify
+with a fresh `get_desktop_state` result and agent-owned visual/semantic reading.
 
 - **Before** — the pre-action snapshot resolves the `element_index`
   you're about to use. Indices from previous turns are stale; the
@@ -234,6 +236,13 @@ expressible structured postcondition.
   the outcome also needs visual reading. The driver returns that final image
   without interpreting it. A multimodal agent harness reads the image and owns
   the stop/retry/ladder decision.
+
+`unknown_reason` distinguishes invalid/unsupported predicates, untrusted web
+content, ambiguous matches, missing targets, unavailable observations, and
+`stability_unproven`. A positive final sample that was not observed for the
+requested consecutive sample count is `stability_unproven`, not success.
+Negative element existence is conservative: when an accessibility projection
+cannot prove its search domain exhaustive, absence remains `unknown`.
 
 Do not make the driver invent task meaning or retry actions automatically.
 For postconditions not expressible by `verify_state`, take a fresh state
@@ -817,7 +826,9 @@ point for new browser workflows.
 window's existence/bounds or a semantic element's existence, value, enabled
 state, or selected state. Use its bounded poll and stable-sample requirement
 instead of hand-written sleeps. `unknown` means the driver could not establish
-the predicate; it is not success.
+the predicate; it is not success. Once a session has effective desktop scope,
+use a fresh `get_desktop_state(session)` result instead—window-scoped
+`verify_state` is denied by that capture policy.
 
 Pass `include_screenshot:true` when visual evidence is useful. The same result
 then contains a fresh final window image. The driver still evaluates only the

@@ -1633,7 +1633,7 @@
     },
     {
       "name": "verify_state",
-      "description": "Deterministically verify bounded predicates against one exact window. The driver evaluates structured window/accessibility state and may return the final screenshot as uninterpreted visual evidence for a multimodal caller. Predicate results are satisfied, unsatisfied, or unknown; unknown never implies success.",
+      "description": "Deterministically verify bounded predicates against one exact window. The driver evaluates structured window/accessibility state and may return the final screenshot as uninterpreted visual evidence for a multimodal caller. Predicate results are satisfied, unsatisfied, or unknown; unknown never implies success. Accessibility projections are conservative: absence remains unknown unless the observed search domain is proven exhaustive.",
       "platforms": [
         "macos",
         "windows",
@@ -1775,6 +1775,7 @@
           },
           "pid": {
             "description": "Exact process whose window may be observed.",
+            "minimum": 1,
             "type": "integer"
           },
           "session": {
@@ -1824,7 +1825,14 @@
                   "type": "integer"
                 },
                 "observed_json": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "status": {
                   "enum": [
@@ -1835,16 +1843,23 @@
                   "type": "string"
                 },
                 "unknown_reason": {
-                  "enum": [
-                    "invalid_predicate",
-                    "unsupported_predicate",
-                    "untrusted_source",
-                    "multi_match",
-                    "target_missing",
-                    "observation_unavailable",
-                    "stability_unproven"
-                  ],
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "invalid_predicate",
+                        "unsupported_predicate",
+                        "untrusted_source",
+                        "multi_match",
+                        "target_missing",
+                        "observation_unavailable",
+                        "stability_unproven"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [

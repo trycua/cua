@@ -141,7 +141,10 @@ impl ObservationProvider for ToolObservationProvider {
                 "include_screenshot": include_screenshot,
                 // Internal direct-tool flag: verification must not refresh the
                 // shared action index/token cache.
-                "observation_only": true,
+                // Registry ingress removes underscore-prefixed arguments before
+                // public dispatch. Direct platform-tool invocation is the
+                // trusted in-process channel for this non-mutating mode.
+                "_observation_only": true,
             }))
             .await;
         if state.is_error == Some(true) {
@@ -677,10 +680,15 @@ fn normalized_role(role: &str) -> String {
         .filter(|character| character.is_ascii_alphanumeric())
         .flat_map(char::to_lowercase)
         .collect();
-    normalized
+    let normalized = normalized
         .strip_prefix("ax")
         .unwrap_or(&normalized)
-        .to_owned()
+        .to_owned();
+    match normalized.as_str() {
+        "pushbutton" => "button".to_owned(),
+        "pagetab" | "tabitem" => "tab".to_owned(),
+        _ => normalized,
+    }
 }
 
 fn target_is_in_web_area(target: &Value, elements: &[Value]) -> bool {
@@ -707,8 +715,8 @@ fn target_is_in_web_area(target: &Value, elements: &[Value]) -> bool {
             .is_some_and(|role| {
                 let normalized = role.to_ascii_lowercase().replace(['_', ' '], "");
                 normalized.contains("webarea")
-                    || normalized.contains("documentweb")
-                    || normalized == "document"
+                    || normalized.contains("document")
+                    || normalized == "embedded"
             })
         {
             return true;
@@ -954,6 +962,8 @@ mod tests {
                 "native role {native_role} should normalize to checkbox"
             );
         }
+        assert_eq!(normalized_role("AXButton"), normalized_role("push button"));
+        assert_eq!(normalized_role("TabItem"), normalized_role("page tab"));
     }
 
     #[test]

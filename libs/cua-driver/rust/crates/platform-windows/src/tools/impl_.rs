@@ -964,7 +964,7 @@ impl Tool for GetWindowStateTool {
         // instead of embedding base64; otherwise the base64 PNG is embedded.
         let include_screenshot = args.get("include_screenshot").and_then(|v| v.as_bool());
         let observation_only = args
-            .get("observation_only")
+            .get("_observation_only")
             .and_then(|value| value.as_bool())
             == Some(true);
         let do_tree = true;
@@ -1176,7 +1176,14 @@ impl Tool for GetWindowStateTool {
                     // UIA tree means element_index has nothing to bind to, so the
                     // deliberate move is an element px action — read the screenshot
                     // already in this response and click by pixel (x,y).
-                    if count == 0 {
+                    if is_msaa {
+                        structured["degraded"] = json!(true);
+                        structured["degraded_reason"] = json!(
+                            "msaa_fallback_partial: the UIA provider was unavailable and \
+                             Cua Driver used a partial MSAA tree. Treat it as discovery \
+                             evidence only; it cannot prove checked state."
+                        );
+                    } else if count == 0 {
                         structured["degraded"] = json!(true);
                         structured["degraded_reason"] = json!(
                             "ax_tree_empty: the UIA walk returned no actionable elements. \
@@ -1195,12 +1202,14 @@ impl Tool for GetWindowStateTool {
                 }
 
                 if let Some((b64_opt, file_path, w, h, orig_w)) = screenshot_opt {
-                    if let Some(ow) = orig_w {
-                        if w > 0 {
-                            state.resize_registry.set_ratio(pid, ow as f64 / w as f64);
+                    if !observation_only {
+                        if let Some(ow) = orig_w {
+                            if w > 0 {
+                                state.resize_registry.set_ratio(pid, ow as f64 / w as f64);
+                            }
+                        } else {
+                            state.resize_registry.clear_ratio(pid);
                         }
-                    } else {
-                        state.resize_registry.clear_ratio(pid);
                     }
                     // base64 is embedded only when no out_file was given (vision
                     // path). With `screenshot_out_file` the bytes went to disk and

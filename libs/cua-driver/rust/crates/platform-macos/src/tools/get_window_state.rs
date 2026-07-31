@@ -209,11 +209,11 @@ impl Tool for GetWindowStateTool {
         // still forces a capture (an explicit "write the frame to disk").
         let include_screenshot = args.get("include_screenshot").and_then(|v| v.as_bool());
         let should_capture = include_screenshot != Some(false) || screenshot_out_file.is_some();
-        // Internal direct-tool mode used by verify_state. Public registry
-        // schema validation rejects this key; it prevents a read-only
-        // observation from replacing action-grounding indices or tokens.
+        // Internal direct-tool mode used by verify_state. Registry ingress
+        // strips underscore-prefixed arguments before public dispatch; only
+        // a trusted direct in-process invocation can enable this mode.
         let observation_only = args
-            .get("observation_only")
+            .get("_observation_only")
             .and_then(|value| value.as_bool())
             == Some(true);
         // Optional caps — when omitted, fall back to the defaults baked into
@@ -382,16 +382,18 @@ impl Tool for GetWindowStateTool {
                     // different ratios (only the large one downscales), and a
                     // pid-only key leaked one window's ratio into the other's
                     // pixel clicks.
-                    if let Some(ow) = orig_w {
-                        if w > 0 {
-                            self.state.resize_registry.set_ratio(
-                                pid,
-                                window_id,
-                                ow as f64 / w as f64,
-                            );
+                    if !observation_only {
+                        if let Some(ow) = orig_w {
+                            if w > 0 {
+                                self.state.resize_registry.set_ratio(
+                                    pid,
+                                    window_id,
+                                    ow as f64 / w as f64,
+                                );
+                            }
+                        } else {
+                            self.state.resize_registry.clear_ratio(pid, window_id);
                         }
-                    } else {
-                        self.state.resize_registry.clear_ratio(pid, window_id);
                     }
                     Some((b64, file_path, w, h, bounds, scale))
                 }
@@ -399,7 +401,9 @@ impl Tool for GetWindowStateTool {
                     tracing::warn!(
                         "Screenshot frame could not be verified for window {window_id}: {e:?}"
                     );
-                    self.state.resize_registry.clear_ratio(pid, window_id);
+                    if !observation_only {
+                        self.state.resize_registry.clear_ratio(pid, window_id);
+                    }
                     screenshot_frame_error = Some(e);
                     None
                 }
@@ -502,9 +506,11 @@ impl Tool for GetWindowStateTool {
             (None, Some(r)) if scope_matched => build_elements_array(&r.nodes),
             _ => Vec::new(),
         };
-        let elements_complete = tree_result
-            .as_ref()
-            .is_some_and(|result| scope_matched && !result.truncated);
+        // The structured array intentionally contains only actionable nodes,
+        // and AX child reads can fail independently of the element/depth caps.
+        // Until the walker exposes a proof over the projected search domain,
+        // absence must remain unknown rather than being claimed complete.
+        let elements_complete = false;
 
         let mut structured = serde_json::json!({
             "window_id": window_id,
@@ -806,6 +812,9 @@ pub(crate) fn build_elements_array_with_token(
             if let Some(selected) = selected {
                 entry["selected"] = serde_json::Value::Bool(selected);
             }
+            if node.in_web_content {
+                entry["in_web_content"] = serde_json::Value::Bool(true);
+            }
             if let Some(frame) = frame {
                 entry["frame"] = frame;
             }
@@ -986,6 +995,7 @@ mod tests {
             max_value: None,
             enabled: None,
             selected: None,
+            in_web_content: false,
         }
     }
 
@@ -1110,6 +1120,21 @@ mod tests {
         assert_eq!(entry["max"], 8.0);
         assert_eq!(entry["enabled"], true);
         assert_eq!(entry["selected"], false);
+    }
+
+    #[test]
+    fn elements_surface_inherited_web_content_trust_marker() {
+        let mut nodes = vec![node(
+            Some(0),
+            "AXButton",
+            Some("Renderer button"),
+            2,
+            None,
+            None,
+        )];
+        nodes[0].in_web_content = true;
+        let entry = &build_elements_array(&nodes)[0];
+        assert_eq!(entry["in_web_content"], true);
     }
 
     #[test]

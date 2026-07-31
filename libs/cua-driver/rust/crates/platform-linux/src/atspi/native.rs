@@ -502,13 +502,13 @@ async fn collect_visited_bounded<'a>(
         let enabled = state_r
             .as_ref()
             .and_then(|state| state.as_ref().ok())
-            .map(|state| state.contains(State::Enabled));
+            .map(|state| state.contains(State::Enabled) && state.contains(State::Sensitive));
         let selected = if role_lower.contains("check") {
             checked
         } else if role_lower.contains("radio")
             || role_lower.contains("list item")
             || role_lower.contains("menu item")
-            || role_lower.contains("tab")
+            || matches!(role_lower.as_str(), "tab" | "page tab" | "tab item")
         {
             state_r
                 .as_ref()

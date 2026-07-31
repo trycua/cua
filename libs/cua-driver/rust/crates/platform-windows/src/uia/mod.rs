@@ -20,8 +20,9 @@ use windows::Win32::UI::Accessibility::{
     UIA_BoundingRectanglePropertyId, UIA_ControlTypePropertyId, UIA_ExpandCollapsePatternId,
     UIA_HelpTextPropertyId, UIA_InvokePatternId, UIA_IsEnabledPropertyId,
     UIA_IsOffscreenPropertyId, UIA_NamePropertyId, UIA_ProcessIdPropertyId,
-    UIA_RangeValuePatternId, UIA_ScrollPatternId, UIA_SelectionItemPatternId, UIA_TextPatternId,
-    UIA_TogglePatternId, UIA_ValuePatternId, UIA_ValueValuePropertyId,
+    UIA_RangeValuePatternId, UIA_ScrollPatternId, UIA_SelectionItemIsSelectedPropertyId,
+    UIA_SelectionItemPatternId, UIA_TextPatternId, UIA_TogglePatternId,
+    UIA_ToggleToggleStatePropertyId, UIA_ValuePatternId, UIA_ValueValuePropertyId,
 };
 
 pub mod cache;
@@ -154,6 +155,8 @@ unsafe fn walk_tree_unsafe(
         UIA_IsEnabledPropertyId,
         UIA_IsOffscreenPropertyId,
         UIA_BoundingRectanglePropertyId,
+        UIA_ToggleToggleStatePropertyId,
+        UIA_SelectionItemIsSelectedPropertyId,
     ] {
         let _ = cache_req.AddProperty(*prop);
     }

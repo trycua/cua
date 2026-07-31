@@ -39,12 +39,40 @@ fn integer_schema(_: &mut SchemaGenerator) -> Schema {
     json_schema!({ "type": "integer" })
 }
 
+fn positive_integer_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({ "type": "integer", "minimum": 1 })
+}
+
 fn string_schema(generator: &mut SchemaGenerator) -> Schema {
     String::json_schema(generator)
 }
 
 fn nonempty_string_schema(_: &mut SchemaGenerator) -> Schema {
     json_schema!({ "type": "string", "minLength": 1 })
+}
+
+fn nullable_string_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({ "anyOf": [{ "type": "string" }, { "type": "null" }] })
+}
+
+fn nullable_unknown_reason_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({
+        "anyOf": [
+            {
+                "type": "string",
+                "enum": [
+                    "invalid_predicate",
+                    "unsupported_predicate",
+                    "untrusted_source",
+                    "multi_match",
+                    "target_missing",
+                    "observation_unavailable",
+                    "stability_unproven"
+                ]
+            },
+            { "type": "null" }
+        ]
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
@@ -110,7 +138,7 @@ pub struct StatePredicate {
 #[serde(deny_unknown_fields)]
 pub struct VerifyStateInput {
     /// Exact process whose window may be observed.
-    #[schemars(schema_with = "integer_schema")]
+    #[schemars(schema_with = "positive_integer_schema")]
     pub pid: i64,
     /// Exact native window identifier.
     #[schemars(schema_with = "integer_schema")]
@@ -164,10 +192,10 @@ pub enum UnknownReason {
 pub struct PredicateOutcome {
     pub index: u64,
     pub status: VerificationStatus,
-    #[schemars(required)]
+    #[schemars(required, schema_with = "nullable_unknown_reason_schema")]
     pub unknown_reason: Option<UnknownReason>,
     /// Normalized, bounded JSON projection of the matched state.
-    #[schemars(required)]
+    #[schemars(required, schema_with = "nullable_string_schema")]
     pub observed_json: Option<String>,
 }
 
@@ -188,7 +216,9 @@ pub fn contracts() -> Vec<ToolContract> {
         description: "Deterministically verify bounded predicates against one exact window. \
             The driver evaluates structured window/accessibility state and may return the final \
             screenshot as uninterpreted visual evidence for a multimodal caller. Predicate \
-            results are satisfied, unsatisfied, or unknown; unknown never implies success."
+            results are satisfied, unsatisfied, or unknown; unknown never implies success. \
+            Accessibility projections are conservative: absence remains unknown unless the \
+            observed search domain is proven exhaustive."
             .into(),
         platforms: ALL_PLATFORMS.to_vec(),
         aliases: Vec::new(),
@@ -262,6 +292,34 @@ mod tests {
         assert_eq!(
             serde_json::to_value(output).unwrap()["status"],
             json!("unknown")
+        );
+        let schema = VerifyStateOutput::output_schema();
+        let predicate = &schema["properties"]["predicates"]["items"];
+        for field in ["unknown_reason", "observed_json"] {
+            assert!(
+                predicate["properties"][field]["anyOf"]
+                    .as_array()
+                    .is_some_and(|variants| variants
+                        .iter()
+                        .any(|variant| variant["type"] == "null")),
+                "{field} must be required and nullable"
+            );
+        }
+        let satisfied = VerifyStateOutput {
+            status: VerificationStatus::Satisfied,
+            stable: true,
+            elapsed_ms: 1,
+            samples: 2,
+            predicates: vec![PredicateOutcome {
+                index: 0,
+                status: VerificationStatus::Satisfied,
+                unknown_reason: None,
+                observed_json: None,
+            }],
+        };
+        assert!(
+            satisfied.validate().is_ok(),
+            "published output schema must accept runtime null optionals"
         );
     }
 }

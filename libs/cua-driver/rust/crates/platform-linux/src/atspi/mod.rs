@@ -48,6 +48,9 @@ pub struct AtspiTreeResult {
     pub tree_markdown: String,
     pub nodes: Vec<AtspiNode>,
     pub bounds: Vec<(usize, i32, i32, u32, u32)>,
+    /// True only for a native AT-SPI walk. The X11 property fallback is a
+    /// partial discovery aid and must not prove verification predicates.
+    pub trusted: bool,
 }
 
 /// Walk the AT-SPI tree for a window identified by (pid, xid).
@@ -75,6 +78,7 @@ pub(crate) fn walk_tree_for_recording(
                 tree_markdown,
                 nodes,
                 bounds,
+                trusted: true,
             };
         }
     }
@@ -118,6 +122,7 @@ pub fn walk_tree_bounded(
                     tree_markdown: md,
                     nodes,
                     bounds,
+                    trusted: true,
                 };
             }
         }
@@ -235,6 +240,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
                 tree_markdown: String::new(),
                 nodes: vec![],
                 bounds: vec![],
+                trusted: false,
             }
         }
     };
@@ -290,6 +296,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
         tree_markdown,
         nodes,
         bounds: vec![],
+        trusted: false,
     }
 }
 

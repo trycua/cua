@@ -163,7 +163,7 @@ fn def() -> &'static ToolDef {
                 "delivery_mode": {
                     "type": "string",
                     "enum": ["background", "foreground"],
-                    "description": "Best-effort-background ladder rung (default \"background\"). \"background\": perform the AX action or post the CGEvent without fronting. \"foreground\": briefly front the window, act, let transient UI settle, then restore the prior frontmost app. Requires window_id. A generic click has no independent postcondition read-back, so its action effect remains unverifiable — confirm the effect from a fresh state snapshot. Use the agent loop: background AX (element_index) → snapshot → background pixel (x/y) → snapshot → delivery_mode:\"foreground\"."
+                    "description": "Best-effort-background ladder rung (default \"background\"). \"background\": perform the AX action or post the CGEvent without fronting. \"foreground\": briefly front the window, act, let transient UI settle, then restore the prior frontmost app. Requires window_id. A generic click has no independent postcondition read-back, except selection of list-like AX rows whose AXSelected state can be confirmed; otherwise confirm the effect from a fresh state snapshot. Use the agent loop: background AX (element_index) → snapshot → background pixel (x/y) → snapshot → delivery_mode:\"foreground\"."
                 },
                 "scope": {
                     "type": "string",
@@ -521,7 +521,10 @@ impl Tool for ClickTool {
             let changes = super::finish_window_observation(snapshot, &args).await;
 
             match result {
-                Ok(Ok(((mut msg, needs_webkit_delay, suspected_noop), fronted))) => {
+                Ok(Ok((
+                    (mut msg, needs_webkit_delay, suspected_noop, selection_verified),
+                    fronted,
+                ))) => {
                     // For text inputs, wait 800ms for WebKit DOM focus to settle
                     // before returning — matches the Swift reference behaviour.
                     if needs_webkit_delay {
@@ -539,9 +542,20 @@ impl Tool for ClickTool {
                     //     the caller verifies via screenshot.
                     let mut structured = serde_json::json!({
                         "path": if fronted { "ax_fg" } else { "ax" },
-                        "verified": false,
-                        "effect": if suspected_noop { "suspected_noop" } else { "unverifiable" },
+                        "verified": selection_verified,
+                        "effect": if selection_verified {
+                            "confirmed"
+                        } else if suspected_noop {
+                            "suspected_noop"
+                        } else {
+                            "unverifiable"
+                        },
                     });
+                    if selection_verified {
+                        structured["evidence"] = serde_json::json!([
+                            { "kind": "accessibility_readback" }
+                        ]);
+                    }
                     if suspected_noop {
                         structured["escalation"] = serde_json::json!({
                             "recommended": "px",
@@ -916,7 +930,8 @@ impl Tool for ClickTool {
 
 // ── AX click implementation (blocking) ───────────────────────────────────────
 
-/// Returns `(summary_text, needs_webkit_delay, suspected_noop)`.
+/// Returns `(summary_text, needs_webkit_delay, suspected_noop,
+/// selection_verified)`.
 ///
 /// `suspected_noop` is true when the element did not advertise the action we
 /// dispatched — AXUIElementPerformAction returns success regardless, so this is
@@ -930,7 +945,7 @@ fn perform_ax_click(
     window_id: u32,
     action_str: &str,
     cursor_key: &str,
-) -> anyhow::Result<(String, bool, bool)> {
+) -> anyhow::Result<(String, bool, bool, bool)> {
     let ax_action = map_action(action_str);
     let element = element_ptr as AXUIElementRef;
 
@@ -944,13 +959,50 @@ fn perform_ax_click(
     // (AX returns success even when the element doesn't advertise the action).
     let advertised = unsafe { copy_action_names(element) };
 
-    let err = unsafe { crate::ax::bindings::perform_action(element, ax_action) };
-    if err != crate::ax::bindings::kAXErrorSuccess {
-        anyhow::bail!("AXUIElementPerformAction({ax_action}) returned {err}");
-    }
-
     let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
     let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
+
+    // A click on an AppKit collection item is frequently represented by a
+    // label child or row that does not advertise AXPress. Prefer a bounded,
+    // read-back-verified AXSelected write over dispatching a known hollow press
+    // or forcing the caller onto a less stable pixel coordinate.
+    if ax_action == "AXPress" && !advertised.iter().any(|action| action == ax_action) {
+        if let Some(selected_role) = crate::input::ax_actions::select_nearest_container(element_ptr)
+        {
+            return Ok((
+                format!(
+                    "✅ Selected nearest {selected_role} for [{idx}] {role} \"{title}\"; \
+                     confirmed AXSelected=true."
+                ),
+                false,
+                false,
+                true,
+            ));
+        }
+    }
+
+    let err = unsafe { crate::ax::bindings::perform_action(element, ax_action) };
+    if err != crate::ax::bindings::kAXErrorSuccess {
+        // Some collection rows claim a click-like action but Finder returns
+        // kAXErrorCannotComplete. Use the same verified selection fallback
+        // before surfacing the dispatch error.
+        if ax_action == "AXPress" {
+            if let Some(selected_role) =
+                crate::input::ax_actions::select_nearest_container(element_ptr)
+            {
+                return Ok((
+                    format!(
+                        "✅ Selected nearest {selected_role} for [{idx}] {role} \"{title}\" \
+                         after AXPress returned {err}; confirmed AXSelected=true."
+                    ),
+                    false,
+                    false,
+                    true,
+                ));
+            }
+        }
+        anyhow::bail!("AXUIElementPerformAction({ax_action}) returned {err}");
+    }
 
     let mut summary = format!("✅ Performed {ax_action} on [{idx}] {role} \"{title}\".");
 
@@ -1033,7 +1085,7 @@ fn perform_ax_click(
     let _ = pid;
     let _ = window_id; // used by caller context
 
-    Ok((summary, needs_webkit_delay, suspected_noop))
+    Ok((summary, needs_webkit_delay, suspected_noop, false))
 }
 
 fn map_action(action: &str) -> &'static str {

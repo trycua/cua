@@ -786,7 +786,7 @@ public protocol CyclopsClientProtocol: AnyObject, Sendable {
 
     func deletePool(pool: Pool) async throws
 
-    func getPool(pool: Pool) async throws  -> Pool
+    func getPool(name: String) async throws  -> Pool
 
     func listPools(namespace: String) async throws  -> [Pool]
 
@@ -1031,13 +1031,13 @@ open func deletePool(pool: Pool)async throws   {
         )
 }
 
-open func getPool(pool: Pool)async throws  -> Pool  {
+open func getPool(name: String)async throws  -> Pool  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_cyclops_sdk_fn_method_cyclopsclient_get_pool(
                     self.uniffiCloneHandle(),
-                    FfiConverterTypePool_lower(pool)
+                    FfiConverterString.lower(name)
                 )
             },
             pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
@@ -2893,7 +2893,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool() != 31235) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool() != 43327) {
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool() != 49450) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools() != 27984) {

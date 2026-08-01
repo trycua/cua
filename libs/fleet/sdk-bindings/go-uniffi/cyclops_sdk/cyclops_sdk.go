@@ -443,7 +443,7 @@ func uniffiCheckChecksums() {
 		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
 			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool()
 		})
-		if checksum != 43327 {
+		if checksum != 49450 {
 			// If this happens try cleaning and rebuilding your project
 			panic("cyclops_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool: UniFFI API checksum mismatch")
 		}
@@ -1069,7 +1069,7 @@ type CyclopsClientInterface interface {
 	WaitClaim(claim Claim) (Sandbox, error)
 	CreatePool(request CreatePoolRequest) (Pool, error)
 	DeletePool(pool Pool) error
-	GetPool(pool Pool) (Pool, error)
+	GetPool(name string) (Pool, error)
 	ListPools(namespace string) ([]Pool, error)
 	UpdatePool(pool Pool) (Pool, error)
 	ServiceRequest(sandbox Sandbox, service string, path string, request HttpRequest) (HttpResponse, error)
@@ -1363,7 +1363,7 @@ func (_self *CyclopsClient) DeletePool(pool Pool) error {
 	return err
 }
 
-func (_self *CyclopsClient) GetPool(pool Pool) (Pool, error) {
+func (_self *CyclopsClient) GetPool(name string) (Pool, error) {
 	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
 	defer _self.ffiObject.decrementPointer()
 	res, err := uniffiRustCallAsync[*SdkError](
@@ -1380,7 +1380,7 @@ func (_self *CyclopsClient) GetPool(pool Pool) (Pool, error) {
 			return FfiConverterPoolINSTANCE.Lift(ffi)
 		},
 		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_pool(
-			_pointer, FfiConverterPoolINSTANCE.Lower(pool)),
+			_pointer, FfiConverterStringINSTANCE.Lower(name)),
 		// pollFn
 		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
 			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)

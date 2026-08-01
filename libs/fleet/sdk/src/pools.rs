@@ -84,8 +84,8 @@ impl CyclopsClient {
         Ok(list.items)
     }
 
-    pub async fn get_pool(self: Arc<Self>, pool: Pool) -> Result<Pool, SdkError> {
-        let item_url = self.pool_item_url(&pool)?;
+    pub async fn get_pool(self: Arc<Self>, name: String) -> Result<Pool, SdkError> {
+        let item_url = routes::named_pool_item(self.base_url(), &name)?;
         self.send_json("get pool", json_request("GET", item_url, None), &[200])
             .await
     }

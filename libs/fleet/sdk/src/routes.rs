@@ -26,6 +26,14 @@ pub fn pool_item(base: &Url, namespace: &str, name: &str) -> Result<Url, SdkErro
     )
 }
 
+pub fn named_pool_item(base: &Url, name: &str) -> Result<Url, SdkError> {
+    validate_dns_label_for("name", name)?;
+    route(
+        base,
+        format!("{POOL_COLLECTION_PREFIX}{name}{POOL_COLLECTION_SUFFIX}/{name}"),
+    )
+}
+
 pub fn namespace_collection(base: &Url) -> Result<Url, SdkError> {
     route(base, NAMESPACE_COLLECTION.into())
 }

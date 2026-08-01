@@ -2566,12 +2566,15 @@ end
       )
   end
 
-  def get_pool(pool)
-        pool = pool
-        RustBuffer.check_lower_TypePool(pool)
+  def get_pool(name)
+        name = CyclopsSdk::uniffi_utf8(name)
+
     result = CyclopsSdk.uniffi_rust_future_rust_buffer(
+
       SdkError,
-      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_pool(uniffi_clone_handle(),RustBuffer.alloc_from_TypePool(pool),RustCallStatus.new),
+
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_pool(uniffi_clone_handle(),RustBuffer.allocFromString(name),RustCallStatus.new),
+
     )
     return result.consumeIntoTypePool
   end

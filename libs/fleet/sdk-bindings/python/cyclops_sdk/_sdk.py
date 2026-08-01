@@ -506,7 +506,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim() != 17760:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool() != 43327:
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool() != 49450:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims() != 7802:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -2676,7 +2676,7 @@ class CyclopsClientProtocol(typing.Protocol):
         raise NotImplementedError
     async def get_claim(self, claim: Claim) -> Claim:
         raise NotImplementedError
-    async def get_pool(self, pool: Pool) -> Pool:
+    async def get_pool(self, name: str) -> Pool:
         raise NotImplementedError
     async def list_claims(self, namespace: str) -> typing.List[Claim]:
         raise NotImplementedError
@@ -2927,12 +2927,12 @@ class CyclopsClient(CyclopsClientProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
-    async def get_pool(self, pool: Pool) -> Pool:
+    async def get_pool(self, name: str) -> Pool:
 
-        _UniffiFfiConverterTypePool.check_lower(pool)
+        _UniffiFfiConverterString.check_lower(name)
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
-            _UniffiFfiConverterTypePool.lower(pool),
+            _UniffiFfiConverterString.lower(name),
         )
         _uniffi_lift_return = _UniffiFfiConverterTypePool.lift
         _uniffi_error_converter = _UniffiFfiConverterTypeSdkError

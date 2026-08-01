@@ -794,7 +794,7 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_pool(`ptr`: Long,`pool`: RustBuffer.ByValue,
     ): Long
-    external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_get_pool(`ptr`: Long,`pool`: RustBuffer.ByValue,
+    external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_get_pool(`ptr`: Long,`name`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_list_pools(`ptr`: Long,`namespace`: RustBuffer.ByValue,
     ): Long
@@ -964,7 +964,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool() != 31235.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool() != 43327.toShort()) {
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool() != 49450.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools() != 27984.toShort()) {
@@ -1939,7 +1939,7 @@ public interface CyclopsClientInterface {
 
     suspend fun `deletePool`(`pool`: Pool)
 
-    suspend fun `getPool`(`pool`: Pool): Pool
+    suspend fun `getPool`(`name`: kotlin.String): Pool
 
     suspend fun `listPools`(`namespace`: kotlin.String): List<Pool>
 
@@ -2198,12 +2198,12 @@ open class CyclopsClient: Disposable, AutoCloseable, CyclopsClientInterface
 
     @Throws(SdkException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
-    override suspend fun `getPool`(`pool`: Pool) : Pool {
+    override suspend fun `getPool`(`name`: kotlin.String) : Pool {
         return uniffiRustCallAsync(
         callWithHandle { uniffiHandle ->
             UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_pool(
                 uniffiHandle,
-                FfiConverterTypePool.lower(`pool`),
+                FfiConverterString.lower(`name`),
             )
         },
         { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },

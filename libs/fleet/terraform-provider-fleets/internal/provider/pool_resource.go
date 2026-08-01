@@ -65,7 +65,7 @@ func (r *poolResource) Create(ctx context.Context, req resource.CreateRequest, r
 		resp.Diagnostics.AddError("Unable to create Cyclops pool", err.Error())
 		return
 	}
-	created, err = r.client.GetPool(created)
+	created, err = r.client.GetPool(created.Metadata.Name)
 	if err != nil {
 		resp.Diagnostics.AddError("Pool created but could not be read", err.Error())
 		return
@@ -80,7 +80,7 @@ func (r *poolResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	pool, err := r.client.GetPool(poolIdentity(state.Namespace.ValueString(), state.Name.ValueString()))
+	pool, err := r.client.GetPool(state.Name.ValueString())
 	if isNotFound(err) {
 		resp.State.RemoveResource(ctx)
 		return
@@ -108,7 +108,7 @@ func (r *poolResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		resp.Diagnostics.AddError("Unable to update Cyclops pool", err.Error())
 		return
 	}
-	updated, err = r.client.GetPool(updated)
+	updated, err = r.client.GetPool(updated.Metadata.Name)
 	if err != nil {
 		resp.Diagnostics.AddError("Pool updated but could not be read", err.Error())
 		return

@@ -371,7 +371,7 @@ async fn create_and_delete_for_the_same_namespace_do_not_interleave() {
 }
 
 #[tokio::test]
-async fn lists_gets_and_updates_typed_pools() {
+async fn gets_named_pool_and_updates_typed_pools() {
     let current = pool();
     let updated = Pool {
         spec: serde_json::from_value(serde_json::json!({
@@ -383,21 +383,13 @@ async fn lists_gets_and_updates_typed_pools() {
     };
     let http = Arc::new(ScriptedHttpClient::new([
         Ok(token()),
-        Ok(response(
-            200,
-            &json_bytes(&serde_json::json!({ "items": [current.clone()] })),
-        )),
         Ok(json_response(200, &current)),
         Ok(json_response(200, &updated)),
     ]));
     let client = client(Arc::clone(&http));
 
     assert_eq!(
-        client.clone().list_pools(NAMESPACE.into()).await.unwrap(),
-        vec![current.clone()]
-    );
-    assert_eq!(
-        client.clone().get_pool(current.clone()).await.unwrap(),
+        client.clone().get_pool(NAMESPACE.into()).await.unwrap(),
         current
     );
     assert_eq!(
@@ -406,9 +398,8 @@ async fn lists_gets_and_updates_typed_pools() {
     );
 
     let requests = resource_requests(&http).await;
-    assert_request(&requests[0], "GET", COLLECTION, None);
-    assert_request(&requests[1], "GET", ITEM, None);
-    assert_merge_patch_request(&requests[2], ITEM, Some(&json_bytes(&updated)));
+    assert_request(&requests[0], "GET", ITEM, None);
+    assert_merge_patch_request(&requests[1], ITEM, Some(&json_bytes(&updated)));
 }
 
 #[tokio::test]
@@ -449,7 +440,7 @@ async fn rejects_deleting_a_pool_outside_the_namespace_owned_lifecycle() {
 }
 
 #[tokio::test]
-async fn gets_and_updates_non_lifecycle_pool_resources_without_namespace_cleanup() {
+async fn updates_non_lifecycle_pool_resources_without_namespace_cleanup() {
     let other = Pool {
         metadata: ResourceMetadata {
             namespace: NAMESPACE.into(),
@@ -462,20 +453,17 @@ async fn gets_and_updates_non_lifecycle_pool_resources_without_namespace_cleanup
     let http = Arc::new(ScriptedHttpClient::new([
         Ok(token()),
         Ok(json_response(200, &other)),
-        Ok(json_response(200, &other)),
     ]));
     let client = client(Arc::clone(&http));
 
-    assert_eq!(client.clone().get_pool(other.clone()).await.unwrap(), other);
     assert_eq!(
         client.update_pool(other.clone()).await.unwrap(),
         other.clone()
     );
 
     let requests = resource_requests(&http).await;
-    assert_eq!(requests.len(), 2);
-    assert_request(&requests[0], "GET", &other_item, None);
-    assert_merge_patch_request(&requests[1], &other_item, Some(&json_bytes(&other)));
+    assert_eq!(requests.len(), 1);
+    assert_merge_patch_request(&requests[0], &other_item, Some(&json_bytes(&other)));
 }
 
 #[tokio::test]
@@ -508,7 +496,7 @@ async fn maps_invalid_json_and_non_success_responses() {
     ]));
     let invalid_json_client = client(Arc::clone(&invalid_json_http));
     assert!(matches!(
-        invalid_json_client.get_pool(pool()).await,
+        invalid_json_client.get_pool(NAMESPACE.into()).await,
         Err(SdkError::Body { .. })
     ));
 
@@ -562,17 +550,7 @@ async fn rejects_invalid_dns_labels_without_http_requests() {
     ] {
         let http = Arc::new(ScriptedHttpClient::new([]));
         let client = client(Arc::clone(&http));
-        let error = client
-            .get_pool(Pool {
-                metadata: ResourceMetadata {
-                    namespace: NAMESPACE.into(),
-                    name: value.into(),
-                    labels: None,
-                },
-                ..pool()
-            })
-            .await
-            .unwrap_err();
+        let error = client.get_pool(value.into()).await.unwrap_err();
         assert!(matches!(
             error,
             SdkError::InvalidResourceName {

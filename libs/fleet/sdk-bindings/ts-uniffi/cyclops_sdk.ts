@@ -1536,14 +1536,14 @@ private constructor(pointer: UniffiHandle) {
     }
     }
     
-    async getPool(pool: Pool, asyncOpts_?: { signal: AbortSignal }): Promise<Pool> /*throws*/ {
+    async getPool(name: string, asyncOpts_?: { signal: AbortSignal }): Promise<Pool> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
     try {
         return await uniffiRustCallAsync(
             /*rustCaller:*/ uniffiCaller,
             /*rustFutureFunc:*/ () => {
                 return nativeModule().uniffi_cyclops_sdk_fn_method_cyclopsclient_get_pool(
-                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterTypePool.lower(pool, nativeModule().rustbuffer_alloc)
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc)
                 );
             },
             /*pollFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_poll_rust_buffer,
@@ -2074,7 +2074,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim() !== 17760) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim");
     }
-    if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool() !== 43327) {
+    if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool() !== 49450) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool");
     }
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims() !== 7802) {

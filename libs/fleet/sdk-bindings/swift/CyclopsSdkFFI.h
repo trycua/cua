@@ -355,7 +355,7 @@ uint64_t uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_pool(uint64_t ptr, Ru
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CYCLOPS_SDK_FN_METHOD_CYCLOPSCLIENT_GET_POOL
 #define UNIFFI_FFIDEF_UNIFFI_CYCLOPS_SDK_FN_METHOD_CYCLOPSCLIENT_GET_POOL
-uint64_t uniffi_cyclops_sdk_fn_method_cyclopsclient_get_pool(uint64_t ptr, RustBuffer pool
+uint64_t uniffi_cyclops_sdk_fn_method_cyclopsclient_get_pool(uint64_t ptr, RustBuffer name
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CYCLOPS_SDK_FN_METHOD_CYCLOPSCLIENT_LIST_POOLS

@@ -6,12 +6,12 @@
 //! MCP and daemon transports are downstream adapters rather than peer contracts.
 
 use cua_driver_contract::{
-    ActionResult, ClickInput, DragInput, EndSessionInput, EndSessionOutput, EscalateSessionInput,
-    GetAgentCursorStateInput, GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput,
-    GetSessionStateInput, HotkeyInput, MoveCursorInput, PressKeyInput, ScrollInput,
-    SessionStateOutput, SetAgentCursorEnabledInput, SetAgentCursorMotionInput,
-    SetAgentCursorThemeInput, StartSessionInput, StartSessionOutput, ToolInput, TypeTextInput,
-    VerifyStateInput, VerifyStateOutput,
+    ActionResult, ClickInput, ClipboardReadInput, ClipboardWriteInput, DragInput, EndSessionInput,
+    EndSessionOutput, EscalateSessionInput, GetAgentCursorStateInput, GetCursorPositionInput,
+    GetDesktopStateInput, GetScreenSizeInput, GetSessionStateInput, HotkeyInput, MoveCursorInput,
+    PressKeyInput, ScrollInput, SessionStateOutput, SetAgentCursorEnabledInput,
+    SetAgentCursorMotionInput, SetAgentCursorThemeInput, StartSessionInput, StartSessionOutput,
+    ToolInput, TypeTextInput, VerifyStateInput, VerifyStateOutput,
 };
 use cua_driver_core::daemon::{
     is_daemon_listening, request_daemon_metadata, send_request, socket_path_for_namespace,
@@ -559,6 +559,8 @@ macro_rules! desktop_tool_methods {
             click: ClickInput,
             drag: DragInput,
             scroll: ScrollInput,
+            clipboard_read: ClipboardReadInput,
+            clipboard_write: ClipboardWriteInput,
             type_text: TypeTextInput,
             press_key: PressKeyInput,
             hotkey: HotkeyInput,

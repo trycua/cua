@@ -1,8 +1,8 @@
 //! Tool trait and registry.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -76,6 +76,51 @@ fn desktop_action_coordinator() -> &'static tokio::sync::Mutex<()> {
     COORDINATOR.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
+fn active_text_input_pids() -> &'static Mutex<HashSet<i64>> {
+    static ACTIVE: OnceLock<Mutex<HashSet<i64>>> = OnceLock::new();
+    ACTIVE.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+#[derive(Debug)]
+struct TextInputAdmission {
+    pid: i64,
+}
+
+impl Drop for TextInputAdmission {
+    fn drop(&mut self) {
+        active_text_input_pids()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&self.pid);
+    }
+}
+
+fn try_admit_text_input(
+    tool_name: &str,
+    args: &Value,
+) -> Result<Option<TextInputAdmission>, ToolResult> {
+    if tool_name != "type_text" {
+        return Ok(None);
+    }
+    let Some(pid) = args
+        .get("pid")
+        .and_then(Value::as_i64)
+        .filter(|pid| *pid > 0)
+    else {
+        // Desktop-scoped input has no stable process identity. It continues to
+        // use the process-wide physical action coordinator below.
+        return Ok(None);
+    };
+    let mut active = active_text_input_pids()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if !active.insert(pid) {
+        let message = format!("text input is already active for pid {pid}");
+        return Err(protected_refusal("input_busy", &message));
+    }
+    Ok(Some(TextInputAdmission { pid }))
+}
+
 pub use cua_driver_contract::{CAPABILITY_VERSION, TOOLS_LIST_SCHEMA_VERSION};
 
 /// Metadata for a single tool.
@@ -139,8 +184,7 @@ impl ToolDef {
                 ),
             )
         } else {
-            cua_driver_contract::tool_contract(&self.name)
-                .and_then(|contract| contract.success_output_schema)
+            cua_driver_contract::tool_success_output_schema(&self.name)
         };
         if let Some(output_schema) = output_schema {
             entry
@@ -958,6 +1002,20 @@ impl ToolRegistry {
             return result;
         }
 
+        // A queued text mutation can become stale while another agent is
+        // typing into the same process. Refuse that overlap before consent,
+        // cursor, recording, or platform focus behavior can begin. The guard
+        // is process-global so independent registries cannot interleave text
+        // through separate platform workers, and RAII releases it on task
+        // cancellation as well as normal completion.
+        let _text_input_admission = match try_admit_text_input(resolved_name, &public_args) {
+            Ok(admission) => admission,
+            Err(mut refusal) => {
+                restore_public_runtime_result(&mut refusal, &runtime_prefix);
+                return refusal;
+            }
+        };
+
         let active_adapters =
             crate::authorization::enforcement_adapters_for_call(resolved_name, &public_args);
         let has_adapter = |id: &str| active_adapters.iter().any(|adapter| adapter.id == id);
@@ -1043,6 +1101,19 @@ impl ToolRegistry {
             if let Err(error) = self
                 .authorize_private_observation(
                     tool.as_ref(),
+                    resolved_name,
+                    &public_args,
+                    context,
+                    runtime_session.as_deref(),
+                )
+                .await
+            {
+                return protected_consent_refusal(error);
+            }
+        }
+        if has_adapter("clipboard") {
+            if let Err(error) = self
+                .authorize_clipboard(
                     resolved_name,
                     &public_args,
                     context,
@@ -1255,6 +1326,10 @@ impl ToolRegistry {
             .flatten();
 
         let mut result = tool.invoke(args.clone()).await;
+        // The platform worker has exited, so another text operation for this
+        // pid may now start even while result projection and evidence capture
+        // finish for the completed call.
+        drop(_text_input_admission);
         if result.action_record.is_none() {
             if let Some(structured) = result.structured_content.as_ref() {
                 result.action_record = crate::action_record::ActionExecutionRecord::from_legacy(
@@ -1642,6 +1717,59 @@ impl ToolRegistry {
         Ok(())
     }
 
+    async fn authorize_clipboard(
+        &self,
+        tool_name: &str,
+        args: &Value,
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+        lifecycle_session: Option<&str>,
+    ) -> Result<(), crate::consent::ConsentError> {
+        if context.mode() != crate::authorization::PermissionMode::Bounded {
+            return Ok(());
+        }
+        let (operation, content_kind, summary) = if tool_name == "clipboard_read" {
+            (
+                "read",
+                if args.get("include_text").and_then(Value::as_bool) == Some(true) {
+                    "text_and_types"
+                } else {
+                    "types"
+                },
+                "Allow Cua to read the current system clipboard",
+            )
+        } else {
+            let kind = if args.get("text").and_then(Value::as_str).is_some() {
+                "text"
+            } else if args.get("image_path").and_then(Value::as_str).is_some() {
+                "image"
+            } else {
+                "file_url"
+            };
+            (
+                "write",
+                kind,
+                "Allow Cua to replace the current system clipboard",
+            )
+        };
+        self.protected_resource_grants
+            .authorize(
+                context,
+                "clipboard",
+                crate::authorization::RiskClass::R2,
+                lifecycle_session,
+                serde_json::json!({
+                    "kind": "system_clipboard",
+                    "operation": operation,
+                    "content_kind": content_kind,
+                }),
+                &format!("{summary} using {tool_name}"),
+                Duration::from_secs(30 * 60),
+                Duration::from_secs(8 * 60 * 60),
+            )
+            .await
+            .map(|_| ())
+    }
+
     async fn authorize_file_transfer(
         &self,
         tool_name: &str,
@@ -1683,6 +1811,25 @@ impl ToolRegistry {
                         "canonical_destination_root": destination,
                     }),
                     "Allow Cua to download one file from this browser tab to the exact destination directory".to_owned(),
+                )
+            }
+            "clipboard_write" => {
+                let (argument, content_kind) =
+                    if args.get("image_path").and_then(Value::as_str).is_some() {
+                        ("image_path", "image")
+                    } else {
+                        ("file_path", "file_url")
+                    };
+                let source = canonical_existing_file(required_path_arg(args, argument)?)?;
+                args[argument] = Value::String(source.clone());
+                (
+                    serde_json::json!({
+                        "kind": "clipboard_local_file",
+                        "content_kind": content_kind,
+                        "direction": "local_to_clipboard",
+                        "canonical_source_path": source,
+                    }),
+                    format!("Allow Cua to read this exact local {content_kind} into the clipboard"),
                 )
             }
             "get_desktop_state" | "get_window_state" => {
@@ -2034,6 +2181,25 @@ fn canonical_upload_files(args: &Value) -> Result<Vec<String>, ToolResult> {
         .collect()
 }
 
+fn canonical_existing_file(raw: &str) -> Result<String, ToolResult> {
+    let path = Path::new(raw);
+    if !path.is_absolute() {
+        return Err(protected_scope_refusal(
+            "clipboard file paths must be absolute",
+        ));
+    }
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|_| protected_scope_refusal("the exact clipboard path does not exist"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(protected_scope_refusal(
+            "clipboard paths must name regular files directly, not links or directories",
+        ));
+    }
+    std::fs::canonicalize(path)
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|_| protected_scope_refusal("the clipboard path could not be canonicalized"))
+}
+
 /// Resolve a not-yet-created output without creating it before approval.
 ///
 /// The deepest existing ancestor is canonicalized first, so symlinked parents
@@ -2270,8 +2436,8 @@ fn restore_public_runtime_value(value: &mut Value, runtime_prefix: &str) -> bool
 mod runtime_isolation_tests {
     use super::{
         canonical_proposed_path, desktop_action_coordinator, namespace_runtime_args,
-        publish_action_result, restore_public_runtime_result, TrustedInvocationEvidence,
-        DISPATCH_RUNTIME_SCOPE,
+        publish_action_result, restore_public_runtime_result, try_admit_text_input,
+        TrustedInvocationEvidence, DISPATCH_RUNTIME_SCOPE,
     };
     use crate::{
         authorization::PermissionMode,
@@ -3521,6 +3687,38 @@ resources:
     }
 
     #[test]
+    fn overlapping_text_input_for_one_pid_fails_fast_and_releases_after_completion() {
+        let pid = 8_675_410;
+        let first = try_admit_text_input("type_text", &serde_json::json!({"pid": pid}))
+            .expect("first text operation should be admitted")
+            .expect("pid-scoped text operation should receive a guard");
+
+        let refusal = try_admit_text_input("type_text", &serde_json::json!({"pid": pid}))
+            .expect_err("overlapping text operation should fail fast");
+        assert_eq!(refusal.is_error, Some(true));
+        assert_eq!(
+            refusal
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(serde_json::Value::as_str),
+            Some("input_busy")
+        );
+
+        let other_pid = try_admit_text_input("type_text", &serde_json::json!({"pid": pid + 1}))
+            .expect("a different pid should have an independent input lane")
+            .expect("pid-scoped text operation should receive a guard");
+        drop(other_pid);
+        drop(first);
+
+        assert!(
+            try_admit_text_input("type_text", &serde_json::json!({"pid": pid}))
+                .expect("completed text operation should release its pid")
+                .is_some()
+        );
+    }
+
+    #[test]
     fn runtime_namespaces_sessions_and_explicit_cursor_ids_without_leaking_them() {
         let context = standard_context();
         let mut args = serde_json::json!({
@@ -3694,6 +3892,13 @@ fn recording_args_for(tool_name: &str, args: &Value) -> Value {
                     );
                 }
             }
+            "clipboard_write" => {
+                for field in ["text", "image_path", "file_path"] {
+                    if arguments.contains_key(field) {
+                        arguments.insert(field.to_owned(), Value::String("[redacted]".to_owned()));
+                    }
+                }
+            }
             "browser_set_input_files" => {
                 if let Some(count) = arguments
                     .get("files")
@@ -3841,6 +4046,31 @@ mod capability_tests {
                 !serialized.contains(forbidden),
                 "recording leaked {forbidden}"
             );
+        }
+    }
+
+    #[test]
+    fn clipboard_write_recording_args_are_content_free() {
+        let recorded = recording_args_for(
+            "clipboard_write",
+            &serde_json::json!({
+                "text": "private text",
+                "image_path": "/private/image.png",
+                "file_path": "/private/document.pdf",
+                "session": "public-session",
+            }),
+        );
+        assert_eq!(recorded["text"], "[redacted]");
+        assert_eq!(recorded["image_path"], "[redacted]");
+        assert_eq!(recorded["file_path"], "[redacted]");
+        assert_eq!(recorded["session"], "public-session");
+        let serialized = recorded.to_string();
+        for forbidden in [
+            "private text",
+            "/private/image.png",
+            "/private/document.pdf",
+        ] {
+            assert!(!serialized.contains(forbidden));
         }
     }
 
@@ -4289,6 +4519,27 @@ mod capability_tests {
         }
         .to_list_entry();
         assert!(runtime_only.get("outputSchema").is_none());
+    }
+
+    #[test]
+    fn list_windows_advertises_the_shared_z_index_contract() {
+        let entry = ToolDef {
+            name: "list_windows".into(),
+            description: "List windows.".into(),
+            input_schema: serde_json::json!({"type":"object","properties":{}}),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        }
+        .to_list_entry();
+        let z_index =
+            &entry["outputSchema"]["properties"]["windows"]["items"]["properties"]["z_index"];
+        assert_eq!(z_index["type"], serde_json::json!(["integer", "null"]));
+        assert!(z_index["description"]
+            .as_str()
+            .expect("description")
+            .contains("Higher values are closer to the front"));
     }
 
     #[test]

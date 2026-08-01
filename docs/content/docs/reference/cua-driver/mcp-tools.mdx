@@ -160,7 +160,7 @@ Browser DevTools setup belongs to `browser_prepare`, which can prove that a sepa
 
 Optional `webkit_inspector_port`: opens a WebKit inspector server on the specified port (sets WEBKIT_INSPECTOR_SERVER=127.0.0.1:N + TAURI_WEBVIEW_AUTOMATION=1). Use this for Tauri/WebKit-based apps.
 
-Optional `creates_new_application_instance`: when true, forces a new app instance even if one is already running (passes -n to open). Reach for this when another agent or session may drive the SAME app concurrently — it returns a fresh pid + window so each session acts on its own isolated window instead of clobbering one shared instance. Without it, single-instance apps (Calculator, many utilities) hand every caller the same window, so two sessions fight over it.
+Optional `creates_new_application_instance`: when true, requests a new app instance even if one is already running. Reach for this when another agent or session may drive the SAME app concurrently — it returns a fresh pid + window so each session acts on its own isolated window instead of clobbering one shared instance. Without it, single-instance apps (Calculator, many utilities) hand every caller the same window, so two sessions fight over it. Apps that cannot create an isolated process return `NEW_APPLICATION_INSTANCE_UNAVAILABLE`; retry without the option only when sharing the existing process is safe.
 
 Optional `additional_arguments`: extra argv strings appended after --args.
 
@@ -170,7 +170,7 @@ Returns the launched app's pid, bundle_id, name, and a `windows` array (same sha
 
 - `additional_arguments` (array of string, optional): Extra arguments appended after --args when launching.
 - `bundle_id` (string, optional): App bundle identifier, e.g. com.apple.calculator. Preferred over name.
-- `creates_new_application_instance` (boolean, optional): When true, force a new app instance even if already running (open -n). Use for concurrent multi-agent/multi-session work so each session gets an isolated instance + window instead of sharing one — on single-instance apps (e.g. Calculator) every caller otherwise gets the same window and the sessions clobber each other.
+- `creates_new_application_instance` (boolean, optional): When true, request a new app instance even if already running. Use for concurrent multi-agent/multi-session work so each session gets an isolated instance + window instead of sharing one. Apps that cannot create an isolated process return NEW_APPLICATION_INSTANCE_UNAVAILABLE; retry without this option only when sharing the existing process is safe.
 - `name` (string, optional): App display name. Used only when bundle_id is absent.
 - `urls` (array of string, optional): Optional file paths or URLs to open with the app (e.g. a folder path for Finder).
 - `webkit_inspector_port` (integer, optional): Open a WebKit inspector server on this port (sets WEBKIT_INSPECTOR_SERVER env var).

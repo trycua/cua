@@ -104,10 +104,7 @@ class _FleetClient:
         return await self._client.service_request(sandbox, service, path, request)
 
     async def get_pool(self, name: str) -> Any:
-        for pool in await self.list_pools():
-            if pool.metadata.name == name:
-                return pool
-        raise LookupError(f"Fleet pool {name!r} was not found")
+        return await self._client.get_pool(name)
 
     async def get_claim(self, pool: Any) -> Any:
         expected = f"{pool.metadata.name}-claim"

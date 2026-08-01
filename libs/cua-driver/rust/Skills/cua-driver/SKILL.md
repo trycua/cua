@@ -687,6 +687,13 @@ against a specific window.
 | Send key to pid                  | `press_key({pid, key, modifiers})`                                                                              | no focus change; key goes to pid's current focus                                                                                                                                                                      |
 | Modifier combo                   | `hotkey({pid, keys})` (no focus) or `hotkey({pid, x, y, keys})` (px)                                            | e.g. `["cmd","c"]` / `["ctrl","c"]`; posted per-pid, not HID tap. **px** pixel-clicks `(x,y)` to focus a field first, e.g. `["cmd","v"]` to paste into it                                                             |
 
+`list_windows.z_index` uses one portable convention: higher integer
+values are closer to the front. Select a frontmost candidate with the
+maximum non-null value. If all values are `null` (as they can be on
+native Wayland), use an explicit fallback; never treat `null` as zero
+or infer stacking from array order. The `windows` records returned by
+`launch_app` use the same convention.
+
 In effective desktop scope, the foreground/system equivalents omit
 `pid`/`window_id` and pass `scope:"desktop"`: `click`, `scroll`, `drag`,
 `move_cursor`, `type_text`, `press_key`, and `hotkey`. Coordinates are

@@ -387,7 +387,11 @@ impl Tool for ListWindowsTool {
     fn def(&self) -> &ToolDef {
         LIST_WINDOWS_DEF.get_or_init(|| ToolDef {
             name: "list_windows".into(),
-            description: "List top-level X11 windows via _NET_CLIENT_LIST.".into(),
+            description: "List top-level windows. Each record includes z_index (integer or null; \
+                higher values are closer to the front; null means stacking order is unavailable \
+                and callers must not infer one). To select a frontmost candidate, take the maximum \
+                integer z_index; if every value is null, use an explicit fallback instead of \
+                relying on array order.".into(),
             input_schema: json!({"type":"object","properties":{
                 "pid":{"type":"integer"},
                 "on_screen_only":{"type":"boolean","description":"When true, filter to visible windows only. Default false."}
@@ -489,6 +493,24 @@ mod list_windows_tests {
         assert_eq!(rec["z_index"], json!(3));
         assert_eq!(rec["window_id"], json!(42));
         assert_eq!(rec["title"], json!("Example"));
+    }
+
+    #[test]
+    fn unavailable_wayland_order_serializes_as_null() {
+        let w = crate::x11::WindowInfo {
+            xid: 43,
+            pid: Some(1234),
+            app_name: "native-wayland-app".to_owned(),
+            title: "Example".to_owned(),
+            is_on_screen: true,
+            z_index: None,
+            x: 0,
+            y: 0,
+            width: 300,
+            height: 400,
+        };
+
+        assert_eq!(window_record_json(&w)["z_index"], Value::Null);
     }
 
     #[test]

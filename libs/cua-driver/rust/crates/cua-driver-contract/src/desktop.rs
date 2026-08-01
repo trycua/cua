@@ -19,6 +19,7 @@ const ALL_PLATFORMS: [Platform; 3] = [Platform::Macos, Platform::Windows, Platfo
 
 pub fn contracts() -> Vec<ToolContract> {
     vec![
+        list_windows(),
         get_desktop_state(),
         get_screen_size(),
         get_cursor_position(),
@@ -30,6 +31,84 @@ pub fn contracts() -> Vec<ToolContract> {
         press_key(),
         hotkey(),
     ]
+}
+
+const Z_INDEX_DESCRIPTION: &str = "Higher values are closer to the front. Null means the provider cannot observe stacking order; callers must not infer an order from array position or treat null as zero.";
+
+fn list_windows() -> ToolContract {
+    ToolContract {
+        name: "list_windows".into(),
+        description: "List top-level windows and their observable stacking order.".into(),
+        platforms: ALL_PLATFORMS.to_vec(),
+        aliases: Vec::new(),
+        capabilities: vec!["window.list".into()],
+        annotations: ToolAnnotations {
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        },
+        schema_mode: SchemaMode::PortableSubset,
+        cursor_semantics: Some(CursorSemantics::new(CursorAction::Observe)),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "pid": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Optional process-id filter."
+                },
+                "on_screen_only": {
+                    "type": "boolean",
+                    "description": "When true, return only windows the provider considers on-screen."
+                }
+            },
+            "additionalProperties": false
+        }),
+        // Keep this schema deliberately narrow: platform window records have
+        // additive fields and are still converging, while z_index has one
+        // portable meaning that consumers need in order to sort safely.
+        success_output_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "windows": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "z_index": {
+                                "type": ["integer", "null"],
+                                "description": Z_INDEX_DESCRIPTION
+                            }
+                        },
+                        "required": ["z_index"],
+                        "additionalProperties": true
+                    }
+                }
+            },
+            "required": ["windows"],
+            "additionalProperties": true
+        })),
+        output_validator: validate_list_windows_output,
+    }
+}
+
+fn validate_list_windows_output(value: serde_json::Value) -> Result<(), String> {
+    let windows = value
+        .get("windows")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "windows must be an array".to_owned())?;
+    for (index, window) in windows.iter().enumerate() {
+        let z_index = window
+            .get("z_index")
+            .ok_or_else(|| format!("windows[{index}].z_index is required"))?;
+        if !(z_index.is_null() || z_index.is_u64() || z_index.is_i64()) {
+            return Err(format!(
+                "windows[{index}].z_index must be an integer or null"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn contract<I: ToolInput, O: ToolOutput>(

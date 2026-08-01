@@ -56,7 +56,7 @@ pub const TOOLS_LIST_SCHEMA_VERSION: &str = "1";
 pub const CAPABILITY_VERSION: &str = "1";
 
 /// Shape version for the checked-in generated client contract.
-pub const CONTRACT_VERSION: &str = "0.4.0";
+pub const CONTRACT_VERSION: &str = "0.5.0";
 
 /// MCP protocol version used by current cua-driver clients.
 pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
@@ -277,7 +277,7 @@ mod tests {
         let mut sorted = names.clone();
         sorted.sort_unstable();
         assert_eq!(names, sorted);
-        assert_eq!(manifest.contract_version, "0.4.0");
+        assert_eq!(manifest.contract_version, "0.5.0");
         assert!(manifest.experimental);
     }
 
@@ -347,6 +347,7 @@ mod tests {
             "get_desktop_state",
             "get_screen_size",
             "hotkey",
+            "list_windows",
             "move_cursor",
             "press_key",
             "scroll",
@@ -358,6 +359,36 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn list_windows_defines_nullable_higher_is_frontmost_z_index() {
+        let contract = tool_contract("list_windows").expect("list_windows contract");
+        let z_index = &contract.success_output_schema.as_ref().expect("schema")["properties"]
+            ["windows"]["items"]["properties"]["z_index"];
+        assert_eq!(z_index["type"], serde_json::json!(["integer", "null"]));
+        let description = z_index["description"].as_str().expect("description");
+        assert!(description.contains("Higher values are closer to the front"));
+        assert!(description.contains("must not infer an order"));
+
+        assert_eq!(
+            validate_success_output(
+                "list_windows",
+                serde_json::json!({
+                    "windows": [
+                        {"z_index": 4, "platform_field": true},
+                        {"z_index": null}
+                    ],
+                    "current_space_id": null
+                }),
+            ),
+            Ok(true)
+        );
+        assert!(validate_success_output(
+            "list_windows",
+            serde_json::json!({"windows": [{"z_index": "unknown"}]}),
+        )
+        .is_err());
     }
 
     #[test]

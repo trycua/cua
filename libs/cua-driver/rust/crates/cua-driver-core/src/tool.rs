@@ -4292,6 +4292,27 @@ mod capability_tests {
     }
 
     #[test]
+    fn list_windows_advertises_the_shared_z_index_contract() {
+        let entry = ToolDef {
+            name: "list_windows".into(),
+            description: "List windows.".into(),
+            input_schema: serde_json::json!({"type":"object","properties":{}}),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        }
+        .to_list_entry();
+        let z_index =
+            &entry["outputSchema"]["properties"]["windows"]["items"]["properties"]["z_index"];
+        assert_eq!(z_index["type"], serde_json::json!(["integer", "null"]));
+        assert!(z_index["description"]
+            .as_str()
+            .expect("description")
+            .contains("Higher values are closer to the front"));
+    }
+
+    #[test]
     fn type_text_claims_terminal_safe_capability() {
         // The terminal-emulator fallback shipped per platform must be
         // discoverable as a capability so consumers can pick `type_text`

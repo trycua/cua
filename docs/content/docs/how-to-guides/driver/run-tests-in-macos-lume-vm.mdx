@@ -223,9 +223,10 @@ Verify the app-owned grants, signature, capture result, and SIP state:
   and .source.attribution == "driver-daemon"
 '
 
-"$DRIVER" call check_permissions '{"prompt":true}' | jq -e '
-  .structuredContent.screen_recording_capturable == true
-  and .structuredContent.direct_capture_status == "ready"
+"$DRIVER" permissions grant
+"$DRIVER" permissions status --json | jq -e '
+  .screen_recording_capturable == true
+  and .direct_capture_status == "ready"
 '
 
 jq -e '

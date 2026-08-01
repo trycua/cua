@@ -9,13 +9,32 @@ Preserve contributor credit when external code or design ships in Cua.
   commit remain in history.
 - When adapting material parts of a contribution in a new commit, add the
   contributor with a `Co-authored-by` trailer and write `Salvaged from #<pr>`
-  in the commit or landing pull request body.
+  in the commit or landing pull request body. The source pull request must be
+  different from the landing pull request.
+- When adapting a contribution directly in its existing pull request, keep the
+  contributor as the commit author and credit adapting authors with
+  `Co-authored-by` trailers instead of citing the pull request as its own source.
+- Use GitHub-linked or GitHub noreply email addresses for commit authors and
+  coauthors so the contributor-attribution check can resolve each identity.
 - Preserve known human coauthor trailers during rebases and squash merges.
 - Link the source pull request and tell its author where the work shipped.
 - Honor public credit opt-out requests. Keep security attribution private until
   disclosure is permitted.
 
 Do not reimplement submitted work solely to remove its authorship history.
+
+## Cross-platform Cua Driver behavior
+
+Treat user-visible Cua Driver behavior as a cross-platform contract. Implement
+shared state, geometry, timing, and protocol semantics in the common crates
+whenever possible, then keep each macOS, Windows, X11, and Wayland adapter thin.
+Do not silently land a platform-specific cursor or interaction change as though
+it were universal.
+
+For every affected platform, add focused coverage and either verify the native
+behavior or document a concrete operating-system or compositor limitation.
+When a platform cannot support the same contract, return or publish that
+limitation explicitly instead of substituting misleading behavior.
 
 ## Pull request titles and component releases
 
@@ -41,3 +60,29 @@ Before declaring a pull request ready or merging it, inspect its final changed
 files and query its current GitHub title. Correct the title yourself when the
 scope or release impact changed during implementation, and wait for
 `CI: Release metadata` to pass. Do not leave title correction for a maintainer.
+
+## Monorepo component release resolution
+
+Cua is a monorepo with independent component release streams. Never use
+GitHub's repository-wide "Latest" release badge, the `/releases/latest`
+endpoint, or a generic "stable" designation to determine whether a component
+has shipped or which version users receive.
+
+Inspect the component's canonical installer and release workflow instead. For
+Cua Driver, both the Unix and Windows installers normally use a
+release-managed baked version. Their API fallback selects the highest semantic
+version whose tag matches `cua-driver-rs-v*`. Both download assets from the
+exact component tag; neither depends on GitHub's repository-wide "Latest"
+release.
+
+Before making a release-status or installation-version claim:
+
+- identify the component's tag prefix and canonical installer entry points;
+- inspect version-override and baked-version precedence;
+- verify that the component-tagged release and expected assets exist; and
+- confirm which exact version the canonical installer currently resolves.
+
+Describe a component as shipped when its own release artifacts exist and its
+canonical distribution path resolves them. Do not add a separate
+"promoted to GitHub Latest/stable" requirement unless that component's
+distribution code explicitly uses one.

@@ -3,11 +3,16 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "claude": "tsx claude_agent.ts",
     "codex": "tsx codex_agent.ts",
+    "native": "tsx native_driver.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@openai/codex-sdk": "0.145.0"
+    "@anthropic-ai/claude-agent-sdk": "0.3.218",
+    "@openai/codex-sdk": "0.145.0",
+    "@trycua/cua-driver": "0.12.2",
+    "zod": "4.1.12"
   },
   "devDependencies": {
     "@types/node": "22.17.0",

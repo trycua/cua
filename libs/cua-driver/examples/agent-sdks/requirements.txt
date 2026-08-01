@@ -1,1 +1,3 @@
 claude-agent-sdk==0.2.124
+openai-codex==0.144.4
+cua-driver==0.12.2

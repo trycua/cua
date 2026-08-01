@@ -1,16 +1,43 @@
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
-    tool::{Tool, ToolDef},
+    tool::{ProtectedResourceOwnership, Tool, ToolDef},
 };
 use serde_json::Value;
+use std::{future::Future, sync::Arc, time::Duration};
 
+use super::ToolState;
 use crate::permissions::status::{
     accessibility_granted, request_accessibility, request_screen_recording,
     screen_recording_granted,
 };
 
-pub struct CheckPermissionsTool;
+/// Private argv sentinel shared by the trusted CLI launcher and the public
+/// launch_app refusal.
+pub const PERMISSIONS_HOST_REQUEST_ARG: &str = "__permissions-host-request";
+
+pub struct CheckPermissionsTool {
+    state: Arc<ToolState>,
+}
+
+impl CheckPermissionsTool {
+    pub fn new(state: Arc<ToolState>) -> Self {
+        Self { state }
+    }
+}
+
+/// LaunchServices-hosted permission setup entrypoint. This is deliberately
+/// not registered as an agent tool or exposed on the daemon socket: the
+/// standalone `permissions grant` command launches the app bundle and macOS
+/// owns the actual approval UI.
+pub async fn request_from_launchservices_host(probe_direct_capture: bool) -> ToolResult {
+    let tool = CheckPermissionsTool::new(Arc::new(ToolState::new(false, false, None)));
+    tool.invoke(serde_json::json!({
+        "prompt": true,
+        "probe_direct_capture": probe_direct_capture,
+    }))
+    .await
+}
 
 fn driver_bundle_id_for_executable(executable: &str) -> Option<&'static str> {
     if executable.contains("/CuaDriverLocal.app/Contents/MacOS/") {
@@ -38,12 +65,74 @@ fn screen_recording_capturable() -> bool {
         .unwrap_or(false)
 }
 
+const DIRECT_CAPTURE_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DirectCaptureProbeResult {
+    Ready,
+    Unavailable,
+    TimedOut,
+    Failed,
+}
+
+impl DirectCaptureProbeResult {
+    fn response_fields(self) -> (Option<bool>, &'static str, Option<Value>) {
+        match self {
+            Self::Ready => (Some(true), "ready", None),
+            Self::Unavailable => (Some(false), "unavailable", None),
+            Self::TimedOut => (
+                None,
+                "timed_out",
+                Some(serde_json::json!({
+                    "code": "direct_capture_probe_timed_out",
+                    "message": "The ScreenCaptureKit capability probe did not complete within 10 seconds.",
+                })),
+            ),
+            Self::Failed => (
+                None,
+                "probe_failed",
+                Some(serde_json::json!({
+                    "code": "direct_capture_probe_failed",
+                    "message": "The ScreenCaptureKit capability probe could not complete.",
+                })),
+            ),
+        }
+    }
+}
+
+async fn run_direct_capture_probe<F>(timeout: Duration, probe: F) -> DirectCaptureProbeResult
+where
+    F: Future<Output = Result<bool, tokio::task::JoinError>>,
+{
+    match tokio::time::timeout(timeout, probe).await {
+        Ok(Ok(true)) => DirectCaptureProbeResult::Ready,
+        Ok(Ok(false)) => DirectCaptureProbeResult::Unavailable,
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "direct ScreenCaptureKit capability probe failed");
+            DirectCaptureProbeResult::Failed
+        }
+        Err(_) => DirectCaptureProbeResult::TimedOut,
+    }
+}
+
+async fn bounded_screen_recording_capturable() -> DirectCaptureProbeResult {
+    run_direct_capture_probe(
+        DIRECT_CAPTURE_PROBE_TIMEOUT,
+        tokio::task::spawn_blocking(screen_recording_capturable),
+    )
+    .await
+}
+
 fn should_probe_direct_capture(
     should_prompt: bool,
     screen_recording: bool,
     probe_direct_capture: bool,
 ) -> bool {
     should_prompt && screen_recording && probe_direct_capture
+}
+
+fn should_prompt_permissions(requested: bool, host_owns_permission_ux: bool) -> bool {
+    requested && !cua_driver_core::embedded_mode() && !host_owns_permission_ux
 }
 
 /// (B) Which TCC identity the booleans in this response reflect.
@@ -55,7 +144,10 @@ fn should_probe_direct_capture(
 ///     its own responsible process — the real driver status.
 ///   - the **embedding host** otherwise. That is intentional only when the
 ///     host directly spawned `cua-driver serve --embedded`.
-fn permission_source() -> serde_json::Value {
+fn permission_source(
+    host_owns_permission_ux: bool,
+    configured_host_bundle_id: Option<&str>,
+) -> serde_json::Value {
     let pid = unsafe { libc::getpid() };
     let ppid = unsafe { libc::getppid() };
     let exe = std::env::current_exe()
@@ -69,12 +161,16 @@ fn permission_source() -> serde_json::Value {
     // This branch only ever downgrades attribution (host, never
     // driver-daemon), so the caller-controlled env var can't spoof an
     // elevated identity. `host_bundle_id` is advisory, not a trust signal.
-    if cua_driver_core::embedded_mode() {
-        let host_bundle_id = std::env::var(cua_driver_core::HOST_BUNDLE_ID_ENV).unwrap_or_default();
+    if host_owns_permission_ux || cua_driver_core::embedded_mode() {
+        let host_bundle_id = configured_host_bundle_id
+            .map(str::to_owned)
+            .or_else(|| std::env::var(cua_driver_core::HOST_BUNDLE_ID_ENV).ok())
+            .unwrap_or_default();
         return serde_json::json!({
             "attribution": "host",
             "host_bundle_id": host_bundle_id,
-            "embedded": true,
+            "embedded": cua_driver_core::embedded_mode(),
+            "direct_runtime": host_owns_permission_ux && !cua_driver_core::embedded_mode(),
             "pid": pid,
             "responsible_ppid": ppid,
             "executable": exe,
@@ -144,8 +240,9 @@ fn def() -> &'static ToolDef {
             Returns: `accessibility` + `screen_recording` (booleans from the TCC \
             preflight APIs), `screen_recording_capturable` (a live ScreenCaptureKit \
             probe when `prompt` is true; null on read-only calls), \
-            `direct_capture_status` (`ready`, `unavailable`, \
-            `blocked_by_screen_recording`, or `not_checked`), and `source` (which TCC identity the \
+            `direct_capture_status` (`ready`, `unavailable`, `timed_out`, `probe_failed`, \
+            `blocked_by_screen_recording`, or `not_checked`), `direct_capture_error` (a structured \
+            timeout/probe failure when applicable), and `source` (which TCC identity the \
             booleans reflect: the CuaDriver daemon vs the launching terminal/IDE). \
             macOS attributes grants to the responsible process, so a standalone call \
             from a terminal reports the terminal's grants, not the driver's. The \
@@ -158,7 +255,8 @@ fn def() -> &'static ToolDef {
             "properties": {
                 "prompt": {
                     "type": "boolean",
-                    "description": "Raise the system permission prompts for missing grants. Default true.",
+                    "description": "Raise the system permission prompts for missing grants. Default false; only a trusted host setup route may set true.",
+                    "default": false,
                 },
                 "probe_direct_capture": {
                     "type": "boolean",
@@ -167,8 +265,9 @@ fn def() -> &'static ToolDef {
             },
             "additionalProperties": false,
         }),
-        // Not read_only because the default path may raise a modal dialog
-        // (mirrors Swift annotation `readOnlyHint: false`).
+        // Not read_only because an explicit prompt=true would raise a modal
+        // dialog if invoked by the trusted host helper. The public registry
+        // refuses that shape before platform dispatch.
         read_only: false,
         destructive: false,
         idempotent: true,
@@ -182,14 +281,32 @@ impl Tool for CheckPermissionsTool {
         def()
     }
 
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        _args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if adapter_id == "os_permission_prompt"
+            && !should_prompt_permissions(true, self.state.host_owns_permission_ux)
+        {
+            ProtectedResourceOwnership::DriverOwned
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        // Default to prompting — same default + rationale as Swift.
+        // Public calls default to read-only inspection. Only the
+        // LaunchServices-hosted setup route passes prompt=true.
         // Embedded mode hard-disables prompting regardless of the arg (the
         // host owns the grant flow). This and the startup gate are the only
         // `request_*` call sites, so both being gated makes prompts
         // unreachable when embedded.
-        let should_prompt = args.bool_or("prompt", true) && !cua_driver_core::embedded_mode();
+        let should_prompt = should_prompt_permissions(
+            args.bool_or("prompt", false),
+            self.state.host_owns_permission_ux,
+        );
         let probe_direct_capture = args.bool_or("probe_direct_capture", true);
         if should_prompt {
             let _ = request_accessibility();
@@ -202,22 +319,27 @@ impl Tool for CheckPermissionsTool {
         // private-window-picker bypass consent. A status/read-only call must
         // therefore never execute it. The explicit grant path opts in with
         // `prompt:true`, explains the dialog first, and verifies the result.
-        let (screen_recording_capturable, direct_capture_status) = if !should_prompt {
-            (None, "not_checked")
-        } else if !screen_recording {
-            (None, "blocked_by_screen_recording")
-        } else if should_probe_direct_capture(should_prompt, screen_recording, probe_direct_capture)
-        {
-            let capturable = screen_recording_capturable();
-            (
-                Some(capturable),
-                if capturable { "ready" } else { "unavailable" },
-            )
-        } else {
-            (None, "not_checked")
-        };
+        let (screen_recording_capturable, direct_capture_status, direct_capture_error) =
+            if !should_prompt {
+                (None, "not_checked", None)
+            } else if !screen_recording {
+                (None, "blocked_by_screen_recording", None)
+            } else if should_probe_direct_capture(
+                should_prompt,
+                screen_recording,
+                probe_direct_capture,
+            ) {
+                bounded_screen_recording_capturable()
+                    .await
+                    .response_fields()
+            } else {
+                (None, "not_checked", None)
+            };
         // (B) Which identity the booleans above belong to.
-        let source = permission_source();
+        let source = permission_source(
+            self.state.host_owns_permission_ux,
+            self.state.host_bundle_id.as_deref(),
+        );
         let is_caller = source.get("attribution").and_then(|v| v.as_str()) == Some("caller");
 
         // Text format mirrors Swift 1:1:
@@ -242,6 +364,16 @@ impl Tool for CheckPermissionsTool {
             summary.push_str(
                 "\n⚠️  Screen Recording reads granted but a live capture probe failed — \
                  the grant likely belongs to a different process, not this one.",
+            );
+        } else if direct_capture_status == "timed_out" {
+            summary.push_str(
+                "\n⚠️  The direct ScreenCaptureKit readiness probe timed out; the permission \
+                 check returned without waiting indefinitely.",
+            );
+        } else if direct_capture_status == "probe_failed" {
+            summary.push_str(
+                "\n⚠️  The direct ScreenCaptureKit readiness probe failed; see \
+                 direct_capture_error for the bounded failure code.",
             );
         } else if screen_recording_capturable.is_none() && (!should_prompt || !probe_direct_capture)
         {
@@ -272,6 +404,7 @@ impl Tool for CheckPermissionsTool {
             "screen_recording":            screen_recording,
             "screen_recording_capturable": screen_recording_capturable,
             "direct_capture_status":        direct_capture_status,
+            "direct_capture_error":         direct_capture_error,
             "source":                      source,
         }))
     }
@@ -332,9 +465,86 @@ mod tests {
     }
 
     #[test]
+    fn direct_host_runtime_cannot_raise_permission_prompts() {
+        let _guard = env_lock();
+        let original = swap_env(cua_driver_core::EMBEDDED_ENV, None);
+        assert!(
+            should_prompt_permissions(true, false),
+            "standalone Cua-owned runtime retains its explicit prompt path"
+        );
+        assert!(
+            !should_prompt_permissions(true, true),
+            "direct host-owned runtime must force read-only permission checks"
+        );
+        restore_env(cua_driver_core::EMBEDDED_ENV, original);
+    }
+
+    #[test]
+    fn direct_runtime_reports_host_attribution() {
+        let _guard = env_lock();
+        let original = swap_env(cua_driver_core::EMBEDDED_ENV, None);
+        let source = permission_source(true, None);
+        assert_eq!(
+            source.get("attribution").and_then(|value| value.as_str()),
+            Some("host")
+        );
+        assert_eq!(
+            source
+                .get("direct_runtime")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        restore_env(cua_driver_core::EMBEDDED_ENV, original);
+    }
+
+    #[test]
+    fn immutable_runtime_host_label_wins_over_process_environment() {
+        let _guard = env_lock();
+        let original_host = swap_env(
+            cua_driver_core::HOST_BUNDLE_ID_ENV,
+            Some("com.example.stale"),
+        );
+        let source = permission_source(true, Some("com.example.runtime"));
+        assert_eq!(source["host_bundle_id"], "com.example.runtime");
+        restore_env(cua_driver_core::HOST_BUNDLE_ID_ENV, original_host);
+    }
+
+    #[test]
     fn staged_prompt_never_runs_the_direct_capture_probe() {
         assert!(!should_probe_direct_capture(true, false, false));
         assert!(!should_probe_direct_capture(true, true, false));
+    }
+
+    #[tokio::test]
+    async fn direct_capture_probe_returns_before_a_hung_probe() {
+        let result = run_direct_capture_probe(
+            std::time::Duration::from_millis(10),
+            std::future::pending::<Result<bool, tokio::task::JoinError>>(),
+        )
+        .await;
+
+        assert_eq!(result, DirectCaptureProbeResult::TimedOut);
+        let (capturable, status, error) = result.response_fields();
+        assert_eq!(capturable, None);
+        assert_eq!(status, "timed_out");
+        assert_eq!(error.unwrap()["code"], "direct_capture_probe_timed_out");
+    }
+
+    #[tokio::test]
+    async fn direct_capture_probe_preserves_successful_results() {
+        let ready = run_direct_capture_probe(
+            std::time::Duration::from_secs(1),
+            std::future::ready(Ok(true)),
+        )
+        .await;
+        let unavailable = run_direct_capture_probe(
+            std::time::Duration::from_secs(1),
+            std::future::ready(Ok(false)),
+        )
+        .await;
+
+        assert_eq!(ready, DirectCaptureProbeResult::Ready);
+        assert_eq!(unavailable, DirectCaptureProbeResult::Unavailable);
     }
 
     #[test]
@@ -349,7 +559,7 @@ mod tests {
         let original = swap_env(name, Some("1"));
         let embedded = swap_env(cua_driver_core::EMBEDDED_ENV, None);
 
-        let source = permission_source();
+        let source = permission_source(false, None);
         assert_eq!(
             source.get("attribution").and_then(|v| v.as_str()),
             Some("caller"),
@@ -369,7 +579,7 @@ mod tests {
             Some("com.example.host"),
         );
 
-        let source = permission_source();
+        let source = permission_source(false, None);
         assert_eq!(
             source.get("attribution").and_then(|v| v.as_str()),
             Some("host"),
@@ -392,7 +602,7 @@ mod tests {
         let embedded = swap_env(cua_driver_core::EMBEDDED_ENV, Some("1"));
         let disclaim = swap_env(cua_driver_core::RESPONSIBILITY_DISCLAIMED_ENV, Some("1"));
 
-        let source = permission_source();
+        let source = permission_source(false, None);
         assert_eq!(
             source.get("attribution").and_then(|v| v.as_str()),
             Some("host"),
@@ -406,7 +616,7 @@ mod tests {
     fn embedded_env_requires_exact_value_one() {
         let _guard = env_lock();
         let embedded = swap_env(cua_driver_core::EMBEDDED_ENV, Some("true"));
-        let source = permission_source();
+        let source = permission_source(false, None);
         assert_ne!(
             source.get("attribution").and_then(|v| v.as_str()),
             Some("host"),

@@ -37,7 +37,7 @@ You bring the agent, which already handles coding and tool-use on its own. Cua g
 
 **Cua Driver** drives the GUI of a real machine you already have, whether that machine runs macOS, Windows, or Linux. It is the right shape when the agent needs to work with local applications, signed-in accounts, existing files, or machine state that already lives on that computer.
 
-**Cua Sandbox** is a fresh isolated cloud computer where the agent can run code and drive the GUI together. It is a full computer with all three action surfaces available inside the same environment rather than a remote desktop, which matters when the task needs both programmatic work and visible interaction without touching your local machine. The agent brings the model and its reasoning; Cua provides the computer where that reasoning can turn into action.
+**Cua Sandbox** is a fresh isolated computer running on local Docker or VM infrastructure where the agent can run code and drive the GUI together. It is a full computer with all three action surfaces available inside the same environment rather than a remote desktop, which matters when the task needs both programmatic work and visible interaction without changing the host desktop. The agent brings the model and its reasoning; Cua provides the computer where that reasoning can turn into action.
 
 ## Safety and isolation
 
@@ -47,6 +47,6 @@ Cua Driver exposes [permission policies](/concepts/how-permission-policies-work)
 
 ## Start building
 
-- [Drive your first application](/tutorials/drive-your-first-app) on an existing macOS, Windows, or Linux computer.
-- [Start your first cloud sandbox](/tutorials/your-first-cloud-sandbox) for an isolated Linux computer.
+- [Drive your first app with Cua Driver](/tutorials/drive-your-first-app) on an existing macOS, Windows, or Linux computer.
+- [Start your first local sandbox](/tutorials/your-first-local-sandbox) for an isolated Linux computer.
 - [Install Cua Driver](/how-to-guides/driver/install) and connect it to an agent you already use.

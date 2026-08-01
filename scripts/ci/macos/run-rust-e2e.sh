@@ -18,10 +18,130 @@ Usage: run-rust-e2e.sh [--no-build]
 Run from a logged-in macOS desktop after install-local and TCC authorization.
 The testkit proxies MCP calls through the installed CuaDriver daemon.
 The installed daemon must embed the same CUA_DRIVER_SOURCE_SHA as this source.
+Because this is a disposable behavior-test desktop, that daemon must have been
+started with --permission-mode unrestricted --dangerously-bypass-approvals.
 Maintainers should use libs/cua-driver/tests/runners/macos-lume/run-all.sh.
 The contributor-facing command always runs the complete matrix.
 EOF
 }
+
+# Capture a command's full output before matching it. Piping a producer into
+# `grep -q` closes its stdout mid-write, the driver CLI can panic on that broken
+# pipe, and `pipefail` then reports the panic as the pipeline's status even when
+# the pattern matched.
+CAPTURED_OUTPUT=""
+capture_command_output() {
+  local status=0
+  CAPTURED_OUTPUT=""
+  CAPTURED_OUTPUT="$("$@" 2>&1)" || status=$?
+  return "${status}"
+}
+
+output_contains() {
+  local needle="$1"
+  shift
+  local status=0
+  capture_command_output "$@" || status=$?
+  if ((status != 0)); then
+    return 1
+  fi
+  [[ "${CAPTURED_OUTPUT}" == *"${needle}"* ]]
+}
+
+json_string_array() {
+  local item
+  local result=''
+  for item in "$@"; do
+    result="${result:+${result},}$(jq -n --arg value "${item}" '$value')"
+  done
+  printf '[%s]\n' "${result}"
+}
+
+# The Lume runner points CARGO_TARGET_DIR at an absolute, per-invocation
+# namespace instead of the inherited rust/target directory. Refuse relative
+# values because this script invokes Cargo from more than one working directory.
+resolved_build_target_dir() {
+  local configured="${CARGO_TARGET_DIR:-}"
+  if [[ -z "${configured}" ]]; then
+    printf '%s/target\n' "${RUST_ROOT}"
+    return 0
+  fi
+  case "${configured}" in
+    /*) printf '%s\n' "${configured}" ;;
+    *)
+      echo "CARGO_TARGET_DIR must be absolute for macOS E2E: ${configured}" >&2
+      return 2
+      ;;
+  esac
+}
+
+FAILURE_COUNT=0
+FAILED_LANES=()
+VIDEO_FAILURES=()
+PREFLIGHT_FAILED=0
+REPORT_FAILED=0
+
+note_lane_failure() {
+  FAILURE_COUNT=$((FAILURE_COUNT + 1))
+  FAILED_LANES+=("$1")
+}
+
+note_video_failure() {
+  FAILURE_COUNT=$((FAILURE_COUNT + 1))
+  VIDEO_FAILURES+=("$1")
+}
+
+json_bool() {
+  if [[ "$1" == 1 ]]; then
+    printf 'true\n'
+  else
+    printf 'false\n'
+  fi
+}
+
+# One machine-readable record of what failed, so a caller can tell a single
+# typed cell failure apart from a lane, video, preflight, or report failure.
+write_failure_record() {
+  local failures_file="$1"
+  jq -n \
+    --arg schema 'cua-driver/e2e-failures@v1' \
+    --arg suite "${SUITE}" \
+    --arg cell_filter "${CUA_E2E_CELL_FILTER:-}" \
+    --arg harness_filter "${CUA_E2E_HARNESS_FILTER:-}" \
+    --argjson failure_count "${FAILURE_COUNT}" \
+    --argjson preflight_failed "$(json_bool "${PREFLIGHT_FAILED}")" \
+    --argjson report_failed "$(json_bool "${REPORT_FAILED}")" \
+    --argjson lanes "$(json_string_array ${FAILED_LANES[@]+"${FAILED_LANES[@]}"})" \
+    --argjson video_failures "$(json_string_array ${VIDEO_FAILURES[@]+"${VIDEO_FAILURES[@]}"})" \
+    '{schema: $schema, suite: $suite,
+      filters: {cell: $cell_filter, harness: $harness_filter},
+      failure_count: $failure_count, preflight_failed: $preflight_failed,
+      report_failed: $report_failed, lanes: $lanes,
+      video_failures: $video_failures}' \
+    > "${failures_file}"
+}
+
+run_test() {
+  local name="$1"; shift
+  echo "[RUN] ${name}"
+  set +e
+  (cd "${RUST_ROOT}" && "$@") 2>&1 | tee "${ARTIFACT_DIR}/${name}.log"
+  local exit_code=${PIPESTATUS[0]}
+  set -e
+  if [[ "${exit_code}" != 0 ]]; then
+    note_lane_failure "${name}"
+  fi
+}
+
+if [[ "${CUA_E2E_RUNNER_LIB_ONLY:-0}" == 1 ]]; then
+  # Sourced by the focused runner tests, which exercise the helpers above
+  # without a live macOS desktop.
+  if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    echo "CUA_E2E_RUNNER_LIB_ONLY is valid only when this script is sourced" >&2
+    exit 2
+  fi
+  return 0
+fi
 
 while (($#)); do
   case "$1" in
@@ -79,18 +199,22 @@ RESULTS_FILE="${ARTIFACT_DIR}/results.jsonl"
 DECLARATIONS_FILE="${ARTIFACT_DIR}/cases.jsonl"
 ENVIRONMENT_FILE="${ARTIFACT_DIR}/environment.jsonl"
 SUMMARY_FILE="${ARTIFACT_DIR}/summary.md"
+FAILURES_FILE="${ARTIFACT_DIR}/failures.json"
 mkdir -p "${ARTIFACT_DIR}"
 : > "${DECLARATIONS_FILE}"
 : > "${ENVIRONMENT_FILE}"
 : > "${RESULTS_FILE}"
 rm -f "${SUMMARY_FILE}"
+# A record from a previous attempt must never describe this one.
+rm -f "${FAILURES_FILE}"
 
 export CUA_E2E_DECLARATIONS_FILE="${DECLARATIONS_FILE}"
 export CUA_E2E_ENVIRONMENT_FILE="${ENVIRONMENT_FILE}"
 export CUA_E2E_RESULTS_FILE="${RESULTS_FILE}"
 export CUA_E2E_RECORDINGS_ROOT="${RECORDING_ROOT}"
 export CUA_TEST_WORKSPACE_ROOT="${RUST_ROOT}"
-export CUA_TEST_DRIVER_BIN="${RUST_ROOT}/target/release/cua-driver"
+BUILD_TARGET_DIR="$(resolved_build_target_dir)"
+export CUA_TEST_DRIVER_BIN="${BUILD_TARGET_DIR}/release/cua-driver"
 export CUA_TEST_APPS_ROOT="${RUST_ROOT}/test-apps"
 export CUA_TEST_REQUIRE_FIXTURES=1
 export CUA_TEST_DRIVER_STDERR=1
@@ -115,6 +239,15 @@ if [[ ! -x "${CUA_TEST_DRIVER_BIN}" ]]; then
   echo "Required driver binary was not built: ${CUA_TEST_DRIVER_BIN}" >&2
   exit 1
 fi
+MACOS_DAEMON_SOCKET="${CUA_E2E_MACOS_DAEMON_SOCKET:-${HOME}/Library/Caches/cua-driver/cua-driver.sock}"
+MACOS_DAEMON_BIN="${CUA_E2E_INSTALLED_DRIVER_BIN:-${CUA_TEST_DRIVER_BIN}}"
+if ! output_contains "permission mode: unrestricted" \
+    "${MACOS_DAEMON_BIN}" status --socket "${MACOS_DAEMON_SOCKET}"; then
+  printf '%s\n' "${CAPTURED_OUTPUT}" >&2
+  echo "macOS canonical E2E requires an explicitly unrestricted disposable worker daemon" >&2
+  echo "Use tests/runners/macos-lume/run-all.sh, which restores standard mode afterward" >&2
+  exit 1
+fi
 
 required_fixtures=()
 required_fixtures+=("${CUA_TEST_APPS_ROOT}/harness-electron/CuaTestHarness.Electron.app")
@@ -134,8 +267,6 @@ for fixture in "${required_fixtures[@]}"; do
   [[ -d "${fixture}" ]] || { echo "Required fixture missing: ${fixture}" >&2; exit 1; }
 done
 
-FAILURE_COUNT=0
-
 run_report() {
   (cd "${RUST_ROOT}" && cargo run -p cua-driver-testkit --bin cua-e2e-report -- \
     --declarations "${DECLARATIONS_FILE}" \
@@ -154,26 +285,26 @@ set +e
 PREFLIGHT_EXIT=${PIPESTATUS[0]}
 set -e
 if [[ "${PREFLIGHT_EXIT}" != 0 ]]; then
+  PREFLIGHT_FAILED=1
+  FAILURE_COUNT=$((FAILURE_COUNT + 1))
   set +e
   run_report
   set -e
+  write_failure_record "${FAILURES_FILE}"
   echo "macOS E2E environment preflight failed" >&2
   exit 1
 fi
 
-run_test() {
-  local name="$1"; shift
-  echo "[RUN] ${name}"
-  set +e
-  (cd "${RUST_ROOT}" && "$@") 2>&1 | tee "${ARTIFACT_DIR}/${name}.log"
-  local exit_code=${PIPESTATUS[0]}
-  set -e
-  if [[ "${exit_code}" != 0 ]]; then
-    FAILURE_COUNT=$((FAILURE_COUNT + 1))
-  fi
-}
-
 if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
+  run_test protected-permission-prompt-socket cargo test -p cua-driver \
+    --test permission_prompt_authorization_test -- --test-threads=1
+  run_test protected-host-self-launch cargo test -p platform-macos \
+    launch_app::tests -- --test-threads=1
+  run_test sdk-runtime-contract cargo test -p cua-driver-sdk --lib -- --test-threads=1
+  run_test sdk-runtime-configuration cargo test -p cua-driver-sdk \
+    --test runtime_configuration -- --test-threads=1
+  run_test private-worker-lifecycle cargo test -p cua-driver \
+    --test private_worker_test -- --test-threads=1
   run_test shared-app-matrix cargo test -p cua-driver --test cross_platform_behavior_test -- \
     --ignored --exact shared_web_action_matrix_is_state_verified \
     --nocapture --test-threads=1
@@ -182,6 +313,9 @@ if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
     --nocapture --test-threads=1
 fi
 if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
+  run_test agent-cursor-showcase cargo test -p cua-driver \
+    --test agent_cursor_showcase_test -- \
+    --ignored --nocapture --test-threads=1
   for appkit_test in \
     harness_appkit_smoke \
     harness_appkit_text_input \
@@ -203,7 +337,8 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     harness_swiftui_smoke \
     harness_swiftui_counter_background \
     harness_swiftui_set_value_background \
-    harness_swiftui_popover_foreground; do
+    harness_swiftui_popover_foreground \
+    harness_swiftui_verify_state; do
     run_test "swiftui-${swiftui_test}" cargo test -p cua-driver --test harness_swiftui_test -- \
       --ignored --exact "${swiftui_test}" --nocapture --test-threads=1
   done
@@ -226,20 +361,20 @@ while IFS= read -r -d '' video; do
   if ! ffprobe -v error -show_entries format=duration \
       -of default=noprint_wrappers=1:nokey=1 "${video}" >/dev/null; then
     echo "[VIDEO FAIL] Unplayable trajectory: ${video}" >&2
-    FAILURE_COUNT=$((FAILURE_COUNT + 1))
+    note_video_failure "unplayable:${video#"${ARTIFACT_DIR}/"}"
   fi
 done < <(find "${RECORDING_ROOT}" -type f -name recording.mp4 -print0)
 
 OWNED_VIDEOS="$(mktemp)"
 jq -r 'select(.evidence.video != null) | .evidence.video' "${RESULTS_FILE}" > "${OWNED_VIDEOS}"
 while IFS= read -r -d '' video; do
-  relative="${video#${ARTIFACT_DIR}/}"
+  relative="${video#"${ARTIFACT_DIR}/"}"
   if [[ "${relative}" == recordings/environment-preflight-*/recording.mp4 ]]; then
     continue
   fi
   if ! grep -Fxq -- "${relative}" "${OWNED_VIDEOS}"; then
     echo "[VIDEO FAIL] Orphan trajectory has no typed result row: ${relative}" >&2
-    FAILURE_COUNT=$((FAILURE_COUNT + 1))
+    note_video_failure "orphan:${relative}"
   fi
 done < <(find "${RECORDING_ROOT}" -type f -name recording.mp4 -print0)
 rm -f "${OWNED_VIDEOS}"
@@ -247,12 +382,12 @@ rm -f "${OWNED_VIDEOS}"
 while IFS= read -r -d '' error_file; do
   echo "[VIDEO FAIL] ${error_file}" >&2
   cat "${error_file}" >&2
-  FAILURE_COUNT=$((FAILURE_COUNT + 1))
+  note_video_failure "recording-error:${error_file#"${ARTIFACT_DIR}/"}"
 done < <(find "${RECORDING_ROOT}" -type f -name recording-error.txt -print0)
 
 if [[ "${video_count}" == 0 ]]; then
   echo "[VIDEO FAIL] No E2E trajectory videos were produced" >&2
-  FAILURE_COUNT=$((FAILURE_COUNT + 1))
+  note_video_failure "no-trajectories"
 fi
 
 set +e
@@ -261,11 +396,14 @@ REPORT_EXIT=$?
 set -e
 if [[ "${REPORT_EXIT}" != 0 ]]; then
   echo "macOS E2E result validation failed" >&2
+  REPORT_FAILED=1
   FAILURE_COUNT=$((FAILURE_COUNT + 1))
 fi
 
+write_failure_record "${FAILURES_FILE}"
+
 if [[ "${FAILURE_COUNT}" != 0 ]]; then
-  echo "macOS Rust E2E suite had ${FAILURE_COUNT} failing lane(s)" >&2
+  echo "macOS Rust E2E suite had ${FAILURE_COUNT} failure signal(s)" >&2
   exit 1
 fi
 echo "macOS Rust E2E suite completed: ${SUITE}"

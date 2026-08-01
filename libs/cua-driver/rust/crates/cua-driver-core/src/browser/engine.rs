@@ -24,13 +24,14 @@
 //!   omitted from the snapshot — never guessed.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, Mutex, Weak};
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::session::register_session_end_hook;
+use crate::session::register_scoped_session_end_hook;
 
 use super::binding::{
     cardinality_exact_candidate, correlate, selected_tab_target_id, BindingOutcome,
@@ -39,7 +40,10 @@ use super::binding::{
 use super::cdp_ws::{CdpConnection, CdpPool};
 use super::grant::{ExistingProfileGrant, ExistingProfileGrants, GrantLookup};
 use super::mutation::{MutationGates, MutationKey};
-use super::platform::{BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform};
+use super::platform::{
+    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
+    BrowserVisualActionKind,
+};
 use super::prepare::ManagedBrowsers;
 use super::reconnect::ReconnectGates;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
@@ -74,9 +78,11 @@ pub struct BrowserEngine {
     pub(crate) pool: CdpPool,
     pub(crate) managed_browsers: ManagedBrowsers,
     pub(crate) existing_profile_grants: ExistingProfileGrants,
-    pub(crate) approval_broker: crate::consent::ApprovalBroker,
+    pub(crate) approval_broker: Arc<crate::consent::ApprovalBroker>,
+    pub(crate) protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
     mutation_gates: MutationGates,
     reconnect_gates: ReconnectGates,
+    session_end_hook: Mutex<Option<crate::session::SessionEndHookRegistration>>,
 }
 
 fn refuse(code: BrowserRefusalCode, msg: impl Into<String>) -> BrowserRefusal {
@@ -96,6 +102,32 @@ fn authorize_live_browser_origin(
     manifest
         .authorize_browser_url(live_url)
         .map_err(|error| refuse(BrowserRefusalCode::BrowserOriginOutsideScope, error))
+}
+
+fn protected_live_origin_scope(raw: &str) -> Result<String, BrowserRefusal> {
+    if raw.trim() == "about:blank" {
+        return Ok("about:blank".to_owned());
+    }
+    let parsed = url::Url::parse(raw).map_err(|_| {
+        refuse(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "the live top-level browser URL is invalid",
+        )
+    })?;
+    let origin = parsed.origin().ascii_serialization();
+    if origin != "null" {
+        return Ok(origin);
+    }
+
+    // Opaque origins (for example file: and data:) cannot safely share one
+    // generic "null" grant. Bind them to a one-way document digest without
+    // sending the full path/query/fragment to the consent provider.
+    let digest = Sha256::digest(raw.as_bytes());
+    let digest = digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    Ok(format!("{}:sha256:{digest}", parsed.scheme()))
 }
 
 fn route_err(context: &str, err: impl std::fmt::Display) -> BrowserRefusal {
@@ -148,8 +180,56 @@ pub(crate) struct ValidatedTab {
     pub conn: Arc<CdpConnection>,
     pub record: TargetRecord,
     pub tab: TabRecord,
+    /// Live native metadata from this mutation's revalidation, rather than
+    /// the bind-time geometry retained in `record`.
+    pub native: NativeWindowInfo,
     /// Flattened CDP session id attached to the tab's target.
     pub cdp_session: String,
+}
+
+fn viewport_point_to_screen(
+    native: Rect,
+    metrics: &Value,
+    viewport_x: f64,
+    viewport_y: f64,
+) -> Option<(f64, f64)> {
+    if !viewport_x.is_finite() || !viewport_y.is_finite() {
+        return None;
+    }
+    let viewport = metrics
+        .get("cssVisualViewport")
+        .or_else(|| metrics.get("cssLayoutViewport"))?;
+    let width = viewport.get("clientWidth")?.as_f64()?;
+    let height = viewport.get("clientHeight")?.as_f64()?;
+    if !width.is_finite()
+        || !height.is_finite()
+        || width <= 0.0
+        || height <= 0.0
+        || viewport_x < 0.0
+        || viewport_y < 0.0
+        || viewport_x > width
+        || viewport_y > height
+    {
+        return None;
+    }
+
+    // CDP viewport coordinates and native/CDP window bounds are all DIPs.
+    // Chromium centers the content viewport horizontally and places its
+    // browser chrome above it. A negative inset means the geometry is not
+    // trustworthy enough for visual feedback, so skip rather than mislead.
+    let horizontal_inset = (native.width - width) / 2.0;
+    let top_inset = native.height - height;
+    if !horizontal_inset.is_finite()
+        || !top_inset.is_finite()
+        || horizontal_inset < -1.0
+        || top_inset < -1.0
+    {
+        return None;
+    }
+    Some((
+        native.x + horizontal_inset.max(0.0) + viewport_x,
+        native.y + top_inset.max(0.0) + viewport_y,
+    ))
 }
 
 /// Whether a CDP error is Chromium's "method not implemented" shape.
@@ -473,7 +553,11 @@ impl BrowserEngine {
     /// capability store. Platform crates call this once and register
     /// the five tools via `register_browser_tools`.
     pub fn new(platform: Arc<dyn BrowserPlatform>) -> Arc<Self> {
-        Self::new_with_protected_consent_provider(platform, None)
+        Self::new_with_runtime_services(
+            platform,
+            Arc::new(crate::consent::ApprovalBroker::unavailable()),
+            Arc::new(crate::consent::ProtectedResourceOwnershipStore::default()),
+        )
     }
 
     /// Create an engine with a provider installed by a trusted embedding host
@@ -483,25 +567,52 @@ impl BrowserEngine {
         platform: Arc<dyn BrowserPlatform>,
         provider: Option<Arc<dyn crate::consent::ProtectedConsentProvider>>,
     ) -> Arc<Self> {
+        Self::new_with_runtime_services(
+            platform,
+            Arc::new(crate::consent::ApprovalBroker::new(provider)),
+            Arc::new(crate::consent::ProtectedResourceOwnershipStore::default()),
+        )
+    }
+
+    /// Create an engine using the runtime-owned broker shared by every
+    /// protected resource adapter.
+    pub fn new_with_approval_broker(
+        platform: Arc<dyn BrowserPlatform>,
+        approval_broker: Arc<crate::consent::ApprovalBroker>,
+    ) -> Arc<Self> {
+        Self::new_with_runtime_services(
+            platform,
+            approval_broker,
+            Arc::new(crate::consent::ProtectedResourceOwnershipStore::default()),
+        )
+    }
+
+    pub fn new_with_runtime_services(
+        platform: Arc<dyn BrowserPlatform>,
+        approval_broker: Arc<crate::consent::ApprovalBroker>,
+        protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
+    ) -> Arc<Self> {
         let engine = Arc::new(Self {
             platform,
             store: BrowserStore::new(),
             pool: CdpPool::new(),
             managed_browsers: Default::default(),
             existing_profile_grants: ExistingProfileGrants::new(),
-            approval_broker: crate::consent::ApprovalBroker::new(provider),
+            approval_broker,
+            protected_resource_ownership,
             mutation_gates: MutationGates::new(),
             reconnect_gates: ReconnectGates::new(),
+            session_end_hook: Mutex::new(None),
         });
         let weak: Weak<Self> = Arc::downgrade(&engine);
-        register_session_end_hook(move |session_id| {
+        let registration = register_scoped_session_end_hook(move |session_id| {
             if let Some(engine) = weak.upgrade() {
                 engine.store.remove_session(session_id);
                 engine.cleanup_prepared_session(session_id);
                 for grant in engine.existing_profile_grants.remove_session(session_id) {
                     engine.pool.release_claim_marker(&grant.endpoint_ws_url);
                     if let Some(protected) = grant.protected_consent.as_ref() {
-                        protected.indicator.revoke();
+                        protected.revoke();
                     }
                     if let Ok(runtime) = tokio::runtime::Handle::try_current() {
                         let engine = engine.clone();
@@ -518,6 +629,7 @@ impl BrowserEngine {
                 }
             }
         });
+        *engine.session_end_hook.lock().unwrap() = Some(registration);
         engine
     }
 
@@ -1312,42 +1424,145 @@ impl BrowserEngine {
         }
 
         let cdp_session = self.attach(&conn, &tab.cdp_target_id).await?;
-        if crate::authorization::configured_permission_mode()
-            .is_ok_and(|mode| mode == crate::authorization::PermissionMode::Bounded)
-        {
-            let frame_tree = conn
-                .call(Some(&cdp_session), "Page.getFrameTree", json!({}))
-                .await
-                .map_err(|error| {
-                    route_err(
-                        "could not prove the live browser origin before bounded-mode input",
-                        error,
-                    )
-                })?;
-            let live_url = frame_tree
-                .pointer("/frameTree/frame/url")
-                .and_then(Value::as_str)
+        let dispatch_context = crate::tool::current_dispatch_authorization_context();
+        let dispatch_mode = dispatch_context
+            .as_ref()
+            .map(|context| context.mode())
+            .map(Ok)
+            .unwrap_or_else(crate::authorization::configured_permission_mode);
+        if dispatch_mode.is_ok_and(|mode| mode == crate::authorization::PermissionMode::Bounded) {
+            let live_url = self.live_top_level_url(&conn, &cdp_session).await?;
+            // A browser mutation admitted for a delegated bounded session
+            // must use that exact session's manifest. Falling back to the
+            // process compatibility manifest would let a missing task-local
+            // context borrow unrelated authority.
+            let manifest = dispatch_context
+                .as_deref()
                 .ok_or_else(|| {
                     refuse(
                         BrowserRefusalCode::BrowserOriginOutsideScope,
-                        "the live top-level browser origin could not be proven",
+                        "the bounded browser authorization context is unavailable",
                     )
-                })?;
-            let manifest =
-                crate::session_manifest::configured_session_manifest().map_err(|error| {
-                    refuse(
-                        BrowserRefusalCode::BrowserOriginOutsideScope,
-                        format!("the bounded session policy is unavailable: {error}"),
-                    )
-                })?;
-            authorize_live_browser_origin(manifest, live_url)?;
+                })?
+                .bounded_manifest();
+            authorize_live_browser_origin(manifest, &live_url)?;
         }
         Ok(ValidatedTab {
             conn,
             record,
             tab,
+            native,
             cdp_session,
         })
+    }
+
+    async fn live_top_level_url(
+        &self,
+        conn: &CdpConnection,
+        cdp_session: &str,
+    ) -> Result<String, BrowserRefusal> {
+        let frame_tree = conn
+            .call(Some(cdp_session), "Page.getFrameTree", json!({}))
+            .await
+            .map_err(|error| {
+                route_err("could not prove the live top-level browser document", error)
+            })?;
+        frame_tree
+            .pointer("/frameTree/frame/url")
+            .and_then(Value::as_str)
+            .filter(|url| !url.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                refuse(
+                    BrowserRefusalCode::BrowserOriginOutsideScope,
+                    "the live top-level browser origin could not be proven",
+                )
+            })
+    }
+
+    pub(crate) async fn attest_protected_tab(
+        &self,
+        session: &str,
+        target_id: &str,
+        tab_id: &str,
+    ) -> Result<(ValidatedTab, String), BrowserRefusal> {
+        let validated = self
+            .revalidate_for_mutation(session, target_id, Some(tab_id))
+            .await?;
+        let live_url = self
+            .live_top_level_url(&validated.conn, &validated.cdp_session)
+            .await?;
+        let live_origin = protected_live_origin_scope(&live_url)?;
+        Ok((validated, live_origin))
+    }
+
+    /// Animate platform-owned browser feedback without coupling it to input
+    /// delivery. Only main-frame viewport points are mapped: child-frame CDP
+    /// coordinates are not necessarily in the top-level viewport space, and a
+    /// misleading cursor is worse than no cursor.
+    pub(crate) async fn visualize_browser_action(
+        &self,
+        session: &str,
+        validated: &ValidatedTab,
+        cdp_session: &str,
+        viewport_x: f64,
+        viewport_y: f64,
+        kind: BrowserVisualActionKind,
+    ) {
+        // `document.visibilityState` distinguishes the selected tab without
+        // focusing its native window or invoking any CDP activation command.
+        // Treat an unavailable or malformed proof as inactive: omitting
+        // feedback is safer than drawing a cursor over another tab.
+        let tab_is_active = validated
+            .conn
+            .call(
+                Some(&validated.cdp_session),
+                "Runtime.evaluate",
+                json!({
+                    "expression": "document.visibilityState === 'visible'",
+                    "returnByValue": true,
+                    "awaitPromise": false,
+                }),
+            )
+            .await
+            .ok()
+            .and_then(|result| result.pointer("/result/value").and_then(Value::as_bool))
+            .unwrap_or(false);
+
+        let screen_point = if cdp_session == validated.cdp_session {
+            validated
+                .conn
+                .call(Some(cdp_session), "Page.getLayoutMetrics", json!({}))
+                .await
+                .ok()
+                .and_then(|metrics| {
+                    viewport_point_to_screen(
+                        validated.native.bounds,
+                        &metrics,
+                        viewport_x,
+                        viewport_y,
+                    )
+                })
+        } else {
+            // Child-frame coordinates are not necessarily in the top-level
+            // viewport. Still update active-tab gating, but do not guess a
+            // pointer position.
+            None
+        };
+        let (screen_x, screen_y) = screen_point
+            .map(|(x, y)| (Some(x), Some(y)))
+            .unwrap_or((None, None));
+        self.platform
+            .visualize_browser_action(BrowserVisualAction {
+                session: session.to_owned(),
+                window_id: validated.native.window_id,
+                cdp_target_id: validated.tab.cdp_target_id.clone(),
+                tab_is_active,
+                screen_x,
+                screen_y,
+                kind,
+            })
+            .await;
     }
 
     /// Serialize the full revalidate-dispatch-verify interval by the real CDP
@@ -2513,6 +2728,45 @@ fn collect_interactive(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn viewport_point_maps_below_browser_chrome_in_live_native_bounds() {
+        let point = viewport_point_to_screen(
+            Rect::new(100.0, 50.0, 1000.0, 800.0),
+            &json!({
+                "cssVisualViewport": {
+                    "clientWidth": 980.0,
+                    "clientHeight": 700.0
+                }
+            }),
+            240.0,
+            120.0,
+        );
+        assert_eq!(point, Some((350.0, 270.0)));
+    }
+
+    #[test]
+    fn viewport_point_refuses_untrustworthy_or_out_of_view_geometry() {
+        let native = Rect::new(0.0, 0.0, 800.0, 600.0);
+        assert_eq!(
+            viewport_point_to_screen(
+                native,
+                &json!({"cssVisualViewport":{"clientWidth":900.0,"clientHeight":600.0}}),
+                10.0,
+                10.0,
+            ),
+            None
+        );
+        assert_eq!(
+            viewport_point_to_screen(
+                native,
+                &json!({"cssVisualViewport":{"clientWidth":800.0,"clientHeight":500.0}}),
+                801.0,
+                10.0,
+            ),
+            None
+        );
+    }
 
     fn fixture_doc() -> Value {
         json!({

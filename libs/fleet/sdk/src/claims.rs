@@ -3,9 +3,14 @@ use crate::{
     ResourceMetadata, Sandbox, SdkError, routes,
 };
 use cyclops_sdk_schema::{ClaimSpec, SandboxTemplateRef};
+#[cfg(not(target_arch = "wasm32"))]
 use futures_timer::Delay;
+#[cfg(target_arch = "wasm32")]
+use gloo_timers::future::TimeoutFuture;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Duration;
 use url::Url;
 
 const JSON_CONTENT_TYPE: &str = "application/json";
@@ -13,6 +18,14 @@ const JSON_CONTENT_TYPE: &str = "application/json";
 #[derive(Deserialize)]
 struct ResourceList<T> {
     items: Vec<T>,
+}
+
+async fn wait_for_claim_poll_interval(interval_ms: u64) {
+    #[cfg(target_arch = "wasm32")]
+    TimeoutFuture::new(interval_ms.min(u64::from(u32::MAX)) as u32).await;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    Delay::new(Duration::from_millis(interval_ms)).await;
 }
 
 #[uniffi::export]
@@ -122,7 +135,7 @@ impl CyclopsClient {
                 });
             }
             if attempt + 1 < self.claim_poll_limit() {
-                Delay::new(Duration::from_millis(self.claim_poll_interval_ms())).await;
+                wait_for_claim_poll_interval(self.claim_poll_interval_ms()).await;
             }
         }
         Err(SdkError::ClaimTimeout)

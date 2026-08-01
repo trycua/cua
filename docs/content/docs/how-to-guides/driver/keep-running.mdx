@@ -6,7 +6,12 @@ description: Register Cua Driver as a persistent daemon that starts automaticall
 import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Cua Driver requires a daemon for tool execution. The daemon owns the per-pid element cache, permission policy, recording and configuration state, macOS TCC attribution, and the Windows interactive-session context. MCP and one-shot CLI calls fail if they cannot reach it.
+External MCP clients and one-shot CLI calls require a daemon. The daemon owns
+the per-pid element cache, permission policy, recording and configuration
+state, macOS TCC attribution, and the Windows interactive-session context. Keep
+it running when you use those interfaces. Applications that import
+`CuaDriver.create()` execute through the same-process SDK and do not need this
+setup.
 
 <Tabs items={['macOS', 'Windows', 'Linux']}>
   <Tab value="macOS">

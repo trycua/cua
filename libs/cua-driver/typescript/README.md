@@ -4,7 +4,7 @@ Rust-backed TypeScript/Node SDK for Cua Driver client applications.
 
 ## Product boundary
 
-The package root exposes the native daemon SDK:
+The package root exposes the native SDK:
 
 ```ts
 import { CuaDriver } from "@trycua/cua-driver"
@@ -21,10 +21,10 @@ runtime-neutral MCP clients and should configure the executable directly:
 cua-driver mcp
 ```
 
-The removed pre-release MCP facade used `CuaDriver.stdio()`, async methods,
-`*Args` interfaces, and a TypeScript stdio transport. Application code migrates
-to the synchronous Rust-backed methods shown below; agent code removes the Cua
-package import and supplies `cua-driver mcp` to its agent SDK.
+The removed pre-release MCP facade used `CuaDriver.stdio()`, `*Args`
+interfaces, and a TypeScript stdio transport. Application code imports the
+typed Rust-backed SDK shown below; agent code supplies `cua-driver mcp` to its
+agent SDK.
 
 ## SDK example
 
@@ -32,13 +32,15 @@ package import and supplies `cua-driver mcp` to its agent SDK.
 import {
   CaptureScope,
   CuaDriver,
+  CursorReducedMotion,
   EndSessionInput,
   GetDesktopStateInput,
+  SetAgentCursorThemeInput,
   StartSessionInput,
 } from "@trycua/cua-driver"
 
-const driver = CuaDriver.connect(undefined) // default installed daemon socket
-driver.startSession(
+const driver = CuaDriver.create(undefined) // same process; no daemon
+await driver.startSession(
   StartSessionInput.new({
     session: "demo",
     captureScope: CaptureScope.Desktop,
@@ -46,27 +48,69 @@ driver.startSession(
 )
 
 try {
-  const desktop = driver.getDesktopState(
+  await driver.setAgentCursorTheme(
+    SetAgentCursorThemeInput.new({
+      session: "demo",
+      themeId: "cua.default",
+      reducedMotion: CursorReducedMotion.Auto,
+    }),
+  )
+  const desktop = await driver.getDesktopState(
     GetDesktopStateInput.new({ session: "demo" }),
   )
   console.log(desktop.images[0]?.mimeType)
 } finally {
-  driver.endSession(EndSessionInput.new({ session: "demo" }))
+  await driver.endSession(EndSessionInput.new({ session: "demo" }))
+  await driver.shutdown()
   driver.uniffiDestroy()
 }
 ```
 
-The SDK is currently synchronous and requires a native library matching the
-host OS and architecture. Desktop calls return a typed `ToolResult` with text,
+SDK operations are asynchronous and require a native library matching the host
+OS and architecture. The macOS native package requires macOS 13 or newer.
+Desktop calls return a typed `ToolResult` with text,
 images, verification/error metadata, and `structuredJson` / `rawJson` for
-platform-extensible results. Session lifecycle calls return dedicated
-generated records.
+platform-extensible results. Session lifecycle calls return dedicated generated
+records.
 
-## Embedded Node and Electron hosts
+The agent cursor is session-owned. Its default theme and custom dotLottie
+authoring workflow are documented in
+[`docs/cursor-themes.md`](../docs/cursor-themes.md). Custom source is compiled
+and installed with the local CLI; SDK and MCP tools select only an installed
+theme ID. The built-in cursor shows the sanitized public session name in a
+badge below the pointer.
 
-A signed desktop application can bundle `cua-driver`, start it as a direct
-child, and connect both the native SDK and its agent runtime to the same private
-daemon:
+## Authorization integrations
+
+`standard` is promptless for normal automation. An application that needs to
+authorize attachment to an existing logged-in Chromium profile can construct a
+configured runtime with
+`CuaDriver.createConfiguredWithAuthorizationHost(options, host)`. Implement
+the `DriverAuthorizationHost` interface in trusted application code and return
+the request's exact digest with `Allow`, `Deny`, or `Cancel`.
+
+`CuaDriver.createConfiguredWithActivityObserver(options, observer)` emits
+content-free action, refusal, grant, and session events. The observer cannot
+change authorization or tool results. Use
+`createConfiguredWithHostIntegrations` when the application needs both.
+
+See the [SDK reference](https://cua.ai/docs/reference/cua-driver/sdk-reference)
+for complete examples and the callback trust rules.
+
+`CuaDriver.connect(socketPath)` remains available while existing applications
+migrate. It exposes the same methods over the installed daemon, but it does not
+provide a second SDK contract.
+
+`shutdown()` closes admission, waits for already admitted operations to finish,
+and is idempotent. Calls started after shutdown reject with `DriverError`.
+`uniffiDestroy()` releases the binding handle, but orderly applications should
+await `shutdown()` first.
+
+## Daemon-backed MCP hosts
+
+A signed desktop application that must also expose MCP to an external agent can
+bundle `cua-driver`, start it as a direct child, and connect both application
+code and its agent runtime to the same private daemon:
 
 ```ts
 import { CuaDriver, EmbeddedCuaDriverHost } from "@trycua/cua-driver"
@@ -129,3 +173,12 @@ The npm package installs one optional native package selected for the current
 OS and CPU. It does not bundle the `cua-driver` executable: ship that executable
 outside ASAR, preserve its executable bit, and sign it before signing and
 notarizing the enclosing app.
+
+Each native package also carries Cua's copy-mode build of the pinned
+`@ubjs/node` N-API runtime. Upstream `0.31.0-3` returns Rust-owned memory through
+external ArrayBuffers, which Electron 20 and newer intentionally reject because
+of V8's memory cage. The copy-mode runtime keeps the generated UniFFI API and
+RustBuffer ownership contract unchanged, but copies at the native/JavaScript
+boundary before freeing Rust-owned return buffers. Regular Node and Electron
+therefore receive the same values; Electron hosts do not need to spawn or
+configure the private daemon themselves.

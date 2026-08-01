@@ -13,6 +13,54 @@ Install, uninstall, local-build, and VM sync helpers for cua-driver.
 | `sync-vm-worktree.sh` | Sync this checkout to verification VMs and pull artifacts back |
 | `post-install-hints.txt` | User-facing hints printed by install scripts |
 
+## Stable macOS local signing
+
+macOS Accessibility and Screen Recording grants are tied to an app's
+designated requirement. An ad-hoc signature uses a `cdhash` requirement that
+changes on every rebuild, so its grants do not survive the next local install.
+The installer now reports whether the installed requirement is
+`certificate-backed` or `ad-hoc cdhash`; an ad-hoc install always prints a
+prominent warning and bootstrap instructions.
+
+For behavior or E2E verification, require the stable path:
+
+```bash
+bash libs/cua-driver/scripts/install-local.sh \
+  --release --autostart --require-stable-signing
+```
+
+`CUA_DRIVER_REQUIRE_STABLE_SIGNING=1` is the environment equivalent. Strict
+mode stops before replacing the live app when no usable certificate-backed
+identity is available.
+
+For the most reliable non-interactive rebuilds, use a dedicated keychain:
+
+```bash
+SIGNING_KEYCHAIN="$HOME/Library/Keychains/cua-driver-signing.keychain-db"
+security create-keychain "$SIGNING_KEYCHAIN"  # first time only
+security set-keychain-settings "$SIGNING_KEYCHAIN"
+security unlock-keychain "$SIGNING_KEYCHAIN"
+export CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN="$SIGNING_KEYCHAIN"
+```
+
+The first install creates `CuaDriver Local Signing (cua-driver-rs)` in that
+keychain. If `codesign` cannot use its private key non-interactively, unlock
+the keychain, trust the certificate in Keychain Access, and authorize Apple
+code-signing tools:
+
+```bash
+read -r -s -p 'Keychain password: ' KEYCHAIN_PASSWORD; echo
+security set-key-partition-list \
+  -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" \
+  "$SIGNING_KEYCHAIN"
+unset KEYCHAIN_PASSWORD
+```
+
+Then rerun the strict installer and grant Accessibility and Screen Recording
+once. When the dedicated default keychain above exists, the installer prefers
+it automatically; exporting `CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN` remains the
+most explicit choice.
+
 Released installers show a telemetry notice before asking the installed binary
 to record anything. Telemetry is enabled by default and can be persistently
 disabled with `cua-driver telemetry disable`. Installation events use the same

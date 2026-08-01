@@ -106,6 +106,13 @@ pub fn clear_session(session: &str) {
     scopes().lock().unwrap().remove(session);
 }
 
+pub fn clear_sessions_with_prefix(prefix: &str) -> usize {
+    let mut registry = scopes().lock().unwrap();
+    let before = registry.len();
+    registry.retain(|session, _| !session.starts_with(prefix));
+    before - registry.len()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EscalateError {
     Ended,
@@ -180,6 +187,7 @@ fn tool_scope(tool_name: &str, args: &Value) -> ToolScope {
     if matches!(
         tool_name,
         "get_window_state"
+            | "verify_state"
             | "get_accessibility_tree"
             | "get_app_state"
             | "screenshot"

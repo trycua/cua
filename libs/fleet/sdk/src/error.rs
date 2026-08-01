@@ -9,6 +9,12 @@ pub enum HttpError {
 }
 
 #[derive(Debug, Error, uniffi::Error)]
+pub enum AccessTokenProviderError {
+    #[error("access token unavailable: {reason}")]
+    Failed { reason: String },
+}
+
+#[derive(Debug, Error, uniffi::Error)]
 pub enum SdkError {
     #[error("invalid configuration: {reason}")]
     Configuration { reason: String },

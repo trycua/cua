@@ -201,12 +201,25 @@ pub fn desktop_state() -> DesktopState {
 #[cfg(target_os = "windows")]
 pub fn interactive_desktop_check() -> Result<bool, String> {
     let state = desktop_state();
-    if state.session_id == Some(0) {
-        return Err("running in Windows Session 0".to_owned());
+    classify_interactive_desktop(&state)
+}
+
+#[cfg(target_os = "windows")]
+fn classify_interactive_desktop(state: &DesktopState) -> Result<bool, String> {
+    match state.session_id {
+        Some(0) => return Err("running in Windows Session 0".to_owned()),
+        Some(_) => {}
+        None => {
+            return Err(
+                "could not determine the Windows session id; refusing desktop runtime ownership"
+                    .to_owned(),
+            );
+        }
     }
     if !state.has_process_window_station {
         return Err(state
             .process_window_station_error
+            .clone()
             .unwrap_or_else(|| "GetProcessWindowStation returned null".to_owned()));
     }
     Ok(state.has_foreground_window())
@@ -312,6 +325,42 @@ pub fn is_non_interactive_error(err: &str) -> bool {
 #[cfg(all(test, target_os = "windows"))]
 mod tests {
     use super::*;
+
+    fn state(session_id: u32, attached: bool, foreground: bool) -> DesktopState {
+        DesktopState {
+            session_id: Some(session_id),
+            has_process_window_station: attached,
+            process_window_station_error: (!attached).then(|| "no station".into()),
+            thread_desktop_name: None,
+            thread_desktop_error: None,
+            input_desktop_name: None,
+            input_desktop_error: None,
+            foreground_hwnd: foreground.then_some(1),
+        }
+    }
+
+    #[test]
+    fn session_zero_is_classified_as_runtime_unavailable() {
+        let error = classify_interactive_desktop(&state(0, true, true)).unwrap_err();
+        assert!(error.contains("Session 0"));
+        assert_eq!(
+            classify_interactive_desktop(&state(2, true, true)),
+            Ok(true)
+        );
+        assert_eq!(
+            classify_interactive_desktop(&state(2, true, false)),
+            Ok(false),
+            "a temporarily locked interactive session remains a valid owner"
+        );
+        let mut unknown = state(2, true, true);
+        unknown.session_id = None;
+        assert!(
+            classify_interactive_desktop(&unknown)
+                .unwrap_err()
+                .contains("could not determine"),
+            "an unclassified process must not be allowed to claim an interactive runtime"
+        );
+    }
 
     #[test]
     fn current_session_id_returns_some_on_windows() {

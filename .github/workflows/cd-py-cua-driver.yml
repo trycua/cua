@@ -233,17 +233,24 @@ jobs:
             "$RUNNER_TEMP/cua-driver-native/win32-arm64-msvc"
 
           tar -xzf "$RUNNER_TEMP"/cua-driver-assets/*-darwin-universal-binary.tar.gz \
-            -C "$RUNNER_TEMP/cua-driver-native/darwin-arm64" libcua_driver_sdk.dylib
+            -C "$RUNNER_TEMP/cua-driver-native/darwin-arm64" \
+            libcua_driver_sdk.dylib cua_driver_node_runtime.node
           cp "$RUNNER_TEMP/cua-driver-native/darwin-arm64/libcua_driver_sdk.dylib" \
             "$RUNNER_TEMP/cua-driver-native/darwin-x64/libcua_driver_sdk.dylib"
+          cp "$RUNNER_TEMP/cua-driver-native/darwin-arm64/cua_driver_node_runtime.node" \
+            "$RUNNER_TEMP/cua-driver-native/darwin-x64/cua_driver_node_runtime.node"
           tar -xzf "$RUNNER_TEMP"/cua-driver-assets/*-linux-x86_64-binary.tar.gz \
-            -C "$RUNNER_TEMP/cua-driver-native/linux-x64-gnu" libcua_driver_sdk.so
+            -C "$RUNNER_TEMP/cua-driver-native/linux-x64-gnu" \
+            libcua_driver_sdk.so cua_driver_node_runtime.node
           tar -xzf "$RUNNER_TEMP"/cua-driver-assets/*-linux-arm64-binary.tar.gz \
-            -C "$RUNNER_TEMP/cua-driver-native/linux-arm64-gnu" libcua_driver_sdk.so
+            -C "$RUNNER_TEMP/cua-driver-native/linux-arm64-gnu" \
+            libcua_driver_sdk.so cua_driver_node_runtime.node
           unzip -j "$RUNNER_TEMP"/cua-driver-assets/*-windows-x86_64-binary.zip \
-            cua_driver_sdk.dll -d "$RUNNER_TEMP/cua-driver-native/win32-x64-msvc"
+            cua_driver_sdk.dll cua_driver_node_runtime.node \
+            -d "$RUNNER_TEMP/cua-driver-native/win32-x64-msvc"
           unzip -j "$RUNNER_TEMP"/cua-driver-assets/*-windows-arm64-binary.zip \
-            cua_driver_sdk.dll -d "$RUNNER_TEMP/cua-driver-native/win32-arm64-msvc"
+            cua_driver_sdk.dll cua_driver_node_runtime.node \
+            -d "$RUNNER_TEMP/cua-driver-native/win32-arm64-msvc"
       - name: Pack root and platform npm packages
         run: |
           node libs/cua-driver/scripts/build-npm-packages.mjs \

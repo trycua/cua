@@ -112,14 +112,27 @@ pub fn scroll_wheel_desktop(
     move_cursor_desktop(x, y)?;
     std::thread::sleep(std::time::Duration::from_millis(40));
     for _ in 0..ticks.max(1) {
-        let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
-            .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
-        let wheel_y = (delta_y_per_tick / 120).clamp(-10, 10);
-        let wheel_x = (delta_x_per_tick / 120).clamp(-10, 10);
-        let event =
-            CGEvent::new_scroll_event(source, ScrollEventUnit::LINE, 2, wheel_y, wheel_x, 0)
-                .map_err(|_| anyhow::anyhow!("CGEvent::new_scroll_event failed"))?;
-        unsafe { CGEventSetLocation(event.as_ptr() as *mut std::ffi::c_void, x, y) };
+        // AppKit does not reliably consume synthetic LINE-unit events posted
+        // through the global HID queue. pynput's proven macOS desktop path uses
+        // PIXEL units, a null source, and scales each logical wheel notch to ten
+        // pixels. Keep that exact controller convention instead of attaching
+        // synthetic source state unrelated to the physical pointer we warped.
+        let wheel_y = (delta_y_per_tick / 12).clamp(-100, 100);
+        let wheel_x = (delta_x_per_tick / 12).clamp(-100, 100);
+        let event_ref = unsafe {
+            CGEventCreateScrollWheelEvent2(
+                std::ptr::null_mut(),
+                ScrollEventUnit::PIXEL,
+                2,
+                wheel_y,
+                wheel_x,
+                0,
+            )
+        };
+        if event_ref.is_null() {
+            return Err(anyhow::anyhow!("CGEventCreateScrollWheelEvent2 failed"));
+        }
+        let event = unsafe { CGEvent::from_ptr(event_ref) };
         event.post(CGEventTapLocation::HID);
         std::thread::sleep(std::time::Duration::from_millis(30));
     }
@@ -146,6 +159,18 @@ pub fn click_at_xy_desktop_preserving_cursor(x: f64, y: f64) -> anyhow::Result<(
 }
 
 extern "C" {
+    /// Quartz's non-variadic scroll-event constructor. The public desktop
+    /// path intentionally passes a null source to match real mouse-controller
+    /// libraries such as pynput.
+    fn CGEventCreateScrollWheelEvent2(
+        source: core_graphics::sys::CGEventSourceRef,
+        units: core_graphics::event::CGScrollEventUnit,
+        wheel_count: u32,
+        wheel1: i32,
+        wheel2: i32,
+        wheel3: i32,
+    ) -> core_graphics::sys::CGEventRef;
+
     /// Reconnect the mouse-delta stream to the (just-warped) cursor position so a
     /// synthesized click hit-tests at the new location, not the pre-warp one.
     fn CGAssociateMouseAndMouseCursorPosition(connected: bool) -> i32;
@@ -260,10 +285,30 @@ fn click_at_xy_inner(
     Ok(())
 }
 
-/// Full Chromium-compatible left-click recipe matching Swift's `clickViaAuthSignedPost`.
+/// Prepare a raw background pixel click by making the target AppKit-active
+/// without raising or restacking its window.
 ///
-/// The sequence stays PID/window-routed throughout. It must not make the target
-/// key: changing key-window ownership violates background delivery.
+/// The Swift implementation ran this immediately before the stamped event
+/// stream. The original Rust port retained the SkyLight primitive but omitted
+/// this call while cursor-overlay repinning was incomplete. Callers should
+/// re-pin their overlay after this returns, then post the click sequence.
+///
+/// Returns whether the private focus-without-raise recipe succeeded. Event
+/// posting remains best-effort when the private APIs are unavailable.
+pub fn prepare_background_pixel_click(pid: i32, wid: u32) -> bool {
+    let activated = crate::input::skylight::activate_without_raise(pid as libc::pid_t, wid);
+    // Match Swift's settle interval so AppKit updates its active/key-window
+    // routing before the mouseMoved + primer + target stream arrives.
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    activated
+}
+
+/// Post the stamped event half of the Chromium-compatible left-click recipe
+/// matching Swift's `clickViaAuthSignedPost`.
+///
+/// The sequence stays PID/window-routed throughout. The caller must first run
+/// [`prepare_background_pixel_click`] for background delivery, then re-pin any
+/// cursor overlay before entering this event stream.
 ///  1. Stamped `mouseMoved` at target coords (f0=2, cursor-state primer).
 ///  2. Off-screen primer down/up at (-1, -1) (f0=1/2) — satisfies Chromium's
 ///     user-activation gate without hitting any DOM element.
@@ -442,6 +487,49 @@ pub fn drag_at_xy(
     button: DragButton,
     foreground_release: bool,
 ) -> anyhow::Result<()> {
+    drag_at_xy_observed(
+        pid,
+        from_x,
+        from_y,
+        to_x,
+        to_y,
+        from_local,
+        to_local,
+        wid,
+        duration_ms,
+        steps,
+        modifiers,
+        button,
+        foreground_release,
+        |_, _| {},
+    )
+}
+
+/// PID-routed drag with an observer called for every native pointer position.
+///
+/// The cursor overlay uses this for the same reason as
+/// [`drag_at_xy_foreground_observed`]: the synthetic cursor should follow the
+/// actual dispatched path rather than jumping to the endpoint after release.
+#[allow(clippy::too_many_arguments)]
+pub fn drag_at_xy_observed<F>(
+    pid: i32,
+    from_x: f64,
+    from_y: f64,
+    to_x: f64,
+    to_y: f64,
+    from_local: Option<(f64, f64)>,
+    to_local: Option<(f64, f64)>,
+    wid: Option<u32>,
+    duration_ms: u64,
+    steps: usize,
+    modifiers: &[&str],
+    button: DragButton,
+    foreground_release: bool,
+    mut observe: F,
+) -> anyhow::Result<()>
+where
+    F: FnMut(f64, f64),
+{
     use core_graphics::event::CGEventTapLocation;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -507,6 +595,7 @@ pub fn drag_at_xy(
         button_number,
         0,
     );
+    observe(from_x, from_y);
     std::thread::sleep(std::time::Duration::from_millis(16));
 
     // Interpolated drag steps.
@@ -524,6 +613,7 @@ pub fn drag_at_xy(
             drag.set_flags(flags);
         }
         post_mouse_event(pid, &drag, il, wid, click_group_id, 1, button_number, 0);
+        observe(ix, iy);
         if step_delay_ms > 0 {
             std::thread::sleep(std::time::Duration::from_millis(step_delay_ms));
         }
@@ -573,6 +663,39 @@ pub fn drag_at_xy_foreground(
     modifiers: &[&str],
     button: DragButton,
 ) -> anyhow::Result<()> {
+    drag_at_xy_foreground_observed(
+        from_x,
+        from_y,
+        to_x,
+        to_y,
+        duration_ms,
+        steps,
+        modifiers,
+        button,
+        |_, _| {},
+    )
+}
+
+/// Foreground drag with an observer called for every native pointer position.
+///
+/// The cursor overlay uses this to follow the same interpolated path and
+/// cadence as the HID gesture instead of gliding only after the real pointer
+/// has already completed the drag.
+#[allow(clippy::too_many_arguments)]
+pub fn drag_at_xy_foreground_observed<F>(
+    from_x: f64,
+    from_y: f64,
+    to_x: f64,
+    to_y: f64,
+    duration_ms: u64,
+    steps: usize,
+    modifiers: &[&str],
+    button: DragButton,
+    mut observe: F,
+) -> anyhow::Result<()>
+where
+    F: FnMut(f64, f64),
+{
     use core_graphics::display::CGDisplay;
     use core_graphics::event::CGEventTapLocation;
 
@@ -613,6 +736,7 @@ pub fn drag_at_xy_foreground(
     // when the HID event carries an explicit location.
     let _ = CGDisplay::warp_mouse_cursor_position(CGPoint::new(from_x, from_y));
     unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
+    observe(from_x, from_y);
     std::thread::sleep(std::time::Duration::from_millis(40));
 
     // Prime the renderer's tracking state with a genuine HID mouse move.
@@ -642,18 +766,17 @@ pub fn drag_at_xy_foreground(
 
     for i in 1..=steps {
         let t = i as f64 / steps as f64;
-        let event = CGEvent::new_mouse_event(
-            source.clone(),
-            dragged_type,
-            CGPoint::new(from_x + (to_x - from_x) * t, from_y + (to_y - from_y) * t),
-            cg_button,
-        )
-        .map_err(|_| anyhow::anyhow!("foreground drag mouseDragged failed"))?;
+        let x = from_x + (to_x - from_x) * t;
+        let y = from_y + (to_y - from_y) * t;
+        let event =
+            CGEvent::new_mouse_event(source.clone(), dragged_type, CGPoint::new(x, y), cg_button)
+                .map_err(|_| anyhow::anyhow!("foreground drag mouseDragged failed"))?;
         if flags != CGEventFlags::CGEventFlagNull {
             event.set_flags(flags);
         }
         event.set_integer_value_field(core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE, 1);
         post(&event);
+        observe(x, y);
         if step_delay_ms > 0 {
             std::thread::sleep(std::time::Duration::from_millis(step_delay_ms));
         }

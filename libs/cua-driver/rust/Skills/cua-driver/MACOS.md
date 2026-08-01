@@ -23,15 +23,15 @@ is therefore forbidden unless the user **explicitly** asked for
 frontmost state:
 
 - **Every form of the `open` CLI — `open -a <App>`, `open -b
-  <bundle-id>`, `open <file>`, `open <path-to-App.app>`, `open
-  <url>` — always activates.** macOS routes all forms through
+<bundle-id>`, `open <file>`, `open <path-to-App.app>`, `open
+<url>` — always activates.** macOS routes all forms through
   LaunchServices, which unhides and foregrounds the target
   regardless of whether you passed an app name, a bundle id, a
   document, a URL, or the bundle path itself. The activation
   happens even when the only intent was "start the process."
   **Never use `open` for any app launch.** This includes launching
   a just-built .app from a local build dir (e.g. `open
-  build/Build/Products/Debug/MyApp.app`) — resolve the
+build/Build/Products/Debug/MyApp.app`) — resolve the
   `CFBundleIdentifier` from `Info.plist` and use `launch_app`
   with that id. See "The narrow carve-out" below for why
   `launch_app` is safe even when the app internally calls
@@ -81,9 +81,9 @@ frontmost is true'`). Mutating it is not.
 **Corollary — the AXMenuBar rule.** `AXMenuBarItem` + AXPick
 dispatches at the AX layer regardless of which app is frontmost,
 but macOS's on-screen menu bar always belongs to the frontmost
-app. If you drive a *backgrounded* app's menu bar, the AX call
+app. If you drive a _backgrounded_ app's menu bar, the AX call
 succeeds but the viewer sees the dispatch rendered over the
-*frontmost* app's menu bar — confusing in any observed session and
+_frontmost_ app's menu bar — confusing in any observed session and
 routinely a silent no-op too, because action menu items go
 `DISABLED` when their owning app isn't the key window. **So: only
 use menu-bar navigation when the target is already frontmost.** For
@@ -105,16 +105,16 @@ is safe even for apps that normally foreground on media-load
 
 ## Intent → tool mapping (macOS-specific)
 
-| Intent | Use | Don't use |
-|---|---|---|
-| Open / launch an app | `launch_app({bundle_id})` or `launch_app({bundle_id, urls:[...]})` | `open -a`, `osascript 'tell app … to launch/activate/open'` |
-| Find a pid | `list_apps` or `launch_app`'s return | `pgrep`, `ps`, `osascript frontmost` |
-| Enumerate an app's windows | `list_windows({pid})` — or read the `windows` array `launch_app` already returns | `osascript 'every window of app …'` |
-| Click / type / scroll / keys | `click`, `type_text`, `scroll`, `press_key`, `hotkey` | `osascript`, `cliclick`, raw `CGEvent`, `open <url>` |
-| Drag / drag-and-drop / marquee select | `drag({pid, from_x, from_y, to_x, to_y})` (pixel-only — macOS AX has no semantic drag) | `cliclick dd:`, `osascript drag` |
-| Screenshot | `screenshot` or the PNG in `get_window_state` | `screencapture` |
-| Quit an app | ask the user first, then `hotkey({pid, keys:["cmd","q"]})` | `kill`, `killall`, `pkill` |
-| Hand a file/URL to an app | `launch_app({bundle_id, urls:[<path>]})` | `open -a <App> <path>`, `open <url>` |
+| Intent                                | Use                                                                                    | Don't use                                                   |
+| ------------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Open / launch an app                  | `launch_app({bundle_id})` or `launch_app({bundle_id, urls:[...]})`                     | `open -a`, `osascript 'tell app … to launch/activate/open'` |
+| Find a pid                            | `list_apps` or `launch_app`'s return                                                   | `pgrep`, `ps`, `osascript frontmost`                        |
+| Enumerate an app's windows            | `list_windows({pid})` — or read the `windows` array `launch_app` already returns       | `osascript 'every window of app …'`                         |
+| Click / type / scroll / keys          | `click`, `type_text`, `scroll`, `press_key`, `hotkey`                                  | `osascript`, `cliclick`, raw `CGEvent`, `open <url>`        |
+| Drag / drag-and-drop / marquee select | `drag({pid, from_x, from_y, to_x, to_y})` (pixel-only — macOS AX has no semantic drag) | `cliclick dd:`, `osascript drag`                            |
+| Screenshot                            | `screenshot` or the PNG in `get_window_state`                                          | `screencapture`                                             |
+| Quit an app                           | ask the user first, then `hotkey({pid, keys:["cmd","q"]})`                             | `kill`, `killall`, `pkill`                                  |
+| Hand a file/URL to an app             | `launch_app({bundle_id, urls:[<path>]})`                                               | `open -a <App> <path>`, `open <url>`                        |
 
 ### The narrow carve-out
 
@@ -160,7 +160,7 @@ There is no `ax`/`vision` capture toggle. **Every `get_window_state`
 returns both the AX tree and a screenshot** (default), so verifying that
 an action **landed** never means "go grab a screenshot" — it means
 cross-check the tree diff against the pixels you already have in the same
-response, and only switch *dispatch rung* on a real signal:
+response, and only switch _dispatch rung_ on a real signal:
 
 1. **Re-snapshot and read the tree diff** — a changed `AXValue`, a new
    element, a collapsed menu, a disabled button. If the tree shows the
@@ -183,12 +183,13 @@ response, and only switch *dispatch rung* on a real signal:
 On these surfaces you read the result off the screenshot already in the
 response, then address the target by `x,y` — an **element px action**.
 `px` is your **conscious switch to the pixel addressing path**, not a
-different capture: the screenshot was always there, you just change *how
-you address* the target. The point is to catch the "type → AX-check
+different capture: the screenshot was always there, you just change _how
+you address_ the target. The point is to catch the "type → AX-check
 succeeds → believe the lie → find out three calls later" trap on exactly
 the surfaces that warrant it.
 
 Rule of thumb:
+
 - **element ax action** (default) — the element lookup before a click
   AND the first verify after it; you address by `[N]` `element_index`
   and read the tree diff.
@@ -308,16 +309,18 @@ hold the no-foreground contract without the flag.
 
 macOS-specific residuals worth knowing (the rest of the capture/dispatch/
 addressing params are a shared cross-platform contract — see `SKILL.md` →
-*Cross-platform parameter contract*):
+_Cross-platform parameter contract_):
 
-- **`check_permissions.prompt` is macOS-only.** `true` raises the TCC
-  Accessibility / Screen-Recording dialogs and runs the prompt-capable direct
-  ScreenCaptureKit probe. `false` is read-only and returns direct-capture
-  readiness as not checked. There is no Windows/Linux equivalent — TCC is a
-  macOS construct, so the param is intentionally absent from the shared
-  contract.
+- **`check_permissions.prompt` is macOS-only and public calls are
+  status-only.** Omitted `prompt` defaults to `false`; explicit `true` is
+  refused before platform dispatch in every mode. For a signed standalone
+  install, the human-run `cua-driver permissions grant` command launches a
+  short-lived CuaDriver app instance through LaunchServices so macOS owns the
+  approval UI and direct ScreenCaptureKit probe. In an in-process SDK runtime,
+  private embedded host, or `cua-driver mcp --direct`, the embedding host owns
+  permission UX. There is no Windows/Linux equivalent.
 - **`session` always worked on macOS;** the cross-platform change is that
-  Windows/Linux stopped *rejecting* it. No macOS-side change to how you
+  Windows/Linux stopped _rejecting_ it. No macOS-side change to how you
   pass it.
 - **`scope`** (`window` / `desktop`) selects the action form uniformly on all
   platforms. Pass `scope:"desktop"` with no pid/window_id for screen-absolute
@@ -368,12 +371,13 @@ anything in `/Applications` that's actually `iOSAppOnMac.app`) and
 Linear), an AX `type_text` can't reach the rendered text view: the
 `AXSetAttribute(kAXSelectedText)` write succeeds on the AX shim, but
 the UIKit/Chromium view that owns the input never observes it — and on
-Electron the shim *echoes the value straight back through `AXValue`*,
+Electron the shim _echoes the value straight back through `AXValue`_,
 so a naive read-back "confirms" a value that isn't really there.
 
 The driver **detects Electron and refuses to trust that echo**: an
-AX-path `type_text` on an Electron app returns `effect:"unverifiable"`
-+ `escalation:{recommended:"px"}`, **never** a false `verified:true`.
+AX-path `type_text` on an Electron app returns `effect:"unverifiable"` +
+`escalation:{target:"pixel",reason:"effect_unconfirmed"}`, **never** a
+false `effect:"confirmed"`.
 (On Catalyst the AX value reads back unreadable, so it reports
 unverified too.) Bottom line: on these surfaces **do not trust the AX
 confirm — the screenshot in the same response is the only truth.**
@@ -385,11 +389,13 @@ UIKit renderer the real keyboard focus the AX layer can't, then types
 into the now-focused field. Read `x,y` straight off the screenshot in
 the `get_window_state` response (same convention as `click`). This is
 the one-call replacement for the old two-step "pixel-click then
-`type_text`" — and you do **not** reach for a clipboard + `Cmd+V`
-dance.
+`type_text`". Prefer this direct route. If an application only accepts paste,
+call `clipboard_write`, then `clipboard_read` and verify the returned types
+(and text when applicable) **before** selecting or replacing existing editor
+content. Send Cmd+V only after that read-back succeeds.
 
 0. **If the control is CLOSED, open it first.** A px focus-click won't
-   reliably *open and focus* a closed control (a search button, a
+   reliably _open and focus_ a closed control (a search button, a
    collapsed field) — it lands on whatever is already focused (e.g.
    the message composer), so your text leaks there. **AX-press to
    open/activate the control first** (AX actions work in the
@@ -397,7 +403,7 @@ dance.
 1. **`type_text({pid, window_id, x, y, text})`** — focus + type in a
    single call. Re-snapshot and read the text off the screenshot to
    confirm; the AX value can still lag on Catalyst/Electron.
-2. Only if the keystrokes *still* drop (a focus-polling app), escalate
+2. Only if the keystrokes _still_ drop (a focus-polling app), escalate
    that one `type_text` with `delivery_mode:"foreground"`.
 
 The `x,y` (px) form is **mutually exclusive** with `element_index`
@@ -417,12 +423,12 @@ functional and one perceptual:
 
 - **Functional:** menu items that touch document/playback/editor
   state go `DISABLED` when their owning app isn't the key window
-  (Preview rotate, IINA speed change, most editor commands). AXPick
-  + AXPress will dispatch successfully from the driver's side but
+  (Preview rotate, IINA speed change, most editor commands).
+  AXPick + AXPress will dispatch successfully from the driver's side but
   no-op at the target — you get a silent false-pass.
 - **Perceptual (matters for demos, screen recordings, and anything
   the user watches live):** macOS's screen-rendered menu bar
-  always belongs to the *frontmost* app. AXPick on a backgrounded
+  always belongs to the _frontmost_ app. AXPick on a backgrounded
   app's `AXMenuBarItem` dispatches to that app's per-process menu at
   the AX layer, but any visible menu render happens over the
   frontmost app's menu bar — the viewer sees an IINA submenu
@@ -432,9 +438,9 @@ functional and one perceptual:
   integrity bug even though it's not a correctness bug.
 
 **Good decision rule:** if the target is not already frontmost, do
-not use `AXMenuBarItem` at all. For *reading* in-window state,
+not use `AXMenuBarItem` at all. For _reading_ in-window state,
 snapshot the window AX tree — most apps expose the same state via
-an in-window `AXStaticText`, title bar, or toolbar. For *dispatching*
+an in-window `AXStaticText`, title bar, or toolbar. For _dispatching_
 actions, use in-window `element_index` (buttons, toolbar items) or
 pixel clicks on in-window controls — both dispatch via AppKit's
 window-under-pointer hit-test and are **not** frontmost-gated.
@@ -447,7 +453,7 @@ the canonical path for menus.
 Menu contents are a two-snapshot flow. Closed AXMenu subtrees are
 deliberately skipped during snapshot — otherwise every app's File /
 Edit / View hierarchy plus every Recent Items macOS has ever seen
-would inflate the tree 10-100x. But once a menu is *open*, its
+would inflate the tree 10-100x. But once a menu is _open_, its
 AXMenuItem children do receive `element_index` values so you can
 click them normally.
 
@@ -505,7 +511,13 @@ Use `BROWSER.md` for the typed browser capability workflow. Chrome and Edge
 support exact native-window binding, page refs, navigation, typing, and an
 explicit synthetic DOM click. Existing-profile preparation is separately
 approved and may automate the exact product-specific remote-debugging control;
-it does not depend on System Events or direct profile-file edits.
+it does not depend on System Events or direct profile-file edits. When Chrome
+withholds the setup page's web AX subtree, the adapter uses only a temporary
+tab it created and navigated, proves the committed native URL and expected
+selected internal-tab title with no omnibox edit in progress, revalidates the
+window, and PID-routes its bounded checkbox-pixel fallback. The same control's
+state must verify after mutation; unsupported appearance, scale, zoom,
+window-size, or toolbar geometry refuses without a click.
 
 Standalone Chromium activates its window when CDP's trusted pointer route is
 used on macOS. The driver therefore returns
@@ -513,6 +525,17 @@ used on macOS. The driver therefore returns
 background delivery. Use `input_route:"dom_event"` only when synthetic click
 semantics are acceptable. Embedded Electron has a separately bounded route;
 do not infer that route for arbitrary WKWebView or Tauri hosts.
+
+For a declared session, typed browser click, type, and pointer mutations animate
+the macOS agent-cursor overlay at the live main-page target. This is a
+recording/observation aid only: the physical pointer stays put and the overlay
+does not deliver input or foreground Chrome. Navigation itself has no pointer
+target and therefore does not synthesize cursor motion.
+
+Before drawing, the browser route checks the target page's live visibility
+without selecting it. An inactive tab's cursor stays hidden. For concurrent
+recordings, assign one session to each tab; the active tab's session color is
+the only browser cursor displayed in that Chrome window.
 
 Browser chrome, permission prompts, downloads, file pickers, Safari, Firefox,
 and unbound embedded webviews remain native surfaces. Inspect them with
@@ -522,11 +545,11 @@ starting point for new browser workflows.
 
 ## macOS common error patterns
 
-| Error text | Meaning | Fix |
-|---|---|---|
-| macOS system-alert beep on `press_key` with no visible change | Target window is minimized; Return / Space / Tab commits don't establish real renderer focus on minimized windows | AX-click a clickable equivalent (Go button, Submit button, checkbox) instead of pressing the key; see "Keyboard commits on minimized windows" under the Browser section |
-| `Accessibility permission not granted` | TCC not granted | Stop; tell user to grant in System Settings |
-| `Screen Recording permission not granted` | TCC not granted for capture | Screenshots and pixel actions are unavailable. If the task is AX-completable, use `get_window_state({include_screenshot:false})` and element-indexed actions; otherwise stop and ask the user to run `cua-driver permissions grant` |
+| Error text                                                    | Meaning                                                                                                           | Fix                                                                                                                                                                                                                                 |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| macOS system-alert beep on `press_key` with no visible change | Target window is minimized; Return / Space / Tab commits don't establish real renderer focus on minimized windows | AX-click a clickable equivalent (Go button, Submit button, checkbox) instead of pressing the key; see "Keyboard commits on minimized windows" under the Browser section                                                             |
+| `Accessibility permission not granted`                        | TCC not granted                                                                                                   | Stop; tell user to grant in System Settings                                                                                                                                                                                         |
+| `Screen Recording permission not granted`                     | TCC not granted for capture                                                                                       | Screenshots and pixel actions are unavailable. If the task is AX-completable, use `get_window_state({include_screenshot:false})` and element-indexed actions; otherwise stop and ask the user to run `cua-driver permissions grant` |
 
 ## Example end-to-end task (macOS)
 
@@ -542,6 +565,6 @@ starting point for new browser workflows.
    populated AX subtree (sidebar, list view, files).
 3. Done.
 
-If the user instead asks to navigate *within* an already-open Finder
+If the user instead asks to navigate _within_ an already-open Finder
 window, use the menu-bar flow from "Navigating native menu bars"
 above (click Go → pick a menu item → re-snapshot → click it).

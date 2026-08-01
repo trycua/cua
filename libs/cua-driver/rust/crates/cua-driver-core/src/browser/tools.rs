@@ -11,13 +11,16 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use crate::protocol::{Content, ToolResult};
-use crate::tool::{Tool, ToolDef, ToolRegistry};
+use crate::tool::{ProtectedResourceOwnership, Tool, ToolDef, ToolRegistry};
 use crate::tool_args::ArgsExt;
 
 use super::approval::MCP_HOST_APPROVAL_ARG;
+use super::cdp_ws::CdpConnection;
 use super::download::BrowserDownloadTool;
 use super::engine::{BrowserEngine, BrowserTabScreenshot};
-use super::platform::{PrepareAuthorization, PrepareProfile, PrepareRequest, PrepareStrategy};
+use super::platform::{
+    BrowserVisualActionKind, PrepareAuthorization, PrepareProfile, PrepareRequest, PrepareStrategy,
+};
 use super::pointer::BrowserPointerTool;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::store::BrowserActionKind;
@@ -89,6 +92,114 @@ fn schema_session() -> Value {
         "type": "string",
         "description": "Stable caller-declared session id. Browser targets, tabs, and refs are scoped to this session."
     })
+}
+
+pub(crate) fn browser_resource_ownership(
+    engine: &BrowserEngine,
+    args: &Value,
+) -> ProtectedResourceOwnership {
+    let Some(session) = args
+        .get("session")
+        .and_then(Value::as_str)
+        .filter(|session| !session.is_empty())
+    else {
+        return ProtectedResourceOwnership::UserOwned;
+    };
+    let runtime_session = crate::tool::current_dispatch_authorization_context()
+        .map(|context| context.runtime_session_key(session))
+        .unwrap_or_else(|| session.to_owned());
+    let pid = args.get("pid").and_then(Value::as_i64).or_else(|| {
+        args.get("target_id")
+            .and_then(Value::as_str)
+            .and_then(|target_id| engine.store.get_target(&runtime_session, target_id).ok())
+            .map(|target| target.pid)
+    });
+    if pid.is_some_and(|pid| {
+        engine.is_driver_owned_pid_for_session(&runtime_session, pid)
+            || engine.is_driver_owned_pid_for_session(session, pid)
+    }) {
+        ProtectedResourceOwnership::DriverOwned
+    } else {
+        ProtectedResourceOwnership::UserOwned
+    }
+}
+
+pub(crate) async fn browser_protected_resource_scope(
+    engine: &BrowserEngine,
+    args: &Value,
+    tool_name: &str,
+) -> Result<Option<Value>, String> {
+    let session = args
+        .get("session")
+        .and_then(Value::as_str)
+        .filter(|session| !session.is_empty())
+        .ok_or_else(|| "the browser operation requires an explicit session".to_owned())?;
+    let target_id = args
+        .get("target_id")
+        .and_then(Value::as_str)
+        .filter(|target| !target.is_empty())
+        .ok_or_else(|| "the browser operation requires an exact target_id".to_owned())?;
+    let tab_id = args
+        .get("tab_id")
+        .and_then(Value::as_str)
+        .filter(|tab| !tab.is_empty())
+        .ok_or_else(|| "the browser operation requires an exact tab_id".to_owned())?;
+    let runtime_session = crate::tool::current_dispatch_authorization_context()
+        .map(|context| context.runtime_session_key(session))
+        .unwrap_or_else(|| session.to_owned());
+    let (validated, live_origin) = engine
+        .attest_protected_tab(&runtime_session, target_id, tab_id)
+        .await
+        .map_err(|error| error.message)?;
+    let target = validated.record;
+    let tab = validated.tab;
+    let requested_origin = if tool_name == "browser_navigate" {
+        let requested = args
+            .get("url")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "browser_navigate requires a destination URL".to_owned())?;
+        if requested.to_ascii_lowercase().starts_with("about:") {
+            Some("about:".to_owned())
+        } else {
+            let parsed = url::Url::parse(requested)
+                .map_err(|_| "the destination URL is invalid".to_owned())?;
+            Some(parsed.origin().ascii_serialization())
+        }
+    } else {
+        None
+    };
+    let action_class = match tool_name {
+        "get_browser_state" => "page_observation",
+        "browser_navigate" => "navigation",
+        "browser_dialog" => "page_dialog_resolution",
+        _ => "page_input",
+    };
+    let mut resource = json!({
+        "kind": "authenticated_browser_tab",
+        "target_id": target_id,
+        "tab_id": tab_id,
+        "pid": target.pid,
+        "process_fingerprint": target.fingerprint,
+        "binding_generation": target.generation,
+        "cdp_target_id": tab.cdp_target_id,
+        "tab_generation": tab.generation,
+        "live_origin": live_origin,
+        "requested_origin": requested_origin,
+        "action_class": action_class,
+    });
+    if tool_name == "browser_dialog" {
+        resource["dialog_id"] = args.get("dialog_id").cloned().unwrap_or(Value::Null);
+        resource["dialog_action"] = args.get("action").cloned().unwrap_or(Value::Null);
+        resource["delivery_mode"] = Value::String(
+            args.get("delivery_mode")
+                .and_then(Value::as_str)
+                .unwrap_or("background")
+                .to_owned(),
+        );
+        resource["prompt_text_present"] =
+            Value::Bool(args.get("prompt_text").and_then(Value::as_str).is_some());
+    }
+    Ok(Some(resource))
 }
 
 fn semantic_ref_value(listed: &super::engine::SemanticListedRef) -> Value {
@@ -199,6 +310,32 @@ impl GetBrowserStateTool {
 impl Tool for GetBrowserStateTool {
     fn def(&self) -> &ToolDef {
         &self.def
+    }
+
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if adapter_id == "private_observation" {
+            browser_resource_ownership(&self.engine, args)
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        if adapter_id == "private_observation"
+            && args.get("target_id").and_then(Value::as_str).is_some()
+        {
+            browser_protected_resource_scope(&self.engine, args, "get_browser_state").await
+        } else {
+            Ok(None)
+        }
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
@@ -458,11 +595,11 @@ impl BrowserPrepareTool {
                 for an isolated profile requires host approval or a short-lived setup \
                 token plus allow_launch=true. It launches a separate browser and never \
                 copies, modifies, or terminates the requested user profile. Existing-profile \
-                attachment is explicit and follows the daemon's immutable permission mode: \
-                standard requires a certified protected-consent provider, bounded requires \
-                a launch-approved exact resource manifest plus protected indicator, and \
-                unrestricted requires explicit trusted startup risk acceptance. Ordinary MCP \
-                transport approval never proves profile consent. On proven platforms, an \
+                attachment is explicit and follows the runtime's immutable permission mode: \
+                standard requires an explicit --grant existing-profile launch grant or an \
+                embedding authorization host, bounded requires a launch-approved exact resource \
+                manifest, and unrestricted requires explicit trusted startup risk acceptance. \
+                Ordinary MCP transport approval never proves profile authorization. On proven platforms, an \
                 authorized request also permits one bounded exact-window setup: \
                 open the recognized browser product's fixed remote-debugging page, toggle \
                 its uniquely matched per-instance checkbox, prove the PID-owned loopback \
@@ -640,6 +777,30 @@ impl Tool for BrowserNavigateTool {
         &self.def
     }
 
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if adapter_id == "browser_bound_input" {
+            browser_resource_ownership(&self.engine, args)
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        if adapter_id == "browser_bound_input" {
+            browser_protected_resource_scope(&self.engine, args, "browser_navigate").await
+        } else {
+            Ok(None)
+        }
+    }
+
     async fn invoke(&self, args: Value) -> ToolResult {
         let (target_id, tab_id, url) = match (
             args.require_str("target_id"),
@@ -763,6 +924,30 @@ impl BrowserClickTool {
 impl Tool for BrowserClickTool {
     fn def(&self) -> &ToolDef {
         &self.def
+    }
+
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if adapter_id == "browser_bound_input" {
+            browser_resource_ownership(&self.engine, args)
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        if adapter_id == "browser_bound_input" {
+            browser_protected_resource_scope(&self.engine, args, "browser_click").await
+        } else {
+            Ok(None)
+        }
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
@@ -916,6 +1101,36 @@ impl Tool for BrowserClickTool {
                     .to_tool_result()
                 }
             };
+            // Cursor feedback is best-effort and visual-only. A missing box
+            // must not turn a valid DOM-event action into a refusal.
+            let _ = conn
+                .call(
+                    Some(cdp),
+                    "DOM.scrollIntoViewIfNeeded",
+                    json!({ "backendNodeId": backend }),
+                )
+                .await;
+            if let Ok(box_model) = conn
+                .call(
+                    Some(cdp),
+                    "DOM.getBoxModel",
+                    json!({ "backendNodeId": backend }),
+                )
+                .await
+            {
+                if let Some((x, y)) = quad_center(&box_model) {
+                    self.engine
+                        .visualize_browser_action(
+                            &session,
+                            &validated,
+                            cdp,
+                            x,
+                            y,
+                            BrowserVisualActionKind::Click,
+                        )
+                        .await;
+                }
+            }
             return match conn
                 .call(
                     Some(cdp),
@@ -985,6 +1200,17 @@ impl Tool for BrowserClickTool {
             (None, Some(pt)) => pt,
             (None, None) => unreachable!("validated above"),
         };
+
+        self.engine
+            .visualize_browser_action(
+                &session,
+                &validated,
+                cdp,
+                x,
+                y,
+                BrowserVisualActionKind::Click,
+            )
+            .await;
 
         if let Err(error) = conn
             .call(
@@ -1106,6 +1332,145 @@ const FOCUS_EMULATION_READY_CHECK: &str = "function() { \
     return document.hasFocus() && active === this; \
 }";
 
+// Select the element's whole content so the next insertion replaces it instead
+// of appending. Returns the number of characters selected, or -1 when the node
+// is not a shape we know how to select. Selection is the only clearing path
+// that keeps input semantics intact: assigning `value` directly would skip the
+// beforeinput/input events that frameworks bind their state to.
+const SELECT_ALL_IN_ELEMENT: &str = "function() { \
+    if (this.tagName === 'INPUT' || this.tagName === 'TEXTAREA') { \
+        const value = this.value || ''; \
+        try { this.setSelectionRange(0, value.length); } catch (e) { \
+            try { this.select(); } catch (_) { return -1; } \
+        } \
+        if (this.selectionStart !== 0 || this.selectionEnd !== value.length) return -1; \
+        return Array.from(value).length; \
+    } \
+    if (this.isContentEditable) { \
+        const root = this.getRootNode(); \
+        const owner = ('getSelection' in root) ? root : this.ownerDocument; \
+        const selection = owner.getSelection(); \
+        if (!selection) return -1; \
+        const range = this.ownerDocument.createRange(); \
+        range.selectNodeContents(this); \
+        selection.removeAllRanges(); \
+        selection.addRange(range); \
+        return Array.from(this.textContent || '').length; \
+    } \
+    return -1; \
+}";
+
+/// Put the element's entire content into the selection.
+///
+/// `browser_type` delivers through `Input.insertText` and the trusted key path,
+/// and both insert at the caret. Without an explicit selection there is no way
+/// to *set* a field that already holds text — a caller who tries ends up with
+/// the old and the new value concatenated. Both delivery paths replace the
+/// current selection, so selecting everything first turns "insert" into "set".
+async fn select_all_in_element(
+    conn: &CdpConnection,
+    cdp: &str,
+    object_id: &str,
+) -> Result<usize, String> {
+    let selected = conn
+        .call(
+            Some(cdp),
+            "Runtime.callFunctionOn",
+            json!({
+                "objectId": object_id,
+                "functionDeclaration": SELECT_ALL_IN_ELEMENT,
+                "returnByValue": true,
+            }),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    match selected["result"]["value"].as_i64() {
+        Some(n) if n >= 0 => Ok(n as usize),
+        _ => Err("the ref is not a text input, textarea, or contenteditable \
+                  element, so its content cannot be selected for replacement"
+            .into()),
+    }
+}
+
+/// Establish Chromium's trusted-input focus state for an inactive tab.
+///
+/// Selection alone is not durable in a fully occluded window: without focus
+/// emulation Chromium can accept `Input.insertText` while discarding the
+/// selection, silently turning replacement back into append.
+async fn enter_focus_emulation(
+    conn: &CdpConnection,
+    cdp: &str,
+    backend_node_id: i64,
+    object_id: &str,
+) -> Result<(), String> {
+    conn.call(
+        Some(cdp),
+        "Emulation.setFocusEmulationEnabled",
+        json!({ "enabled": true }),
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+
+    let mut focus_error = None;
+    for _ in 0..20 {
+        if let Err(error) = conn
+            .call(
+                Some(cdp),
+                "DOM.focus",
+                json!({ "backendNodeId": backend_node_id }),
+            )
+            .await
+        {
+            focus_error = Some(error.to_string());
+            break;
+        }
+        let ready = conn
+            .call(
+                Some(cdp),
+                "Runtime.callFunctionOn",
+                json!({
+                    "objectId": object_id,
+                    "functionDeclaration": FOCUS_EMULATION_READY_CHECK,
+                    "returnByValue": true,
+                }),
+            )
+            .await;
+        if matches!(
+            ready,
+            Ok(ref value) if value["result"]["value"].as_bool() == Some(true)
+        ) {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            if let Err(error) = conn
+                .call(
+                    Some(cdp),
+                    "DOM.focus",
+                    json!({ "backendNodeId": backend_node_id }),
+                )
+                .await
+            {
+                focus_error = Some(error.to_string());
+                break;
+            }
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+
+    let _ = conn
+        .call(
+            Some(cdp),
+            "Emulation.setFocusEmulationEnabled",
+            json!({ "enabled": false }),
+        )
+        .await;
+    Err(format!(
+        "the exact editable ref did not become focus-ready under CDP emulation{}",
+        focus_error
+            .map(|error| format!(": {error}"))
+            .unwrap_or_default()
+    ))
+}
+
 pub struct BrowserTypeTool {
     def: ToolDef,
     engine: Arc<BrowserEngine>,
@@ -1117,9 +1482,11 @@ impl BrowserTypeTool {
             name: "browser_type".into(),
             description: "Type text into an exactly-bound tab via the Input domain. \
                 mode=\"insert_text\" (default) uses Input.insertText; \
-                mode=\"keystrokes\" dispatches per-character key events. Pass a ref \
-                to an editable element from the latest snapshot. A ref is required; \
-                heuristic bindings are refused."
+                mode=\"keystrokes\" dispatches per-character key events. Both insert \
+                at the caret, so typing into a field that already holds text appends \
+                to it; pass replace=true to set the field instead, or to clear it by \
+                typing an empty string. Pass a ref to an editable element from the \
+                latest snapshot. A ref is required; heuristic bindings are refused."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -1134,6 +1501,15 @@ impl BrowserTypeTool {
                         "enum": ["insert_text", "keystrokes"],
                         "description": "insert_text (default): bulk Input.insertText. \
                             keystrokes: per-character Input.dispatchKeyEvent."
+                    },
+                    "replace": {
+                        "type": "boolean",
+                        "description": "false (default): insert at the caret, appending \
+                            to whatever the field already holds. true: select the \
+                            element's whole content first so the text replaces it — \
+                            with an empty text this clears the field. Replacement goes \
+                            through the selection, so beforeinput/input still fire and \
+                            framework state stays consistent."
                     },
                 },
                 "required": ["target_id", "tab_id", "ref", "text"],
@@ -1152,6 +1528,30 @@ impl BrowserTypeTool {
 impl Tool for BrowserTypeTool {
     fn def(&self) -> &ToolDef {
         &self.def
+    }
+
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if adapter_id == "browser_bound_input" {
+            browser_resource_ownership(&self.engine, args)
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        if adapter_id == "browser_bound_input" {
+            browser_protected_resource_scope(&self.engine, args, "browser_type").await
+        } else {
+            Ok(None)
+        }
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
@@ -1173,6 +1573,7 @@ impl Tool for BrowserTypeTool {
                 "mode must be \"insert_text\" or \"keystrokes\", got {mode:?}"
             ));
         }
+        let replace = args.opt_bool("replace").unwrap_or(false);
 
         let _mutation = match self
             .engine
@@ -1287,12 +1688,125 @@ impl Tool for BrowserTypeTool {
             .to_tool_result();
         }
 
+        // Give the recording a visual target before text delivery. Keep this
+        // best-effort: editability/input semantics never depend on the overlay.
+        let _ = conn
+            .call(
+                Some(cdp),
+                "DOM.scrollIntoViewIfNeeded",
+                json!({ "backendNodeId": entry.backend_node_id }),
+            )
+            .await;
+        if let Ok(box_model) = conn
+            .call(
+                Some(cdp),
+                "DOM.getBoxModel",
+                json!({ "backendNodeId": entry.backend_node_id }),
+            )
+            .await
+        {
+            if let Some((x, y)) = quad_center(&box_model) {
+                self.engine
+                    .visualize_browser_action(
+                        &session,
+                        &validated,
+                        cdp,
+                        x,
+                        y,
+                        BrowserVisualActionKind::Type,
+                    )
+                    .await;
+            }
+        }
+
         let requested_chars = text.chars().count();
+        let mut replaced_chars = 0usize;
         let (typed, delivered_chars) = if mode == "insert_text" {
-            match conn
-                .call(Some(cdp), "Input.insertText", json!({ "text": text }))
-                .await
-            {
+            if replace {
+                if let Err(detail) =
+                    enter_focus_emulation(conn, cdp, entry.backend_node_id, &object_id).await
+                {
+                    return BrowserRefusal::new(
+                        BrowserRefusalCode::BrowserInputTrustUnavailable,
+                        format!(
+                            "the inactive tab could not prepare trusted replacement input: {detail}"
+                        ),
+                    )
+                    .to_tool_result();
+                }
+                match select_all_in_element(conn, cdp, &object_id).await {
+                    Ok(n) => replaced_chars = n,
+                    Err(detail) => {
+                        let _ = conn
+                            .call(
+                                Some(cdp),
+                                "Emulation.setFocusEmulationEnabled",
+                                json!({ "enabled": false }),
+                            )
+                            .await;
+                        return BrowserRefusal::new(
+                            BrowserRefusalCode::BrowserActionUnavailable,
+                            format!("replace=true could not select the ref's content: {detail}"),
+                        )
+                        .to_tool_result();
+                    }
+                }
+            }
+            // An empty insertText is a no-op, so "clear the field" needs an
+            // explicit deletion of the selection we just made. Delete keeps the
+            // same event path as typing; it is not a value assignment.
+            let mut call = if replace && text.is_empty() {
+                if replaced_chars == 0 {
+                    Ok(json!({}))
+                } else {
+                    match conn
+                        .call(
+                            Some(cdp),
+                            "Input.dispatchKeyEvent",
+                            json!({
+                                "type": "keyDown",
+                                "key": "Delete",
+                                "code": "Delete",
+                                "windowsVirtualKeyCode": 46,
+                                "nativeVirtualKeyCode": 46,
+                            }),
+                        )
+                        .await
+                    {
+                        Ok(_) => {
+                            conn.call(
+                                Some(cdp),
+                                "Input.dispatchKeyEvent",
+                                json!({
+                                    "type": "keyUp",
+                                    "key": "Delete",
+                                    "code": "Delete",
+                                    "windowsVirtualKeyCode": 46,
+                                    "nativeVirtualKeyCode": 46,
+                                }),
+                            )
+                            .await
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
+            } else {
+                conn.call(Some(cdp), "Input.insertText", json!({ "text": text }))
+                    .await
+            };
+            if replace {
+                if let Err(error) = conn
+                    .call(
+                        Some(cdp),
+                        "Emulation.setFocusEmulationEnabled",
+                        json!({ "enabled": false }),
+                    )
+                    .await
+                {
+                    call = Err(error);
+                }
+            }
+            match call {
                 Ok(_) => (Ok(()), requested_chars),
                 Err(error) => (Err(error), 0),
             }
@@ -1392,8 +1906,56 @@ impl Tool for BrowserTypeTool {
                 )
                 .to_tool_result();
             }
+            // Select AFTER the last DOM.focus above: re-focusing a node drops
+            // the selection again, so selecting any earlier would silently
+            // degrade replace=true back to append.
+            if replace {
+                match select_all_in_element(conn, cdp, &object_id).await {
+                    Ok(n) => replaced_chars = n,
+                    Err(detail) => {
+                        // Leave focus emulation the way we found it, exactly as
+                        // the other early returns in this branch do.
+                        let _ = conn
+                            .call(
+                                Some(cdp),
+                                "Emulation.setFocusEmulationEnabled",
+                                json!({ "enabled": false }),
+                            )
+                            .await;
+                        return BrowserRefusal::new(
+                            BrowserRefusalCode::BrowserActionUnavailable,
+                            format!("replace=true could not select the ref's content: {detail}"),
+                        )
+                        .to_tool_result();
+                    }
+                }
+            }
             let mut result = Ok(());
             let mut delivered = 0;
+            // No characters to type means the selection has to go away by
+            // itself; the loop below would leave the old content selected but
+            // present, and "cleared" would be a false report.
+            if replace && text.is_empty() && replaced_chars > 0 {
+                for phase in ["keyDown", "keyUp"] {
+                    if let Err(error) = conn
+                        .call(
+                            Some(cdp),
+                            "Input.dispatchKeyEvent",
+                            json!({
+                                "type": phase,
+                                "key": "Delete",
+                                "code": "Delete",
+                                "windowsVirtualKeyCode": 46,
+                                "nativeVirtualKeyCode": 46,
+                            }),
+                        )
+                        .await
+                    {
+                        result = Err(error);
+                        break;
+                    }
+                }
+            }
             for ch in text.chars() {
                 let (key, key_text) = if ch == '\n' {
                     ("Enter".to_string(), "\r".to_string())
@@ -1450,10 +2012,14 @@ impl Tool for BrowserTypeTool {
         };
 
         match typed {
-            Ok(()) => ToolResult::text(format!(
-                "typed {} char(s) into {tab_id}",
-                requested_chars
-            ))
+            Ok(()) => ToolResult::text(if replace {
+                format!(
+                    "typed {requested_chars} char(s) into {tab_id}, replacing \
+                     {replaced_chars} char(s)"
+                )
+            } else {
+                format!("typed {requested_chars} char(s) into {tab_id}")
+            })
             .with_structured(json!({
                 "status": "ok",
                 "target_id": target_id,
@@ -1464,6 +2030,11 @@ impl Tool for BrowserTypeTool {
                 "chars": requested_chars,
                 "requested_chars": requested_chars,
                 "delivered_chars": delivered_chars,
+                // Report what was displaced, not just what was sent: a caller
+                // that asked to replace needs to distinguish "set an empty
+                // field" from "overwrote something" without re-reading the page.
+                "replace": replace,
+                "replaced_chars": replaced_chars,
             })),
             Err(e) => BrowserRefusal::new(
                 BrowserRefusalCode::BrowserInputIncomplete,
@@ -1527,6 +2098,36 @@ impl BrowserDialogTool {
 impl Tool for BrowserDialogTool {
     fn def(&self) -> &ToolDef {
         &self.def
+    }
+
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if matches!(
+            adapter_id,
+            "private_observation" | "browser_consequential_action"
+        ) {
+            browser_resource_ownership(&self.engine, args)
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        if matches!(
+            adapter_id,
+            "private_observation" | "browser_consequential_action"
+        ) {
+            browser_protected_resource_scope(&self.engine, args, "browser_dialog").await
+        } else {
+            Ok(None)
+        }
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {

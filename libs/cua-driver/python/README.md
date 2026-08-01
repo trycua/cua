@@ -19,9 +19,9 @@ cua-driver mcp
 ```
 
 The removed pre-release MCP facade used `CuaDriver.stdio()`,
-`AsyncCuaDriver`, `*Args`, and transport classes. Application code migrates to
-the synchronous Rust-backed methods shown below; agent code removes the Cua
-package import and supplies `cua-driver mcp` to its agent SDK.
+`AsyncCuaDriver`, `*Args`, and transport classes. Application code imports the
+typed Rust-backed SDK shown below; agent code supplies `cua-driver mcp` to its
+agent SDK.
 
 ## Installation
 
@@ -29,43 +29,92 @@ Install and usage docs live at https://cua.ai/docs/how-to-guides/driver/install
 and https://cua.ai/docs/reference/cua-driver/mcp-tools.
 
 The wheel contains generated UniFFI bindings, a platform-specific Rust SDK
-library, and the `cua-driver` executable. The daemon must be running and have
-the required OS permissions before SDK calls are made.
+library, and the `cua-driver` executable. `CuaDriver.create()` loads the runtime
+in the importing process and does not require the executable or daemon.
 
 ## SDK example
 
 ```python
+import asyncio
+
 from cua_driver import (
     CaptureScope,
     CuaDriver,
+    CursorReducedMotion,
     EndSessionInput,
     GetDesktopStateInput,
+    SetAgentCursorThemeInput,
     StartSessionInput,
 )
 
-driver = CuaDriver.connect(None)  # or pass an explicit daemon socket path
-driver.start_session(
-    StartSessionInput(session="demo", capture_scope=CaptureScope.DESKTOP)
-)
-try:
-    desktop = driver.get_desktop_state(
-        GetDesktopStateInput(session="demo", screenshot_out_file=None)
+async def main() -> None:
+    driver = CuaDriver.create()
+    await driver.start_session(
+        StartSessionInput(session="demo", capture_scope=CaptureScope.DESKTOP)
     )
-    print(desktop.images[0].mime_type)
-finally:
-    driver.end_session(EndSessionInput(session="demo"))
+    try:
+        await driver.set_agent_cursor_theme(
+            SetAgentCursorThemeInput(
+                session="demo",
+                theme_id="cua.default",
+                reduced_motion=CursorReducedMotion.AUTO,
+            )
+        )
+        desktop = await driver.get_desktop_state(
+            GetDesktopStateInput(session="demo", screenshot_out_file=None)
+        )
+        print(desktop.images[0].mime_type)
+    finally:
+        await driver.end_session(EndSessionInput(session="demo"))
+        await driver.shutdown()
+
+
+asyncio.run(main())
 ```
 
-The SDK is currently synchronous. Desktop calls return a typed `ToolResult`
-with text, images, verification/error metadata, and `structured_json` /
-`raw_json` for platform-extensible results. Session lifecycle calls return
-dedicated generated records.
+SDK operations are asynchronous. Desktop calls return a typed `ToolResult` with
+text, images, verification/error metadata, and `structured_json` / `raw_json`
+for platform-extensible results. Session lifecycle calls return dedicated
+generated records.
 
-## Embedded application host
+The agent cursor is session-owned. Its default theme and custom dotLottie
+authoring workflow are documented in
+[`docs/cursor-themes.md`](../docs/cursor-themes.md). Custom source is compiled
+and installed with the local CLI; SDK and MCP tools select only an installed
+theme ID. The built-in cursor shows the sanitized public session name in a
+badge below the pointer.
 
-Python applications can own the same Rust lifecycle object as Node clients.
-The regular `CuaDriver` interface is unchanged; only the socket comes from the
-embedded host:
+## Authorization integrations
+
+`standard` is promptless for normal automation. An application that needs to
+authorize attachment to an existing logged-in Chromium profile can construct a
+configured runtime with
+`CuaDriver.create_configured_with_authorization_host(options, host)`.
+Implement `DriverAuthorizationHost.authorize()` in trusted application code
+and return the request's exact digest with `ALLOW`, `DENY`, or `CANCEL`.
+
+`CuaDriver.create_configured_with_activity_observer(options, observer)` emits
+content-free action, refusal, grant, and session events. The observer cannot
+change authorization or tool results. Use
+`create_configured_with_host_integrations` when the application needs both.
+
+See the [SDK reference](https://cua.ai/docs/reference/cua-driver/sdk-reference)
+for complete examples and the callback trust rules.
+
+`CuaDriver.connect(socket_path)` remains available while existing applications
+migrate. It exposes the same methods over the installed daemon, but it does not
+provide a second SDK contract.
+
+`shutdown()` closes admission, waits for already admitted operations to finish,
+and is idempotent. Calls started after shutdown fail with `DriverError.Shutdown`.
+Destroying a binding handle releases native resources, but orderly applications
+should still await `shutdown()`.
+
+## Daemon-backed MCP host
+
+Applications that must also expose MCP to an external agent can own a private
+daemon child. The child provides a stable permission identity and session
+lifetime for short-lived or external clients:
 
 ```python
 import asyncio
@@ -83,7 +132,7 @@ async def main() -> None:
     try:
         # Application calls use driver. An agent runtime can launch
         # connection.mcp.command with connection.mcp.args and environment.
-        print(driver.metadata())
+        print(await driver.metadata())
     finally:
         del driver
         await host.stop()
@@ -114,7 +163,7 @@ exit_code = run_cua_driver(["mcp"])
 
 | Platform | Architecture | Status |
 | --- | --- | --- |
-| macOS | Universal (ARM64 + x86_64) | Supported |
+| macOS 13+ | Universal (ARM64 + x86_64) | Supported |
 | Linux | x86_64 | Supported |
 | Windows | x86_64 | Supported |
 | Windows | ARM64 | Supported |

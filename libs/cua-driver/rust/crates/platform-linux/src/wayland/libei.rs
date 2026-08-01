@@ -137,6 +137,7 @@ enum Cmd {
         to_x: f64,
         to_y: f64,
         steps: u32,
+        duration_ms: u64,
         button: Button,
         reply: Sender<anyhow::Result<()>>,
     },
@@ -376,6 +377,7 @@ pub fn drag(
     to_x: f64,
     to_y: f64,
     steps: u32,
+    duration_ms: u64,
     button: Button,
 ) -> anyhow::Result<()> {
     ensure_started()?;
@@ -387,6 +389,7 @@ pub fn drag(
             to_x,
             to_y,
             steps,
+            duration_ms,
             button,
             reply: tx_r,
         })
@@ -479,7 +482,8 @@ fn open_eis_context() -> anyhow::Result<(reis::ei::Context, PortalKeepAlive)> {
         .map_err(|e| anyhow::anyhow!("failed to build tokio runtime for ashpd: {e}"))?;
 
     let (fd, proxy, session) = rt.block_on(async {
-        let proxy = RemoteDesktop::new()
+        let connection = super::portal::fresh_session_connection().await?;
+        let proxy = RemoteDesktop::with_connection(connection)
             .await
             .map_err(|e| anyhow::anyhow!("portal RemoteDesktop proxy unreachable: {e}. Install xdg-desktop-portal-gnome / xdg-desktop-portal-kde."))?;
         let session = proxy
@@ -997,6 +1001,7 @@ impl EisState {
                 to_x,
                 to_y,
                 steps,
+                duration_ms,
                 button,
                 ..
             } => {
@@ -1023,16 +1028,26 @@ impl EisState {
                 device.frame(serial, event_time_us());
                 btn.button(button.to_evdev(), reis::ei::button::ButtonState::Press);
                 device.frame(serial, event_time_us());
+                if let Some(context) = self.context.as_ref() {
+                    let _ = context.flush();
+                }
                 // Bound the interpolation: run_command executes synchronously in
                 // the worker loop, so a huge step count would block EIS event
                 // processing (incl. Ping) and balloon the unflushed request queue.
                 let n = (*steps).max(1).min(500);
+                let delay = drag_step_delay(*duration_ms, n);
                 for s in 1..=n {
                     let t = s as f32 / n as f32;
                     let ix = from_rx + (to_rx - from_rx) * t;
                     let iy = from_ry + (to_ry - from_ry) * t;
                     ptr_abs.motion_absolute(ix, iy);
                     device.frame(serial, event_time_us());
+                    if let Some(context) = self.context.as_ref() {
+                        let _ = context.flush();
+                    }
+                    if !delay.is_zero() {
+                        std::thread::sleep(delay);
+                    }
                 }
                 btn.button(button.to_evdev(), reis::ei::button::ButtonState::Released);
                 device.frame(serial, event_time_us());
@@ -1337,6 +1352,17 @@ fn device_interface<T: reis::Interface>(
         .downcast()
 }
 
+fn drag_step_delay(duration_ms: u64, steps: u32) -> std::time::Duration {
+    let frames = u64::from(steps.max(1).min(500));
+    std::time::Duration::from_micros(
+        duration_ms
+            .min(10_000)
+            .saturating_mul(1_000)
+            .checked_div(frames)
+            .unwrap_or(0),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1358,6 +1384,14 @@ mod tests {
             error.to_string(),
             "libei key sequence has 65 transitions; maximum is 64"
         );
+    }
+
+    #[test]
+    fn drag_duration_is_distributed_across_motion_frames() {
+        let delay = drag_step_delay(500, 30);
+        assert_eq!(delay, std::time::Duration::from_micros(16_666));
+        assert!(delay.saturating_mul(30) <= std::time::Duration::from_millis(500));
+        assert_eq!(drag_step_delay(0, 30), std::time::Duration::from_millis(0));
     }
 
     #[test]

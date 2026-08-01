@@ -98,6 +98,7 @@ mod reserved_args_tests {
         let mut args = json!({
             "pid": 42,
             "_session_id": "forged",
+            "_observation_only": true,
             "_cua_browser_prepare_mcp_host_approved": true,
             "profile": {"mode": "isolated_new", "_future_public_field": "retained"}
         });

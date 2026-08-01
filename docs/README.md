@@ -18,7 +18,8 @@ Public docs live in `content/docs/` and follow the Diátaxis modes:
 
 - `tutorials/` teach a guided first success.
 - `how-to-guides/` give steps for a specific goal.
-- `explanation/` explains concepts, constraints, and tradeoffs.
+- `concepts/` contains Diátaxis explanations of concepts, constraints, and
+  tradeoffs.
 - `reference/` is dry lookup: commands, APIs, contracts, limits.
 
 Place content by what the reader is trying to do, not by topic. Do not mix modes in one page; move reference tables to reference pages and link to them from how-to guides or explanations.

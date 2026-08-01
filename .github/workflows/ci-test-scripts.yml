@@ -8,6 +8,8 @@ on:
       - ".github/release-manifest.schema.json"
       - ".github/release-backfill/**"
       - ".github/workflows/cd-rust-cua-driver.yml"
+      - ".github/workflows/ci-cua-driver-installer-compat.yml"
+      - ".github/workflows/ci-release-metadata.yml"
       - ".github/workflows/cd-swift-lume.yml"
       - ".github/workflows/release-please.yml"
       - ".github/workflows/release-bump-version.yml"
@@ -18,6 +20,11 @@ on:
       - ".github/workflows/ci-contributor-attribution.yml"
       - "docs/release-backfill-runbook.md"
       - "libs/cua-driver/scripts/**"
+      - "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/build.sh"
+      - "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/package-lock.json"
+      - "libs/cua-driver/tests/fixtures/apps/cross-platform/tauri/build.sh"
+      - "libs/cua-driver/tests/runners/macos-lume/**"
+      - "scripts/ci/macos/run-rust-e2e.sh"
 
 jobs:
   test:

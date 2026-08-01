@@ -278,7 +278,10 @@ pub fn run(subcommand: &str, flags: &[String]) {
     match result {
         Ok(()) => {}
         Err(e) => {
-            eprintln!("cua-driver skills {subcommand}: {e}");
+            // `anyhow::Error`'s default Display only prints the outermost
+            // context. Use alternate Display so failures include the source
+            // URL and the underlying HTTP, extraction, or filesystem error.
+            eprintln!("cua-driver skills {subcommand}: {e:#}");
             std::process::exit(1);
         }
     }

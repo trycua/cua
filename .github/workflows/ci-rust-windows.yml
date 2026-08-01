@@ -8,6 +8,7 @@ on:
       - "libs/cua-driver/rust/Cargo.lock"
       - "libs/cua-driver/rust/crates/cua-driver/**"
       - "libs/cua-driver/rust/crates/cua-driver-core/**"
+      - "libs/cua-driver/rust/crates/cua-driver-sdk/**"
       - "libs/cua-driver/rust/crates/cua-driver-testkit/**"
       - "libs/cua-driver/rust/crates/cursor-overlay/**"
       - "libs/cua-driver/rust/crates/pip-preview/**"
@@ -23,6 +24,7 @@ on:
       - "libs/cua-driver/rust/Cargo.lock"
       - "libs/cua-driver/rust/crates/cua-driver/**"
       - "libs/cua-driver/rust/crates/cua-driver-core/**"
+      - "libs/cua-driver/rust/crates/cua-driver-sdk/**"
       - "libs/cua-driver/rust/crates/cua-driver-testkit/**"
       - "libs/cua-driver/rust/crates/cursor-overlay/**"
       - "libs/cua-driver/rust/crates/pip-preview/**"
@@ -50,14 +52,67 @@ jobs:
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           workspaces: "libs/cua-driver/rust -> target"
+      - name: Record Windows runner session
+        id: runner-session
+        shell: pwsh
+        run: |
+          $sessionId = (Get-Process -Id $PID).SessionId
+          "session_id=$sessionId" >> $env:GITHUB_OUTPUT
+          "Windows runner process session id: $sessionId"
       - name: Run Windows Rust tests
         working-directory: libs/cua-driver/rust
         # Compile every Rust target without executing desktop-dependent integration
         # tests; interactive behavior belongs in e2e-rust-windows.yml.
-        run: cargo test -p cua-driver -p cua-driver-core -p cua-driver-testkit -p platform-windows -p cua-driver-uia --all-targets --no-run --locked
+        run: cargo test -p cua-driver -p cua-driver-core -p cua-driver-sdk -p cua-driver-testkit -p cursor-overlay -p cursor-theme-cli -p platform-windows -p cua-driver-uia --all-targets --no-run --locked
+      - name: Run cross-platform cursor renderer unit tests
+        working-directory: libs/cua-driver/rust
+        run: |
+          cargo test -p cursor-overlay --lib --locked
+          if ($LASTEXITCODE -ne 0) { throw "cursor renderer tests failed with exit $LASTEXITCODE" }
+          cargo test -p cursor-theme-cli --locked
+          if ($LASTEXITCODE -ne 0) { throw "cursor theme compiler tests failed with exit $LASTEXITCODE" }
+      - name: Run Windows delivery guidance unit tests
+        working-directory: libs/cua-driver/rust
+        run: "cargo test -p platform-windows input::delivery::tests:: --lib --locked"
+      - name: Run transport-independent authorization and SDK tests
+        working-directory: libs/cua-driver/rust
+        run: |
+          cargo test -p cua-driver-core session_authorization::tests:: --lib --locked
+          if ($LASTEXITCODE -ne 0) { throw "session authorization tests failed with exit $LASTEXITCODE" }
+          cargo test -p cua-driver-sdk abi::tests:: --lib --locked
+          if ($LASTEXITCODE -ne 0) { throw "SDK ABI tests failed with exit $LASTEXITCODE" }
+          cargo test -p cua-driver-sdk remote_ --lib --locked
+          if ($LASTEXITCODE -ne 0) { throw "remote SDK tests failed with exit $LASTEXITCODE" }
+          cargo test -p cua-driver --bin cua-driver named_pipe_authentication_tests:: --locked
+          if ($LASTEXITCODE -ne 0) { throw "named-pipe authentication tests failed with exit $LASTEXITCODE" }
+          # The production binary embeds uiAccess=true and Windows correctly
+          # refuses to launch it unelevated. Run the same pure security policy
+          # from the manifest-free library test target.
+          cargo test -p cua-driver-uia --lib authorization_tests:: --locked
+          if ($LASTEXITCODE -ne 0) { throw "UIAccess authorization tests failed with exit $LASTEXITCODE" }
+          cargo test -p platform-windows diagnostics::tests:: --lib --locked
+          if ($LASTEXITCODE -ne 0) { throw "Windows desktop classification tests failed with exit $LASTEXITCODE" }
+      - name: Run full SDK unit suite in an interactive runner session
+        if: steps.runner-session.outputs.session_id != '0'
+        working-directory: libs/cua-driver/rust
+        run: cargo test -p cua-driver-sdk --lib --locked -- --test-threads=1
+      - name: Prove Session 0 refusal
+        if: steps.runner-session.outputs.session_id == '0'
+        working-directory: libs/cua-driver/rust
+        run: cargo test -p cua-driver-sdk session_zero_refuses_runtime_creation_before_platform_dispatch --lib --locked
+      - name: Prove metadata commands remain desktop-free
+        working-directory: libs/cua-driver/rust
+        run: |
+          cargo run -p cua-driver --locked -- list-tools | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "list-tools failed with exit $LASTEXITCODE" }
+          cargo run -p cua-driver --locked -- describe click | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "describe failed with exit $LASTEXITCODE" }
+          cargo run -p cua-driver --locked -- dump-docs --type cli | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "dump-docs failed with exit $LASTEXITCODE" }
       - name: Run Windows browser platform unit tests
         working-directory: libs/cua-driver/rust
-        run: 'cargo test -p platform-windows browser_platform::tests:: --lib --locked'
+        run: "cargo test -p platform-windows browser_platform::tests:: --lib --locked"
       - name: Run Windows protocol schema contract
+        if: steps.runner-session.outputs.session_id != '0'
         working-directory: libs/cua-driver/rust
         run: cargo test -p cua-driver --test protocol_schema_test --locked

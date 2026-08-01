@@ -2108,8 +2108,13 @@ mod tests {
             std::fs::remove_file(turn.join(file)).expect("remove private visual evidence");
         }
 
-        validate_catalog(&[case.clone()], &[result.clone()], Some(root.path()), true)
-            .expect("private existing-profile consent must not persist visual state");
+        validate_catalog(
+            std::slice::from_ref(&case),
+            std::slice::from_ref(&result),
+            Some(root.path()),
+            true,
+        )
+        .expect("private existing-profile consent must not persist visual state");
 
         let mut action: Value = read_json_value(&turn.join("action.json")).expect("read action");
         action["arguments"]["strategy"]["kind"] = Value::String("isolated_new".to_owned());

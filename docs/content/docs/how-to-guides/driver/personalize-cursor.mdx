@@ -1,77 +1,138 @@
 ---
-title: Personalize the Cua cursor
-description: "Swap the agent cursor shape and palette: pick a built-in silhouette, override at runtime, or bring your own SVG/PNG/ICO."
+title: Personalize the agent cursor
+description: "Use Cua Driver's semantic default cursor or compile and install a safe custom dotLottie theme."
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-The Cua Driver agent cursor ships with two built-in silhouettes:
+Cua Driver ships one built-in theme, `cua.default`, on macOS, Windows, and
+Linux. It uses a session-colored pointer with a white outline and matching
+glow. Every state shares the same gentle floating motion, with semantic
+animations layered on top for actions such as observe, click, drag, scroll,
+type, and navigate.
 
-- **`teardrop`** (the default)
-- **`arrow`**
-
-`teardrop` is the default. Opt back into the arrow with `--cursor-shape arrow`. You can also replace the silhouette entirely with your own SVG / PNG / JPEG / ICO file via `--cursor-icon <path>`, swap the body palette at runtime, or scale the bloom halo independently.
-
-## Pick a built-in silhouette
-
-```bash
-cua-driver serve --cursor-shape teardrop   # explicit; same as the default
-cua-driver serve --cursor-shape arrow      # opt into the procedural arrow
-```
-
-`--cursor-shape` is a daemon startup option. Passing it to an MCP proxy or one-shot CLI adapter does not change the already-running daemon's overlay; set it on `cua-driver serve`.
-
-`--cursor-icon <path>` always wins over `--cursor-shape`: if you pass both, the custom file is what renders.
-
-## Change the cursor look at runtime
-
-Every per-instance cursor accepts a runtime style override via the `set_agent_cursor_style` MCP tool. An agent or harness can call it mid-session; the next paint frame picks up the new style.
-
-```json
-{
-  "gradient_colors": ["#FF6B6B", "#FFD93D"],
-  "bloom_color":     "#FF6B6B"
-}
-```
-
-- `gradient_colors`: array of CSS hex strings used as the cursor body's tip-to-tail gradient. An empty array reverts to the palette default (`#F0FBFF` → `#66D9FF` → `#35C6D8` on the teardrop; the palette's `cursor_start/mid/end` on the arrow).
-- `bloom_color`: hex string for the radial halo behind the cursor. Empty string reverts.
-- `image_path`: path to a PNG / JPEG / SVG / ICO file. When set, replaces the built-in silhouette with your asset. Empty string clears the override, reverting to the default silhouette.
-
-Switch between the built-in `arrow` and `teardrop` silhouettes at runtime with `set_agent_cursor_motion`'s `cursor_icon` field. Pass the built-in name or a file path, using the same vocabulary the CLI `--cursor-shape` / `--cursor-icon` flags accept. Both the CLI and MCP resolve names through the same `BuiltinShape` table, so they can never drift.
-
-## Use your own cursor asset
-
-Pass `--cursor-icon <path>` to `cua-driver serve` (or set `image_path` on `set_agent_cursor_style` at runtime). Supported formats: `.svg`, `.png`, `.jpeg`, `.ico`. The asset is rasterised once at startup into a 52×52 RGBA buffer and used in place of the built-in silhouette.
-
-```bash
-cua-driver serve --cursor-icon ~/my-cursor.svg
-```
-
-<Callout type="info" title="Tip orientation">
-Custom cursor assets are rendered with no rotation compensation. The driver assumes your asset's tip points to the **right** at rest. If your SVG has a tip pointing up, up-left, or anywhere else, the cursor will appear rotated off-axis during motion. Two options:
-
-1. **Re-author your SVG** so the tip points right at the unrotated default. The driver's rotation logic then aligns the tip with motion direction automatically.
-2. **Stick with PNG / static art** if you do not care about motion-aligned rotation. The cursor will render at a fixed orientation regardless of motion direction. This is what most OS cursor packs do.
+<Callout type="warn" title="Visual aid, not authorization">
+The cursor helps a person follow an agent. It is not a security indicator,
+consent prompt, or proof that an action succeeded.
 </Callout>
 
-## Recolour at launch
+![The twelve semantic action animations in the built-in Cua cursor theme](/img/cua-driver/cursor-themes/action-animations.gif)
 
-`--cursor-palette <name>` picks a built-in colour palette for the cursor at launch. It is the launch-time counterpart to the runtime `set_agent_cursor_style` palette. Like the other cursor flags it is parsed on `serve` and `mcp` only.
+## Select a theme for a session
+
+Create a session and select an already-installed theme by ID:
 
 ```bash
-cua-driver serve --cursor-palette <name>
+cua-driver start_session '{"session":"demo"}'
+cua-driver set_agent_cursor_theme \
+  '{"session":"demo","theme_id":"cua.default","reduced_motion":"auto"}'
+cua-driver get_agent_cursor_state '{"session":"demo"}'
 ```
 
-Run `cua-driver serve --help` for the available palette names.
+Use `set_agent_cursor_enabled` to hide or show the session cursor. Use
+`set_agent_cursor_motion` for movement physics and visibility timing only.
 
-## Things that aren't currently personalizable
+## Session name badge
 
-- **Multiple built-in palettes per agent.** Runtime overrides can recolour a cursor, but built-in named palettes are shared.
-- **Shape render size.** `cursor_size` controls the dot-style cursor radius. The shape-based render path uses its own fixed size.
-- **Motion-path curve shape.** Glide duration, post-click dwell, idle-hide delay, and spring damping are tunable via `set_agent_cursor_motion`, but the underlying path shape is fixed.
+The built-in overlay places the public session name in a compact badge below
+the pointer. The badge follows the cursor, uses the session color, and renders
+with the same display-scale-aware native pipeline as the theme.
 
-## See also
+Choose a short, recognizable session name when starting the session:
 
-- [Connect your agent](./connect-your-agent): register Cua Driver with Claude Code, Codex, Hermes, and others.
-- [MCP tools](/reference/cua-driver/mcp-tools): full parameter list and return shape.
+```bash
+cua-driver start_session '{"session":"research"}'
+```
+
+The badge displays `research`. Cua Driver strips control characters, collapses
+whitespace, and shortens labels longer than 28 characters. The label is visual
+identity only. It does not grant authorization, select another session's
+capabilities, or expose Cua's private runtime identifier.
+
+The badge also shows execution context when it applies. A filled delivery chip
+identifies `background` or `foreground`, followed by an outlined target chip
+for `ax`, `pixel`, `browser`, or `desktop`. These chips stay visible while the
+action is active and fade independently from the session name. They are drawn
+by Cua Driver, so their meaning stays consistent across themes and operating
+systems.
+
+The old `set_agent_cursor_style` operation and its `cursor_id`, shape, color,
+label, size, opacity, image-path, gradient, and bloom styling fields have been
+removed. (`cursor_id` may still appear on input-delivery tools where it names a
+virtual pointer; it is no longer a cursor-theme selector.)
+
+## Create a custom theme
+
+A source theme is a dotLottie archive with:
+
+- the standard `manifest.json`;
+- 128×128, 30 fps animations under `a/`, with at most 120 frames per
+  animation and 1,000 frames across the complete compiled theme;
+- a `cua/theme.json` semantic manifest;
+- all twelve actions: `idle`, `observe`, `click`, `drag`, `scroll`, `text`,
+  `key`, `navigate`, `app`, `transfer`, `record`, and `system`;
+- a representative `still_frame` for every animation;
+- an author and license.
+
+The compiler enforces the complete theme contract, including the semantic
+manifest, animation inventory, frame limits, bounded vector feature set,
+author, and license. It preserves paths and strokes as vectors, so the native
+renderer can draw them at the current display scale instead of enlarging a
+fixed-resolution image.
+
+![The host-rendered delivery and target context chips](/img/cua-driver/cursor-themes/delivery-target-context.gif)
+
+Validate, compile, inspect, and preview the source:
+
+```bash
+cua-driver cursor-theme validate theme.lottie
+cua-driver cursor-theme build theme.lottie --output theme.cua-theme
+cua-driver cursor-theme inspect theme.cua-theme
+cua-driver cursor-theme preview theme.cua-theme --output preview
+```
+
+Install it locally, then select its reverse-DNS ID:
+
+```bash
+cua-driver cursor-theme install theme.cua-theme
+cua-driver cursor-theme list
+
+cua-driver set_agent_cursor_theme \
+  '{"session":"demo","theme_id":"com.example.cursor.studio"}'
+```
+
+Profile v2 does not compile dotLottie color/theme variants. Publish each
+visually distinct design under a separate theme ID.
+
+Profile v2 contains action animations only. The source manifest uses
+`"schema": "cua.cursor-theme/2"`,
+`"profile": "cua-driver-actions-v2"`, and `"semantics": 2`. V1 source and
+compiled artifacts are rejected. Remove the old `modifiers` section and rebuild
+the theme with the current compiler.
+
+## Why installation is separate
+
+Theme authoring is a trusted local workflow. The short-lived compiler validates
+the ZIP and Lottie source, rejects unsupported or unbounded content, and emits
+bounded vector frames containing validated geometry, paints, and transforms.
+
+The privileged overlay loads only the compiled `.cua-theme` artifact. It never
+parses ZIP, JSON, Lottie, fonts, expressions, URLs, or an arbitrary source
+path. It rasterizes the bounded vector commands through Skia at the display's
+actual backing scale. MCP and SDK tools may select an installed ID, but they
+cannot install source or submit inline animation data.
+
+The built-in `cua.default` theme uses the same compiler and renderer. Cua ships
+its compiled artifact inside the driver, so users do not need to install it.
+The driver applies the stable session color and shared floating motion to the
+default theme's action layer. Installed custom themes keep their authored
+colors. The host renders delivery and target chips in the badge for both the
+default and custom themes.
+
+Remove a custom theme with:
+
+```bash
+cua-driver cursor-theme uninstall com.example.cursor.studio
+```
+
+The built-in `cua.default` theme cannot be removed.

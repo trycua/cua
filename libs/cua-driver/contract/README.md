@@ -31,6 +31,32 @@ It also covers the portable whole-desktop loop:
 - `click` with the required `scope="desktop"`
 - `drag` and `scroll` in native desktop coordinates
 - `type_text`, `press_key`, and `hotkey` against the foreground application
+- `clipboard_read` for available types and opt-in plain-text readback
+- `clipboard_write` for text, image, and file-URL clipboard content
+
+The canonical session-owned cursor slice is shared exactly by MCP and both
+generated SDKs:
+
+- `set_agent_cursor_enabled`
+- `set_agent_cursor_motion`
+- `set_agent_cursor_theme`
+- `get_agent_cursor_state`
+
+Cursor artwork is selected by installed theme ID. Theme installation and
+dotLottie compilation are intentionally local CLI operations, not SDK or MCP
+tool calls.
+
+The checked-observation slice is also shared by MCP and both generated SDKs:
+
+- `verify_state` evaluates one to eight ANDed predicates against one exact
+  `(pid, window_id)`.
+- Window existence/bounds and semantic accessibility element
+  existence/value/enabled/selected predicates return `satisfied`,
+  `unsatisfied`, or `unknown`.
+- A bounded poll can require consecutive stable samples. `unknown` never
+  implies success.
+- `include_screenshot=true` adds final image content for a multimodal agent
+  harness to interpret. Cua Driver does not OCR or assign task meaning to it.
 
 Session contracts are marked `canonical_runtime`: the same typed Rust input,
 output, and metadata declaration builds the live MCP tool. Desktop contracts
@@ -49,14 +75,19 @@ from the contract rather than a second runtime map.
 Both SDKs retain a generic tool call so runtime-discovered and
 platform-specific tools remain usable. The generated manifest records tool
 platforms, capabilities, annotations, input schemas, and experimental success
-schemas. Success schemas are not advertised as live MCP `outputSchema` values
-until every transport path has passed parity tests.
+schemas. The live MCP `tools/list` response advertises these successful-result
+schemas as `outputSchema`; all action tools share the closed `ActionResult`
+schema even when their richer runtime input is not part of the portable SDK
+manifest.
+
+See [Action results and postcondition verification](../docs/action-result-contract.md)
+for the wire shape and 0.14 migration guidance.
 
 Compatibility is tracked separately at each boundary:
 
 | Field | Current | Meaning |
 | --- | --- | --- |
-| `contract_version` | `0.2.0` | Generated manifest and typed SDK shape |
+| `contract_version` | `0.5.0` | Generated manifest and typed SDK shape |
 | `tools_list_schema_version` | `1` | cua-driver `tools/list` extension shape |
 | `capability_version` | `1` | Additive capability-token vocabulary |
 | `mcp_protocol_version` | `2025-06-18` | MCP initialization protocol served to agent runtimes |

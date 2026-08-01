@@ -19,6 +19,8 @@
 #![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 
 use std::any::Any;
+#[cfg(target_os = "macos")]
+use std::io::Write as _;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -364,7 +366,18 @@ fn launch_host_with_evidence(spec: &HostSpec, scenario: &str, evidence: &mut Evi
                         name: spec.name,
                         journal,
                     };
-                    let ax_deadline = Instant::now() + Duration::from_secs(10);
+                    // A freshly provisioned platform webview can need more than
+                    // the generic fixture budget to start its renderer and
+                    // expose the remote accessibility subtree (observed for
+                    // cold Windows WebView2 and macOS WKWebView helpers). Keep
+                    // the extension Tauri-specific and bounded; every other
+                    // harness still fails fast.
+                    let ax_timeout = if spec.name == "tauri" {
+                        Duration::from_secs(30)
+                    } else {
+                        Duration::from_secs(10)
+                    };
+                    let ax_deadline = Instant::now() + ax_timeout;
                     let mut last_tree = String::new();
                     while Instant::now() < ax_deadline {
                         let state = snapshot(&mut fixture);
@@ -737,15 +750,9 @@ fn unverified_background_protocol_oracle(
         return Vec::new();
     }
     assert_eq!(
-        response.verified(),
-        Some(false),
-        "background dispatch without independent read-back must remain unverified: {}",
-        response.text()
-    );
-    assert_ne!(
-        response.structured()["verify"].as_str(),
-        Some("confirmed"),
-        "background dispatch overclaimed a confirmed read-back: {}",
+        response.action_effect(),
+        Some("unverifiable"),
+        "background dispatch without independent read-back must remain unverifiable: {}",
         response.text()
     );
     vec![OracleKind::Protocol]
@@ -873,7 +880,7 @@ fn run_hotkey_action(fixture: &mut Fixture, addressing: &str, delivery: &str) ->
     hotkey_args
         .as_object_mut()
         .expect("hotkey arguments object")
-        .insert("keys".to_owned(), serde_json::json!(["ctrl", "shift", "7"]));
+        .insert("keys".to_owned(), serde_json::json!(["ctrl", "shift", "h"]));
     let response = fixture.driver.call("hotkey", hotkey_args);
     if let Some(code) = background_refusal_code(&response, delivery) {
         return refused_without_fixture_mutation(fixture, &journal_before, code, &response);
@@ -885,8 +892,106 @@ fn run_hotkey_action(fixture: &mut Fixture, addressing: &str, delivery: &str) ->
         response.text()
     );
     assert_fixture_contains(fixture, "key_state=hotkey");
+    #[cfg(target_os = "macos")]
+    if fixture.name == "electron" && addressing == "px" && delivery == "foreground" {
+        run_macos_selection_hotkeys(fixture);
+    }
     let passed = unverified_background_protocol_oracle(&response, delivery);
     Observation::delivered_with_fixture_state(passed)
+}
+
+#[cfg(target_os = "macos")]
+struct TextClipboardGuard {
+    previous: Vec<u8>,
+}
+
+#[cfg(target_os = "macos")]
+impl TextClipboardGuard {
+    fn replace(text: &str) -> Self {
+        let previous = Command::new("/usr/bin/pbpaste")
+            .output()
+            .expect("read macOS text pasteboard")
+            .stdout;
+        write_text_clipboard(text.as_bytes());
+        Self { previous }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for TextClipboardGuard {
+    fn drop(&mut self) {
+        write_text_clipboard(&self.previous);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn write_text_clipboard(contents: &[u8]) {
+    let mut child = Command::new("/usr/bin/pbcopy")
+        .stdin(Stdio::piped())
+        .spawn()
+        .expect("start macOS text pasteboard writer");
+    child
+        .stdin
+        .as_mut()
+        .expect("pbcopy stdin")
+        .write_all(contents)
+        .expect("write macOS text pasteboard");
+    assert!(
+        child.wait().expect("wait for pbcopy").success(),
+        "pbcopy failed"
+    );
+}
+
+#[cfg(target_os = "macos")]
+fn run_macos_selection_hotkeys(fixture: &mut Fixture) {
+    const INITIAL: &str = "cua-hotkey-initial";
+    const REPLACEMENT: &str = "cua-hotkey-replacement";
+    const PASTED: &str = "cua-hotkey-pasted";
+
+    let state = snapshot(fixture);
+    let mut type_args = action_target_args(fixture, &state, "keyboard-input", "px", "foreground");
+    type_args["text"] = serde_json::json!(INITIAL);
+    let typed = fixture.driver.call("type_text", type_args);
+    assert!(!typed.is_error(), "seed selection fixture: {}", typed.raw);
+    assert_fixture_value(fixture, "keyboard-input", INITIAL);
+
+    let select_all = |fixture: &mut Fixture| {
+        let state = snapshot(fixture);
+        let mut args = action_target_args(fixture, &state, "keyboard-input", "px", "foreground");
+        args["keys"] = serde_json::json!(["cmd", "a"]);
+        let response = fixture.driver.call("hotkey", args);
+        assert!(!response.is_error(), "Cmd+A failed: {}", response.raw);
+        assert_eq!(
+            response.action_effect(),
+            Some("unverifiable"),
+            "generic hotkeys must retain the honest unverifiable contract: {}",
+            response.raw
+        );
+    };
+
+    select_all(fixture);
+    let state = snapshot(fixture);
+    let mut replace_args =
+        action_target_args(fixture, &state, "keyboard-input", "px", "foreground");
+    replace_args["text"] = serde_json::json!(REPLACEMENT);
+    let replaced = fixture.driver.call("type_text", replace_args);
+    assert!(!replaced.is_error(), "replace selection: {}", replaced.raw);
+    assert_fixture_value(fixture, "keyboard-input", REPLACEMENT);
+
+    select_all(fixture);
+    let _clipboard = TextClipboardGuard::replace(PASTED);
+    let state = snapshot(fixture);
+    let mut paste_args = action_target_args(fixture, &state, "keyboard-input", "px", "foreground");
+    paste_args["keys"] = serde_json::json!(["cmd", "v"]);
+    let pasted = fixture.driver.call("hotkey", paste_args);
+    assert!(!pasted.is_error(), "Cmd+V failed: {}", pasted.raw);
+    assert_eq!(
+        pasted.action_effect(),
+        Some("unverifiable"),
+        "{}",
+        pasted.raw
+    );
+    assert_fixture_value(fixture, "keyboard-input", PASTED);
 }
 
 fn run_scroll_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> Observation {
@@ -1292,12 +1397,12 @@ fn run_browser_tool_roundtrip(fixture: &mut Fixture) -> Observation {
         }),
     );
     assert_eq!(
-        click.structured()["status"].as_str(),
-        Some("ok"),
+        click.action_effect(),
+        Some("unverifiable"),
         "trusted browser click failed: {}",
         click.raw
     );
-    assert_eq!(click.structured()["route"].as_str(), Some("trusted"));
+    assert_eq!(click.action_route(), Some("trusted_input"));
     assert_fixture_text(fixture, "lbl-counter", "counter=1");
 
     let second_snapshot = fixture.driver.call(
@@ -1320,8 +1425,8 @@ fn run_browser_tool_roundtrip(fixture: &mut Fixture) -> Observation {
         }),
     );
     assert_eq!(
-        typed.structured()["status"].as_str(),
-        Some("ok"),
+        typed.action_effect(),
+        Some("unverifiable"),
         "browser type failed: {}",
         typed.raw
     );
@@ -1337,10 +1442,10 @@ fn run_browser_tool_roundtrip(fixture: &mut Fixture) -> Observation {
             "session": session,
         }),
     );
-    assert_eq!(
-        stale.structured()["refusal"]["code"].as_str(),
-        Some("browser_ref_stale"),
-        "older snapshot ref should fail closed: {}",
+    assert_eq!(stale.action_effect(), Some("refused"), "{}", stale.raw);
+    assert!(
+        stale.text().contains("browser_ref_stale"),
+        "older snapshot ref should retain its diagnostic code: {}",
         stale.raw
     );
     assert_fixture_text(fixture, "lbl-counter", "counter=1");
@@ -1390,9 +1495,14 @@ fn run_browser_tool_roundtrip(fixture: &mut Fixture) -> Observation {
         }),
     );
     assert_eq!(
-        stale_after_navigation.structured()["refusal"]["code"].as_str(),
-        Some("browser_ref_stale"),
-        "navigation-invalidated ref should fail closed: {}",
+        stale_after_navigation.action_effect(),
+        Some("refused"),
+        "{}",
+        stale_after_navigation.raw
+    );
+    assert!(
+        stale_after_navigation.text().contains("browser_ref_stale"),
+        "navigation-invalidated ref should retain its diagnostic code: {}",
         stale_after_navigation.raw
     );
     let ended = fixture

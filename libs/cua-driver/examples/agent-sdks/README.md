@@ -1,75 +1,108 @@
-# Use Cua Driver from agent SDKs
+# Cua Driver SDK and agent examples
 
-These examples show **Cua as an agent tool**. Codex and Claude connect directly
-to `cua-driver mcp`; the agent SDK is the MCP client and discovers the live tool
-surface through `tools/list`.
+These executable examples cover two intentionally different boundaries:
 
-This is intentionally different from **Cua as an imported SDK**. An application
-that wants typed, programmatic calls can import the Python `cua-driver` package
-or the TypeScript `@trycua/cua-driver` package. Those packages are Rust-backed
-UniFFI SDKs that call the daemon directly; they do not provide MCP clients.
+- **Native application route:** Python or Node imports `cua-driver` in process.
+  Claude Agent SDK can wrap a narrow set of those calls as in-process custom
+  tools.
+- **MCP agent route:** Claude or Codex launches `cua-driver mcp`. The agent SDK
+  already supplies the language-independent MCP client.
 
-## Prerequisites
+Codex SDK does not expose direct custom-tool callbacks. Its Cua Driver examples
+therefore use MCP rather than inventing a bespoke native adapter.
 
-1. Install Cua Driver, grant the host OS permissions, and ensure its daemon is
-   running.
-2. Put `cua-driver` on `PATH`, or set `CUA_DRIVER_BIN` to its absolute path.
-3. Authenticate the selected agent SDK. The Codex SDK can use an existing Codex
-   login or `CODEX_API_KEY`; the Claude Agent SDK can use an existing Claude
-   Code login or `ANTHROPIC_API_KEY`.
+## Deterministic perceive → act → verify fixture
 
-Both scripts create a unique Cua session with `cua-driver call start_session`,
-give that session ID to the agent, and call `end_session` in a `finally` block.
-The session's capture scope comes from `CUA_CAPTURE_SCOPE` and defaults to
-`auto`. Valid values are `auto`, `window`, and `desktop`.
-
-The examples let the model execute GUI actions without an interactive approval
-prompt. Run them only with a task you trust, and keep purchases, messages,
-deletions, credential entry, and other irreversible actions out of unattended
-prompts.
-
-## Python: Claude Agent SDK
+Start the loopback-only fixture in one terminal:
 
 ```bash
-cd libs/cua-driver/examples/agent-sdks
-python3.10 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+python3 fixture_server.py
+```
 
-CUA_CAPTURE_SCOPE=auto \
-  .venv/bin/python claude_agent.py \
+It opens a page with one autofocus input. The native examples capture the
+desktop, type a unique value, press Enter, and verify the submitted value
+through the independent `/state` endpoint. A timeout after a mutation is
+treated as an unknown outcome: the examples observe the fixture before any
+retry.
+
+Python:
+
+```bash
+python3.12 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python native_driver.py
+```
+
+TypeScript:
+
+```bash
+npm install
+npm run native
+```
+
+Grant Screen Recording and Accessibility/Input permission to the importing
+Python or Node process. Keep the fixture browser window focused when the native
+example starts.
+
+## Claude Agent SDK: native or MCP
+
+Python:
+
+```bash
+.venv/bin/python claude_agent.py --route native \
+  "Enter a short value in the fixture and submit it"
+
+.venv/bin/python claude_agent.py --route mcp \
   "Open Calculator, compute 19 * 23, and report the result"
 ```
 
-`tools=[]` removes Claude Code's built-in tools, `strict_mcp_config=True`
-ignores unrelated user/project MCP servers, and the `cua_driver` server is the
-only tool source supplied to the run.
-
-## TypeScript: Codex SDK
+TypeScript:
 
 ```bash
-cd libs/cua-driver/examples/agent-sdks
-npm install
+npm run claude -- --route native \
+  "Enter a short value in the fixture and submit it"
 
-CUA_CAPTURE_SCOPE=window \
-  npm run codex -- \
+npm run claude -- --route mcp \
+  "Open Calculator, compute 19 * 23, and report the result"
+```
+
+The native route supplies four narrow in-process callbacks: observe, click,
+type, and key press. The MCP route discovers the complete live Cua Driver tool
+surface. Set `CLAUDE_MODEL` optionally.
+
+## Codex SDK: MCP
+
+Python:
+
+```bash
+.venv/bin/python codex_agent.py \
   "Inspect the active app and summarize what is visible without changing it"
 ```
 
-The Codex thread uses a read-only filesystem sandbox and `approvalPolicy:
-"never"`; desktop actions still happen through the separately configured
-`cua_driver` MCP server. The prompt tells Codex not to substitute shell or
-filesystem operations for the MCP tools.
-
-## Local checks without running an agent
-
-These checks do not require API credentials or a live desktop:
+TypeScript:
 
 ```bash
-python3.10 -m py_compile claude_agent.py
-npm run typecheck
+npm run codex -- \
+  "Inspect the active app and summarize what is visible without changing it"
 ```
 
-The examples intentionally do not import the Cua Driver language packages.
-That absence is the architectural point: an MCP-capable agent already has a
-runtime-neutral client. Use the packages only when application code wants
-typed direct calls rather than an agent-controlled tool loop.
+Set `CODEX_MODEL` optionally. Both scripts create a unique Cua session outside
+the agent, configure `cua-driver mcp`, and end the session in `finally`.
+
+## Environment and safety
+
+- Put `cua-driver` on `PATH`, or set `CUA_DRIVER_BIN` for MCP examples.
+- Set `CUA_CAPTURE_SCOPE` to `auto`, `window`, or `desktop` for MCP examples.
+- Authenticate the chosen agent SDK using its normal local login or API key.
+- Run only trusted tasks. These examples remove interactive approval prompts.
+- Keep purchases, messages, deletion, credential entry, and other irreversible
+  actions out of unattended prompts.
+
+## Credential-free checks
+
+```bash
+python3.12 -m py_compile \
+  claude_agent.py codex_agent.py fixture_server.py native_driver.py native_tools.py
+python3.12 -m unittest test_fixture_server.py
+npm run typecheck
+```

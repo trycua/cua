@@ -568,7 +568,7 @@ GitHub release: draft
 Target SHA: the merged release pull request commit
 ```
 
-The Cua Driver CD workflow starts from the tag, builds the platform artifacts, looks up the matching draft by release ID, and uploads assets without changing its body or publication state. The attribution check confirms `@alice` as the pull request author and `@bob` as the linked issue reporter.
+The Cua Driver CD workflow starts from the tag and builds immutable candidate artifacts, but a tag push cannot publish the draft. A maintainer first dispatches the Linux, Windows, and macOS interactive E2E matrices against that exact tag SHA; the Linux and Windows matrices also exercise `install-local.sh` and `install-local.ps1` in isolated namespaces, while the canonical macOS Lume matrix installs through `install-local.sh` under the stable TCC identity. Only after that evidence passes does a `workflow_dispatch` with `publish: true` rebuild the same tag, upload the release assets, and finalize the draft. The attribution check confirms `@alice` as the pull request author and `@bob` as the linked issue reporter.
 
 #### Final GitHub release body
 
@@ -840,13 +840,15 @@ The cloud repository should consume the release manifest only after the core wor
 
 ### Publication
 
-1. Let the existing tag-triggered CD workflow build and test the exact tagged commit.
-2. List GitHub releases, include drafts, and match the unique draft by `tag_name`; retain its release ID and upload URL.
-3. Upload packages and checksums by release ID without writing the body, changing the draft flag, or creating a second release. Remove `softprops/action-gh-release` from these two CD paths unless a pinned version is fixture-proven to reuse the same draft safely.
-4. Attach the attribution manifest and optional visual to the same release ID.
-5. Let the **release finalizer job** be the only writer of the final body and the only job allowed to change `draft: true` to published. It waits for all required product artifacts and attribution checks, marks Cua Driver as a prerelease, and allows Lume to become the latest release.
-6. Verify that the release body matches the tag-pinned changelog data and that the manifest tag and SHA match the release target.
-7. Publish the GitHub release and produce the non-blocking social draft artifact.
+1. Let the tag-triggered CD workflow build candidate artifacts from the exact tagged commit; it must not publish the draft.
+2. Dispatch the canonical interactive E2E matrices with the full tag SHA. Require the Linux shared, native, capture, and `install-local.sh` lanes; the Windows interactive lanes on a GUI runner plus the hosted `install-local.ps1` lane; and the macOS Lume matrix, which includes its own signed `install-local.sh` and TCC checks.
+3. After those runs pass, dispatch the Cua Driver CD workflow for the immutable version with `publish: true`.
+4. List GitHub releases, include drafts, and match the unique draft by `tag_name`; retain its release ID and upload URL.
+5. Upload packages and checksums by release ID without writing the body, changing the draft flag, or creating a second release. Remove `softprops/action-gh-release` from these two CD paths unless a pinned version is fixture-proven to reuse the same draft safely.
+6. Attach the attribution manifest and optional visual to the same release ID.
+7. Let the **release finalizer job** be the only writer of the final body and the only job allowed to change `draft: true` to published. It waits for all required product artifacts and attribution checks, marks Cua Driver as a prerelease, and allows Lume to become the latest release.
+8. Verify that the release body matches the tag-pinned changelog data and that the manifest tag and SHA match the release target.
+9. Publish the GitHub release and produce the non-blocking social draft artifact.
 
 All jobs that mutate a release use a per-tag concurrency group. During the
 pilot, rendering failures leave the release in draft along with artifact,

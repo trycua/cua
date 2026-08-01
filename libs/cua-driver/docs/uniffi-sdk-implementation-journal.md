@@ -1,6 +1,11 @@
 # UniFFI imported-SDK implementation journal
 
-Status: package-root SDK cleanup validated locally; pull-request exact-head CI pending
+Status: historical baseline plus RFC 2447 migration log
+
+The original sections below record the daemon-client SDK shipped in 0.11.0.
+[RFC 2447](../../../rfcs/2447-cua-driver-native-core-and-mcp-adapter.md)
+supersedes that topology: the public typed SDK now owns the platform runtime,
+and daemon/MCP hosting is migrating downstream of it.
 
 ## Definition of done
 
@@ -21,9 +26,12 @@ Deliver an experimental imported-SDK vertical slice in pull request #2341 where:
 - UniFFI: `0.31.0`, matching the repository's Fleet SDK precedent.
 - Node generator/runtime: `uniffi-bindgen-react-native` / `@ubjs/*` `0.31.0-3`.
 
-## Architecture decision
+## Historical architecture decision
 
-The FFI library is a daemon client, not an in-process copy of the GUI engine. This preserves the daemon's process-wide session state, permission ownership, platform event-loop constraints, policy enforcement, and timeout behavior. The shared Rust contract remains transport-free and is consumed by both live tool handlers and the exported UniFFI methods.
+Version 0.11.0 initially shipped the FFI library as a daemon client. RFC 2447
+supersedes that topology: `CuaDriver.create()` now owns the platform runtime in
+the importing process, while `connect()` remains the explicit compatibility
+path for an external daemon.
 
 The public integration split remains:
 
@@ -49,6 +57,42 @@ The product boundary is reflected directly in packaging:
 - Node N-API generation is available through `ubrn generate napi bindings`; it loads the same `cdylib` through `@ubjs/node` and currently requires a separately orchestrated Rust build.
 
 ## Verification log
+
+### RFC 2447 first implementation slice (2026-07-22)
+
+- `CuaDriver.create()` constructs the platform runtime in the importing process;
+  it neither launches `cua-driver` nor opens daemon IPC.
+- `cua-driver serve` constructs that same SDK-owned runtime and temporarily
+  exposes its private registry through the existing compatibility transport.
+- Python and TypeScript package roots select their binding client kind for both
+  `create()` and the transitional `connect()` path.
+- SDK operations are generated as asynchronous Python and TypeScript methods.
+- Rust SDK tests passed: 11 tests, including typed inventory parity,
+  same-process PID identity, idempotent shutdown, and daemon compatibility.
+- Python loader tests passed: 3 tests across in-process and daemon modes.
+- Node loader tests passed: 4 tests across in-process and daemon modes; the
+  Electron lifecycle fixture remains a separate release-matrix check.
+- Local macOS tests required a test-copy rpath for the Command Line Tools
+  `swift-5.5` runtime. No rpath mutation is checked in or applied to release
+  artifacts.
+
+### RFC 2447 versioned C ABI slice (2026-07-22)
+
+- A generated, checked-in public C header defines version negotiation, opaque driver and
+  operation handles, caller-owned buffers, status/error mapping, asynchronous
+  completion, cancellation, and idempotent release.
+- `cua-driver-abi-header` uses pinned `cbindgen` over the Rust ABI exports, and
+  CI rejects header drift. UniFFI still independently generates the
+  language-facing Python and TypeScript bindings from the safe Rust SDK.
+- The safe Rust `CuaDriver` wrapper imports the exported C symbols, so Rust,
+  Python, and TypeScript all traverse the same native seam.
+- The ABI owns a process-lifetime asynchronous executor. Foreign callers do
+  not need Tokio or a daemon to create and use the embedded runtime.
+- Unit tests contain panics, validate cancellation, and assert that the header
+  matches the exported v1 contract. CI compiles and runs an external C client
+  against the release library and checks its exported symbol table.
+- Linux, macOS, and Windows release archives include the public header next to
+  the shared library.
 
 ### Rust and contract
 

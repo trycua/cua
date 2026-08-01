@@ -13,13 +13,15 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use crate::protocol::ToolResult;
-use crate::tool::{Tool, ToolDef};
+use crate::tool::{ProtectedResourceOwnership, Tool, ToolDef};
 use crate::tool_args::ArgsExt;
 
 use super::cdp_ws::CdpConnection;
 use super::engine::{BrowserEngine, ValidatedTab};
+use super::platform::BrowserVisualActionKind;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::store::{BrowserActionKind, FrameKind, FrameRef};
+use super::tools::{browser_protected_resource_scope, browser_resource_ownership};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PointerAction {
@@ -52,6 +54,16 @@ impl PointerAction {
             Self::Scroll => "scroll",
             Self::Drag => "drag",
         }
+    }
+}
+
+fn visual_kind(action: PointerAction) -> BrowserVisualActionKind {
+    match action {
+        PointerAction::Hover => BrowserVisualActionKind::Hover,
+        PointerAction::RightClick => BrowserVisualActionKind::RightClick,
+        PointerAction::DoubleClick => BrowserVisualActionKind::DoubleClick,
+        PointerAction::Scroll => BrowserVisualActionKind::Scroll,
+        PointerAction::Drag => BrowserVisualActionKind::Drag,
     }
 }
 
@@ -381,6 +393,7 @@ impl BrowserPointerTool {
 
     async fn dom_event(
         &self,
+        session: &str,
         request: &PointerRequest,
         validated: &ValidatedTab,
         origin: &ResolvedRef,
@@ -392,6 +405,19 @@ impl BrowserPointerTool {
                 Ok(id) => id,
                 Err(result) => return result,
             };
+
+        if let Ok((x, y)) = point_for_ref(conn, &origin.cdp_session, origin.backend_node_id).await {
+            self.engine
+                .visualize_browser_action(
+                    session,
+                    validated,
+                    &origin.cdp_session,
+                    x,
+                    y,
+                    visual_kind(request.action),
+                )
+                .await;
+        }
 
         let (function, arguments) = match request.action {
             PointerAction::Hover => (
@@ -530,6 +556,7 @@ impl BrowserPointerTool {
 
     async fn trusted(
         &self,
+        session: &str,
         request: &PointerRequest,
         validated: &ValidatedTab,
         origin_ref: Option<&ResolvedRef>,
@@ -560,6 +587,17 @@ impl BrowserPointerTool {
             (None, None) => None,
             _ => unreachable!("destination resolution matches request"),
         };
+
+        self.engine
+            .visualize_browser_action(
+                session,
+                validated,
+                cdp_session,
+                origin.0,
+                origin.1,
+                visual_kind(request.action),
+            )
+            .await;
 
         if let Err(error) = conn
             .call(
@@ -692,6 +730,30 @@ impl Tool for BrowserPointerTool {
         &self.def
     }
 
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if adapter_id == "browser_bound_input" {
+            browser_resource_ownership(&self.engine, args)
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        if adapter_id == "browser_bound_input" {
+            browser_protected_resource_scope(&self.engine, args, "browser_pointer").await
+        } else {
+            Ok(None)
+        }
+    }
+
     async fn invoke(&self, args: Value) -> ToolResult {
         let target_id = match args.require_str("target_id") {
             Ok(value) => value,
@@ -804,6 +866,7 @@ impl Tool for BrowserPointerTool {
         match request.route {
             InputRoute::DomEvent => {
                 self.dom_event(
+                    &session,
                     &request,
                     &validated,
                     origin_ref.as_ref().expect("dom route requires ref"),
@@ -813,6 +876,7 @@ impl Tool for BrowserPointerTool {
             }
             InputRoute::Trusted => {
                 self.trusted(
+                    &session,
                     &request,
                     &validated,
                     origin_ref.as_ref(),

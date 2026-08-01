@@ -180,11 +180,14 @@ pub fn is_available() -> bool {
     post_to_pid_fn().is_some()
 }
 
-/// `true` when all three focus-without-raise SPIs resolved.
+/// `true` when the focus-without-raise SPIs resolved, including either the
+/// modern window-owner PSN lookup or the deprecated pid fallback.
 pub fn is_focus_without_raise_available() -> bool {
-    get_front_process_fn().is_some()
-        && get_process_for_pid_fn().is_some()
-        && post_event_record_to_fn().is_some()
+    let has_psn_lookup = (connection_id_fn().is_some()
+        && get_window_owner_fn().is_some()
+        && get_connection_psn_fn().is_some())
+        || get_process_for_pid_fn().is_some();
+    get_front_process_fn().is_some() && has_psn_lookup && post_event_record_to_fn().is_some()
 }
 
 // ── ObjC runtime helpers ───────────────────────────────────────────────────
@@ -337,7 +340,8 @@ pub fn main_connection_id() -> Option<u32> {
 ///
 /// Recipe:
 /// 1. `_SLPSGetFrontProcess` → capture current front PSN.
-/// 2. `GetProcessForPID(target_pid)` → target PSN.
+/// 2. `SLSGetWindowOwner + SLSGetConnectionPSN` → target PSN, with
+///    `GetProcessForPID(target_pid)` as an older-system fallback.
 /// 3. Post 248-byte defocus record to front PSN (`bytes[0x8a] = 0x02`).
 /// 4. Post 248-byte focus record to target PSN (`bytes[0x8a] = 0x01`,
 ///    `bytes[0x3c..0x3f]` = `target_wid` little-endian).
@@ -356,11 +360,6 @@ pub fn activate_without_raise(target_pid: pid_t, target_wid: u32) -> bool {
         Some(f) => f,
         None => return false,
     };
-    let get_pid_psn = match get_process_for_pid_fn() {
-        Some(f) => f,
-        None => return false,
-    };
-
     // 8-byte PSN buffers (two UInt32s).
     let mut prev_psn = [0u8; 8];
     let mut target_psn = [0u8; 8];
@@ -370,8 +369,7 @@ pub fn activate_without_raise(target_pid: pid_t, target_wid: u32) -> bool {
         return false;
     }
 
-    let ok_target = unsafe { get_pid_psn(target_pid, target_psn.as_mut_ptr() as *mut c_void) } == 0;
-    if !ok_target {
+    if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
         return false;
     }
 
@@ -465,6 +463,47 @@ pub fn with_foreground_assist(
     body: impl FnOnce() -> anyhow::Result<()>,
 ) -> anyhow::Result<bool> {
     with_menu_shortcut_activation(target_pid, target_wid, body)
+}
+
+/// Activate an exact target window for a global HID keyboard action.
+///
+/// Unlike [`with_menu_shortcut_activation`], this helper must not run `action`
+/// when the private foreground SPI is unavailable: a global HID event has no
+/// pid addressing and would otherwise land in whichever application is
+/// currently frontmost. The short settles keep the target frontmost until
+/// WindowServer has routed both sides of the key chord, then restore the prior
+/// process even when the action fails.
+pub fn with_foreground_hid_activation(
+    target_pid: libc::pid_t,
+    target_wid: u32,
+    action: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let set_front = set_front_process_fn()
+        .ok_or_else(|| anyhow::anyhow!("foreground HID delivery is unavailable"))?;
+
+    let mut prev_psn = [0u8; 8];
+    let prev_ok = get_front_process_fn()
+        .map(|f| unsafe { f(prev_psn.as_mut_ptr() as *mut c_void) } == 0)
+        .unwrap_or(false);
+
+    let mut target_psn = [0u8; 8];
+    if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
+        anyhow::bail!("could not resolve target window for foreground HID delivery");
+    }
+    let activated = unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) };
+    if activated != 0 {
+        anyhow::bail!("WindowServer rejected foreground HID activation");
+    }
+
+    std::thread::sleep(std::time::Duration::from_millis(40));
+    let result = action();
+    std::thread::sleep(std::time::Duration::from_millis(40));
+
+    if prev_ok {
+        unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
+    }
+
+    result
 }
 
 /// Activate `target_pid`'s window `target_wid` for NSMenu key dispatch, run `action`,

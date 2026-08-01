@@ -8,10 +8,11 @@
 //! do not replace the richer platform-owned runtime schemas.
 
 use crate::{
-    ClickInput, ClickOutput, CursorPositionOutput, DesktopActionOutput, DesktopStateOutput,
+    ActionResult, ClickInput, ClipboardReadInput, ClipboardReadOutput, ClipboardWriteInput,
+    ClipboardWriteOutput, CursorAction, CursorPositionOutput, CursorSemantics, DesktopStateOutput,
     DragInput, GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput, HotkeyInput,
-    MoveCursorInput, MoveCursorOutput, Platform, PressKeyInput, SchemaMode, ScreenSizeOutput,
-    ScrollInput, ToolAnnotations, ToolContract, ToolInput, ToolOutput, TypeTextInput,
+    MoveCursorInput, Platform, PressKeyInput, SchemaMode, ScreenSizeOutput, ScrollInput,
+    ToolAnnotations, ToolContract, ToolInput, ToolOutput, TypeTextInput,
 };
 
 const ALL_PLATFORMS: [Platform; 3] = [Platform::Macos, Platform::Windows, Platform::Linux];
@@ -25,10 +26,94 @@ pub fn contracts() -> Vec<ToolContract> {
         click(),
         drag(),
         scroll(),
+        clipboard_read(),
+        clipboard_write(),
         type_text(),
         press_key(),
         hotkey(),
     ]
+}
+
+const Z_INDEX_DESCRIPTION: &str = "Higher values are closer to the front. Null means the provider cannot observe stacking order; callers must not infer an order from array position or treat null as zero.";
+
+// Keep this schema deliberately narrow: platform window records have additive
+// fields and are still converging, while z_index has one portable meaning that
+// consumers need in order to sort safely. This runtime schema intentionally
+// stays outside the typed SDK manifest until that broader shape converges.
+pub(crate) fn list_windows_success_output_schema() -> serde_json::Value {
+    serde_json::json!({
+            "type": "object",
+            "properties": {
+                "windows": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "z_index": {
+                                "type": ["integer", "null"],
+                                "description": Z_INDEX_DESCRIPTION
+                            }
+                        },
+                        "required": ["z_index"],
+                        "additionalProperties": true
+                    }
+                }
+            },
+            "required": ["windows"],
+            "additionalProperties": true
+    })
+}
+
+pub(crate) fn validate_list_windows_output(value: serde_json::Value) -> Result<(), String> {
+    let windows = value
+        .get("windows")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "windows must be an array".to_owned())?;
+    for (index, window) in windows.iter().enumerate() {
+        let z_index = window
+            .get("z_index")
+            .ok_or_else(|| format!("windows[{index}].z_index is required"))?;
+        if !(z_index.is_null() || z_index.is_u64() || z_index.is_i64()) {
+            return Err(format!(
+                "windows[{index}].z_index must be an integer or null"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn clipboard_read() -> ToolContract {
+    let mut contract = contract::<ClipboardReadInput, ClipboardReadOutput>(
+        "clipboard_read",
+        "List available system clipboard types and optionally return privacy-sensitive plain text. Clipboard content is never retained in telemetry.",
+        &["clipboard.read", "clipboard.types"],
+        ToolAnnotations {
+            read_only: true,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        },
+        CursorAction::Observe,
+    );
+    contract.schema_mode = SchemaMode::CanonicalRuntime;
+    contract
+}
+
+fn clipboard_write() -> ToolContract {
+    let mut contract = contract::<ClipboardWriteInput, ClipboardWriteOutput>(
+        "clipboard_write",
+        "Replace the system clipboard with exactly one value: plain text, an image from an absolute local path, or a file URL from an absolute local path. Returns the available types for read-back before paste.",
+        &["clipboard.write", "clipboard.write.text", "clipboard.write.image", "clipboard.write.file_url", "clipboard.types"],
+        ToolAnnotations {
+            read_only: false,
+            destructive: true,
+            idempotent: true,
+            open_world: false,
+        },
+        CursorAction::Text,
+    );
+    contract.schema_mode = SchemaMode::CanonicalRuntime;
+    contract
 }
 
 fn contract<I: ToolInput, O: ToolOutput>(
@@ -36,6 +121,7 @@ fn contract<I: ToolInput, O: ToolOutput>(
     description: &str,
     capabilities: &[&str],
     annotations: ToolAnnotations,
+    cursor_action: CursorAction,
 ) -> ToolContract {
     assert_eq!(name, I::TOOL_NAME, "typed input is bound to the wrong tool");
     ToolContract {
@@ -46,6 +132,7 @@ fn contract<I: ToolInput, O: ToolOutput>(
         capabilities: capabilities.iter().map(|value| (*value).into()).collect(),
         annotations,
         schema_mode: SchemaMode::PortableSubset,
+        cursor_semantics: Some(CursorSemantics::new(cursor_action)),
         input_schema: I::input_schema(),
         success_output_schema: Some(O::output_schema()),
         output_validator: crate::validate_typed_output::<O>,
@@ -63,6 +150,7 @@ fn get_desktop_state() -> ToolContract {
             idempotent: false,
             open_world: false,
         },
+        CursorAction::Observe,
     )
 }
 
@@ -77,6 +165,7 @@ fn get_screen_size() -> ToolContract {
             idempotent: true,
             open_world: false,
         },
+        CursorAction::Observe,
     )
 }
 
@@ -91,11 +180,12 @@ fn get_cursor_position() -> ToolContract {
             idempotent: true,
             open_world: false,
         },
+        CursorAction::Observe,
     )
 }
 
 fn move_cursor() -> ToolContract {
-    contract::<MoveCursorInput, MoveCursorOutput>(
+    contract::<MoveCursorInput, ActionResult>(
         "move_cursor",
         "Move the real OS pointer in get_desktop_state coordinates.",
         &["agent_cursor.move", "input.pointer.move"],
@@ -105,11 +195,12 @@ fn move_cursor() -> ToolContract {
             idempotent: true,
             open_world: false,
         },
+        CursorAction::Navigate,
     )
 }
 
 fn click() -> ToolContract {
-    contract::<ClickInput, ClickOutput>(
+    contract::<ClickInput, ActionResult>(
         "click",
         "Click an absolute point in get_desktop_state coordinates without targeting a window.",
         &[
@@ -123,11 +214,12 @@ fn click() -> ToolContract {
             idempotent: false,
             open_world: true,
         },
+        CursorAction::Click,
     )
 }
 
 fn drag() -> ToolContract {
-    contract::<DragInput, DesktopActionOutput>(
+    contract::<DragInput, ActionResult>(
         "drag",
         "Drag between two absolute points in get_desktop_state coordinates.",
         &["input.pointer.drag"],
@@ -137,11 +229,12 @@ fn drag() -> ToolContract {
             idempotent: false,
             open_world: true,
         },
+        CursorAction::Drag,
     )
 }
 
 fn scroll() -> ToolContract {
-    contract::<ScrollInput, DesktopActionOutput>(
+    contract::<ScrollInput, ActionResult>(
         "scroll",
         "Scroll at an absolute point in get_desktop_state coordinates.",
         &["input.pointer.scroll", "accessibility.element_tokens"],
@@ -151,11 +244,12 @@ fn scroll() -> ToolContract {
             idempotent: false,
             open_world: true,
         },
+        CursorAction::Scroll,
     )
 }
 
 fn type_text() -> ToolContract {
-    contract::<TypeTextInput, DesktopActionOutput>(
+    contract::<TypeTextInput, ActionResult>(
         "type_text",
         "Type text into the current foreground desktop application.",
         &[
@@ -169,11 +263,12 @@ fn type_text() -> ToolContract {
             idempotent: false,
             open_world: true,
         },
+        CursorAction::Text,
     )
 }
 
 fn press_key() -> ToolContract {
-    contract::<PressKeyInput, DesktopActionOutput>(
+    contract::<PressKeyInput, ActionResult>(
         "press_key",
         "Press one key, with optional modifiers, in the foreground desktop application.",
         &["input.keyboard.press", "accessibility.element_tokens"],
@@ -183,11 +278,12 @@ fn press_key() -> ToolContract {
             idempotent: false,
             open_world: true,
         },
+        CursorAction::Key,
     )
 }
 
 fn hotkey() -> ToolContract {
-    contract::<HotkeyInput, DesktopActionOutput>(
+    contract::<HotkeyInput, ActionResult>(
         "hotkey",
         "Press a key chord in the foreground desktop application.",
         &["input.keyboard.hotkey"],
@@ -197,5 +293,6 @@ fn hotkey() -> ToolContract {
             idempotent: false,
             open_world: true,
         },
+        CursorAction::Key,
     )
 }

@@ -28,6 +28,8 @@
             root = ./libs/cua-driver;
             fileset = pkgs.lib.fileset.unions [
               ./libs/cua-driver/rust
+              ./libs/cua-driver/wayland-helper
+              ./libs/cua-driver/compat-fixtures
               ./libs/cua-driver/tests/fixtures/shared/web/index.html
             ];
           };

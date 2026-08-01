@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { spawnSync } from "node:child_process"
+
 import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -45,6 +47,16 @@ const localPackage = join(
 )
 mkdirSync(localPackage, { recursive: true })
 copyFileSync(source, join(localPackage, file))
+const runtime = join(localPackage, "cua_driver_node_runtime.node")
+const runtimeBuild = spawnSync(
+  process.execPath,
+  [join(driverRoot, "scripts", "build-node-runtime.mjs"), "--output", runtime],
+  { stdio: "inherit" },
+)
+if (runtimeBuild.error) throw runtimeBuild.error
+if (runtimeBuild.status !== 0) {
+  throw new Error(`Node runtime build exited with status ${runtimeBuild.status}`)
+}
 writeFileSync(
   join(localPackage, "package.json"),
   `${JSON.stringify(

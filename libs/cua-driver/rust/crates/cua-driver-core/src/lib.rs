@@ -45,16 +45,20 @@ pub fn parent_liveness_stdin_enabled() -> bool {
     embedded_mode() && std::env::var_os(PARENT_LIVENESS_STDIN_ENV).is_some_and(|value| value == "1")
 }
 
+pub mod action_record;
 pub mod authorization;
 pub mod browser;
 pub mod capture_mode;
 pub mod capture_scope;
 pub mod cdp;
+pub mod clipboard;
 pub mod consent;
+pub mod cursor_events;
 pub mod cursor_sampler;
 pub mod daemon;
 pub mod element_cache;
 pub mod element_token;
+pub mod expectation;
 pub mod ffmpeg_install;
 pub mod health_report;
 pub mod image_utils;
@@ -69,6 +73,7 @@ pub mod recording_tools;
 pub mod recording_zoom;
 pub mod server;
 pub mod session;
+pub mod session_authorization;
 pub mod session_manifest;
 pub mod session_tools;
 pub mod socket_io;
@@ -78,6 +83,8 @@ pub mod tool_args;
 pub mod tool_schema;
 pub mod video;
 pub mod video_ffmpeg;
+pub mod window_inspection;
+pub mod window_target;
 
 pub use cua_driver_contract::{CaptureScope, EscalationReason};
 pub use recording::RecordingSession;

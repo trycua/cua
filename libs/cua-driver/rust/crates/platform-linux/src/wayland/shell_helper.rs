@@ -13,6 +13,8 @@
 //!   (the GNOME analogue of the X11 `_GTK_FRAME_EXTENTS` reconstruction).
 //! - `MoveCursor(x,y)` / `ClickPulse(x,y)` / `HideCursor()` — draw the agent
 //!   cursor as a Clutter actor on the compositor stage.
+//! - `SetCursorState(...)` / `SetCursorColor(...)` — keep the compositor cursor
+//!   aligned with the shared semantic theme and active session identity.
 //!
 //! Everything here is **best-effort**: if the extension isn't installed/enabled
 //! the calls return `None` / no-op and callers keep the prior behaviour (no
@@ -33,6 +35,7 @@ const DBUS_DEST: &str = "org.freedesktop.DBus";
 const DBUS_PATH: &str = "/org/freedesktop/DBus";
 const DBUS_IFACE: &str = "org.freedesktop.DBus";
 const BROWSER_HELPER_API_VERSION: u32 = 4;
+const SEMANTIC_CURSOR_API_VERSION: u32 = 8;
 
 #[derive(Debug, Clone)]
 struct ShellWindow {
@@ -42,6 +45,10 @@ struct ShellWindow {
 
 pub fn available() -> bool {
     shell_owner(false).is_some()
+}
+
+pub fn semantic_cursor_available() -> bool {
+    shell_owner_with_min_version(Some(SEMANTIC_CURSOR_API_VERSION)).is_some()
 }
 
 fn gdbus_call(method: &str, args: &[String]) -> Option<String> {
@@ -110,6 +117,10 @@ fn gdbus_call_to(
 /// name closes the race where another process replaces the well-known name
 /// after ownership is checked.
 fn shell_owner(require_browser_api: bool) -> Option<String> {
+    shell_owner_with_min_version(require_browser_api.then_some(BROWSER_HELPER_API_VERSION))
+}
+
+fn shell_owner_with_min_version(min_version: Option<u32>) -> Option<String> {
     let owner_raw = gdbus_call_to(
         DBUS_DEST,
         DBUS_PATH,
@@ -142,7 +153,7 @@ fn shell_owner(require_browser_api: bool) -> Option<String> {
         return None;
     }
 
-    if require_browser_api {
+    if let Some(min_version) = min_version {
         let version_raw = gdbus_call_to(
             &owner,
             PATH,
@@ -150,7 +161,7 @@ fn shell_owner(require_browser_api: bool) -> Option<String> {
             &[],
             Duration::from_millis(800),
         )?;
-        if parse_first_u32(&version_raw)? < BROWSER_HELPER_API_VERSION {
+        if parse_first_u32(&version_raw)? < min_version {
             return None;
         }
     }
@@ -283,14 +294,20 @@ fn wait_timeout(mut child: std::process::Child, dur: Duration) -> Option<std::pr
     })
 }
 
-/// Screen origin of the Wayland surface buffer backing `pid`.
+/// Screen origin of the compositor frame backing `pid`.
 ///
-/// GTK's AT-SPI `CoordType::Window` includes client-side shadow extents, while
-/// Mutter's frame rectangle excludes them. The buffer origin preserves those
-/// extents so accessibility frames line up with pixels. Older helpers omit the
-/// buffer fields and fall back to the frame origin.
+/// `screenshot_window_dispatch` crops the Shell stage to this same frame
+/// rectangle, and GTK's AT-SPI `CoordType::Window` coordinates are relative to
+/// that frame. Using Mutter's larger surface-buffer rectangle here shifts
+/// elements up and left by the client-side shadow extents whenever the window
+/// is floating, so pixel actions derived from the returned screenshot miss
+/// their target.
 pub fn window_origin_for_pid(pid: u32) -> Option<(i32, i32)> {
     let raw = gdbus_call("GetRects", &[])?;
+    parse_window_origin(&raw, pid)
+}
+
+fn parse_window_origin(raw: &str, pid: u32) -> Option<(i32, i32)> {
     // gdbus prints a GVariant tuple like `('[{"pid":..,"x":..}]',)`. Pull the
     // JSON array out robustly (first '[' .. last ']') rather than parsing the
     // GVariant wrapper, so an apostrophe in a window title can't break it.
@@ -300,16 +317,8 @@ pub fn window_origin_for_pid(pid: u32) -> Option<(i32, i32)> {
     let arr: Vec<serde_json::Value> = serde_json::from_str(json).ok()?;
     for w in &arr {
         if w.get("pid").and_then(|p| p.as_u64()) == Some(pid as u64) {
-            let x = w
-                .get("buffer_x")
-                .and_then(serde_json::Value::as_i64)
-                .or_else(|| w.get("x").and_then(serde_json::Value::as_i64))?
-                as i32;
-            let y = w
-                .get("buffer_y")
-                .and_then(serde_json::Value::as_i64)
-                .or_else(|| w.get("y").and_then(serde_json::Value::as_i64))?
-                as i32;
+            let x = w.get("x").and_then(serde_json::Value::as_i64)? as i32;
+            let y = w.get("y").and_then(serde_json::Value::as_i64)? as i32;
             return Some((x, y));
         }
     }
@@ -525,6 +534,32 @@ pub fn click_pulse(x: i32, y: i32) {
     let _ = gdbus_call("ClickPulse", &[x.to_string(), y.to_string()]);
 }
 
+/// Set the stable session-specific fill color for the compositor cursor.
+pub fn set_cursor_color(fill_color: &str) {
+    let _ = gdbus_call("SetCursorColor", &[fill_color.to_owned()]);
+}
+
+/// Update the compositor-owned cursor's semantic action state.
+///
+/// Callers gate this method on helper v8 so an older helper cannot silently
+/// render the retired cursor artwork.
+pub fn set_cursor_state(action: &str, delivery: &str, target: &str, active: bool) {
+    let _ = gdbus_call(
+        "SetCursorState",
+        &[
+            action.to_owned(),
+            delivery.to_owned(),
+            target.to_owned(),
+            active.to_string(),
+        ],
+    );
+}
+
+/// Set the renderer-visible public session label for the compositor cursor.
+pub fn set_session_label(label: &str) {
+    let _ = gdbus_call("SetSessionLabel", &[label.to_owned()]);
+}
+
 /// Hide the agent cursor.
 pub fn hide_cursor() {
     let _ = gdbus_call("HideCursor", &[]);
@@ -533,6 +568,11 @@ pub fn hide_cursor() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const EXTENSION_SOURCE: &str =
+        include_str!("../../../../../wayland-helper/winrects@cua/extension.js");
+    const EXTENSION_METADATA: &str =
+        include_str!("../../../../../wayland-helper/winrects@cua/metadata.json");
 
     #[test]
     fn parses_and_filters_shell_windows() {
@@ -546,6 +586,13 @@ mod tests {
         assert_eq!((windows[0].width, windows[0].height), (958, 736));
         assert!(windows[0].is_on_screen);
         assert_eq!(windows[0].z_index, Some(2));
+    }
+
+    #[test]
+    fn accessibility_origin_matches_the_frame_cropped_screenshot() {
+        let raw = r#"('[{"id":46,"pid":6079,"title":"Floating GTK","x":14,"y":12,"w":560,"h":736,"buffer_x":0,"buffer_y":0}]',)"#;
+
+        assert_eq!(parse_window_origin(raw, 6079), Some((14, 12)));
     }
 
     #[test]
@@ -577,5 +624,48 @@ mod tests {
         assert!(!windows[0].focused);
         assert!(windows[1].focused);
         assert_eq!(windows[1].info.xid, 47);
+    }
+
+    #[test]
+    fn bundled_helper_v8_uses_host_owned_modifier_badge_chips() {
+        assert!(EXTENSION_SOURCE.contains("GetVersion()"));
+        assert!(EXTENSION_SOURCE.contains("return 8;"));
+        assert!(EXTENSION_SOURCE.contains("SetCursorState"));
+        assert!(EXTENSION_SOURCE.contains("SetCursorColor"));
+        assert!(EXTENSION_SOURCE.contains("SetSessionLabel"));
+        assert!(EXTENSION_SOURCE.contains("const DISPLAY_SIZE = 42;"));
+        assert!(EXTENSION_SOURCE.contains("const GLOW_PADDING = 24;"));
+        assert!(EXTENSION_SOURCE.contains("function drawCursorGlowShape"));
+        assert!(EXTENSION_SOURCE.contains("function glowPath"));
+        assert!(EXTENSION_SOURCE.contains("strokePath(cr, width, alpha, fillColor)"));
+        assert!(EXTENSION_SOURCE.contains("width + 1.5"));
+        assert!(EXTENSION_SOURCE.contains("width - 1"));
+        assert!(EXTENSION_SOURCE.contains("createGlowSurface(this._fillColor)"));
+        assert!(EXTENSION_SOURCE.contains("cr.translate(-GLOW_PADDING, -GLOW_PADDING);"));
+        assert!(EXTENSION_SOURCE.contains("function drawBadgeChip"));
+        assert!(EXTENSION_SOURCE.contains("this._badge.add_child(this._badgeDot)"));
+        assert!(EXTENSION_SOURCE.contains("this._badge.add_child(this._badgeLabel)"));
+        assert!(EXTENSION_SOURCE.contains("this._deliveryChip"));
+        assert!(EXTENSION_SOURCE.contains("this._targetChip"));
+        assert!(EXTENSION_SOURCE.contains("const badgeAlpha = Math.max(labelAlpha, chipAlpha)"));
+        assert!(EXTENSION_SOURCE.contains("this._badgeLabel.hide()"));
+        assert!(!EXTENSION_SOURCE.contains("this._badgeIdentity"));
+        assert!(!EXTENSION_SOURCE.contains("function drawModifiers"));
+        let metadata: serde_json::Value =
+            serde_json::from_str(EXTENSION_METADATA).expect("valid bundled helper metadata");
+        assert_eq!(metadata["version"], 8);
+
+        for action in [
+            "idle", "observe", "click", "drag", "scroll", "text", "key", "navigate", "app",
+            "transfer", "record", "system",
+        ] {
+            assert!(
+                EXTENSION_SOURCE.contains(&format!("'{action}'")),
+                "missing semantic cursor state {action}"
+            );
+        }
+
+        assert!(!EXTENSION_SOURCE.contains("const VERTS"));
+        assert!(!EXTENSION_SOURCE.contains("setSourceRGBA(0.10, 0.75, 1.00"));
     }
 }

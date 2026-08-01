@@ -254,19 +254,18 @@ pub fn format_ref(snapshot_id: u64, index: u32) -> String {
 
 pub struct BrowserStore {
     inner: Mutex<HashMap<String, SessionTargets>>,
-    next_id: AtomicU64,
 }
 
 impl BrowserStore {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(HashMap::new()),
-            next_id: AtomicU64::new(1),
         }
     }
 
     fn next(&self) -> u64 {
-        self.next_id.fetch_add(1, Ordering::Relaxed)
+        static NEXT_BROWSER_SNAPSHOT_ID: AtomicU64 = AtomicU64::new(1);
+        NEXT_BROWSER_SNAPSHOT_ID.fetch_add(1, Ordering::Relaxed)
     }
 
     /// Mint a target id and insert the record under `session`.
@@ -579,6 +578,17 @@ mod tests {
         assert_eq!(err.code, BrowserRefusalCode::BrowserBindingStale);
         let err = store.get_target("sess-b", &tid).unwrap_err();
         assert_eq!(err.code, BrowserRefusalCode::BrowserBindingStale);
+    }
+
+    #[test]
+    fn page_refs_do_not_alias_across_runtime_owned_stores() {
+        let (_store_a, _target_a, _tab_a, ref_a) = store_with_ref();
+        let (store_b, target_b, tab_b, ref_b) = store_with_ref();
+        assert_ne!(ref_a, ref_b);
+        let error = store_b
+            .resolve_ref("sess-a", &target_b, &tab_b, &ref_a)
+            .unwrap_err();
+        assert_eq!(error.code, BrowserRefusalCode::BrowserRefStale);
     }
 
     #[test]

@@ -374,6 +374,16 @@ def validate_pr_attribution(
         )
         return login or None
 
+    commit_shas = {str(item.get("sha") or "") for item in commits}
+    credited_coauthors: set[str] = set()
+    for item in commits:
+        message = str((item.get("commit") or {}).get("message") or "")
+        for match in COAUTHOR_RE.finditer(message):
+            email = match.group("email").strip().lower()
+            login = resolved_login(match.group("name"), email)
+            if login and email not in ignored:
+                credited_coauthors.add(login.lower())
+
     def record_unresolved(
         *, email: str, name: str, sha: str, kind: str, references: Sequence[int]
     ) -> None:
@@ -405,16 +415,38 @@ def validate_pr_attribution(
         committer = commit.get("committer") or {}
         committer_email = str(committer.get("email") or "").strip().lower()
         linked_committer = str((item.get("committer") or {}).get("login") or "").strip()
+        parents = [str(parent.get("sha") or "") for parent in item.get("parents") or []]
+        is_base_sync_merge = len(parents) > 1 and any(
+            parent and parent not in commit_shas for parent in parents[1:]
+        )
         preserved_unlinked_author = (
             not author_login
             and bool(pull_login)
             and linked_committer.lower() == pull_login.lower()
             and author_email != committer_email
         )
+        distinct_external_author = bool(author_login) and (
+            author_login.lower() != pull_login.lower()
+            and not is_bot(author_login, bots)
+            and author_login.lower() not in internal
+            and author_login.lower() not in opt_out
+        )
         # An ordinary direct PR author is credited from pull-request metadata even
         # when their commit email is private. A distinct unlinked author committed
         # by the landing PR author is a strong cherry-pick/preservation signal.
-        if preserved_unlinked_author and author_email not in ignored:
+        #
+        # A base synchronization merge imports a parent outside the PR commit set,
+        # so it is not salvaged contributor work. Its distinct author must still
+        # have explicit coauthor credit elsewhere in the PR.
+        if is_base_sync_merge and distinct_external_author:
+            if author_login.lower() not in credited_coauthors:
+                trailer = f"Co-authored-by: {author_name} <{author_email}>"
+                early_errors.append(
+                    f"base synchronization merge {sha} is authored by @{author_login}, "
+                    "distinct from the landing PR author, but that contribution is not "
+                    f"credited; add `{trailer}` to a commit in this PR"
+                )
+        elif preserved_unlinked_author and author_email not in ignored:
             record_unresolved(
                 email=author_email,
                 name=author_name,
@@ -422,12 +454,7 @@ def validate_pr_attribution(
                 kind="commit author",
                 references=references,
             )
-        elif author_login and (
-            author_login.lower() != pull_login.lower()
-            and not is_bot(author_login, bots)
-            and author_login.lower() not in internal
-            and author_login.lower() not in opt_out
-        ):
+        elif distinct_external_author:
             if not references:
                 early_errors.append(
                     f"commit {sha} is authored by @{author_login}, distinct from landing "
@@ -633,8 +660,9 @@ def merge_contributors(items: Iterable[Mapping[str, Any]]) -> list[dict[str, Any
     by_login: dict[str, dict[str, Any]] = {}
     for item in items:
         login = str(item["login"])
+        key = login.lower()
         existing = by_login.setdefault(
-            login,
+            key,
             {"login": login, "roles": set(), "external": bool(item.get("external", True))},
         )
         existing["roles"].add(str(item["role"]))
@@ -933,21 +961,30 @@ def build_manifest(
 
 
 def _thanks(change: Mapping[str, Any]) -> str:
-    external = [
-        item
-        for item in change.get("contributors", [])
-        if item.get("external") and item.get("role") in {"author", "coauthor"}
-    ]
-    reporters = [
-        item
-        for item in change.get("contributors", [])
-        if item.get("external") and item.get("role") == "reporter"
-    ]
+    external: dict[str, Mapping[str, Any]] = {}
+    reporters: dict[str, Mapping[str, Any]] = {}
+    for item in change.get("contributors", []):
+        if not item.get("external"):
+            continue
+        login = str(item["login"])
+        key = login.lower()
+        if item.get("role") in {"author", "coauthor"}:
+            external.setdefault(key, item)
+        elif item.get("role") == "reporter":
+            reporters.setdefault(key, item)
+    for key in external:
+        reporters.pop(key, None)
+
     parts: list[str] = []
     if external:
-        parts.append("Thanks " + ", ".join(f"@{item['login']}" for item in external))
+        parts.append(
+            "Thanks " + ", ".join(f"@{item['login']}" for item in external.values())
+        )
     if reporters:
-        parts.append("reported by " + ", ".join(f"@{item['login']}" for item in reporters))
+        parts.append(
+            "reported by "
+            + ", ".join(f"@{item['login']}" for item in reporters.values())
+        )
     return "; ".join(parts)
 
 

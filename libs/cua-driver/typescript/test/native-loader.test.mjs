@@ -53,7 +53,7 @@ const server = net.createServer(socket => {
     const request = JSON.parse(buffer.split("\\n", 1)[0]);
     const result = request.method === "metadata" ? {
       driver_version: "0.10.0",
-      contract_version: "0.2.0",
+      contract_version: "0.5.0",
       tools_list_schema_version: "1",
       capability_version: "1",
       mcp_protocol_version: "2025-06-18",
@@ -79,7 +79,7 @@ process.stdin.on("end", () => server.close(() => process.exit(0)));
       const sdk = await import("@trycua/cua-driver")
       const driver = sdk.CuaDriver.connect(connection.socketPath)
       assert.equal(driver.socketPath(), connection.socketPath)
-      assert.deepEqual(JSON.parse(driver.listToolsJson()), {
+      assert.deepEqual(JSON.parse(await driver.listToolsJson()), {
         tools: [{ name: "embedded_fixture" }],
       })
       driver.uniffiDestroy()
@@ -107,12 +107,14 @@ test(
         if (message.ready) resolve(null)
       })
     })
-    const requestPromise = readyPromise.then(
+    const requests = []
+    const requestsPromise = readyPromise.then(
       () =>
         new Promise((resolve, reject) => {
           fixture.on("error", reject)
           fixture.on("message", (message) => {
-            if (message.request) resolve(message.request)
+            if (message.request) requests.push(message.request)
+            if (requests.length === 2) resolve(requests)
           })
         }),
     )
@@ -121,7 +123,18 @@ test(
       await readyPromise
       assert.equal(existsSync(socketPath), true)
       const sdk = await import("@trycua/cua-driver")
-      const { CuaDriver, GetDesktopStateInput } = sdk
+      const {
+        ActionEffect,
+        ActionRoute,
+        ClickButton,
+        ClickInput,
+        CuaDriver,
+        DesktopScope,
+        StatePredicate,
+        VerificationStatus,
+        VerifyStateInput,
+        WindowPredicate,
+      } = sdk
       assert.equal("StdioMcpTransport" in sdk, false)
       await assert.rejects(
         import("@trycua/cua-driver/sdk"),
@@ -147,26 +160,92 @@ test(
         "typeText",
         "pressKey",
         "hotkey",
+        "verifyState",
       ]
       assert.equal(
         expectedMethods.every((name) => typeof driver[name] === "function"),
         true,
       )
-      const result = driver.getDesktopState(
-        GetDesktopStateInput.new({ session: "node-run" }),
+      const verificationResult = await driver.verifyState(
+        VerifyStateInput.new({
+          pid: 123n,
+          windowId: 456n,
+          expect: [
+            StatePredicate.new({
+              window: WindowPredicate.new({ exists: true }),
+            }),
+          ],
+          session: "node-run",
+          timeoutMs: 0n,
+          stableSamples: 1n,
+          includeScreenshot: true,
+        }),
       )
-      const request = await requestPromise
+      const actionResult = await driver.click(
+        ClickInput.new({
+          x: 12,
+          y: 34,
+          scope: DesktopScope.Desktop,
+          session: "node-run",
+          button: ClickButton.Left,
+          count: 1,
+        }),
+      )
+      await requestsPromise
       driver.uniffiDestroy()
 
-      assert.equal(result.text, "node ffi")
-      assert.equal(result.images[0].mimeType, "image/png")
-      assert.equal(result.verified, true)
-      assert.equal(request.name, "get_desktop_state")
-      assert.deepEqual(request.args, { session: "node-run" })
-      assert.equal(request.client_kind, "typescript_sdk")
+      assert.equal(verificationResult.text, "node ffi")
+      assert.equal(verificationResult.images[0].mimeType, "image/png")
+      assert.equal(verificationResult.action, undefined)
+      assert.equal(verificationResult.verification.status, VerificationStatus.Satisfied)
+      assert.equal(actionResult.verification, undefined)
+      assert.equal(actionResult.action.effect, ActionEffect.Unverifiable)
+      assert.equal(actionResult.action.route, ActionRoute.GlobalInput)
+      assert.equal("verified" in actionResult, false)
+      assert.equal(requests[0].name, "verify_state")
+      assert.deepEqual(requests[0].args, {
+        pid: 123,
+        window_id: 456,
+        expect: [{ window: { exists: true } }],
+        session: "node-run",
+        timeout_ms: 0,
+        stable_samples: 1,
+        include_screenshot: true,
+      })
+      assert.equal(requests[0].client_kind, "typescript_sdk")
+      assert.equal(requests[1].name, "click")
+      assert.deepEqual(requests[1].args, {
+        x: 12,
+        y: 34,
+        scope: "desktop",
+        session: "node-run",
+        button: "left",
+        count: 1,
+      })
     } finally {
       fixture.kill()
       rmSync(directory, { recursive: true, force: true })
+    }
+  },
+)
+
+test(
+  "generated Node SDK can own the runtime in process",
+  { skip: !existsSync(library), timeout: 10_000 },
+  async () => {
+    const { CuaDriver, DriverExecutionMode } = await import("@trycua/cua-driver")
+    const driver = CuaDriver.create(undefined)
+    try {
+      assert.equal(driver.executionMode(), DriverExecutionMode.Embedded)
+      assert.equal(driver.socketPath(), "")
+      assert.equal(driver.isAvailable(), true)
+      const metadata = await driver.metadata()
+      assert.equal(metadata.embedded, true)
+      assert.equal(metadata.pid, process.pid)
+      await driver.shutdown()
+      assert.equal(driver.isAvailable(), false)
+    } finally {
+      driver.uniffiDestroy()
     }
   },
 )

@@ -61,6 +61,42 @@ pub fn select_nearest_container(element_ptr: usize) -> Option<String> {
     None
 }
 
+/// Read the selection state of the nearest collection-like element without
+/// mutating it. This is used to verify a coordinate fallback when AppKit
+/// exposes `AXSelected` but refuses to set it directly (notably Finder icon
+/// views).
+pub fn nearest_container_selection_state(element_ptr: usize) -> Option<(String, bool)> {
+    let mut current = element_ptr as AXUIElementRef;
+    let mut owns_current = false;
+
+    for _ in 0..MAX_SELECTION_ANCESTORS {
+        let role = unsafe { copy_string_attr(current, "AXRole") }.unwrap_or_default();
+        if is_selectable_container_role(&role) {
+            if let Some(selected) = unsafe { copy_bool_attr(current, "AXSelected") } {
+                if owns_current {
+                    unsafe { CFRelease(current as CFTypeRef) };
+                }
+                return Some((role, selected));
+            }
+        }
+
+        let parent = unsafe { copy_element_attr(current, "AXParent") };
+        if owns_current {
+            unsafe { CFRelease(current as CFTypeRef) };
+        }
+        let Some(parent) = parent else {
+            return None;
+        };
+        current = parent;
+        owns_current = true;
+    }
+
+    if owns_current {
+        unsafe { CFRelease(current as CFTypeRef) };
+    }
+    None
+}
+
 fn ensure_ax_enabled(enabled: Option<bool>, action: &str) -> anyhow::Result<()> {
     if enabled == Some(false) {
         anyhow::bail!(

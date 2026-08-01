@@ -60,9 +60,11 @@ fn def() -> &'static ToolDef {
             the requested WindowServer bounds. `px_frame_mismatch` or \
             `px_capture_unavailable` omits an unprovable screenshot/pixel frame \
             instead of guessing a transform; the truthful AX payload remains available.\n\n\
-            Optional `query` filters the tree_markdown to matching lines plus their ancestor \
-            chain (case-insensitive substring). The element_index values are unchanged — \
-            filtering only trims the rendered Markdown.\n\n\
+            Optional `query` projects both tree_markdown and structured `elements` to \
+            matching lines plus their ancestor chain (case-insensitive substring). The \
+            element_index values are unchanged, the complete snapshot remains actionable, \
+            and `element_count` continues to report its total size; \
+            `filtered_element_count` reports the projected response size.\n\n\
             Optional `max_elements` / `max_depth` bound the AX walk to mitigate \
             context-window blow-up on Electron / Obsidian / large web apps that \
             produce 10k+ element trees. When applied, BOTH the markdown \
@@ -75,7 +77,7 @@ fn def() -> &'static ToolDef {
                 "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
                 "pid": { "type": "integer", "description": "Target process ID." },
                 "window_id": { "type": "integer", "description": "Target window ID from list_windows." },
-                "query": { "type": "string", "description": "Case-insensitive filter for tree_markdown." },
+                "query": { "type": "string", "description": "Case-insensitive filter for tree_markdown and structured elements. Returns matching actionable rows plus their actionable ancestors without renumbering element_index values." },
                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
                 "include_screenshot": {
                     "type": "boolean",
@@ -506,6 +508,8 @@ impl Tool for GetWindowStateTool {
             (None, Some(r)) if scope_matched => build_elements_array(&r.nodes),
             _ => Vec::new(),
         };
+        let elements_json = project_elements_for_query(elements_json, query.as_deref(), &tree_md);
+        let filtered_element_count = elements_json.len();
         // The structured array intentionally contains only actionable nodes,
         // and AX child reads can fail independently of the element/depth caps.
         // Until the walker exposes a proof over the projected search domain,
@@ -524,6 +528,9 @@ impl Tool for GetWindowStateTool {
                 Issue #22865: use `max_elements` / `max_depth` to bound the \
                 AX walk on apps with very large trees."
         });
+        if query.is_some() {
+            structured["filtered_element_count"] = serde_json::json!(filtered_element_count);
+        }
         // Surface 6: an opaque snapshot identifier consumers can log
         // alongside the per-element tokens for debug correlation. Same value
         // embedded in every `element_token` emitted in `elements[]` above.
@@ -847,6 +854,39 @@ pub(crate) fn build_elements_array(nodes: &[crate::ax::tree::AXNode]) -> Vec<ser
     out
 }
 
+/// Keep the structured response aligned with a query-filtered markdown tree.
+///
+/// The AX walker deliberately keeps the complete node/cache snapshot so the
+/// original element indices remain valid. The rendered markdown already holds
+/// the exact matching rows and ancestor chain, so use its indices as the
+/// projection source of truth instead of duplicating query matching over the
+/// structured fields.
+fn project_elements_for_query(
+    mut elements: Vec<serde_json::Value>,
+    query: Option<&str>,
+    filtered_markdown: &str,
+) -> Vec<serde_json::Value> {
+    if query.is_none() {
+        return elements;
+    }
+
+    let visible_indices: std::collections::HashSet<u64> = filtered_markdown
+        .lines()
+        .filter_map(|line| {
+            let rendered = line.trim_start().strip_prefix("- [")?;
+            let (index, _) = rendered.split_once(']')?;
+            index.parse().ok()
+        })
+        .collect();
+    elements.retain(|entry| {
+        entry
+            .get("element_index")
+            .and_then(serde_json::Value::as_u64)
+            .is_some_and(|index| visible_indices.contains(&index))
+    });
+    elements
+}
+
 #[cfg(test)]
 mod window_scope_contract_tests {
     use super::*;
@@ -1045,6 +1085,62 @@ mod tests {
             vec![0, 1, 2],
             "ordering must match DFS / element_index assignment"
         );
+    }
+
+    #[test]
+    fn query_projection_keeps_only_rendered_actionable_rows() {
+        let nodes = vec![
+            node(Some(0), "AXWindow", Some("Document"), 0, None, None),
+            node(Some(1), "AXMenuItem", Some("Window"), 1, Some(0), None),
+            node(
+                Some(2),
+                "AXMenuItem",
+                Some("Move & Resize"),
+                2,
+                Some(1),
+                None,
+            ),
+            node(Some(3), "AXMenuItem", Some("Left"), 3, Some(2), None),
+            node(Some(4), "AXButton", Some("Unrelated"), 1, Some(0), None),
+        ];
+        let elements = build_elements_array(&nodes);
+        let filtered_markdown = concat!(
+            "- [0] AXWindow \"Document\"\n",
+            "  - [1] AXMenuItem \"Window\"\n",
+            "    - [2] AXMenuItem \"Move & Resize\"\n",
+            "      - [3] AXMenuItem \"Left\"\n",
+        );
+
+        let projected = project_elements_for_query(elements, Some("Left"), filtered_markdown);
+        let indices: Vec<u64> = projected
+            .iter()
+            .map(|entry| entry["element_index"].as_u64().unwrap())
+            .collect();
+
+        assert_eq!(indices, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn query_projection_returns_no_elements_when_markdown_has_no_match() {
+        let nodes = vec![node(Some(0), "AXButton", Some("Unrelated"), 0, None, None)];
+        let elements = build_elements_array(&nodes);
+
+        let projected = project_elements_for_query(elements, Some("zoomLeft"), "");
+
+        assert!(projected.is_empty());
+    }
+
+    #[test]
+    fn unfiltered_projection_preserves_every_element() {
+        let nodes = vec![
+            node(Some(0), "AXButton", Some("One"), 0, None, None),
+            node(Some(1), "AXButton", Some("Two"), 0, None, None),
+        ];
+        let elements = build_elements_array(&nodes);
+
+        let projected = project_elements_for_query(elements, None, "");
+
+        assert_eq!(projected.len(), 2);
     }
 
     #[test]

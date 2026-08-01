@@ -263,6 +263,52 @@ pub struct CursorPositionOutput {
 
 impl ToolOutput for CursorPositionOutput {}
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+pub struct ClipboardReadOutput {
+    pub supported: bool,
+    pub types: Vec<String>,
+    #[schemars(required, schema_with = "nullable_string_schema")]
+    pub text: Option<String>,
+    pub privacy_sensitive: bool,
+    pub content_redacted_from_telemetry: bool,
+}
+
+impl ToolOutput for ClipboardReadOutput {
+    fn validate(&self) -> Result<(), String> {
+        if !self.supported {
+            return Err("successful clipboard reads must be supported".into());
+        }
+        if !self.privacy_sensitive || !self.content_redacted_from_telemetry {
+            return Err("clipboard privacy metadata must remain enabled".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+pub struct ClipboardWriteOutput {
+    pub supported: bool,
+    pub written_type: String,
+    pub types: Vec<String>,
+    pub privacy_sensitive: bool,
+    pub content_redacted_from_telemetry: bool,
+}
+
+impl ToolOutput for ClipboardWriteOutput {
+    fn validate(&self) -> Result<(), String> {
+        if !self.supported {
+            return Err("successful clipboard writes must be supported".into());
+        }
+        if !matches!(self.written_type.as_str(), "text" | "image" | "file_url") {
+            return Err("written_type must be text, image, or file_url".into());
+        }
+        if !self.privacy_sensitive || !self.content_redacted_from_telemetry {
+            return Err("clipboard privacy metadata must remain enabled".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
 #[serde(rename_all = "snake_case")]
 pub enum ActionEffect {

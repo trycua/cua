@@ -51,6 +51,7 @@ pub mod browser;
 pub mod capture_mode;
 pub mod capture_scope;
 pub mod cdp;
+pub mod clipboard;
 pub mod consent;
 pub mod cursor_events;
 pub mod cursor_sampler;

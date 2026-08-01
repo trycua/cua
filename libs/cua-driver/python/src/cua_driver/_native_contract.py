@@ -1700,6 +1700,242 @@ class _UniffiFfiConverterTypeClickInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeClickButton.write(value.button, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.count, buf)
 
+class _UniffiFfiConverterBoolean:
+    @classmethod
+    def check_lower(cls, value):
+        return not not value
+
+    @classmethod
+    def lower(cls, value):
+        return 1 if value else 0
+
+    @staticmethod
+    def lift(value):
+        return value != 0
+
+    @classmethod
+    def read(cls, buf):
+        return cls.lift(buf.read_u8())
+
+    @classmethod
+    def write(cls, value, buf):
+        buf.write_u8(value)
+
+@dataclass
+class ClipboardReadInput:
+    def __init__(self, *, include_text:bool, session:typing.Optional[str]):
+        self.include_text = include_text
+        self.session = session
+
+
+
+
+    def __str__(self):
+        return "ClipboardReadInput(include_text={}, session={})".format(self.include_text, self.session)
+    def __eq__(self, other):
+        if self.include_text != other.include_text:
+            return False
+        if self.session != other.session:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeClipboardReadInput(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return ClipboardReadInput(
+            include_text=_UniffiFfiConverterBoolean.read(buf),
+            session=_UniffiFfiConverterOptionalString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterBoolean.check_lower(value.include_text)
+        _UniffiFfiConverterOptionalString.check_lower(value.session)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterBoolean.write(value.include_text, buf)
+        _UniffiFfiConverterOptionalString.write(value.session, buf)
+
+class _UniffiFfiConverterSequenceString(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterString.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterString.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterString.read(buf) for i in range(count)
+        ]
+
+@dataclass
+class ClipboardReadOutput:
+    def __init__(self, *, supported:bool, types:typing.List[str], text:typing.Optional[str], privacy_sensitive:bool, content_redacted_from_telemetry:bool):
+        self.supported = supported
+        self.types = types
+        self.text = text
+        self.privacy_sensitive = privacy_sensitive
+        self.content_redacted_from_telemetry = content_redacted_from_telemetry
+
+
+
+
+    def __str__(self):
+        return "ClipboardReadOutput(supported={}, types={}, text={}, privacy_sensitive={}, content_redacted_from_telemetry={})".format(self.supported, self.types, self.text, self.privacy_sensitive, self.content_redacted_from_telemetry)
+    def __eq__(self, other):
+        if self.supported != other.supported:
+            return False
+        if self.types != other.types:
+            return False
+        if self.text != other.text:
+            return False
+        if self.privacy_sensitive != other.privacy_sensitive:
+            return False
+        if self.content_redacted_from_telemetry != other.content_redacted_from_telemetry:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeClipboardReadOutput(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return ClipboardReadOutput(
+            supported=_UniffiFfiConverterBoolean.read(buf),
+            types=_UniffiFfiConverterSequenceString.read(buf),
+            text=_UniffiFfiConverterOptionalString.read(buf),
+            privacy_sensitive=_UniffiFfiConverterBoolean.read(buf),
+            content_redacted_from_telemetry=_UniffiFfiConverterBoolean.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterBoolean.check_lower(value.supported)
+        _UniffiFfiConverterSequenceString.check_lower(value.types)
+        _UniffiFfiConverterOptionalString.check_lower(value.text)
+        _UniffiFfiConverterBoolean.check_lower(value.privacy_sensitive)
+        _UniffiFfiConverterBoolean.check_lower(value.content_redacted_from_telemetry)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterBoolean.write(value.supported, buf)
+        _UniffiFfiConverterSequenceString.write(value.types, buf)
+        _UniffiFfiConverterOptionalString.write(value.text, buf)
+        _UniffiFfiConverterBoolean.write(value.privacy_sensitive, buf)
+        _UniffiFfiConverterBoolean.write(value.content_redacted_from_telemetry, buf)
+
+@dataclass
+class ClipboardWriteInput:
+    def __init__(self, *, text:typing.Optional[str], image_path:typing.Optional[str], file_path:typing.Optional[str], session:typing.Optional[str]):
+        self.text = text
+        self.image_path = image_path
+        self.file_path = file_path
+        self.session = session
+
+
+
+
+    def __str__(self):
+        return "ClipboardWriteInput(text={}, image_path={}, file_path={}, session={})".format(self.text, self.image_path, self.file_path, self.session)
+    def __eq__(self, other):
+        if self.text != other.text:
+            return False
+        if self.image_path != other.image_path:
+            return False
+        if self.file_path != other.file_path:
+            return False
+        if self.session != other.session:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeClipboardWriteInput(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return ClipboardWriteInput(
+            text=_UniffiFfiConverterOptionalString.read(buf),
+            image_path=_UniffiFfiConverterOptionalString.read(buf),
+            file_path=_UniffiFfiConverterOptionalString.read(buf),
+            session=_UniffiFfiConverterOptionalString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterOptionalString.check_lower(value.text)
+        _UniffiFfiConverterOptionalString.check_lower(value.image_path)
+        _UniffiFfiConverterOptionalString.check_lower(value.file_path)
+        _UniffiFfiConverterOptionalString.check_lower(value.session)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterOptionalString.write(value.text, buf)
+        _UniffiFfiConverterOptionalString.write(value.image_path, buf)
+        _UniffiFfiConverterOptionalString.write(value.file_path, buf)
+        _UniffiFfiConverterOptionalString.write(value.session, buf)
+
+@dataclass
+class ClipboardWriteOutput:
+    def __init__(self, *, supported:bool, written_type:str, types:typing.List[str], privacy_sensitive:bool, content_redacted_from_telemetry:bool):
+        self.supported = supported
+        self.written_type = written_type
+        self.types = types
+        self.privacy_sensitive = privacy_sensitive
+        self.content_redacted_from_telemetry = content_redacted_from_telemetry
+
+
+
+
+    def __str__(self):
+        return "ClipboardWriteOutput(supported={}, written_type={}, types={}, privacy_sensitive={}, content_redacted_from_telemetry={})".format(self.supported, self.written_type, self.types, self.privacy_sensitive, self.content_redacted_from_telemetry)
+    def __eq__(self, other):
+        if self.supported != other.supported:
+            return False
+        if self.written_type != other.written_type:
+            return False
+        if self.types != other.types:
+            return False
+        if self.privacy_sensitive != other.privacy_sensitive:
+            return False
+        if self.content_redacted_from_telemetry != other.content_redacted_from_telemetry:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeClipboardWriteOutput(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return ClipboardWriteOutput(
+            supported=_UniffiFfiConverterBoolean.read(buf),
+            written_type=_UniffiFfiConverterString.read(buf),
+            types=_UniffiFfiConverterSequenceString.read(buf),
+            privacy_sensitive=_UniffiFfiConverterBoolean.read(buf),
+            content_redacted_from_telemetry=_UniffiFfiConverterBoolean.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterBoolean.check_lower(value.supported)
+        _UniffiFfiConverterString.check_lower(value.written_type)
+        _UniffiFfiConverterSequenceString.check_lower(value.types)
+        _UniffiFfiConverterBoolean.check_lower(value.privacy_sensitive)
+        _UniffiFfiConverterBoolean.check_lower(value.content_redacted_from_telemetry)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterBoolean.write(value.supported, buf)
+        _UniffiFfiConverterString.write(value.written_type, buf)
+        _UniffiFfiConverterSequenceString.write(value.types, buf)
+        _UniffiFfiConverterBoolean.write(value.privacy_sensitive, buf)
+        _UniffiFfiConverterBoolean.write(value.content_redacted_from_telemetry, buf)
+
 @dataclass
 class CursorMotionOutput:
     def __init__(self, *, start_handle:float, end_handle:float, arc_size:float, arc_flow:float, spring:float, glide_duration_ms:float, dwell_after_click_ms:float, idle_hide_ms:float, turn_radius:float):
@@ -2072,29 +2308,6 @@ class _UniffiFfiConverterTypeCursorAction(_UniffiConverterRustBuffer):
 
 
 
-class _UniffiFfiConverterSequenceString(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, value):
-        for item in value:
-            _UniffiFfiConverterString.check_lower(item)
-
-    @classmethod
-    def write(cls, value, buf):
-        items = len(value)
-        buf.write_i32(items)
-        for item in value:
-            _UniffiFfiConverterString.write(item, buf)
-
-    @classmethod
-    def read(cls, buf):
-        count = buf.read_i32()
-        if count < 0:
-            raise InternalError("Unexpected negative sequence length")
-
-        return [
-            _UniffiFfiConverterString.read(buf) for i in range(count)
-        ]
-
 class _UniffiFfiConverterUInt64(_UniffiConverterPrimitiveInt):
     CLASS_NAME = "u64"
     VALUE_MIN = 0
@@ -2337,27 +2550,6 @@ class _UniffiFfiConverterTypeElementSelector(_UniffiConverterRustBuffer):
     def write(value, buf):
         _UniffiFfiConverterOptionalString.write(value.role, buf)
         _UniffiFfiConverterOptionalString.write(value.label_contains, buf)
-
-class _UniffiFfiConverterBoolean:
-    @classmethod
-    def check_lower(cls, value):
-        return not not value
-
-    @classmethod
-    def lower(cls, value):
-        return 1 if value else 0
-
-    @staticmethod
-    def lift(value):
-        return value != 0
-
-    @classmethod
-    def read(cls, buf):
-        return cls.lift(buf.read_u8())
-
-    @classmethod
-    def write(cls, value, buf):
-        buf.write_u8(value)
 
 class _UniffiFfiConverterOptionalBoolean(_UniffiConverterRustBuffer):
     @classmethod
@@ -4418,6 +4610,10 @@ __all__ = [
     "ActionResult",
     "BoundsExpectation",
     "ClickInput",
+    "ClipboardReadInput",
+    "ClipboardReadOutput",
+    "ClipboardWriteInput",
+    "ClipboardWriteOutput",
     "CursorMotionOutput",
     "CursorPointOutput",
     "CursorThemeOutput",

@@ -19,6 +19,7 @@ pip-preview = { path = "../pip-preview" }
 tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+clipboard-rs = { version = "0.3.5", features = ["wayland"] }
 # X11 background input + window enumeration
 x11rb = { version = "0.13", features = ["xinput", "randr", "xfixes", "composite", "shape", "xtest"] }
 x11 = { version = "2.21", features = ["xlib", "xinput", "xtest"] }

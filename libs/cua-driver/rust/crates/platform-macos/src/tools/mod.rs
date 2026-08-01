@@ -2,6 +2,7 @@
 
 mod bring_to_front;
 mod click;
+mod clipboard;
 mod double_click;
 mod drag;
 mod get_window_state;
@@ -763,6 +764,10 @@ pub fn register_all(
         scroll::ScrollTool::new(state.clone()),
         &pid_window_candidates,
     ));
+    cua_driver_core::clipboard::register_clipboard_tools(
+        registry,
+        Arc::new(clipboard::MacosClipboard::new()),
+    );
     // The standalone `screenshot` tool was removed (#1692). The pixel-grounding
     // screenshot the Claude Code computer-use compat loop relies on now comes
     // from `get_window_state` (which always returns BOTH the tree AND a

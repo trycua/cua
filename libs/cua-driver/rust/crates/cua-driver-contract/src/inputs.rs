@@ -511,6 +511,48 @@ impl ToolInput for TypeTextInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
+pub struct ClipboardReadInput {
+    /// Return plain-text clipboard content in addition to the available types.
+    /// Clipboard content is privacy-sensitive and is never retained in telemetry.
+    #[serde(default)]
+    pub include_text: bool,
+    /// Optional session id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "string_schema")]
+    pub session: Option<String>,
+}
+
+impl ToolInput for ClipboardReadInput {
+    const TOOL_NAME: &'static str = "clipboard_read";
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ClipboardWriteInput {
+    /// Plain text to place on the clipboard.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "string_schema")]
+    pub text: Option<String>,
+    /// Absolute path to a local image to place on the clipboard.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "string_schema")]
+    pub image_path: Option<String>,
+    /// Absolute path to a local file to place on the clipboard as a file URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "string_schema")]
+    pub file_path: Option<String>,
+    /// Optional session id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "string_schema")]
+    pub session: Option<String>,
+}
+
+impl ToolInput for ClipboardWriteInput {
+    const TOOL_NAME: &'static str = "clipboard_write";
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
 pub struct PressKeyInput {
     pub key: String,
     pub scope: DesktopScope,

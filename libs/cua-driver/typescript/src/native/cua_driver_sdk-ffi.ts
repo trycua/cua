@@ -423,6 +423,16 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_driver_sdk_fn_method_cuadriver_clipboard_read": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_fn_method_cuadriver_clipboard_write": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_driver_sdk_fn_method_cuadriver_drag": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -554,6 +564,16 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_driver_sdk_fn_method_cuadriversession_click": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_fn_method_cuadriversession_clipboard_read": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_fn_method_cuadriversession_clipboard_write": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
@@ -808,6 +828,16 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_driver_sdk_checksum_method_cuadriver_clipboard_read": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_cuadriver_clipboard_write": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_driver_sdk_checksum_method_cuadriver_drag": {
       args: [],
       ret: FfiType.UInt16,
@@ -939,6 +969,16 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_driver_sdk_checksum_method_cuadriversession_click": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_cuadriversession_clipboard_read": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_cuadriversession_clipboard_write": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -1241,6 +1281,8 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_constructor_cuadriver_create_with_client_kind(options: Uint8Array, clientKind: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_call_tool(uniffiSelf: bigint, name: Uint8Array, argumentsJson: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_click(uniffiSelf: bigint, input: Uint8Array): bigint;
+    uniffi_cua_driver_sdk_fn_method_cuadriver_clipboard_read(uniffiSelf: bigint, input: Uint8Array): bigint;
+    uniffi_cua_driver_sdk_fn_method_cuadriver_clipboard_write(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_drag(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_end_session(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_escalate_session(uniffiSelf: bigint, input: Uint8Array): bigint;
@@ -1268,6 +1310,8 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_method_cuadriver_verify_state(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_call_tool(uniffiSelf: bigint, name: Uint8Array, argumentsJson: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_click(uniffiSelf: bigint, input: Uint8Array): bigint;
+    uniffi_cua_driver_sdk_fn_method_cuadriversession_clipboard_read(uniffiSelf: bigint, input: Uint8Array): bigint;
+    uniffi_cua_driver_sdk_fn_method_cuadriversession_clipboard_write(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_close(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_drag(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_end_session(uniffiSelf: bigint, input: Uint8Array): bigint;
@@ -1318,6 +1362,8 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_with_client_kind(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_call_tool(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_click(): number;
+    uniffi_cua_driver_sdk_checksum_method_cuadriver_clipboard_read(): number;
+    uniffi_cua_driver_sdk_checksum_method_cuadriver_clipboard_write(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_drag(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_end_session(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_escalate_session(): number;
@@ -1345,6 +1391,8 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_checksum_method_cuadriver_verify_state(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_call_tool(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_click(): number;
+    uniffi_cua_driver_sdk_checksum_method_cuadriversession_clipboard_read(): number;
+    uniffi_cua_driver_sdk_checksum_method_cuadriversession_clipboard_write(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_close(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_drag(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_end_session(): number;

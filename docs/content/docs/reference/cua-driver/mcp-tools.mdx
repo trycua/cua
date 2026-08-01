@@ -12,7 +12,7 @@ description: Reference for every MCP tool Cua Driver exposes
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-`cua-driver` exposes 50 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
+`cua-driver` exposes 52 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
 
 Tool names are `snake_case`. Responses are MCP `CallTool.Result` envelopes: a text content block prefixed with a `✅` summary (or the error reason on failure), plus optional image or structured-content blocks on tools that produce them. See the [CLI reference](/reference/cua-driver/cli-reference) for CLI-specific options like `--socket` and `--screenshot-out-file`.
 
@@ -372,7 +372,7 @@ Press a key combination — e.g. `["cmd", "c"]` for Copy, `["cmd", "shift", "4"]
 • `background` (default): post the combo to the target pid WITHOUT fronting or raising it — uses the macOS 14+ auth-message envelope so Chromium/Electron accept it as trusted live input. No focus steal. `window_id` here only targets the combo; it does not raise.
 • `foreground`: briefly front the window (NSMenu path, &lt; 1 ms via SLPSSetFrontProcessWithOptions) so native menu key-equivalents (Cmd+Z, Cmd+W) dispatch, then restore the prior frontmost — the explicit escalation for menu-bar shortcuts on non-Chromium apps that ignore a background combo. With x,y, the focused field receives the chord through the foreground HID queue (needed by native Chromium fields such as the omnibox). Requires window_id.
 
-A combo is never driver-verifiable (no read-back) → effect:"unverifiable"; confirm via screenshot. NOTE: a keyboard combo does NOT focus a text field — to type into a backgrounded Electron input, establish real renderer focus with a PIXEL click first, then `type_text` (do not reach for a clipboard + Cmd+V dance).
+A combo is never driver-verifiable (no read-back) → effect:"unverifiable"; confirm via screenshot. NOTE: a keyboard combo does NOT focus a text field — to type into a backgrounded Electron input, establish real renderer focus with a PIXEL click first, then `type_text`. If an app only accepts paste, call `clipboard_write`, then `clipboard_read` and verify its types (and text when applicable) before selecting or replacing editor content; only then send Cmd+V.
 
 Recognized modifiers: cmd/command, shift, option/alt, ctrl/control, fn. Non-modifier keys use the same vocabulary as `press_key`. Order: modifiers first, one non-modifier last.
 
@@ -511,6 +511,29 @@ Actions:
 ```json
 {"action":"execute_javascript"}
 ```
+
+## Clipboard tools
+
+### `clipboard_read`
+
+List available system clipboard types and optionally return privacy-sensitive plain text. Clipboard content is never retained in telemetry.
+
+**Arguments:**
+
+- `include_text` (boolean, optional): Return plain-text clipboard content in addition to the available types.
+Clipboard content is privacy-sensitive and is never retained in telemetry. default: `false`
+- `session` (string, optional): Optional session id.
+
+### `clipboard_write`
+
+Replace the system clipboard with exactly one value: plain text, an image from an absolute local path, or a file URL from an absolute local path. Returns the available types for read-back before paste.
+
+**Arguments:**
+
+- `file_path` (string, optional): Absolute path to a local file to place on the clipboard as a file URL.
+- `image_path` (string, optional): Absolute path to a local image to place on the clipboard.
+- `session` (string, optional): Optional session id.
+- `text` (string, optional): Plain text to place on the clipboard.
 
 ## Recording tools
 

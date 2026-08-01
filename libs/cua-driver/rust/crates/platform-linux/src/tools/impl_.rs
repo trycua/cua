@@ -7189,6 +7189,10 @@ pub fn build_registry_with_provider(
     ));
     r.register(pid_window_guarded(SetValueTool, &pid_window_candidates));
     r.register(pid_window_guarded(ScrollTool, &pid_window_candidates));
+    cua_driver_core::clipboard::register_clipboard_tools(
+        &mut r,
+        Arc::new(crate::clipboard::LinuxClipboard::new()),
+    );
     // `screenshot` removed - see the matching comment in
     // platform-windows/src/tools/impl_.rs::build_registry. Canonical
     // screenshot path is `get_window_state` (it always returns a screenshot now).

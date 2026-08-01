@@ -8760,6 +8760,10 @@ pub fn build_registry_with_provider(
         },
         &pid_window_candidates,
     ));
+    cua_driver_core::clipboard::register_clipboard_tools(
+        &mut r,
+        Arc::new(crate::clipboard::WindowsClipboard::new()),
+    );
     // `screenshot` / `ScreenshotCompatTool` removed from the tool surface
     // — `get_window_state` (which now always returns a screenshot) is the
     // single canonical path for getting a window screenshot. Reasons:

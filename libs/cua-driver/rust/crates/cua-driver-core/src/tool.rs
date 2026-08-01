@@ -2077,7 +2077,10 @@ fn canonical_proposed_path(raw: &str) -> Result<String, ToolResult> {
             .parent()
             .ok_or_else(|| protected_scope_refusal("the output path has no existing ancestor"))?;
     }
-    let metadata = std::fs::symlink_metadata(existing)
+    // Follow a live symlink only for the deepest existing ancestor. The
+    // canonical path below replaces the alias before approval and dispatch, so
+    // the approved identity cannot be changed by swapping the symlink later.
+    let metadata = std::fs::metadata(existing)
         .map_err(|_| protected_scope_refusal("the output ancestor is unavailable"))?;
     if !metadata.is_dir() {
         return Err(protected_scope_refusal(
@@ -2506,6 +2509,28 @@ mod runtime_isolation_tests {
                 destructive: false,
                 idempotent: false,
                 open_world: true,
+            },
+        }));
+        Arc::new(registry)
+    }
+
+    fn screenshot_registry(
+        provider: Option<Arc<dyn ProtectedConsentProvider>>,
+        hits: Arc<AtomicUsize>,
+        last_args: Arc<Mutex<Option<serde_json::Value>>>,
+    ) -> Arc<super::ToolRegistry> {
+        let mut registry = super::ToolRegistry::new_with_protected_consent_provider(provider);
+        registry.register(Box::new(ArgumentProbe {
+            hits,
+            last_args,
+            def: super::ToolDef {
+                name: "get_window_state".into(),
+                description: "test screenshot output".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: true,
+                destructive: false,
+                idempotent: true,
+                open_world: false,
             },
         }));
         Arc::new(registry)
@@ -2965,6 +2990,37 @@ resources:
         );
     }
 
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn standard_screenshot_output_accepts_and_rewrites_the_system_temp_alias() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let last_args = Arc::new(Mutex::new(None));
+        let registry = screenshot_registry(None, hits.clone(), last_args.clone());
+        let result = registry
+            .invoke_with_context(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": 42,
+                    "window_id": 7,
+                    "session": "calendar",
+                    "screenshot_out_file": "/tmp/calendar_popover.png",
+                }),
+                standard_context(),
+            )
+            .await;
+
+        assert_ne!(result.is_error, Some(true));
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            last_args.lock().unwrap().as_ref().unwrap()["screenshot_out_file"],
+            std::fs::canonicalize("/tmp")
+                .unwrap()
+                .join("calendar_popover.png")
+                .to_string_lossy()
+                .as_ref()
+        );
+    }
+
     #[tokio::test]
     async fn legacy_page_mutations_require_trusted_unrestricted_launch_acceptance() {
         let hits = Arc::new(AtomicUsize::new(0));
@@ -3333,6 +3389,65 @@ resources:
                 .to_string_lossy()
         );
         assert!(!proposed.exists());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn proposed_output_scope_accepts_the_macos_system_temp_alias() {
+        let proposed = std::path::Path::new("/tmp/calendar_popover.png");
+        let canonical = canonical_proposed_path(proposed.to_str().unwrap()).unwrap();
+        assert_eq!(
+            canonical,
+            std::fs::canonicalize("/tmp")
+                .unwrap()
+                .join("calendar_popover.png")
+                .to_string_lossy()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn proposed_output_scope_rewrites_a_symlinked_directory_ancestor() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let real = root.path().join("real");
+        let alias = root.path().join("alias");
+        std::fs::create_dir(&real).unwrap();
+        symlink(&real, &alias).unwrap();
+
+        let proposed = alias.join("nested").join("capture.png");
+        let canonical = canonical_proposed_path(proposed.to_str().unwrap()).unwrap();
+        assert_eq!(
+            canonical,
+            std::fs::canonicalize(&real)
+                .unwrap()
+                .join("nested")
+                .join("capture.png")
+                .to_string_lossy()
+        );
+        assert!(!canonical.starts_with(alias.to_string_lossy().as_ref()));
+        assert!(!proposed.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn proposed_output_scope_still_rejects_unsafe_symlink_and_traversal_paths() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let broken = root.path().join("broken");
+        symlink(root.path().join("missing-target"), &broken).unwrap();
+        assert!(canonical_proposed_path(broken.join("capture.png").to_str().unwrap()).is_err());
+
+        let file = root.path().join("file");
+        std::fs::write(&file, b"not a directory").unwrap();
+        let file_alias = root.path().join("file-alias");
+        symlink(&file, &file_alias).unwrap();
+        assert!(canonical_proposed_path(file_alias.join("capture.png").to_str().unwrap()).is_err());
+
+        let traversal = root.path().join("missing").join("..").join("escape.png");
+        assert!(canonical_proposed_path(traversal.to_str().unwrap()).is_err());
     }
 
     #[tokio::test]

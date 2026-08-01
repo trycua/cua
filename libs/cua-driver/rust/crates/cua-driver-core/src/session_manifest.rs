@@ -1112,7 +1112,10 @@ fn canonical_manifest_path(path: &Path) -> Result<String, String> {
             .parent()
             .ok_or_else(|| "path has no existing ancestor".to_owned())?;
     }
-    let metadata = std::fs::symlink_metadata(existing).map_err(|error| error.to_string())?;
+    // Follow a live symlink only for the deepest existing ancestor. The
+    // canonical path stored in the grant replaces the alias, preventing later
+    // symlink substitution from changing the authorized identity.
+    let metadata = std::fs::metadata(existing).map_err(|error| error.to_string())?;
     if !metadata.is_dir() {
         return Err("existing ancestor is not a directory".to_owned());
     }
@@ -1196,6 +1199,48 @@ mod tests {
         let path = dir.path().join("manifest.yaml");
         std::fs::write(&path, source).unwrap();
         load_manifest(&path)
+    }
+
+    #[cfg(all(feature = "yaml", unix))]
+    #[test]
+    fn manifest_paths_canonicalize_symlinked_directory_ancestors() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let real = root.path().join("real");
+        let alias = root.path().join("alias");
+        std::fs::create_dir(&real).unwrap();
+        symlink(&real, &alias).unwrap();
+
+        let proposed = alias.join("nested").join("capture.png");
+        assert_eq!(
+            canonical_manifest_path(&proposed).unwrap(),
+            std::fs::canonicalize(&real)
+                .unwrap()
+                .join("nested")
+                .join("capture.png")
+                .to_string_lossy()
+        );
+    }
+
+    #[cfg(all(feature = "yaml", unix))]
+    #[test]
+    fn manifest_paths_still_reject_unsafe_symlink_and_traversal_paths() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let broken = root.path().join("broken");
+        symlink(root.path().join("missing-target"), &broken).unwrap();
+        assert!(canonical_manifest_path(&broken.join("capture.png")).is_err());
+
+        let file = root.path().join("file");
+        std::fs::write(&file, b"not a directory").unwrap();
+        let file_alias = root.path().join("file-alias");
+        symlink(&file, &file_alias).unwrap();
+        assert!(canonical_manifest_path(&file_alias.join("capture.png")).is_err());
+
+        let traversal = root.path().join("missing").join("..").join("escape.png");
+        assert!(canonical_manifest_path(&traversal).is_err());
     }
 
     #[cfg(feature = "yaml")]

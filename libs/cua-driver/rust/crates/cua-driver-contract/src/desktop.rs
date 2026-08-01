@@ -19,7 +19,6 @@ const ALL_PLATFORMS: [Platform; 3] = [Platform::Macos, Platform::Windows, Platfo
 
 pub fn contracts() -> Vec<ToolContract> {
     vec![
-        list_windows(),
         get_desktop_state(),
         get_screen_size(),
         get_cursor_position(),
@@ -35,40 +34,12 @@ pub fn contracts() -> Vec<ToolContract> {
 
 const Z_INDEX_DESCRIPTION: &str = "Higher values are closer to the front. Null means the provider cannot observe stacking order; callers must not infer an order from array position or treat null as zero.";
 
-fn list_windows() -> ToolContract {
-    ToolContract {
-        name: "list_windows".into(),
-        description: "List top-level windows and their observable stacking order.".into(),
-        platforms: ALL_PLATFORMS.to_vec(),
-        aliases: Vec::new(),
-        capabilities: vec!["window.list".into()],
-        annotations: ToolAnnotations {
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            open_world: false,
-        },
-        schema_mode: SchemaMode::PortableSubset,
-        cursor_semantics: Some(CursorSemantics::new(CursorAction::Observe)),
-        input_schema: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "pid": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "description": "Optional process-id filter."
-                },
-                "on_screen_only": {
-                    "type": "boolean",
-                    "description": "When true, return only windows the provider considers on-screen."
-                }
-            },
-            "additionalProperties": false
-        }),
-        // Keep this schema deliberately narrow: platform window records have
-        // additive fields and are still converging, while z_index has one
-        // portable meaning that consumers need in order to sort safely.
-        success_output_schema: Some(serde_json::json!({
+// Keep this schema deliberately narrow: platform window records have additive
+// fields and are still converging, while z_index has one portable meaning that
+// consumers need in order to sort safely. This runtime schema intentionally
+// stays outside the typed SDK manifest until that broader shape converges.
+pub(crate) fn list_windows_success_output_schema() -> serde_json::Value {
+    serde_json::json!({
             "type": "object",
             "properties": {
                 "windows": {
@@ -88,12 +59,10 @@ fn list_windows() -> ToolContract {
             },
             "required": ["windows"],
             "additionalProperties": true
-        })),
-        output_validator: validate_list_windows_output,
-    }
+    })
 }
 
-fn validate_list_windows_output(value: serde_json::Value) -> Result<(), String> {
+pub(crate) fn validate_list_windows_output(value: serde_json::Value) -> Result<(), String> {
     let windows = value
         .get("windows")
         .and_then(serde_json::Value::as_array)

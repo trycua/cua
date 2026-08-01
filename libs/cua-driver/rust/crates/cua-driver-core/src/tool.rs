@@ -139,8 +139,7 @@ impl ToolDef {
                 ),
             )
         } else {
-            cua_driver_contract::tool_contract(&self.name)
-                .and_then(|contract| contract.success_output_schema)
+            cua_driver_contract::tool_success_output_schema(&self.name)
         };
         if let Some(output_schema) = output_schema {
             entry

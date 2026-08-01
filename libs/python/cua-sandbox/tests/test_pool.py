@@ -214,6 +214,7 @@ def test_sync_pool_matches_blocking_context_manager(monkeypatch):
     assert claim_client.released == ["claim-1"]
     assert claim_client.closed is True
 
+
 @pytest.mark.asyncio
 async def test_reconcile_preserves_replicas_and_named_services(monkeypatch):
     client = FakeFleetClient()

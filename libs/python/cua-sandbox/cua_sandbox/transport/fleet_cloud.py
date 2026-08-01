@@ -192,7 +192,14 @@ class FleetCloudTransport(FleetTransport):
         if services is not None and (
             not isinstance(services, Mapping)
             or not services
-            or any(not isinstance(name, str) or not name or not isinstance(port, int) or port < 1 or port > 65535 for name, port in services.items())
+            or any(
+                not isinstance(name, str)
+                or not name
+                or not isinstance(port, int)
+                or port < 1
+                or port > 65535
+                for name, port in services.items()
+            )
         ):
             raise ValueError("services must map non-empty names to TCP ports")
         self._image = image
@@ -336,7 +343,10 @@ class FleetCloudTransport(FleetTransport):
 
     def _pool_request(self) -> CreatePoolRequest:
         assert self._image is not None
-        service_ports = self._services or {"server": 8000, **{f"port-{port}": port for port in self._image._ports if port != 8000}}
+        service_ports = self._services or {
+            "server": 8000,
+            **{f"port-{port}": port for port in self._image._ports if port != 8000},
+        }
         services = [
             SandboxService(name=name, target_port=port, protocol=ServiceProtocol.TCP)
             for name, port in service_ports.items()

@@ -376,7 +376,7 @@ Workflow per turn:
 1. `launch_app` returns pid and windows. Use `creates_new_application_instance:true` when another run may touch the app.
 2. `get_window_state(pid, window_id)` refreshes the tree and element indices.
 3. Act with the fresh index.
-4. `verify_state(pid, window_id, expect)` checks bounded structured postconditions. `unknown` is not success. Set `include_screenshot:true` when the multimodal agent should also read visual evidence and decide whether to stop, retry, or advance the ladder.
+4. After each state-changing action, `verify_state(pid, window_id, expect)` checks actual task postconditions. `unknown` is not success. Once all are satisfied, stop issuing actions, end the session, and report completion. Otherwise retry or advance; use `include_screenshot:true` for multimodal agent reading.
 
 A declared session owns a colored agent-cursor overlay; it never moves the real pointer. Pure accessibility actions show only a brief first pulse. Use `move_cursor` or a pixel action first when a recording needs a visible glide.
 
@@ -474,6 +474,8 @@ mod agent_instruction_tests {
         assert!(instructions.contains("verify_state"));
         assert!(instructions.contains("`unknown` is not success"));
         assert!(instructions.contains("multimodal agent"));
+        assert!(instructions.contains("stop issuing actions"));
+        assert!(instructions.contains("end the session"));
         assert!(
             instructions.split_whitespace().count() <= 200,
             "initialize instructions should stay within the documented context budget"

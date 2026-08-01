@@ -67,7 +67,7 @@ Always returns BOTH the element tree AND a screenshot — ground on both and cro
 
 The snapshot is SCOPED to `window_id`: a window_id that no longer exists is refused with `window_id_not_found`, and one owned by another process is refused with `window_owner_pid_mismatch` naming the real `owner_pid` to retry with (macOS hosts a sandboxed app's Open/Save panel out-of-process, so its window belongs to the panel service, not the app). If the window is live under this pid but its accessibility surface can't be resolved, the tree comes back EMPTY with `degraded_reason: ax_window_unresolved` and the screenshot of the requested window — act by pixel there. This tool never returns another surface's elements under your window_id. Before exposing a screenshot, its raw dimensions are validated as a coherent 1x/2x representation of the requested WindowServer bounds. `px_frame_mismatch` or `px_capture_unavailable` omits an unprovable screenshot/pixel frame instead of guessing a transform; the truthful AX payload remains available.
 
-Optional `query` filters the tree_markdown to matching lines plus their ancestor chain (case-insensitive substring). The element_index values are unchanged — filtering only trims the rendered Markdown.
+Optional `query` projects both tree_markdown and structured `elements` to matching lines plus their ancestor chain (case-insensitive substring). The element_index values are unchanged, the complete snapshot remains actionable, and `element_count` continues to report its total size; `filtered_element_count` reports the projected response size.
 
 Optional `max_elements` / `max_depth` bound the AX walk to mitigate context-window blow-up on Electron / Obsidian / large web apps that produce 10k+ element trees. When applied, BOTH the markdown and the structured elements are truncated identically. Omit both for current default behaviour (≤2 000 elements, depth ≤25).
 
@@ -78,7 +78,7 @@ Optional `max_elements` / `max_depth` bound the AX walk to mitigate context-wind
 - `max_depth` (integer, optional): Cap on the AX-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower this for deep menu/Electron trees. range: 1–unbounded
 - `max_elements` (integer, optional): Cap on the total number of AX nodes walked. Truncates depth-first; markdown and structured elements truncate together. Omit for the default (2 000). Lower this for Electron / Obsidian / large web apps that produce 10k+ element trees and blow context windows. range: 1–unbounded
 - `pid` (integer, required): Target process ID.
-- `query` (string, optional): Case-insensitive filter for tree_markdown.
+- `query` (string, optional): Case-insensitive filter for tree_markdown and structured elements. Returns matching actionable rows plus their actionable ancestors without renumbering element_index values.
 - `screenshot_out_file` (string, optional): When set, write the PNG to this file path (~ expanded) instead of embedding base64 in the response. The structured output will contain screenshot_file_path instead.
 - `session` (string, optional): Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.
 - `window_id` (integer, required): Target window ID from list_windows.

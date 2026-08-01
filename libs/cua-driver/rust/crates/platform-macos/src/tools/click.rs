@@ -74,6 +74,9 @@ fn selection_readback_confirms(before: bool, after: bool, has_modifiers: bool) -
     }
 }
 
+const SELECTION_READBACK_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+const SELECTION_READBACK_POLL: std::time::Duration = std::time::Duration::from_millis(25);
+
 fn pixel_activation_policy(
     button: &str,
     effective_foreground: bool,
@@ -1074,24 +1077,32 @@ fn perform_ax_click(
                 1,
                 &modifier_refs,
             )?;
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            if let Some((_, after)) =
-                crate::input::ax_actions::nearest_container_selection_state(element_ptr)
-            {
-                let verified = selection_readback_confirms(before, after, !modifiers.is_empty());
-                if verified {
-                    return Ok((
-                        format!(
-                            "✅ Selected nearest {selected_role} for [{idx}] {role} \"{title}\"; \
-                             AX selection write was unavailable, so a coordinate click was \
-                             delivered and confirmed by AXSelected read-back."
-                        ),
-                        false,
-                        false,
-                        true,
-                        true,
-                    ));
+            let deadline = std::time::Instant::now() + SELECTION_READBACK_TIMEOUT;
+            loop {
+                if let Some((_, after)) =
+                    crate::input::ax_actions::nearest_container_selection_state(element_ptr)
+                {
+                    let verified =
+                        selection_readback_confirms(before, after, !modifiers.is_empty());
+                    if verified {
+                        return Ok((
+                            format!(
+                                "✅ Selected nearest {selected_role} for [{idx}] {role} \
+                                 \"{title}\"; AX selection write was unavailable, so a \
+                                 coordinate click was delivered and confirmed by AXSelected \
+                                 read-back."
+                            ),
+                            false,
+                            false,
+                            true,
+                            true,
+                        ));
+                    }
                 }
+                if std::time::Instant::now() >= deadline {
+                    break;
+                }
+                std::thread::sleep(SELECTION_READBACK_POLL);
             }
         }
     }

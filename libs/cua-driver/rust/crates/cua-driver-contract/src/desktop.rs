@@ -8,11 +8,11 @@
 //! do not replace the richer platform-owned runtime schemas.
 
 use crate::{
-    ActionResult, ClickInput, CursorAction, CursorPositionOutput, CursorSemantics,
-    DesktopStateOutput, DragInput, GetCursorPositionInput, GetDesktopStateInput,
-    GetScreenSizeInput, HotkeyInput, MoveCursorInput, Platform, PressKeyInput, SchemaMode,
-    ScreenSizeOutput, ScrollInput, ToolAnnotations, ToolContract, ToolInput, ToolOutput,
-    TypeTextInput,
+    ActionResult, ClickInput, ClipboardReadInput, ClipboardReadOutput, ClipboardWriteInput,
+    ClipboardWriteOutput, CursorAction, CursorPositionOutput, CursorSemantics, DesktopStateOutput,
+    DragInput, GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput, HotkeyInput,
+    MoveCursorInput, Platform, PressKeyInput, SchemaMode, ScreenSizeOutput, ScrollInput,
+    ToolAnnotations, ToolContract, ToolInput, ToolOutput, TypeTextInput,
 };
 
 const ALL_PLATFORMS: [Platform; 3] = [Platform::Macos, Platform::Windows, Platform::Linux];
@@ -26,10 +26,94 @@ pub fn contracts() -> Vec<ToolContract> {
         click(),
         drag(),
         scroll(),
+        clipboard_read(),
+        clipboard_write(),
         type_text(),
         press_key(),
         hotkey(),
     ]
+}
+
+const Z_INDEX_DESCRIPTION: &str = "Higher values are closer to the front. Null means the provider cannot observe stacking order; callers must not infer an order from array position or treat null as zero.";
+
+// Keep this schema deliberately narrow: platform window records have additive
+// fields and are still converging, while z_index has one portable meaning that
+// consumers need in order to sort safely. This runtime schema intentionally
+// stays outside the typed SDK manifest until that broader shape converges.
+pub(crate) fn list_windows_success_output_schema() -> serde_json::Value {
+    serde_json::json!({
+            "type": "object",
+            "properties": {
+                "windows": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "z_index": {
+                                "type": ["integer", "null"],
+                                "description": Z_INDEX_DESCRIPTION
+                            }
+                        },
+                        "required": ["z_index"],
+                        "additionalProperties": true
+                    }
+                }
+            },
+            "required": ["windows"],
+            "additionalProperties": true
+    })
+}
+
+pub(crate) fn validate_list_windows_output(value: serde_json::Value) -> Result<(), String> {
+    let windows = value
+        .get("windows")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "windows must be an array".to_owned())?;
+    for (index, window) in windows.iter().enumerate() {
+        let z_index = window
+            .get("z_index")
+            .ok_or_else(|| format!("windows[{index}].z_index is required"))?;
+        if !(z_index.is_null() || z_index.is_u64() || z_index.is_i64()) {
+            return Err(format!(
+                "windows[{index}].z_index must be an integer or null"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn clipboard_read() -> ToolContract {
+    let mut contract = contract::<ClipboardReadInput, ClipboardReadOutput>(
+        "clipboard_read",
+        "List available system clipboard types and optionally return privacy-sensitive plain text. Clipboard content is never retained in telemetry.",
+        &["clipboard.read", "clipboard.types"],
+        ToolAnnotations {
+            read_only: true,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        },
+        CursorAction::Observe,
+    );
+    contract.schema_mode = SchemaMode::CanonicalRuntime;
+    contract
+}
+
+fn clipboard_write() -> ToolContract {
+    let mut contract = contract::<ClipboardWriteInput, ClipboardWriteOutput>(
+        "clipboard_write",
+        "Replace the system clipboard with exactly one value: plain text, an image from an absolute local path, or a file URL from an absolute local path. Returns the available types for read-back before paste.",
+        &["clipboard.write", "clipboard.write.text", "clipboard.write.image", "clipboard.write.file_url", "clipboard.types"],
+        ToolAnnotations {
+            read_only: false,
+            destructive: true,
+            idempotent: true,
+            open_world: false,
+        },
+        CursorAction::Text,
+    );
+    contract.schema_mode = SchemaMode::CanonicalRuntime;
+    contract
 }
 
 fn contract<I: ToolInput, O: ToolOutput>(

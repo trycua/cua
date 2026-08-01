@@ -608,6 +608,229 @@ const FfiConverterTypeClickInput = (() => {
     return new FFIConverter();
 })();
 
+export type ClipboardReadInput = {
+    /**
+     * Return plain-text clipboard content in addition to the available types.
+     * Clipboard content is privacy-sensitive and is never retained in telemetry.
+     */
+    includeText: boolean,
+    /**
+     * Optional session id.
+     */
+    session?: string
+}
+
+/**
+ * Generated factory for {@link ClipboardReadInput} record objects.
+ */
+export const ClipboardReadInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ClipboardReadInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ClipboardReadInput>,
+    });
+})();
+
+const FfiConverterTypeClipboardReadInput = (() => {
+    type TypeName = ClipboardReadInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                includeText: FfiConverterBool.read(from),
+                session: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterBool.write(value.includeText, into);
+            FfiConverterOptionalString.write(value.session, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterBool.allocationSize(value.includeText) +
+             FfiConverterOptionalString.allocationSize(value.session);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type ClipboardReadOutput = {
+    supported: boolean,
+    types: Array<string>,
+    text?: string,
+    privacySensitive: boolean,
+    contentRedactedFromTelemetry: boolean
+}
+
+/**
+ * Generated factory for {@link ClipboardReadOutput} record objects.
+ */
+export const ClipboardReadOutput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ClipboardReadOutput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ClipboardReadOutput>,
+    });
+})();
+
+const FfiConverterTypeClipboardReadOutput = (() => {
+    type TypeName = ClipboardReadOutput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                supported: FfiConverterBool.read(from),
+                types: FfiConverterSequenceString.read(from),
+                text: FfiConverterOptionalString.read(from),
+                privacySensitive: FfiConverterBool.read(from),
+                contentRedactedFromTelemetry: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterBool.write(value.supported, into);
+            FfiConverterSequenceString.write(value.types, into);
+            FfiConverterOptionalString.write(value.text, into);
+            FfiConverterBool.write(value.privacySensitive, into);
+            FfiConverterBool.write(value.contentRedactedFromTelemetry, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterBool.allocationSize(value.supported) +
+             FfiConverterSequenceString.allocationSize(value.types) +
+             FfiConverterOptionalString.allocationSize(value.text) +
+             FfiConverterBool.allocationSize(value.privacySensitive) +
+             FfiConverterBool.allocationSize(value.contentRedactedFromTelemetry);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type ClipboardWriteInput = {
+    /**
+     * Plain text to place on the clipboard.
+     */
+    text?: string,
+    /**
+     * Absolute path to a local image to place on the clipboard.
+     */
+    imagePath?: string,
+    /**
+     * Absolute path to a local file to place on the clipboard as a file URL.
+     */
+    filePath?: string,
+    /**
+     * Optional session id.
+     */
+    session?: string
+}
+
+/**
+ * Generated factory for {@link ClipboardWriteInput} record objects.
+ */
+export const ClipboardWriteInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ClipboardWriteInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ClipboardWriteInput>,
+    });
+})();
+
+const FfiConverterTypeClipboardWriteInput = (() => {
+    type TypeName = ClipboardWriteInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                text: FfiConverterOptionalString.read(from),
+                imagePath: FfiConverterOptionalString.read(from),
+                filePath: FfiConverterOptionalString.read(from),
+                session: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalString.write(value.text, into);
+            FfiConverterOptionalString.write(value.imagePath, into);
+            FfiConverterOptionalString.write(value.filePath, into);
+            FfiConverterOptionalString.write(value.session, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalString.allocationSize(value.text) +
+             FfiConverterOptionalString.allocationSize(value.imagePath) +
+             FfiConverterOptionalString.allocationSize(value.filePath) +
+             FfiConverterOptionalString.allocationSize(value.session);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type ClipboardWriteOutput = {
+    supported: boolean,
+    writtenType: string,
+    types: Array<string>,
+    privacySensitive: boolean,
+    contentRedactedFromTelemetry: boolean
+}
+
+/**
+ * Generated factory for {@link ClipboardWriteOutput} record objects.
+ */
+export const ClipboardWriteOutput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ClipboardWriteOutput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ClipboardWriteOutput>,
+    });
+})();
+
+const FfiConverterTypeClipboardWriteOutput = (() => {
+    type TypeName = ClipboardWriteOutput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                supported: FfiConverterBool.read(from),
+                writtenType: FfiConverterString.read(from),
+                types: FfiConverterSequenceString.read(from),
+                privacySensitive: FfiConverterBool.read(from),
+                contentRedactedFromTelemetry: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterBool.write(value.supported, into);
+            FfiConverterString.write(value.writtenType, into);
+            FfiConverterSequenceString.write(value.types, into);
+            FfiConverterBool.write(value.privacySensitive, into);
+            FfiConverterBool.write(value.contentRedactedFromTelemetry, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterBool.allocationSize(value.supported) +
+             FfiConverterString.allocationSize(value.writtenType) +
+             FfiConverterSequenceString.allocationSize(value.types) +
+             FfiConverterBool.allocationSize(value.privacySensitive) +
+             FfiConverterBool.allocationSize(value.contentRedactedFromTelemetry);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type CursorMotionOutput = {
     startHandle: number,
     endHandle: number,
@@ -2957,6 +3180,10 @@ export default Object.freeze({
     FfiConverterTypeCaptureScope,
     FfiConverterTypeClickButton,
     FfiConverterTypeClickInput,
+    FfiConverterTypeClipboardReadInput,
+    FfiConverterTypeClipboardReadOutput,
+    FfiConverterTypeClipboardWriteInput,
+    FfiConverterTypeClipboardWriteOutput,
     FfiConverterTypeCursorAction,
     FfiConverterTypeCursorMotionOutput,
     FfiConverterTypeCursorPointOutput,

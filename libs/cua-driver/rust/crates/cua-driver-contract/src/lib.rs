@@ -27,21 +27,21 @@ pub use cursor::{
     CursorSemantics, CursorTarget, CursorThemeSelection,
 };
 pub use inputs::{
-    CaptureScope, ClickButton, ClickInput, DesktopScope, DragInput, EndSessionInput,
-    EscalateSessionInput, EscalationReason, GetAgentCursorStateInput, GetCursorPositionInput,
-    GetDesktopStateInput, GetScreenSizeInput, GetSessionStateInput, HotkeyInput, MoveCursorInput,
-    PressKeyInput, ScrollBy, ScrollDirection, ScrollInput, SetAgentCursorEnabledInput,
-    SetAgentCursorMotionInput, SetAgentCursorThemeInput, StartSessionInput, ToolInput,
-    TypeTextInput,
+    CaptureScope, ClickButton, ClickInput, ClipboardReadInput, ClipboardWriteInput, DesktopScope,
+    DragInput, EndSessionInput, EscalateSessionInput, EscalationReason, GetAgentCursorStateInput,
+    GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput, GetSessionStateInput,
+    HotkeyInput, MoveCursorInput, PressKeyInput, ScrollBy, ScrollDirection, ScrollInput,
+    SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
+    StartSessionInput, ToolInput, TypeTextInput,
 };
 pub use outputs::{
     ActionDelivery, ActionDeliveryMode, ActionEffect, ActionEscalation, ActionEscalationReason,
     ActionEscalationTarget, ActionEvidence, ActionEvidenceKind, ActionResult,
-    ActionResultValidationError, ActionRoute, CursorMotionOutput, CursorPointOutput,
-    CursorPositionOutput, CursorThemeOutput, CursorVisualOutput, DesktopStateOutput,
-    EffectiveScope, EndSessionOutput, GetAgentCursorStateOutput, ScreenSizeOutput,
-    SessionStateOutput, SetAgentCursorEnabledOutput, SetAgentCursorMotionOutput,
-    SetAgentCursorThemeOutput, StartSessionOutput, ToolOutput,
+    ActionResultValidationError, ActionRoute, ClipboardReadOutput, ClipboardWriteOutput,
+    CursorMotionOutput, CursorPointOutput, CursorPositionOutput, CursorThemeOutput,
+    CursorVisualOutput, DesktopStateOutput, EffectiveScope, EndSessionOutput,
+    GetAgentCursorStateOutput, ScreenSizeOutput, SessionStateOutput, SetAgentCursorEnabledOutput,
+    SetAgentCursorMotionOutput, SetAgentCursorThemeOutput, StartSessionOutput, ToolOutput,
 };
 pub use verification::{
     BoundsExpectation, ElementPredicate, ElementSelector, PredicateOutcome, StatePredicate,
@@ -56,7 +56,7 @@ pub const TOOLS_LIST_SCHEMA_VERSION: &str = "1";
 pub const CAPABILITY_VERSION: &str = "1";
 
 /// Shape version for the checked-in generated client contract.
-pub const CONTRACT_VERSION: &str = "0.4.0";
+pub const CONTRACT_VERSION: &str = "0.5.0";
 
 /// MCP protocol version used by current cua-driver clients.
 pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
@@ -247,11 +247,25 @@ pub fn tool_input_fields(name: &str) -> Option<&'static BTreeSet<String>> {
     tool_index().get(name).map(|entry| &entry.input_fields)
 }
 
+/// Return the successful `structuredContent` schema advertised by the live
+/// MCP tool. Runtime-only tools can define a narrow shared schema here without
+/// committing every generated SDK to their broader platform-specific shape.
+pub fn tool_success_output_schema(name: &str) -> Option<Value> {
+    if name == "list_windows" {
+        return Some(desktop::list_windows_success_output_schema());
+    }
+    tool_contract(name).and_then(|contract| contract.success_output_schema)
+}
+
 /// Validate a successful structured payload against the Rust output type that
 /// also generates its SDK schema. Returns `Ok(false)` for non-SDK tools.
 pub fn validate_success_output(name: &str, value: Value) -> Result<bool, String> {
     if is_action_result_tool(name) {
         validate_typed_output::<ActionResult>(value)?;
+        return Ok(true);
+    }
+    if name == "list_windows" {
+        desktop::validate_list_windows_output(value)?;
         return Ok(true);
     }
     if let Some(entry) = tool_index().get(name) {
@@ -277,7 +291,7 @@ mod tests {
         let mut sorted = names.clone();
         sorted.sort_unstable();
         assert_eq!(names, sorted);
-        assert_eq!(manifest.contract_version, "0.4.0");
+        assert_eq!(manifest.contract_version, "0.5.0");
         assert!(manifest.experimental);
     }
 
@@ -358,6 +372,36 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn list_windows_defines_nullable_higher_is_frontmost_z_index() {
+        assert!(tool_contract("list_windows").is_none());
+        let schema = tool_success_output_schema("list_windows").expect("runtime schema");
+        let z_index = &schema["properties"]["windows"]["items"]["properties"]["z_index"];
+        assert_eq!(z_index["type"], serde_json::json!(["integer", "null"]));
+        let description = z_index["description"].as_str().expect("description");
+        assert!(description.contains("Higher values are closer to the front"));
+        assert!(description.contains("must not infer an order"));
+
+        assert_eq!(
+            validate_success_output(
+                "list_windows",
+                serde_json::json!({
+                    "windows": [
+                        {"z_index": 4, "platform_field": true},
+                        {"z_index": null}
+                    ],
+                    "current_space_id": null
+                }),
+            ),
+            Ok(true)
+        );
+        assert!(validate_success_output(
+            "list_windows",
+            serde_json::json!({"windows": [{"z_index": "unknown"}]}),
+        )
+        .is_err());
     }
 
     #[test]

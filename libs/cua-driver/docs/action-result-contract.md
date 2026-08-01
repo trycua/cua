@@ -54,6 +54,21 @@ The invariants are:
 - `partial` has `delivery.delivered_count`;
 - `refused` has neither delivery nor evidence.
 
+## Window target resolution
+
+Window-scoped actions accept a PID without `window_id` only when that process
+has exactly one eligible top-level window. The driver promotes that unique
+match to an exact `(pid, window_id)` target before dispatch. If the PID owns
+multiple eligible windows, the action fails before sending input with
+`code: "ambiguous_window_target"`, `effect: "refused"`, and a `candidates`
+array containing each candidate's `window_id`, title, application name when
+available, and on-screen state. Call `list_windows({pid})`, select the intended
+candidate, and retry with its explicit `window_id`.
+
+A PID with no eligible windows fails with `code: "window_target_not_found"`.
+Explicit `window_id` targets and `element_token` targets retain their exact
+resolution semantics; the guard does not replace or reinterpret them.
+
 An action that reached an actuator but lacks a trusted readback is
 `unverifiable`, not `confirmed`. Screenshot change, native API acceptance,
 event receipt, and operator observation may remain useful internal diagnostics,

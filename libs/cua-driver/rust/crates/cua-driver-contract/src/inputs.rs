@@ -67,7 +67,11 @@ fn number_schema(_: &mut SchemaGenerator) -> Schema {
 }
 
 fn positive_number_schema(_: &mut SchemaGenerator) -> Schema {
-    json_schema!({ "type": "number", "exclusiveMinimum": 0 })
+    json_schema!({ "type": "number", "minimum": 1 })
+}
+
+fn positive_integer_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({ "type": "integer", "minimum": 1 })
 }
 
 fn click_button_schema(generator: &mut SchemaGenerator) -> Schema {
@@ -414,7 +418,9 @@ pub struct MoveCursorInput {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SetWindowFrameInput {
+    #[schemars(schema_with = "positive_integer_schema")]
     pub pid: u32,
+    #[schemars(schema_with = "positive_integer_schema")]
     pub window_id: u64,
     #[schemars(schema_with = "number_schema")]
     pub x: f64,

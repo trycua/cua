@@ -384,12 +384,20 @@ mod tests {
             serde_json::json!(["pid", "window_id", "x", "y", "width", "height"])
         );
         assert_eq!(
-            contract.input_schema["properties"]["width"]["exclusiveMinimum"],
-            serde_json::json!(0)
+            contract.input_schema["properties"]["pid"]["minimum"],
+            serde_json::json!(1)
         );
         assert_eq!(
-            contract.input_schema["properties"]["height"]["exclusiveMinimum"],
-            serde_json::json!(0)
+            contract.input_schema["properties"]["window_id"]["minimum"],
+            serde_json::json!(1)
+        );
+        assert_eq!(
+            contract.input_schema["properties"]["width"]["minimum"],
+            serde_json::json!(1)
+        );
+        assert_eq!(
+            contract.input_schema["properties"]["height"]["minimum"],
+            serde_json::json!(1)
         );
         assert_eq!(
             contract.cursor_semantics.expect("cursor semantics").action,

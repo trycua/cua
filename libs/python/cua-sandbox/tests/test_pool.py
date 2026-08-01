@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 from cua_sandbox import Image, Pool
 from cua_sandbox.sync import Pool as SyncPool
+from cua_sandbox.transport.fleet_cloud import _FleetClient
 from cyclops_sdk import Sandbox as FleetSandbox
 
 
@@ -62,6 +63,26 @@ class FakeFleetClient:
 
     async def close(self) -> None:
         self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_fleet_client_get_pool_uses_name_lookup_without_listing() -> None:
+    expected = fleet_pool()
+
+    class GeneratedClient:
+        async def get_pool(self, name: str) -> object:
+            assert name == "foo"
+            return expected
+
+    client = object.__new__(_FleetClient)
+    client._client = GeneratedClient()
+
+    async def fail_if_listed() -> list[object]:
+        raise AssertionError("get_pool must not list pools")
+
+    client.list_pools = fail_if_listed
+
+    assert await client.get_pool("foo") is expected
 
 
 @pytest.mark.asyncio

@@ -68,9 +68,16 @@ impl Frame {
     }
 
     fn approximately_eq(self, other: Self, tolerance: f64) -> bool {
-        (self.x - other.x).abs() <= tolerance
-            && (self.y - other.y).abs() <= tolerance
-            && (self.width - other.width).abs() <= tolerance
+        self.position_approximately_eq(other, tolerance)
+            && self.size_approximately_eq(other, tolerance)
+    }
+
+    fn position_approximately_eq(self, other: Self, tolerance: f64) -> bool {
+        (self.x - other.x).abs() <= tolerance && (self.y - other.y).abs() <= tolerance
+    }
+
+    fn size_approximately_eq(self, other: Self, tolerance: f64) -> bool {
+        (self.width - other.width).abs() <= tolerance
             && (self.height - other.height).abs() <= tolerance
     }
 }
@@ -94,6 +101,31 @@ enum FrameMutation {
 // after AXSize can silently restore the window's previous size even though both
 // accessibility writes return success.
 const FRAME_MUTATION_ORDER: [FrameMutation; 2] = [FrameMutation::Position, FrameMutation::Size];
+
+const POSITION_ONLY: [FrameMutation; 1] = [FrameMutation::Position];
+const SIZE_ONLY: [FrameMutation; 1] = [FrameMutation::Size];
+
+fn corrective_mutations(requested: Frame, observed: Frame) -> &'static [FrameMutation] {
+    const TOLERANCE: f64 = 2.0;
+    match (
+        requested.position_approximately_eq(observed, TOLERANCE),
+        requested.size_approximately_eq(observed, TOLERANCE),
+    ) {
+        (true, true) => &[],
+        (false, true) => &POSITION_ONLY,
+        (true, false) => &SIZE_ONLY,
+        (false, false) => &FRAME_MUTATION_ORDER,
+    }
+}
+
+fn window_server_frame(window_id: u32) -> Option<Frame> {
+    crate::windows::window_bounds_by_id(window_id).map(|bounds| Frame {
+        x: bounds.x,
+        y: bounds.y,
+        width: bounds.width,
+        height: bounds.height,
+    })
+}
 
 fn mutate_and_verify(input: &SetWindowFrameInput) -> Result<FrameOutcome, String> {
     use crate::{
@@ -156,41 +188,63 @@ fn mutate_and_verify(input: &SetWindowFrameInput) -> Result<FrameOutcome, String
                     "window_id {window_id} does not expose a settable AXSize"
                 ))
             } else {
-                let before = element_screen_rect(target)
-                    .map(Frame::from_ax)
-                    .ok_or_else(|| {
-                        format!("could not read the current frame of window_id {window_id}")
-                    });
+                let before = window_server_frame(window_id).ok_or_else(|| {
+                    format!(
+                        "could not read the current WindowServer frame of window_id {window_id}"
+                    )
+                });
                 before.and_then(|before| {
                     let mut mutation_errors = Vec::new();
-                    for mutation in FRAME_MUTATION_ORDER {
-                        let (attribute, error) = match mutation {
-                            FrameMutation::Position => (
-                                "AXPosition",
-                                set_point_attr(target, "AXPosition", requested.x, requested.y),
-                            ),
-                            FrameMutation::Size => (
-                                "AXSize",
-                                set_size_attr(target, "AXSize", requested.width, requested.height),
-                            ),
-                        };
-                        if error != kAXErrorSuccess {
-                            mutation_errors
-                                .push(format!("{attribute} was rejected with AXError {error}"));
+                    let apply_mutations = |mutations: &[FrameMutation]| {
+                        let mut errors = Vec::new();
+                        for mutation in mutations {
+                            let (attribute, error) = match mutation {
+                                FrameMutation::Position => (
+                                    "AXPosition",
+                                    set_point_attr(target, "AXPosition", requested.x, requested.y),
+                                ),
+                                FrameMutation::Size => (
+                                    "AXSize",
+                                    set_size_attr(
+                                        target,
+                                        "AXSize",
+                                        requested.width,
+                                        requested.height,
+                                    ),
+                                ),
+                            };
+                            if error != kAXErrorSuccess {
+                                errors
+                                    .push(format!("{attribute} was rejected with AXError {error}"));
+                            }
                         }
-                    }
+                        errors
+                    };
+                    mutation_errors.extend(apply_mutations(&FRAME_MUTATION_ORDER));
 
                     let mut observed = None;
-                    for _ in 0..6 {
-                        if let Some(rect) = element_screen_rect(target) {
-                            let frame = Frame::from_ax(rect);
-                            let confirmed = frame.approximately_eq(requested, 2.0);
+                    for attempt in 0..20 {
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+
+                        // Tahoe can settle either mutation while rolling the other one
+                        // back. Correct only the component that still differs so the two
+                        // writes converge instead of continually undoing each other.
+                        if attempt < 6 {
+                            if let Some(rect) = element_screen_rect(target) {
+                                let corrections =
+                                    corrective_mutations(requested, Frame::from_ax(rect));
+                                mutation_errors.extend(apply_mutations(corrections));
+                            }
+                        }
+
+                        // Confirmation comes from WindowServer, not the AX values written
+                        // above. This is also the coordinate source exposed by list_windows.
+                        if let Some(frame) = window_server_frame(window_id) {
                             observed = Some(frame);
-                            if confirmed {
+                            if frame.approximately_eq(requested, 2.0) {
                                 break;
                             }
                         }
-                        std::thread::sleep(std::time::Duration::from_millis(40));
                     }
                     let confirmed =
                         observed.is_some_and(|frame| frame.approximately_eq(requested, 2.0));
@@ -239,9 +293,9 @@ fn action_record(outcome: &FrameOutcome) -> ActionExecutionRecord {
         builder = builder.evidence(ActionEvidence {
             kind: EvidenceKind::ValueReadback,
             detail: if outcome.confirmed {
-                "AXPosition and AXSize matched the requested frame within 2 points".into()
+                "WindowServer matched the requested frame within 2 points".into()
             } else {
-                "AXPosition and AXSize were readable but did not match the requested frame".into()
+                "WindowServer returned a frame that did not match the request".into()
             },
         });
     }
@@ -340,6 +394,38 @@ mod tests {
         assert_eq!(
             FRAME_MUTATION_ORDER,
             [FrameMutation::Position, FrameMutation::Size]
+        );
+    }
+
+    #[test]
+    fn corrective_pass_updates_only_the_component_that_did_not_settle() {
+        let requested = Frame {
+            x: 10.0,
+            y: 20.0,
+            width: 800.0,
+            height: 600.0,
+        };
+        assert_eq!(
+            corrective_mutations(
+                requested,
+                Frame {
+                    x: 30.0,
+                    y: 40.0,
+                    ..requested
+                }
+            ),
+            &POSITION_ONLY
+        );
+        assert_eq!(
+            corrective_mutations(
+                requested,
+                Frame {
+                    width: 900.0,
+                    height: 700.0,
+                    ..requested
+                }
+            ),
+            &SIZE_ONLY
         );
     }
 

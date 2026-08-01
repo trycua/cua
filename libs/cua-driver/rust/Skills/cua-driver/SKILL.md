@@ -272,10 +272,14 @@ An optional escalation is a harness instruction, never an automatic retry:
 - `foreground`: explicitly select foreground delivery if session policy allows;
 - `page`: bind the native window to a supported browser page route;
 - `session`: prepare or explicitly widen the session only when policy permits.
+- `rebind`: switch to the reported post-action window, refresh its state, and
+  resume background window-scoped interaction without activating it. If the
+  target is ambiguous, correlate `window_change.new_windows` with
+  `list_windows` before considering pixel, page, or foreground delivery.
 
 Branch on the closed reason vocabulary:
 `route_unavailable`, `delivery_failed`, `effect_unconfirmed`,
-`suspected_noop`, and `permission_required`.
+`suspected_noop`, `permission_required`, and `surface_changed`.
 
 After any action, keep using `verify_state` or a fresh state snapshot for the
 actual task postcondition. The multimodal harness owns visual reading and the

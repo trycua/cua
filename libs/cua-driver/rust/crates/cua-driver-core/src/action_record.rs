@@ -201,6 +201,7 @@ pub enum EscalationKind {
     ExpandCaptureScope,
     PrepareSession,
     RetryWithForegroundDelivery,
+    RebindWindow,
 }
 
 /// Complete internal accounting for one action execution.
@@ -214,6 +215,7 @@ pub struct ActionExecutionRecord {
     pub fallbacks: Vec<ActionFallback>,
     pub evidence: Vec<ActionEvidence>,
     pub escalation: Option<ActionEscalation>,
+    pub window_change: Option<cua_driver_contract::ActionWindowChange>,
     pub delivered_count: Option<u32>,
     pub detail: Option<String>,
 }
@@ -233,6 +235,7 @@ impl ActionExecutionRecord {
             fallbacks: Vec::new(),
             evidence: Vec::new(),
             escalation: None,
+            window_change: None,
             delivered_count: None,
             detail: None,
         }
@@ -279,6 +282,7 @@ impl ActionExecutionRecord {
             }),
             evidence: projected_evidence(&self.evidence),
             escalation: self.escalation.clone(),
+            window_change: self.window_change.clone(),
         })
     }
 
@@ -338,6 +342,7 @@ impl ActionExecutionRecord {
                     })
                     .collect()
             }),
+            window_change: projection.window_change.clone(),
             escalation: projection.escalation.map(|escalation| {
                 use cua_driver_contract::{
                     ActionEscalation, ActionEscalationReason, ActionEscalationTarget,
@@ -373,6 +378,10 @@ impl ActionExecutionRecord {
                         ActionEscalationTarget::Session,
                         ActionEscalationReason::RouteUnavailable,
                     ),
+                    EscalationKind::RebindWindow => (
+                        ActionEscalationTarget::Rebind,
+                        ActionEscalationReason::SurfaceChanged,
+                    ),
                 };
                 ActionEscalation {
                     target,
@@ -382,6 +391,13 @@ impl ActionExecutionRecord {
                         ActionEscalationReason::SuspectedNoop
                     } else {
                         reason
+                    },
+                    window: if escalation.kind == EscalationKind::RebindWindow {
+                        projection.window_change.as_ref().and_then(|change| {
+                            (change.new_windows.len() == 1).then(|| change.new_windows[0].clone())
+                        })
+                    } else {
+                        None
                     },
                 }
             }),
@@ -465,6 +481,27 @@ impl ActionExecutionRecord {
             .and_then(serde_json::Value::as_str)
         {
             record.escalation = browser_refusal_escalation(code);
+        }
+        record.window_change = match structured.get("window_change") {
+            Some(value) => Some(serde_json::from_value(value.clone()).ok()?),
+            None => None,
+        };
+        if let Some(change) = record
+            .window_change
+            .as_ref()
+            .filter(|change| change.foreground_changed || !change.new_windows.is_empty())
+        {
+            record.evidence.push(ActionEvidence {
+                kind: EvidenceKind::WindowChange,
+                detail: "post-action window topology changed".to_owned(),
+            });
+            record.effect = ActionEffect::Confirmed;
+            if !change.new_windows.is_empty() {
+                record.escalation = Some(ActionEscalation {
+                    kind: EscalationKind::RebindWindow,
+                    detail: Some("a new interaction surface may block the prior window".to_owned()),
+                });
+            }
         }
         if effect == ActionEffect::Partial && record.delivered_count.is_none() {
             return None;
@@ -948,6 +985,7 @@ fn escalation_kind_name(kind: EscalationKind) -> &'static str {
         EscalationKind::ExpandCaptureScope => "expand_capture_scope",
         EscalationKind::PrepareSession => "prepare_session",
         EscalationKind::RetryWithForegroundDelivery => "retry_with_foreground_delivery",
+        EscalationKind::RebindWindow => "rebind_window",
     }
 }
 
@@ -1051,6 +1089,7 @@ pub struct ActionOutcomeProjection {
     pub delivery: Option<ActionDeliveryProjection>,
     pub evidence: Option<Vec<ActionEvidenceProjection>>,
     pub escalation: Option<ActionEscalation>,
+    pub window_change: Option<cua_driver_contract::ActionWindowChange>,
 }
 
 /// Published delivery accounting; the original request is intentionally absent.
@@ -1290,7 +1329,11 @@ mod tests {
             .unwrap();
             assert_eq!(
                 result.escalation,
-                Some(cua_driver_contract::ActionEscalation { target, reason })
+                Some(cua_driver_contract::ActionEscalation {
+                    target,
+                    reason,
+                    window: None,
+                })
             );
         }
 
@@ -1441,6 +1484,74 @@ mod tests {
     }
 
     #[test]
+    fn post_action_window_change_confirms_effect_and_recommends_exact_rebind() {
+        let record = ActionExecutionRecord::from_legacy(
+            "click",
+            &serde_json::json!({"delivery_mode": "background"}),
+            &serde_json::json!({
+                "path": "ax",
+                "verified": false,
+                "effect": "unverifiable",
+                "escalation": {
+                    "recommended": "px",
+                    "reason": "legacy fallback before observing the new surface"
+                },
+                "window_change": {
+                    "new_windows": [{
+                        "pid": 123,
+                        "window_id": 41,
+                        "app_name": "TextEdit",
+                        "title": "Open"
+                    }],
+                    "foreground_changed": false
+                }
+            }),
+        )
+        .expect("window-changing action should normalize");
+
+        let public = record
+            .public_result()
+            .expect("window change should project");
+        assert_eq!(public.effect, cua_driver_contract::ActionEffect::Confirmed);
+        assert_eq!(
+            public.evidence,
+            Some(vec![cua_driver_contract::ActionEvidence {
+                kind: cua_driver_contract::ActionEvidenceKind::WindowChange,
+            }])
+        );
+        let change = public
+            .window_change
+            .expect("window metadata should survive");
+        assert_eq!(change.new_windows.len(), 1);
+        assert_eq!(change.new_windows[0].window_id, 41);
+        assert_eq!(
+            public.escalation,
+            Some(cua_driver_contract::ActionEscalation {
+                target: cua_driver_contract::ActionEscalationTarget::Rebind,
+                reason: cua_driver_contract::ActionEscalationReason::SurfaceChanged,
+                window: Some(change.new_windows[0].clone()),
+            })
+        );
+    }
+
+    #[test]
+    fn malformed_post_action_window_change_fails_closed() {
+        assert!(ActionExecutionRecord::from_legacy(
+            "click",
+            &serde_json::json!({"delivery_mode": "background"}),
+            &serde_json::json!({
+                "path": "ax",
+                "effect": "unverifiable",
+                "window_change": {
+                    "new_windows": [{"pid": 123}],
+                    "foreground_changed": false
+                }
+            }),
+        )
+        .is_none());
+    }
+
+    #[test]
     fn browser_pointer_routes_share_the_closed_action_contract() {
         for (input_route, expected_route) in [
             ("trusted", cua_driver_contract::ActionRoute::TrustedInput),
@@ -1518,6 +1629,7 @@ mod tests {
             Some(cua_driver_contract::ActionEscalation {
                 target: cua_driver_contract::ActionEscalationTarget::Page,
                 reason: cua_driver_contract::ActionEscalationReason::RouteUnavailable,
+                window: None,
             })
         );
 

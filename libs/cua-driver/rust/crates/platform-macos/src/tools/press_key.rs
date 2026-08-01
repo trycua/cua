@@ -279,6 +279,7 @@ impl Tool for PressKeyTool {
                                    pixel-click to focus then type_text.)"
                     });
                 }
+                changes.add_to_structured(&mut structured);
                 ToolResult::text(format!(
                     "✅ Pressed {display_key} on pid {pid}{label}.{}",
                     changes.result_suffix()

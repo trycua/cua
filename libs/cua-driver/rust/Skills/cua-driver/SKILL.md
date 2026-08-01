@@ -687,6 +687,13 @@ against a specific window.
 | Send key to pid                  | `press_key({pid, key, modifiers})`                                                                              | no focus change; key goes to pid's current focus                                                                                                                                                                      |
 | Modifier combo                   | `hotkey({pid, keys})` (no focus) or `hotkey({pid, x, y, keys})` (px)                                            | e.g. `["cmd","c"]` / `["ctrl","c"]`; posted per-pid, not HID tap. **px** pixel-clicks `(x,y)` to focus a field first, e.g. `["cmd","v"]` to paste into it                                                             |
 
+`list_windows.z_index` uses one portable convention: higher integer
+values are closer to the front. Select a frontmost candidate with the
+maximum non-null value. If all values are `null` (as they can be on
+native Wayland), use an explicit fallback; never treat `null` as zero
+or infer stacking from array order. The `windows` records returned by
+`launch_app` use the same convention.
+
 In effective desktop scope, the foreground/system equivalents omit
 `pid`/`window_id` and pass `scope:"desktop"`: `click`, `scroll`, `drag`,
 `move_cursor`, `type_text`, `press_key`, and `hotkey`. Coordinates are
@@ -893,6 +900,7 @@ doesn't-survive-across-sessions caveat.
 | `No cached AX state for pid X window_id W`                                         | You either skipped `get_window_state` this turn, or passed a different `window_id` to the click than the one the snapshot cached against                                         | Call `get_window_state({pid: X, window_id: W})` first — the same window_id you intend to click in                                                                                                                    |
 | `Invalid element_index N for pid X window_id W`                                    | Index is stale or out of range                                                                                                                                                   | Re-run `get_window_state` with the same window_id, pick a fresh index from the new tree                                                                                                                              |
 | `window_id W belongs to pid P, not …`                                              | Passed a window_id that's owned by a different process                                                                                                                           | Use `list_windows({pid: X})` to enumerate this pid's own windows                                                                                                                                                     |
+| `ambiguous_window_target`                                                          | A PID-only window action matched multiple eligible top-level windows                                                                                                              | Use the returned candidates or `list_windows({pid: X})`, select the intended sibling, and retry with its explicit `window_id`                                                                                       |
 | `AX action … failed with code …` / `UIA invoke failed`                             | Element doesn't support the default action                                                                                                                                       | Try `show_menu`, `confirm`, `cancel`, `pick`, or fall through to a pixel click on the element's center                                                                                                               |
 | `The user doesn't want to proceed with this tool use. The tool use was rejected …` | The harness uses this _exact_ string for BOTH a permission-prompt denial AND a manual interrupt (Esc / stop) of a running tool — they are indistinguishable from the tool result | Treat as "tool canceled, no result, await the user." Do NOT paraphrase ("you stopped me") — quote the literal message and name the canceled tool + its args, so the user can tell what was in flight vs. what landed |
 

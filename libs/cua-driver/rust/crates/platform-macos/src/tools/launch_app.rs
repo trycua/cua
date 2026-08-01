@@ -457,19 +457,7 @@ impl Tool for LaunchAppTool {
 
                 let windows_json: Vec<Value> = windows
                     .iter()
-                    .map(|w| {
-                        serde_json::json!({
-                            "window_id": w.window_id,
-                            "pid": w.pid,
-                            "app_name": w.app_name,
-                            "title": w.title,
-                            "bounds": {
-                                "x": w.bounds.x, "y": w.bounds.y,
-                                "width": w.bounds.width, "height": w.bounds.height
-                            },
-                            "is_on_screen": w.is_on_screen,
-                        })
-                    })
+                    .map(super::list_windows::window_record_json)
                     .collect();
 
                 let mut structured = serde_json::json!({

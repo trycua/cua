@@ -1,8 +1,8 @@
 //! Tool trait and registry.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -76,6 +76,51 @@ fn desktop_action_coordinator() -> &'static tokio::sync::Mutex<()> {
     COORDINATOR.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
+fn active_text_input_pids() -> &'static Mutex<HashSet<i64>> {
+    static ACTIVE: OnceLock<Mutex<HashSet<i64>>> = OnceLock::new();
+    ACTIVE.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+#[derive(Debug)]
+struct TextInputAdmission {
+    pid: i64,
+}
+
+impl Drop for TextInputAdmission {
+    fn drop(&mut self) {
+        active_text_input_pids()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&self.pid);
+    }
+}
+
+fn try_admit_text_input(
+    tool_name: &str,
+    args: &Value,
+) -> Result<Option<TextInputAdmission>, ToolResult> {
+    if tool_name != "type_text" {
+        return Ok(None);
+    }
+    let Some(pid) = args
+        .get("pid")
+        .and_then(Value::as_i64)
+        .filter(|pid| *pid > 0)
+    else {
+        // Desktop-scoped input has no stable process identity. It continues to
+        // use the process-wide physical action coordinator below.
+        return Ok(None);
+    };
+    let mut active = active_text_input_pids()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if !active.insert(pid) {
+        let message = format!("text input is already active for pid {pid}");
+        return Err(protected_refusal("input_busy", &message));
+    }
+    Ok(Some(TextInputAdmission { pid }))
+}
+
 pub use cua_driver_contract::{CAPABILITY_VERSION, TOOLS_LIST_SCHEMA_VERSION};
 
 /// Metadata for a single tool.
@@ -139,8 +184,7 @@ impl ToolDef {
                 ),
             )
         } else {
-            cua_driver_contract::tool_contract(&self.name)
-                .and_then(|contract| contract.success_output_schema)
+            cua_driver_contract::tool_success_output_schema(&self.name)
         };
         if let Some(output_schema) = output_schema {
             entry
@@ -958,6 +1002,20 @@ impl ToolRegistry {
             return result;
         }
 
+        // A queued text mutation can become stale while another agent is
+        // typing into the same process. Refuse that overlap before consent,
+        // cursor, recording, or platform focus behavior can begin. The guard
+        // is process-global so independent registries cannot interleave text
+        // through separate platform workers, and RAII releases it on task
+        // cancellation as well as normal completion.
+        let _text_input_admission = match try_admit_text_input(resolved_name, &public_args) {
+            Ok(admission) => admission,
+            Err(mut refusal) => {
+                restore_public_runtime_result(&mut refusal, &runtime_prefix);
+                return refusal;
+            }
+        };
+
         let active_adapters =
             crate::authorization::enforcement_adapters_for_call(resolved_name, &public_args);
         let has_adapter = |id: &str| active_adapters.iter().any(|adapter| adapter.id == id);
@@ -1268,6 +1326,10 @@ impl ToolRegistry {
             .flatten();
 
         let mut result = tool.invoke(args.clone()).await;
+        // The platform worker has exited, so another text operation for this
+        // pid may now start even while result projection and evidence capture
+        // finish for the completed call.
+        drop(_text_input_admission);
         if result.action_record.is_none() {
             if let Some(structured) = result.structured_content.as_ref() {
                 result.action_record = crate::action_record::ActionExecutionRecord::from_legacy(
@@ -2374,8 +2436,8 @@ fn restore_public_runtime_value(value: &mut Value, runtime_prefix: &str) -> bool
 mod runtime_isolation_tests {
     use super::{
         canonical_proposed_path, desktop_action_coordinator, namespace_runtime_args,
-        publish_action_result, restore_public_runtime_result, TrustedInvocationEvidence,
-        DISPATCH_RUNTIME_SCOPE,
+        publish_action_result, restore_public_runtime_result, try_admit_text_input,
+        TrustedInvocationEvidence, DISPATCH_RUNTIME_SCOPE,
     };
     use crate::{
         authorization::PermissionMode,
@@ -3625,6 +3687,38 @@ resources:
     }
 
     #[test]
+    fn overlapping_text_input_for_one_pid_fails_fast_and_releases_after_completion() {
+        let pid = 8_675_410;
+        let first = try_admit_text_input("type_text", &serde_json::json!({"pid": pid}))
+            .expect("first text operation should be admitted")
+            .expect("pid-scoped text operation should receive a guard");
+
+        let refusal = try_admit_text_input("type_text", &serde_json::json!({"pid": pid}))
+            .expect_err("overlapping text operation should fail fast");
+        assert_eq!(refusal.is_error, Some(true));
+        assert_eq!(
+            refusal
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(serde_json::Value::as_str),
+            Some("input_busy")
+        );
+
+        let other_pid = try_admit_text_input("type_text", &serde_json::json!({"pid": pid + 1}))
+            .expect("a different pid should have an independent input lane")
+            .expect("pid-scoped text operation should receive a guard");
+        drop(other_pid);
+        drop(first);
+
+        assert!(
+            try_admit_text_input("type_text", &serde_json::json!({"pid": pid}))
+                .expect("completed text operation should release its pid")
+                .is_some()
+        );
+    }
+
+    #[test]
     fn runtime_namespaces_sessions_and_explicit_cursor_ids_without_leaking_them() {
         let context = standard_context();
         let mut args = serde_json::json!({
@@ -4425,6 +4519,27 @@ mod capability_tests {
         }
         .to_list_entry();
         assert!(runtime_only.get("outputSchema").is_none());
+    }
+
+    #[test]
+    fn list_windows_advertises_the_shared_z_index_contract() {
+        let entry = ToolDef {
+            name: "list_windows".into(),
+            description: "List windows.".into(),
+            input_schema: serde_json::json!({"type":"object","properties":{}}),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        }
+        .to_list_entry();
+        let z_index =
+            &entry["outputSchema"]["properties"]["windows"]["items"]["properties"]["z_index"];
+        assert_eq!(z_index["type"], serde_json::json!(["integer", "null"]));
+        assert!(z_index["description"]
+            .as_str()
+            .expect("description")
+            .contains("Higher values are closer to the front"));
     }
 
     #[test]

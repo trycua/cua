@@ -9,6 +9,7 @@ use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef, ToolRegistry},
     tool_args::{parse_typed_input, parse_typed_projection, ArgsExt},
+    window_target::{PidOnlyWindowTargetGuard, WindowTargetCandidate, WindowTargetCandidates},
 };
 use serde_json::{json, Value};
 use std::fs;
@@ -17,6 +18,39 @@ use std::sync::{Arc, RwLock};
 
 use crate::atspi::ElementCache;
 use cursor_overlay::CursorRegistry;
+
+fn window_target_candidates_for_pid(
+    windows: impl IntoIterator<Item = crate::x11::WindowInfo>,
+    pid: u32,
+) -> Vec<WindowTargetCandidate> {
+    windows
+        .into_iter()
+        .filter(|window| window.pid == Some(pid))
+        .map(|window| WindowTargetCandidate {
+            window_id: window.xid,
+            title: window.title,
+            app_name: Some(window.app_name),
+            is_on_screen: window.is_on_screen,
+        })
+        .collect()
+}
+
+fn pid_window_target_candidates(pid: i64) -> Vec<WindowTargetCandidate> {
+    let Ok(pid) = u32::try_from(pid) else {
+        return Vec::new();
+    };
+    window_target_candidates_for_pid(crate::wayland::list_windows_dispatch(Some(pid)), pid)
+}
+
+fn pid_window_guarded<T: Tool + 'static>(
+    tool: T,
+    candidates: &WindowTargetCandidates,
+) -> Box<dyn Tool> {
+    Box::new(PidOnlyWindowTargetGuard::new(
+        Box::new(tool),
+        candidates.clone(),
+    ))
+}
 
 // ── DriverConfig + ResizeRegistry + ZoomRegistry ─────────────────────────────
 
@@ -387,7 +421,11 @@ impl Tool for ListWindowsTool {
     fn def(&self) -> &ToolDef {
         LIST_WINDOWS_DEF.get_or_init(|| ToolDef {
             name: "list_windows".into(),
-            description: "List top-level X11 windows via _NET_CLIENT_LIST.".into(),
+            description: "List top-level windows. Each record includes z_index (integer or null; \
+                higher values are closer to the front; null means stacking order is unavailable \
+                and callers must not infer one). To select a frontmost candidate, take the maximum \
+                integer z_index; if every value is null, use an explicit fallback instead of \
+                relying on array order.".into(),
             input_schema: json!({"type":"object","properties":{
                 "pid":{"type":"integer"},
                 "on_screen_only":{"type":"boolean","description":"When true, filter to visible windows only. Default false."}
@@ -489,6 +527,24 @@ mod list_windows_tests {
         assert_eq!(rec["z_index"], json!(3));
         assert_eq!(rec["window_id"], json!(42));
         assert_eq!(rec["title"], json!("Example"));
+    }
+
+    #[test]
+    fn unavailable_wayland_order_serializes_as_null() {
+        let w = crate::x11::WindowInfo {
+            xid: 43,
+            pid: Some(1234),
+            app_name: "native-wayland-app".to_owned(),
+            title: "Example".to_owned(),
+            is_on_screen: true,
+            z_index: None,
+            x: 0,
+            y: 0,
+            width: 300,
+            height: 400,
+        };
+
+        assert_eq!(window_record_json(&w)["z_index"], Value::Null);
     }
 
     #[test]
@@ -7066,42 +7122,73 @@ pub fn build_registry_with_provider(
     ));
     r.register(Box::new(LaunchAppTool));
     r.register(Box::new(KillAppTool));
-    r.register(Box::new(BringToFrontTool));
-    r.register(Box::new(ClickTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(DoubleClickTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(RightClickTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(DragTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(MouseButtonDownTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(MouseDragTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(MouseButtonUpTool {
-        state: state.clone(),
-    }));
+    let pid_window_candidates: WindowTargetCandidates = Arc::new(pid_window_target_candidates);
+    r.register(pid_window_guarded(BringToFrontTool, &pid_window_candidates));
+    r.register(pid_window_guarded(
+        ClickTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
+    r.register(pid_window_guarded(
+        DoubleClickTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
+    r.register(pid_window_guarded(
+        RightClickTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
+    r.register(pid_window_guarded(
+        DragTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
+    r.register(pid_window_guarded(
+        MouseButtonDownTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
+    r.register(pid_window_guarded(
+        MouseDragTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
+    r.register(pid_window_guarded(
+        MouseButtonUpTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
     r.register(Box::new(ParallelMouseDragTool {
         state: state.clone(),
     }));
-    r.register(Box::new(TypeTextTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(PressKeyTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(HotkeyTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(SetValueTool));
-    r.register(Box::new(ScrollTool));
+    r.register(pid_window_guarded(
+        TypeTextTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
+    r.register(pid_window_guarded(
+        PressKeyTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
+    r.register(pid_window_guarded(
+        HotkeyTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
+    r.register(pid_window_guarded(SetValueTool, &pid_window_candidates));
+    r.register(pid_window_guarded(ScrollTool, &pid_window_candidates));
     cua_driver_core::clipboard::register_clipboard_tools(
         &mut r,
         Arc::new(crate::clipboard::LinuxClipboard::new()),
@@ -7236,6 +7323,38 @@ mod browser_launch_guard_tests {
         ));
         assert!(!contains_remote_debugging_flag(
             "--user-data-dir=/tmp/profile"
+        ));
+    }
+}
+
+#[cfg(test)]
+mod pid_window_target_tests {
+    use super::*;
+    use cua_driver_core::window_target::{resolve_pid_window_target, PidWindowTargetResolution};
+
+    fn window(xid: u64, pid: u32) -> crate::x11::WindowInfo {
+        crate::x11::WindowInfo {
+            xid,
+            pid: Some(pid),
+            app_name: "editor".into(),
+            title: format!("Document {xid}"),
+            is_on_screen: true,
+            z_index: Some(1),
+            x: 0,
+            y: 0,
+            width: 640,
+            height: 480,
+        }
+    }
+
+    #[test]
+    fn same_pid_sibling_windows_are_ambiguous() {
+        let candidates =
+            window_target_candidates_for_pid([window(7, 42), window(8, 42), window(9, 99)], 42);
+        assert!(matches!(
+            resolve_pid_window_target(candidates),
+            PidWindowTargetResolution::Ambiguous(windows)
+                if windows.iter().map(|window| window.window_id).collect::<Vec<_>>() == [7, 8]
         ));
     }
 }

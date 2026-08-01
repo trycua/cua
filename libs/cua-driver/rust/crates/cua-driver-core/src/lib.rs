@@ -84,6 +84,7 @@ pub mod tool_schema;
 pub mod video;
 pub mod video_ffmpeg;
 pub mod window_inspection;
+pub mod window_target;
 
 pub use cua_driver_contract::{CaptureScope, EscalationReason};
 pub use recording::RecordingSession;

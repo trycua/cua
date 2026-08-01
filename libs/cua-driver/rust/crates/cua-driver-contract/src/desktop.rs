@@ -34,6 +34,54 @@ pub fn contracts() -> Vec<ToolContract> {
     ]
 }
 
+const Z_INDEX_DESCRIPTION: &str = "Higher values are closer to the front. Null means the provider cannot observe stacking order; callers must not infer an order from array position or treat null as zero.";
+
+// Keep this schema deliberately narrow: platform window records have additive
+// fields and are still converging, while z_index has one portable meaning that
+// consumers need in order to sort safely. This runtime schema intentionally
+// stays outside the typed SDK manifest until that broader shape converges.
+pub(crate) fn list_windows_success_output_schema() -> serde_json::Value {
+    serde_json::json!({
+            "type": "object",
+            "properties": {
+                "windows": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "z_index": {
+                                "type": ["integer", "null"],
+                                "description": Z_INDEX_DESCRIPTION
+                            }
+                        },
+                        "required": ["z_index"],
+                        "additionalProperties": true
+                    }
+                }
+            },
+            "required": ["windows"],
+            "additionalProperties": true
+    })
+}
+
+pub(crate) fn validate_list_windows_output(value: serde_json::Value) -> Result<(), String> {
+    let windows = value
+        .get("windows")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "windows must be an array".to_owned())?;
+    for (index, window) in windows.iter().enumerate() {
+        let z_index = window
+            .get("z_index")
+            .ok_or_else(|| format!("windows[{index}].z_index is required"))?;
+        if !(z_index.is_null() || z_index.is_u64() || z_index.is_i64()) {
+            return Err(format!(
+                "windows[{index}].z_index must be an integer or null"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn clipboard_read() -> ToolContract {
     let mut contract = contract::<ClipboardReadInput, ClipboardReadOutput>(
         "clipboard_read",

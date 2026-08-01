@@ -4,4 +4,4 @@ from cua_train import TrainClient
 
 __all__ = ["TrainClient"]
 
-__version__ = "0.0.4"
+__version__ = "0.0.7"

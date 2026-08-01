@@ -6,7 +6,7 @@ import time
 import urllib.error
 import urllib.request
 
-from cyclops_sdk import (
+from fleet_sdk import (
     CreateClaimRequest,
     CreatePoolRequest,
     CyclopsClient,

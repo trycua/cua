@@ -49,8 +49,10 @@ fn def() -> &'static ToolDef {
              A combo is never driver-verifiable (no read-back) → effect:\"unverifiable\"; \
              confirm via screenshot. NOTE: a keyboard combo does NOT focus a text \
              field — to type into a backgrounded Electron input, establish real \
-             renderer focus with a PIXEL click first, then `type_text` (do not reach \
-             for a clipboard + Cmd+V dance).\n\n\
+             renderer focus with a PIXEL click first, then `type_text`. If an app only \
+             accepts paste, call `clipboard_write`, then `clipboard_read` and verify its \
+             types (and text when applicable) before selecting or replacing editor content; \
+             only then send Cmd+V.\n\n\
              Recognized modifiers: cmd/command, shift, option/alt, ctrl/control, fn. \
              Non-modifier keys use the same vocabulary as `press_key`. Order: \
              modifiers first, one non-modifier last."

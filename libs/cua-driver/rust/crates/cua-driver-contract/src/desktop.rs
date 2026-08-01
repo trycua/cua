@@ -8,11 +8,11 @@
 //! do not replace the richer platform-owned runtime schemas.
 
 use crate::{
-    ActionResult, ClickInput, CursorAction, CursorPositionOutput, CursorSemantics,
-    DesktopStateOutput, DragInput, GetCursorPositionInput, GetDesktopStateInput,
-    GetScreenSizeInput, HotkeyInput, MoveCursorInput, Platform, PressKeyInput, SchemaMode,
-    ScreenSizeOutput, ScrollInput, ToolAnnotations, ToolContract, ToolInput, ToolOutput,
-    TypeTextInput,
+    ActionResult, ClickInput, ClipboardReadInput, ClipboardReadOutput, ClipboardWriteInput,
+    ClipboardWriteOutput, CursorAction, CursorPositionOutput, CursorSemantics, DesktopStateOutput,
+    DragInput, GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput, HotkeyInput,
+    MoveCursorInput, Platform, PressKeyInput, SchemaMode, ScreenSizeOutput, ScrollInput,
+    ToolAnnotations, ToolContract, ToolInput, ToolOutput, TypeTextInput,
 };
 
 const ALL_PLATFORMS: [Platform; 3] = [Platform::Macos, Platform::Windows, Platform::Linux];
@@ -26,10 +26,46 @@ pub fn contracts() -> Vec<ToolContract> {
         click(),
         drag(),
         scroll(),
+        clipboard_read(),
+        clipboard_write(),
         type_text(),
         press_key(),
         hotkey(),
     ]
+}
+
+fn clipboard_read() -> ToolContract {
+    let mut contract = contract::<ClipboardReadInput, ClipboardReadOutput>(
+        "clipboard_read",
+        "List available system clipboard types and optionally return privacy-sensitive plain text. Clipboard content is never retained in telemetry.",
+        &["clipboard.read", "clipboard.types"],
+        ToolAnnotations {
+            read_only: true,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        },
+        CursorAction::Observe,
+    );
+    contract.schema_mode = SchemaMode::CanonicalRuntime;
+    contract
+}
+
+fn clipboard_write() -> ToolContract {
+    let mut contract = contract::<ClipboardWriteInput, ClipboardWriteOutput>(
+        "clipboard_write",
+        "Replace the system clipboard with exactly one value: plain text, an image from an absolute local path, or a file URL from an absolute local path. Returns the available types for read-back before paste.",
+        &["clipboard.write", "clipboard.write.text", "clipboard.write.image", "clipboard.write.file_url", "clipboard.types"],
+        ToolAnnotations {
+            read_only: false,
+            destructive: true,
+            idempotent: true,
+            open_world: false,
+        },
+        CursorAction::Text,
+    );
+    contract.schema_mode = SchemaMode::CanonicalRuntime;
+    contract
 }
 
 fn contract<I: ToolInput, O: ToolOutput>(

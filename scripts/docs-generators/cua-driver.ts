@@ -644,6 +644,10 @@ export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: str
       tools: ['page'],
     },
     {
+      title: 'Clipboard tools',
+      tools: ['clipboard_read', 'clipboard_write'],
+    },
+    {
       title: 'Recording tools',
       tools: ['start_recording', 'stop_recording', 'replay_trajectory'],
     },

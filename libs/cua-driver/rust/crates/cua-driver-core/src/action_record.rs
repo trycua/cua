@@ -186,6 +186,7 @@ pub struct ActionEvidence {
 pub enum EvidenceKind {
     AccessibilityReadback,
     BrowserReadback,
+    ValueReadback,
     WindowChange,
     NativeApiResult,
     ScreenshotComparison,
@@ -355,7 +356,8 @@ impl ActionExecutionRecord {
                     .map(|evidence| cua_driver_contract::ActionEvidence {
                         kind: match evidence.kind {
                             ProjectedEvidenceKind::AccessibilityReadback
-                            | ProjectedEvidenceKind::BrowserReadback => {
+                            | ProjectedEvidenceKind::BrowserReadback
+                            | ProjectedEvidenceKind::ValueReadback => {
                                 cua_driver_contract::ActionEvidenceKind::ValueReadback
                             }
                             ProjectedEvidenceKind::WindowChange => {
@@ -913,6 +915,7 @@ fn projected_evidence(evidence: &[ActionEvidence]) -> Option<Vec<ActionEvidenceP
             let kind = match evidence.kind {
                 EvidenceKind::AccessibilityReadback => ProjectedEvidenceKind::AccessibilityReadback,
                 EvidenceKind::BrowserReadback => ProjectedEvidenceKind::BrowserReadback,
+                EvidenceKind::ValueReadback => ProjectedEvidenceKind::ValueReadback,
                 EvidenceKind::WindowChange => ProjectedEvidenceKind::WindowChange,
                 EvidenceKind::NativeApiResult
                 | EvidenceKind::ScreenshotComparison
@@ -970,6 +973,7 @@ fn evidence_kind_name(kind: EvidenceKind) -> &'static str {
     match kind {
         EvidenceKind::AccessibilityReadback => "accessibility_readback",
         EvidenceKind::BrowserReadback => "browser_readback",
+        EvidenceKind::ValueReadback => "value_readback",
         EvidenceKind::WindowChange => "window_change",
         EvidenceKind::NativeApiResult => "native_api_result",
         EvidenceKind::ScreenshotComparison => "screenshot_comparison",
@@ -1115,6 +1119,7 @@ pub struct ActionEvidenceProjection {
 pub enum ProjectedEvidenceKind {
     AccessibilityReadback,
     BrowserReadback,
+    ValueReadback,
     WindowChange,
 }
 
@@ -1426,6 +1431,34 @@ mod tests {
                 "public ActionResult leaked {forbidden}: {rendered}"
             );
         }
+    }
+
+    #[test]
+    fn system_api_value_readback_projects_without_transport_details() {
+        let result = ActionExecutionRecord::builder(
+            ActionEffect::Confirmed,
+            ActionTransport::WindowsSetWindowPos,
+            RequestedDelivery::NotApplicable,
+        )
+        .actual_delivery(ActualDelivery::NotApplicable)
+        .evidence(ActionEvidence {
+            kind: EvidenceKind::ValueReadback,
+            detail: "GetWindowRect matched exact HWND geometry".into(),
+        })
+        .build()
+        .unwrap()
+        .public_result()
+        .unwrap();
+
+        assert_eq!(
+            serde_json::to_value(result).unwrap(),
+            serde_json::json!({
+                "effect": "confirmed",
+                "route": "system_api",
+                "delivery": {"mode": "not_applicable"},
+                "evidence": [{"kind": "value_readback"}]
+            })
+        );
     }
 
     #[test]

@@ -19,3 +19,4 @@ def test_publish_prepare_checks_out_canonical_metadata() -> None:
         "      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4\n"
         "      - name: Determine and validate patch version"
     ) in prepare
+    assert "@v" not in workflow.read_text()

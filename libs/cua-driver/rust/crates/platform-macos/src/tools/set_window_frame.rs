@@ -84,6 +84,17 @@ struct FrameOutcome {
     mutation_errors: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FrameMutation {
+    Position,
+    Size,
+}
+
+// Position must precede size. On macOS Tahoe, writing AXPosition immediately
+// after AXSize can silently restore the window's previous size even though both
+// accessibility writes return success.
+const FRAME_MUTATION_ORDER: [FrameMutation; 2] = [FrameMutation::Position, FrameMutation::Size];
+
 fn mutate_and_verify(input: &SetWindowFrameInput) -> Result<FrameOutcome, String> {
     use crate::{
         ax::bindings::{
@@ -151,19 +162,22 @@ fn mutate_and_verify(input: &SetWindowFrameInput) -> Result<FrameOutcome, String
                         format!("could not read the current frame of window_id {window_id}")
                     });
                 before.and_then(|before| {
-                    let size_error =
-                        set_size_attr(target, "AXSize", requested.width, requested.height);
-                    let position_error =
-                        set_point_attr(target, "AXPosition", requested.x, requested.y);
                     let mut mutation_errors = Vec::new();
-                    if size_error != kAXErrorSuccess {
-                        mutation_errors
-                            .push(format!("AXSize was rejected with AXError {size_error}"));
-                    }
-                    if position_error != kAXErrorSuccess {
-                        mutation_errors.push(format!(
-                            "AXPosition was rejected with AXError {position_error}"
-                        ));
+                    for mutation in FRAME_MUTATION_ORDER {
+                        let (attribute, error) = match mutation {
+                            FrameMutation::Position => (
+                                "AXPosition",
+                                set_point_attr(target, "AXPosition", requested.x, requested.y),
+                            ),
+                            FrameMutation::Size => (
+                                "AXSize",
+                                set_size_attr(target, "AXSize", requested.width, requested.height),
+                            ),
+                        };
+                        if error != kAXErrorSuccess {
+                            mutation_errors
+                                .push(format!("{attribute} was rejected with AXError {error}"));
+                        }
                     }
 
                     let mut observed = None;
@@ -319,6 +333,14 @@ mod tests {
             },
             2.0
         ));
+    }
+
+    #[test]
+    fn macos_applies_position_before_size_to_avoid_size_rollback() {
+        assert_eq!(
+            FRAME_MUTATION_ORDER,
+            [FrameMutation::Position, FrameMutation::Size]
+        );
     }
 
     #[test]

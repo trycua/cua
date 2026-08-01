@@ -14,6 +14,23 @@ pub enum ActionEffect {
     Refused,
 }
 
+/// Classify an idempotent native mutation using an independent value readback.
+/// A missing readback never confirms success, while a readable unchanged value
+/// is stronger evidence of a no-op than of an unknown outcome.
+pub fn effect_from_value_readback(
+    confirmed: bool,
+    changed: bool,
+    readback_available: bool,
+) -> ActionEffect {
+    if confirmed && readback_available {
+        ActionEffect::Confirmed
+    } else if changed || !readback_available {
+        ActionEffect::Unverifiable
+    } else {
+        ActionEffect::SuspectedNoop
+    }
+}
+
 /// The delivery mode requested by the caller.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RequestedDelivery {
@@ -44,6 +61,7 @@ pub enum ActionTransport {
     AgentCursorOverlay,
     MacosAxAction,
     MacosAxValue,
+    MacosAxWindowFrame,
     MacosCgEventPid,
     MacosCgEventHid,
     WindowsUiaInvoke,
@@ -59,6 +77,7 @@ pub enum ActionTransport {
     WindowsSendInput,
     WindowsSetCursorPos,
     WindowsShellExecute,
+    WindowsSetWindowPos,
     LinuxAtSpiAction,
     LinuxAtSpiValue,
     LinuxPty,
@@ -67,6 +86,7 @@ pub enum ActionTransport {
     LinuxLibei,
     LinuxWaylandVirtualPointer,
     LinuxCuaCompositorInject,
+    LinuxX11ConfigureWindow,
     BrowserCdpInputMouse,
     BrowserCdpInputKey,
     BrowserCdpRuntimeFunction,
@@ -77,6 +97,7 @@ impl ActionTransport {
         Self::AgentCursorOverlay,
         Self::MacosAxAction,
         Self::MacosAxValue,
+        Self::MacosAxWindowFrame,
         Self::MacosCgEventPid,
         Self::MacosCgEventHid,
         Self::WindowsUiaInvoke,
@@ -92,6 +113,7 @@ impl ActionTransport {
         Self::WindowsSendInput,
         Self::WindowsSetCursorPos,
         Self::WindowsShellExecute,
+        Self::WindowsSetWindowPos,
         Self::LinuxAtSpiAction,
         Self::LinuxAtSpiValue,
         Self::LinuxPty,
@@ -100,6 +122,7 @@ impl ActionTransport {
         Self::LinuxLibei,
         Self::LinuxWaylandVirtualPointer,
         Self::LinuxCuaCompositorInject,
+        Self::LinuxX11ConfigureWindow,
         Self::BrowserCdpInputMouse,
         Self::BrowserCdpInputKey,
         Self::BrowserCdpRuntimeFunction,
@@ -110,6 +133,7 @@ impl ActionTransport {
             Self::AgentCursorOverlay => ActionRoute::SyntheticEvents,
             Self::MacosAxAction
             | Self::MacosAxValue
+            | Self::MacosAxWindowFrame
             | Self::WindowsUiaInvoke
             | Self::WindowsUiaToggle
             | Self::WindowsUiaSelection
@@ -133,6 +157,7 @@ impl ActionTransport {
             | Self::LinuxLibei
             | Self::LinuxWaylandVirtualPointer
             | Self::LinuxCuaCompositorInject => ActionRoute::GlobalInput,
+            Self::WindowsSetWindowPos | Self::LinuxX11ConfigureWindow => ActionRoute::SystemApi,
             Self::BrowserCdpRuntimeFunction => ActionRoute::Dom,
             Self::BrowserCdpInputMouse | Self::BrowserCdpInputKey => ActionRoute::TrustedInput,
         }
@@ -145,6 +170,7 @@ pub enum ActionRoute {
     Accessibility,
     SyntheticEvents,
     GlobalInput,
+    SystemApi,
     Dom,
     TrustedInput,
 }
@@ -302,6 +328,7 @@ impl ActionExecutionRecord {
                 ActionRoute::Accessibility => cua_driver_contract::ActionRoute::Accessibility,
                 ActionRoute::SyntheticEvents => cua_driver_contract::ActionRoute::SyntheticEvents,
                 ActionRoute::GlobalInput => cua_driver_contract::ActionRoute::GlobalInput,
+                ActionRoute::SystemApi => cua_driver_contract::ActionRoute::SystemApi,
                 ActionRoute::Dom => cua_driver_contract::ActionRoute::Dom,
                 ActionRoute::TrustedInput => cua_driver_contract::ActionRoute::TrustedInput,
             },
@@ -916,6 +943,7 @@ fn route_name(route: ActionRoute) -> &'static str {
         ActionRoute::Accessibility => "accessibility",
         ActionRoute::SyntheticEvents => "synthetic_events",
         ActionRoute::GlobalInput => "global_input",
+        ActionRoute::SystemApi => "system_api",
         ActionRoute::Dom => "dom",
         ActionRoute::TrustedInput => "trusted_input",
     }
@@ -969,6 +997,7 @@ fn transport_name(transport: ActionTransport) -> &'static str {
         ActionTransport::AgentCursorOverlay => "agent_cursor_overlay",
         ActionTransport::MacosAxAction => "macos_ax_action",
         ActionTransport::MacosAxValue => "macos_ax_value",
+        ActionTransport::MacosAxWindowFrame => "macos_ax_window_frame",
         ActionTransport::MacosCgEventPid => "macos_cg_event_pid",
         ActionTransport::MacosCgEventHid => "macos_cg_event_hid",
         ActionTransport::WindowsUiaInvoke => "windows_uia_invoke",
@@ -984,6 +1013,7 @@ fn transport_name(transport: ActionTransport) -> &'static str {
         ActionTransport::WindowsSendInput => "windows_send_input",
         ActionTransport::WindowsSetCursorPos => "windows_set_cursor_pos",
         ActionTransport::WindowsShellExecute => "windows_shell_execute",
+        ActionTransport::WindowsSetWindowPos => "windows_set_window_pos",
         ActionTransport::LinuxAtSpiAction => "linux_at_spi_action",
         ActionTransport::LinuxAtSpiValue => "linux_at_spi_value",
         ActionTransport::LinuxPty => "linux_pty",
@@ -992,6 +1022,7 @@ fn transport_name(transport: ActionTransport) -> &'static str {
         ActionTransport::LinuxLibei => "linux_libei",
         ActionTransport::LinuxWaylandVirtualPointer => "linux_wayland_virtual_pointer",
         ActionTransport::LinuxCuaCompositorInject => "linux_cua_compositor_inject",
+        ActionTransport::LinuxX11ConfigureWindow => "linux_x11_configure_window",
         ActionTransport::BrowserCdpInputMouse => "browser_cdp_input_mouse",
         ActionTransport::BrowserCdpInputKey => "browser_cdp_input_key",
         ActionTransport::BrowserCdpRuntimeFunction => "browser_cdp_runtime_function",
@@ -1107,7 +1138,31 @@ mod tests {
     }
 
     #[test]
-    fn every_transport_maps_to_one_of_the_five_stable_routes() {
+    fn value_readback_never_claims_unobserved_success() {
+        assert_eq!(
+            effect_from_value_readback(true, false, true),
+            ActionEffect::Confirmed
+        );
+        assert_eq!(
+            effect_from_value_readback(false, true, true),
+            ActionEffect::Unverifiable
+        );
+        assert_eq!(
+            effect_from_value_readback(false, false, false),
+            ActionEffect::Unverifiable
+        );
+        assert_eq!(
+            effect_from_value_readback(true, false, false),
+            ActionEffect::Unverifiable
+        );
+        assert_eq!(
+            effect_from_value_readback(false, false, true),
+            ActionEffect::SuspectedNoop
+        );
+    }
+
+    #[test]
+    fn every_transport_maps_to_one_of_the_six_stable_routes() {
         let mut routes = Vec::new();
         for transport in ActionTransport::ALL {
             let record = ActionExecutionRecord::builder(
@@ -1125,6 +1180,7 @@ mod tests {
         assert!(routes.contains(&ActionRoute::Accessibility));
         assert!(routes.contains(&ActionRoute::SyntheticEvents));
         assert!(routes.contains(&ActionRoute::GlobalInput));
+        assert!(routes.contains(&ActionRoute::SystemApi));
         assert!(routes.contains(&ActionRoute::Dom));
         assert!(routes.contains(&ActionRoute::TrustedInput));
     }

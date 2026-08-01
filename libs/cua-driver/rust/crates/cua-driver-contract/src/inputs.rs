@@ -66,6 +66,10 @@ fn number_schema(_: &mut SchemaGenerator) -> Schema {
     json_schema!({ "type": "number" })
 }
 
+fn positive_number_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({ "type": "number", "exclusiveMinimum": 0 })
+}
+
 fn click_button_schema(generator: &mut SchemaGenerator) -> Schema {
     ClickButton::json_schema(generator)
 }
@@ -405,6 +409,29 @@ pub struct MoveCursorInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SetWindowFrameInput {
+    pub pid: u32,
+    pub window_id: u64,
+    #[schemars(schema_with = "number_schema")]
+    pub x: f64,
+    #[schemars(schema_with = "number_schema")]
+    pub y: f64,
+    #[schemars(schema_with = "positive_number_schema")]
+    pub width: f64,
+    #[schemars(schema_with = "positive_number_schema")]
+    pub height: f64,
+    /// Optional session id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "string_schema")]
+    pub session: Option<String>,
+}
+
+impl ToolInput for SetWindowFrameInput {
+    const TOOL_NAME: &'static str = "set_window_frame";
 }
 
 impl ToolInput for MoveCursorInput {

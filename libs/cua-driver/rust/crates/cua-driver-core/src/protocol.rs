@@ -371,14 +371,14 @@ fn agent_instructions() -> String {
 
 Tools operate apps without stealing focus or moving the real pointer. Prefer `element_index` ({tree_kind}) over pixels; it works on backgrounded or hidden windows.
 
+Prefer any client-provided API, CLI, or filesystem operation that completes a non-GUI outcome directly; do not open a file manager for ordinary file operations. This MCP server has no shell.
+
 Workflow per turn:
 0. `start_session(session)` once per run; reuse that id on actions. Concurrent runs use distinct ids. End it when done.
 1. `launch_app` returns pid and windows. Use `creates_new_application_instance:true` when another run may touch the app.
 2. `get_window_state(pid, window_id)` refreshes the tree and element indices.
 3. Act with the fresh index.
 4. `verify_state(pid, window_id, expect)` checks bounded structured postconditions. `unknown` is not success. Set `include_screenshot:true` when the multimodal agent should also read visual evidence and decide whether to stop, retry, or advance the ladder.
-
-A declared session owns a colored agent-cursor overlay; it never moves the real pointer. Pure accessibility actions show only a brief first pulse. Use `move_cursor` or a pixel action first when a recording needs a visible glide.
 
 If a `cua-driver` skill is loaded in your harness (Claude Code / Codex / OpenClaw / OpenCode dirs), prefer its detailed workflow — SKILL.md plus {platform_skill_pointer}. Install with `cua-driver skills install` if not yet present."#
     )
@@ -474,6 +474,8 @@ mod agent_instruction_tests {
         assert!(instructions.contains("verify_state"));
         assert!(instructions.contains("`unknown` is not success"));
         assert!(instructions.contains("multimodal agent"));
+        assert!(instructions.contains("client-provided API, CLI, or filesystem operation"));
+        assert!(instructions.contains("has no shell"));
         assert!(
             instructions.split_whitespace().count() <= 200,
             "initialize instructions should stay within the documented context budget"

@@ -32,7 +32,7 @@ pub use inputs::{
     GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput, GetSessionStateInput,
     HotkeyInput, MoveCursorInput, PressKeyInput, ScrollBy, ScrollDirection, ScrollInput,
     SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
-    StartSessionInput, ToolInput, TypeTextInput,
+    SetWindowFrameInput, StartSessionInput, ToolInput, TypeTextInput,
 };
 pub use outputs::{
     ActionDelivery, ActionDeliveryMode, ActionEffect, ActionEscalation, ActionEscalationReason,
@@ -81,6 +81,7 @@ pub const ACTION_RESULT_TOOLS: &[&str] = &[
     "press_key",
     "hotkey",
     "set_value",
+    "set_window_frame",
     "browser_click",
     "browser_pointer",
     "browser_type",
@@ -364,6 +365,7 @@ mod tests {
             "move_cursor",
             "press_key",
             "scroll",
+            "set_window_frame",
             "type_text",
         ] {
             assert_eq!(
@@ -372,6 +374,27 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn set_window_frame_is_exact_targeted_and_positive_sized() {
+        let contract = tool_contract("set_window_frame").expect("set_window_frame contract");
+        assert_eq!(
+            contract.input_schema["required"],
+            serde_json::json!(["pid", "window_id", "x", "y", "width", "height"])
+        );
+        assert_eq!(
+            contract.input_schema["properties"]["width"]["exclusiveMinimum"],
+            serde_json::json!(0)
+        );
+        assert_eq!(
+            contract.input_schema["properties"]["height"]["exclusiveMinimum"],
+            serde_json::json!(0)
+        );
+        assert_eq!(
+            contract.cursor_semantics.expect("cursor semantics").action,
+            CursorAction::App
+        );
     }
 
     #[test]

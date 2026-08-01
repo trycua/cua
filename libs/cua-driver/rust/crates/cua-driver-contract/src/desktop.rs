@@ -12,7 +12,7 @@ use crate::{
     ClipboardWriteOutput, CursorAction, CursorPositionOutput, CursorSemantics, DesktopStateOutput,
     DragInput, GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput, HotkeyInput,
     MoveCursorInput, Platform, PressKeyInput, SchemaMode, ScreenSizeOutput, ScrollInput,
-    ToolAnnotations, ToolContract, ToolInput, ToolOutput, TypeTextInput,
+    SetWindowFrameInput, ToolAnnotations, ToolContract, ToolInput, ToolOutput, TypeTextInput,
 };
 
 const ALL_PLATFORMS: [Platform; 3] = [Platform::Macos, Platform::Windows, Platform::Linux];
@@ -23,6 +23,7 @@ pub fn contracts() -> Vec<ToolContract> {
         get_screen_size(),
         get_cursor_position(),
         move_cursor(),
+        set_window_frame(),
         click(),
         drag(),
         scroll(),
@@ -196,6 +197,21 @@ fn move_cursor() -> ToolContract {
             open_world: false,
         },
         CursorAction::Navigate,
+    )
+}
+
+fn set_window_frame() -> ToolContract {
+    contract::<SetWindowFrameInput, ActionResult>(
+        "set_window_frame",
+        "Set one exact top-level window's frame in the desktop-coordinate space reported by list_windows and verify the resulting geometry through an independent readback.",
+        &["window.frame.set"],
+        ToolAnnotations {
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        },
+        CursorAction::App,
     )
 }
 

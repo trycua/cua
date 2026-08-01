@@ -704,8 +704,12 @@ impl Tool for ListWindowsTool {
                 have a visible window right now?\", \"which of this pid's windows is the main \
                 one?\".\n\n\
                 Per-record fields: window_id (HWND), pid + app_name, title, \
-                bounds {x, y, width, height}, layer (always 0), z_index (stacking order), \
-                is_on_screen, minimized. The macOS-specific on_current_space / space_ids fields are \
+                bounds {x, y, width, height}, layer (always 0), z_index (integer or null; higher \
+                values are closer to the front; null means stacking order is unavailable and \
+                callers must not infer one), is_on_screen, minimized. To select a frontmost \
+                candidate, take the maximum integer z_index; if every value is null, use an \
+                explicit fallback instead of relying on array order. The macOS-specific \
+                on_current_space / space_ids fields are \
                 omitted on Windows; current_space_id is null.\n\n\
                 Inputs: pid (optional pid filter), on_screen_only (bool, default false).".into(),
             input_schema: json!({"type":"object","properties":{
@@ -771,7 +775,7 @@ impl Tool for ListWindowsTool {
             .enumerate()
             .map(|(i, w)| {
                 let app_name = pid_to_name.get(&w.pid).cloned().unwrap_or_default();
-                let z_index = (n.saturating_sub(1).saturating_sub(i)) as i64;
+                let z_index = z_index_from_front_to_back(n, i) as i64;
                 json!({
                     "window_id":  w.hwnd,
                     "pid":        w.pid,
@@ -844,6 +848,24 @@ impl Tool for ListWindowsTool {
             "_legacy_windows":  legacy_windows,
         });
         ToolResult::text(lines.join("\n")).with_structured(structured)
+    }
+}
+
+fn z_index_from_front_to_back(total: usize, position: usize) -> usize {
+    total.saturating_sub(1).saturating_sub(position)
+}
+
+#[cfg(test)]
+mod list_windows_z_index_tests {
+    use super::z_index_from_front_to_back;
+
+    #[test]
+    fn enum_windows_front_to_back_order_normalizes_to_higher_is_frontmost() {
+        let indices: Vec<_> = (0..3)
+            .map(|position| z_index_from_front_to_back(3, position))
+            .collect();
+        assert_eq!(indices, vec![2, 1, 0]);
+        assert!(indices[0] > indices[2]);
     }
 }
 
@@ -2243,12 +2265,13 @@ impl Tool for LaunchAppTool {
                 .await
                 .unwrap_or_default();
             if !wins.is_empty() {
-                windows_json = wins.iter().map(|w| json!({
+                let window_count = wins.len();
+                windows_json = wins.iter().enumerate().map(|(position, w)| json!({
                     "window_id": w.hwnd, "title": w.title,
                     "bounds":    { "x": w.x, "y": w.y, "width": w.width, "height": w.height },
                     "layer":     0,
-                    "z_index":   0,           // single-window context; per-record z_index already in list_windows
-                    "is_on_screen": true,
+                    "z_index":   z_index_from_front_to_back(window_count, position),
+                    "is_on_screen": w.is_on_screen,
                 })).collect();
                 break;
             }
@@ -2303,12 +2326,13 @@ impl Tool for LaunchAppTool {
                         .await
                         .unwrap_or_default();
                         if !wins.is_empty() {
-                            windows_json = wins.iter().map(|w| json!({
+                            let window_count = wins.len();
+                            windows_json = wins.iter().enumerate().map(|(position, w)| json!({
                                 "window_id": w.hwnd, "title": w.title,
                                 "bounds": { "x": w.x, "y": w.y, "width": w.width, "height": w.height },
                                 "layer": 0,
-                                "z_index": 0,
-                                "is_on_screen": true,
+                                "z_index": z_index_from_front_to_back(window_count, position),
+                                "is_on_screen": w.is_on_screen,
                             })).collect();
                             resolved_pid = candidate_pid;
                             break 'outer;

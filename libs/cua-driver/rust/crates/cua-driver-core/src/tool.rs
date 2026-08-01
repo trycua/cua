@@ -184,8 +184,7 @@ impl ToolDef {
                 ),
             )
         } else {
-            cua_driver_contract::tool_contract(&self.name)
-                .and_then(|contract| contract.success_output_schema)
+            cua_driver_contract::tool_success_output_schema(&self.name)
         };
         if let Some(output_schema) = output_schema {
             entry
@@ -4384,6 +4383,27 @@ mod capability_tests {
         }
         .to_list_entry();
         assert!(runtime_only.get("outputSchema").is_none());
+    }
+
+    #[test]
+    fn list_windows_advertises_the_shared_z_index_contract() {
+        let entry = ToolDef {
+            name: "list_windows".into(),
+            description: "List windows.".into(),
+            input_schema: serde_json::json!({"type":"object","properties":{}}),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        }
+        .to_list_entry();
+        let z_index =
+            &entry["outputSchema"]["properties"]["windows"]["items"]["properties"]["z_index"];
+        assert_eq!(z_index["type"], serde_json::json!(["integer", "null"]));
+        assert!(z_index["description"]
+            .as_str()
+            .expect("description")
+            .contains("Higher values are closer to the front"));
     }
 
     #[test]

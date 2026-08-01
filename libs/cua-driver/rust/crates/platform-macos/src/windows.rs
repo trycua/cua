@@ -209,7 +209,7 @@ fn enumerate_windows(options: u32, layers: LayerFilter) -> Vec<WindowInfo> {
         };
 
         // z_index: CGWindowList front-to-back → assign reverse index.
-        let z_index = total - idx;
+        let z_index = z_index_from_front_to_back(total, idx);
 
         result.push(WindowInfo {
             window_id,
@@ -226,6 +226,10 @@ fn enumerate_windows(options: u32, layers: LayerFilter) -> Vec<WindowInfo> {
     }
 
     result
+}
+
+fn z_index_from_front_to_back(total: usize, position: usize) -> usize {
+    total.saturating_sub(position)
 }
 
 fn get_bounds_num(
@@ -335,6 +339,15 @@ pub fn resolve_main_window_id(pid: i32) -> anyhow::Result<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cg_front_to_back_order_normalizes_to_higher_is_frontmost() {
+        let indices: Vec<_> = (0..3)
+            .map(|position| z_index_from_front_to_back(3, position))
+            .collect();
+        assert_eq!(indices, vec![3, 2, 1]);
+        assert!(indices[0] > indices[2]);
+    }
 
     fn window(window_id: u32, pid: i32, app_name: &str) -> WindowInfo {
         WindowInfo {

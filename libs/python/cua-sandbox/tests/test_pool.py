@@ -31,6 +31,7 @@ class FakeFleetClient:
         self.updated: list[object] = []
         self.claims: list[object] = []
         self.released: list[object] = []
+        self.service_requests: list[object] = []
         self.closed = False
 
     async def get_pool(self, name: str) -> object:
@@ -54,7 +55,16 @@ class FakeFleetClient:
 
     async def wait_claim(self, claim: object) -> FleetSandbox:
         assert claim == "claim-1"
-        return FleetSandbox(namespace="foo", claim="claim-1", name="sandbox-1", services=["server"])
+        return FleetSandbox(
+            namespace="foo",
+            claim="claim-1",
+            name="sandbox-1",
+            services=["server", "mcp"],
+        )
+
+    async def service_request(self, sandbox, service, path, request):
+        self.service_requests.append((sandbox, service, path, request))
+        return SimpleNamespace(status=200, headers=[], body=b'{"result":"ok"}')
 
     async def delete_claim(self, claim: object) -> None:
         self.released.append(claim)
@@ -235,3 +245,25 @@ async def test_reconcile_preserves_replicas_and_named_services(monkeypatch):
         ("server", 8000),
         ("mcp", 3000),
     ]
+
+
+@pytest.mark.asyncio
+async def test_claim_exposes_named_service_requests(monkeypatch):
+    reconcile_client = FakeFleetClient()
+    claim_client = FakeFleetClient()
+    clients = iter([reconcile_client, claim_client])
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(clients))
+    pool = await Pool.reconcile({"name": "foo", "image": Image.from_registry("example:latest")})
+
+    async with pool.claim() as sandbox:
+        response = await sandbox.services.request(
+            "mcp",
+            method="POST",
+            path="/mcp",
+            json={"jsonrpc": "2.0", "method": "tools/list", "id": 1},
+        )
+
+    assert response.status_code == 200
+    _, service, path, request = claim_client.service_requests[0]
+    assert (service, path, request.method) == ("mcp", "/mcp", "POST")
+    assert request.body == b'{"jsonrpc": "2.0", "method": "tools/list", "id": 1}'

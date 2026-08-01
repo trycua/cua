@@ -106,6 +106,12 @@ pool = await Pool.reconcile({
 
 async with pool.claim() as sb:
     result = await sb.shell.run("echo hello")
+
+    # Requests use the same authenticated Fleet claim.
+    response = await sb.services.request(
+        "mcp", method="POST", path="/mcp", json={"jsonrpc": "2.0", "method": "tools/list", "id": 1}
+    )
+    response.raise_for_status()
 ```
 
 For scripts that use the synchronous facade:

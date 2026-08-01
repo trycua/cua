@@ -86,26 +86,26 @@ jobs:
         include:
           - platform: linux-x86_64
             runner: ubuntu-22.04
-            wheel: cua_train-0.1.1-py3-none-manylinux_2_34_x86_64.whl
-            sha256: 9ab37ae89ef6f95a1c0e315226af7716625bc6225e54770f94315905a744c5ad
+            wheel: cua_train-0.1.2-py3-none-manylinux_2_34_x86_64.whl
+            sha256: e1b22a88711f64d333d7d3cc52e15b39a7e6eec7fac2ac44b5aba3c59142dd5b
             library_suffix: .so
             audit: auditwheel
           - platform: linux-aarch64
             runner: ubuntu-24.04-arm
-            wheel: cua_train-0.1.1-py3-none-manylinux_2_34_aarch64.whl
-            sha256: 6f8eb7f450f05d4a495de70a0a8f7acdb3dce20d842bae96f2aec27e2869fb85
+            wheel: cua_train-0.1.2-py3-none-manylinux_2_34_aarch64.whl
+            sha256: 05a0d248fc977ffdb6e07c4e8a897ca361c721814c82a4b76cbfbd38180eb323
             library_suffix: .so
             audit: auditwheel
           - platform: macos-x86_64
             runner: macos-15-intel
-            wheel: cua_train-0.1.1-py3-none-macosx_10_12_x86_64.whl
-            sha256: 1822fb9a63c6566d2763a9fb2e384ba4cc6a3771d97fb2cd3f1f9af66916e6df
+            wheel: cua_train-0.1.2-py3-none-macosx_10_12_x86_64.whl
+            sha256: cdabd2dd18c76f6fd4b04dcc63366d7cf4c8bed0fab36fe13751d3bef5161f18
             library_suffix: .dylib
             audit: delocate
           - platform: macos-arm64
             runner: macos-14
-            wheel: cua_train-0.1.1-py3-none-macosx_11_0_arm64.whl
-            sha256: 045b51e3ebebc7bf2107ec5a97801250b551e9617bcbbeec97a1e4f4c2ebd884
+            wheel: cua_train-0.1.2-py3-none-macosx_11_0_arm64.whl
+            sha256: 14bf1db6aec6f23313e7953b79e95f9b233e2526aeafe7fd3b6a90f7d6b844b4
             library_suffix: .dylib
             audit: delocate
     steps:

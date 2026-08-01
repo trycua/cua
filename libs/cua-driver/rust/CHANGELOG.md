@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.15.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.14.2...cua-driver-rs-v0.15.0) (2026-08-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cua-driver:** standardize action results ([#2713](https://github.com/trycua/cua/issues/2713))
+
+### Features
+
+* **cua-driver:** add checked state verification ([#2705](https://github.com/trycua/cua/issues/2705)) ([84440dd](https://github.com/trycua/cua/commit/84440ddc6d42accb629f2289012241ed512e1aea))
+* **cua-driver:** add clipboard read and write primitives ([#2764](https://github.com/trycua/cua/issues/2764)) ([b8fb6d1](https://github.com/trycua/cua/commit/b8fb6d1218d84ea1806ebce2dec5f22edda29c21))
+* **cua-driver:** standardize action results ([#2713](https://github.com/trycua/cua/issues/2713)) ([8e0a92e](https://github.com/trycua/cua/commit/8e0a92e3dbf20134be9922f9e0dc847addcc92fa))
+
+
+### Bug Fixes
+
+* **cua-driver:** bound macOS capture permission probe ([#2761](https://github.com/trycua/cua/issues/2761)) ([14b790f](https://github.com/trycua/cua/commit/14b790f766fe177aa047c88975e301a49a17cc4c))
+* **cua-driver:** define list_windows z-index contract ([#2768](https://github.com/trycua/cua/issues/2768)) ([5fe669f](https://github.com/trycua/cua/commit/5fe669ff43897f305aacb2442d8c5084607daf66))
+* **cua-driver:** index writable native value controls ([46fc5cb](https://github.com/trycua/cua/commit/46fc5cb7c2b477ba3194a792580dab4a595a5ec5))
+* **cua-driver:** open Finder folder URLs reliably ([13057dc](https://github.com/trycua/cua/commit/13057dc6c8c08da71b8e06a63831ccb5b6870bc5))
+* **cua-driver:** preserve verified selection readbacks ([dc0af9b](https://github.com/trycua/cua/commit/dc0af9b23ca8d866540b9ed2b4e4ad7b8b0c4ffb))
+* **cua-driver:** reject ambiguous PID-only targets ([#2763](https://github.com/trycua/cua/issues/2763)) ([5b95f2a](https://github.com/trycua/cua/commit/5b95f2a888b84f1e892635b20484b69d27122630))
+* **cua-driver:** reject concurrent text input per process ([#2762](https://github.com/trycua/cua/issues/2762)) ([07d1242](https://github.com/trycua/cua/commit/07d124258d83c2a53b0739463a925eaa3477066b))
+* **cua-driver:** select macOS collection items reliably ([4be90ea](https://github.com/trycua/cua/commit/4be90ea11345535decb1baacde14c0313338f1c6))
+
 ## [0.14.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.14.1...cua-driver-rs-v0.14.2) (2026-07-31)
 
 

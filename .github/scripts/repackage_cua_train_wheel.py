@@ -185,9 +185,9 @@ def verify(path: Path, source: Path | None = None) -> None:
         raise WheelError("destination WHEEL metadata does not match the wheel filename")
     if not any(name.startswith("cua_train/") for name in entries):
         raise WheelError("destination wheel is missing cua_train")
-    if not any(name.startswith("cyclops_sdk/") for name in entries):
-        raise WheelError("destination wheel is missing cyclops_sdk")
-    if not any(name.startswith("cyclops_sdk/libcyclops_sdk.") for name in entries):
+    if not any(name.startswith("fleet_sdk/") for name in entries):
+        raise WheelError("destination wheel is missing fleet_sdk")
+    if not any(name.startswith("fleet_sdk/libcyclops_sdk.") for name in entries):
         raise WheelError("destination wheel is missing the native cyclops library")
 
     record_rows = list(csv.reader(entries[record_name].decode().splitlines()))

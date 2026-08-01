@@ -113,6 +113,53 @@ classify_designated_requirement() {
     esac
 }
 
+# An ad-hoc signature's designated requirement is its cdhash. Replacing the
+# bundle with a different ad-hoc build leaves TCC rows carrying the old csreq;
+# toggling the visible System Settings entry does not reliably rewrite it.
+ad_hoc_requirement_changed() {
+    local previous_requirement="$1"
+    local installed_requirement="$2"
+
+    [ -n "$previous_requirement" ] \
+        && [ -n "$installed_requirement" ] \
+        && [ "$previous_requirement" != "$installed_requirement" ] \
+        && [ "$(classify_designated_requirement "$previous_requirement")" = "ad-hoc" ] \
+        && [ "$(classify_designated_requirement "$installed_requirement")" = "ad-hoc" ]
+}
+
+# Reset only the two TCC services used by Cua Driver Local, and only when an
+# actual ad-hoc cdhash transition was observed. The caller must register the
+# newly installed bundle with LaunchServices before invoking this function.
+reset_local_tcc_after_ad_hoc_change() {
+    local previous_requirement="$1"
+    local installed_requirement="$2"
+    local bundle_id="com.trycua.driver.local"
+    local service failed_services=""
+
+    ad_hoc_requirement_changed "$previous_requirement" "$installed_requirement" || return 0
+
+    if ! command -v tccutil >/dev/null 2>&1; then
+        echo "${RED}Error: tccutil is required to clear stale local-app permission rows after an ad-hoc cdhash change.${NORMAL}" >&2
+        return 1
+    fi
+
+    for service in Accessibility ScreenCapture; do
+        if ! tccutil reset "$service" "$bundle_id" >/dev/null 2>&1; then
+            failed_services="$failed_services $service"
+        fi
+    done
+    if [ -n "$failed_services" ]; then
+        echo "${RED}Error: could not reset these TCC services for $bundle_id:$failed_services.${NORMAL}" >&2
+        echo "The new app is installed, but its stale permission rows may remain. Run:" >&2
+        echo "  tccutil reset Accessibility $bundle_id" >&2
+        echo "  tccutil reset ScreenCapture $bundle_id" >&2
+        return 1
+    fi
+
+    echo "${YELLOW}The ad-hoc cdhash changed; cleared stale Accessibility and Screen Recording rows for $bundle_id.${NORMAL}" >&2
+    echo "Re-grant them to the new app with: cua-driver-local permissions grant" >&2
+}
+
 # Signs a staged local app without touching the live installation. Strict mode
 # refuses the ad-hoc path; non-strict mode keeps it available for casual local
 # development but makes the resulting TCC reset impossible to miss.

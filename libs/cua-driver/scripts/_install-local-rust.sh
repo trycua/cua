@@ -335,6 +335,10 @@ if [ "$OS" = "Darwin" ]; then
     chmod +x "$APP_STAGE/Contents/MacOS/cua-driver-local"
     chmod +x "$APP_STAGE/Contents/MacOS/cua-cursor-theme"
     rm -f "$APP_STAGE/Contents/MacOS/.gitkeep"
+    PREVIOUS_REQUIREMENT=""
+    if [ -d "$APP_DEST" ] && command -v codesign >/dev/null 2>&1; then
+        PREVIOUS_REQUIREMENT="$(designated_requirement "$APP_DEST")"
+    fi
     # Stamp the local build version so the bundle reports something sane.
     if command -v plutil >/dev/null 2>&1; then
         plutil -replace CFBundleShortVersionString -string "$VERSION_TAG" \
@@ -451,6 +455,17 @@ elif [ "$OS" = "Linux" ] && command -v systemctl >/dev/null 2>&1; then
     systemctl --user stop cua-driver-local.service >/dev/null 2>&1 || true
 fi
 pkill -x cua-driver-local >/dev/null 2>&1 || true
+
+# A changed ad-hoc cdhash leaves the old csreq attached to this bundle's TCC
+# rows. Once the new bundle is registered and old daemons are stopped, reset
+# only its Accessibility and ScreenCapture rows so `permissions grant` can
+# create entries for the new identity.
+if [ "$OS" = "Darwin" ]; then
+    if ! reset_local_tcc_after_ad_hoc_change \
+        "$PREVIOUS_REQUIREMENT" "$INSTALLED_REQUIREMENT"; then
+        exit 1
+    fi
+fi
 
 # Agent skill pack symlinks: NOT auto-created. Run
 # `cua-driver skills install --local` to symlink agent dirs to the

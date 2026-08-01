@@ -65,14 +65,27 @@ Use whichever combination matches the host. When in doubt, run
 `cua-driver doctor` — it reports the platform and the right entry
 point.
 
-## Choose a semantic system operation before a GUI path
+## Start with the narrowest semantic route
 
-Before opening or operating an application, classify the requested outcome. If
-the caller already has a purpose-built API, CLI, or filesystem operation that
-can complete a non-GUI outcome directly, use it before Cua Driver. File moves,
-renames, copies, directory creation, archive extraction, data conversion, and
-process inspection should not be performed by opening Finder, Explorer, or a
-Linux file manager and imitating a user.
+Before opening or operating an application, name the desired postcondition and
+use the first applicable route below. Verify the result in the same domain
+before stopping or advancing:
+
+0. **Caller-provided headless/background operation for a non-GUI outcome.**
+   Prefer an exact application API/SDK, service or database client, CLI, or
+   filesystem operation over imitating a user. This includes batch-safe file
+   moves, renames, copies, directory creation, archive extraction, data
+   conversion, and process inspection. Read the resulting semantic state back;
+   a zero exit status alone is not proof.
+1. **Typed Cua operation for an application or window outcome.** Use
+   `set_window_frame` for exact geometry, typed browser tools for supported page
+   content, and clipboard tools for clipboard state. Verify with
+   `list_windows`, `get_browser_state`, or `clipboard_read`, respectively.
+2. **Background accessibility action.** Use a fresh AX/UIA/AT-SPI target.
+3. **Background pixel action.** Use the pixels from the same state snapshot.
+4. **Foreground delivery.** Retry only the action that evidence says could not
+   land in the background.
+5. **Desktop fallback.** Enter this explicit, one-way session phase last.
 
 Use Cua Driver when the outcome lives in an application's UI or window state,
 or when the user explicitly asks to operate that GUI. Once the task crosses
@@ -458,7 +471,13 @@ the tree against the pixels you already have, and only change
 _dispatch rung_ on a real signal. Walk the rungs:
 
 ```
-# Rung 1 — element ax action, backgrounded (the cheap default)
+# Routes 0–1 — resolve non-GUI, exact geometry, and supported page outcomes first
+# Use a caller-provided semantic operation for a non-GUI outcome, then read it back.
+# For exact window geometry: set_window_frame(...), then list_windows(...) readback.
+# For supported page content: get_browser_state(...), typed browser action, refresh refs.
+# Continue below only when the postcondition actually requires native UI interaction.
+
+# Route 2 — element AX/UIA/AT-SPI action, backgrounded
 get_window_state(pid, window_id)            # tree + screenshot, both, always
 resp = click(pid, window_id, element_index) # or type_text / set_value / press_key
 check = verify_state(                       # bounded structured read-back
@@ -481,20 +500,13 @@ if resp.effect == "suspected_noop"
    or check.status != "satisfied"
    or the tree looks wrong vs the screenshot:   # e.g. an h:1 / off-viewport row
 
-    # Rung 2 — element px action off the SAME screenshot
+    # Route 3 — element px action off the SAME screenshot
     pick the target pixel from the screenshot already in the response
     click(pid, x, y)                        # background pixel — still no foreground
     verify_state(..., include_screenshot=true)
     if it landed: done
 
-# Rung 2b — exact browser page tools, when get_browser_state can bind this window
-# Use typed browser refs for page content; native window tools still handle chrome.
-get_browser_state(session, pid, window_id)
-browser_click(session, target_id, tab_id, ref) # or browser_type; see BROWSER.md
-get_browser_state(session, pid, window_id)     # verify with fresh refs
-if it landed: done
-
-# Rung 3 — background delivery was dropped (insert/click never arrived)
+# Route 4 — background delivery was dropped (insert/click never arrived)
 if resp.escalation.target == "foreground"
    or the px action still did nothing:
     re-call the same action with delivery_mode:"foreground"
@@ -502,9 +514,9 @@ if resp.escalation.target == "foreground"
     # unfocused window there; see LINUX.md
     verify again
 
-# Rung 4 — desktop fallback (auto sessions only, explicit and one-way)
-# Reach this only after AX, window-pixel, browser-page (when available), and
-# foreground-window delivery have all been exhausted and verified ineffective.
+# Route 5 — desktop fallback (auto sessions only, explicit and one-way)
+# Reach this only after semantic, AX, window-pixel, and foreground-window
+# delivery have all been exhausted and verified ineffective.
 escalate_session(session,
     reason="foreground_ineffective",       # or another advertised reason
     detail="bounded non-sensitive summary")

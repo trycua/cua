@@ -369,18 +369,17 @@ fn agent_instructions() -> String {
     format!(
         r#"cua-driver: cross-platform background computer-use automation.
 
-Tools operate apps without stealing focus or moving the real pointer. Prefer `element_index` ({tree_kind}) over pixels; it works on backgrounded or hidden windows.
+Before starting UI work, classify the desired postcondition. For a non-GUI outcome, prefer a client-provided app API/SDK, headless/background interface, CLI, or filesystem operation and read the result back in that semantic domain. This server has no shell.
 
-Prefer any client-provided API, CLI, or filesystem operation that completes a non-GUI outcome directly; do not open a file manager for ordinary file operations. This MCP server has no shell.
+For an app or window outcome, use the narrowest semantic Cua route first: `set_window_frame` plus `list_windows` readback for geometry, typed browser tools for supported page content, and clipboard tools for clipboard state. Then climb through background `element_index` ({tree_kind}), background pixels, foreground delivery, and desktop fallback. Never advance on transport success alone.
 
 Workflow per turn:
-0. `start_session(session)` once per run; reuse that id on actions. Concurrent runs use distinct ids. End it when done.
-1. `launch_app` returns pid and windows. Use `creates_new_application_instance:true` when another run may touch the app.
-2. `get_window_state(pid, window_id)` refreshes the tree and element indices.
-3. Act with the fresh index.
-4. `verify_state(pid, window_id, expect)` checks bounded structured postconditions. `unknown` is not success. Set `include_screenshot:true` when the multimodal agent should also read visual evidence and decide whether to stop, retry, or advance the ladder.
+0. `start_session(session)` once; reuse that id and end it when done.
+1. `launch_app`, then `get_window_state(pid, window_id)` to refresh element indices.
+2. Act with the fresh index.
+3. `verify_state(pid, window_id, expect)` checks bounded postconditions. `unknown` is not success; `include_screenshot:true` lets the multimodal agent judge visual evidence.
 
-If a `cua-driver` skill is loaded in your harness (Claude Code / Codex / OpenClaw / OpenCode dirs), prefer its detailed workflow — SKILL.md plus {platform_skill_pointer}. Install with `cua-driver skills install` if not yet present."#
+If the `cua-driver` skill is loaded, follow SKILL.md plus {platform_skill_pointer}."#
     )
 }
 
@@ -474,8 +473,18 @@ mod agent_instruction_tests {
         assert!(instructions.contains("verify_state"));
         assert!(instructions.contains("`unknown` is not success"));
         assert!(instructions.contains("multimodal agent"));
-        assert!(instructions.contains("client-provided API, CLI, or filesystem operation"));
+        assert!(instructions.contains("client-provided app API/SDK"));
+        assert!(instructions.contains("headless/background interface"));
+        assert!(instructions.contains("read the result back in that semantic domain"));
+        assert!(instructions.contains("narrowest semantic Cua route first"));
+        assert!(instructions.contains("`set_window_frame` plus `list_windows` readback"));
+        assert!(instructions.contains("typed browser tools for supported page content"));
         assert!(instructions.contains("has no shell"));
+        assert!(
+            instructions.find("client-provided app API/SDK")
+                < instructions.find("background `element_index`"),
+            "semantic/headless operations must precede native UI dispatch"
+        );
         assert!(
             instructions.split_whitespace().count() <= 200,
             "initialize instructions should stay within the documented context budget"

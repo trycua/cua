@@ -588,12 +588,25 @@ fn browser_refusal_escalation(code: &str) -> Option<ActionEscalation> {
 }
 
 /// Legacy `verified` was not a sufficient proof by itself: some action
-/// producers used it as a delivery acknowledgement, and clicks have no
-/// independent postcondition read-back. Only value-changing tools whose
-/// platform implementations compare a fresh value against the request may
-/// promote that legacy bit to publishable evidence.
+/// producers used it as a delivery acknowledgement. Value-changing tools may
+/// promote that bit when their platform implementation compares a fresh value
+/// against the request. A click may do so only when the producer also declares
+/// explicit accessibility read-back evidence, as the macOS collection-item
+/// selection fallback does after observing `AXSelected`.
 fn legacy_has_publishable_readback(tool_name: &str, structured: &serde_json::Value) -> bool {
-    matches!(tool_name, "type_text" | "type_text_chars" | "set_value")
+    let value_readback_tool = matches!(tool_name, "type_text" | "type_text_chars" | "set_value");
+    let click_selection_readback = tool_name == "click"
+        && structured
+            .get("evidence")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|evidence| {
+                evidence.iter().any(|item| {
+                    item.get("kind").and_then(serde_json::Value::as_str)
+                        == Some("accessibility_readback")
+                })
+            });
+
+    (value_readback_tool || click_selection_readback)
         && structured
             .get("verified")
             .and_then(serde_json::Value::as_bool)
@@ -1438,6 +1451,34 @@ mod tests {
             );
             assert!(record.evidence.is_empty());
         }
+    }
+
+    #[test]
+    fn click_selection_readback_preserves_confirmed_effect() {
+        let record = ActionExecutionRecord::from_legacy(
+            "click",
+            &serde_json::json!({"delivery_mode": "background"}),
+            &serde_json::json!({
+                "path": "cgevent",
+                "verified": true,
+                "effect": "confirmed",
+                "evidence": [{"kind": "accessibility_readback"}],
+            }),
+        )
+        .expect("verified selection click should normalize");
+
+        assert_eq!(record.effect, ActionEffect::Confirmed);
+        assert_eq!(record.evidence.len(), 1);
+        assert_eq!(record.evidence[0].kind, EvidenceKind::AccessibilityReadback);
+        assert_eq!(
+            serde_json::to_value(record.public_result().expect("public result")).unwrap(),
+            serde_json::json!({
+                "effect": "confirmed",
+                "route": "synthetic_events",
+                "delivery": {"mode": "background"},
+                "evidence": [{"kind": "value_readback"}],
+            })
+        );
     }
 
     #[test]

@@ -24,12 +24,14 @@ fn def() -> &'static ToolDef {
              Optional `webkit_inspector_port`: opens a WebKit inspector server on the specified \
              port (sets WEBKIT_INSPECTOR_SERVER=127.0.0.1:N + TAURI_WEBVIEW_AUTOMATION=1). \
              Use this for Tauri/WebKit-based apps.\n\n\
-             Optional `creates_new_application_instance`: when true, forces a new app instance \
-             even if one is already running (passes -n to open). Reach for this when another \
+             Optional `creates_new_application_instance`: when true, requests a new app instance \
+             even if one is already running. Reach for this when another \
              agent or session may drive the SAME app concurrently — it returns a fresh pid + \
              window so each session acts on its own isolated window instead of clobbering one \
              shared instance. Without it, single-instance apps (Calculator, many utilities) hand \
-             every caller the same window, so two sessions fight over it.\n\n\
+             every caller the same window, so two sessions fight over it. Apps that cannot create \
+             an isolated process return `NEW_APPLICATION_INSTANCE_UNAVAILABLE`; retry without the \
+             option only when sharing the existing process is safe.\n\n\
              Optional `additional_arguments`: extra argv strings appended after --args.\n\n\
              Returns the launched app's pid, bundle_id, name, and a `windows` array \
              (same shape as `list_windows`) so callers can skip an extra round-trip before \
@@ -62,7 +64,7 @@ fn def() -> &'static ToolDef {
                 },
                 "creates_new_application_instance": {
                     "type": "boolean",
-                    "description": "When true, force a new app instance even if already running (open -n). Use for concurrent multi-agent/multi-session work so each session gets an isolated instance + window instead of sharing one — on single-instance apps (e.g. Calculator) every caller otherwise gets the same window and the sessions clobber each other."
+                    "description": "When true, request a new app instance even if already running. Use for concurrent multi-agent/multi-session work so each session gets an isolated instance + window instead of sharing one. Apps that cannot create an isolated process return NEW_APPLICATION_INSTANCE_UNAVAILABLE; retry without this option only when sharing the existing process is safe."
                 },
                 "additional_arguments": {
                     "type": "array",
@@ -261,6 +263,8 @@ impl Tool for LaunchAppTool {
                     )?
                 }
             };
+
+            let pid = validate_launched_pid(pid, creates_new_instance)?;
 
             // Retry loop: LaunchServices returns before WindowServer has
             // registered the new windows. Poll up to 5x100ms.
@@ -504,7 +508,17 @@ impl Tool for LaunchAppTool {
                 }
                 ToolResult::text(summary).with_structured(structured)
             }
-            Ok(Err(e)) => structured_launch_failure(&e),
+            Ok(Err(e)) => {
+                let existing_app = creates_new_instance
+                    .then(|| {
+                        existing_running_app(
+                            response_bundle_id.as_deref(),
+                            response_requested_name.as_deref(),
+                        )
+                    })
+                    .flatten();
+                structured_launch_failure(&e, existing_app.as_ref())
+            }
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
@@ -617,10 +631,57 @@ fn requested_app_name(requested_name: Option<&str>, requested_bundle_id: Option<
         .to_owned()
 }
 
-fn structured_launch_failure(error: &anyhow::Error) -> ToolResult {
+fn existing_running_app(
+    requested_bundle_id: Option<&str>,
+    requested_name: Option<&str>,
+) -> Option<crate::apps::AppInfo> {
+    crate::apps::list_running_apps().into_iter().find(|app| {
+        requested_bundle_id.is_some_and(|bundle_id| {
+            app.bundle_id
+                .as_deref()
+                .is_some_and(|running_bundle_id| running_bundle_id.eq_ignore_ascii_case(bundle_id))
+        }) || (requested_bundle_id.is_none()
+            && requested_name.is_some_and(|name| app.name.eq_ignore_ascii_case(name)))
+    })
+}
+
+fn validate_launched_pid(pid: i32, creates_new_instance: bool) -> anyhow::Result<i32> {
+    if creates_new_instance && pid <= 0 {
+        anyhow::bail!(
+            "macOS returned invalid process identifier {pid} for the requested new application instance"
+        );
+    }
+    Ok(pid)
+}
+
+fn structured_launch_failure(
+    error: &anyhow::Error,
+    existing_app: Option<&crate::apps::AppInfo>,
+) -> ToolResult {
     use crate::apps::nsworkspace::LaunchError;
 
-    let (code, requested) = if let Some(launch_error) = error.downcast_ref::<LaunchError>() {
+    let launch_error = error.downcast_ref::<LaunchError>();
+    if !matches!(launch_error, Some(LaunchError::BadUrl(_))) {
+        if let Some(existing_app) = existing_app {
+            let bundle_id = existing_app.bundle_id.as_deref().unwrap_or("?");
+            return structured_launch_error(
+                "NEW_APPLICATION_INSTANCE_UNAVAILABLE",
+                format!(
+                    "macOS did not create a new application instance for {}. The existing process (pid {}) is still running; retry without creates_new_application_instance or choose an app that supports multiple instances. Underlying launch error: {error:#}",
+                    existing_app.name, existing_app.pid
+                ),
+                serde_json::json!({
+                    "bundle_id": bundle_id,
+                    "name": existing_app.name,
+                    "pid": existing_app.pid,
+                    "creates_new_application_instance": true,
+                    "launch_state": launch_state(true, true, false),
+                }),
+            );
+        }
+    }
+
+    let (code, requested) = if let Some(launch_error) = launch_error {
         match launch_error {
             LaunchError::Cocoa(_) => ("NSWORKSPACE_LAUNCH_FAILED", true),
             LaunchError::NoApp => ("LAUNCH_RESULT_MISSING", true),
@@ -732,8 +793,9 @@ mod tests {
     use super::{
         contains_remote_debugging_flag, is_cua_driver_bundle_id, local_file_target,
         normalize_launch_url, preflight_file_urls, response_identity, structured_launch_failure,
-        LaunchAppTool,
+        validate_launched_pid, LaunchAppTool,
     };
+    use cua_driver_core::protocol::Content;
     use cua_driver_core::tool::Tool;
     use serde_json::json;
     use std::path::PathBuf;
@@ -817,7 +879,7 @@ mod tests {
     fn launch_timeout_reports_requested_without_process_or_window() {
         let error = anyhow::Error::new(crate::apps::nsworkspace::LaunchError::Timeout)
             .context("Failed to launch com.example.App");
-        let result = structured_launch_failure(&error);
+        let result = structured_launch_failure(&error, None);
         let structured = result.structured_content.expect("structured error");
 
         assert_eq!(result.is_error, Some(true));
@@ -833,13 +895,57 @@ mod tests {
             "bad url".to_owned(),
         ))
         .context("Failed to launch com.example.App");
-        let result = structured_launch_failure(&error);
+        let result = structured_launch_failure(&error, None);
         let structured = result.structured_content.expect("structured error");
 
         assert_eq!(structured["error"], "APP_URL_INVALID");
         assert_eq!(structured["launch_state"]["requested"], false);
         assert_eq!(structured["launch_state"]["process_running"], false);
         assert_eq!(structured["launch_state"]["window_ready"], false);
+    }
+
+    #[test]
+    fn unavailable_new_instance_reports_existing_process_and_retry() {
+        let error = anyhow::Error::new(crate::apps::nsworkspace::LaunchError::Cocoa(
+            "The application could not be launched because it was not found.".to_owned(),
+        ))
+        .context("Failed to launch com.example.SingleInstance");
+        let existing_app = crate::apps::AppInfo {
+            name: "Single Instance".to_owned(),
+            pid: 4242,
+            bundle_id: Some("com.example.SingleInstance".to_owned()),
+            running: true,
+            active: false,
+            launch_path: None,
+            kind: Some("desktop".to_owned()),
+            last_used: None,
+        };
+
+        let result = structured_launch_failure(&error, Some(&existing_app));
+        let structured = result.structured_content.expect("structured error");
+
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(structured["error"], "NEW_APPLICATION_INSTANCE_UNAVAILABLE");
+        assert_eq!(structured["bundle_id"], "com.example.SingleInstance");
+        assert_eq!(structured["pid"], 4242);
+        assert_eq!(structured["creates_new_application_instance"], true);
+        assert_eq!(structured["launch_state"]["requested"], true);
+        assert_eq!(structured["launch_state"]["process_running"], true);
+        assert_eq!(structured["launch_state"]["window_ready"], false);
+        assert!(result.content.iter().any(|content| matches!(
+            content,
+            Content::Text { text, .. }
+                if text.contains("retry without creates_new_application_instance")
+        )));
+    }
+
+    #[test]
+    fn new_instance_cannot_report_success_without_a_process() {
+        let error = validate_launched_pid(-1, true).expect_err("invalid pid must fail");
+        assert!(error
+            .to_string()
+            .contains("invalid process identifier -1 for the requested new application instance"));
+        assert_eq!(validate_launched_pid(4242, true).unwrap(), 4242);
     }
 
     #[test]

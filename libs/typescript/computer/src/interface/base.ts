@@ -260,23 +260,61 @@ export abstract class BaseComputerInterface {
         }
 
         return new Promise<{ [key: string]: unknown }>((innerResolve, innerReject) => {
+          const socket = this.ws;
+          let settled = false;
+
+          const cleanup = () => {
+            socket.off('message', messageHandler);
+            socket.off('error', errorHandler);
+            socket.off('close', closeHandler);
+          };
+
+          const resolveCommand = (response: { [key: string]: unknown }) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            innerResolve(response);
+          };
+
+          const rejectCommand = (error: unknown) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            innerReject(error);
+          };
+
           const messageHandler = (data: WebSocket.RawData) => {
             try {
               const response = JSON.parse(data.toString());
               if (response.error) {
-                innerReject(new Error(response.error));
+                rejectCommand(new Error(response.error));
               } else {
-                innerResolve(response);
+                resolveCommand(response);
               }
             } catch (error) {
-              innerReject(error);
+              rejectCommand(error);
             }
-            this.ws.off('message', messageHandler);
           };
 
-          this.ws.on('message', messageHandler);
+          const errorHandler = (error: Error) => rejectCommand(error);
+          const closeHandler = (code: number, reason: Buffer) => {
+            const detail = reason.length > 0 ? `: ${reason.toString()}` : '';
+            rejectCommand(
+              new Error(`WebSocket closed before receiving a response (${code}${detail})`)
+            );
+          };
+
+          socket.on('message', messageHandler);
+          socket.on('error', errorHandler);
+          socket.on('close', closeHandler);
           const wsCommand = { command, params };
-          this.ws.send(JSON.stringify(wsCommand));
+          try {
+            socket.send(JSON.stringify(wsCommand), (error) => {
+              if (error) rejectCommand(error);
+            });
+          } catch (error) {
+            rejectCommand(error);
+          }
         });
       };
 

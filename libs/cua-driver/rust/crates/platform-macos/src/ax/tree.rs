@@ -5,7 +5,8 @@
 //!   `INDENT- AXStaticText = "value"`  (non-indexed)
 //!
 //! Rules (from cua-driver reference):
-//! - An element is "actionable" (gets an index) when it has ≥1 action name.
+//! - An element is addressable (gets an index) when it has ≥1 action name or
+//!   exposes a writable AXValue control surface.
 //! - Non-actionable leaf nodes with a value are rendered as `AXRole = "value"`.
 //! - AXStaticText with no title/value is omitted.
 //! - Tree is walked depth-first; element_index is assigned in DFS order.
@@ -130,6 +131,23 @@ where
     } else {
         ControlState::default()
     }
+}
+
+fn role_supports_value_addressing(role: &str) -> bool {
+    matches!(
+        role,
+        "AXTextField"
+            | "AXTextArea"
+            | "AXComboBox"
+            | "AXSlider"
+            | "AXStepper"
+            | "AXCheckBox"
+            | "AXRadioButton"
+    )
+}
+
+fn is_addressable(actions_present: bool, value_settable: bool) -> bool {
+    actions_present || value_settable
 }
 
 pub struct TreeWalkResult {
@@ -431,7 +449,16 @@ unsafe fn walk_element(
 
     let has_content =
         !visible_title.is_empty() || !visible_description.is_empty() || !visible_value.is_empty();
-    let is_actionable = !actions.is_empty();
+    // Some native controls expose no AX action names but do expose a writable
+    // AXValue. Finder's transient inline-rename field is the important case:
+    // rendering it without an element_index leaves an agent able to see the
+    // field but unable to call set_value on it. Probe writability only for the
+    // small family of value controls so arbitrary display nodes do not pay an
+    // extra AX round trip.
+    let value_settable = actions.is_empty()
+        && role_supports_value_addressing(&role)
+        && is_attribute_settable(element, "AXValue");
+    let is_actionable = is_addressable(!actions.is_empty(), value_settable);
 
     if !is_actionable && !has_content && role != "AXWindow" && role != "AXSheet" {
         let children = copy_children(element);
@@ -726,6 +753,28 @@ fn leading_indent_depth(line: &str) -> usize {
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn writable_value_controls_are_addressable_without_actions() {
+        assert!(is_addressable(false, true));
+        assert!(is_addressable(true, false));
+        assert!(!is_addressable(false, false));
+
+        for role in [
+            "AXTextField",
+            "AXTextArea",
+            "AXComboBox",
+            "AXSlider",
+            "AXStepper",
+            "AXCheckBox",
+            "AXRadioButton",
+        ] {
+            assert!(role_supports_value_addressing(role), "{role}");
+        }
+        for role in ["AXStaticText", "AXImage", "AXWindow", "AXGroup"] {
+            assert!(!role_supports_value_addressing(role), "{role}");
+        }
+    }
 
     #[test]
     fn control_state_reads_are_gated_by_actionability() {

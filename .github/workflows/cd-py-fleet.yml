@@ -86,26 +86,26 @@ jobs:
         include:
           - platform: linux-x86_64
             runner: ubuntu-22.04
-            wheel: cua_train-0.1.2-py3-none-manylinux_2_34_x86_64.whl
-            sha256: e1b22a88711f64d333d7d3cc52e15b39a7e6eec7fac2ac44b5aba3c59142dd5b
+            wheel: cua_train-0.1.3-py3-none-manylinux_2_34_x86_64.whl
+            sha256: 7e12c5c5e413cf927bafd443af572c74c8ce41fed889c9712e656c31b77c9a9a
             library_suffix: .so
             audit: auditwheel
           - platform: linux-aarch64
             runner: ubuntu-24.04-arm
-            wheel: cua_train-0.1.2-py3-none-manylinux_2_34_aarch64.whl
-            sha256: 05a0d248fc977ffdb6e07c4e8a897ca361c721814c82a4b76cbfbd38180eb323
+            wheel: cua_train-0.1.3-py3-none-manylinux_2_34_aarch64.whl
+            sha256: 360cba8ba294151a105009fde751be7fc231d69449905013333a05dbb4284cc2
             library_suffix: .so
             audit: auditwheel
           - platform: macos-x86_64
             runner: macos-15-intel
-            wheel: cua_train-0.1.2-py3-none-macosx_10_12_x86_64.whl
-            sha256: cdabd2dd18c76f6fd4b04dcc63366d7cf4c8bed0fab36fe13751d3bef5161f18
+            wheel: cua_train-0.1.3-py3-none-macosx_10_12_x86_64.whl
+            sha256: e173c7d8cadae2bd5df36216d9587d67d4f6cfa064b97afce153c9ac7435b745
             library_suffix: .dylib
             audit: delocate
           - platform: macos-arm64
             runner: macos-14
-            wheel: cua_train-0.1.2-py3-none-macosx_11_0_arm64.whl
-            sha256: 14bf1db6aec6f23313e7953b79e95f9b233e2526aeafe7fd3b6a90f7d6b844b4
+            wheel: cua_train-0.1.3-py3-none-macosx_11_0_arm64.whl
+            sha256: a04b30f94d27cd29538ca366f5926b5127b73e003fc8bf2bba7e53d69d5e8af0
             library_suffix: .dylib
             audit: delocate
     steps:
@@ -163,24 +163,38 @@ jobs:
           from pathlib import Path
           import sys
 
-          import cyclops_sdk
-          from cyclops_sdk import (
+          import fleet_sdk
+          from fleet_sdk import (
               CreateClaimRequest,
               CreatePoolRequest,
               CyclopsClient,
+              CyclopsConfiguration,
+              CyclopsCredentials,
+              Firmware,
+              HttpHeader,
+              HttpRequest,
               PoolSpec,
+              PoolTemplate,
+              RuntimeKind,
               SandboxService,
           )
 
-          package = Path(cyclops_sdk.__file__).resolve().parent
+          package = Path(fleet_sdk.__file__).resolve().parent
           native = package / f"libcyclops_sdk{sys.argv[1]}"
           assert native.is_file(), native
           ctypes.CDLL(str(native))
           assert all((
-              CyclopsClient,
-              CreatePoolRequest,
               CreateClaimRequest,
+              CreatePoolRequest,
+              CyclopsClient,
+              CyclopsConfiguration,
+              CyclopsCredentials,
+              Firmware,
+              HttpHeader,
+              HttpRequest,
               PoolSpec,
+              PoolTemplate,
+              RuntimeKind,
               SandboxService,
           ))
           PY

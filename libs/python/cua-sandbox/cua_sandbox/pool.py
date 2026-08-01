@@ -54,7 +54,12 @@ class Pool:
         The Fleet client used to reconcile is closed before this method returns.
         """
         name, image = cls._validate_config(config)
-        desired = FleetCloudTransport(image=image, name=name)._pool_request()
+        desired = FleetCloudTransport(
+            image=image,
+            name=name,
+            replicas=config.get("replicas", 1),
+            services=config.get("services"),
+        )._pool_request()
         client = _FleetClient()
         try:
             try:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 from urllib.parse import urlparse
 
 from cua_sandbox._config import (
@@ -180,17 +180,36 @@ class FleetCloudTransport(FleetTransport):
         region: str = "us-east-1",
         time_to_start: Optional[float] = None,
         request_timeout: Optional[float] = None,
+        replicas: int = 1,
+        services: Mapping[str, int] | None = None,
     ) -> None:
         if disk_gb is not None:
             raise ValueError("disk_gb is not supported by the Fleet cloud transport")
         if region != "us-east-1":
             raise ValueError("Fleet cloud sandboxes currently support only region='us-east-1'")
+        if isinstance(replicas, bool) or not isinstance(replicas, int) or replicas < 1:
+            raise ValueError("replicas must be a positive integer")
+        if services is not None and (
+            not isinstance(services, Mapping)
+            or not services
+            or any(
+                not isinstance(name, str)
+                or not name
+                or not isinstance(port, int)
+                or port < 1
+                or port > 65535
+                for name, port in services.items()
+            )
+        ):
+            raise ValueError("services must map non-empty names to TCP ports")
         self._image = image
         self._name = name
         self._cpu = cpu
         self._memory_mb = memory_mb
         self._time_to_start = time_to_start if time_to_start is not None else 600.0
         self._request_timeout = request_timeout or 30.0
+        self._replicas = replicas
+        self._services = dict(services) if services is not None else None
         self._provisioned = False
         self._owns_resources = image is not None
         self._pool: Any = None
@@ -324,16 +343,18 @@ class FleetCloudTransport(FleetTransport):
 
     def _pool_request(self) -> CreatePoolRequest:
         assert self._image is not None
-        services = [SandboxService(name="server", target_port=8000, protocol=ServiceProtocol.TCP)]
-        services.extend(
-            SandboxService(name=f"port-{port}", target_port=port, protocol=ServiceProtocol.TCP)
-            for port in self._image._ports
-            if port != 8000
-        )
+        service_ports = self._services or {
+            "server": 8000,
+            **{f"port-{port}": port for port in self._image._ports if port != 8000},
+        }
+        services = [
+            SandboxService(name=name, target_port=port, protocol=ServiceProtocol.TCP)
+            for name, port in service_ports.items()
+        ]
         return CreatePoolRequest(
             namespace=self._name,
             spec=PoolSpec(
-                replicas=1,
+                replicas=self._replicas,
                 services=services,
                 template=PoolTemplate(
                     runtime=None,

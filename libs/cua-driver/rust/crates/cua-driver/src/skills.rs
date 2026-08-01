@@ -823,6 +823,25 @@ mod tests {
     }
 
     #[test]
+    fn canonical_skill_makes_verified_completion_terminal() {
+        let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let skill = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
+            .expect("canonical skill must be readable");
+        let normalized = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+
+        for required in [
+            "After each state-changing action",
+            "stop issuing actions immediately",
+            "end the session",
+        ] {
+            assert!(
+                normalized.contains(required),
+                "canonical skill must contain terminal completion guidance: {required}"
+            );
+        }
+    }
+
+    #[test]
     fn macos_skill_keeps_ax_only_and_non_prompting_permission_guidance() {
         let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let macos = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/MACOS.md"))

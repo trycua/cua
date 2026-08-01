@@ -223,7 +223,10 @@ impl ToolOutput for VerifyStateOutput {}
 pub fn contracts() -> Vec<ToolContract> {
     vec![ToolContract {
         name: VerifyStateInput::TOOL_NAME.into(),
-        description: "Deterministically verify bounded predicates against one exact window. \
+        description: "After each state-changing action, deterministically verify the actual task \
+            postconditions now checkable as bounded predicates against one exact window. Once all \
+            task postconditions are satisfied, stop issuing actions, end the session, and report \
+            completion. \
             The driver evaluates structured window/accessibility state and may return the final \
             screenshot as uninterpreted visual evidence for a multimodal caller. Predicate \
             results are satisfied, unsatisfied, or unknown; unknown never implies success. \
@@ -273,6 +276,16 @@ mod tests {
         assert_eq!(selector["properties"]["role"]["minLength"], 1);
         assert_eq!(selector["properties"]["label_contains"]["minLength"], 1);
         assert_eq!(schema["additionalProperties"], false);
+    }
+
+    #[test]
+    fn description_makes_satisfied_task_postconditions_terminal() {
+        let contract = contracts().pop().expect("verify_state contract");
+        assert!(contract
+            .description
+            .contains("After each state-changing action"));
+        assert!(contract.description.contains("stop issuing actions"));
+        assert!(contract.description.contains("end the session"));
     }
 
     #[test]

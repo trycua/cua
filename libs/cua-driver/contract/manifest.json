@@ -2316,7 +2316,7 @@
     },
     {
       "name": "verify_state",
-      "description": "Deterministically verify bounded predicates against one exact window. The driver evaluates structured window/accessibility state and may return the final screenshot as uninterpreted visual evidence for a multimodal caller. Predicate results are satisfied, unsatisfied, or unknown; unknown never implies success. Accessibility projections are conservative: absence remains unknown unless the observed search domain is proven exhaustive.",
+      "description": "After each state-changing action, deterministically verify the actual task postconditions now checkable as bounded predicates against one exact window. Once all task postconditions are satisfied, stop issuing actions, end the session, and report completion. The driver evaluates structured window/accessibility state and may return the final screenshot as uninterpreted visual evidence for a multimodal caller. Predicate results are satisfied, unsatisfied, or unknown; unknown never implies success. Accessibility projections are conservative: absence remains unknown unless the observed search domain is proven exhaustive.",
       "platforms": [
         "macos",
         "windows",

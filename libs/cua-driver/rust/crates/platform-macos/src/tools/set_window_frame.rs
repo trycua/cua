@@ -241,10 +241,11 @@ impl Tool for SetWindowFrameTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let input: SetWindowFrameInput = match serde_json::from_value(args) {
-            Ok(input) => input,
-            Err(error) => return ToolResult::error(format!("set_window_frame: {error}")),
-        };
+        let input: SetWindowFrameInput =
+            match cua_driver_core::tool_args::parse_typed_input("set_window_frame", args) {
+                Ok(input) => input,
+                Err(result) => return result,
+            };
         let outcome = match tokio::task::spawn_blocking(move || mutate_and_verify(&input)).await {
             Ok(Ok(outcome)) => outcome,
             Ok(Err(error)) => return ToolResult::error(format!("set_window_frame: {error}")),

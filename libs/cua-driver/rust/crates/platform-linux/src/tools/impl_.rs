@@ -6954,10 +6954,11 @@ impl Tool for SetWindowFrameTool {
             ActualDelivery, EvidenceKind, RequestedDelivery,
         };
 
-        let input: SetWindowFrameInput = match serde_json::from_value(args) {
-            Ok(input) => input,
-            Err(error) => return ToolResult::error(format!("set_window_frame: {error}")),
-        };
+        let input: SetWindowFrameInput =
+            match cua_driver_core::tool_args::parse_typed_input("set_window_frame", args) {
+                Ok(input) => input,
+                Err(result) => return result,
+            };
         if crate::wayland::is_wayland() {
             return ToolResult::error(
                 "set_window_frame: this Wayland compositor exposes no protocol that permits a client to set another top-level window's geometry",

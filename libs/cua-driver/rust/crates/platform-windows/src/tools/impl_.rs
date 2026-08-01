@@ -8033,10 +8033,11 @@ impl Tool for SetWindowFrameTool {
             ActualDelivery, EvidenceKind, RequestedDelivery,
         };
 
-        let input: SetWindowFrameInput = match serde_json::from_value(args) {
-            Ok(input) => input,
-            Err(error) => return ToolResult::error(format!("set_window_frame: {error}")),
-        };
+        let input: SetWindowFrameInput =
+            match cua_driver_core::tool_args::parse_typed_input("set_window_frame", args) {
+                Ok(input) => input,
+                Err(result) => return result,
+            };
         let outcome = tokio::task::spawn_blocking(move || {
             use windows::Win32::{
                 Foundation::{HWND, RECT},

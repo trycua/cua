@@ -553,6 +553,24 @@ pub fn activate_pid(pid: i32) -> bool {
     }
 }
 
+/// Bring every window owned by `pid` forward and make the application active.
+///
+/// Interactive foreground sessions use this stronger activation request when
+/// the exact-window SkyLight route was accepted but did not actually transfer
+/// foreground ownership. Keeping it separate from [`activate_pid`] preserves
+/// the narrower behavior used by focus-restoration call sites.
+pub fn activate_pid_all_windows(pid: i32) -> bool {
+    use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
+    unsafe {
+        match NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {
+            Some(app) => app.activateWithOptions(
+                NSApplicationActivationOptions::NSApplicationActivateAllWindows,
+            ),
+            None => false,
+        }
+    }
+}
+
 /// Return the bundle identifier of the running process for `pid`, via
 /// `NSRunningApplication.runningApplicationWithProcessIdentifier(pid)?.bundleIdentifier`.
 ///

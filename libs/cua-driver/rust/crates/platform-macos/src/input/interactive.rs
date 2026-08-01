@@ -31,6 +31,7 @@ const TEXT_EVENT_UTF16_UNITS: usize = 20;
 const SCROLL_PHASE_FIELD: u32 = 99;
 const SCROLL_MOMENTUM_PHASE_FIELD: u32 = 123;
 const PHASELESS_PRECISE_PIXELS_PER_LINE: f64 = 10.0;
+const FOREGROUND_ACTIVATION_RETRY: Duration = Duration::from_millis(250);
 
 /// Controls whether events remain PID-routed or use the foreground HID queue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -361,6 +362,8 @@ fn run_worker(
 struct NativeInputState {
     config: InteractiveInputConfig,
     source: CGEventSource,
+    foreground_hid_active: bool,
+    last_activation_attempt: Option<Instant>,
     pressed_button: Option<PointerButton>,
     click_group_id: i64,
     scroll_residual_x: f64,
@@ -378,6 +381,8 @@ impl NativeInputState {
         Self {
             config,
             source,
+            foreground_hid_active: false,
+            last_activation_attempt: None,
             pressed_button: None,
             click_group_id: 1,
             scroll_residual_x: 0.0,
@@ -387,26 +392,51 @@ impl NativeInputState {
         }
     }
 
-    fn prepare_target(&self) -> Result<()> {
-        if self.config.delivery_mode == InteractiveDeliveryMode::PersistentForeground
-            && crate::apps::frontmost_pid() != Some(self.config.pid)
-        {
-            if !crate::input::skylight::set_front_process_persistently(
-                self.config.pid as libc::pid_t,
-                self.config.window_id,
-            ) {
-                crate::apps::activate_pid(self.config.pid);
+    fn prepare_target(&mut self) -> Result<()> {
+        self.foreground_hid_active = false;
+        if self.config.delivery_mode == InteractiveDeliveryMode::PersistentForeground {
+            let frontmost_pid = crate::apps::frontmost_pid();
+            if foreground_hid_route(self.config.delivery_mode, self.config.pid, frontmost_pid) {
+                self.foreground_hid_active = true;
+                return Ok(());
             }
-            // Paid once when opening the session, never on the event hot path.
-            thread::sleep(std::time::Duration::from_millis(40));
+
+            let now = Instant::now();
+            let activation_due = self
+                .last_activation_attempt
+                .is_none_or(|attempt| now.duration_since(attempt) >= FOREGROUND_ACTIVATION_RETRY);
+            if activation_due {
+                self.last_activation_attempt = Some(now);
+                let skylight_accepted = crate::input::skylight::set_front_process_persistently(
+                    self.config.pid as libc::pid_t,
+                    self.config.window_id,
+                );
+                if !skylight_accepted || crate::apps::frontmost_pid() != Some(self.config.pid) {
+                    crate::apps::activate_pid_all_windows(self.config.pid);
+                }
+                // Foreground ownership changes asynchronously. Wait only as
+                // long as needed, then use target-routed delivery if macOS
+                // still refuses the activation request. Further activation
+                // attempts are throttled so this wait never enters the input
+                // hot path on every batch.
+                for _ in 0..4 {
+                    if crate::apps::frontmost_pid() == Some(self.config.pid) {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+            }
+            self.foreground_hid_active = foreground_hid_route(
+                self.config.delivery_mode,
+                self.config.pid,
+                crate::apps::frontmost_pid(),
+            );
         }
         Ok(())
     }
 
     fn dispatch_batch(&mut self, batch: &InteractiveInputBatch) -> Result<()> {
-        if self.config.delivery_mode == InteractiveDeliveryMode::PersistentForeground
-            && crate::apps::frontmost_pid() != Some(self.config.pid)
-        {
+        if self.config.delivery_mode == InteractiveDeliveryMode::PersistentForeground {
             self.prepare_target()?;
         }
         self.refresh_bounds_if_due()?;
@@ -608,7 +638,7 @@ impl NativeInputState {
     }
 
     fn post_keyboard(&self, event: &CGEvent) {
-        if self.is_foreground() {
+        if self.foreground_hid_active {
             event.post(CGEventTapLocation::HID);
         } else {
             super::keyboard::post_keyboard_event(self.config.pid, event);
@@ -622,7 +652,7 @@ impl NativeInputState {
         button: PointerButton,
         click: bool,
     ) {
-        if self.is_foreground() {
+        if self.foreground_hid_active {
             event.post(CGEventTapLocation::HID);
         } else {
             super::mouse::post_mouse_event(
@@ -637,10 +667,15 @@ impl NativeInputState {
             );
         }
     }
+}
 
-    fn is_foreground(&self) -> bool {
-        self.config.delivery_mode == InteractiveDeliveryMode::PersistentForeground
-    }
+fn foreground_hid_route(
+    delivery_mode: InteractiveDeliveryMode,
+    target_pid: i32,
+    frontmost_pid: Option<i32>,
+) -> bool {
+    delivery_mode == InteractiveDeliveryMode::PersistentForeground
+        && frontmost_pid == Some(target_pid)
 }
 
 fn modifier_flags(modifiers: &[Modifier]) -> CGEventFlags {
@@ -816,5 +851,24 @@ mod tests {
         assert_eq!(chunks.len(), 2);
         assert_eq!(chunks[0].len(), 19);
         assert_eq!(chunks[1], "😀".encode_utf16().collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn foreground_hid_requires_verified_target_ownership() {
+        assert!(foreground_hid_route(
+            InteractiveDeliveryMode::PersistentForeground,
+            42,
+            Some(42)
+        ));
+        assert!(!foreground_hid_route(
+            InteractiveDeliveryMode::PersistentForeground,
+            42,
+            Some(7)
+        ));
+        assert!(!foreground_hid_route(
+            InteractiveDeliveryMode::Background,
+            42,
+            Some(42)
+        ));
     }
 }

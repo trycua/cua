@@ -72,6 +72,11 @@ extern "C" {
         attribute: CFStringRef,
         value: CFTypeRef,
     ) -> AXError;
+    pub fn AXUIElementIsAttributeSettable(
+        element: AXUIElementRef,
+        attribute: CFStringRef,
+        settable: *mut u8,
+    ) -> AXError;
     pub fn AXUIElementSetMessagingTimeout(
         element: AXUIElementRef,
         timeout_in_seconds: f32,
@@ -122,6 +127,19 @@ extern "C" {
 // ── Helper functions ──────────────────────────────────────────────────────────
 
 use core_foundation::{array::CFArray, base::TCFType, string::CFString as CFStr};
+
+/// Whether an AX attribute is currently writable on this element.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
+pub unsafe fn is_attribute_settable(element: AXUIElementRef, attr_name: &str) -> bool {
+    let attr = CFStr::new(attr_name);
+    let mut settable = 0_u8;
+    AXUIElementIsAttributeSettable(element, attr.as_concrete_TypeRef(), &mut settable)
+        == kAXErrorSuccess
+        && settable != 0
+}
 
 /// Copy a string attribute from an AX element. Returns `None` on any error.
 ///

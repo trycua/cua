@@ -405,11 +405,14 @@ in the background): a px focus-click won't reliably open _and_ focus a
 closed control, so the text leaks into whatever's already focused.
 Escalate to `delivery_mode:"foreground"` only if it still drops.
 
-**`set_value` stays AX-only by design** — it's for **non-text**
-controls (dropdown / `AXPopUpButton`, checkbox, slider, stepper). Its
-pixel counterpart is a `click`/`drag` on the control, not a "set value
-at a pixel." So: text → `type_text` (ax+px); non-text control values →
-`set_value`; pixel-manipulate a control → `click`/`drag`.
+**`set_value` stays AX-only by design** — use it when the intent is to
+replace a control's whole value: dropdowns, checkboxes, sliders, steppers,
+and native text fields such as Finder's inline rename editor. Use
+`type_text` when the intent is to insert text at the current selection or
+cursor. Its pixel counterpart is a `click`/`drag` on the control, not a
+"set value at a pixel." So: insert text → `type_text` (ax+px); replace a
+surfaced native value → `set_value`; pixel-manipulate a control →
+`click`/`drag`.
 
 **Action responses carry closed action facts**
 

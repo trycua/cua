@@ -6,7 +6,7 @@ use core_foundation::base::{CFRelease, CFTypeRef};
 const MAX_SELECTION_ANCESTORS: usize = 8;
 
 fn is_selectable_container_role(role: &str) -> bool {
-    matches!(role, "AXRow" | "AXCell" | "AXListItem")
+    matches!(role, "AXRow" | "AXCell" | "AXListItem" | "AXImage")
 }
 
 /// Select the nearest list-like element at or above `element_ptr` and confirm
@@ -19,9 +19,11 @@ fn is_selectable_container_role(role: &str) -> bool {
 /// selects that row, so the AX equivalent is to set the row's `AXSelected`
 /// attribute rather than treating the failed press as terminal.
 ///
-/// The fallback is deliberately limited to standard selectable container
-/// roles, bounded ancestor traversal, and a successful read-back. It therefore
-/// cannot turn an arbitrary failed button press into a claimed success.
+/// Finder icon views expose each selectable file directly as an `AXImage` with
+/// an `AXSelected` attribute, so that role is included alongside the standard
+/// row-like containers. The fallback remains bounded and requires a successful
+/// `AXSelected=true` read-back, so an arbitrary failed image/button press cannot
+/// become a claimed success.
 pub fn select_nearest_container(element_ptr: usize) -> Option<String> {
     let mut current = element_ptr as AXUIElementRef;
     let mut owns_current = false;
@@ -125,7 +127,7 @@ mod tests {
 
     #[test]
     fn selection_fallback_is_limited_to_collection_item_roles() {
-        for role in ["AXRow", "AXCell", "AXListItem"] {
+        for role in ["AXRow", "AXCell", "AXListItem", "AXImage"] {
             assert!(is_selectable_container_role(role), "{role}");
         }
         for role in ["AXButton", "AXTextField", "AXWindow", "AXOutline"] {

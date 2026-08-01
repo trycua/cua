@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.16.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.15.0...cua-driver-rs-v0.16.0) (2026-08-01)
+
+
+### Features
+
+* **cua-driver:** add verified semantic window framing ([#2772](https://github.com/trycua/cua/issues/2772)) ([fb39144](https://github.com/trycua/cua/commit/fb3914475b9cba97376a6b9b739077cc0994d15f))
+
+
+### Bug Fixes
+
+* **cua-driver:** prefer semantic routes before GUI fallback ([6f2faf9](https://github.com/trycua/cua/commit/6f2faf9f9c0ea2db3d0b731d45c6d80a9de23db5))
+
 ## [0.15.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.14.2...cua-driver-rs-v0.15.0) (2026-08-01)
 
 

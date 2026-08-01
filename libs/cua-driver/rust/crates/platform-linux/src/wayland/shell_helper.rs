@@ -13,6 +13,8 @@
 //!   (the GNOME analogue of the X11 `_GTK_FRAME_EXTENTS` reconstruction).
 //! - `MoveCursor(x,y)` / `ClickPulse(x,y)` / `HideCursor()` — draw the agent
 //!   cursor as a Clutter actor on the compositor stage.
+//! - `SetCursorState(...)` / `SetCursorColor(...)` — keep the compositor cursor
+//!   aligned with the shared semantic theme and active session identity.
 //!
 //! Everything here is **best-effort**: if the extension isn't installed/enabled
 //! the calls return `None` / no-op and callers keep the prior behaviour (no
@@ -20,6 +22,7 @@
 //! there's no zbus blocking-feature or async-context coupling — the calls are
 //! infrequent (once per `get_window_state`, a few per click).
 
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::process::Command;
 use std::time::Duration;
 
@@ -28,26 +31,69 @@ use crate::x11::WindowInfo;
 const DEST: &str = "org.cua.WinRects";
 const PATH: &str = "/org/cua/WinRects";
 const IFACE: &str = "org.cua.WinRects";
+const DBUS_DEST: &str = "org.freedesktop.DBus";
+const DBUS_PATH: &str = "/org/freedesktop/DBus";
+const DBUS_IFACE: &str = "org.freedesktop.DBus";
+const BROWSER_HELPER_API_VERSION: u32 = 4;
+const SEMANTIC_CURSOR_API_VERSION: u32 = 8;
+
+#[derive(Debug, Clone)]
+struct ShellWindow {
+    info: WindowInfo,
+    focused: bool,
+}
 
 pub fn available() -> bool {
-    static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *AVAILABLE.get_or_init(|| gdbus_call("GetRects", &[]).is_some())
+    shell_owner(false).is_some()
+}
+
+pub fn semantic_cursor_available() -> bool {
+    shell_owner_with_min_version(Some(SEMANTIC_CURSOR_API_VERSION)).is_some()
 }
 
 fn gdbus_call(method: &str, args: &[String]) -> Option<String> {
-    gdbus_call_with_timeout(method, args, Duration::from_millis(800))
+    let owner = shell_owner(false)?;
+    gdbus_call_to(
+        &owner,
+        PATH,
+        &format!("{IFACE}.{method}"),
+        args,
+        Duration::from_millis(800),
+    )
 }
 
 fn gdbus_call_with_timeout(method: &str, args: &[String], timeout: Duration) -> Option<String> {
+    let owner = shell_owner(false)?;
+    gdbus_call_to(&owner, PATH, &format!("{IFACE}.{method}"), args, timeout)
+}
+
+fn trusted_gdbus_call(method: &str, args: &[String]) -> Option<String> {
+    let owner = shell_owner(true)?;
+    gdbus_call_to(
+        &owner,
+        PATH,
+        &format!("{IFACE}.{method}"),
+        args,
+        Duration::from_millis(800),
+    )
+}
+
+fn gdbus_call_to(
+    destination: &str,
+    object_path: &str,
+    method: &str,
+    args: &[String],
+    timeout: Duration,
+) -> Option<String> {
     let mut cmd = Command::new("gdbus");
     cmd.arg("call")
         .arg("--session")
         .arg("--dest")
-        .arg(DEST)
+        .arg(destination)
         .arg("--object-path")
-        .arg(PATH)
+        .arg(object_path)
         .arg("--method")
-        .arg(format!("{IFACE}.{method}"));
+        .arg(method);
     for a in args {
         cmd.arg(a);
     }
@@ -65,6 +111,105 @@ fn gdbus_call_with_timeout(method: &str, args: &[String], timeout: Duration) -> 
     Some(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// Resolve the helper's immutable unique bus name and prove that it is hosted
+/// by this user's system-installed GNOME Shell process. Browser-sensitive
+/// callers additionally require the current helper API. Calling the unique
+/// name closes the race where another process replaces the well-known name
+/// after ownership is checked.
+fn shell_owner(require_browser_api: bool) -> Option<String> {
+    shell_owner_with_min_version(require_browser_api.then_some(BROWSER_HELPER_API_VERSION))
+}
+
+fn shell_owner_with_min_version(min_version: Option<u32>) -> Option<String> {
+    let owner_raw = gdbus_call_to(
+        DBUS_DEST,
+        DBUS_PATH,
+        &format!("{DBUS_IFACE}.GetNameOwner"),
+        &[DEST.to_owned()],
+        Duration::from_millis(800),
+    )?;
+    let owner = parse_quoted_string(&owner_raw)?;
+    if !owner.starts_with(':') {
+        return None;
+    }
+
+    let pid_raw = gdbus_call_to(
+        DBUS_DEST,
+        DBUS_PATH,
+        &format!("{DBUS_IFACE}.GetConnectionUnixProcessID"),
+        &[owner.clone()],
+        Duration::from_millis(800),
+    )?;
+    let uid_raw = gdbus_call_to(
+        DBUS_DEST,
+        DBUS_PATH,
+        &format!("{DBUS_IFACE}.GetConnectionUnixUser"),
+        &[owner.clone()],
+        Duration::from_millis(800),
+    )?;
+    let pid = parse_first_u32(&pid_raw)?;
+    let uid = parse_first_u32(&uid_raw)?;
+    if uid != current_uid() || !is_trusted_gnome_shell(pid) {
+        return None;
+    }
+
+    if let Some(min_version) = min_version {
+        let version_raw = gdbus_call_to(
+            &owner,
+            PATH,
+            &format!("{IFACE}.GetVersion"),
+            &[],
+            Duration::from_millis(800),
+        )?;
+        if parse_first_u32(&version_raw)? < min_version {
+            return None;
+        }
+    }
+    Some(owner)
+}
+
+fn parse_quoted_string(raw: &str) -> Option<String> {
+    let start = raw.find('\'')? + 1;
+    let end = raw[start..].find('\'')? + start;
+    (end > start).then(|| raw[start..end].to_owned())
+}
+
+fn parse_first_u32(raw: &str) -> Option<u32> {
+    // `gdbus call` renders typed scalars as `(uint32 6079,)`. Searching the
+    // whole string would incorrectly return the `32` in the type annotation.
+    let payload = raw.split_once("uint32").map_or(raw, |(_, payload)| payload);
+    payload
+        .split(|character: char| !character.is_ascii_digit())
+        .find(|part| !part.is_empty())?
+        .parse()
+        .ok()
+}
+
+fn current_uid() -> u32 {
+    std::fs::metadata("/proc/self")
+        .map(|meta| meta.uid())
+        .unwrap_or(u32::MAX)
+}
+
+fn is_trusted_gnome_shell(pid: u32) -> bool {
+    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok();
+    if comm.as_deref().map(str::trim) != Some("gnome-shell") {
+        return false;
+    }
+    let executable = std::fs::read_link(format!("/proc/{pid}/exe")).ok();
+    let metadata = executable
+        .as_ref()
+        .and_then(|path| std::fs::metadata(path).ok());
+    executable
+        .as_ref()
+        .and_then(|path| path.file_name())
+        .and_then(|name| name.to_str())
+        == Some("gnome-shell")
+        && metadata
+            .as_ref()
+            .is_some_and(|meta| meta.uid() == 0 && meta.permissions().mode() & 0o022 == 0)
+}
+
 /// Capture the GNOME stage through the compositor helper.
 ///
 /// Mutter does not expose wlroots screencopy protocols, and its one-shot
@@ -73,9 +218,27 @@ fn gdbus_call_with_timeout(method: &str, args: &[String], timeout: Duration) -> 
 /// can use Shell's screenshot API without confusing a stable Wayland window id
 /// for an X11 drawable.
 pub fn screenshot_display() -> Option<Vec<u8>> {
+    let raw = gdbus_call_with_timeout("Capture", &[], Duration::from_secs(5))?;
+    decode_capture(&raw)
+}
+
+/// Capture the GNOME stage only when the helper owner and current browser API
+/// have passed the same compositor-attestation checks used for mutation.
+pub fn trusted_screenshot_display() -> Option<Vec<u8>> {
+    let owner = shell_owner(true)?;
+    let raw = gdbus_call_to(
+        &owner,
+        PATH,
+        &format!("{IFACE}.Capture"),
+        &[],
+        Duration::from_secs(5),
+    )?;
+    decode_capture(&raw)
+}
+
+fn decode_capture(raw: &str) -> Option<Vec<u8>> {
     use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 
-    let raw = gdbus_call_with_timeout("Capture", &[], Duration::from_secs(5))?;
     let start = raw.find('\'')? + 1;
     let end = raw.rfind('\'')?;
     if end <= start {
@@ -131,14 +294,20 @@ fn wait_timeout(mut child: std::process::Child, dur: Duration) -> Option<std::pr
     })
 }
 
-/// Screen origin of the Wayland surface buffer backing `pid`.
+/// Screen origin of the compositor frame backing `pid`.
 ///
-/// GTK's AT-SPI `CoordType::Window` includes client-side shadow extents, while
-/// Mutter's frame rectangle excludes them. The buffer origin preserves those
-/// extents so accessibility frames line up with pixels. Older helpers omit the
-/// buffer fields and fall back to the frame origin.
+/// `screenshot_window_dispatch` crops the Shell stage to this same frame
+/// rectangle, and GTK's AT-SPI `CoordType::Window` coordinates are relative to
+/// that frame. Using Mutter's larger surface-buffer rectangle here shifts
+/// elements up and left by the client-side shadow extents whenever the window
+/// is floating, so pixel actions derived from the returned screenshot miss
+/// their target.
 pub fn window_origin_for_pid(pid: u32) -> Option<(i32, i32)> {
     let raw = gdbus_call("GetRects", &[])?;
+    parse_window_origin(&raw, pid)
+}
+
+fn parse_window_origin(raw: &str, pid: u32) -> Option<(i32, i32)> {
     // gdbus prints a GVariant tuple like `('[{"pid":..,"x":..}]',)`. Pull the
     // JSON array out robustly (first '[' .. last ']') rather than parsing the
     // GVariant wrapper, so an apostrophe in a window title can't break it.
@@ -148,16 +317,8 @@ pub fn window_origin_for_pid(pid: u32) -> Option<(i32, i32)> {
     let arr: Vec<serde_json::Value> = serde_json::from_str(json).ok()?;
     for w in &arr {
         if w.get("pid").and_then(|p| p.as_u64()) == Some(pid as u64) {
-            let x = w
-                .get("buffer_x")
-                .and_then(serde_json::Value::as_i64)
-                .or_else(|| w.get("x").and_then(serde_json::Value::as_i64))?
-                as i32;
-            let y = w
-                .get("buffer_y")
-                .and_then(serde_json::Value::as_i64)
-                .or_else(|| w.get("y").and_then(serde_json::Value::as_i64))?
-                as i32;
+            let x = w.get("x").and_then(serde_json::Value::as_i64)? as i32;
+            let y = w.get("y").and_then(serde_json::Value::as_i64)? as i32;
             return Some((x, y));
         }
     }
@@ -174,6 +335,71 @@ pub fn window_origin_for_pid(pid: u32) -> Option<(i32, i32)> {
 pub fn list_windows(filter_pid: Option<u32>) -> Option<Vec<WindowInfo>> {
     let raw = gdbus_call("GetRects", &[])?;
     parse_windows(&raw, filter_pid)
+}
+
+/// Return one compositor-attested GNOME window only when the current helper
+/// API is hosted by the verified Shell owner.
+pub fn trusted_window_for_id(pid: u32, window_id: u64) -> Option<WindowInfo> {
+    trusted_shell_windows(Some(pid))?
+        .into_iter()
+        .find(|window| window.info.xid == window_id)
+        .map(|window| window.info)
+}
+
+/// Enumerate exact browser-window ids for one process through the verified
+/// GNOME Shell helper. `None` means no trusted helper is available; an empty
+/// vector means the trusted helper found no owned windows.
+pub fn trusted_window_ids_for_pid(pid: u32) -> Option<Vec<u64>> {
+    Some(
+        trusted_shell_windows(Some(pid))?
+            .into_iter()
+            .map(|window| window.info.xid)
+            .collect(),
+    )
+}
+
+/// Briefly activate an exact compositor-owned window, execute one bounded
+/// focus-sensitive operation, and restore the prior exact Shell focus.
+pub fn with_focused_window<T>(
+    pid: u32,
+    window_id: u64,
+    body: impl FnOnce() -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    let before = trusted_shell_windows(None)
+        .ok_or_else(|| anyhow::anyhow!("the verified GNOME Shell helper API is unavailable"))?;
+    let target = before
+        .iter()
+        .find(|window| window.info.pid == Some(pid) && window.info.xid == window_id)
+        .ok_or_else(|| anyhow::anyhow!("no exact GNOME Shell window owns the approved target"))?;
+    let previous = before
+        .iter()
+        .find(|window| window.focused)
+        .map(|window| window.info.xid)
+        .ok_or_else(|| anyhow::anyhow!("GNOME Shell did not expose a restorable focused window"))?;
+
+    if target.focused {
+        return body();
+    }
+    trusted_activate_window(window_id)
+        .then_some(())
+        .ok_or_else(|| anyhow::anyhow!("GNOME Shell did not confirm exact target activation"))?;
+    let body_result = body();
+    let restored = trusted_activate_window(previous);
+    match (body_result, restored) {
+        (Ok(value), true) => Ok(value),
+        (Err(error), true) => Err(error),
+        (Ok(_), false) => {
+            anyhow::bail!("GNOME Shell did not restore the previously focused window")
+        }
+        (Err(error), false) => Err(anyhow::anyhow!(
+            "{error}; GNOME Shell also failed to restore the previously focused window"
+        )),
+    }
+}
+
+fn trusted_shell_windows(filter_pid: Option<u32>) -> Option<Vec<ShellWindow>> {
+    let raw = trusted_gdbus_call("GetRects", &[])?;
+    parse_shell_windows(&raw, filter_pid)
 }
 
 /// Ask GNOME Shell to focus and raise one stable-sequence window.
@@ -195,6 +421,23 @@ pub fn activate_window(window_id: u64) -> bool {
     window_is_focused(window_id)
 }
 
+fn trusted_activate_window(window_id: u64) -> bool {
+    let Ok(window_id) = u32::try_from(window_id) else {
+        return false;
+    };
+    let accepted = trusted_gdbus_call("Activate", &[window_id.to_string()])
+        .is_some_and(|output| output.trim_start().starts_with("(true,"));
+    if !accepted {
+        return false;
+    }
+    std::thread::sleep(Duration::from_millis(60));
+    trusted_shell_windows(None).is_some_and(|windows| {
+        windows
+            .into_iter()
+            .any(|window| window.info.xid == u64::from(window_id) && window.focused)
+    })
+}
+
 fn window_is_focused(window_id: u32) -> bool {
     let Some(raw) = gdbus_call("GetRects", &[]) else {
         return false;
@@ -214,6 +457,15 @@ fn window_is_focused(window_id: u32) -> bool {
 }
 
 fn parse_windows(raw: &str, filter_pid: Option<u32>) -> Option<Vec<WindowInfo>> {
+    Some(
+        parse_shell_windows(raw, filter_pid)?
+            .into_iter()
+            .map(|window| window.info)
+            .collect(),
+    )
+}
+
+fn parse_shell_windows(raw: &str, filter_pid: Option<u32>) -> Option<Vec<ShellWindow>> {
     let start = raw.find('[')?;
     let end = raw.rfind(']')?;
     let windows: Vec<serde_json::Value> = serde_json::from_str(&raw[start..=end]).ok()?;
@@ -249,17 +501,23 @@ fn parse_windows(raw: &str, filter_pid: Option<u32>) -> Option<Vec<WindowInfo>> 
                     .and_then(serde_json::Value::as_u64)
                     .and_then(|value| usize::try_from(value).ok());
 
-                Some(WindowInfo {
-                    xid: id,
-                    pid: Some(pid),
-                    app_name: title.clone(),
-                    title,
-                    is_on_screen: visible && !minimized && width > 0 && height > 0,
-                    z_index,
-                    x,
-                    y,
-                    width,
-                    height,
+                Some(ShellWindow {
+                    info: WindowInfo {
+                        xid: id,
+                        pid: Some(pid),
+                        app_name: title.clone(),
+                        title,
+                        is_on_screen: visible && !minimized && width > 0 && height > 0,
+                        z_index,
+                        x,
+                        y,
+                        width,
+                        height,
+                    },
+                    focused: window
+                        .get("focused")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false),
                 })
             })
             .collect(),
@@ -276,6 +534,32 @@ pub fn click_pulse(x: i32, y: i32) {
     let _ = gdbus_call("ClickPulse", &[x.to_string(), y.to_string()]);
 }
 
+/// Set the stable session-specific fill color for the compositor cursor.
+pub fn set_cursor_color(fill_color: &str) {
+    let _ = gdbus_call("SetCursorColor", &[fill_color.to_owned()]);
+}
+
+/// Update the compositor-owned cursor's semantic action state.
+///
+/// Callers gate this method on helper v8 so an older helper cannot silently
+/// render the retired cursor artwork.
+pub fn set_cursor_state(action: &str, delivery: &str, target: &str, active: bool) {
+    let _ = gdbus_call(
+        "SetCursorState",
+        &[
+            action.to_owned(),
+            delivery.to_owned(),
+            target.to_owned(),
+            active.to_string(),
+        ],
+    );
+}
+
+/// Set the renderer-visible public session label for the compositor cursor.
+pub fn set_session_label(label: &str) {
+    let _ = gdbus_call("SetSessionLabel", &[label.to_owned()]);
+}
+
 /// Hide the agent cursor.
 pub fn hide_cursor() {
     let _ = gdbus_call("HideCursor", &[]);
@@ -284,6 +568,11 @@ pub fn hide_cursor() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const EXTENSION_SOURCE: &str =
+        include_str!("../../../../../wayland-helper/winrects@cua/extension.js");
+    const EXTENSION_METADATA: &str =
+        include_str!("../../../../../wayland-helper/winrects@cua/metadata.json");
 
     #[test]
     fn parses_and_filters_shell_windows() {
@@ -300,10 +589,83 @@ mod tests {
     }
 
     #[test]
+    fn accessibility_origin_matches_the_frame_cropped_screenshot() {
+        let raw = r#"('[{"id":46,"pid":6079,"title":"Floating GTK","x":14,"y":12,"w":560,"h":736,"buffer_x":0,"buffer_y":0}]',)"#;
+
+        assert_eq!(parse_window_origin(raw, 6079), Some((14, 12)));
+    }
+
+    #[test]
     fn marks_minimized_shell_windows_off_screen() {
         let raw = r#"('[{"id":47,"pid":6080,"title":"Hidden","x":0,"y":0,"w":100,"h":100,"minimized":true,"visible":false,"stacking":1}]',)"#;
         let windows = parse_windows(raw, None).expect("valid helper response");
         assert_eq!(windows.len(), 1);
         assert!(!windows[0].is_on_screen);
+    }
+
+    #[test]
+    fn parses_dbus_owner_and_numeric_identity() {
+        assert_eq!(
+            parse_quoted_string("(':1.204',)"),
+            Some(":1.204".to_owned())
+        );
+        assert_eq!(parse_first_u32("(uint32 6079,)"), Some(6079));
+        assert_eq!(parse_first_u32("(uint32 4,)"), Some(4));
+        assert_eq!(parse_first_u32("(6079,)"), Some(6079));
+        assert_eq!(parse_quoted_string("(nothing,)"), None);
+        assert_eq!(parse_first_u32("(nothing,)"), None);
+    }
+
+    #[test]
+    fn preserves_exact_focus_from_shell_snapshot() {
+        let raw = r#"('[{"id":46,"pid":6079,"title":"Target","x":66,"y":32,"w":958,"h":736,"focused":false,"minimized":false,"visible":true,"stacking":2},{"id":47,"pid":6080,"title":"Sentinel","x":0,"y":0,"w":100,"h":100,"focused":true,"minimized":false,"visible":true,"stacking":3}]',)"#;
+        let windows = parse_shell_windows(raw, None).expect("valid helper response");
+        assert_eq!(windows.len(), 2);
+        assert!(!windows[0].focused);
+        assert!(windows[1].focused);
+        assert_eq!(windows[1].info.xid, 47);
+    }
+
+    #[test]
+    fn bundled_helper_v8_uses_host_owned_modifier_badge_chips() {
+        assert!(EXTENSION_SOURCE.contains("GetVersion()"));
+        assert!(EXTENSION_SOURCE.contains("return 8;"));
+        assert!(EXTENSION_SOURCE.contains("SetCursorState"));
+        assert!(EXTENSION_SOURCE.contains("SetCursorColor"));
+        assert!(EXTENSION_SOURCE.contains("SetSessionLabel"));
+        assert!(EXTENSION_SOURCE.contains("const DISPLAY_SIZE = 42;"));
+        assert!(EXTENSION_SOURCE.contains("const GLOW_PADDING = 24;"));
+        assert!(EXTENSION_SOURCE.contains("function drawCursorGlowShape"));
+        assert!(EXTENSION_SOURCE.contains("function glowPath"));
+        assert!(EXTENSION_SOURCE.contains("strokePath(cr, width, alpha, fillColor)"));
+        assert!(EXTENSION_SOURCE.contains("width + 1.5"));
+        assert!(EXTENSION_SOURCE.contains("width - 1"));
+        assert!(EXTENSION_SOURCE.contains("createGlowSurface(this._fillColor)"));
+        assert!(EXTENSION_SOURCE.contains("cr.translate(-GLOW_PADDING, -GLOW_PADDING);"));
+        assert!(EXTENSION_SOURCE.contains("function drawBadgeChip"));
+        assert!(EXTENSION_SOURCE.contains("this._badge.add_child(this._badgeDot)"));
+        assert!(EXTENSION_SOURCE.contains("this._badge.add_child(this._badgeLabel)"));
+        assert!(EXTENSION_SOURCE.contains("this._deliveryChip"));
+        assert!(EXTENSION_SOURCE.contains("this._targetChip"));
+        assert!(EXTENSION_SOURCE.contains("const badgeAlpha = Math.max(labelAlpha, chipAlpha)"));
+        assert!(EXTENSION_SOURCE.contains("this._badgeLabel.hide()"));
+        assert!(!EXTENSION_SOURCE.contains("this._badgeIdentity"));
+        assert!(!EXTENSION_SOURCE.contains("function drawModifiers"));
+        let metadata: serde_json::Value =
+            serde_json::from_str(EXTENSION_METADATA).expect("valid bundled helper metadata");
+        assert_eq!(metadata["version"], 8);
+
+        for action in [
+            "idle", "observe", "click", "drag", "scroll", "text", "key", "navigate", "app",
+            "transfer", "record", "system",
+        ] {
+            assert!(
+                EXTENSION_SOURCE.contains(&format!("'{action}'")),
+                "missing semantic cursor state {action}"
+            );
+        }
+
+        assert!(!EXTENSION_SOURCE.contains("const VERTS"));
+        assert!(!EXTENSION_SOURCE.contains("setSourceRGBA(0.10, 0.75, 1.00"));
     }
 }

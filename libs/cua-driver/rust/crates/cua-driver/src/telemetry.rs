@@ -20,12 +20,14 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const POSTHOG_CAPTURE_URL: &str = "https://eu.i.posthog.com/capture/";
 const POSTHOG_API_KEY: &str = "phc_eSkLnbLxsnYFaXksif1ksbrNzYlJShr35miFLDppF14";
 const POSTHOG_TIMEOUT_SECS: u64 = 3;
 const LIFECYCLE_RETRY_BACKOFF_SECS: u64 = 15 * 60;
+const TOOL_TELEMETRY_LIMIT_PER_HOUR: usize = 1_000;
+const TOOL_TELEMETRY_WINDOW: Duration = Duration::from_secs(60 * 60);
 
 const HOME_SUBDIRECTORY: &str = ".cua-driver";
 const LEGACY_HOME_SUBDIRECTORY: &str = ".cua-driver-rs";
@@ -42,16 +44,27 @@ const RELEASE_RECORDED_DIRECTORY: &str = ".release_installed";
 pub const ENV_TELEMETRY_ENABLED: &str = "CUA_DRIVER_RS_TELEMETRY_ENABLED";
 const ENV_TELEMETRY_ENABLED_COMPAT: &str = "CUA_TELEMETRY_ENABLED";
 const ENV_TELEMETRY_DEBUG: &str = "CUA_DRIVER_RS_TELEMETRY_DEBUG";
+const ENV_TELEMETRY_SYNTHETIC: &str = "CUA_DRIVER_TELEMETRY_SYNTHETIC";
 const ENV_TELEMETRY_HOME: &str = "CUA_DRIVER_TELEMETRY_HOME";
 const ENV_CLI_WRAPPED_CHILD: &str = "CUA_DRIVER_CLI_TELEMETRY_CHILD";
 const ENV_CLI_COMPLETION_WORKER: &str = "CUA_DRIVER_CLI_TELEMETRY_WORKER";
 const ENV_CLI_COMPLETION_COMMAND: &str = "CUA_DRIVER_CLI_TELEMETRY_COMMAND";
 const ENV_CLI_COMPLETION_TOOL: &str = "CUA_DRIVER_CLI_TELEMETRY_TOOL";
+const ENV_CLI_COMPLETION_COMPUTER_ACTION: &str = "CUA_DRIVER_CLI_TELEMETRY_COMPUTER_ACTION";
 const ENV_CLI_COMPLETION_OPERATION: &str = "CUA_DRIVER_CLI_TELEMETRY_OPERATION";
 const ENV_CLI_COMPLETION_CLIENT_KIND: &str = "CUA_DRIVER_CLI_TELEMETRY_CLIENT_KIND";
 const ENV_CLI_COMPLETION_EXIT_CODE: &str = "CUA_DRIVER_CLI_TELEMETRY_EXIT_CODE";
 const ENV_CLI_COMPLETION_DURATION_MS: &str = "CUA_DRIVER_CLI_TELEMETRY_DURATION_MS";
 const ENV_LIFECYCLE_WORKER: &str = "CUA_DRIVER_LIFECYCLE_TELEMETRY_WORKER";
+const ENV_UPDATE_EVENT_WORKER: &str = "CUA_DRIVER_UPDATE_TELEMETRY_WORKER";
+const ENV_UPDATE_EVENT_NAME: &str = "CUA_DRIVER_UPDATE_TELEMETRY_EVENT";
+const ENV_UPDATE_SOURCE: &str = "CUA_DRIVER_UPDATE_TELEMETRY_SOURCE";
+const ENV_UPDATE_OUTCOME: &str = "CUA_DRIVER_UPDATE_TELEMETRY_OUTCOME";
+const ENV_UPDATE_TARGET_VERSION: &str = "CUA_DRIVER_UPDATE_TELEMETRY_TARGET_VERSION";
+const ENV_UPDATE_CACHE_HIT: &str = "CUA_DRIVER_UPDATE_TELEMETRY_CACHE_HIT";
+const ENV_UPDATE_DAEMON_WAS_RUNNING: &str = "CUA_DRIVER_UPDATE_TELEMETRY_DAEMON_RUNNING";
+const ENV_UPDATE_FAILURE_CLASS: &str = "CUA_DRIVER_UPDATE_TELEMETRY_FAILURE_CLASS";
+const ENV_UPDATE_DURATION_MS: &str = "CUA_DRIVER_UPDATE_TELEMETRY_DURATION_MS";
 pub const ENV_INSTALL_CHANNEL: &str = "CUA_DRIVER_INSTALL_CHANNEL";
 pub const ENV_RELEASE_VERSION: &str = "CUA_DRIVER_RELEASE_VERSION";
 
@@ -68,6 +81,9 @@ pub mod event {
     pub const PERMISSIONS_GATE_STARTED: &str = "cua_driver_permissions_gate_started";
     pub const PERMISSIONS_GATE_DISMISSED: &str = "cua_driver_permissions_gate_dismissed";
     pub const PERMISSIONS_GATE_COMPLETED: &str = "cua_driver_permissions_gate_completed";
+    pub const UPDATE_CHECKED: &str = "cua_driver_update_checked";
+    pub const UPDATE_APPLY_STARTED: &str = "cua_driver_update_apply_started";
+    pub const UPDATE_APPLY_COMPLETED: &str = "cua_driver_update_apply_completed";
 }
 
 const INSPECTABLE_EVENTS: &[&str] = &[
@@ -83,7 +99,80 @@ const INSPECTABLE_EVENTS: &[&str] = &[
     event::PERMISSIONS_GATE_STARTED,
     event::PERMISSIONS_GATE_DISMISSED,
     event::PERMISSIONS_GATE_COMPLETED,
+    event::UPDATE_CHECKED,
+    event::UPDATE_APPLY_STARTED,
+    event::UPDATE_APPLY_COMPLETED,
 ];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UpdateCheckSource {
+    Background,
+    Cli,
+    Mcp,
+}
+
+impl UpdateCheckSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Background => "background",
+            Self::Cli => "cli",
+            Self::Mcp => "mcp",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UpdateCheckOutcome {
+    UpToDate,
+    Available,
+    Unavailable,
+}
+
+impl UpdateCheckOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::UpToDate => "up_to_date",
+            Self::Available => "available",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UpdateApplyOutcome {
+    Installed,
+    AlreadyCurrent,
+    Failed,
+}
+
+impl UpdateApplyOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Installed => "installed",
+            Self::AlreadyCurrent => "already_current",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UpdateFailureClass {
+    None,
+    CheckFailed,
+    InstallerExit,
+    InstallerLaunch,
+}
+
+impl UpdateFailureClass {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::CheckFailed => "check_failed",
+            Self::InstallerExit => "installer_exit",
+            Self::InstallerLaunch => "installer_launch",
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Transport {
@@ -166,7 +255,9 @@ pub fn reset_id() -> Result<(), String> {
     let Some(home) = telemetry_home_dir() else {
         return Ok(());
     };
-    let legacy = if std::env::var_os(ENV_TELEMETRY_HOME).is_none() {
+    let legacy = if std::env::var_os(ENV_TELEMETRY_HOME).is_none()
+        && !crate::bundle::is_local_installation()
+    {
         home_root().map(|root| root.join(LEGACY_HOME_SUBDIRECTORY))
     } else {
         None
@@ -175,11 +266,11 @@ pub fn reset_id() -> Result<(), String> {
 }
 
 fn reset_id_in_homes(home: &Path, legacy: Option<&Path>) -> Result<(), String> {
-    let lifecycle_lock = open_lock_file(&home, TELEMETRY_LIFECYCLE_LOCK_FILE_NAME)?;
+    let lifecycle_lock = open_lock_file(home, TELEMETRY_LIFECYCLE_LOCK_FILE_NAME)?;
     lifecycle_lock
         .lock()
         .map_err(|error| format!("failed to lock telemetry lifecycle: {error}"))?;
-    let identity_lock = open_lock_file(&home, TELEMETRY_IDENTITY_LOCK_FILE_NAME)?;
+    let identity_lock = open_lock_file(home, TELEMETRY_IDENTITY_LOCK_FILE_NAME)?;
     identity_lock
         .lock()
         .map_err(|error| format!("failed to lock telemetry identity: {error}"))?;
@@ -199,8 +290,9 @@ fn reset_id_in_homes(home: &Path, legacy: Option<&Path>) -> Result<(), String> {
         remove_file_if_exists(&legacy.join(TELEMETRY_INSTALL_CHANNEL_FILE_NAME))?;
         let legacy_releases = legacy.join(RELEASE_RECORDED_DIRECTORY);
         if legacy_releases.exists() {
-            std::fs::remove_dir_all(&legacy_releases)
-                .map_err(|error| format!("failed to remove {}: {error}", legacy_releases.display()))?;
+            std::fs::remove_dir_all(&legacy_releases).map_err(|error| {
+                format!("failed to remove {}: {error}", legacy_releases.display())
+            })?;
         }
     }
     Ok(())
@@ -225,6 +317,7 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
             ("command", Value::String("other".into())),
             ("tool_name", Value::String("not_applicable".into())),
             ("operation", Value::String("not_applicable".into())),
+            ("computer_action", Value::Bool(false)),
             ("client_kind", Value::String("not_applicable".into())),
             ("success", Value::Bool(true)),
             ("exit_class", Value::String("success".into())),
@@ -243,22 +336,27 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
             ("reported_provider", Value::String("unknown".into())),
             ("reported_model", Value::String("unknown".into())),
             ("reported_agent", Value::String("unknown".into())),
-            ("reported_agent_version_major", Value::String("unknown".into())),
+            (
+                "reported_agent_version_major",
+                Value::String("unknown".into()),
+            ),
             ("execution_mode", Value::String(execution_mode().into())),
         ]),
         event::MCP_TOOL_COMPLETED => bounded_properties(&[
             ("tool_name", Value::String("other".into())),
             ("operation", Value::String("not_applicable".into())),
+            ("computer_action", Value::Bool(false)),
             ("success", Value::Bool(true)),
             ("error_class", Value::String("none".into())),
+            ("refusal_code", Value::String("none".into())),
             ("duration_bucket", Value::String("lt_10ms".into())),
             ("output_type", Value::String("empty".into())),
             ("output_size_bucket", Value::String("0".into())),
             ("execution_mode", Value::String(execution_mode().into())),
         ]),
         event::MCP_STARTUP_COMPLETED => bounded_properties(&[
-            ("path", Value::String("in_process".into())),
-            ("daemon", Value::String("not_applicable".into())),
+            ("path", Value::String("daemon_proxy".into())),
+            ("daemon", Value::String("already_running".into())),
             ("success", Value::Bool(true)),
             ("duration_bucket", Value::String("lt_100ms".into())),
             ("execution_mode", Value::String(execution_mode().into())),
@@ -268,6 +366,8 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
             ("revived", Value::Bool(false)),
             ("concurrent_sessions_bucket", Value::String("1".into())),
             ("entry_transport", Value::String("mcp_stdio".into())),
+            ("client_kind", Value::String("mcp".into())),
+            ("capture_scope", Value::String("auto".into())),
             ("execution_mode", Value::String(execution_mode().into())),
         ]),
         event::AGENT_SESSION_ENDED => bounded_properties(&[
@@ -276,20 +376,24 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
             ("tool_count_bucket", Value::String("1_4".into())),
             ("computer_action_count_bucket", Value::String("1_4".into())),
             ("error_count_bucket", Value::String("0".into())),
+            ("browser_refusal_count_bucket", Value::String("0".into())),
             ("had_successful_tool", Value::Bool(true)),
             ("had_successful_computer_action", Value::Bool(true)),
             ("used_page", Value::Bool(false)),
+            ("used_browser", Value::Bool(true)),
             ("used_cursor_tools", Value::Bool(false)),
             ("used_recording", Value::Bool(false)),
             ("used_config_write", Value::Bool(false)),
             ("cursor_outcome_observed", Value::Bool(true)),
             ("cursor_overlay_enabled_at_end", Value::Bool(true)),
-            ("cursor_style", Value::String("default".into())),
-            ("cursor_color_source", Value::String("automatic_palette".into())),
-            ("cursor_label_set", Value::Bool(false)),
+            ("cursor_theme", Value::String("default".into())),
             ("cursor_motion_customized", Value::Bool(false)),
             ("multi_cursor_bucket", Value::String("1".into())),
             ("observed_multiple_transports", Value::Bool(false)),
+            ("client_kind", Value::String("mcp".into())),
+            ("capture_scope", Value::String("auto".into())),
+            ("auto_escalated_to_desktop", Value::Bool(true)),
+            ("escalation_reason", Value::String("other".into())),
             ("execution_mode", Value::String(execution_mode().into())),
         ]),
         event::PERMISSIONS_GATE_STARTED => bounded_properties(&[
@@ -309,6 +413,23 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
             ("resolution", Value::String("granted".into())),
             ("duration_bucket", Value::String("2s_9_999ms".into())),
         ]),
+        event::UPDATE_CHECKED => bounded_properties(&[
+            ("source", Value::String("cli".into())),
+            ("outcome", Value::String("available".into())),
+            ("target_version", Value::String("1.2.3".into())),
+            ("cache_hit", Value::Bool(false)),
+        ]),
+        event::UPDATE_APPLY_STARTED => bounded_properties(&[
+            ("target_version", Value::String("1.2.3".into())),
+            ("daemon_was_running", Value::Bool(false)),
+        ]),
+        event::UPDATE_APPLY_COMPLETED => bounded_properties(&[
+            ("target_version", Value::String("1.2.3".into())),
+            ("outcome", Value::String("installed".into())),
+            ("failure_class", Value::String("none".into())),
+            ("daemon_was_running", Value::Bool(false)),
+            ("duration_bucket", Value::String("2s_9_999ms".into())),
+        ]),
         _ => Map::new(),
     };
     let transport = match event_name {
@@ -316,9 +437,7 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
         | event::MCP_TOOL_COMPLETED
         | event::MCP_STARTUP_COMPLETED
         | event::AGENT_SESSION_STARTED
-        | event::AGENT_SESSION_ENDED => {
-            Transport::McpStdio
-        }
+        | event::AGENT_SESSION_ENDED => Transport::McpStdio,
         event::SERVE_START_LEGACY
         | event::PERMISSIONS_GATE_STARTED
         | event::PERMISSIONS_GATE_DISMISSED
@@ -367,30 +486,46 @@ static AGENT_SESSIONS: OnceLock<Mutex<HashMap<String, AgentSessionState>>> = Onc
 struct AgentSessionState {
     started: std::time::Instant,
     entry_transport: Transport,
+    client_kind: cua_driver_core::session::SessionClientKind,
+    capture_scope: cua_driver_core::CaptureScope,
+    auto_escalated_to_desktop: bool,
+    escalation_reason: Option<cua_driver_core::EscalationReason>,
     transport_bits: u8,
     tool_count: u64,
     computer_action_count: u64,
     error_count: u64,
+    browser_refusal_count: u64,
     had_successful_tool: bool,
     had_successful_computer_action: bool,
     used_page: bool,
+    used_browser: bool,
     used_cursor_tools: bool,
     used_recording: bool,
     used_config_write: bool,
 }
 
 impl AgentSessionState {
-    fn new(entry_transport: Transport) -> Self {
+    fn new(
+        entry_transport: Transport,
+        client_kind: cua_driver_core::session::SessionClientKind,
+        capture_scope: cua_driver_core::CaptureScope,
+    ) -> Self {
         Self {
             started: std::time::Instant::now(),
             entry_transport,
+            client_kind,
+            capture_scope,
+            auto_escalated_to_desktop: false,
+            escalation_reason: None,
             transport_bits: transport_bit(entry_transport),
             tool_count: 0,
             computer_action_count: 0,
             error_count: 0,
+            browser_refusal_count: 0,
             had_successful_tool: false,
             had_successful_computer_action: false,
             used_page: false,
+            used_browser: false,
             used_cursor_tools: false,
             used_recording: false,
             used_config_write: false,
@@ -401,26 +536,54 @@ impl AgentSessionState {
         &mut self,
         transport: Transport,
         computer_action: bool,
+        escalation_reason: Option<cua_driver_core::EscalationReason>,
         outcome: &cua_driver_core::server::ToolCompletionObservation,
     ) {
         self.transport_bits |= transport_bit(transport);
         let tool_name = outcome.tool_name.as_str();
+        if tool_name == "escalate_session"
+            && outcome.success
+            && self.capture_scope == cua_driver_core::CaptureScope::Auto
+        {
+            if let Some(reason) = escalation_reason {
+                self.auto_escalated_to_desktop = true;
+                self.escalation_reason = Some(reason);
+            }
+        }
         if matches!(tool_name, "start_session" | "end_session") {
             return;
         }
+        let used_browser = matches!(
+            tool_name,
+            "get_browser_state"
+                | "browser_prepare"
+                | "browser_navigate"
+                | "browser_click"
+                | "browser_type"
+                | "browser_dialog"
+                | "browser_set_input_files"
+                | "browser_download"
+                | "browser_pointer"
+        );
+        let refused = outcome.refusal_code.is_refusal();
+        let completed_computer_action = computer_action && !refused;
         self.tool_count = self.tool_count.saturating_add(1);
         self.computer_action_count = self
             .computer_action_count
-            .saturating_add(u64::from(computer_action));
+            .saturating_add(u64::from(completed_computer_action));
         self.error_count = self.error_count.saturating_add(u64::from(!outcome.success));
+        self.browser_refusal_count = self
+            .browser_refusal_count
+            .saturating_add(u64::from(used_browser && refused));
         self.had_successful_tool |= outcome.success;
-        self.had_successful_computer_action |= outcome.success && computer_action;
+        self.had_successful_computer_action |= outcome.success && completed_computer_action;
         self.used_page |= tool_name == "page";
+        self.used_browser |= used_browser;
         self.used_cursor_tools |= matches!(
             tool_name,
             "set_agent_cursor_enabled"
                 | "set_agent_cursor_motion"
-                | "set_agent_cursor_style"
+                | "set_agent_cursor_theme"
                 | "get_agent_cursor_state"
         );
         self.used_recording |= matches!(
@@ -435,7 +598,7 @@ impl AgentSessionState {
         reason: cua_driver_core::session::SessionEndReason,
         cursor: Option<cua_driver_core::session::CursorOutcomeObservation>,
     ) -> Map<String, Value> {
-        use cua_driver_core::session::{CursorColorSource, CursorStyleCategory, SessionEndReason};
+        use cua_driver_core::session::{CursorThemeCategory, SessionEndReason};
         let end_reason = match reason {
             SessionEndReason::Explicit => "explicit",
             SessionEndReason::IdleTimeout => "idle_timeout",
@@ -445,44 +608,78 @@ impl AgentSessionState {
         let cursor = cursor.unwrap_or(cua_driver_core::session::CursorOutcomeObservation {
             observed: false,
             enabled: false,
-            style: CursorStyleCategory::Unknown,
-            color_source: CursorColorSource::Unknown,
-            label_set: false,
+            theme: CursorThemeCategory::Unknown,
             motion_customized: false,
             active_cursor_count: 0,
         });
-        let cursor_style = match cursor.style {
-            CursorStyleCategory::Default => "default",
-            CursorStyleCategory::BuiltinArrow => "builtin_arrow",
-            CursorStyleCategory::BuiltinTeardrop => "builtin_teardrop",
-            CursorStyleCategory::CustomIcon => "custom_icon",
-            CursorStyleCategory::Unknown => "unknown",
-        };
-        let cursor_color_source = match cursor.color_source {
-            CursorColorSource::AutomaticPalette => "automatic_palette",
-            CursorColorSource::Custom => "custom",
-            CursorColorSource::Unknown => "unknown",
+        let cursor_theme = match cursor.theme {
+            CursorThemeCategory::Default => "default",
+            CursorThemeCategory::Custom => "custom",
+            CursorThemeCategory::Unknown => "unknown",
         };
         bounded_properties(&[
             ("end_reason", Value::String(end_reason.into())),
-            ("duration_bucket", Value::String(agent_session_duration_bucket(self.started.elapsed()).into())),
-            ("tool_count_bucket", Value::String(agent_session_count_bucket(self.tool_count).into())),
-            ("computer_action_count_bucket", Value::String(agent_session_count_bucket(self.computer_action_count).into())),
-            ("error_count_bucket", Value::String(agent_session_error_bucket(self.error_count).into())),
+            (
+                "duration_bucket",
+                Value::String(agent_session_duration_bucket(self.started.elapsed()).into()),
+            ),
+            (
+                "tool_count_bucket",
+                Value::String(agent_session_count_bucket(self.tool_count).into()),
+            ),
+            (
+                "computer_action_count_bucket",
+                Value::String(agent_session_count_bucket(self.computer_action_count).into()),
+            ),
+            (
+                "error_count_bucket",
+                Value::String(agent_session_error_bucket(self.error_count).into()),
+            ),
+            (
+                "browser_refusal_count_bucket",
+                Value::String(agent_session_error_bucket(self.browser_refusal_count).into()),
+            ),
             ("had_successful_tool", Value::Bool(self.had_successful_tool)),
-            ("had_successful_computer_action", Value::Bool(self.had_successful_computer_action)),
+            (
+                "had_successful_computer_action",
+                Value::Bool(self.had_successful_computer_action),
+            ),
             ("used_page", Value::Bool(self.used_page)),
+            ("used_browser", Value::Bool(self.used_browser)),
             ("used_cursor_tools", Value::Bool(self.used_cursor_tools)),
             ("used_recording", Value::Bool(self.used_recording)),
             ("used_config_write", Value::Bool(self.used_config_write)),
             ("cursor_outcome_observed", Value::Bool(cursor.observed)),
             ("cursor_overlay_enabled_at_end", Value::Bool(cursor.enabled)),
-            ("cursor_style", Value::String(cursor_style.into())),
-            ("cursor_color_source", Value::String(cursor_color_source.into())),
-            ("cursor_label_set", Value::Bool(cursor.label_set)),
-            ("cursor_motion_customized", Value::Bool(cursor.motion_customized)),
-            ("multi_cursor_bucket", Value::String(cursor_count_bucket(cursor.active_cursor_count).into())),
-            ("observed_multiple_transports", Value::Bool(self.transport_bits.count_ones() > 1)),
+            ("cursor_theme", Value::String(cursor_theme.into())),
+            (
+                "cursor_motion_customized",
+                Value::Bool(cursor.motion_customized),
+            ),
+            (
+                "multi_cursor_bucket",
+                Value::String(cursor_count_bucket(cursor.active_cursor_count).into()),
+            ),
+            (
+                "observed_multiple_transports",
+                Value::Bool(self.transport_bits.count_ones() > 1),
+            ),
+            (
+                "client_kind",
+                Value::String(session_client_kind(self.client_kind).into()),
+            ),
+            (
+                "capture_scope",
+                Value::String(capture_scope(self.capture_scope).into()),
+            ),
+            (
+                "auto_escalated_to_desktop",
+                Value::Bool(self.auto_escalated_to_desktop),
+            ),
+            (
+                "escalation_reason",
+                Value::String(escalation_reason(self.escalation_reason).into()),
+            ),
             ("execution_mode", Value::String(execution_mode().into())),
         ])
     }
@@ -503,6 +700,37 @@ fn session_transport(transport: cua_driver_core::session::SessionTransport) -> T
         cua_driver_core::session::SessionTransport::Daemon => Transport::Daemon,
         cua_driver_core::session::SessionTransport::McpStdio => Transport::McpStdio,
         cua_driver_core::session::SessionTransport::McpHttp => Transport::McpHttp,
+    }
+}
+
+fn session_client_kind(kind: cua_driver_core::session::SessionClientKind) -> &'static str {
+    match kind {
+        cua_driver_core::session::SessionClientKind::Cli => "cli",
+        cua_driver_core::session::SessionClientKind::Direct => "direct",
+        cua_driver_core::session::SessionClientKind::Mcp => "mcp",
+        cua_driver_core::session::SessionClientKind::PythonSdk => "python_sdk",
+        cua_driver_core::session::SessionClientKind::TypescriptSdk => "typescript_sdk",
+    }
+}
+
+fn capture_scope(scope: cua_driver_core::CaptureScope) -> &'static str {
+    match scope {
+        cua_driver_core::CaptureScope::Auto => "auto",
+        cua_driver_core::CaptureScope::Window => "window",
+        cua_driver_core::CaptureScope::Desktop => "desktop",
+    }
+}
+
+fn escalation_reason(reason: Option<cua_driver_core::EscalationReason>) -> &'static str {
+    match reason {
+        Some(cua_driver_core::EscalationReason::AxTreePixelMismatch) => "ax_tree_pixel_mismatch",
+        Some(cua_driver_core::EscalationReason::BackgroundDeliveryFailed) => {
+            "background_delivery_failed"
+        }
+        Some(cua_driver_core::EscalationReason::ForegroundIneffective) => "foreground_ineffective",
+        Some(cua_driver_core::EscalationReason::NoWindowTarget) => "no_window_target",
+        Some(cua_driver_core::EscalationReason::Other) => "other",
+        None => "not_applicable",
     }
 }
 
@@ -574,7 +802,14 @@ impl cua_driver_core::session::SessionObserver for TelemetryObserver {
             if sessions.len() >= MAX_TRACKED_AGENT_SESSIONS {
                 return;
             }
-            sessions.insert(session_id.to_owned(), AgentSessionState::new(transport));
+            sessions.insert(
+                session_id.to_owned(),
+                AgentSessionState::new(
+                    transport,
+                    observation.client_kind,
+                    observation.capture_scope,
+                ),
+            );
             sessions.len()
         };
         let declaration = match observation.declaration {
@@ -588,8 +823,19 @@ impl cua_driver_core::session::SessionObserver for TelemetryObserver {
             bounded_properties(&[
                 ("declaration", Value::String(declaration.into())),
                 ("revived", Value::Bool(observation.revived)),
-                ("concurrent_sessions_bucket", Value::String(concurrent_sessions_bucket(concurrent).into())),
+                (
+                    "concurrent_sessions_bucket",
+                    Value::String(concurrent_sessions_bucket(concurrent).into()),
+                ),
                 ("entry_transport", Value::String(transport.as_str().into())),
+                (
+                    "client_kind",
+                    Value::String(session_client_kind(observation.client_kind).into()),
+                ),
+                (
+                    "capture_scope",
+                    Value::String(capture_scope(observation.capture_scope).into()),
+                ),
                 ("execution_mode", Value::String(execution_mode().into())),
             ]),
             transport,
@@ -601,6 +847,7 @@ impl cua_driver_core::session::SessionObserver for TelemetryObserver {
         session_id: &str,
         transport: cua_driver_core::session::SessionTransport,
         computer_action: bool,
+        escalation_reason: Option<cua_driver_core::EscalationReason>,
         outcome: &cua_driver_core::server::ToolCompletionObservation,
     ) {
         let sessions = AGENT_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()));
@@ -610,7 +857,12 @@ impl cua_driver_core::session::SessionObserver for TelemetryObserver {
             return;
         }
         if let Some(state) = sessions.get_mut(session_id) {
-            state.observe(session_transport(transport), computer_action, outcome);
+            state.observe(
+                session_transport(transport),
+                computer_action,
+                escalation_reason,
+                outcome,
+            );
         }
     }
 
@@ -628,7 +880,9 @@ impl cua_driver_core::session::SessionObserver for TelemetryObserver {
         if !is_enabled() {
             return;
         }
-        let Some(state) = state else { return; };
+        let Some(state) = state else {
+            return;
+        };
         let transport = state.entry_transport;
         capture_bounded(
             event::AGENT_SESSION_ENDED,
@@ -667,18 +921,45 @@ pub(crate) fn capture_mcp_session_started(
         event::MCP_SESSION_STARTED,
         bounded_properties(&[
             ("mcp_client", Value::String(mcp_client)),
-            ("mcp_client_version_major", Value::String(version_major(metadata.client_version.as_deref()))),
-            ("protocol_version", Value::String(normalize_protocol(metadata.protocol_version.as_deref()))),
+            (
+                "mcp_client_version_major",
+                Value::String(version_major(metadata.client_version.as_deref())),
+            ),
+            (
+                "protocol_version",
+                Value::String(normalize_protocol(metadata.protocol_version.as_deref())),
+            ),
             ("capability_tools", Value::Bool(capabilities.tools)),
             ("capability_roots", Value::Bool(capabilities.roots)),
             ("capability_sampling", Value::Bool(capabilities.sampling)),
-            ("capability_experimental", Value::Bool(capabilities.experimental)),
-            ("capability_elicitation_form", Value::Bool(capabilities.elicitation_form)),
-            ("capability_elicitation_url", Value::Bool(capabilities.elicitation_url)),
-            ("reported_provider", Value::String(normalize_provider(context.provider.as_deref()))),
-            ("reported_model", Value::String(normalize_model(context.model.as_deref()))),
-            ("reported_agent", Value::String(normalize_client(context.agent_name.as_deref()))),
-            ("reported_agent_version_major", Value::String(version_major(context.agent_version.as_deref()))),
+            (
+                "capability_experimental",
+                Value::Bool(capabilities.experimental),
+            ),
+            (
+                "capability_elicitation_form",
+                Value::Bool(capabilities.elicitation_form),
+            ),
+            (
+                "capability_elicitation_url",
+                Value::Bool(capabilities.elicitation_url),
+            ),
+            (
+                "reported_provider",
+                Value::String(normalize_provider(context.provider.as_deref())),
+            ),
+            (
+                "reported_model",
+                Value::String(normalize_model(context.model.as_deref())),
+            ),
+            (
+                "reported_agent",
+                Value::String(normalize_client(context.agent_name.as_deref())),
+            ),
+            (
+                "reported_agent_version_major",
+                Value::String(version_major(context.agent_version.as_deref())),
+            ),
             ("execution_mode", Value::String(execution_mode().into())),
         ]),
         transport,
@@ -689,16 +970,62 @@ pub(crate) fn capture_tool_completed(
     outcome: cua_driver_core::server::ToolCompletionObservation,
     transport: Transport,
 ) {
+    let is_first_value_candidate =
+        outcome.computer_action && outcome.success && !outcome.refusal_code.is_refusal();
+    if !is_enabled() || !should_capture_tool_completion(Instant::now(), is_first_value_candidate) {
+        return;
+    }
     let mut properties = tool_completion_properties(outcome);
     properties.insert(
         "execution_mode".into(),
         Value::String(execution_mode().into()),
     );
-    capture_bounded(
-        event::MCP_TOOL_COMPLETED,
-        properties,
-        transport,
-    );
+    capture_bounded(event::MCP_TOOL_COMPLETED, properties, transport);
+}
+
+#[derive(Debug)]
+struct ToolTelemetryRateLimit {
+    window_started: Instant,
+    captured: usize,
+    captured_value_event: bool,
+}
+
+impl ToolTelemetryRateLimit {
+    fn new(now: Instant) -> Self {
+        Self {
+            window_started: now,
+            captured: 0,
+            captured_value_event: false,
+        }
+    }
+
+    fn allow(&mut self, now: Instant, is_value_event: bool) -> bool {
+        if now.duration_since(self.window_started) >= TOOL_TELEMETRY_WINDOW {
+            self.window_started = now;
+            self.captured = 0;
+            self.captured_value_event = false;
+        }
+        if self.captured >= TOOL_TELEMETRY_LIMIT_PER_HOUR {
+            if !is_value_event || self.captured_value_event {
+                return false;
+            }
+            self.captured_value_event = true;
+            return true;
+        }
+        self.captured += 1;
+        self.captured_value_event |= is_value_event;
+        true
+    }
+}
+
+static TOOL_TELEMETRY_RATE_LIMIT: OnceLock<Mutex<ToolTelemetryRateLimit>> = OnceLock::new();
+
+fn should_capture_tool_completion(now: Instant, is_value_event: bool) -> bool {
+    TOOL_TELEMETRY_RATE_LIMIT
+        .get_or_init(|| Mutex::new(ToolTelemetryRateLimit::new(now)))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .allow(now, is_value_event)
 }
 
 fn tool_completion_properties(
@@ -749,12 +1076,23 @@ fn tool_completion_properties(
     };
     bounded_properties(&[
         ("tool_name", Value::String(tool_name)),
-        ("operation", Value::String(outcome.operation.as_str().into())),
+        (
+            "operation",
+            Value::String(outcome.operation.as_str().into()),
+        ),
+        ("computer_action", Value::Bool(outcome.computer_action)),
         ("success", Value::Bool(outcome.success)),
         ("error_class", Value::String(error_class.into())),
+        (
+            "refusal_code",
+            Value::String(outcome.refusal_code.as_str().into()),
+        ),
         ("duration_bucket", Value::String(duration_bucket.into())),
         ("output_type", Value::String(output_type.into())),
-        ("output_size_bucket", Value::String(output_size_bucket.into())),
+        (
+            "output_size_bucket",
+            Value::String(output_size_bucket.into()),
+        ),
     ])
 }
 
@@ -765,7 +1103,6 @@ pub(crate) fn capture_mcp_startup_completed(
     elapsed: Duration,
 ) {
     let path = match path {
-        "in_process" => "in_process",
         "daemon_proxy" => "daemon_proxy",
         _ => "unknown",
     };
@@ -785,7 +1122,10 @@ pub(crate) fn capture_mcp_startup_completed(
             ("path", Value::String(path.into())),
             ("daemon", Value::String(daemon.into())),
             ("success", Value::Bool(success)),
-            ("duration_bucket", Value::String(duration_bucket(elapsed).into())),
+            (
+                "duration_bucket",
+                Value::String(duration_bucket(elapsed).into()),
+            ),
             ("execution_mode", Value::String(execution_mode().into())),
         ]),
         Transport::McpStdio,
@@ -810,11 +1150,17 @@ pub(crate) fn capture_permissions_gate_completed(
         event::PERMISSIONS_GATE_COMPLETED,
         bounded_properties(&[
             ("missing_accessibility", Value::Bool(missing_accessibility)),
-            ("missing_screen_recording", Value::Bool(missing_screen_recording)),
+            (
+                "missing_screen_recording",
+                Value::Bool(missing_screen_recording),
+            ),
             ("panel_shown", Value::Bool(panel_shown)),
             ("dismissed", Value::Bool(dismissed)),
             ("resolution", Value::String(resolution.into())),
-            ("duration_bucket", Value::String(duration_bucket(elapsed).into())),
+            (
+                "duration_bucket",
+                Value::String(duration_bucket(elapsed).into()),
+            ),
         ]),
         Transport::Daemon,
     );
@@ -841,7 +1187,10 @@ pub(crate) fn capture_permissions_gate_started(
         event::PERMISSIONS_GATE_STARTED,
         bounded_properties(&[
             ("missing_accessibility", Value::Bool(missing_accessibility)),
-            ("missing_screen_recording", Value::Bool(missing_screen_recording)),
+            (
+                "missing_screen_recording",
+                Value::Bool(missing_screen_recording),
+            ),
         ]),
         Transport::Daemon,
     );
@@ -856,8 +1205,14 @@ pub(crate) fn capture_permissions_gate_dismissed(
         event::PERMISSIONS_GATE_DISMISSED,
         bounded_properties(&[
             ("missing_accessibility", Value::Bool(missing_accessibility)),
-            ("missing_screen_recording", Value::Bool(missing_screen_recording)),
-            ("duration_bucket", Value::String(duration_bucket(elapsed).into())),
+            (
+                "missing_screen_recording",
+                Value::Bool(missing_screen_recording),
+            ),
+            (
+                "duration_bucket",
+                Value::String(duration_bucket(elapsed).into()),
+            ),
         ]),
         Transport::Daemon,
     );
@@ -866,17 +1221,29 @@ pub(crate) fn capture_permissions_gate_dismissed(
 fn normalize_client(value: Option<&str>) -> String {
     let normalized = value.unwrap_or("").trim().to_ascii_lowercase();
     for (needle, canonical) in [
-        ("claude", "claude_code"), ("codex", "codex"), ("cursor", "cursor"),
-        ("windsurf", "windsurf"), ("vscode", "vscode"), ("visual studio code", "vscode"),
-        ("zed", "zed"), ("openclaw", "openclaw"), ("opencode", "opencode"),
+        ("claude", "claude_code"),
+        ("codex", "codex"),
+        ("cursor", "cursor"),
+        ("windsurf", "windsurf"),
+        ("vscode", "vscode"),
+        ("visual studio code", "vscode"),
+        ("zed", "zed"),
+        ("openclaw", "openclaw"),
+        ("opencode", "opencode"),
         ("hermes", "hermes"),
     ] {
-        if normalized.contains(needle) { return canonical.into(); }
+        if normalized.contains(needle) {
+            return canonical.into();
+        }
     }
     if normalized == "pi" || normalized.starts_with("pi/") || normalized.starts_with("pi ") {
         return "pi".into();
     }
-    if normalized.is_empty() { "unknown".into() } else { "other".into() }
+    if normalized.is_empty() {
+        "unknown".into()
+    } else {
+        "other".into()
+    }
 }
 
 fn normalize_provider(value: Option<&str>) -> String {
@@ -894,12 +1261,19 @@ fn normalize_provider(value: Option<&str>) -> String {
 
 fn normalize_model(value: Option<&str>) -> String {
     let raw = value.unwrap_or("").trim().to_ascii_lowercase();
-    if raw.is_empty() { return "unknown".into(); }
+    if raw.is_empty() {
+        return "unknown".into();
+    }
     let category = if raw.starts_with("claude-") {
-        if raw.contains("opus") { "claude_opus" }
-        else if raw.contains("sonnet") { "claude_sonnet" }
-        else if raw.contains("haiku") { "claude_haiku" }
-        else { "claude_other" }
+        if raw.contains("opus") {
+            "claude_opus"
+        } else if raw.contains("sonnet") {
+            "claude_sonnet"
+        } else if raw.contains("haiku") {
+            "claude_haiku"
+        } else {
+            "claude_other"
+        }
     } else if raw.starts_with("gpt-5") {
         "gpt_5"
     } else if raw.starts_with("gpt-4.1") {
@@ -915,9 +1289,13 @@ fn normalize_model(value: Option<&str>) -> String {
     } else if raw == "o4" || raw.starts_with("o4-") {
         "openai_o4"
     } else if raw.starts_with("gemini-") {
-        if raw.contains("flash") { "gemini_flash" }
-        else if raw.contains("pro") { "gemini_pro" }
-        else { "gemini_other" }
+        if raw.contains("flash") {
+            "gemini_flash"
+        } else if raw.contains("pro") {
+            "gemini_pro"
+        } else {
+            "gemini_other"
+        }
     } else if raw.starts_with("grok-") {
         "grok"
     } else if raw.starts_with("nova-") {
@@ -932,7 +1310,9 @@ fn normalize_model(value: Option<&str>) -> String {
 
 fn normalize_protocol(value: Option<&str>) -> String {
     match value {
-        Some(value @ ("2024-11-05" | "2025-03-26" | "2025-06-18" | "2025-11-25")) => value.to_owned(),
+        Some(value @ ("2024-11-05" | "2025-03-26" | "2025-06-18" | "2025-11-25")) => {
+            value.to_owned()
+        }
         _ => "unknown".into(),
     }
 }
@@ -943,7 +1323,11 @@ fn version_major(value: Option<&str>) -> String {
         .split(|character: char| !character.is_ascii_digit())
         .find(|part| !part.is_empty())
         .unwrap_or("unknown");
-    if major.len() <= 4 { major.to_owned() } else { "unknown".into() }
+    if major.len() <= 4 {
+        major.to_owned()
+    } else {
+        "unknown".into()
+    }
 }
 
 pub fn ensure_first_run_registration() {
@@ -987,7 +1371,9 @@ pub(crate) fn spawn_first_run_registration_worker() {
     eprintln!(
         "Cua Driver sends content-free product telemetry by default. Run `cua-driver telemetry disable` to stop it; `cua-driver telemetry status` shows the current setting."
     );
-    let Ok(executable) = std::env::current_exe() else { return; };
+    let Ok(executable) = std::env::current_exe() else {
+        return;
+    };
     let _ = std::process::Command::new(executable)
         .env(ENV_LIFECYCLE_WORKER, "1")
         .stdin(Stdio::null())
@@ -1073,19 +1459,21 @@ where
 }
 
 fn lifecycle_is_current() -> bool {
-    let registered = marker_path(INSTALLATION_RECORDED_FILE_NAME)
-        .is_some_and(|path| path.exists());
-    let release = release_marker_path(&release_version())
-        .is_some_and(|path| path.exists());
+    let registered = marker_path(INSTALLATION_RECORDED_FILE_NAME).is_some_and(|path| path.exists());
+    let release = release_marker_path(&release_version()).is_some_and(|path| path.exists());
     registered && release
 }
 
 fn lifecycle_retry_deferred() -> bool {
-    let Some(path) = marker_path(TELEMETRY_RETRY_AFTER_FILE_NAME) else { return false; };
+    let Some(path) = marker_path(TELEMETRY_RETRY_AFTER_FILE_NAME) else {
+        return false;
+    };
     let Some(retry_after) = std::fs::read_to_string(path)
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
-    else { return false; };
+    else {
+        return false;
+    };
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_secs())
@@ -1096,9 +1484,16 @@ fn lifecycle_retry_deferred() -> bool {
 fn defer_lifecycle_retry(home: &Path) {
     let retry_after = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_secs().saturating_add(LIFECYCLE_RETRY_BACKOFF_SECS));
+        .map(|duration| {
+            duration
+                .as_secs()
+                .saturating_add(LIFECYCLE_RETRY_BACKOFF_SECS)
+        });
     if let Ok(retry_after) = retry_after {
-        let _ = std::fs::write(home.join(TELEMETRY_RETRY_AFTER_FILE_NAME), retry_after.to_string());
+        let _ = std::fs::write(
+            home.join(TELEMETRY_RETRY_AFTER_FILE_NAME),
+            retry_after.to_string(),
+        );
     }
 }
 
@@ -1109,11 +1504,15 @@ where
     match post(payload) {
         Ok(status) if (200..300).contains(&status) => true,
         Ok(status) => {
-            debug_log(format_args!("{event_name} returned {status}; marker not written"));
+            debug_log(format_args!(
+                "{event_name} returned {status}; marker not written"
+            ));
             false
         }
         Err(error) => {
-            debug_log(format_args!("{event_name} failed: {error}; marker not written"));
+            debug_log(format_args!(
+                "{event_name} failed: {error}; marker not written"
+            ));
             false
         }
     }
@@ -1134,12 +1533,210 @@ pub(crate) fn capture_bounded(
     spawn_payload(event_name, payload);
 }
 
+/// Record an explicit or freshness-bounded update check. A detached worker
+/// owns delivery because CLI checks are one-shot processes and must not wait
+/// on PostHog before returning to the user.
+pub(crate) fn capture_update_checked(
+    source: UpdateCheckSource,
+    outcome: UpdateCheckOutcome,
+    target_version: Option<&str>,
+    cache_hit: bool,
+) {
+    spawn_update_event_worker(
+        event::UPDATE_CHECKED,
+        Some(source.as_str()),
+        Some(outcome.as_str()),
+        target_version,
+        Some(cache_hit),
+        None,
+        None,
+        None,
+    );
+}
+
+pub(crate) fn capture_update_apply_started(target_version: &str, daemon_was_running: bool) {
+    spawn_update_event_worker(
+        event::UPDATE_APPLY_STARTED,
+        None,
+        None,
+        Some(target_version),
+        None,
+        Some(daemon_was_running),
+        None,
+        None,
+    );
+}
+
+pub(crate) fn capture_update_apply_completed(
+    target_version: Option<&str>,
+    outcome: UpdateApplyOutcome,
+    failure_class: UpdateFailureClass,
+    daemon_was_running: bool,
+    elapsed: Duration,
+) {
+    spawn_update_event_worker(
+        event::UPDATE_APPLY_COMPLETED,
+        None,
+        Some(outcome.as_str()),
+        target_version,
+        None,
+        Some(daemon_was_running),
+        Some(failure_class.as_str()),
+        Some(elapsed),
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_update_event_worker(
+    event_name: &'static str,
+    source: Option<&str>,
+    outcome: Option<&str>,
+    target_version: Option<&str>,
+    cache_hit: Option<bool>,
+    daemon_was_running: Option<bool>,
+    failure_class: Option<&str>,
+    elapsed: Option<Duration>,
+) {
+    if !is_enabled() {
+        return;
+    }
+    let Ok(executable) = std::env::current_exe() else {
+        return;
+    };
+    let mut worker = std::process::Command::new(executable);
+    worker
+        .env(ENV_UPDATE_EVENT_WORKER, "1")
+        .env(ENV_UPDATE_EVENT_NAME, event_name)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if let Some(source) = source {
+        worker.env(ENV_UPDATE_SOURCE, source);
+    }
+    if let Some(outcome) = outcome {
+        worker.env(ENV_UPDATE_OUTCOME, outcome);
+    }
+    if let Some(version) = target_version.and_then(strict_release_version) {
+        worker.env(ENV_UPDATE_TARGET_VERSION, version);
+    }
+    if let Some(cache_hit) = cache_hit {
+        worker.env(ENV_UPDATE_CACHE_HIT, if cache_hit { "1" } else { "0" });
+    }
+    if let Some(daemon_was_running) = daemon_was_running {
+        worker.env(
+            ENV_UPDATE_DAEMON_WAS_RUNNING,
+            if daemon_was_running { "1" } else { "0" },
+        );
+    }
+    if let Some(failure_class) = failure_class {
+        worker.env(ENV_UPDATE_FAILURE_CLASS, failure_class);
+    }
+    if let Some(elapsed) = elapsed {
+        worker.env(ENV_UPDATE_DURATION_MS, elapsed.as_millis().to_string());
+    }
+    let _ = worker.spawn();
+}
+
+/// Run the hidden update-event delivery worker before CLI parsing. Every
+/// environment value is revalidated into a closed enum or strict SemVer before
+/// it can enter a payload.
+pub(crate) fn run_update_event_worker_if_requested() -> bool {
+    if !parse_env_bool(ENV_UPDATE_EVENT_WORKER).unwrap_or(false) {
+        return false;
+    }
+    let event_name = std::env::var(ENV_UPDATE_EVENT_NAME).unwrap_or_default();
+    let target_version = std::env::var(ENV_UPDATE_TARGET_VERSION)
+        .ok()
+        .and_then(|value| strict_release_version(&value))
+        .unwrap_or_else(|| "unknown".into());
+    let properties = match event_name.as_str() {
+        event::UPDATE_CHECKED => {
+            let source = match std::env::var(ENV_UPDATE_SOURCE).as_deref() {
+                Ok("background") => "background",
+                Ok("cli") => "cli",
+                Ok("mcp") => "mcp",
+                _ => return true,
+            };
+            let outcome = match std::env::var(ENV_UPDATE_OUTCOME).as_deref() {
+                Ok("up_to_date") => "up_to_date",
+                Ok("available") => "available",
+                Ok("unavailable") => "unavailable",
+                _ => return true,
+            };
+            bounded_properties(&[
+                ("source", Value::String(source.into())),
+                ("outcome", Value::String(outcome.into())),
+                ("target_version", Value::String(target_version)),
+                (
+                    "cache_hit",
+                    Value::Bool(parse_env_bool(ENV_UPDATE_CACHE_HIT).unwrap_or(false)),
+                ),
+            ])
+        }
+        event::UPDATE_APPLY_STARTED => bounded_properties(&[
+            ("target_version", Value::String(target_version)),
+            (
+                "daemon_was_running",
+                Value::Bool(parse_env_bool(ENV_UPDATE_DAEMON_WAS_RUNNING).unwrap_or(false)),
+            ),
+        ]),
+        event::UPDATE_APPLY_COMPLETED => {
+            let outcome = match std::env::var(ENV_UPDATE_OUTCOME).as_deref() {
+                Ok("installed") => "installed",
+                Ok("already_current") => "already_current",
+                Ok("failed") => "failed",
+                _ => return true,
+            };
+            let failure_class = match std::env::var(ENV_UPDATE_FAILURE_CLASS).as_deref() {
+                Ok("none") => "none",
+                Ok("check_failed") => "check_failed",
+                Ok("installer_exit") => "installer_exit",
+                Ok("installer_launch") => "installer_launch",
+                _ => return true,
+            };
+            let elapsed = std::env::var(ENV_UPDATE_DURATION_MS)
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .map(Duration::from_millis)
+                .unwrap_or_default();
+            bounded_properties(&[
+                ("target_version", Value::String(target_version)),
+                ("outcome", Value::String(outcome.into())),
+                ("failure_class", Value::String(failure_class.into())),
+                (
+                    "daemon_was_running",
+                    Value::Bool(parse_env_bool(ENV_UPDATE_DAEMON_WAS_RUNNING).unwrap_or(false)),
+                ),
+                (
+                    "duration_bucket",
+                    Value::String(duration_bucket(elapsed).into()),
+                ),
+            ])
+        }
+        _ => return true,
+    };
+    if !is_enabled() {
+        return true;
+    }
+    let Some(identity) = get_or_create_install_id() else {
+        return true;
+    };
+    let payload = build_payload(&event_name, &properties, &identity, Transport::Cli);
+    if let Err(error) =
+        post_to_posthog_with_timeout(&payload, Duration::from_secs(POSTHOG_TIMEOUT_SECS))
+    {
+        debug_log(format_args!("{event_name} failed: {error}"));
+    }
+    true
+}
+
 /// Record a finite CLI command only after its outcome is known. This is
 /// synchronous with a short timeout because one-shot processes may exit before
 /// a detached request is delivered.
 pub(crate) fn capture_cli_completed(
     command: &'static str,
     tool_name: Option<&str>,
+    computer_action: bool,
     operation: &str,
     client_kind: &str,
     exit_code: i32,
@@ -1189,17 +1786,26 @@ pub(crate) fn capture_cli_completed(
         event::CLI_COMPLETED,
         &bounded_properties(&[
             ("command", Value::String(command.into())),
-            ("tool_name", Value::String(tool_name.into())),
+            ("tool_name", Value::String(tool_name)),
             ("operation", Value::String(operation.into())),
+            (
+                "computer_action",
+                Value::Bool(command == "call" && computer_action),
+            ),
             ("client_kind", Value::String(client_kind.into())),
             ("success", Value::Bool(success)),
             ("exit_class", Value::String(exit_class.into())),
-            ("duration_bucket", Value::String(duration_bucket(elapsed).into())),
+            (
+                "duration_bucket",
+                Value::String(duration_bucket(elapsed).into()),
+            ),
         ]),
         &identity,
         Transport::Cli,
     );
-    if let Err(error) = post_to_posthog_with_timeout(&payload, Duration::from_secs(POSTHOG_TIMEOUT_SECS)) {
+    if let Err(error) =
+        post_to_posthog_with_timeout(&payload, Duration::from_secs(POSTHOG_TIMEOUT_SECS))
+    {
         debug_log(format_args!("{} failed: {error}", event::CLI_COMPLETED));
     }
 }
@@ -1231,11 +1837,13 @@ pub(crate) fn run_cli_completion_worker_if_requested() -> bool {
         .unwrap_or_default();
     let command = fixed_cli_command(&command);
     let tool_name = std::env::var(ENV_CLI_COMPLETION_TOOL).ok();
+    let computer_action = parse_env_bool(ENV_CLI_COMPLETION_COMPUTER_ACTION).unwrap_or(false);
     let operation = std::env::var(ENV_CLI_COMPLETION_OPERATION).unwrap_or_default();
     let client_kind = std::env::var(ENV_CLI_COMPLETION_CLIENT_KIND).unwrap_or_default();
     capture_cli_completed(
         command,
         tool_name.as_deref(),
+        computer_action,
         &operation,
         &client_kind,
         exit_code,
@@ -1247,6 +1855,7 @@ pub(crate) fn run_cli_completion_worker_if_requested() -> bool {
 pub(crate) fn spawn_cli_completion_worker(
     command: &'static str,
     tool_name: Option<&str>,
+    computer_action: bool,
     operation: &str,
     client_kind: &str,
     exit_code: i32,
@@ -1255,15 +1864,30 @@ pub(crate) fn spawn_cli_completion_worker(
     if !is_enabled() {
         return;
     }
-    let Ok(executable) = std::env::current_exe() else { return; };
+    let Ok(executable) = std::env::current_exe() else {
+        return;
+    };
     let mut worker = std::process::Command::new(executable);
     worker
         .env(ENV_CLI_COMPLETION_WORKER, "1")
         .env(ENV_CLI_COMPLETION_COMMAND, fixed_cli_command(command))
-        .env(ENV_CLI_COMPLETION_OPERATION, fixed_cli_operation(command, operation))
-        .env(ENV_CLI_COMPLETION_CLIENT_KIND, fixed_cli_client_kind(command, client_kind))
+        .env(
+            ENV_CLI_COMPLETION_COMPUTER_ACTION,
+            if computer_action { "1" } else { "0" },
+        )
+        .env(
+            ENV_CLI_COMPLETION_OPERATION,
+            fixed_cli_operation(command, operation),
+        )
+        .env(
+            ENV_CLI_COMPLETION_CLIENT_KIND,
+            fixed_cli_client_kind(command, client_kind),
+        )
         .env(ENV_CLI_COMPLETION_EXIT_CODE, exit_code.to_string())
-        .env(ENV_CLI_COMPLETION_DURATION_MS, elapsed.as_millis().to_string());
+        .env(
+            ENV_CLI_COMPLETION_DURATION_MS,
+            elapsed.as_millis().to_string(),
+        );
     if let Some(tool_name) = tool_name {
         worker.env(ENV_CLI_COMPLETION_TOOL, fixed_tool_name(tool_name));
     }
@@ -1315,26 +1939,43 @@ fn fixed_tool_name(tool_name: &str) -> String {
 fn fixed_cli_operation(command: &str, operation: &str) -> &'static str {
     match command {
         "recording" => match operation {
-            "start" => "start", "stop" => "stop", "status" => "status",
-            "render" => "render", _ => "other",
+            "start" => "start",
+            "stop" => "stop",
+            "status" => "status",
+            "render" => "render",
+            _ => "other",
         },
         "permissions" => match operation {
-            "status" => "status", "grant" => "grant", _ => "other",
+            "status" => "status",
+            "grant" => "grant",
+            _ => "other",
         },
         "config" => match operation {
-            "show" => "show", "get" => "get", "set" => "set",
-            "reset" => "reset", _ => "other",
+            "show" => "show",
+            "get" => "get",
+            "set" => "set",
+            "reset" => "reset",
+            _ => "other",
         },
         "autostart" => match operation {
-            "enable" => "enable", "disable" => "disable", "status" => "status",
-            "kick" => "kick", _ => "other",
+            "enable" => "enable",
+            "disable" => "disable",
+            "status" => "status",
+            "kick" => "kick",
+            _ => "other",
         },
         "skills" => match operation {
-            "install" => "install", "update" => "update", "uninstall" => "uninstall",
-            "status" => "status", "path" => "path", _ => "other",
+            "install" => "install",
+            "update" => "update",
+            "uninstall" => "uninstall",
+            "status" => "status",
+            "path" => "path",
+            _ => "other",
         },
         "update" => match operation {
-            "apply" => "apply", "check_only" => "check_only", _ => "other",
+            "apply" => "apply",
+            "check_only" => "check_only",
+            _ => "other",
         },
         _ => "not_applicable",
     }
@@ -1390,12 +2031,22 @@ fn build_payload(
     event_properties.insert("os_major".into(), Value::String(os_major()));
     event_properties.insert("arch".into(), Value::String(arch().into()));
     event_properties.insert("is_ci".into(), Value::Bool(is_ci()));
+    event_properties.insert(
+        "is_synthetic".into(),
+        Value::Bool(parse_env_bool(ENV_TELEMETRY_SYNTHETIC).unwrap_or(false)),
+    );
     event_properties.insert("transport".into(), Value::String(transport.as_str().into()));
-    event_properties.insert("process_session_id".into(), Value::String(process_session_id()));
+    event_properties.insert(
+        "process_session_id".into(),
+        Value::String(process_session_id()),
+    );
     event_properties.insert("id_persisted".into(), Value::Bool(identity.persisted));
     event_properties.insert("$process_person_profile".into(), Value::Bool(false));
     event_properties.insert("$lib".into(), Value::String("cua-driver-rs".into()));
-    event_properties.insert("$lib_version".into(), Value::String(current_product_version().into()));
+    event_properties.insert(
+        "$lib_version".into(),
+        Value::String(current_product_version().into()),
+    );
 
     serde_json::json!({
         "api_key": POSTHOG_API_KEY,
@@ -1416,7 +2067,11 @@ fn spawn_payload(event_name: &'static str, payload: Value) {
     if tokio::runtime::Handle::try_current().is_ok() {
         tokio::task::spawn_blocking(task);
     } else {
-        if std::thread::Builder::new().name("cua-telemetry".into()).spawn(task).is_err() {
+        if std::thread::Builder::new()
+            .name("cua-telemetry".into())
+            .spawn(task)
+            .is_err()
+        {
             finish_pending_send();
         }
     }
@@ -1451,13 +2106,18 @@ pub(crate) fn flush_pending(timeout: Duration) {
     }
     let wait = PENDING_WAIT.get_or_init(|| (Mutex::new(()), Condvar::new()));
     let deadline = std::time::Instant::now() + timeout;
-    let mut guard = wait.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut guard = wait
+        .0
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     while PENDING_SENDS.load(Ordering::SeqCst) > 0 {
         let now = std::time::Instant::now();
         if now >= deadline {
             break;
         }
-        let (next, result) = wait.1.wait_timeout(guard, deadline - now)
+        let (next, result) = wait
+            .1
+            .wait_timeout(guard, deadline - now)
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard = next;
         if result.timed_out() {
@@ -1489,7 +2149,7 @@ fn telemetry_home_dir() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os(ENV_TELEMETRY_HOME) {
         return Some(PathBuf::from(path));
     }
-    home_root().map(|home| home.join(HOME_SUBDIRECTORY))
+    home_root().map(|home| home.join(crate::bundle::user_home_subdirectory()))
 }
 
 fn home_root() -> Option<PathBuf> {
@@ -1509,7 +2169,9 @@ fn marker_path(name: &str) -> Option<PathBuf> {
 fn release_marker_path(version: &str) -> Option<PathBuf> {
     let safe: String = version
         .chars()
-        .filter(|character| character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_'))
+        .filter(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_')
+        })
         .take(80)
         .collect();
     telemetry_home_dir().map(|home| home.join(RELEASE_RECORDED_DIRECTORY).join(safe))
@@ -1524,11 +2186,15 @@ fn read_config() -> Value {
 }
 
 fn persisted_enabled() -> Option<bool> {
-    read_config().get(CONFIG_ENABLED_KEY).and_then(Value::as_bool)
+    read_config()
+        .get(CONFIG_ENABLED_KEY)
+        .and_then(Value::as_bool)
 }
 
 fn write_json_atomic(path: &Path, value: &Value) -> Result<(), String> {
-    let parent = path.parent().ok_or_else(|| "invalid config path".to_owned())?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| "invalid config path".to_owned())?;
     std::fs::create_dir_all(parent)
         .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
     let temporary = path.with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
@@ -1568,6 +2234,7 @@ fn open_lock_file(home: &Path, name: &str) -> Result<File, String> {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(home.join(name))
         .map_err(|error| format!("failed to open telemetry state lock: {error}"))
 }
@@ -1594,16 +2261,24 @@ fn try_lifecycle_lock(home: &Path) -> Option<File> {
 }
 
 fn migrate_legacy_telemetry_home() {
-    if std::env::var_os(ENV_TELEMETRY_HOME).is_some() {
+    if std::env::var_os(ENV_TELEMETRY_HOME).is_some() || crate::bundle::is_local_installation() {
         return;
     }
-    let Some(root) = home_root() else { return; };
+    let Some(root) = home_root() else {
+        return;
+    };
     let legacy = root.join(LEGACY_HOME_SUBDIRECTORY);
     let current = root.join(HOME_SUBDIRECTORY);
-    if !legacy.is_dir() { return; }
+    if !legacy.is_dir() {
+        return;
+    }
     let _ = std::fs::create_dir_all(&current);
-    let Ok(identity_lock) = open_lock_file(&current, TELEMETRY_IDENTITY_LOCK_FILE_NAME) else { return; };
-    if identity_lock.lock().is_err() { return; }
+    let Ok(identity_lock) = open_lock_file(&current, TELEMETRY_IDENTITY_LOCK_FILE_NAME) else {
+        return;
+    };
+    if identity_lock.lock().is_err() {
+        return;
+    }
     for name in [TELEMETRY_ID_FILE_NAME, INSTALLATION_RECORDED_FILE_NAME] {
         let source = legacy.join(name);
         let destination = current.join(name);
@@ -1636,18 +2311,26 @@ fn get_or_create_install_id() -> Option<InstallationIdentity> {
 
 fn load_or_create_install_id_uncached() -> Option<InstallationIdentity> {
     if let Some(id) = read_install_id() {
-        return Some(InstallationIdentity { id, persisted: true });
+        return Some(InstallationIdentity {
+            id,
+            persisted: true,
+        });
     }
     let Some(path) = marker_path(TELEMETRY_ID_FILE_NAME) else {
         static EPHEMERAL_ID: OnceLock<String> = OnceLock::new();
         return Some(InstallationIdentity {
-            id: EPHEMERAL_ID.get_or_init(|| uuid::Uuid::new_v4().to_string()).clone(),
+            id: EPHEMERAL_ID
+                .get_or_init(|| uuid::Uuid::new_v4().to_string())
+                .clone(),
             persisted: false,
         });
     };
     let candidate = uuid::Uuid::new_v4().to_string();
     match persist_install_id_if_absent(&path, &candidate) {
-        Ok(id) => Some(InstallationIdentity { id, persisted: true }),
+        Ok(id) => Some(InstallationIdentity {
+            id,
+            persisted: true,
+        }),
         Err(error) => {
             debug_log(format_args!("installation identity unavailable: {error}"));
             None
@@ -1656,7 +2339,9 @@ fn load_or_create_install_id_uncached() -> Option<InstallationIdentity> {
 }
 
 fn persist_install_id_if_absent(path: &Path, candidate: &str) -> Result<String, String> {
-    let home = path.parent().ok_or_else(|| "invalid telemetry identity path".to_owned())?;
+    let home = path
+        .parent()
+        .ok_or_else(|| "invalid telemetry identity path".to_owned())?;
     let identity_lock = open_lock_file(home, TELEMETRY_IDENTITY_LOCK_FILE_NAME)?;
     identity_lock
         .lock()
@@ -1804,29 +2489,41 @@ fn os_family() -> &'static str {
 
 fn os_major() -> String {
     static OS_MAJOR: OnceLock<String> = OnceLock::new();
-    OS_MAJOR.get_or_init(|| {
-        let raw = os_version();
-        let start = raw.find(|character: char| character.is_ascii_digit());
-        let Some(start) = start else { return "unknown".into(); };
-        raw[start..]
-            .split(|character: char| !character.is_ascii_digit())
-            .next()
-            .filter(|value| !value.is_empty())
-            .unwrap_or("unknown")
-            .to_owned()
-    }).clone()
+    OS_MAJOR
+        .get_or_init(|| {
+            let raw = os_version();
+            let start = raw.find(|character: char| character.is_ascii_digit());
+            let Some(start) = start else {
+                return "unknown".into();
+            };
+            raw[start..]
+                .split(|character: char| !character.is_ascii_digit())
+                .next()
+                .filter(|value| !value.is_empty())
+                .unwrap_or("unknown")
+                .to_owned()
+        })
+        .clone()
 }
 
 fn os_version() -> String {
     #[cfg(target_os = "macos")]
-    let command = std::process::Command::new("sw_vers").arg("-productVersion").output();
+    let command = std::process::Command::new("sw_vers")
+        .arg("-productVersion")
+        .output();
     #[cfg(target_os = "windows")]
-    let command = std::process::Command::new("cmd").args(["/c", "ver"]).output();
+    let command = std::process::Command::new("cmd")
+        .args(["/c", "ver"])
+        .output();
     #[cfg(target_os = "linux")]
     {
         return std::fs::read_to_string("/etc/os-release")
             .ok()
-            .and_then(|contents| contents.lines().find_map(|line| line.strip_prefix("VERSION_ID=").map(str::to_owned)))
+            .and_then(|contents| {
+                contents
+                    .lines()
+                    .find_map(|line| line.strip_prefix("VERSION_ID=").map(str::to_owned))
+            })
             .map(|value| value.trim_matches('"').to_owned())
             .unwrap_or_else(|| "unknown".into());
     }
@@ -1849,12 +2546,26 @@ fn arch() -> &'static str {
 
 fn is_ci() -> bool {
     const VARIABLES: &[&str] = &[
-        "CI", "CONTINUOUS_INTEGRATION", "GITHUB_ACTIONS", "GITLAB_CI",
-        "JENKINS_URL", "CIRCLECI", "BUILDKITE", "TF_BUILD", "TEAMCITY_VERSION",
-        "TRAVIS", "APPVEYOR", "BITBUCKET_BUILD_NUMBER", "CODEBUILD_BUILD_ID",
-        "DRONE", "HUDSON_URL", "CI_NAME",
+        "CI",
+        "CONTINUOUS_INTEGRATION",
+        "GITHUB_ACTIONS",
+        "GITLAB_CI",
+        "JENKINS_URL",
+        "CIRCLECI",
+        "BUILDKITE",
+        "TF_BUILD",
+        "TEAMCITY_VERSION",
+        "TRAVIS",
+        "APPVEYOR",
+        "BITBUCKET_BUILD_NUMBER",
+        "CODEBUILD_BUILD_ID",
+        "DRONE",
+        "HUDSON_URL",
+        "CI_NAME",
     ];
-    VARIABLES.iter().any(|name| std::env::var_os(name).is_some())
+    VARIABLES
+        .iter()
+        .any(|name| std::env::var_os(name).is_some())
 }
 
 #[cfg(test)]
@@ -1894,7 +2605,9 @@ mod tests {
     fn wait_for_path(path: &Path, timeout: Duration) -> bool {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
-            if path.exists() { return true; }
+            if path.exists() {
+                return true;
+            }
             std::thread::sleep(Duration::from_millis(10));
         }
         path.exists()
@@ -1910,7 +2623,9 @@ mod tests {
                 .filter_map(Result::ok)
                 .filter(|entry| entry.file_name().to_string_lossy().starts_with("ready-"))
                 .count();
-            if ready == count { return true; }
+            if ready == count {
+                return true;
+            }
             std::thread::sleep(Duration::from_millis(10));
         }
         false
@@ -1931,7 +2646,9 @@ mod tests {
         Command::new(std::env::current_exe().expect("current test executable"))
             .arg(match kind {
                 "identity" => "telemetry::tests::identity_process_child",
-                "lifecycle-winner" | "lifecycle-contender" => "telemetry::tests::lifecycle_process_child",
+                "lifecycle-winner" | "lifecycle-contender" => {
+                    "telemetry::tests::lifecycle_process_child"
+                }
                 _ => panic!("unknown test child kind"),
             })
             .arg("--exact")
@@ -1946,7 +2663,9 @@ mod tests {
 
     #[test]
     fn identity_process_child() {
-        if std::env::var(TEST_CHILD_KIND).ok().as_deref() != Some("identity") { return; }
+        if std::env::var(TEST_CHILD_KIND).ok().as_deref() != Some("identity") {
+            return;
+        }
         let root = PathBuf::from(std::env::var_os(TEST_CHILD_ROOT).expect("test child root"));
         let index = std::env::var(TEST_CHILD_INDEX).expect("test child index");
         let candidate = std::env::var(TEST_CHILD_CANDIDATE).expect("test child candidate");
@@ -1959,8 +2678,12 @@ mod tests {
 
     #[test]
     fn lifecycle_process_child() {
-        let Ok(kind) = std::env::var(TEST_CHILD_KIND) else { return; };
-        if !matches!(kind.as_str(), "lifecycle-winner" | "lifecycle-contender") { return; }
+        let Ok(kind) = std::env::var(TEST_CHILD_KIND) else {
+            return;
+        };
+        if !matches!(kind.as_str(), "lifecycle-winner" | "lifecycle-contender") {
+            return;
+        }
         let root = PathBuf::from(std::env::var_os(TEST_CHILD_ROOT).expect("test child root"));
         let index = std::env::var(TEST_CHILD_INDEX).expect("test child index");
         let mut call = 0usize;
@@ -1969,7 +2692,8 @@ mod tests {
             std::fs::write(
                 root.join(format!("event-{index}-{call}.json")),
                 serde_json::to_vec(payload).expect("serialize captured event"),
-            ).expect("write captured event");
+            )
+            .expect("write captured event");
             if kind == "lifecycle-winner" && call == 1 {
                 std::fs::write(root.join("winner-ready"), "1").expect("signal winner ready");
                 if !wait_for_path(&root.join("release-winner"), Duration::from_secs(15)) {
@@ -1981,7 +2705,8 @@ mod tests {
         std::fs::write(
             root.join(format!("observed-id-{index}")),
             read_install_id().unwrap_or_default(),
-        ).expect("write observed identity");
+        )
+        .expect("write observed identity");
     }
 
     #[test]
@@ -1992,7 +2717,11 @@ mod tests {
             let mut children: Vec<_> = (0..CHILDREN)
                 .map(|index| spawn_test_child("identity", root, index))
                 .collect();
-            assert!(wait_for_children_ready(root, CHILDREN, Duration::from_secs(15)));
+            assert!(wait_for_children_ready(
+                root,
+                CHILDREN,
+                Duration::from_secs(15)
+            ));
             std::fs::write(root.join("go"), "1").unwrap();
             for child in &mut children {
                 let status = wait_for_child(child, Duration::from_secs(15));
@@ -2021,7 +2750,10 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         with_isolated_home(|root| {
             let mut winner = spawn_test_child("lifecycle-winner", root, 0);
-            assert!(wait_for_path(&root.join("winner-ready"), Duration::from_secs(15)));
+            assert!(wait_for_path(
+                &root.join("winner-ready"),
+                Duration::from_secs(15)
+            ));
 
             let mut contender = spawn_test_child("lifecycle-contender", root, 1);
             let contender_status = wait_for_child(&mut contender, Duration::from_secs(5));
@@ -2050,12 +2782,26 @@ mod tests {
                 .unwrap()
                 .filter_map(Result::ok)
                 .filter(|entry| entry.file_name().to_string_lossy().starts_with("event-"))
-                .map(|entry| serde_json::from_slice::<Value>(&std::fs::read(entry.path()).unwrap()).unwrap())
+                .map(|entry| {
+                    serde_json::from_slice::<Value>(&std::fs::read(entry.path()).unwrap()).unwrap()
+                })
                 .collect::<Vec<_>>();
             events.sort_by_key(|event| event["event"].as_str().unwrap_or_default().to_owned());
             assert_eq!(events.len(), 2);
-            assert_eq!(events.iter().filter(|item| item["event"] == event::INSTALLATION_REGISTERED).count(), 1);
-            assert_eq!(events.iter().filter(|item| item["event"] == event::RELEASE_INSTALLED).count(), 1);
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|item| item["event"] == event::INSTALLATION_REGISTERED)
+                    .count(),
+                1
+            );
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|item| item["event"] == event::RELEASE_INSTALLED)
+                    .count(),
+                1
+            );
             let persisted = read_install_id().expect("persisted identity");
             assert!(events.iter().all(|item| item["distinct_id"] == persisted));
             for index in 0..=1 {
@@ -2064,8 +2810,13 @@ mod tests {
                     persisted
                 );
             }
-            assert!(root.join(HOME_SUBDIRECTORY).join(INSTALLATION_RECORDED_FILE_NAME).exists());
-            assert!(release_marker_path(current_product_version()).unwrap().exists());
+            assert!(root
+                .join(HOME_SUBDIRECTORY)
+                .join(INSTALLATION_RECORDED_FILE_NAME)
+                .exists());
+            assert!(release_marker_path(current_product_version())
+                .unwrap()
+                .exists());
         });
     }
 
@@ -2076,9 +2827,13 @@ mod tests {
             assert_eq!(effective_enabled(), (true, "default"));
             set_enabled(false).unwrap();
             assert_eq!(effective_enabled(), (false, "persisted"));
-            unsafe { std::env::set_var(ENV_TELEMETRY_ENABLED, "true"); }
+            unsafe {
+                std::env::set_var(ENV_TELEMETRY_ENABLED, "true");
+            }
             assert_eq!(effective_enabled(), (true, "environment"));
-            unsafe { std::env::remove_var(ENV_TELEMETRY_ENABLED); }
+            unsafe {
+                std::env::remove_var(ENV_TELEMETRY_ENABLED);
+            }
         });
     }
 
@@ -2095,9 +2850,13 @@ mod tests {
             .unwrap();
             assert_eq!(install_channel(), "install_script");
 
-            unsafe { std::env::set_var(ENV_INSTALL_CHANNEL, "update_apply"); }
+            unsafe {
+                std::env::set_var(ENV_INSTALL_CHANNEL, "update_apply");
+            }
             assert_eq!(install_channel(), "update_apply");
-            unsafe { std::env::remove_var(ENV_INSTALL_CHANNEL); }
+            unsafe {
+                std::env::remove_var(ENV_INSTALL_CHANNEL);
+            }
 
             std::fs::write(home.join(TELEMETRY_INSTALL_CHANNEL_FILE_NAME), "invalid").unwrap();
             assert_eq!(install_channel(), "first_run");
@@ -2113,14 +2872,21 @@ mod tests {
             let id = uuid::Uuid::new_v4().to_string();
             std::fs::write(home.join(TELEMETRY_ID_FILE_NAME), &id).unwrap();
             set_enabled(false).unwrap();
-            unsafe { std::env::set_var(ENV_TELEMETRY_ENABLED, "false"); }
+            unsafe {
+                std::env::set_var(ENV_TELEMETRY_ENABLED, "false");
+            }
             let mut calls = 0;
-            capture_install_with_poster(|_| { calls += 1; Ok(200) });
+            capture_install_with_poster(|_| {
+                calls += 1;
+                Ok(200)
+            });
             assert_eq!(calls, 0);
             assert_eq!(read_install_id().as_deref(), Some(id.as_str()));
             assert!(!home.join(INSTALLATION_RECORDED_FILE_NAME).exists());
             assert!(!home.join(TELEMETRY_RETRY_AFTER_FILE_NAME).exists());
-            unsafe { std::env::remove_var(ENV_TELEMETRY_ENABLED); }
+            unsafe {
+                std::env::remove_var(ENV_TELEMETRY_ENABLED);
+            }
         });
     }
 
@@ -2162,14 +2928,22 @@ mod tests {
             let mut calls = 0;
             capture_install_with_poster(|_| {
                 calls += 1;
-                if calls == 1 { Ok(200) } else { Ok(500) }
+                if calls == 1 {
+                    Ok(200)
+                } else {
+                    Ok(500)
+                }
             });
             assert!(home.join(INSTALLATION_RECORDED_FILE_NAME).exists());
-            assert!(!release_marker_path(current_product_version()).unwrap().exists());
+            assert!(!release_marker_path(current_product_version())
+                .unwrap()
+                .exists());
 
             remove_file_if_exists(&home.join(TELEMETRY_RETRY_AFTER_FILE_NAME)).unwrap();
             capture_install_with_poster(|_| Ok(200));
-            assert!(release_marker_path(current_product_version()).unwrap().exists());
+            assert!(release_marker_path(current_product_version())
+                .unwrap()
+                .exists());
         });
     }
 
@@ -2191,7 +2965,10 @@ mod tests {
                 calls += 1;
                 Ok(200)
             });
-            assert_eq!(calls, 1, "retry backoff must prevent per-command network stalls");
+            assert_eq!(
+                calls, 1,
+                "retry backoff must prevent per-command network stalls"
+            );
         });
     }
 
@@ -2201,7 +2978,11 @@ mod tests {
         with_isolated_home(|root| {
             set_enabled(false).unwrap();
             let home = root.join(HOME_SUBDIRECTORY);
-            std::fs::write(home.join(TELEMETRY_ID_FILE_NAME), uuid::Uuid::new_v4().to_string()).unwrap();
+            std::fs::write(
+                home.join(TELEMETRY_ID_FILE_NAME),
+                uuid::Uuid::new_v4().to_string(),
+            )
+            .unwrap();
             write_marker(&home.join(INSTALLATION_RECORDED_FILE_NAME)).unwrap();
             write_marker(&release_marker_path("1.2.3").unwrap()).unwrap();
             reset_id().unwrap();
@@ -2214,7 +2995,8 @@ mod tests {
     #[test]
     fn reset_erases_legacy_identity_before_migration_can_restore_it() {
         let _guard = ENV_LOCK.lock().unwrap();
-        let root = std::env::temp_dir().join(format!("cua-telemetry-reset-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("cua-telemetry-reset-{}", uuid::Uuid::new_v4()));
         let current = root.join(HOME_SUBDIRECTORY);
         let legacy = root.join(LEGACY_HOME_SUBDIRECTORY);
         std::fs::create_dir_all(&legacy).unwrap();
@@ -2231,7 +3013,11 @@ mod tests {
 
     #[test]
     fn v3_payload_allows_server_geoip_without_sending_an_ip_or_client_timestamp() {
-        let identity = InstallationIdentity { id: "test-id".into(), persisted: true };
+        let _guard = ENV_LOCK.lock().unwrap();
+        let identity = InstallationIdentity {
+            id: "test-id".into(),
+            persisted: true,
+        };
         let payload = build_payload(
             event::MCP_TOOL_COMPLETED,
             &bounded_properties(&[
@@ -2244,23 +3030,69 @@ mod tests {
         assert!(payload.get("timestamp").is_none());
         let properties = payload["properties"].as_object().unwrap();
         for required in [
-            "telemetry_schema_version", "product_version", "os_family", "os_major",
-            "arch", "is_ci", "transport", "process_session_id", "id_persisted",
-            "$process_person_profile", "$lib", "$lib_version",
-            "tool_name", "success",
+            "telemetry_schema_version",
+            "product_version",
+            "os_family",
+            "os_major",
+            "arch",
+            "is_ci",
+            "is_synthetic",
+            "transport",
+            "process_session_id",
+            "id_persisted",
+            "$process_person_profile",
+            "$lib",
+            "$lib_version",
+            "tool_name",
+            "success",
         ] {
             assert!(properties.contains_key(required), "missing {required}");
         }
         assert_eq!(properties["telemetry_schema_version"], 3);
+        assert_eq!(properties["is_synthetic"], false);
         assert!(!properties.contains_key("$geoip_disable"));
         assert!(!properties.contains_key("$ip"));
-        let serialized = serde_json::to_string(&payload).unwrap().to_ascii_lowercase();
+        let serialized = serde_json::to_string(&payload)
+            .unwrap()
+            .to_ascii_lowercase();
         for forbidden in [
-            "prompt", "task_text", "arguments", "result_text", "typed_text", "clipboard",
-            "screenshot", "accessibility_tree", "window_title", "application_name", "file_path",
-            "url", "raw_error", "stack_trace", "initialize_payload",
+            "prompt",
+            "task_text",
+            "arguments",
+            "result_text",
+            "typed_text",
+            "clipboard",
+            "screenshot",
+            "accessibility_tree",
+            "window_title",
+            "application_name",
+            "file_path",
+            "url",
+            "raw_error",
+            "stack_trace",
+            "initialize_payload",
         ] {
-            assert!(!serialized.contains(forbidden), "payload contains {forbidden}: {serialized}");
+            assert!(
+                !serialized.contains(forbidden),
+                "payload contains {forbidden}: {serialized}"
+            );
+        }
+    }
+
+    #[test]
+    fn synthetic_marker_is_explicit_and_common_to_all_events() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let original = std::env::var_os(ENV_TELEMETRY_SYNTHETIC);
+        unsafe {
+            std::env::set_var(ENV_TELEMETRY_SYNTHETIC, "true");
+        }
+        let payload = inspect_event(event::MCP_TOOL_COMPLETED).unwrap();
+        assert_eq!(payload["properties"]["is_synthetic"], true);
+        unsafe {
+            match original {
+                Some(value) => std::env::set_var(ENV_TELEMETRY_SYNTHETIC, value),
+                None => std::env::remove_var(ENV_TELEMETRY_SYNTHETIC),
+            }
         }
     }
 
@@ -2269,11 +3101,20 @@ mod tests {
         let session = inspect_event(event::MCP_SESSION_STARTED).unwrap();
         let session_properties = session["properties"].as_object().unwrap();
         for field in [
-            "mcp_client", "mcp_client_version_major", "protocol_version",
-            "capability_tools", "capability_roots", "capability_sampling",
-            "capability_experimental", "capability_elicitation_form",
-            "capability_elicitation_url", "reported_provider", "reported_model",
-            "reported_agent", "reported_agent_version_major", "execution_mode",
+            "mcp_client",
+            "mcp_client_version_major",
+            "protocol_version",
+            "capability_tools",
+            "capability_roots",
+            "capability_sampling",
+            "capability_experimental",
+            "capability_elicitation_form",
+            "capability_elicitation_url",
+            "reported_provider",
+            "reported_model",
+            "reported_agent",
+            "reported_agent_version_major",
+            "execution_mode",
         ] {
             assert!(session_properties.contains_key(field), "missing {field}");
         }
@@ -2281,13 +3122,15 @@ mod tests {
         let tool = inspect_event(event::MCP_TOOL_COMPLETED).unwrap();
         assert_eq!(tool["properties"]["duration_bucket"], "lt_10ms");
         assert_eq!(tool["properties"]["operation"], "not_applicable");
+        assert_eq!(tool["properties"]["refusal_code"], "none");
+        assert_eq!(tool["properties"]["computer_action"], false);
         assert!(matches!(
             tool["properties"]["execution_mode"].as_str(),
             Some("embedded" | "standalone")
         ));
         let mcp_start = inspect_event(event::MCP_STARTUP_COMPLETED).unwrap();
         assert_eq!(mcp_start["properties"]["transport"], "mcp_stdio");
-        assert_eq!(mcp_start["properties"]["path"], "in_process");
+        assert_eq!(mcp_start["properties"]["path"], "daemon_proxy");
         assert_eq!(
             mcp_start["properties"]["execution_mode"],
             tool["properties"]["execution_mode"]
@@ -2307,14 +3150,13 @@ mod tests {
             .is_none());
         let permissions_dismissed = inspect_event(event::PERMISSIONS_GATE_DISMISSED).unwrap();
         assert_eq!(permissions_dismissed["properties"]["transport"], "daemon");
-        assert_eq!(permissions_dismissed["properties"]["duration_bucket"], "2s_9_999ms");
+        assert_eq!(
+            permissions_dismissed["properties"]["duration_bucket"],
+            "2s_9_999ms"
+        );
         let permissions = inspect_event(event::PERMISSIONS_GATE_COMPLETED).unwrap();
         assert_eq!(permissions["properties"]["resolution"], "granted");
-        for payload in [
-            permissions_started,
-            permissions_dismissed,
-            permissions,
-        ] {
+        for payload in [permissions_started, permissions_dismissed, permissions] {
             assert_eq!(payload["properties"]["telemetry_schema_version"], 3);
             assert!(payload.get("timestamp").is_none());
             let serialized = serde_json::to_string(&payload)
@@ -2343,6 +3185,45 @@ mod tests {
         }
         let serve_start = inspect_event(event::SERVE_START_LEGACY).unwrap();
         assert_eq!(serve_start["properties"]["transport"], "daemon");
+    }
+
+    #[test]
+    fn update_events_expose_only_bounded_funnel_properties() {
+        let checked = inspect_event(event::UPDATE_CHECKED).unwrap();
+        assert_eq!(checked["properties"]["source"], "cli");
+        assert_eq!(checked["properties"]["outcome"], "available");
+        assert_eq!(checked["properties"]["target_version"], "1.2.3");
+        assert_eq!(checked["properties"]["cache_hit"], false);
+
+        let started = inspect_event(event::UPDATE_APPLY_STARTED).unwrap();
+        assert_eq!(started["properties"]["target_version"], "1.2.3");
+        assert_eq!(started["properties"]["daemon_was_running"], false);
+
+        let completed = inspect_event(event::UPDATE_APPLY_COMPLETED).unwrap();
+        assert_eq!(completed["properties"]["outcome"], "installed");
+        assert_eq!(completed["properties"]["failure_class"], "none");
+        assert_eq!(completed["properties"]["duration_bucket"], "2s_9_999ms");
+
+        for payload in [checked, started, completed] {
+            let serialized = serde_json::to_string(&payload)
+                .unwrap()
+                .to_ascii_lowercase();
+            for forbidden in [
+                "raw_error",
+                "exit_code",
+                "install_command",
+                "release_notes_url",
+                "file_path",
+                "arguments",
+                "prompt",
+                "$ip",
+            ] {
+                assert!(
+                    !serialized.contains(forbidden),
+                    "update payload contains {forbidden}: {serialized}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -2389,20 +3270,26 @@ mod tests {
     #[test]
     fn agent_session_aggregate_is_bounded_content_free_and_multi_transport() {
         use cua_driver_core::server::{
-            DurationBucket, OutputSizeBucket, OutputType, ToolCompletionObservation,
-            ToolErrorClass,
+            DurationBucket, OutputSizeBucket, OutputType, ToolCompletionObservation, ToolErrorClass,
         };
 
-        let mut state = AgentSessionState::new(Transport::McpStdio);
+        let mut state = AgentSessionState::new(
+            Transport::McpStdio,
+            cua_driver_core::session::SessionClientKind::PythonSdk,
+            cua_driver_core::CaptureScope::Auto,
+        );
         state.started = std::time::Instant::now() - Duration::from_secs(75);
         state.observe(
             Transport::McpHttp,
             true,
+            None,
             &ToolCompletionObservation {
                 tool_name: "click".into(),
                 operation: cua_driver_core::server::ToolOperation::NotApplicable,
+                computer_action: true,
                 success: true,
                 error_class: ToolErrorClass::None,
+                refusal_code: cua_driver_core::server::ToolRefusalCode::None,
                 duration_bucket: DurationBucket::Under10Ms,
                 output_type: OutputType::Text,
                 output_size_bucket: OutputSizeBucket::Under1KiB,
@@ -2411,11 +3298,30 @@ mod tests {
         state.observe(
             Transport::McpHttp,
             false,
+            Some(cua_driver_core::EscalationReason::NoWindowTarget),
+            &ToolCompletionObservation {
+                tool_name: "escalate_session".into(),
+                operation: cua_driver_core::server::ToolOperation::NotApplicable,
+                computer_action: false,
+                success: true,
+                error_class: ToolErrorClass::None,
+                refusal_code: cua_driver_core::server::ToolRefusalCode::None,
+                duration_bucket: DurationBucket::Under10Ms,
+                output_type: OutputType::Text,
+                output_size_bucket: OutputSizeBucket::Under1KiB,
+            },
+        );
+        state.observe(
+            Transport::McpHttp,
+            false,
+            None,
             &ToolCompletionObservation {
                 tool_name: "page".into(),
                 operation: cua_driver_core::server::ToolOperation::QueryDom,
+                computer_action: false,
                 success: false,
                 error_class: ToolErrorClass::InternalError,
+                refusal_code: cua_driver_core::server::ToolRefusalCode::None,
                 duration_bucket: DurationBucket::Ms50To249,
                 output_type: OutputType::Empty,
                 output_size_bucket: OutputSizeBucket::Empty,
@@ -2426,9 +3332,7 @@ mod tests {
             Some(cua_driver_core::session::CursorOutcomeObservation {
                 observed: true,
                 enabled: true,
-                style: cua_driver_core::session::CursorStyleCategory::CustomIcon,
-                color_source: cua_driver_core::session::CursorColorSource::Custom,
-                label_set: true,
+                theme: cua_driver_core::session::CursorThemeCategory::Custom,
                 motion_customized: true,
                 active_cursor_count: 3,
             }),
@@ -2440,14 +3344,20 @@ mod tests {
         assert_eq!(properties["had_successful_tool"], true);
         assert_eq!(properties["had_successful_computer_action"], true);
         assert_eq!(properties["used_page"], true);
-        assert_eq!(properties["cursor_style"], "custom_icon");
-        assert_eq!(properties["cursor_color_source"], "custom");
-        assert_eq!(properties["cursor_label_set"], true);
+        assert_eq!(properties["used_browser"], false);
+        assert_eq!(properties["browser_refusal_count_bucket"], "0");
+        assert_eq!(properties["cursor_theme"], "custom");
         assert_eq!(properties["cursor_motion_customized"], true);
         assert_eq!(properties["multi_cursor_bucket"], "3_5");
         assert_eq!(properties["observed_multiple_transports"], true);
+        assert_eq!(properties["client_kind"], "python_sdk");
+        assert_eq!(properties["capture_scope"], "auto");
+        assert_eq!(properties["auto_escalated_to_desktop"], true);
+        assert_eq!(properties["escalation_reason"], "no_window_target");
 
-        let serialized = serde_json::to_string(&properties).unwrap().to_ascii_lowercase();
+        let serialized = serde_json::to_string(&properties)
+            .unwrap()
+            .to_ascii_lowercase();
         for forbidden in [
             "private-session-id",
             "arguments",
@@ -2458,21 +3368,179 @@ mod tests {
             "file_path",
             "raw_error",
         ] {
-            assert!(!serialized.contains(forbidden), "aggregate contains {forbidden}: {serialized}");
+            assert!(
+                !serialized.contains(forbidden),
+                "aggregate contains {forbidden}: {serialized}"
+            );
+        }
+    }
+
+    #[test]
+    fn failed_or_non_auto_escalation_is_not_counted() {
+        use cua_driver_core::server::{
+            DurationBucket, OutputSizeBucket, OutputType, ToolCompletionObservation,
+            ToolErrorClass, ToolOperation, ToolRefusalCode,
+        };
+
+        let failed = ToolCompletionObservation {
+            tool_name: "escalate_session".into(),
+            operation: ToolOperation::NotApplicable,
+            computer_action: false,
+            success: false,
+            error_class: ToolErrorClass::InvalidParams,
+            refusal_code: ToolRefusalCode::None,
+            duration_bucket: DurationBucket::Under10Ms,
+            output_type: OutputType::Text,
+            output_size_bucket: OutputSizeBucket::Under1KiB,
+        };
+        let mut auto = AgentSessionState::new(
+            Transport::Daemon,
+            cua_driver_core::session::SessionClientKind::TypescriptSdk,
+            cua_driver_core::CaptureScope::Auto,
+        );
+        auto.observe(
+            Transport::Daemon,
+            false,
+            Some(cua_driver_core::EscalationReason::Other),
+            &failed,
+        );
+        let properties =
+            auto.ended_properties(cua_driver_core::session::SessionEndReason::Explicit, None);
+        assert_eq!(properties["auto_escalated_to_desktop"], false);
+        assert_eq!(properties["escalation_reason"], "not_applicable");
+
+        let mut desktop = AgentSessionState::new(
+            Transport::Daemon,
+            cua_driver_core::session::SessionClientKind::PythonSdk,
+            cua_driver_core::CaptureScope::Desktop,
+        );
+        let mut successful = failed;
+        successful.success = true;
+        successful.error_class = ToolErrorClass::None;
+        desktop.observe(
+            Transport::Daemon,
+            false,
+            Some(cua_driver_core::EscalationReason::Other),
+            &successful,
+        );
+        let properties =
+            desktop.ended_properties(cua_driver_core::session::SessionEndReason::Explicit, None);
+        assert_eq!(properties["auto_escalated_to_desktop"], false);
+        assert_eq!(properties["escalation_reason"], "not_applicable");
+    }
+
+    #[test]
+    fn browser_refusal_is_bounded_and_not_a_completed_computer_action() {
+        use cua_driver_core::server::{
+            DurationBucket, OutputSizeBucket, OutputType, ToolCompletionObservation,
+            ToolErrorClass, ToolOperation, ToolRefusalCode,
+        };
+
+        let outcome = ToolCompletionObservation {
+            tool_name: "browser_click".into(),
+            operation: ToolOperation::BrowserClickTrusted,
+            computer_action: true,
+            success: true,
+            error_class: ToolErrorClass::None,
+            refusal_code: ToolRefusalCode::BrowserInputTrustUnavailable,
+            duration_bucket: DurationBucket::Ms50To249,
+            output_type: OutputType::Text,
+            output_size_bucket: OutputSizeBucket::Under1KiB,
+        };
+        let event_properties = tool_completion_properties(outcome.clone());
+        assert_eq!(event_properties["success"], true);
+        assert_eq!(event_properties["error_class"], "none");
+        assert_eq!(
+            event_properties["refusal_code"],
+            "browser_input_trust_unavailable"
+        );
+        assert_eq!(event_properties["operation"], "browser_click_trusted");
+
+        let mut state = AgentSessionState::new(
+            Transport::McpStdio,
+            cua_driver_core::session::SessionClientKind::Mcp,
+            cua_driver_core::CaptureScope::Window,
+        );
+        state.observe(Transport::McpStdio, true, None, &outcome);
+        let session_properties =
+            state.ended_properties(cua_driver_core::session::SessionEndReason::Explicit, None);
+        assert_eq!(session_properties["computer_action_count_bucket"], "0");
+        assert_eq!(session_properties["error_count_bucket"], "0");
+        assert_eq!(session_properties["browser_refusal_count_bucket"], "1");
+        assert_eq!(session_properties["had_successful_tool"], true);
+        assert_eq!(session_properties["had_successful_computer_action"], false);
+        assert_eq!(session_properties["used_browser"], true);
+    }
+
+    #[test]
+    fn every_browser_tool_marks_the_session_without_retaining_arguments() {
+        use cua_driver_core::server::{
+            DurationBucket, OutputSizeBucket, OutputType, ToolCompletionObservation,
+            ToolErrorClass, ToolOperation, ToolRefusalCode,
+        };
+
+        for (tool_name, operation) in [
+            ("browser_dialog", ToolOperation::BrowserDialogAccept),
+            (
+                "browser_set_input_files",
+                ToolOperation::BrowserSetInputFiles,
+            ),
+            ("browser_download", ToolOperation::BrowserDownload),
+            (
+                "browser_pointer",
+                ToolOperation::BrowserPointerDoubleClickDomEvent,
+            ),
+        ] {
+            let mut state = AgentSessionState::new(
+                Transport::McpStdio,
+                cua_driver_core::session::SessionClientKind::Mcp,
+                cua_driver_core::CaptureScope::Window,
+            );
+            state.observe(
+                Transport::McpStdio,
+                true,
+                None,
+                &ToolCompletionObservation {
+                    tool_name: tool_name.into(),
+                    operation,
+                    computer_action: true,
+                    success: true,
+                    error_class: ToolErrorClass::None,
+                    refusal_code: ToolRefusalCode::None,
+                    duration_bucket: DurationBucket::Under10Ms,
+                    output_type: OutputType::Text,
+                    output_size_bucket: OutputSizeBucket::Under1KiB,
+                },
+            );
+            let properties =
+                state.ended_properties(cua_driver_core::session::SessionEndReason::Explicit, None);
+            assert_eq!(properties["used_browser"], true, "tool={tool_name}");
+            assert_eq!(
+                properties["had_successful_computer_action"], true,
+                "tool={tool_name}"
+            );
+            let serialized = serde_json::to_string(&properties).unwrap();
+            assert!(!serialized.contains("destination_root"));
+            assert!(!serialized.contains("prompt_text"));
+            assert!(!serialized.contains("file_paths"));
         }
     }
 
     #[test]
     fn agent_session_buckets_have_fixed_boundaries() {
         for (count, expected) in [
-            (0, "0"), (1, "1_4"), (4, "1_4"), (5, "5_19"),
-            (19, "5_19"), (20, "20_99"), (99, "20_99"), (100, "gte_100"),
+            (0, "0"),
+            (1, "1_4"),
+            (4, "1_4"),
+            (5, "5_19"),
+            (19, "5_19"),
+            (20, "20_99"),
+            (99, "20_99"),
+            (100, "gte_100"),
         ] {
             assert_eq!(agent_session_count_bucket(count), expected);
         }
-        for (count, expected) in [
-            (0, "0"), (1, "1"), (2, "2_4"), (4, "2_4"), (5, "gte_5"),
-        ] {
+        for (count, expected) in [(0, "0"), (1, "1"), (2, "2_4"), (4, "2_4"), (5, "gte_5")] {
             assert_eq!(agent_session_error_bucket(count), expected);
         }
     }
@@ -2486,17 +3554,31 @@ mod tests {
             for forbidden_key in ["session", "session_id", "agent_session_id", "cursor_id"] {
                 assert!(!properties.contains_key(forbidden_key));
             }
-            let serialized = serde_json::to_string(&payload).unwrap().to_ascii_lowercase();
+            let serialized = serde_json::to_string(&payload)
+                .unwrap()
+                .to_ascii_lowercase();
             for forbidden in [
-                "arguments", "result_text", "file_path", "socket", "raw_error", "$ip",
+                "arguments",
+                "result_text",
+                "file_path",
+                "socket",
+                "raw_error",
+                "$ip",
             ] {
-                assert!(!serialized.contains(forbidden), "inspect payload contains {forbidden}: {serialized}");
+                assert!(
+                    !serialized.contains(forbidden),
+                    "inspect payload contains {forbidden}: {serialized}"
+                );
             }
         }
     }
 
     #[test]
     fn disabled_agent_session_observation_creates_no_state_or_identity() {
+        use cua_driver_core::server::{
+            DurationBucket, OutputSizeBucket, OutputType, ToolCompletionObservation,
+            ToolErrorClass, ToolOperation, ToolRefusalCode,
+        };
         use cua_driver_core::session::{
             SessionDeclaration, SessionObserver, SessionStartObservation, SessionTransport,
         };
@@ -2511,7 +3593,23 @@ mod tests {
                     declaration: SessionDeclaration::StartSession,
                     revived: false,
                     transport: SessionTransport::McpStdio,
+                    client_kind: cua_driver_core::session::SessionClientKind::Mcp,
+                    capture_scope: cua_driver_core::CaptureScope::Auto,
                 },
+            );
+            capture_tool_completed(
+                ToolCompletionObservation {
+                    tool_name: "browser_prepare".into(),
+                    operation: ToolOperation::BrowserPrepareExistingProfile,
+                    computer_action: false,
+                    success: true,
+                    error_class: ToolErrorClass::None,
+                    refusal_code: ToolRefusalCode::BrowserConsentRevoked,
+                    duration_bucket: DurationBucket::Ms50To249,
+                    output_type: OutputType::Text,
+                    output_size_bucket: OutputSizeBucket::Under1KiB,
+                },
+                Transport::McpStdio,
             );
             assert!(!AGENT_SESSIONS
                 .get_or_init(|| Mutex::new(HashMap::new()))
@@ -2523,17 +3621,32 @@ mod tests {
     }
 
     #[test]
+    fn tool_completion_rate_limit_resets_after_one_hour() {
+        let started = Instant::now();
+        let mut limit = ToolTelemetryRateLimit::new(started);
+
+        for _ in 0..TOOL_TELEMETRY_LIMIT_PER_HOUR {
+            assert!(limit.allow(started, false));
+        }
+        assert!(!limit.allow(started, false));
+        assert!(limit.allow(started, true));
+        assert!(!limit.allow(started, true));
+        assert!(limit.allow(started + TOOL_TELEMETRY_WINDOW, false));
+    }
+
+    #[test]
     fn http_tool_completion_reaches_the_final_payload_as_mcp_http() {
         use cua_driver_core::server::{
-            DurationBucket, OutputSizeBucket, OutputType, ToolCompletionObservation,
-            ToolErrorClass,
+            DurationBucket, OutputSizeBucket, OutputType, ToolCompletionObservation, ToolErrorClass,
         };
 
         let properties = tool_completion_properties(ToolCompletionObservation {
             tool_name: "click".into(),
             operation: cua_driver_core::server::ToolOperation::NotApplicable,
+            computer_action: true,
             success: true,
             error_class: ToolErrorClass::None,
+            refusal_code: cua_driver_core::server::ToolRefusalCode::None,
             duration_bucket: DurationBucket::Under10Ms,
             output_type: OutputType::Text,
             output_size_bucket: OutputSizeBucket::Under1KiB,
@@ -2551,6 +3664,7 @@ mod tests {
         assert_eq!(payload["properties"]["transport"], "mcp_http");
         assert_eq!(payload["properties"]["tool_name"], "click");
         assert_eq!(payload["properties"]["operation"], "not_applicable");
+        assert_eq!(payload["properties"]["computer_action"], true);
         assert_eq!(payload["properties"]["success"], true);
     }
 
@@ -2563,13 +3677,16 @@ mod tests {
         let properties = tool_completion_properties(ToolCompletionObservation {
             tool_name: "page".into(),
             operation: ToolOperation::InsertText,
+            computer_action: true,
             success: true,
             error_class: ToolErrorClass::None,
+            refusal_code: cua_driver_core::server::ToolRefusalCode::None,
             duration_bucket: DurationBucket::Under10Ms,
             output_type: OutputType::Text,
             output_size_bucket: OutputSizeBucket::Under1KiB,
         });
         assert_eq!(properties["operation"], "insert_text");
+        assert_eq!(properties["computer_action"], true);
         let serialized = serde_json::to_string(&properties).unwrap();
         for forbidden in ["selector", "private typed text", "script"] {
             assert!(!serialized.contains(forbidden));
@@ -2589,9 +3706,18 @@ mod tests {
         assert_eq!(fixed_cli_operation("recording", "start"), "start");
         assert_eq!(fixed_cli_operation("recording", "/private/path"), "other");
         assert_eq!(fixed_cli_operation("doctor", "start"), "not_applicable");
-        assert_eq!(fixed_cli_client_kind("mcp_config", "claude_code"), "claude_code");
-        assert_eq!(fixed_cli_client_kind("mcp_config", "/private/client"), "other");
-        assert_eq!(fixed_cli_client_kind("doctor", "claude_code"), "not_applicable");
+        assert_eq!(
+            fixed_cli_client_kind("mcp_config", "claude_code"),
+            "claude_code"
+        );
+        assert_eq!(
+            fixed_cli_client_kind("mcp_config", "/private/client"),
+            "other"
+        );
+        assert_eq!(
+            fixed_cli_client_kind("doctor", "claude_code"),
+            "not_applicable"
+        );
     }
 
     #[test]
@@ -2641,7 +3767,10 @@ mod tests {
     #[test]
     fn release_versions_accept_strict_semver_and_drop_leading_v() {
         assert_eq!(strict_release_version("v1.2.3"), Some("1.2.3".into()));
-        assert_eq!(strict_release_version("1.2.3-rc.1"), Some("1.2.3-rc.1".into()));
+        assert_eq!(
+            strict_release_version("1.2.3-rc.1"),
+            Some("1.2.3-rc.1".into())
+        );
         assert_eq!(strict_release_version("1.2"), None);
         assert_eq!(strict_release_version("1.2.3+private"), None);
     }

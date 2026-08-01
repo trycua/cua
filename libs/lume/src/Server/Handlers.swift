@@ -77,6 +77,7 @@ extension Server {
 
         let vmName = request.name ?? imageName
         await PullProgressTracker.shared.setProgress(0.0, for: vmName)
+        let pullStartedAt = Date()
 
         Task.detached { @MainActor @Sendable in
             do {
@@ -93,9 +94,23 @@ extension Server {
                 )
                 await PullProgressTracker.shared.complete(for: vmName)
                 Logger.info("Async pull completed", metadata: ["name": vmName])
+                TelemetryClient.shared.recordOperationCompleted(
+                    operation: "pull_start",
+                    transport: .http,
+                    success: true,
+                    errorClass: .none,
+                    elapsed: Date().timeIntervalSince(pullStartedAt)
+                )
             } catch {
                 await PullProgressTracker.shared.setError(error.localizedDescription, for: vmName)
                 Logger.error("Async pull failed", metadata: ["name": vmName, "error": error.localizedDescription])
+                TelemetryClient.shared.recordOperationCompleted(
+                    operation: "pull_start",
+                    transport: .http,
+                    success: false,
+                    errorClass: .operationError,
+                    elapsed: Date().timeIntervalSince(pullStartedAt)
+                )
             }
         }
 
@@ -585,6 +600,7 @@ extension Server {
 
         // Record telemetry
         TelemetryClient.shared.record(event: TelemetryEvent.apiPush)
+        let pushStartedAt = Date()
 
         // Trigger push asynchronously, return Accepted immediately
         Task.detached { @MainActor @Sendable in
@@ -606,9 +622,23 @@ extension Server {
                 print(
                     "Background push completed successfully for image: \(request.imageName):\(request.tags.joined(separator: ","))"
                 )
+                TelemetryClient.shared.recordOperationCompleted(
+                    operation: "push",
+                    transport: .http,
+                    success: true,
+                    errorClass: .none,
+                    elapsed: Date().timeIntervalSince(pushStartedAt)
+                )
             } catch {
                 print(
                     "Background push failed for image: \(request.imageName):\(request.tags.joined(separator: ",")) - Error: \(error.localizedDescription)"
+                )
+                TelemetryClient.shared.recordOperationCompleted(
+                    operation: "push",
+                    transport: .http,
+                    success: false,
+                    errorClass: .operationError,
+                    elapsed: Date().timeIntervalSince(pushStartedAt)
                 )
             }
         }
@@ -950,7 +980,8 @@ extension Server {
                     diskPath: diskPath,
                     nvramPath: nvramPath,
                     networkMode: networkMode,
-                    clipboard: clipboard
+                    clipboard: clipboard,
+                    telemetryTransport: .http
                 )
                 Logger.info("VM started successfully in background task", metadata: ["name": name])
             } catch {

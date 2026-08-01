@@ -23,9 +23,11 @@ name: "CI: cua-driver distro-compat matrix"
 #     may not exist yet on a fresh branch; the job is informational until the
 #     first linux release tag exists.
 #
-# Trigger: any PR that touches the Rust cua-driver or this workflow.
-# Also runs on push to main and on workflow_dispatch so it works as a
-# post-release regression guard.
+# Trigger workflow changes in PRs and on main so edits to this matrix validate
+# against the current release. Source changes do not run this workflow because
+# it downloads a published binary rather than building the proposed commit.
+# Release tags always run the matrix against the matching artifact, and
+# workflow_dispatch remains available for maintainer-requested validation.
 #
 # Companion to the Rust desktop E2E workflows; it validates released binaries,
 # not source-built harness behavior.
@@ -33,16 +35,14 @@ name: "CI: cua-driver distro-compat matrix"
 on:
   pull_request:
     paths:
-      - "libs/cua-driver/rust/**"
       - ".github/workflows/ci-distro-compat-cua-driver.yml"
   push:
-    # Run on main (path-filtered) AND on release tags so a newly-published
-    # binary is immediately validated against the distro matrix.
+    # Path filters do not apply to tag pushes, so every release tag still runs.
+    # Main-branch pushes run only when the matrix itself changes.
     branches: [main]
     tags:
       - "cua-driver-rs-v*"
     paths:
-      - "libs/cua-driver/rust/**"
       - ".github/workflows/ci-distro-compat-cua-driver.yml"
   workflow_dispatch:
     inputs:

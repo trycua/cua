@@ -315,12 +315,39 @@ fn is_xvfb_process_running() -> bool {
 /// NOTE: this only rules out the servers known to lack uinput→X-slave hotplug.
 /// A `true` result means "worth attempting"; the per-action call still fails
 /// gracefully (and the caller falls back) if the slave never binds.
+fn real_pointer_capabilities_available(
+    server_supported: bool,
+    xvfb: bool,
+    uinput_accessible: bool,
+) -> bool {
+    server_supported && !xvfb && uinput_accessible
+}
+
+fn uinput_accessible() -> bool {
+    fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/uinput")
+        .is_ok()
+}
+
 pub fn real_pointer_input_available() -> bool {
+    // `ensure_master_pointer` creates an XI2 master before attaching the
+    // uinput slave. If this process cannot open /dev/uinput, attempting that
+    // path on every click/scroll would create and abandon an XInput master
+    // pair until Xorg terminates the client with BadAlloc. Skip MPX entirely
+    // when the required device is inaccessible.
+    if !uinput_accessible() {
+        return false;
+    }
     let Ok(display) = open_display() else {
         return false;
     };
-    let supported =
-        supports_parallel_pointer_injection(display).is_ok() && !is_xvfb_process_running();
+    let supported = real_pointer_capabilities_available(
+        supports_parallel_pointer_injection(display).is_ok(),
+        is_xvfb_process_running(),
+        true,
+    );
     unsafe { x11::xlib::XCloseDisplay(display) };
     supported
 }
@@ -340,6 +367,12 @@ fn ensure_master_pointer(cursor_id: &str) -> Result<MasterPointerIds> {
     }
 
     let base = master_pointer_name(cursor_id);
+    let device_name = slave_pointer_name(&base);
+    // Acquire the non-X resource before mutating the XInput hierarchy. The
+    // inexpensive availability probe above handles the normal permission
+    // denial; this ordering also prevents a race or late open failure from
+    // leaking a newly created master pair.
+    let uinput_device = create_uinput_pointer(&device_name)?;
     let mut change = x11::xinput2::XIAnyHierarchyChangeInfo::default();
     let name = CString::new(base.clone())?;
     unsafe {
@@ -380,8 +413,6 @@ fn ensure_master_pointer(cursor_id: &str) -> Result<MasterPointerIds> {
     let keyboard_id = keyboard_id
         .ok_or_else(|| anyhow!("failed to locate created master keyboard for '{cursor_id}'"))?;
 
-    let device_name = slave_pointer_name(&base);
-    let uinput_device = create_uinput_pointer(&device_name)?;
     let slave_pointer_id = wait_for_slave_pointer_id(display, &device_name)?;
     attach_slave_to_master(display, slave_pointer_id, pointer_id)?;
     set_flat_pointer_accel(display, slave_pointer_id);
@@ -930,7 +961,19 @@ pub fn x11_activate_window_persistent(xid: u64) -> Result<Option<u64>> {
         prior.unwrap_or(0) as x11::xlib::Window,
     );
     unsafe {
+        // Some WMs honor `_NET_ACTIVE_WINDOW` as raise-only. Persistent
+        // activation must establish input focus too, just like the bounded
+        // foreground rung above, or `bring_to_front` can report success while
+        // keyboard focus remains on the previous window.
+        let previous_handler = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
+        x11::xlib::XSetInputFocus(
+            display,
+            xid as x11::xlib::Window,
+            x11::xlib::RevertToParent,
+            x11::xlib::CurrentTime,
+        );
         x11::xlib::XSync(display, 0);
+        x11::xlib::XSetErrorHandler(previous_handler);
         x11::xlib::XCloseDisplay(display);
     }
     Ok(prior)
@@ -2040,6 +2083,40 @@ pub fn send_click_xtest_desktop(x: i32, y: i32, button: u8, count: usize) -> Res
     Ok(())
 }
 
+/// Move the real X11 pointer to a screen-absolute desktop coordinate.
+pub fn send_move_xtest_desktop(x: i32, y: i32) -> Result<()> {
+    use x11rb::protocol::xtest::ConnectionExt as _;
+    let (conn, screen_num) = connect_x11_for_input()?;
+    let root = conn.setup().roots[screen_num].root;
+    conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x as i16, y as i16, 0)?;
+    conn.flush()?;
+    let _ = conn.get_input_focus()?.reply();
+    Ok(())
+}
+
+/// Scroll the window under a screen-absolute point via real XTest wheel-button
+/// events. X11 buttons 4/5 are vertical up/down and 6/7 horizontal left/right.
+pub fn send_scroll_xtest_desktop(x: i32, y: i32, direction: &str, amount: usize) -> Result<()> {
+    use x11rb::protocol::xtest::ConnectionExt as _;
+    let button = match direction {
+        "up" => 4,
+        "down" => 5,
+        "left" => 6,
+        "right" => 7,
+        other => anyhow::bail!("unknown desktop scroll direction: {other}"),
+    };
+    let (conn, screen_num) = connect_x11_for_input()?;
+    let root = conn.setup().roots[screen_num].root;
+    conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x as i16, y as i16, 0)?;
+    for _ in 0..amount.max(1) {
+        conn.xtest_fake_input(BUTTON_PRESS_EVENT, button, 0, root, x as i16, y as i16, 0)?;
+        conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?;
+    }
+    conn.flush()?;
+    let _ = conn.get_input_focus()?.reply();
+    Ok(())
+}
+
 /// Screen-absolute drag via XTest. The caller activates the target first; XTest
 /// then supplies one real press, interpolated pointer motion, and one release.
 /// This is the foreground counterpart to the window-addressed XSendEvent drag.
@@ -2517,7 +2594,17 @@ exit 0"#,
 
 #[cfg(test)]
 mod path_tests {
-    use super::{path_cumulative, point_on_path, sample_function};
+    use super::{
+        path_cumulative, point_on_path, real_pointer_capabilities_available, sample_function,
+    };
+
+    #[test]
+    fn real_pointer_capabilities_require_uinput_access() {
+        assert!(real_pointer_capabilities_available(true, false, true));
+        assert!(!real_pointer_capabilities_available(true, false, false));
+        assert!(!real_pointer_capabilities_available(false, false, true));
+        assert!(!real_pointer_capabilities_available(true, true, true));
+    }
 
     #[test]
     fn sample_linear_function() {

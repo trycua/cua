@@ -1,0 +1,81 @@
+---
+title: 'Run and validate a Cua-Bench task'
+description: 'Inspect a task, verify its oracle, and exercise a variant manually.'
+---
+
+Use this guide to validate an existing task before running it with an agent or
+including it in a dataset.
+
+## Before you start
+
+- Install Cua-Bench and any dependencies required by the task's provider.
+- Have a local task directory containing `main.py`.
+
+## Inspect the task
+
+Load the task before starting an environment:
+
+```bash
+cb task info <task-path>
+```
+
+Confirm:
+
+- the provider and operating-system types are the ones you expect;
+- the selected variant exists;
+- setup and evaluation show check marks;
+- solve shows a check mark when the task is supposed to include an oracle.
+
+## Verify the oracle and evaluator
+
+Run the selected variant with its oracle and close it after evaluation:
+
+```bash
+cb interact <task-path> \
+  --variant-id 0 \
+  --oracle \
+  --no-wait
+```
+
+Check the reported evaluation result against the reward the task considers
+successful. A failed oracle is a task or environment validation failure; do not
+use that result as an agent score.
+
+## Exercise the task manually
+
+```bash
+cb interact <task-path> --variant-id 0
+```
+
+Complete the task in its visible environment. Return to the terminal and press
+Enter to evaluate and close it.
+
+## Check additional variants
+
+Repeat the oracle check for each variant:
+
+```bash
+cb interact <task-path> --variant-id <variant> --oracle --no-wait
+```
+
+Changing only `--variant-id` exercises the same lifecycle functions with the
+selected variant's prompt, metadata, and computer configuration.
+
+## Troubleshooting
+
+### Playwright reports that the browser executable is missing
+
+For a simulated task, install Chromium in the same environment as Cua-Bench:
+
+```bash
+uv tool run --from 'cua-bench[browser]' playwright install chromium
+```
+
+### A lifecycle function is missing
+
+Confirm that the task's `main.py` decorates each function with the same split.
+Refer to the [task definition reference](/reference/cua-bench/task-definition)
+for the supported decorators and signatures.
+
+If you have not created a task before, follow
+[Build your first Cua-Bench task](/tutorials/your-first-cua-bench-task).

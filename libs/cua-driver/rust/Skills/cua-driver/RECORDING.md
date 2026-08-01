@@ -22,9 +22,9 @@ display to `<output_dir>/recording.mp4` (H.264 / 30 fps) for the
 lifetime of the session. The mp4 is finalized on `stop_recording`. Opt
 out with `record_video: false` when you don't want video.
 
-**macOS — native ScreenCaptureKit, zero-config.** On macOS the
-recorder uses an in-process `SCStream` + `SCRecordingOutput`, so it
-inherits cua-driver's own Screen Recording grant — no separate
+**macOS — native ScreenCaptureKit, zero-config.** On macOS the daemon's
+recorder uses `SCStream` + `SCRecordingOutput`, so it inherits the daemon's
+Screen Recording grant — no separate
 subprocess prompt, no fast-fail, no second TCC dance. Requires macOS
 15.0+ (SCRecordingOutput introduced in macOS 15). No ffmpeg needed.
 

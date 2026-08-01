@@ -43,11 +43,15 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
     for (z_index, xid) in windows.into_iter().enumerate() {
         let pid = get_window_pid(&conn, xid).ok().flatten();
         if let Some(fp) = filter_pid {
-            if pid != Some(fp) { continue; }
+            if pid != Some(fp) {
+                continue;
+            }
         }
 
         let title = get_window_title(&conn, xid).unwrap_or_default();
-        if title.trim().is_empty() { continue; }
+        if title.trim().is_empty() {
+            continue;
+        }
         let app_name = get_window_class(&conn, xid)
             .map(|(instance, class)| if class.is_empty() { instance } else { class })
             .unwrap_or_default();
@@ -61,7 +65,9 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
         let (x, y, w, h) = if let Some(g) = geom {
             // Translate to root coordinates.
             let trans = conn.translate_coordinates(xid, root, 0, 0)?.reply().ok();
-            let (rx, ry) = trans.map(|t| (t.dst_x as i32, t.dst_y as i32)).unwrap_or((0, 0));
+            let (rx, ry) = trans
+                .map(|t| (t.dst_x as i32, t.dst_y as i32))
+                .unwrap_or((0, 0));
             (rx, ry, g.width as u32, g.height as u32)
         } else {
             (0, 0, 0, 0)
@@ -73,7 +79,7 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
             app_name,
             title,
             is_on_screen,
-            z_index: Some(z_index),
+            z_index: Some(z_index_from_bottom_to_top(z_index)),
             x,
             y,
             width: w,
@@ -84,12 +90,20 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
     Ok(result)
 }
 
+fn z_index_from_bottom_to_top(position: usize) -> usize {
+    position
+}
+
 fn get_window_list(conn: &RustConnection, root: Window) -> Result<Vec<Window>> {
     let atom_names = ["_NET_CLIENT_LIST_STACKING", "_NET_CLIENT_LIST"];
     for name in &atom_names {
         if let Ok(atom) = get_atom(conn, name) {
-            if let Ok(reply) = conn.get_property(false, root, atom, AtomEnum::WINDOW, 0, u32::MAX)?.reply() {
-                let windows: Vec<Window> = reply.value32()
+            if let Ok(reply) = conn
+                .get_property(false, root, atom, AtomEnum::WINDOW, 0, u32::MAX)?
+                .reply()
+            {
+                let windows: Vec<Window> = reply
+                    .value32()
                     .map(|iter| iter.collect())
                     .unwrap_or_default();
                 if client_list_property(reply.type_, windows.as_slice()).is_some() {
@@ -130,7 +144,9 @@ fn get_atom(conn: &RustConnection, name: &str) -> Result<Atom> {
 
 fn get_window_pid(conn: &RustConnection, window: Window) -> Result<Option<u32>> {
     let atom = get_atom(conn, "_NET_WM_PID")?;
-    let reply = conn.get_property(false, window, atom, AtomEnum::CARDINAL, 0, 1)?.reply()?;
+    let reply = conn
+        .get_property(false, window, atom, AtomEnum::CARDINAL, 0, 1)?
+        .reply()?;
     Ok(reply.value32().and_then(|mut i| i.next()))
 }
 
@@ -138,7 +154,10 @@ fn get_window_title(conn: &RustConnection, window: Window) -> Result<String> {
     // Try _NET_WM_NAME (UTF-8) first.
     if let Ok(atom) = get_atom(conn, "_NET_WM_NAME") {
         if let Ok(utf8_atom) = get_atom(conn, "UTF8_STRING") {
-            if let Ok(reply) = conn.get_property(false, window, atom, utf8_atom, 0, 1024)?.reply() {
+            if let Ok(reply) = conn
+                .get_property(false, window, atom, utf8_atom, 0, 1024)?
+                .reply()
+            {
                 if !reply.value.is_empty() {
                     return Ok(String::from_utf8_lossy(&reply.value).into_owned());
                 }
@@ -146,7 +165,9 @@ fn get_window_title(conn: &RustConnection, window: Window) -> Result<String> {
         }
     }
     // Fallback: WM_NAME (latin-1 / ASCII).
-    let reply = conn.get_property(false, window, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 1024)?.reply()?;
+    let reply = conn
+        .get_property(false, window, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 1024)?
+        .reply()?;
     Ok(String::from_utf8_lossy(&reply.value).into_owned())
 }
 
@@ -167,14 +188,27 @@ pub fn wm_class_for_window(xid: u64) -> Option<(String, String)> {
 
 fn get_window_class(conn: &RustConnection, xid: Window) -> Option<(String, String)> {
     let reply = conn
-        .get_property(false, xid as u32, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 512)
+        .get_property(
+            false,
+            xid as u32,
+            AtomEnum::WM_CLASS,
+            AtomEnum::STRING,
+            0,
+            512,
+        )
         .ok()?
         .reply()
         .ok()?;
     let raw = reply.value;
     let mut parts = raw.split(|&b| b == 0).filter(|s| !s.is_empty());
-    let instance = parts.next().map(|s| String::from_utf8_lossy(s).into_owned()).unwrap_or_default();
-    let class = parts.next().map(|s| String::from_utf8_lossy(s).into_owned()).unwrap_or_default();
+    let instance = parts
+        .next()
+        .map(|s| String::from_utf8_lossy(s).into_owned())
+        .unwrap_or_default();
+    let class = parts
+        .next()
+        .map(|s| String::from_utf8_lossy(s).into_owned())
+        .unwrap_or_default();
     if instance.is_empty() && class.is_empty() {
         return None;
     }
@@ -200,5 +234,12 @@ mod tests {
         assert!(fallback_window_is_listable(MapState::VIEWABLE));
         assert!(!fallback_window_is_listable(MapState::UNMAPPED));
         assert!(!fallback_window_is_listable(MapState::UNVIEWABLE));
+    }
+
+    #[test]
+    fn ewmh_bottom_to_top_order_normalizes_to_higher_is_frontmost() {
+        let indices: Vec<_> = (0..3).map(z_index_from_bottom_to_top).collect();
+        assert_eq!(indices, vec![0, 1, 2]);
+        assert!(indices[2] > indices[0]);
     }
 }

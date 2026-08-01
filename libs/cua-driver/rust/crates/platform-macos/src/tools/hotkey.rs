@@ -1,8 +1,13 @@
 use async_trait::async_trait;
-use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_contract::HotkeyInput;
+use cua_driver_core::{
+    protocol::ToolResult,
+    tool::{Tool, ToolDef},
+    tool_args::parse_typed_projection,
+};
+use libc;
 use serde_json::Value;
 use std::sync::Arc;
-use libc;
 
 use crate::apps;
 use crate::focus_guard;
@@ -15,7 +20,9 @@ pub struct HotkeyTool {
 }
 
 impl HotkeyTool {
-    pub fn new(state: Arc<ToolState>) -> Self { Self { state } }
+    pub fn new(state: Arc<ToolState>) -> Self {
+        Self { state }
+    }
 }
 
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -36,19 +43,23 @@ fn def() -> &'static ToolDef {
                SLPSSetFrontProcessWithOptions) so native menu key-equivalents \
                (Cmd+Z, Cmd+W) dispatch, then restore the prior frontmost — the \
                explicit escalation for menu-bar shortcuts on non-Chromium apps that \
-               ignore a background combo. Requires window_id.\n\n\
+               ignore a background combo. With x,y, the focused field receives \
+               the chord through the foreground HID queue (needed by native \
+               Chromium fields such as the omnibox). Requires window_id.\n\n\
              A combo is never driver-verifiable (no read-back) → effect:\"unverifiable\"; \
              confirm via screenshot. NOTE: a keyboard combo does NOT focus a text \
              field — to type into a backgrounded Electron input, establish real \
-             renderer focus with a PIXEL click first, then `type_text` (do not reach \
-             for a clipboard + Cmd+V dance).\n\n\
+             renderer focus with a PIXEL click first, then `type_text`. If an app only \
+             accepts paste, call `clipboard_write`, then `clipboard_read` and verify its \
+             types (and text when applicable) before selecting or replacing editor content; \
+             only then send Cmd+V.\n\n\
              Recognized modifiers: cmd/command, shift, option/alt, ctrl/control, fn. \
              Non-modifier keys use the same vocabulary as `press_key`. Order: \
              modifiers first, one non-modifier last."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
-            "required": ["pid", "keys"],
+            "required": ["keys"],
             "properties": {
                 "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
                 "pid": { "type": "integer", "description": "Target process ID." },
@@ -64,6 +75,7 @@ fn def() -> &'static ToolDef {
                     "type": "integer",
                     "description": "Target window. Required for delivery_mode:\"foreground\" (the NSMenu activation needs a window). Does NOT itself raise the window — raising is gated on delivery_mode."
                 },
+                "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "Use desktop with no pid/window_id to send the chord to the frontmost application." },
                 "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
             },
             "additionalProperties": false
@@ -83,15 +95,88 @@ fn is_modifier(k: &str) -> bool {
     )
 }
 
+fn screen_sharing_modifier_delivery_error(
+    is_screen_sharing: bool,
+    has_modifiers: bool,
+    foreground: bool,
+    window_id: Option<u32>,
+) -> Option<ToolResult> {
+    if !is_screen_sharing || !has_modifiers || (foreground && window_id.is_some()) {
+        return None;
+    }
+    Some(
+        ToolResult::error(
+            "Screen Sharing modifier hotkeys require delivery_mode:\"foreground\" and window_id \
+             so Cua Driver can deliver physical modifier transitions safely.",
+        )
+        .with_structured(serde_json::json!({
+            "code": "SCREEN_SHARING_REQUIRES_FOREGROUND_HID",
+            "effect": "refused",
+            "escalation": {
+                "recommended": "foreground",
+                "reason": "Screen Sharing does not forward modifier state from background \
+                           PID-routed base-key events.",
+                "requires": ["window_id"]
+            }
+        })),
+    )
+}
+
 #[async_trait]
 impl Tool for HotkeyTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
         let _ = &self.state;
 
-        let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
+        if args.opt_str("scope").as_deref() == Some("desktop")
+            && args.get("pid").is_none()
+            && args.get("window_id").is_none()
+        {
+            let input = match parse_typed_projection::<HotkeyInput>("hotkey", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
+            };
+            let raw_keys = input.keys;
+            if raw_keys.len() < 2 {
+                return ToolResult::error("hotkey.keys must contain at least two keys.")
+                    .with_structured(serde_json::json!({ "code": "invalid_arguments" }));
+            }
+            let modifiers: Vec<String> = raw_keys
+                .iter()
+                .filter(|key| is_modifier(key))
+                .cloned()
+                .collect();
+            let Some(key) = raw_keys.iter().rev().find(|key| !is_modifier(key)).cloned() else {
+                return ToolResult::error(
+                    "keys must include at least one non-modifier key for desktop hotkey",
+                );
+            };
+            let display = raw_keys.join("+");
+            let result = tokio::task::spawn_blocking(move || {
+                let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                crate::input::keyboard::press_key_global(&key, &modifier_refs)
+            })
+            .await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!("Pressed desktop hotkey {display}."))
+                    .with_structured(serde_json::json!({
+                        "scope": "desktop",
+                        "path": "hid",
+                        "effect": "unverifiable"
+                    })),
+                Ok(Err(error)) => ToolResult::error(format!("desktop hotkey failed: {error}")),
+                Err(error) => ToolResult::error(format!("desktop hotkey task failed: {error}")),
+            };
+        }
+
+        let pid = match args.require_i32("pid") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
 
         if args.get("keys").and_then(|v| v.as_array()).is_none() {
             return ToolResult::error("Missing required parameter: keys");
@@ -104,18 +189,20 @@ impl Tool for HotkeyTool {
 
         // Split: modifiers are all entries that are modifier names; base key is everything else.
         // Typically: last non-modifier is the key; all others are modifiers.
-        let modifiers: Vec<String> = raw_keys.iter()
+        let modifiers: Vec<String> = raw_keys
+            .iter()
             .filter(|k| is_modifier(k))
             .cloned()
             .collect();
-        let non_modifiers: Vec<String> = raw_keys.iter()
+        let non_modifiers: Vec<String> = raw_keys
+            .iter()
             .filter(|k| !is_modifier(k))
             .cloned()
             .collect();
 
         if non_modifiers.is_empty() {
             return ToolResult::error(
-                "keys must include at least one non-modifier key (e.g. \"c\" in [\"cmd\", \"c\"])."
+                "keys must include at least one non-modifier key (e.g. \"c\" in [\"cmd\", \"c\"]).",
             );
         }
 
@@ -129,23 +216,46 @@ impl Tool for HotkeyTool {
         // background combo (matches click/type_text).
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
         let fg = delivery_mode.is_foreground();
+        let screen_sharing_target = crate::input::keyboard::is_screen_sharing_pid(pid);
+        if let Some(error) = screen_sharing_modifier_delivery_error(
+            screen_sharing_target,
+            !modifiers.is_empty(),
+            fg,
+            window_id,
+        ) {
+            return error;
+        }
 
-        // px form: pixel-click to focus, then the combo acts on the focused field
-        // (e.g. Cmd+V into a Chromium input). After it, deliver the combo via the
-        // plain background path (the focus-click already fronted if fg).
+        // px form: focus the field before sending the combo. Foreground delivery
+        // still needs to front the target for the chord itself: the focus helper
+        // restores the previous app before returning.
         let px_focus = {
             let px = args.get("x").and_then(|v| v.as_f64());
             let py = args.get("y").and_then(|v| v.as_f64());
             if let (Some(cx), Some(cy)) = (px, py) {
-                let from_zoom = args.get("from_zoom").and_then(|v| v.as_bool()).unwrap_or(false);
+                let from_zoom = args
+                    .get("from_zoom")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 if let Err(e) = super::focus_by_pixel(
-                    &self.state, pid, window_id, cx, cy, fg,
-                    args.opt_str("session"), args.opt_str("_session_id"), from_zoom,
-                ).await {
+                    &self.state,
+                    pid,
+                    window_id,
+                    cx,
+                    cy,
+                    fg,
+                    args.opt_str("session"),
+                    args.opt_str("_session_id"),
+                    from_zoom,
+                )
+                .await
+                {
                     return e;
                 }
                 true
-            } else { false }
+            } else {
+                false
+            }
         };
 
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
@@ -164,14 +274,47 @@ impl Tool for HotkeyTool {
             || async move {
                 tokio::task::spawn_blocking(move || {
                     let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                    // px-focus already clicked/fronted the target → deliver background.
-                    match (fg && !px_focus, window_id) {
+                    match (fg, px_focus, window_id) {
+                        // Chrome's native omnibox and Chromium/Electron inputs
+                        // require a genuine foreground HID chord. Keep the exact
+                        // target frontmost until both key events are consumed;
+                        // otherwise Cmd+A/Cmd+V can be silently ignored.
+                        (true, true, Some(wid)) => {
+                            crate::input::skylight::with_foreground_hid_activation(
+                                pid as libc::pid_t,
+                                wid,
+                                || {
+                                    if screen_sharing_target {
+                                        crate::input::keyboard::press_key_bare_global(&key, &m)
+                                    } else {
+                                        crate::input::keyboard::press_key_global(&key, &m)
+                                    }
+                                },
+                            )?;
+                            Ok(())
+                        }
+                        // Screen Sharing is an input forwarder: modifier flags
+                        // on a PID-routed base-key event are not relayed to the
+                        // guest. Emit the physical modifier down/base/up
+                        // sequence through the guarded foreground HID path.
+                        (true, false, Some(wid))
+                            if crate::input::keyboard::is_screen_sharing_pid(pid) =>
+                        {
+                            crate::input::skylight::with_foreground_hid_activation(
+                                pid as libc::pid_t,
+                                wid,
+                                || crate::input::keyboard::press_key_bare_global(&key, &m),
+                            )?;
+                            Ok(())
+                        }
                         // foreground rung: briefly front the window so NSMenu key
                         // equivalents dispatch, then restore prior frontmost.
-                        (true, Some(wid)) => {
-                            crate::input::skylight::with_menu_shortcut_activation(pid as libc::pid_t, wid, || {
-                                crate::input::keyboard::hotkey_no_auth(pid, &key, &m)
-                            })?;
+                        (true, false, Some(wid)) => {
+                            crate::input::skylight::with_menu_shortcut_activation(
+                                pid as libc::pid_t,
+                                wid,
+                                || crate::input::keyboard::hotkey_no_auth(pid, &key, &m),
+                            )?;
                             Ok(())
                         }
                         // background (default): auth-envelope post to the pid, no
@@ -184,11 +327,15 @@ impl Tool for HotkeyTool {
         )
         .await;
 
-        let changes = snapshot.detect_async().await;
+        let changes = super::finish_window_observation(snapshot, &args).await;
 
         match result {
             Ok(Ok(())) => {
-                let label = if fg { " (delivery_mode:foreground)" } else { "" };
+                let label = if fg {
+                    " (delivery_mode:foreground)"
+                } else {
+                    ""
+                };
                 // A combo is never read-back-verifiable. On the background rung,
                 // point the agent at the foreground escalation for menu shortcuts
                 // an app drops in the background — same contract as type_text.
@@ -209,10 +356,33 @@ impl Tool for HotkeyTool {
                 ToolResult::text(format!(
                     "Pressed {key_display} on pid {pid}{label}.{}",
                     changes.result_suffix()
-                )).with_structured(structured)
+                ))
+                .with_structured(structured)
             }
             Ok(Err(e)) => ToolResult::error(format!("hotkey failed: {e}")),
-            Err(e)     => ToolResult::error(format!("Task error: {e}")),
+            Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn screen_sharing_modifier_hotkeys_fail_closed_without_foreground_window() {
+        for (foreground, window_id) in [(false, None), (false, Some(7)), (true, None)] {
+            let result = screen_sharing_modifier_delivery_error(true, true, foreground, window_id)
+                .expect("unsafe Screen Sharing modifier route must be refused");
+            assert_eq!(result.is_error, Some(true));
+            let structured = result.structured_content.unwrap();
+            assert_eq!(structured["code"], "SCREEN_SHARING_REQUIRES_FOREGROUND_HID");
+            assert_eq!(structured["effect"], "refused");
+            assert_eq!(structured["escalation"]["recommended"], "foreground");
+            assert_eq!(structured["escalation"]["requires"][0], "window_id");
+        }
+        assert!(screen_sharing_modifier_delivery_error(true, true, true, Some(7)).is_none());
+        assert!(screen_sharing_modifier_delivery_error(true, false, false, None).is_none());
+        assert!(screen_sharing_modifier_delivery_error(false, true, false, None).is_none());
     }
 }

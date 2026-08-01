@@ -1,0 +1,40 @@
+{
+  "bots": [
+    "dependabot[bot]",
+    "github-actions[bot]",
+    "copilot",
+    "release-please[bot]",
+    "renovate[bot]",
+    "trycua-release[bot]"
+  ],
+  "ignoredCoauthorEmails": [
+    "claude@anthropic.com",
+    "coding-sub-agent@trycua.com",
+    "codex@openai.com",
+    "cua@cua.localdomain",
+    "noreply@anthropic.com"
+  ],
+  "coauthorOverrides": {
+    "hippoley <noreply@github.com>": "hippoley"
+  },
+  "identityOverrides": {
+    "ddupont@mit.edu": "ddupont808",
+    "egnichtel@crosscode.com": "ngnichtel",
+    "f@trycua.com": "f-trycua",
+    "i@jyunko.cn": "HsiangNianian",
+    "klymenko@adobe.com": "pavelklymenko",
+    "m.fuechtenkoetter@posteo.de": "ai-ag2026",
+    "manfred@ubuntu26.04-vm": "ai-ag2026",
+    "me@madhavajay.com": "madhavajay",
+    "robert@trycua.com": "enchanted-koala",
+    "sarinajin.li@gmail.com": "sarinali",
+    "zane.chee.2023@scis.smu.edu.sg": "injaneity",
+    "zongxin_yang@hms.harvard.edu": "z-x-yang"
+  },
+  "internalHandles": [
+    "ddupont808",
+    "enchanted-koala",
+    "f-trycua"
+  ],
+  "optOutHandles": []
+}

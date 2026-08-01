@@ -216,7 +216,11 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
     layer_surface.set_exclusive_zone(-1);
     layer_surface.set_keyboard_interactivity(KeyboardInteractivity::None);
 
-    // Click-through: empty input region.
+    // Click-through: empty input region. Standard Wayland intentionally does
+    // not expose another client's global pointer position, so this surface
+    // cannot implement the macOS/Windows/X11 badge-hover reveal without a
+    // compositor-owned adapter. Giving it an input region would steal the
+    // user's pointer events instead of observing them.
     let region: WlRegion = compositor.create_region(&qh, ());
     surface.set_input_region(Some(&region));
     region.destroy();
@@ -317,7 +321,12 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
         if state.configured {
             redraw(&mut state, &shm, &qh)?;
         }
-        queue.dispatch_pending(&mut state)?;
+        // A surface commit only queues the request in wayland-client. A
+        // roundtrip flushes the new frame to the compositor and dispatches
+        // wl_buffer.release events so the previous full-screen buffer can be
+        // reclaimed. dispatch_pending alone never writes or reads the socket,
+        // which left the initial transparent frame on screen indefinitely.
+        queue.roundtrip(&mut state)?;
 
         // Sleep for the remainder of the frame budget so the loop doesn't
         // spin. Channel-driven wakeups would be lower-latency, but layer

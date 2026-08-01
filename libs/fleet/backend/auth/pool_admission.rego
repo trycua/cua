@@ -10,6 +10,7 @@ allowed_image_repositories := {
 	"296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace-duo",
 	"296062593712.dkr.ecr.us-west-2.amazonaws.com/osgym-workspace",
 	"296062593712.dkr.ecr.us-west-2.amazonaws.com/osworld-golden-workspace",
+	"296062593712.dkr.ecr.us-west-2.amazonaws.com/osworld-v2-ubuntu-x86",
 	"296062593712.dkr.ecr.us-west-2.amazonaws.com/ubuntu-vnc-cua-kubevirt",
 }
 

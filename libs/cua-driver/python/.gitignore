@@ -9,6 +9,9 @@ __pycache__/
 # Downloaded binaries and archives
 downloads/
 src/cua_driver/bin/
+src/cua_driver/*.dylib
+src/cua_driver/*.so
+src/cua_driver/*.dll
 
 # Virtual environments
 venv/

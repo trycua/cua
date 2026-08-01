@@ -34,6 +34,8 @@ dependencies = [
     "cua-auto[all]>=0.1.0",
     # HTTP client
     "aiohttp>=3.9.0",
+    # OS-backed credential storage for OAuth tokens
+    "keyring>=25.0",
     # CLI output
     "rich>=13.0.0",
     # Image processing for skills

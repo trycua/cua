@@ -1,8 +1,10 @@
 use async_trait::async_trait;
 use core_foundation::base::{CFRelease, CFTypeRef};
+use cua_driver_contract::{ScrollBy, ScrollDirection, ScrollInput};
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
+    tool_args::parse_typed_projection,
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -92,6 +94,7 @@ fn def() -> &'static ToolDef {
                 "element_token": { "type": "string", "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded. Routes through the pixel-wheel path at the element's center." },
                 "x": { "type": "number", "description": "Window-local screenshot X (top-left origin of the PNG from get_window_state). With `y`, routes through the pixel-wheel path at this point — use for a scrollable surface that isn't in the AX tree. Requires window_id to anchor the window→screen conversion." },
                 "y": { "type": "number", "description": "Window-local screenshot Y. See `x`." },
+                "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "Use desktop with x,y and no pid/window_id for native get_desktop_state screenshot coordinates." },
                 "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
             },
             "additionalProperties": false
@@ -111,6 +114,47 @@ impl Tool for ScrollTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        if args.opt_str("scope").as_deref() == Some("desktop")
+            && args.get("pid").is_none()
+            && args.get("window_id").is_none()
+        {
+            let input = match parse_typed_projection::<ScrollInput>("scroll", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
+            };
+            let (x, y) = (input.x, input.y);
+            let direction = input.direction.as_str();
+            let by = input.by.unwrap_or(ScrollBy::Line).as_str();
+            let amount = input.amount.unwrap_or(3).clamp(1, 50) as usize;
+            let step = if input.by == Some(ScrollBy::Page) {
+                WHEEL_STEP_PAGE_PX
+            } else {
+                WHEEL_STEP_LINE_PX
+            };
+            let (delta_y, delta_x) = match input.direction {
+                ScrollDirection::Down => (-step, 0),
+                ScrollDirection::Up => (step, 0),
+                ScrollDirection::Right => (0, -step),
+                ScrollDirection::Left => (0, step),
+            };
+            let (x, y) = super::desktop_screenshot_point(x, y).await;
+            let result = tokio::task::spawn_blocking(move || {
+                crate::input::mouse::scroll_wheel_desktop(x, y, delta_y, delta_x, amount)
+            })
+            .await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "Scrolled desktop {direction} by {by} × {amount} at ({x:.1}, {y:.1})."
+                ))
+                .with_structured(serde_json::json!({
+                    "scope": "desktop",
+                    "path": "hid",
+                    "effect": "unverifiable"
+                })),
+                Ok(Err(error)) => ToolResult::error(format!("desktop scroll failed: {error}")),
+                Err(error) => ToolResult::error(format!("desktop scroll task failed: {error}")),
+            };
+        }
         let pid = match args.require_i32("pid") {
             Ok(v) => v,
             Err(e) => return e,
@@ -329,55 +373,32 @@ impl Tool for ScrollTool {
                 );
             }
             // Pixel path: x,y are window-local screenshot pixels. Mirror the
-            // click pixel path — undo any session downscale, then add the
-            // window origin and divide out the Retina backing scale.
-            if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+            // click pixel path — undo any session downscale, then translate
+            // through the shared window frame (which refuses a window with no
+            // live frame rather than scrolling at screen-absolute coords).
+            if let Some(ratio) = self.state.resize_registry.ratio(pid, window_id) {
                 cx *= ratio;
                 cy *= ratio;
             }
-            let wid = window_id;
-            tokio::task::spawn_blocking(move || {
-                if let Some(wid) = wid {
-                    let bounds = crate::windows::window_bounds_by_id(wid);
-                    let scale: f64 = if let Some(ref b) = bounds {
-                        if let Ok(png) = crate::capture::screenshot_window_bytes(wid) {
-                            if png.len() >= 24 {
-                                let pw =
-                                    u32::from_be_bytes([png[16], png[17], png[18], png[19]]) as f64;
-                                if b.width > 0.0 && pw > b.width {
-                                    pw / b.width
-                                } else {
-                                    1.0
-                                }
-                            } else {
-                                1.0
-                            }
-                        } else {
-                            1.0
-                        }
-                    } else {
-                        1.0
-                    };
-                    if let Some(b) = bounds {
-                        let (wx, wy) = (cx / scale, cy / scale);
-                        return WheelTarget {
-                            screen_x: b.x + wx,
-                            screen_y: b.y + wy,
-                            win_local: Some((wx, wy)),
-                            wid: Some(wid),
-                        };
-                    }
+            let Some(wid) = window_id else {
+                // Unreachable: the None case refused above. Kept explicit so a
+                // future edit cannot reintroduce the screen-absolute fallback.
+                return ToolResult::error(
+                    "window_id is required when scrolling by window-local x,y pixels.".to_string(),
+                );
+            };
+            match super::px_frame::resolve_or_refuse(wid).await {
+                Ok(frame) => {
+                    let (sx, sy, lx, ly) = frame.to_screen(cx, cy);
+                    Some(WheelTarget {
+                        screen_x: sx,
+                        screen_y: sy,
+                        win_local: Some((lx, ly)),
+                        wid: Some(wid),
+                    })
                 }
-                // No window_id → treat x,y as screen coordinates.
-                WheelTarget {
-                    screen_x: cx,
-                    screen_y: cy,
-                    win_local: None,
-                    wid: None,
-                }
-            })
-            .await
-            .ok()
+                Err(refusal) => return refusal,
+            }
         } else {
             None
         };
@@ -451,7 +472,7 @@ impl Tool for ScrollTool {
             )
             .await;
 
-            let changes = snapshot.detect_async().await;
+            let changes = super::finish_window_observation(snapshot, &args).await;
             let mode_label = if fg {
                 " (delivery_mode:foreground)"
             } else {
@@ -511,19 +532,17 @@ impl Tool for ScrollTool {
 
                 tokio::task::spawn_blocking(move || {
                     for _ in 0..amount {
-                        if let Err(e) = crate::input::keyboard::press_key(pid, &key, &[]) {
-                            return Err(e);
-                        }
+                        crate::input::keyboard::press_key(pid, &key, &[])?;
                         std::thread::sleep(std::time::Duration::from_millis(50));
                     }
-                    Ok(())
+                    Ok::<(), anyhow::Error>(())
                 })
                 .await
             },
         )
         .await;
 
-        let changes = snapshot.detect_async().await;
+        let changes = super::finish_window_observation(snapshot, &args).await;
 
         match result {
             Ok(Ok(())) => ToolResult::text(format!(

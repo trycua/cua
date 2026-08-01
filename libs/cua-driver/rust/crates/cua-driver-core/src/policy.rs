@@ -1,16 +1,15 @@
 //! Optional permission-policy enforcement for MCP tool calls.
 
-use std::path::Path;
-#[cfg(feature = "rego")]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-#[cfg(any(feature = "yaml", feature = "rego"))]
 use anyhow::Context;
 use anyhow::{bail, Result};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 pub const POLICY_FILE_ENV: &str = "CUA_DRIVER_POLICY_FILE";
+pub const MANAGED_POLICY_FILE_ENV: &str = "CUA_DRIVER_MANAGED_POLICY_FILE";
 #[cfg(feature = "rego")]
 const REGO_ALLOW_RULE: &str = "data.cua.policy.allow";
 
@@ -32,11 +31,17 @@ pub enum PolicyEngine {
 }
 
 impl PolicyEngine {
-    /// Load a policy file or Rego policy directory. A missing path disables
-    /// enforcement to preserve the driver's behavior when no policy is present.
+    /// Load an explicitly configured policy file or Rego policy directory.
+    ///
+    /// Callers represent an *unset* policy as `None` before invoking this
+    /// function. Once a path is supplied, a missing path is a configuration
+    /// error rather than an implicit request to disable enforcement.
     pub fn load(path: &Path) -> Result<Option<Self>> {
         if !path.exists() {
-            return Ok(None);
+            bail!(
+                "configured permission policy path does not exist: {}",
+                path.display()
+            );
         }
 
         if path.is_dir() {
@@ -110,30 +115,188 @@ fn canonical_tool_name(tool: &str) -> &str {
     }
 }
 
-static CONFIGURED_POLICY: OnceLock<Result<Option<PolicyEngine>, String>> = OnceLock::new();
+#[derive(Debug, Clone)]
+struct ConfiguredPolicyLayer {
+    engine: PolicyEngine,
+    sha256: String,
+}
+
+static CONFIGURED_POLICY: OnceLock<Result<Option<ConfiguredPolicyLayer>, String>> = OnceLock::new();
+static CONFIGURED_MANAGED_POLICY: OnceLock<Result<Option<ConfiguredPolicyLayer>, String>> =
+    OnceLock::new();
+
+fn policy_files(path: &Path) -> Result<Vec<PathBuf>> {
+    if path.is_file() {
+        return Ok(vec![path.to_path_buf()]);
+    }
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(path)
+        .with_context(|| format!("failed to read policy directory {}", path.display()))?
+    {
+        let entry = entry.with_context(|| {
+            format!(
+                "failed to read an entry in policy directory {}",
+                path.display()
+            )
+        })?;
+        let entry_path = entry.path();
+        if entry_path.is_file()
+            && entry_path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("rego"))
+        {
+            files.push(entry_path);
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+fn policy_sha256(path: &Path) -> Result<String> {
+    let files = policy_files(path)?;
+    let mut digest = Sha256::new();
+    digest.update(b"cua-driver-policy-v1\0");
+    for file in files {
+        let name = file
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("policy");
+        let bytes = std::fs::read(&file)
+            .with_context(|| format!("failed to hash policy {}", file.display()))?;
+        digest.update((name.len() as u64).to_be_bytes());
+        digest.update(name.as_bytes());
+        digest.update((bytes.len() as u64).to_be_bytes());
+        digest.update(bytes);
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
+fn load_configured_layer(env_name: &str) -> Result<Option<ConfiguredPolicyLayer>, String> {
+    let Some(path_os) = std::env::var_os(env_name) else {
+        return Ok(None);
+    };
+    let path = Path::new(&path_os);
+    if !path.exists() {
+        return Err(format!(
+            "configured permission policy path does not exist: {}",
+            path.display()
+        ));
+    }
+    let hash_before_load = policy_sha256(path).map_err(|error| error.to_string())?;
+    let engine = PolicyEngine::load(path).map_err(|error| error.to_string())?;
+    let Some(engine) = engine else {
+        return Ok(None);
+    };
+    let sha256 = policy_sha256(path).map_err(|error| error.to_string())?;
+    if hash_before_load != sha256 {
+        return Err(format!(
+            "configured permission policy changed while it was being loaded: {}",
+            path.display()
+        ));
+    }
+    Ok(Some(ConfiguredPolicyLayer { engine, sha256 }))
+}
 
 /// Return the process-wide policy configured through [`POLICY_FILE_ENV`].
 /// The file is loaded once so stdio and HTTP requests use the same immutable
 /// policy snapshot for the lifetime of the driver process.
 pub fn configured_policy() -> Result<Option<&'static PolicyEngine>, String> {
-    match CONFIGURED_POLICY.get_or_init(|| {
-        let Some(path_os) = std::env::var_os(POLICY_FILE_ENV) else {
-            return Ok(None);
-        };
-        let path = Path::new(&path_os);
-        if !path.exists() {
-            tracing::warn!(
-                path = %path.display(),
-                "{POLICY_FILE_ENV} is set but the path does not exist; \
-                 policy enforcement is disabled"
-            );
-            return Ok(None);
-        }
-        PolicyEngine::load(path).map_err(|error| error.to_string())
-    }) {
-        Ok(policy) => Ok(policy.as_ref()),
+    match CONFIGURED_POLICY.get_or_init(|| load_configured_layer(POLICY_FILE_ENV)) {
+        Ok(policy) => Ok(policy.as_ref().map(|layer| &layer.engine)),
         Err(error) => Err(error.clone()),
     }
+}
+
+/// Return the immutable administrator-owned ceiling. A user policy is always
+/// intersected with this layer and can never widen it.
+pub fn configured_managed_policy() -> Result<Option<&'static PolicyEngine>, String> {
+    match CONFIGURED_MANAGED_POLICY.get_or_init(|| load_configured_layer(MANAGED_POLICY_FILE_ENV)) {
+        Ok(policy) => Ok(policy.as_ref().map(|layer| &layer.engine)),
+        Err(error) => Err(error.clone()),
+    }
+}
+
+fn layer_sha256(
+    layer: &'static OnceLock<Result<Option<ConfiguredPolicyLayer>, String>>,
+    env_name: &str,
+) -> Result<Option<String>, String> {
+    match layer.get_or_init(|| load_configured_layer(env_name)) {
+        Ok(policy) => Ok(policy.as_ref().map(|configured| configured.sha256.clone())),
+        Err(error) => Err(error.clone()),
+    }
+}
+
+pub fn user_policy_sha256() -> Result<Option<String>, String> {
+    layer_sha256(&CONFIGURED_POLICY, POLICY_FILE_ENV)
+}
+
+pub fn managed_policy_sha256() -> Result<Option<String>, String> {
+    layer_sha256(&CONFIGURED_MANAGED_POLICY, MANAGED_POLICY_FILE_ENV)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum AuthorizationError {
+    #[error("Permission denied: {0}")]
+    Denied(String),
+    #[error("Policy evaluation error: {0}")]
+    Evaluation(String),
+    #[error("Policy loading error: {0}")]
+    Loading(String),
+}
+
+fn authorize_policy_layers<'a>(
+    tool: &str,
+    args: &Value,
+    layers: impl IntoIterator<Item = (&'a str, &'a PolicyEngine)>,
+) -> Result<(), AuthorizationError> {
+    for (name, policy) in layers {
+        match policy.evaluate(tool, args) {
+            PolicyDecision::Allow => {}
+            PolicyDecision::Deny(reason) => {
+                return Err(AuthorizationError::Denied(format!(
+                    "{name} policy: {reason}"
+                )))
+            }
+            PolicyDecision::Error(message) => {
+                return Err(AuthorizationError::Evaluation(format!(
+                    "{name} policy: {message}"
+                )))
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Canonical process-wide capability-policy decision for one tool call.
+///
+/// Every daemon dispatch path must call this function immediately before
+/// registry lookup/invocation. A proxy may also call it as an early denial,
+/// but the daemon remains authoritative.
+pub fn authorize_tool_call(tool: &str, args: &Value) -> Result<(), AuthorizationError> {
+    let managed = configured_managed_policy()
+        .map_err(|message| AuthorizationError::Loading(format!("managed policy: {message}")))?;
+    let user = configured_policy()
+        .map_err(|message| AuthorizationError::Loading(format!("user policy: {message}")))?;
+    let mut layers = Vec::with_capacity(2);
+    if let Some(policy) = managed {
+        layers.push(("managed", policy));
+    }
+    if let Some(policy) = user {
+        layers.push(("user", policy));
+    }
+    authorize_policy_layers(tool, args, layers)
+}
+
+/// Eagerly validate the immutable process policy before any action endpoint is
+/// exposed. This prevents a configured typo from producing a listening daemon
+/// that only discovers the error after clients begin issuing calls.
+pub fn validate_configured_policy() -> Result<(), AuthorizationError> {
+    configured_managed_policy()
+        .map_err(|message| AuthorizationError::Loading(format!("managed policy: {message}")))?;
+    configured_policy()
+        .map_err(|message| AuthorizationError::Loading(format!("user policy: {message}")))?;
+    Ok(())
 }
 
 #[cfg(feature = "yaml")]
@@ -537,6 +700,7 @@ impl RegoPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(any(feature = "yaml", feature = "rego"))]
     use std::fs;
     use tempfile::tempdir;
 
@@ -574,6 +738,52 @@ deny:
             policy.evaluate("click", &serde_json::json!({"x": 10, "y": 10})),
             PolicyDecision::Deny(_)
         ));
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn managed_and_user_layers_are_intersected() {
+        let managed = yaml_policy("allow:\n  tools: [click, wait]\n");
+        let user = yaml_policy("allow:\n  tools: [wait]\n");
+
+        authorize_policy_layers(
+            "wait",
+            &serde_json::json!({}),
+            [("managed", &managed), ("user", &user)],
+        )
+        .unwrap();
+
+        let denied = authorize_policy_layers(
+            "click",
+            &serde_json::json!({"x": 1, "y": 2}),
+            [("managed", &managed), ("user", &user)],
+        )
+        .expect_err("user layer must be able to narrow managed allow");
+        assert!(denied.to_string().contains("user policy"));
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn policy_hash_is_content_bound_and_stable() {
+        let dir = tempdir().unwrap();
+        let first = dir.path().join("first.yaml");
+        let second = dir.path().join("second.yaml");
+        fs::write(&first, "allow:\n  tools: [wait]\n").unwrap();
+        fs::write(&second, "allow:\n  tools: [wait]\n").unwrap();
+        assert_eq!(
+            policy_sha256(&first).unwrap(),
+            policy_sha256(&first).unwrap()
+        );
+        assert_ne!(
+            policy_sha256(&first).unwrap(),
+            policy_sha256(&second).unwrap(),
+            "file identity is included so separately managed sources have distinct provenance"
+        );
+        fs::write(&first, "allow:\n  tools: [click]\n").unwrap();
+        assert_ne!(
+            policy_sha256(&first).unwrap(),
+            policy_sha256(&second).unwrap()
+        );
     }
 
     #[cfg(feature = "yaml")]
@@ -761,9 +971,12 @@ allow if {
     }
 
     #[test]
-    fn missing_policy_file_disables_enforcement() {
+    fn explicitly_configured_missing_policy_fails_closed() {
         let dir = tempdir().unwrap();
         let missing = dir.path().join("missing.yaml");
-        assert!(PolicyEngine::load(&missing).unwrap().is_none());
+        let error = PolicyEngine::load(&missing).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("configured permission policy path does not exist"));
     }
 }

@@ -10,7 +10,7 @@
 // ── End-to-end ladder behavior (interactive; needs a GUI session) ────────────
 
 /// On a NATIVE Cocoa field (TextEdit), `delivery_mode:"background"` lands via the
-/// AX value-write and the driver confirms it: `path:"ax", verified:true`. This is
+/// AX value-write and the driver confirms it with accessibility read-back. This is
 /// the driver-verifiable happy path — no foreground needed, no screenshot needed.
 #[test]
 #[ignore]
@@ -111,15 +111,21 @@ fn background_type_on_native_cocoa_is_ax_verified() {
         .unwrap_or_else(|error| panic!("background TextEdit contract failed: {error}"));
         assert!(!typed.is_error(), "type_text errored: {}", typed.text());
         assert_eq!(
-            typed.path(),
-            Some("ax"),
+            typed.action_route(),
+            Some("accessibility"),
             "native Cocoa field should land via AX: {}",
             typed.text()
         );
         assert_eq!(
-            typed.verified(),
-            Some(true),
-            "AX write should read back as verified: {}",
+            typed.action_effect(),
+            Some("confirmed"),
+            "AX write should be confirmed by read-back: {}",
+            typed.text()
+        );
+        assert_eq!(
+            typed.structured()["evidence"][0]["kind"],
+            "value_readback",
+            "confirmed actions must expose publishable evidence: {}",
             typed.text()
         );
         passed.push(OracleKind::AxState);

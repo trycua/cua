@@ -115,9 +115,10 @@ pub(super) fn hotkey(modifiers: &[String], key: &str) -> anyhow::Result<()> {
         .seat
         .clone()
         .ok_or_else(|| anyhow::anyhow!("compositor exposes no wl_seat"))?;
-    let manager = state.manager.clone().ok_or_else(|| {
-        anyhow::anyhow!("compositor exposes no zwp_virtual_keyboard_manager_v1")
-    })?;
+    let manager = state
+        .manager
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("compositor exposes no zwp_virtual_keyboard_manager_v1"))?;
     let keyboard = manager.create_virtual_keyboard(&seat, &qh, ());
     let keymap = keymap_file()?;
     keyboard.keymap(1, keymap.as_fd(), XKB_KEYMAP.len() as u32 + 1);
@@ -234,12 +235,36 @@ mod tests {
         assert_eq!(
             hotkey_transitions(&["ctrl".into(), "shift".into()], "7").unwrap(),
             [
-                KeyTransition { keycode: 29, pressed: true, modifier_mask: 4 },
-                KeyTransition { keycode: 42, pressed: true, modifier_mask: 5 },
-                KeyTransition { keycode: 8, pressed: true, modifier_mask: 5 },
-                KeyTransition { keycode: 8, pressed: false, modifier_mask: 5 },
-                KeyTransition { keycode: 42, pressed: false, modifier_mask: 4 },
-                KeyTransition { keycode: 29, pressed: false, modifier_mask: 0 },
+                KeyTransition {
+                    keycode: 29,
+                    pressed: true,
+                    modifier_mask: 4
+                },
+                KeyTransition {
+                    keycode: 42,
+                    pressed: true,
+                    modifier_mask: 5
+                },
+                KeyTransition {
+                    keycode: 8,
+                    pressed: true,
+                    modifier_mask: 5
+                },
+                KeyTransition {
+                    keycode: 8,
+                    pressed: false,
+                    modifier_mask: 5
+                },
+                KeyTransition {
+                    keycode: 42,
+                    pressed: false,
+                    modifier_mask: 4
+                },
+                KeyTransition {
+                    keycode: 29,
+                    pressed: false,
+                    modifier_mask: 0
+                },
             ]
         );
     }

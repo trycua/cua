@@ -73,9 +73,15 @@ export interface MCPInputSchema {
 }
 
 export interface MCPPropertyDoc {
-  type: string;
+  type: string | string[];
   description: string;
   items?: { type: string };
+  enum?: string[];
+  minItems?: number;
+  maxItems?: number;
+  minimum?: number;
+  maximum?: number;
+  default?: unknown;
 }
 
 export interface MCPDocumentation {
@@ -593,7 +599,7 @@ export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: str
   lines.push('');
   lines.push('<Callout type="info">');
   lines.push(
-    "  **TCC auto-delegation.** When an MCP client spawns `cua-driver mcp` from an IDE terminal (Claude Code, Cursor, VS Code, Warp), macOS attributes the subprocess to the parent terminal — not `CuaDriver.app` — so AX probes fail against the wrong bundle id. `mcp` detects this and auto-launches a `cua-driver serve` daemon via `open -n -g -a CuaDriver --args serve`, then proxies every tool call through the daemon's Unix socket. Tool semantics are identical to the in-process path; no Python bridge is needed. Pass `--no-daemon-relaunch` (or set `CUA_DRIVER_MCP_NO_RELAUNCH=1`) to force in-process execution. See the [process model](/reference/cua-driver/process-model) for the full lifecycle, failure modes, and wrapper-author guidance."
+    "  **Runtime ownership.** On Windows and Linux, bare `cua-driver mcp` owns its SDK runtime directly and shuts it down on stdin EOF. On macOS it proxies to the installed `CuaDriver.app` daemon so AX and Screen Recording grants retain the app-bundle identity. Passing `--socket` selects an explicit daemon/service endpoint on every platform. See the [process model](/reference/cua-driver/process-model) for the full lifecycle and wrapper-author guidance."
   );
   lines.push('</Callout>');
   lines.push('');
@@ -636,6 +642,10 @@ export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: str
     {
       title: 'Browser tools',
       tools: ['page'],
+    },
+    {
+      title: 'Clipboard tools',
+      tools: ['clipboard_read', 'clipboard_write'],
     },
     {
       title: 'Recording tools',
@@ -716,7 +726,16 @@ export function generateMCPToolDoc(tool: MCPToolDoc): string[] {
       const requiredLabel = isRequired ? 'required' : 'optional';
       const typeLabel = formatPropertyType(prop);
       const description = escapeMdxText(prop.description ?? '');
-      const suffix = description ? `: ${description}` : '';
+      const details: string[] = [];
+      if (prop.default !== undefined) details.push(`default: \`${JSON.stringify(prop.default)}\``);
+      if (prop.minimum !== undefined || prop.maximum !== undefined) {
+        details.push(`range: ${prop.minimum ?? 'unbounded'}–${prop.maximum ?? 'unbounded'}`);
+      }
+      if (prop.minItems !== undefined || prop.maxItems !== undefined) {
+        details.push(`items: ${prop.minItems ?? 0}–${prop.maxItems ?? 'unbounded'}`);
+      }
+      const prose = [description, details.join('; ')].filter(Boolean).join(' ');
+      const suffix = prose ? `: ${prose}` : '';
       lines.push(`- \`${propName}\` (${typeLabel}, ${requiredLabel})${suffix}`);
     }
     lines.push('');
@@ -769,10 +788,13 @@ function formatPropertyType(prop: MCPPropertyDoc): string {
     const itemType = prop.items?.type ?? 'unknown';
     return `array of ${itemType}`;
   }
-  return prop.type;
+  return Array.isArray(prop.type) ? prop.type.join(' or ') : prop.type;
 }
 
 function syntheticExampleValue(name: string, prop: MCPPropertyDoc): unknown {
+  if (prop.enum?.length) {
+    return prop.enum[0];
+  }
   switch (prop.type) {
     case 'integer':
       if (name === 'pid') return 844;
@@ -794,6 +816,8 @@ function syntheticExampleValue(name: string, prop: MCPPropertyDoc): unknown {
     case 'array':
       if (name === 'keys') return ['cmd', 'c'];
       if (name === 'modifiers') return ['cmd'];
+      if (name === 'expect') return [{ window: { exists: true } }];
+      if (name === 'files' || (prop.minItems ?? 0) > 0) return ['example'];
       return [];
     case 'string':
       if (name === 'text') return 'hello';

@@ -328,12 +328,17 @@ fn run_preflight() {
     };
     driver.reaper().push(child.into_child());
 
-    driver.start_behavior_recording();
     let target = TargetWindow {
         pid: pid as u32,
         native_id: window_id,
     };
     let sentinel = ForegroundSentinel::launch(&mut driver);
+    // Sentinel activation is preflight setup, not behavior under test. Starting
+    // the recorder before launch turns its bring_to_front call into a captured
+    // action; nested Wayland then blocks on a setup-only full-display preimage.
+    // Keep the deliberate guard canaries in the recording while excluding the
+    // activation that establishes their baseline.
+    driver.start_behavior_recording();
     sentinel
         .assert_guard_canaries(&mut driver, target)
         .expect("foreground sentinel guard canaries failed");

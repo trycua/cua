@@ -21,6 +21,9 @@ pip install cua-computer-server
 
 # With MCP support
 pip install cua-computer-server[mcp]
+
+# With the generated native Cua Driver SDK backend
+pip install cua-computer-server[driver]
 ```
 
 ## Usage
@@ -37,6 +40,12 @@ python -m computer_server --host 0.0.0.0
 
 # With resolution scaling (useful for Retina displays or VMs)
 python -m computer_server --width 1512 --height 982
+
+# Delegate portable whole-desktop actions to Cua Driver in this process
+python -m computer_server --backend cua-driver --capture-scope desktop
+
+# Or connect to an already-running Cua Driver daemon
+python -m computer_server --backend cua-driver --driver-mode daemon
 ```
 
 By default the server binds to `127.0.0.1`. Deployments that need access from
@@ -48,6 +57,25 @@ This provides:
 - MCP server at `/mcp` endpoint (requires `fastmcp` package)
 
 MCP clients can connect via streamable HTTP at `http://localhost:8000/mcp`.
+
+### Cua Driver backend
+
+`--backend cua-driver` keeps computer-server's HTTP/WebSocket, MCP, shell,
+file, PTY, browser, accessibility, and window-management surfaces while routing
+portable desktop capture, pointer, scroll, and keyboard actions through the
+generated `cua-driver` Python SDK. The default `embedded` mode loads the Rust
+runtime into computer-server and does not require a daemon. `daemon` mode is a
+compatibility option for deployments that already own a long-lived driver.
+
+Each computer-server process opens a distinct driver session. Its capture scope
+defaults to `desktop`, which enables the `get_desktop_state` command and
+screen-absolute actions. Select `auto` or `window` with `--capture-scope` when a
+stricter session policy is required. In `auto`, call `escalate_capture_scope`
+with the concrete ladder-exhaustion reason before using desktop-only actions;
+computer-server never escalates implicitly. Strict `window` sessions cannot
+escalate. The equivalent environment variables are
+`CUA_DRIVER_MODE`, `CUA_DRIVER_SOCKET`, `CUA_DRIVER_SESSION_ID`, and
+`CUA_DRIVER_CAPTURE_SCOPE`.
 
 #### Resolution Scaling
 

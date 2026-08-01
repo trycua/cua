@@ -1,0 +1,275 @@
+---
+title: Permission modes
+description: Choose standard, bounded, or unrestricted authorization for Cua Driver.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Cua Driver enforces authorization inside the native runtime, after transport
+arguments are sanitized and before a platform action runs. CLI, MCP, direct
+SDK, private-worker, and service-backed calls all reach the same enforcement
+boundary.
+
+## Choose a mode
+
+| Mode | Best for | Runtime behavior |
+| --- | --- | --- |
+| `standard` | Normal local CLI and MCP use | Routine observation, input, file transfer, isolated browser use, recording, and agent-adjustable settings run without Cua prompts. Residual boundaries return a structured refusal unless they have an explicit grant or trusted host callback. |
+| `bounded` | Unattended agents, gateways, and embedded applications | Only tools and resources in a launch-approved manifest may run. In-scope work is silent. Out-of-scope work is denied. |
+| `unrestricted` | Disposable or fully trusted environments | Cua approval checks are bypassed after an explicit dangerous acknowledgement. Hard invariants and configured policy ceilings still apply. |
+
+`standard` is the default:
+
+```bash
+cua-driver mcp
+```
+
+Use `bounded` with a reviewed manifest:
+
+```bash
+cua-driver serve \
+  --permission-mode bounded \
+  --session-policy ./cua-session.yaml \
+  --approve-session-policy
+```
+
+Use `unrestricted` only when full autonomous access is intentional:
+
+```bash
+cua-driver serve --dangerously-bypass-approvals
+```
+
+Passing `--permission-mode unrestricted` without
+`--dangerously-bypass-approvals` fails closed.
+
+<Callout type="warn">
+  Unrestricted mode does not defend against prompt injection or unintended
+  model actions. Use it only where you accept the full effect of every
+  capability allowed by the built-in, managed, and user policy ceilings.
+</Callout>
+
+`autonomous` remains a manifest compatibility alias for `bounded`. `yolo`
+remains a configuration alias for `unrestricted`. New integrations should use
+the canonical names.
+
+## What standard allows
+
+Standard mode is designed to preserve practical autonomous workflows. It does
+not open a Cua confirmation card for routine actions.
+
+| Operation | Standard behavior |
+| --- | --- |
+| Observe windows, applications, and the desktop | Allow |
+| Click, type, scroll, drag, and focus | Allow |
+| Create and use a driver-owned isolated browser | Allow |
+| Read visible page content through typed browser tools | Allow |
+| Upload, download, screenshot, record, and replay validated paths | Allow |
+| Change agent-adjustable cursor and image settings | Allow and audit |
+| Terminate a process proven to have been launched by this runtime | Allow after process fingerprint revalidation |
+| Terminate a foreign process | Deny |
+| Run unbounded legacy page mutation scripts | Deny |
+| Raise an operating-system permission prompt from an agent tool call | Deny |
+| Attach to an existing logged-in Chromium profile | Require an explicit launch grant or trusted host authorization |
+| Invoke an unknown risk-bearing operation | Deny |
+
+Path canonicalization, browser-origin validation, process identity checks, and
+managed or user policy still apply when standard permits an operation.
+
+## Existing logged-in Chromium profiles
+
+An existing profile can contain live cookies and authenticated sites. Standard
+mode therefore keeps attachment as an explicit boundary.
+
+Authorize it for a newly launched MCP runtime:
+
+```bash
+cua-driver mcp --grant existing-profile
+```
+
+Authorize it for a daemon:
+
+```bash
+cua-driver serve --grant existing-profile
+```
+
+`--grant` is repeatable and is trusted launch configuration. It cannot modify
+an already-running daemon. Restart that daemon with the same grant when
+needed.
+
+Other valid authorization paths are:
+
+- A `bounded` manifest that allows `kind: existing_profile`.
+- A `DriverAuthorizationHost` callback installed by an embedding application.
+- `unrestricted` mode with its dangerous acknowledgement.
+- The temporary `browser-approve` compatibility artifact when the trusted
+  launcher explicitly enables it.
+
+An MCP transport marker, model-supplied Boolean, environment variable, or
+ordinary tool argument is never an attachment grant.
+
+One approved attachment covers the resulting browser binding. Tab changes and
+reconnection do not create repeated Cua authorization requests. Any configured
+origin scope still applies to live navigation and input.
+
+See [Browser Profile Attachment](/reference/cua-driver/browser-profile-attachment)
+for the platform and CDP boundary.
+
+## Bounded manifests
+
+Bounded mode is deny by default. A tool must appear in `allow.tools`, and every
+resource crossed by that call must match the manifest.
+
+Manifest version 2 supports application identities, browser profile kinds, and
+directory roots:
+
+```yaml
+version: 2
+mode: bounded
+expires_after: 8h
+idle_timeout: 30m
+
+allow:
+  tools:
+    - start_session
+    - end_session
+    - launch_app
+    - get_window_state
+    - click
+    - type_text
+    - browser_prepare
+    - get_browser_state
+    - browser_navigate
+    - browser_click
+    - browser_type
+    - browser_download
+    - kill_app
+
+resources:
+  apps:
+    - executable: /usr/bin/example-editor
+      launch: true
+      windows: all
+      terminate: driver_launched
+
+  browser:
+    profiles:
+      - kind: isolated
+      - kind: existing_profile
+    origins:
+      - https://app.example.com
+
+  files:
+    read:
+      - dir: /data/input
+        recursive: true
+    write:
+      - dir: /data/output
+        recursive: true
+
+  desktop:
+    display: false
+```
+
+On macOS, use `bundle_id` for an application identity. On Windows and Linux,
+use a canonical absolute `executable` path. `windows: all` allows windows
+owned by the matching application. `terminate: driver_launched` permits
+termination only when Cua proved that the current runtime launched that exact
+process instance.
+
+Browser origins match exact scheme, host, and port. File roots are
+canonicalized and compared by path component, so a shared string prefix or a
+symlink escape does not grant access.
+
+Version 1 manifests remain loadable. They may name exact PIDs, windows, and
+paths, but version 2 is preferred for pre-launch and unattended workflows.
+
+For a complete tested example, see
+[Write a bounded manifest](/how-to-guides/driver/write-a-bounded-manifest).
+
+## Authorization stack
+
+Every call must pass all applicable layers:
+
+1. Hard invariants, including self-targeting and protected-host checks.
+2. The reviewed built-in tool and risk map.
+3. Administrator policy from `CUA_DRIVER_MANAGED_POLICY_FILE`, when set.
+4. User policy from `CUA_DRIVER_POLICY_FILE`, when set.
+5. The bounded manifest, when the active mode is `bounded`.
+6. A launch grant or trusted host authorization for a residual standard-mode
+   boundary.
+
+Each layer can narrow access. No grant or permission mode can widen a managed
+or user policy.
+
+The `tools/list`, `manifest`, and status surfaces expose content-free
+enforcement descriptors. Each descriptor states its adapter ID, risk class,
+resource scope, mode behavior, authorization source, revocation triggers, and
+stable refusal code.
+
+## Host authorization and activity
+
+An embedding application may install `DriverAuthorizationHost` when it wants
+to decide a residual standard-mode request itself. Cua supplies an attested,
+request-bound resource and digest. The host returns allow, deny, or cancel with
+that exact digest.
+
+Cua does not render or prescribe the host's consent experience. The host may
+use product UI, administrator policy, a second device, or another trusted
+decision source.
+
+An optional `DriverActivityObserver` receives content-free action,
+authorization, grant, and session events. Events never contain page text,
+typed input, file contents, screenshots, or raw resource identities.
+
+When no launch grant or host callback exists, a residual boundary returns a
+structured `authorization_required` refusal. It does not open a Cua-owned
+modal.
+
+## Revocation
+
+End one public session:
+
+```bash
+cua-driver revoke --session research-1
+```
+
+Suspend the complete runtime generation:
+
+```bash
+cua-driver revoke --all
+```
+
+Session end removes its grants, browser bindings, launch provenance, recording
+state, and cursor. The ended session label remains tombstoned until an explicit
+`start_session` re-declares it.
+
+`revoke --all` is terminal for that runtime generation. Later calls, including
+anonymous calls, return `authorization_suspended`. Restart the runtime to
+create a fresh authorization generation.
+
+## Cursor and session badge
+
+The semantic cursor is optional activity feedback. A declared session displays
+its sanitized public session name in a badge below the cursor. The badge uses
+the session color, strips control characters, collapses whitespace, and
+truncates long labels.
+
+The cursor and badge are not authorization signals. Hiding the cursor also
+hides the badge. Headless sessions do not require either.
+
+## Security boundary
+
+The host owns the permission mode, manifest, launch grants, and any human
+consent UX. Agent tools cannot change them.
+
+Same-user native code, malware, and automation with control of the same
+desktop are outside Cua Driver's security boundary. Cua can prevent an agent
+from forging its own tool arguments, but it cannot turn an ordinary desktop
+window into a secure desktop.
+
+## Related
+
+- [Permission policies](/reference/cua-driver/permission-policies)
+- [Browser Profile Attachment](/reference/cua-driver/browser-profile-attachment)
+- [Write a bounded manifest](/how-to-guides/driver/write-a-bounded-manifest)
+- [Restrict tool access](/how-to-guides/driver/restrict-tool-access)

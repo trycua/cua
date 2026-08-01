@@ -24,32 +24,28 @@ impl Default for LinuxPageBackend {
 
 #[async_trait]
 impl PageBackend for LinuxPageBackend {
-    async fn get_text(&self, pid: i32, window_id: u32) -> anyhow::Result<String> {
+    async fn get_text(&self, pid: i32, window_id: u64) -> anyhow::Result<String> {
         let pid_u = pid as u32;
-        let xid = window_id as u64;
-        let result = tokio::task::spawn_blocking(move || {
-            crate::atspi::walk_tree(pid_u, xid, None)
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("AT-SPI walk task failed: {e}"))?;
+        let xid = window_id;
+        let result = tokio::task::spawn_blocking(move || crate::atspi::walk_tree(pid_u, xid, None))
+            .await
+            .map_err(|e| anyhow::anyhow!("AT-SPI walk task failed: {e}"))?;
         Ok(extract_text_from_markdown(&result.tree_markdown))
     }
 
     async fn query_dom(
         &self,
         pid: i32,
-        window_id: u32,
+        window_id: u64,
         css_selector: &str,
         _attributes: &[String],
     ) -> anyhow::Result<String> {
         let pid_u = pid as u32;
-        let xid = window_id as u64;
+        let xid = window_id;
         let selector = css_selector.to_owned();
-        let result = tokio::task::spawn_blocking(move || {
-            crate::atspi::walk_tree(pid_u, xid, None)
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("AT-SPI walk task failed: {e}"))?;
+        let result = tokio::task::spawn_blocking(move || crate::atspi::walk_tree(pid_u, xid, None))
+            .await
+            .map_err(|e| anyhow::anyhow!("AT-SPI walk task failed: {e}"))?;
 
         if selector.contains("[data-") {
             anyhow::bail!(
@@ -109,7 +105,7 @@ impl PageBackend for LinuxPageBackend {
     async fn execute_javascript(
         &self,
         _pid: i32,
-        _window_id: u32,
+        _window_id: u64,
         javascript: &str,
     ) -> anyhow::Result<String> {
         let port: u16 = match std::env::var("CUA_DRIVER_CDP_PORT")
@@ -131,7 +127,7 @@ impl PageBackend for LinuxPageBackend {
     async fn execute_javascript_targeted(
         &self,
         pid: i32,
-        window_id: u32,
+        window_id: u64,
         javascript: &str,
         cdp_port: Option<u16>,
         target_url_contains: Option<&str>,
@@ -139,19 +135,20 @@ impl PageBackend for LinuxPageBackend {
         if cdp_port.is_none() && target_url_contains.is_none() {
             return self.execute_javascript(pid, window_id, javascript).await;
         }
-        let port = cdp_port.or_else(|| {
-            std::env::var("CUA_DRIVER_CDP_PORT")
-                .ok()
-                .and_then(|value| value.parse::<u16>().ok())
-        }).ok_or_else(|| anyhow::anyhow!(
-            "targeted execute_javascript on Linux requires cdp_port or CUA_DRIVER_CDP_PORT"
-        ))?;
-        let result = cua_driver_core::cdp::evaluate_targeted(
-            port,
-            javascript,
-            true,
-            target_url_contains,
-        ).await?;
+        let port = cdp_port
+            .or_else(|| {
+                std::env::var("CUA_DRIVER_CDP_PORT")
+                    .ok()
+                    .and_then(|value| value.parse::<u16>().ok())
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "targeted execute_javascript on Linux requires cdp_port or CUA_DRIVER_CDP_PORT"
+                )
+            })?;
+        let result =
+            cua_driver_core::cdp::evaluate_targeted(port, javascript, true, target_url_contains)
+                .await?;
         Ok(format!("cdp.runtime.evaluate.user_gesture: {result}"))
     }
 }

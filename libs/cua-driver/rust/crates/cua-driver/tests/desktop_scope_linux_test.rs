@@ -1,6 +1,6 @@
 //! Linux **desktop-scope** (vision/foreground) modality through the SAME
-//! cua-driver interface as Windows/macOS: `set_config capture_scope=desktop` +
-//! a window-less screen-absolute `click` (no `pid`/`window_id`/`list_windows`).
+//! cua-driver interface as Windows/macOS: a strict desktop session plus a
+//! window-less screen-absolute `click` (no `pid`/`window_id`/`list_windows`).
 //! The Linux actuator warps the pointer and injects a real button press via the
 //! XTest extension — the peer of the Windows `WindowFromPoint` + macOS
 //! global-HID desktop click. (XTest delivering to the under-pointer window is
@@ -11,16 +11,14 @@
 //! `frame` (AT-SPI Component extents), asserts the counter advanced, plus the
 //! window-scope rejection gate.
 //!
-//! Linux config is global-only (no per-session override), so `set_config`
-//! capture_scope writes the on-disk default — the test resets it to `window`
-//! before asserting so a failure can't leave the sandbox in desktop scope.
+//! A separate strict-window session observes the fixture, proving two live
+//! sessions can use different capture scopes without shared mutable config.
 //!
 //! #[ignore] (needs an X11/Xwayland display + AT-SPI + the GTK3 harness). Run:
 //!   cargo test -p cua-driver --test desktop_scope_linux_test -- --ignored --nocapture --test-threads=1
 
 #![cfg(target_os = "linux")]
 
-use std::panic::{self, AssertUnwindSafe};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -87,11 +85,11 @@ fn launch(driver: &mut McpDriver) -> Option<(u32, u64)> {
     None
 }
 
-fn ax_snapshot(driver: &mut McpDriver, pid: u32, wid: u64) -> serde_json::Value {
+fn ax_snapshot(driver: &mut McpDriver, session: &str, pid: u32, wid: u64) -> serde_json::Value {
     driver
         .call(
             "get_window_state",
-            serde_json::json!({ "pid": pid as i64, "window_id": wid, "capture_mode": "ax" }),
+            serde_json::json!({ "session": session, "pid": pid as i64, "window_id": wid, "capture_mode": "ax" }),
         )
         .structured()
         .clone()
@@ -119,6 +117,23 @@ fn increment_center(snap: &serde_json::Value) -> Option<(i64, i64)> {
     Some(((x + w / 2.0) as i64, (y + h / 2.0) as i64))
 }
 
+fn element_center_containing(snap: &serde_json::Value, marker: &str) -> Option<(i64, i64)> {
+    let element = snap["elements"].as_array()?.iter().find(|element| {
+        serde_json::to_string(element)
+            .map(|serialized| serialized.contains(marker))
+            .unwrap_or(false)
+            && element
+                .get("frame")
+                .map(|frame| frame.is_object())
+                .unwrap_or(false)
+    })?;
+    let frame = &element["frame"];
+    Some((
+        (frame["x"].as_f64()? + frame["w"].as_f64()? / 2.0) as i64,
+        (frame["y"].as_f64()? + frame["h"].as_f64()? / 2.0) as i64,
+    ))
+}
+
 fn counter(snap: &serde_json::Value) -> Option<u64> {
     let tree = snap["tree_markdown"].as_str()?;
     let idx = tree.find("counter=")? + "counter=".len();
@@ -129,26 +144,36 @@ fn counter(snap: &serde_json::Value) -> Option<u64> {
     digits.parse().ok()
 }
 
-fn set_scope(driver: &mut McpDriver, scope: &str) {
+fn marker_value(snap: &serde_json::Value, marker: &str) -> Option<u64> {
+    let tree = snap["tree_markdown"].as_str()?;
+    let idx = tree.find(marker)? + marker.len();
+    let digits: String = tree[idx..]
+        .chars()
+        .take_while(|character| character.is_ascii_digit())
+        .collect();
+    digits.parse().ok()
+}
+
+fn desktop_input_route() -> DriverRoute {
+    if std::env::var_os("CUA_INJECT_SOCKET").is_some() {
+        DriverRoute::LinuxCuaCompositorInject
+    } else if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        DriverRoute::LinuxWaylandVirtualPointer
+    } else {
+        DriverRoute::LinuxXTest
+    }
+}
+
+fn start_scope(driver: &mut McpDriver, session: &str, scope: &str) {
     let r = driver.call(
-        "set_config",
-        serde_json::json!({ "key": "capture_scope", "value": scope }),
+        "start_session",
+        serde_json::json!({ "session": session, "capture_scope": scope }),
     );
     assert!(
         !r.is_error(),
-        "set_config capture_scope={scope} failed: {}",
+        "start_session capture_scope={scope} failed: {}",
         r.text()
     );
-}
-
-fn with_desktop_scope<R>(driver: &mut McpDriver, test: impl FnOnce(&mut McpDriver) -> R) -> R {
-    set_scope(driver, "desktop");
-    let result = panic::catch_unwind(AssertUnwindSafe(|| test(driver)));
-    set_scope(driver, "window");
-    match result {
-        Ok(value) => value,
-        Err(payload) => panic::resume_unwind(payload),
-    }
 }
 
 // ── tests ───────────────────────────────────────────────────────────────────────
@@ -167,25 +192,25 @@ fn desktop_scope_windowless_click_lands_on_control() {
         Targeting::Px,
         Delivery::Foreground,
         Scope::Desktop,
-        if std::env::var_os("CUA_INJECT_SOCKET").is_some() {
-            DriverRoute::LinuxCuaCompositorInject
-        } else {
-            DriverRoute::LinuxXTest
-        },
+        desktop_input_route(),
         vec![OracleKind::FixtureState],
     );
     execute_case(case, |evidence| {
         let mut driver = McpDriver::spawn_named(cell_id).expect("start source-built Linux driver");
         *evidence = recording_evidence(driver.recording_dir());
+        let window_session = format!("{cell_id}-window");
+        let desktop_session = format!("{cell_id}-desktop");
+        start_scope(&mut driver, &window_session, "window");
+        start_scope(&mut driver, &desktop_session, "desktop");
         let (pid, wid) = launch(&mut driver).expect("required GTK3 harness did not launch");
 
         // Settle for the AT-SPI tree to register the button + its extents.
-        let mut snap = ax_snapshot(&mut driver, pid, wid);
+        let mut snap = ax_snapshot(&mut driver, &window_session, pid, wid);
         let mut center = increment_center(&snap);
         let deadline = Instant::now() + Duration::from_secs(8);
         while center.is_none() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(400));
-            snap = ax_snapshot(&mut driver, pid, wid);
+            snap = ax_snapshot(&mut driver, &window_session, pid, wid);
             center = increment_center(&snap);
         }
         let Some((cx, cy)) = center else {
@@ -195,9 +220,13 @@ fn desktop_scope_windowless_click_lands_on_control() {
         println!("[desktop-linux] increment button screen-center=({cx},{cy}) pre-counter={pre}");
         let posture = driver.call(
             "bring_to_front",
-            serde_json::json!({"pid": pid as i64, "window_id": wid}),
+            serde_json::json!({"session": window_session, "pid": pid as i64, "window_id": wid}),
         );
-        assert!(!posture.is_error(), "could not foreground GTK3 fixture: {}", posture.text());
+        assert!(
+            !posture.is_error(),
+            "could not foreground GTK3 fixture: {}",
+            posture.text()
+        );
         std::thread::sleep(Duration::from_millis(300));
         driver.start_behavior_recording();
 
@@ -209,11 +238,16 @@ fn desktop_scope_windowless_click_lands_on_control() {
         // counter further, and `post > pre` still holds. We assert the click was
         // *dispatched as desktop scope* on the first attempt, and that it eventually
         // *lands* within the budget.
-        let (post, first_text) = with_desktop_scope(&mut driver, |driver| {
+        let (post, first_text) = {
             let mut post = pre;
             let mut first_text = String::new();
             for attempt in 0..12 {
-                let clicked = driver.call("click", serde_json::json!({ "x": cx, "y": cy }));
+                let clicked = driver.call(
+                    "click",
+                    serde_json::json!({
+                        "session": desktop_session, "scope": "desktop", "x": cx, "y": cy
+                    }),
+                );
                 if attempt == 0 {
                     first_text = clicked.text().to_string();
                     assert!(
@@ -223,13 +257,13 @@ fn desktop_scope_windowless_click_lands_on_control() {
                     );
                 }
                 std::thread::sleep(Duration::from_millis(500));
-                post = counter(&ax_snapshot(driver, pid, wid)).unwrap_or(pre);
+                post = counter(&ax_snapshot(&mut driver, &window_session, pid, wid)).unwrap_or(pre);
                 if post > pre {
                     break;
                 }
             }
             (post, first_text)
-        });
+        };
 
         assert!(
             first_text.to_lowercase().contains("desktop scope"),
@@ -240,6 +274,176 @@ fn desktop_scope_windowless_click_lands_on_control() {
             "counter did not advance after window-less desktop clicks: pre={pre} post={post} \
          (the harness window never became clickable at ({cx},{cy}) within the retry budget)"
         );
+        Observation::delivered_with_fixture_state(Vec::new())
+    });
+}
+
+#[test]
+#[ignore]
+fn desktop_scope_windowless_scroll_lands_on_control() {
+    let cell_id = "linux-gtk3-desktop-scroll-px-foreground";
+    let case = CaseSpec::delivered(
+        cell_id,
+        "gtk3",
+        "gtk3",
+        "scroll",
+        Targeting::Px,
+        Delivery::Foreground,
+        Scope::Desktop,
+        desktop_input_route(),
+        vec![OracleKind::FixtureState],
+    );
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_named(cell_id).expect("start source-built Linux driver");
+        *evidence = recording_evidence(driver.recording_dir());
+        let window_session = format!("{cell_id}-window");
+        let desktop_session = format!("{cell_id}-desktop");
+        start_scope(&mut driver, &window_session, "window");
+        start_scope(&mut driver, &desktop_session, "desktop");
+        let (pid, wid) = launch(&mut driver).expect("required GTK3 harness did not launch");
+        let posture = driver.call(
+            "bring_to_front",
+            serde_json::json!({"session": window_session, "pid": pid as i64, "window_id": wid}),
+        );
+        assert!(
+            !posture.is_error(),
+            "could not foreground GTK3 fixture: {}",
+            posture.text()
+        );
+
+        let mut snap = ax_snapshot(&mut driver, &window_session, pid, wid);
+        let deadline = Instant::now() + Duration::from_secs(8);
+        let (x, y) = loop {
+            if let Some(center) = element_center_containing(&snap, "scroll-tall-viewport") {
+                break center;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "visible GTK3 scroll target was not exposed in the AT-SPI tree"
+            );
+            std::thread::sleep(Duration::from_millis(300));
+            snap = ax_snapshot(&mut driver, &window_session, pid, wid);
+        };
+        let before = marker_value(&snap, "scroll_offset=").unwrap_or(0);
+        driver.start_behavior_recording();
+        let response = driver.call(
+            "scroll",
+            serde_json::json!({
+                "session": desktop_session, "scope": "desktop", "x": x, "y": y,
+                "direction": "down", "by": "line", "amount": 5
+            }),
+        );
+        assert!(
+            !response.is_error(),
+            "desktop scroll failed: {}; raw={}",
+            response.text(),
+            response.raw
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let after = loop {
+            let state = ax_snapshot(&mut driver, &window_session, pid, wid);
+            let offset = marker_value(&state, "scroll_offset=").unwrap_or(before);
+            if offset > before || Instant::now() >= deadline {
+                break offset;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        assert!(
+            after > before,
+            "desktop scroll reported success but GTK3 scroll_offset did not change: \
+             {before} -> {after}; response={}; raw={}",
+            response.text(),
+            response.raw
+        );
+        Observation::delivered_with_fixture_state(Vec::new())
+    });
+}
+
+#[test]
+#[ignore]
+fn desktop_scope_hotkey_releases_modifiers() {
+    let cell_id = "linux-gtk3-desktop-hotkey-px-foreground";
+    let case = CaseSpec::delivered(
+        cell_id,
+        "gtk3",
+        "gtk3",
+        "hotkey",
+        Targeting::Px,
+        Delivery::Foreground,
+        Scope::Desktop,
+        desktop_input_route(),
+        vec![OracleKind::FixtureState],
+    );
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_named(cell_id).expect("start source-built Linux driver");
+        *evidence = recording_evidence(driver.recording_dir());
+        let window_session = format!("{cell_id}-window");
+        let desktop_session = format!("{cell_id}-desktop");
+        start_scope(&mut driver, &window_session, "window");
+        start_scope(&mut driver, &desktop_session, "desktop");
+        let (pid, wid) = launch(&mut driver).expect("required GTK3 harness did not launch");
+        let posture = driver.call(
+            "bring_to_front",
+            serde_json::json!({"session": window_session, "pid": pid as i64, "window_id": wid}),
+        );
+        assert!(
+            !posture.is_error(),
+            "could not foreground GTK3 fixture: {}",
+            posture.text()
+        );
+        std::thread::sleep(Duration::from_millis(300));
+        driver.start_behavior_recording();
+
+        let hotkey = driver.call(
+            "hotkey",
+            serde_json::json!({
+                "session": desktop_session, "scope": "desktop",
+                "keys": ["ctrl", "shift", "k"]
+            }),
+        );
+        assert!(
+            !hotkey.is_error(),
+            "desktop hotkey failed: {}",
+            hotkey.text()
+        );
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let state = ax_snapshot(&mut driver, &window_session, pid, wid);
+            if marker_value(&state, "hotkeys=").unwrap_or(0) >= 1 {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "GTK3 did not observe ctrl+shift+k: {}",
+                hotkey.text()
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        let plain_key = driver.call(
+            "press_key",
+            serde_json::json!({
+                "session": desktop_session, "scope": "desktop", "key": "f5"
+            }),
+        );
+        assert!(
+            !plain_key.is_error(),
+            "post-hotkey plain F5 failed: {}",
+            plain_key.text()
+        );
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let state = ax_snapshot(&mut driver, &window_session, pid, wid);
+            if marker_value(&state, "key_presses=").unwrap_or(0) >= 1 {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "plain F5 did not match after hotkey; modifier state may still be latched"
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
         Observation::delivered_with_fixture_state(Vec::new())
     });
 }
@@ -257,18 +461,22 @@ fn window_scope_rejects_windowless_click() {
         Targeting::Px,
         Delivery::NotApplicable,
         Scope::Window,
-        DriverRoute::Composite,
+        DriverRoute::CaptureScopeGate,
         vec![OracleKind::Protocol],
     );
     execute_case(case, |evidence| {
         let mut driver = McpDriver::spawn_named(cell_id).expect("start source-built Linux driver");
         *evidence = recording_evidence(driver.recording_dir());
-        set_scope(&mut driver, "window");
+        start_scope(&mut driver, cell_id, "window");
         driver.start_behavior_recording();
-        let r = driver.call("click", serde_json::json!({ "x": 100, "y": 100 }));
+        let r = driver.call(
+            "click",
+            serde_json::json!({
+                "session": cell_id, "scope": "desktop", "x": 100, "y": 100
+            }),
+        );
         assert!(
-            r.is_error()
-                && r.structured()["code"].as_str() == Some("desktop_scope_disabled"),
+            r.is_error() && r.structured()["code"].as_str() == Some("desktop_scope_disabled"),
             "window-scope window-less click was NOT rejected: {}",
             r.text()
         );

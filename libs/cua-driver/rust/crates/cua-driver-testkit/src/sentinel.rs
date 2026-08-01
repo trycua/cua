@@ -20,21 +20,45 @@ pub struct ForegroundSentinel {
 
 impl ForegroundSentinel {
     pub fn launch(driver: &mut impl Driver) -> Self {
-        let electron = electron_fixture();
-        assert!(
-            electron.path.exists(),
-            "Electron sentinel fixture is missing at {}",
-            electron.path.display()
+        let mut last_error = None;
+        for attempt in 1..=2 {
+            match Self::try_launch(driver) {
+                Ok(sentinel) => return sentinel,
+                Err(error) => {
+                    eprintln!(
+                        "[testkit] foreground sentinel launch attempt {attempt}/2 failed: {error}"
+                    );
+                    last_error = Some(error);
+                    if attempt < 2 {
+                        std::thread::sleep(Duration::from_millis(300));
+                    }
+                }
+            }
+        }
+        panic!(
+            "could not launch foreground sentinel after bounded retry: {}",
+            last_error.unwrap_or_else(|| "unknown launch error".to_owned())
         );
+    }
+
+    fn try_launch(driver: &mut impl Driver) -> Result<Self, String> {
+        let electron = electron_fixture();
+        if !electron.path.exists() {
+            return Err(format!(
+                "Electron sentinel fixture is missing at {}",
+                electron.path.display()
+            ));
+        }
         let user_data = tempfile::Builder::new()
             .prefix("cua-e2e-sentinel-")
             .tempdir()
-            .expect("create sentinel user-data directory");
+            .map_err(|error| format!("create sentinel user-data directory: {error}"))?;
         let journal_path = user_data.path().join("sentinel-events.jsonl");
-        fs::write(&journal_path, "").expect("initialize sentinel event journal");
+        fs::write(&journal_path, "")
+            .map_err(|error| format!("initialize sentinel event journal: {error}"))?;
         let cdp_port = TcpListener::bind(("127.0.0.1", 0))
             .and_then(|listener| listener.local_addr())
-            .expect("allocate sentinel CDP port")
+            .map_err(|error| format!("allocate sentinel CDP port: {error}"))?
             .port();
         let mut command = Command::new(&electron.path);
         command
@@ -45,7 +69,8 @@ impl ForegroundSentinel {
             .env("CUA_ELECTRON_CDP_PORT", cdp_port.to_string())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        let child = spawn_in_job(&mut command).expect("launch foreground sentinel");
+        let child = spawn_in_job(&mut command)
+            .map_err(|error| format!("launch foreground sentinel: {error}"))?;
         let launched_pid = child.id();
         let mut reaper = ChildReaper::new();
         reaper.push(child);
@@ -73,10 +98,9 @@ impl ForegroundSentinel {
                 );
                 break target;
             }
-            assert!(
-                Instant::now() < window_deadline,
-                "foreground sentinel window did not appear"
-            );
+            if Instant::now() >= window_deadline {
+                return Err("foreground sentinel window did not appear".to_owned());
+            }
             std::thread::sleep(Duration::from_millis(100));
         };
         reaper.track_pid(target.pid);
@@ -84,33 +108,38 @@ impl ForegroundSentinel {
         let focus_deadline = Instant::now() + Duration::from_secs(10);
         if is_wayland_session() {
             wait_for_journal(&journal_path, focus_deadline, r#""kind":"ready""#, "ready");
-            activate_native_foreground(driver, target);
+            try_activate_native_foreground(driver, target)?;
             // Electron may already be focused before its preload listener is ready.
             // The compositor observation is the authoritative Wayland focus gate.
             wait_for_native_focus_stable(target);
         } else {
-            loop {
-                let journal = fs::read_to_string(&journal_path).unwrap_or_default();
-                if journal.contains(r#""kind":"ready""#) && journal.contains(r#""kind":"focus""#) {
-                    break;
-                }
-                assert!(
-                    Instant::now() < focus_deadline,
-                    "foreground sentinel did not become ready and focused: {journal}"
-                );
-                std::thread::sleep(Duration::from_millis(100));
-            }
-            activate_native_foreground(driver, target);
+            wait_for_journal(&journal_path, focus_deadline, r#""kind":"ready""#, "ready");
+            try_activate_native_foreground(driver, target)?;
             wait_for_native_focus_stable(target);
+            // On macOS the Electron renderer can report `document.hasFocus()`
+            // as false at DOMContentLoaded, then become natively focused
+            // without emitting a later DOM `focus` event. Require the setup
+            // click below to reach the WebContents instead: that proves the
+            // renderer is the input target before the journal is reset.
+            #[cfg(not(target_os = "macos"))]
+            wait_for_journal(&journal_path, focus_deadline, r#""kind":"focus""#, "focus");
+            #[cfg(target_os = "macos")]
+            wait_for_journal(
+                &journal_path,
+                focus_deadline,
+                r#""kind":"click""#,
+                "focused by setup click",
+            );
         }
-        fs::write(&journal_path, "").expect("reset focused sentinel journal");
+        fs::write(&journal_path, "")
+            .map_err(|error| format!("reset focused sentinel journal: {error}"))?;
 
-        Self {
+        Ok(Self {
             journal_path,
             target,
             _reaper: reaper,
             _user_data: user_data,
-        }
+        })
     }
 
     pub fn observe(&self) -> (Vec<OracleKind>, Vec<String>) {
@@ -182,12 +211,22 @@ impl ForegroundSentinel {
         wait_for_event(&self.journal_path, "heartbeat", Duration::from_secs(2))?;
         reset_journal(&self.journal_path)?;
 
+        let canary_key = if std::env::var("CUA_E2E_WAYLAND_SESSION")
+            .is_ok_and(|session| session == "cua-compositor")
+        {
+            // The intentionally small injection protocol exposes navigation
+            // and control keys, not printable letters. Space still exercises
+            // the renderer keydown leak detector without broadening it.
+            "space"
+        } else {
+            "a"
+        };
         let leaked_key = driver.call(
             "press_key",
             serde_json::json!({
                 "pid": self.target.pid,
                 "window_id": self.target.native_id,
-                "key": "a",
+                "key": canary_key,
                 "delivery_mode": "foreground",
             }),
         );
@@ -290,6 +329,13 @@ impl ForegroundSentinel {
         activate_native_foreground(driver, self.target);
         wait_for_native_focus_stable(self.target);
         std::thread::sleep(Duration::from_millis(100));
+        reset_journal(&self.journal_path)?;
+        // Windows establishes focus with a physical click. Its DOM `click`
+        // can arrive after the native focus transition and the first journal
+        // reset, falsely attributing setup input to the background action.
+        // A later heartbeat is an event-loop barrier: once observed, clear the
+        // journal again so the action boundary starts from a quiet sentinel.
+        wait_for_event(&self.journal_path, "heartbeat", Duration::from_secs(2))?;
         reset_journal(&self.journal_path)?;
         self.assert_background_posture(target)
     }
@@ -426,6 +472,14 @@ fn is_wayland_session() -> bool {
 }
 
 fn activate_native_foreground(driver: &mut impl Driver, target: TargetWindow) {
+    try_activate_native_foreground(driver, target)
+        .unwrap_or_else(|error| panic!("could not activate foreground sentinel: {error}"));
+}
+
+fn try_activate_native_foreground(
+    driver: &mut impl Driver,
+    target: TargetWindow,
+) -> Result<(), String> {
     let response = driver.call(
         "bring_to_front",
         serde_json::json!({
@@ -433,16 +487,46 @@ fn activate_native_foreground(driver: &mut impl Driver, target: TargetWindow) {
             "window_id": target.native_id,
         }),
     );
-    assert!(
-        !response.is_error(),
-        "could not activate foreground sentinel: {}",
-        response.text()
-    );
+    if response.is_error() {
+        return Err(response.text().to_owned());
+    }
     #[cfg(target_os = "linux")]
-    focus_sway_target(driver, target)
-        .expect("could not focus foreground sentinel through Sway IPC");
+    focus_sway_target(driver, target).map_err(|error| {
+        format!("could not focus foreground sentinel through Sway IPC: {error}")
+    })?;
     #[cfg(target_os = "windows")]
     physically_focus_windows_sentinel(target);
+    #[cfg(target_os = "macos")]
+    focus_macos_sentinel_contents(driver, target)?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn focus_macos_sentinel_contents(
+    driver: &mut impl Driver,
+    target: TargetWindow,
+) -> Result<(), String> {
+    // A native app activation can leave Electron's renderer without keyboard
+    // focus even though WindowServer reports its window at the front. This
+    // bounded setup click lands well inside every canonical sentinel window
+    // and is cleared from the journal before any behavioral action begins.
+    let response = driver.call(
+        "click",
+        serde_json::json!({
+            "pid": target.pid,
+            "window_id": target.native_id,
+            "x": 320.0,
+            "y": 240.0,
+            "delivery_mode": "background",
+        }),
+    );
+    if response.is_error() {
+        return Err(format!(
+            "could not focus foreground sentinel WebContents: {}",
+            response.text()
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]

@@ -6,9 +6,8 @@ URLs, profile paths, and raw DevTools endpoint identifiers.
 
 ## Definition of done
 
-- Add a capability-aware browser API with five typed tools:
-  `get_browser_state`, `browser_prepare`, `browser_navigate`, `browser_click`,
-  and `browser_type`.
+- Add a capability-aware browser API whose typed tools share one exact target,
+  tab, frame, and ref model.
 - Keep `get_browser_state` read-only and make setup explicit.
 - Bind native `(pid, window_id)` targets to browser tabs exactly or refuse all
   mutation. Never promote a heuristic match into an action route.
@@ -534,3 +533,226 @@ page pass on the physical host, so this result is an environment limitation in
 that VM image rather than a browser-tool or fixture regression. The matrix
 keeps its readiness assertion; it does not convert the blank surface into a
 pass or an expected product refusal.
+
+## 2026-07-16: existing-profile attachment and bounded reconnect
+
+Implemented the reviewed existing-profile strategy without changing the
+driver-owned isolated profile contract:
+
+- `browser_prepare` accepts the tagged
+  `strategy:{kind:"existing_profile"}` request only with an exact pid,
+  native window, named session, and five-minute single-use artifact minted by
+  the interactive `browser-approve` CLI. The ordinary MCP host marker cannot
+  authorize this route.
+- Grants live only in daemon memory and are scoped to public and transport
+  session, process fingerprint, native window, browser product, endpoint, and
+  connection generation. Idle/absolute expiry, consent dismissal, identity
+  change, reconnect exhaustion, session end, and daemon restart revoke the
+  grant and release its claimed socket.
+- One browser-level CDP connection is owned per generation. Reconnect is
+  single-flight per approved browser, has three attempts under one bounded
+  deadline, re-proves endpoint/process identity, and invalidates every older
+  target, tab, snapshot, frame, and ref capability.
+- Browser mutations serialize by process fingerprint plus real CDP target, so
+  two sessions cannot interleave actions in the same tab while independent
+  tabs remain parallel. Keystroke typing reports exact requested and delivered
+  character counts and returns `browser_input_incomplete` for a partial prefix.
+- Consent-bearing recording turns persist redacted metadata and result only.
+  Browser screenshots, AX snapshots, approval tokens, endpoint addresses,
+  ports, profile data, and authenticated page content are suppressed.
+
+The macOS Chrome adapter discovers a unique PID-owned loopback listener and
+uses a bounded native AX adapter. It acts only on one browser-owned modal sheet
+with remote-debugging corroboration and one semantic Allow button advertising
+AXPress. During physical-host validation, Chrome exposed the same top-level
+window through both AXChildren and AXWindows with different proxy pointers;
+top-level deduplication now uses Core Foundation object equality so a single
+sheet cannot become a false ambiguous match.
+
+A fresh disposable Chrome profile provided the real acceptance evidence. The
+user-facing remote-debugging toggle exposed one PID-owned listener; the exact
+CLI artifact authorized one call; Cua Driver pressed Chrome's consent action;
+`browser_prepare` returned `attached_existing_profile`; and the following
+`get_browser_state(pid, window_id, session)` produced an exact
+`native_cdp_window` binding without launching, restarting, copying, or changing
+the profile. A separate disposable-profile standalone harness proves the same
+public contract and a DOM mutation against an independent fixture oracle.
+
+Final local verification passed 236 core tests, 134 macOS platform tests, 102
+CLI tests, the protocol and session integration suites, and the ignored
+source-built `standalone_browser_existing_profile` real-browser row. The shared
+Windows/Linux/testkit packages compile with the additive contract. The exact
+branch build was installed locally as Cua Driver 0.8.3; its stable app identity
+retained both Accessibility and Screen Recording grants.
+
+Windows and Linux compile the same contract, grant, generation, mutation, and
+refusal model. Their native consent adapters remain strict refusals until an
+interactive UIA or AT-SPI harness proves stable browser-owned prompt semantics;
+no unsupported prompt route is advertised as working.
+
+The committed source snapshot was also replayed natively on isolated remote VM
+staging paths. The interactive Windows VM passed all 236 shared-core tests and
+96 Windows platform tests, with the two pre-existing cache UAF repro cases
+remaining ignored. The Wayland VM passed all 237 Linux shared-core tests and
+all 100 Linux platform tests. These are native contract and platform-crate
+results, not evidence of UIA or AT-SPI consent-dialog automation. An additional
+X11 VM attempt reached dependency compilation but its root filesystem had only
+4 MB free and returned `No space left on device`; it produced no behavioral
+verdict and was not counted as product evidence.
+
+## 2026-07-16: cross-platform existing-profile setup parity
+
+The existing-profile route now has product-specific setup descriptors for
+Chrome, Chromium, and Edge and native exact-control adapters on all advertised
+desktop platforms:
+
+- macOS uses exact AX page, checkbox, tab-cleanup, and browser-owned consent
+  semantics. A disposable Lume guest passed Chrome and Edge setup with video.
+- Windows uses exact HWND ownership plus UIA page, checkbox, cleanup, and
+  consent semantics. Chrome and Edge passed in a live Azure RDP user session,
+  not Session 0, with video.
+- Linux X11 uses exact X11 foreground restoration for the fixed setup
+  navigation and AT-SPI for the checkbox and consent action. Chrome passed with
+  video.
+- Linux native Wayland requires an exact Sway container and the browser's full
+  renderer accessibility tree. The setup path keeps URL text plus Enter in one
+  virtual-keyboard lifetime, then invokes the unique AT-SPI Remote debugging
+  navigation control. Chrome passed with another Chrome process open, proving
+  that changing tab titles and a shared app id do not redirect the action.
+
+Linux Chromium-family processes used by this harness include
+`--force-renderer-accessibility`; production calls without a complete AT-SPI
+tree refuse with the missing prerequisite. Sway focus is restored through the
+exact compositor container guard. Generic Wayland sessions without exact PID,
+window, and geometry identity are not promoted into a mutation route.
+
+All setup paths still require an operation-bound one-use approval artifact,
+prove a loopback listener owned by the approved PID, attach one browser-level
+socket, invalidate old capabilities, report every visible side effect, and
+attempt exact rollback after a failed setup. Safari, Firefox, unrecognized
+products/locales, and ambiguous setup or consent controls remain refusals.
+
+The evidence in this entry was produced from a dirty diagnostic source marker
+while the implementation was converging. It establishes behavior but is not
+release acceptance; the final commit must be synced and replayed with its exact
+SHA on every retained platform lane.
+
+## 2026-07-17: exact-SHA cross-platform existing-profile acceptance
+
+The final acceptance replay used exact source SHA
+`7fa6c80f5c433a7d4dadef75e4873af89de0cd3f`. A preceding Windows replay was
+discarded because host input and another runner contaminated the interactive
+desktop. A macOS replay then exposed a testkit posture defect: the foreground
+sentinel waited for Electron to focus itself before the harness explicitly
+activated it. The final testkit change waits for readiness, activates the exact
+sentinel, and proves native focus plus the fixture focus journal. It does not
+change any browser action or oracle.
+
+| Platform | Representative products | Rows | Delivered | Expected refusals | Failed | Skipped | Playable videos |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Windows/Win32 | Chrome, Edge | 20 | 18 | 2 | 0 | 0 | 20 |
+| macOS/Quartz | Chrome, Edge | 20 | 16 | 4 | 0 | 0 | 20 |
+| Linux/X11 | Chrome | 10 | 8 | 2 | 0 | 0 | 10 |
+| Linux/Wayland | Chromium on Sway | 10 | 8 | 2 | 0 | 0 | 10 |
+| **Total** |  | **60** | **50** | **10** | **0** | **0** | **60** |
+
+All 60 declarations ran. Every result had `test_status=pass`; every MP4 was
+downloaded and independently checked for positive duration. The Windows lane
+ran in a live RDP user desktop rather than Session 0. The Linux lanes used
+Openbox/X11 and native Sway/Wayland respectively, while macOS ran in a
+TCC-authorized disposable Lume guest.
+
+The expected refusals are product signal, not environment skips. Every platform
+refused `browser_binding_ambiguous` when two native browser windows had the same
+bounds and no unique title tie-break. macOS and Linux additionally refused
+`browser_input_trust_unavailable` for Chromium's trusted CDP Input click because
+that route activated the standalone target; the ref-targeted `dom_event` route
+remains the synthetic full-background alternative. Windows delivered trusted
+clicks for both Chrome and Edge without changing the sentinel posture.
+
+The Sway wrapper replaced itself with `nix develop`, so its redundant shell EXIT
+trap could not write an exit-marker file. The canonical runner nevertheless
+finished, produced its summary, exited from the process table, recorded all 10
+passing rows, and generated 10 valid videos. The acceptance verdict is based on
+those canonical artifacts rather than the disposable wrapper marker.
+
+## 2026-07-17: semantic browser state
+
+Added the opt-in `semantic_v2` snapshot contract while retaining
+`dom_refs_v1` as the compatibility default. The new collector joins the
+Chromium accessibility tree, pierced author DOM, layout snapshot, viewport
+metrics, and proven frame identities. It separates compact readable content
+from typed action refs, ranks visible state before offscreen state, excludes
+CSS-hidden retained controls before budgeting, and conservatively identifies
+controls covered by fixed or absolute page overlays.
+
+Semantic action refs declare `click` and/or `type`. Mutation tools now return
+`browser_action_unavailable` before delivery when a semantic ref does not
+declare the requested action. Static nodes with live backend identity are
+returned separately as `content_refs` for read-only subtree scope; they do not
+become clickable. A bounded DOM supplement recovers visible custom controls
+with explicit interaction evidence when AX omits them.
+
+Read scoping supports role/name/text `query`, current `scope_ref`, and opaque
+single-use continuation. Continuations remain inside the session capability
+store and are invalidated by use, a newer snapshot, navigation, reconnect,
+target replacement, or session end. Raw CDP target IDs, backend node IDs,
+object IDs, selectors, and continuation offsets remain private.
+
+Known full-DOM size or serialization failures use a progressively shallower
+depth ladder and hydrate truncated branches with bounded `DOM.describeNode`
+calls. Time, call-count, and scan-node budgets terminate hydration and retain
+`complete:false`; unrelated transport failures remain hard errors. The
+deterministic fixture contains 320 CSS-hidden retained controls, visible
+message/editor/actions, and more than 300 offscreen controls. Focused tests
+prove visible-first state, continuation, query, subtree scope, action-kind
+enforcement, modal occlusion, DOM supplementation, bounded fallback and
+hydration, and stale continuations after both newer snapshots and out-of-band
+navigation. Hidden-node omission counts are deduplicated, and icon-font glyphs
+are removed from semantic text.
+
+Local source validation passed the complete core and session-lifecycle suites,
+all 46 testkit library tests, source compilation of the standalone browser
+harness, generated documentation drift checks, public-doc hygiene, and local
+link checks. A source-installed macOS product-path replay passed the real Chrome
+semantic row with the TCC-authorized daemon, foreground sentinel, fixture
+journal, exact DOM click, re-snapshot, and typed-value oracle. Windows and Linux
+X11 exact-SHA workflow evidence is the remaining release-acceptance gate.
+
+## 2026-07-18: browser completeness and adversarial tab state
+
+The bind response no longer labels a representative DevTools target as the
+active native tab. A unique exact native-title match produces one `true` and
+the remaining tabs `false`; duplicate, empty, substring-only, or otherwise
+ambiguous titles produce `null` for every tab. The standalone harness adds a
+same-title adversarial row so future list-order regressions are externally
+visible.
+
+The typed surface now includes page-owned JavaScript dialog inspection and
+resolution, exact file-input assignment, extended pointer actions, and
+approval-scoped downloads. All mutations retain the existing exact binding,
+tab lock, reconnect generation, ref/frame identity, and fail-closed posture.
+Synthetic pointer actions are explicit `dom_event` requests; trusted pointer
+actions never fall back after a refusal. Downloads serialize Chromium's
+browser-wide setting, subscribe before triggering, correlate exact frame and
+opaque id events, restore defaults on every outcome, and remove only a proven
+direct partial file after failure.
+
+The real-browser harness adds separate rows for dialogs, upload,
+hover/right-click/double-click/scroll/drag, and downloads. A fixed loopback
+attachment keeps download evidence deterministic. Background rows use the
+foreground sentinel and fixture-owned state rather than treating a CDP reply
+as delivery. Linux Chromium cannot resolve a native JavaScript modal without
+changing foreground posture, so its matrix records a no-dispatch background
+refusal and a separate explicit foreground delivery row. Windows and macOS
+retain strict background dialog resolution. Trajectory recording redacts
+prompt text, upload paths, download directories, and internal approval
+markers; product telemetry retains only fixed operation and refusal
+categories.
+
+The dialog design adapts the exact-target, no-replay security model introduced
+in PR #2166. Its contributor remains credited through a parsed
+`Co-authored-by` trailer in the landing history and `Salvaged from #2166` in
+the pull request body even though this implementation supersedes that earlier
+code shape. Issue authors remain reporter-attributed when the landing PR
+closes their linked issues.

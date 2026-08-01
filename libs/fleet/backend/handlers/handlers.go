@@ -13,7 +13,6 @@ import (
 	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/config"
 	"cyclops-cs-backend/keycloak"
-	"cyclops-cs-backend/templates"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -24,9 +23,6 @@ type Handlers struct {
 	AuthCfg    config.AuthConfiguration
 	KC         config.KeycloakConfiguration
 
-	// Templates is the Redis-backed pool-template store. nil when no
-	// Redis is configured — the pool-template handlers then reply 503.
-	Templates templates.Store
 
 	// WorkloadAdmin manages per-tenant clients in the workloads realm so
 	// OSGym pool VMs can obtain a tenant-scoped OIDC token. nil disables

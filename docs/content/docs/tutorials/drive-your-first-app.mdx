@@ -1,24 +1,27 @@
 ---
-title: Drive your first app
+title: Drive your first app with Cua Driver
 description: Install Cua Driver, connect your agent, and ask it in plain English to drive a desktop app in the background on macOS, Windows, or Linux.
 ---
 
 import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
 import { Callout } from 'fumadocs-ui/components/callout';
 
-# Drive your first app
+By the end of this tutorial, your agent will open Calculator, compute 6 × 7,
+and report 42 through **Cua Driver**. You will install the driver, connect
+Claude Code, Codex, or Hermes, and run the same prompt on macOS, Windows, or
+Linux.
 
-You do not type **Cua Driver** CLI commands by hand. Cua Driver is a backend that an agent harness (Claude Code, Codex, Hermes, and others) drives for you. In this tutorial you install Cua Driver, connect your agent, and ask it in plain English to open a calculator and read a result back. Works the same on macOS, Windows, and Linux.
+New to agents that operate applications? Start with [What is computer use?](/concepts/what-is-computer-use) for the model behind the workflow, then return here to build one.
 
 <VideoDemo
-  src="https://github.com/user-attachments/assets/9217a8c0-8e5f-449d-939a-d8b245d27142"
-  poster="https://github.com/user-attachments/assets/5ff7a103-dc48-4781-ab37-c979a0c54d1a"
-  title="Preview: ask an agent to calculate 6 × 7"
-  sourceUrl="https://x.com/trycua/status/2067639342944985586"
+  src="https://trycua.github.io/assets/videos/cua-driver/windows-msbuild-piano.mp4"
+  poster="https://trycua.github.io/assets/posters/cua-driver/windows-msbuild-piano.jpg"
+  title="Preview: agents play a Windows piano app"
+  sourceUrl="https://x.com/francedot/status/2062231318294131130"
   className="my-8"
 >
-  This Linux recording shows the result you will reproduce: an agent drives Calculator to 42 while
-  the terminal stays in front. The same prompt works on macOS and Windows.
+  Cua Driver coordinates several agent cursors to play a Windows piano app at Microsoft Build. You
+  will start with a smaller Calculator task below.
 </VideoDemo>
 
 ## 1. Install Cua Driver
@@ -104,7 +107,7 @@ Register Cua Driver with your agent harness once.
     It prints a command you run to register the server (paths will be specific to your install):
 
     ```bash
-    claude mcp add-json cua-computer-use '{"args":["mcp","--claude-code-computer-use-compat"],"command":"/Users/you/.local/bin/cua-driver"}'
+    claude mcp add-json --scope user cua-computer-use '{"args":["mcp"],"command":"/Users/you/.local/bin/cua-driver"}'
     ```
   </Tab>
   <Tab value="Codex">
@@ -198,5 +201,7 @@ You installed Cua Driver, verified it could see your desktop, connected your age
 ## Next steps
 
 - [Connect your agent](/how-to-guides/driver/connect-your-agent): register Cua Driver with Cursor, Antigravity, OpenCode, OpenClaw, Pi, and more.
+- [Use Cua Driver in process](/how-to-guides/driver/use-sdk-in-process): embed the typed SDK in a Python or TypeScript application.
+- [Verify a desktop action](/how-to-guides/driver/verify-a-desktop-action): check an action against an independent postcondition.
 - [Best-effort background](/concepts/the-no-foreground-contract): how Cua Driver avoids focus and cursor disruption when the target app supports it.
 - [How-to guides](/how-to-guides): keep the driver running, update it, and more.

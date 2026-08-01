@@ -34,7 +34,7 @@ jobs:
           echo "sha=${sha,,}" >> "$GITHUB_OUTPUT"
 
   browser:
-    name: "${{ matrix.label }} / Chrome and Edge"
+    name: "${{ matrix.label }} / ${{ matrix.products }}"
     needs: source
     strategy:
       fail-fast: false
@@ -43,9 +43,11 @@ jobs:
           - label: Windows
             os: windows-latest
             artifact: rust-browser-windows
+            products: chrome,edge
           - label: Linux X11
             os: ubuntu-latest
             artifact: rust-browser-linux-x11
+            products: chrome
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:
@@ -54,6 +56,7 @@ jobs:
       CUA_E2E_FORBID_SKIPS: "1"
       CUA_TEST_DRIVER_STDERR: "1"
       CUA_E2E_BROWSER_STDERR: "1"
+      CUA_E2E_BROWSER_PRODUCTS: ${{ matrix.products }}
       RUST_BACKTRACE: "1"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -88,7 +91,7 @@ jobs:
       - name: Build source driver on Linux
         if: runner.os == 'Linux'
         shell: bash
-        run: cargo build --release -p cua-driver --manifest-path libs/cua-driver/rust/Cargo.toml
+        run: cargo build --release -p cua-driver --features portal-input --manifest-path libs/cua-driver/rust/Cargo.toml
       - name: Run standalone browsers on Windows
         if: runner.os == 'Windows'
         shell: pwsh

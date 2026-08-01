@@ -23,7 +23,59 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
+use super::semantic::SemanticDocument;
 use super::types::{BindingQuality, ProcessFingerprint, Rect};
+
+/// Browser action kinds proven for one semantic page ref.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserActionKind {
+    Click,
+    Type,
+    Upload,
+    Pointer,
+    Scroll,
+}
+
+impl BrowserActionKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Click => "click",
+            Self::Type => "type",
+            Self::Upload => "upload",
+            Self::Pointer => "pointer",
+            Self::Scroll => "scroll",
+        }
+    }
+}
+
+/// Browser-layout visibility. This is independent from native desktop
+/// foreground or occlusion state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserVisibility {
+    InViewport,
+    NearViewport,
+    Offscreen,
+    CssHidden,
+    NoLayout,
+    PageOccluded,
+    Unknown,
+}
+
+impl BrowserVisibility {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::InViewport => "in_viewport",
+            Self::NearViewport => "near_viewport",
+            Self::Offscreen => "offscreen",
+            Self::CssHidden => "css_hidden",
+            Self::NoLayout => "no_layout",
+            Self::PageOccluded => "page_occluded",
+            Self::Unknown => "unknown",
+        }
+    }
+}
 
 /// Which frame kind a ref was minted in. Exposed on the wire as a
 /// stable string via [`FrameKind::as_str`]; everything else about the
@@ -99,6 +151,16 @@ pub struct RefEntry {
     pub node_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// Semantic action kinds. Empty for legacy DOM refs, whose existing
+    /// mutation behavior remains compatible during the v2 migration.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<BrowserActionKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<BrowserVisibility>,
+    /// Semantic refs enforce their declared action set. Legacy DOM refs keep
+    /// their existing permissive behavior during the versioned migration.
+    #[serde(skip_serializing)]
+    pub semantic: bool,
     /// Frame identity — internal; only the kind string is surfaced.
     #[serde(skip_serializing)]
     pub frame: FrameRef,
@@ -107,15 +169,35 @@ pub struct RefEntry {
 #[derive(Debug, Clone)]
 pub struct SnapshotRecord {
     pub id: u64,
+    pub generation: u64,
     pub url: String,
     /// index → entry; the external ref is `p<id>:<index>`.
     pub refs: HashMap<u32, RefEntry>,
+    pub(crate) semantic: Option<SemanticDocument>,
+    pub(crate) semantic_root_identity: Option<FrameIdentity>,
+    pub(crate) continuations: HashMap<String, SemanticContinuation>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SemanticContinuation {
+    pub offset: usize,
+    pub query: Option<String>,
+    pub scope_backend_node_id: Option<i64>,
+    pub oopif_supported: bool,
+    pub oopif_frames: usize,
 }
 
 #[derive(Debug, Clone)]
 pub struct TabRecord {
     pub tab_id: String,
     pub cdp_target_id: String,
+    pub title: String,
+    pub url: String,
+    /// Native-window selection proof captured at bind time. `None` means the
+    /// selected tab could not be proven without activating or foregrounding a
+    /// page, so the public `active` field must be JSON null.
+    pub active: Option<bool>,
+    pub generation: u64,
     pub snapshots: HashMap<u64, SnapshotRecord>,
 }
 
@@ -128,6 +210,11 @@ pub struct TargetRecord {
     pub window_id: u64,
     pub ws_url: String,
     pub endpoint_owner_pid: i64,
+    /// CDP connection generation that minted this capability. Zero denotes
+    /// the legacy/non-grant route.
+    pub generation: u64,
+    /// Internal transport owner for a grant-backed existing-profile route.
+    pub grant_transport_session: Option<String>,
     pub fingerprint: ProcessFingerprint,
     pub native_title: String,
     pub native_bounds: Rect,
@@ -167,19 +254,18 @@ pub fn format_ref(snapshot_id: u64, index: u32) -> String {
 
 pub struct BrowserStore {
     inner: Mutex<HashMap<String, SessionTargets>>,
-    next_id: AtomicU64,
 }
 
 impl BrowserStore {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(HashMap::new()),
-            next_id: AtomicU64::new(1),
         }
     }
 
     fn next(&self) -> u64 {
-        self.next_id.fetch_add(1, Ordering::Relaxed)
+        static NEXT_BROWSER_SNAPSHOT_ID: AtomicU64 = AtomicU64::new(1);
+        NEXT_BROWSER_SNAPSHOT_ID.fetch_add(1, Ordering::Relaxed)
     }
 
     /// Mint a target id and insert the record under `session`.
@@ -273,7 +359,8 @@ impl BrowserStore {
         })?;
         tab.snapshots
             .get(&snap)
-            .and_then(|s| s.refs.get(&idx))
+            .filter(|snapshot| snapshot.generation == target.generation)
+            .and_then(|snapshot| snapshot.refs.get(&idx))
             .cloned()
             .ok_or_else(|| {
                 BrowserRefusal::new(
@@ -282,6 +369,44 @@ impl BrowserStore {
                         "ref {external} is stale — the page navigated or the snapshot \
                          was superseded; re-run get_browser_state to re-snapshot"
                     ),
+                )
+            })
+    }
+
+    /// Resolve an opaque continuation within the same session, target, tab,
+    /// snapshot generation, and currently-live snapshot namespace.
+    pub fn resolve_semantic_continuation(
+        &self,
+        session: &str,
+        target_id: &str,
+        tab_id: &str,
+        token: &str,
+    ) -> Result<(SnapshotRecord, SemanticContinuation), BrowserRefusal> {
+        let target = self.get_target(session, target_id)?;
+        let tab = target.tabs.get(tab_id).ok_or_else(|| {
+            BrowserRefusal::new(
+                BrowserRefusalCode::BrowserTabNotFound,
+                format!("tab {tab_id} is not known for target {target_id}"),
+            )
+        })?;
+        tab.snapshots
+            .values()
+            .find(|snapshot| {
+                snapshot.generation == target.generation
+                    && snapshot.semantic.is_some()
+                    && snapshot.continuations.contains_key(token)
+            })
+            .and_then(|snapshot| {
+                snapshot
+                    .continuations
+                    .get(token)
+                    .cloned()
+                    .map(|continuation| (snapshot.clone(), continuation))
+            })
+            .ok_or_else(|| {
+                BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserRefStale,
+                    "the semantic continuation is stale or does not belong to this session and tab",
                 )
             })
     }
@@ -299,6 +424,20 @@ impl BrowserStore {
     /// `session::register_session_end_hook` by the engine.
     pub fn remove_session(&self, session: &str) {
         self.inner.lock().unwrap().remove(session);
+    }
+
+    /// Invalidate every capability minted for one browser endpoint before a
+    /// reconnect generation becomes visible.
+    pub fn invalidate_endpoint_generation(&self, pid: i64, generation: u64) -> usize {
+        let mut removed = 0;
+        for session in self.inner.lock().unwrap().values_mut() {
+            let before = session.targets.len();
+            session
+                .targets
+                .retain(|_, target| !(target.pid == pid && target.generation == generation));
+            removed += before - session.targets.len();
+        }
+        removed
     }
 
     /// Number of live targets in a session (diagnostics/tests).
@@ -329,6 +468,8 @@ mod tests {
             window_id: 7,
             ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
             endpoint_owner_pid: 42,
+            generation: 0,
+            grant_transport_session: None,
             fingerprint: ProcessFingerprint {
                 pid: 42,
                 start_time: Some(1),
@@ -357,6 +498,9 @@ mod tests {
                     backend_node_id: 555,
                     node_name: "button".into(),
                     label: Some("Submit".into()),
+                    actions: Vec::new(),
+                    visibility: None,
+                    semantic: false,
                     frame: FrameRef {
                         kind: FrameKind::Main,
                         oopif_target_id: None,
@@ -372,12 +516,20 @@ mod tests {
                 TabRecord {
                     tab_id: tab_id.clone(),
                     cdp_target_id: "CDP1".into(),
+                    title: "Example".into(),
+                    url: "https://example.test".into(),
+                    active: Some(true),
+                    generation: 0,
                     snapshots: HashMap::from([(
                         snap_id,
                         SnapshotRecord {
                             id: snap_id,
+                            generation: 0,
                             url: "https://example.test".into(),
                             refs,
+                            semantic: None,
+                            semantic_root_identity: None,
+                            continuations: HashMap::new(),
                         },
                     )]),
                 },
@@ -429,6 +581,17 @@ mod tests {
     }
 
     #[test]
+    fn page_refs_do_not_alias_across_runtime_owned_stores() {
+        let (_store_a, _target_a, _tab_a, ref_a) = store_with_ref();
+        let (store_b, target_b, tab_b, ref_b) = store_with_ref();
+        assert_ne!(ref_a, ref_b);
+        let error = store_b
+            .resolve_ref("sess-a", &target_b, &tab_b, &ref_a)
+            .unwrap_err();
+        assert_eq!(error.code, BrowserRefusalCode::BrowserRefStale);
+    }
+
+    #[test]
     fn foreign_namespace_refs_are_refused_as_stale() {
         let (store, tid, tab, _) = store_with_ref();
         // An accessibility element_index-style ref must not resolve.
@@ -471,6 +634,28 @@ mod tests {
         assert_eq!(store.target_count("sess-a"), 0);
         let err = store.resolve_ref("sess-a", &tid, &tab, &ext).unwrap_err();
         assert_eq!(err.code, BrowserRefusalCode::BrowserBindingStale);
+    }
+
+    #[test]
+    fn generation_invalidation_is_browser_wide_and_exact() {
+        let store = BrowserStore::new();
+        let mut old = record();
+        old.generation = 1;
+        let mut current = record();
+        current.generation = 2;
+        let mut other_process = record();
+        other_process.pid = 99;
+        other_process.endpoint_owner_pid = 99;
+        other_process.fingerprint.pid = 99;
+        other_process.generation = 1;
+        store.mint_target("session-a", old);
+        store.mint_target("session-b", current);
+        store.mint_target("session-c", other_process);
+
+        assert_eq!(store.invalidate_endpoint_generation(42, 1), 1);
+        assert_eq!(store.target_count("session-a"), 0);
+        assert_eq!(store.target_count("session-b"), 1);
+        assert_eq!(store.target_count("session-c"), 1);
     }
 
     #[test]

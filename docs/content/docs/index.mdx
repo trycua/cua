@@ -1,9 +1,9 @@
 ---
 title: 'Cua documentation'
-description: 'Open-source computer-use automation for real machines and disposable cloud desktops.'
+description: 'Open-source computer-use automation for real machines and local isolated desktops.'
 ---
 
-Cua is an open-source MIT-licensed platform ([github.com/trycua/cua](https://github.com/trycua/cua)) for **computer-use automation**: letting AI agents operate real computers by clicking, typing, and reading the screen and accessibility tree. What we refer to as **Computer-Use 2.0** treats the GUI as one tool surface in an agent loop, alongside code, shell, files, and APIs. The main decision is whether to drive a machine you already have with Cua Driver, or spin up a fresh, isolated cloud desktop with Cua Sandbox.
+Cua is an open-source MIT-licensed platform ([github.com/trycua/cua](https://github.com/trycua/cua)) for **computer-use automation**: letting AI agents operate computers by clicking, typing, and reading the screen and accessibility tree. What we refer to as **Computer-Use 2.0** treats the GUI as one tool surface in an agent loop, alongside code, shell, files, and APIs. Use Cua Driver to drive a machine you already have, Cua Sandbox to start an isolated local desktop, or Cua-Bench to evaluate computer-use agents.
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
 
@@ -13,9 +13,13 @@ import { Card, Cards } from 'fumadocs-ui/components/card';
     already have without bringing them to the foreground or moving the real mouse. It speaks MCP
     over stdio and is also a plain CLI.
   </Card>
-  <Card title="Spin up a cloud desktop — Cua Sandbox" href="/tutorials/your-first-cloud-sandbox">
-    Start disposable full Linux, Windows, or macOS VMs with a GUI for an agent to drive when you
-    want a fresh, isolated computer in the cloud instead of your own machine.
+  <Card title="Start a local desktop — Cua Sandbox" href="/tutorials/your-first-local-sandbox">
+    Start a disposable Linux desktop with Docker, or use a local VM runtime when you need a fresh,
+    isolated computer on your own hardware.
+  </Card>
+  <Card title="Evaluate agents with Cua-Bench" href="/concepts/what-is-cua-bench">
+    Define verifiable computer-use tasks, run agents across local or hosted environments, and score
+    the resulting trajectories.
   </Card>
 </Cards>
 
@@ -25,36 +29,17 @@ These recordings show agents operating desktop apps while the user's active wind
 
 <div className="not-prose my-8 grid gap-5 md:grid-cols-2">
   <VideoDemo
-    src="https://github.com/user-attachments/assets/e4208b4a-704a-4949-8660-4e25f3ed4db4"
-    poster="https://github.com/user-attachments/assets/92c71c18-76f6-4d1c-984d-6bc85c9fe0ac"
-    title="Play media in a background Chrome window on macOS"
-    sourceUrl="https://x.com/trycua/status/2047383209244287350"
+    src="https://trycua.github.io/assets/videos/cua-driver/windows-wpf-agent-qa.mp4"
+    poster="https://trycua.github.io/assets/posters/cua-driver/windows-wpf-agent-qa.jpg"
+    title="Build and check a WPF app on Windows"
+    sourceUrl="https://x.com/trycua/status/2059688966085853245"
   >
-    Claude Code starts playback in Chrome while its terminal remains in front.
+    Claude Code builds a WPF CRM, runs it, patches the code, and checks the app again.
   </VideoDemo>
 
-<VideoDemo
-  src="https://github.com/user-attachments/assets/0a094ad7-9c06-4b6f-9f44-f9ca7582ff73"
-  poster="https://github.com/user-attachments/assets/4b5f7c59-5973-4c34-966e-8aed24e3bde0"
-  title="Build and check a WPF app on Windows"
-  sourceUrl="https://x.com/trycua/status/2059688966085853245"
->
-  Claude Code builds a WPF CRM, runs it, patches the code, and checks the app again.
-</VideoDemo>
-
-<VideoDemo
-  src="https://github.com/user-attachments/assets/9217a8c0-8e5f-449d-939a-d8b245d27142"
-  poster="https://github.com/user-attachments/assets/5ff7a103-dc48-4781-ab37-c979a0c54d1a"
-  title="Check a calculator app on Linux"
-  sourceUrl="https://x.com/trycua/status/2067639342944985586"
->
-  Claude Code builds a calculator, drives it to 42, and reads the result while the terminal stays in
-  front.
-</VideoDemo>
-
   <VideoDemo
-    src="https://github.com/user-attachments/assets/e10c0534-f0f7-45f6-91f7-3b28fd751e7c"
-    poster="https://github.com/user-attachments/assets/52cfc4a4-1e5a-4cb7-873b-734ebb857958"
+    src="https://trycua.github.io/assets/videos/cua-driver/linux-headless-spreadsheet.mp4"
+    poster="https://trycua.github.io/assets/posters/cua-driver/linux-headless-spreadsheet.jpg"
     title="Fill a Linux spreadsheet over SSH"
     sourceUrl="https://x.com/trycua/status/2067639346719826213"
   >
@@ -72,4 +57,4 @@ How-to guides: recipes for a goal. Start with [How-to guides](/how-to-guides).
 
 Reference: precise technical description. Start with [Reference](/reference).
 
-For real local apps and signed-in state, start with **Cua Driver**. For fresh isolated desktops, start with **Cua Sandbox**. Lume is the local Apple Silicon VM substrate behind part of the stack.
+For existing apps and signed-in state, start with **Cua Driver**. For fresh isolated local desktops, start with **Cua Sandbox**. Lume is the local Apple Silicon VM substrate behind part of the stack.

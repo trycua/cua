@@ -36,13 +36,12 @@ use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
 use windows::Win32::UI::Accessibility::{
-    UIA_ComboBoxControlTypeId,
     CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTextPattern,
-    TreeScope_Subtree, UIA_ButtonControlTypeId, UIA_CONTROLTYPE_ID, UIA_ControlTypePropertyId,
-    UIA_DocumentControlTypeId, UIA_EditControlTypeId, UIA_HeaderControlTypeId,
-    UIA_HyperlinkControlTypeId, UIA_ImageControlTypeId, UIA_ListItemControlTypeId,
-    UIA_NamePropertyId, UIA_PaneControlTypeId, UIA_TextControlTypeId, UIA_TextPatternId,
-    UIA_ValueValuePropertyId,
+    TreeScope_Subtree, UIA_ButtonControlTypeId, UIA_ComboBoxControlTypeId,
+    UIA_ControlTypePropertyId, UIA_DocumentControlTypeId, UIA_EditControlTypeId,
+    UIA_HeaderControlTypeId, UIA_HyperlinkControlTypeId, UIA_ImageControlTypeId,
+    UIA_ListItemControlTypeId, UIA_NamePropertyId, UIA_PaneControlTypeId, UIA_TextControlTypeId,
+    UIA_TextPatternId, UIA_ValueValuePropertyId, UIA_CONTROLTYPE_ID,
 };
 
 pub struct WindowsPageBackend;
@@ -61,8 +60,8 @@ impl Default for WindowsPageBackend {
 
 #[async_trait]
 impl PageBackend for WindowsPageBackend {
-    async fn get_text(&self, _pid: i32, window_id: u32) -> anyhow::Result<String> {
-        let hwnd = window_id as u64;
+    async fn get_text(&self, _pid: i32, window_id: u64) -> anyhow::Result<String> {
+        let hwnd = window_id;
         tokio::task::spawn_blocking(move || unsafe { get_text_blocking(hwnd) })
             .await
             .map_err(|e| anyhow::anyhow!("join error: {e}"))?
@@ -71,11 +70,11 @@ impl PageBackend for WindowsPageBackend {
     async fn query_dom(
         &self,
         _pid: i32,
-        window_id: u32,
+        window_id: u64,
         css_selector: &str,
         attributes: &[String],
     ) -> anyhow::Result<String> {
-        let hwnd = window_id as u64;
+        let hwnd = window_id;
         let selector = css_selector.to_owned();
         let attrs: Vec<String> = attributes.to_vec();
         tokio::task::spawn_blocking(move || unsafe { query_dom_blocking(hwnd, &selector, &attrs) })
@@ -86,7 +85,7 @@ impl PageBackend for WindowsPageBackend {
     async fn execute_javascript(
         &self,
         pid: i32,
-        window_id: u32,
+        window_id: u64,
         javascript: &str,
     ) -> anyhow::Result<String> {
         // 1) Bookmark-based UIA exec — zero config, no launch flag needed.
@@ -95,7 +94,15 @@ impl PageBackend for WindowsPageBackend {
         //    sits there).  Any failure (favorites bar hidden + Ctrl+Shift+B
         //    fails to summon, dialog drift, title-poll timeout) is logged
         //    and falls through to the CDP path.
-        match super::page_bookmark::try_bookmark_exec(pid, window_id, javascript).await {
+        let bookmark_result = match u32::try_from(window_id) {
+            Ok(window_id) => {
+                super::page_bookmark::try_bookmark_exec(pid, window_id, javascript).await
+            }
+            Err(_) => Err(anyhow::anyhow!(
+                "window_id {window_id} is outside the legacy bookmark transport's u32 range"
+            )),
+        };
+        match bookmark_result {
             Ok(v) => {
                 return Ok(format!("uia.bookmark_exec: {v}"));
             }
@@ -132,7 +139,7 @@ impl PageBackend for WindowsPageBackend {
     async fn execute_javascript_targeted(
         &self,
         pid: i32,
-        window_id: u32,
+        window_id: u64,
         javascript: &str,
         cdp_port: Option<u16>,
         target_url_contains: Option<&str>,
@@ -140,26 +147,27 @@ impl PageBackend for WindowsPageBackend {
         if cdp_port.is_none() && target_url_contains.is_none() {
             return self.execute_javascript(pid, window_id, javascript).await;
         }
-        let port = cdp_port.or_else(|| {
-            std::env::var("CUA_DRIVER_CDP_PORT")
-                .ok()
-                .and_then(|value| value.parse::<u16>().ok())
-        }).ok_or_else(|| anyhow::anyhow!(
+        let port = cdp_port
+            .or_else(|| {
+                std::env::var("CUA_DRIVER_CDP_PORT")
+                    .ok()
+                    .and_then(|value| value.parse::<u16>().ok())
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!(
             "targeted execute_javascript on Windows requires cdp_port or CUA_DRIVER_CDP_PORT"
-        ))?;
-        let result = cua_driver_core::cdp::evaluate_targeted(
-            port,
-            javascript,
-            true,
-            target_url_contains,
-        ).await?;
+        )
+            })?;
+        let result =
+            cua_driver_core::cdp::evaluate_targeted(port, javascript, true, target_url_contains)
+                .await?;
         Ok(format!("cdp.runtime.evaluate.user_gesture: {result}"))
     }
 
     async fn click_element(
         &self,
         pid: i32,
-        window_id: u32,
+        window_id: u64,
         selector: &str,
     ) -> anyhow::Result<ClickElementResult> {
         // Two-step:
@@ -204,16 +212,18 @@ impl PageBackend for WindowsPageBackend {
         // only fires on a hard parse error. Inspect the parsed value and
         // re-decode when it's a String.
         let parsed: serde_json::Value = {
-            let first = serde_json::from_str::<serde_json::Value>(&probe_json)
-                .map_err(|e| anyhow::anyhow!(
+            let first = serde_json::from_str::<serde_json::Value>(&probe_json).map_err(|e| {
+                anyhow::anyhow!(
                     "click_element: could not parse coord JSON from probe (raw: {probe_raw:?}): {e}"
-                ))?;
+                )
+            })?;
             match first {
-                serde_json::Value::String(inner) => serde_json::from_str(&inner)
-                    .map_err(|e| anyhow::anyhow!(
+                serde_json::Value::String(inner) => serde_json::from_str(&inner).map_err(|e| {
+                    anyhow::anyhow!(
                         "click_element: inner JSON parse failed for double-encoded probe \
                          response (raw: {probe_raw:?}): {e}"
-                    ))?,
+                    )
+                })?,
                 other => other,
             }
         };
@@ -228,17 +238,24 @@ impl PageBackend for WindowsPageBackend {
         // genuinely optional on the JS side (older webviews / unusual
         // contexts may not expose it).
         let require = |key: &str| -> Result<f64, anyhow::Error> {
-            parsed.get(key).and_then(|v| v.as_f64()).filter(|f| f.is_finite())
-                .ok_or_else(|| anyhow::anyhow!(
-                    "click_element: probe JSON missing/invalid required field '{key}' \
+            parsed
+                .get(key)
+                .and_then(|v| v.as_f64())
+                .filter(|f| f.is_finite())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "click_element: probe JSON missing/invalid required field '{key}' \
                      (raw: {probe_raw:?}). All four of vx/vy/sx/sy must be finite numbers."
-                ))
+                    )
+                })
         };
         let vx = require("vx")?;
         let vy = require("vy")?;
         let sx = require("sx")?;
         let sy = require("sy")?;
-        let dpr = parsed.get("dpr").and_then(|v| v.as_f64())
+        let dpr = parsed
+            .get("dpr")
+            .and_then(|v| v.as_f64())
             .filter(|f| f.is_finite() && *f > 0.0)
             .unwrap_or(1.0);
 
@@ -254,7 +271,11 @@ impl PageBackend for WindowsPageBackend {
             use windows::Win32::Foundation::HWND;
             use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GA_ROOT};
             let root = unsafe { GetAncestor(HWND(hwnd as *mut _), GA_ROOT) };
-            let pin_wid = if !root.0.is_null() { root.0 as u64 } else { hwnd };
+            let pin_wid = if !root.0.is_null() {
+                root.0 as u64
+            } else {
+                hwnd
+            };
             crate::overlay::send_command_default(cursor_overlay::OverlayCommand::PinAbove(pin_wid));
         }
         // The cross-platform `PageBackend::click_element` trait carries no
@@ -349,10 +370,7 @@ unsafe fn query_dom_blocking(
 
     // Build a UIA condition for the ControlType (if any) and FindAll.
     let condition = match parsed.control_type {
-        Some(ct) => automation.CreatePropertyCondition(
-            UIA_ControlTypePropertyId,
-            &ct.0.into(),
-        )?,
+        Some(ct) => automation.CreatePropertyCondition(UIA_ControlTypePropertyId, &ct.0.into())?,
         None => automation.CreateTrueCondition()?,
     };
 
@@ -369,7 +387,9 @@ unsafe fn query_dom_blocking(
         // Post-filter by id/class. Skip elements that don't satisfy.
         if !parsed.id_filter.is_empty() {
             let aid = read_string(&elem, |e| {
-                e.CurrentAutomationId().map(|b| b.to_string()).map_err(|e| e.into())
+                e.CurrentAutomationId()
+                    .map(|b| b.to_string())
+                    .map_err(|e| e.into())
             });
             if aid.as_deref().unwrap_or_default() != parsed.id_filter {
                 continue;
@@ -388,7 +408,9 @@ unsafe fn query_dom_blocking(
             let v = match a.as_str() {
                 "name" => Some(name.clone()),
                 "id" => read_string(&elem, |e| {
-                    e.CurrentAutomationId().map(|b| b.to_string()).map_err(|e| e.into())
+                    e.CurrentAutomationId()
+                        .map(|b| b.to_string())
+                        .map_err(|e| e.into())
                 }),
                 "value" => read_value_value(&elem),
                 "href" => {
@@ -408,7 +430,11 @@ unsafe fn query_dom_blocking(
         let line = if attr_parts.is_empty() {
             format!("- {ct} \"{}\"", escape_attr(&name))
         } else {
-            format!("- {ct} \"{}\" [{}]", escape_attr(&name), attr_parts.join(" "))
+            format!(
+                "- {ct} \"{}\" [{}]",
+                escape_attr(&name),
+                attr_parts.join(" ")
+            )
         };
         formatted.push(line);
     }
@@ -502,8 +528,8 @@ unsafe fn walk_text_blocking(root: &IUIAutomationElement) -> String {
     acc
 }
 
-unsafe fn create_true_condition_or_fallback() -> Option<windows::Win32::UI::Accessibility::IUIAutomationCondition>
-{
+unsafe fn create_true_condition_or_fallback(
+) -> Option<windows::Win32::UI::Accessibility::IUIAutomationCondition> {
     let automation: IUIAutomation =
         CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
     automation.CreateTrueCondition().ok()
@@ -550,7 +576,9 @@ unsafe fn read_control_type(elem: &IUIAutomationElement) -> Option<String> {
 }
 
 unsafe fn read_value_value(elem: &IUIAutomationElement) -> Option<String> {
-    let v = elem.GetCurrentPropertyValue(UIA_ValueValuePropertyId).ok()?;
+    let v = elem
+        .GetCurrentPropertyValue(UIA_ValueValuePropertyId)
+        .ok()?;
     let raw = v.as_raw();
     if raw.Anonymous.Anonymous.vt != 8 {
         // VT_BSTR = 8 — anything else (empty, VT_EMPTY=0) means no value.

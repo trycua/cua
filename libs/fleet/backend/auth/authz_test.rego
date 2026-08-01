@@ -16,6 +16,26 @@ test_keys_spa_allowed if {
 	}
 }
 
+test_keys_cua_cli_allowed if {
+	authz.allow with input as {
+		"route": "/api/keys",
+		"method": "POST",
+		"path": "/api/keys",
+		"params": {},
+		"user": {"sub": "user-123", "azp": "cua-cli", "namespace": "", "email": "u@example.com"},
+	}
+}
+
+test_keys_other_interactive_client_denied if {
+	not authz.allow with input as {
+		"route": "/api/keys",
+		"method": "POST",
+		"path": "/api/keys",
+		"params": {},
+		"user": {"sub": "user-123", "azp": "kubernetes", "namespace": "", "email": "u@example.com"},
+	}
+}
+
 test_keys_non_spa_denied if {
 	not authz.allow with input as {
 		"route": "/api/keys",
@@ -119,6 +139,16 @@ test_k8s_spa_allowed if {
 	}
 }
 
+test_k8s_cua_cli_allowed if {
+	authz.allow with input as {
+		"route": "/api/k8s/{path...}",
+		"method": "GET",
+		"path": "/api/k8s/api/v1/namespaces",
+		"params": {"path": "api/v1/namespaces"},
+		"user": {"sub": "user-123", "azp": "cua-cli", "namespace": "", "email": "u@example.com"},
+	}
+}
+
 # ── /api/orch ─────────────────────────────────────────────────────────────────
 
 test_orch_spa_allowed if {
@@ -128,6 +158,16 @@ test_orch_spa_allowed if {
 		"path": "/api/orch/mypool/mypool-orchestrator/status",
 		"params": {"namespace": "mypool", "service": "mypool-orchestrator", "path": "status"},
 		"user": {"sub": "user-123", "azp": "cyclops-cs-spa", "namespace": "", "email": "u@example.com"},
+	}
+}
+
+test_orch_cua_cli_allowed if {
+	authz.allow with input as {
+		"route": "/api/orch/{namespace}/{service}/{path...}",
+		"method": "GET",
+		"path": "/api/orch/mypool/mypool-orchestrator/status",
+		"params": {"namespace": "mypool", "service": "mypool-orchestrator", "path": "status"},
+		"user": {"sub": "user-123", "azp": "cua-cli", "namespace": "", "email": "u@example.com"},
 	}
 }
 
@@ -704,103 +744,6 @@ test_namespaces_missing_azp_denied if {
 		"route": "/api/namespaces",
 		"method": "GET",
 		"path": "/api/namespaces",
-		"params": {},
-		"user": {"sub": "user-123", "azp": "", "namespace": "", "email": "u@example.com"},
-	}
-}
-
-# ── /api/pool-templates — per-user saved pool configs ───────────────────────
-
-test_pool_templates_spa_list_allowed if {
-	authz.allow with input as {
-		"route": "/api/pool-templates",
-		"method": "GET",
-		"path": "/api/pool-templates",
-		"params": {},
-		"user": {"sub": "user-123", "azp": "cyclops-cs-spa", "namespace": "", "email": "u@example.com"},
-	}
-}
-
-test_pool_templates_spa_create_allowed if {
-	authz.allow with input as {
-		"route": "/api/pool-templates",
-		"method": "POST",
-		"path": "/api/pool-templates",
-		"params": {},
-		"user": {"sub": "user-123", "azp": "cyclops-cs-spa", "namespace": "", "email": "u@example.com"},
-	}
-}
-
-test_pool_templates_spa_get_allowed if {
-	authz.allow with input as {
-		"route": "/api/pool-templates/{name}",
-		"method": "GET",
-		"path": "/api/pool-templates/gpu-large",
-		"params": {"name": "gpu-large"},
-		"user": {"sub": "user-123", "azp": "cyclops-cs-spa", "namespace": "", "email": "u@example.com"},
-	}
-}
-
-test_pool_templates_spa_delete_allowed if {
-	authz.allow with input as {
-		"route": "/api/pool-templates/{name}",
-		"method": "DELETE",
-		"path": "/api/pool-templates/gpu-large",
-		"params": {"name": "gpu-large"},
-		"user": {"sub": "user-123", "azp": "cyclops-cs-spa", "namespace": "", "email": "u@example.com"},
-	}
-}
-
-# Per-key clients (key-*) CANNOT touch pool templates — those tokens are
-# bound to a single pool, not a user identity.
-test_pool_templates_per_key_denied if {
-	not authz.allow with input as {
-		"route": "/api/pool-templates",
-		"method": "GET",
-		"path": "/api/pool-templates",
-		"params": {},
-		"user": {"sub": "svc-123", "azp": "key-foo", "namespace": "foo", "email": ""},
-	}
-}
-
-# User API keys (ukey-*) act on behalf of a user and may manage templates.
-test_pool_templates_user_key_list_allowed if {
-	authz.allow with input as {
-		"route": "/api/pool-templates",
-		"method": "GET",
-		"path": "/api/pool-templates",
-		"params": {},
-		"user": {"sub": "user-123", "azp": "ukey-test123abc", "namespace": "", "email": ""},
-	}
-}
-
-test_pool_templates_user_key_delete_allowed if {
-	authz.allow with input as {
-		"route": "/api/pool-templates/{name}",
-		"method": "DELETE",
-		"path": "/api/pool-templates/gpu-large",
-		"params": {"name": "gpu-large"},
-		"user": {"sub": "user-123", "azp": "ukey-test123abc", "namespace": "", "email": ""},
-	}
-}
-
-# Empty sub denied on pool-template routes.
-test_pool_templates_empty_sub_denied if {
-	not authz.allow with input as {
-		"route": "/api/pool-templates",
-		"method": "GET",
-		"path": "/api/pool-templates",
-		"params": {},
-		"user": {"sub": "", "azp": "cyclops-cs-spa", "namespace": "", "email": "u@example.com"},
-	}
-}
-
-# Missing azp denied on pool-template routes.
-test_pool_templates_missing_azp_denied if {
-	not authz.allow with input as {
-		"route": "/api/pool-templates",
-		"method": "GET",
-		"path": "/api/pool-templates",
 		"params": {},
 		"user": {"sub": "user-123", "azp": "", "namespace": "", "email": "u@example.com"},
 	}

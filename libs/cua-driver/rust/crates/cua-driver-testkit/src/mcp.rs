@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+use crate::daemon::TestDaemon;
 use crate::driver::{BehaviorRecording, Driver};
 use crate::paths::driver_binary;
 use crate::reaper::{spawn_in_job, ChildReaper};
@@ -23,6 +24,7 @@ use crate::CALL_TIMEOUT;
 /// [`reaper`]: McpDriver::reaper
 pub struct McpDriver {
     reaper: ChildReaper,
+    _daemon: Option<TestDaemon>,
     stdin: ChildStdin,
     rx: Receiver<String>,
     next_id: u32,
@@ -37,29 +39,54 @@ impl McpDriver {
     /// Returns `None` (with a skip message) if the binary isn't built — the
     /// caller's test should early-return so an un-built binary skips, not fails.
     pub fn spawn() -> Option<Self> {
-        Self::spawn_internal(&[], &[], None)
+        Self::spawn_internal(&[], &[], None, false)
     }
 
     /// Spawn the driver with a stable recording label for artifact naming.
     pub fn spawn_named(recording_label: &str) -> Option<Self> {
-        Self::spawn_internal(&[], &[], Some(recording_label))
+        Self::spawn_internal(&[], &[], Some(recording_label), false)
+    }
+
+    /// Spawn a named driver with the native cursor overlay enabled.
+    ///
+    /// Most testkit daemons disable the overlay so unrelated behavior tests
+    /// cannot paint over their own pixel oracles. Cursor-specific E2E tests
+    /// opt in through this constructor.
+    pub fn spawn_named_with_overlay(recording_label: &str) -> Option<Self> {
+        Self::spawn_internal(&[], &[], Some(recording_label), true)
     }
 
     /// Spawn a named driver with environment variables scoped to this child.
     pub fn spawn_named_with_env(recording_label: &str, env: &[(&str, &str)]) -> Option<Self> {
-        Self::spawn_internal(env, &[], Some(recording_label))
+        Self::spawn_internal(env, &[], Some(recording_label), false)
     }
 
     /// Spawn the driver with extra environment variables set on the child.
     pub fn spawn_with_env(env: &[(&str, &str)]) -> Option<Self> {
-        Self::spawn_internal(env, &[], None)
+        Self::spawn_internal(env, &[], None, false)
     }
 
     fn spawn_internal(
         env: &[(&str, &str)],
         args: &[&str],
         recording_label: Option<&str>,
+        overlay_enabled: bool,
     ) -> Option<Self> {
+        let mut daemon_env = env.to_vec();
+        let e2e_unrestricted = std::env::var_os("CUA_E2E_UNRESTRICTED_GUI").is_some();
+        let caller_selected_mode = daemon_env
+            .iter()
+            .any(|(name, _)| *name == "CUA_DRIVER_PERMISSION_MODE");
+        if args.is_empty() && e2e_unrestricted && !caller_selected_mode {
+            // Canonical GUI behavior runners execute in disposable desktops
+            // and opt into this testkit-only switch. Translate it at the
+            // daemon boundary so unrelated SDK/runtime tests in the same
+            // runner do not inherit product authorization variables.
+            daemon_env.extend([
+                ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
+                ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
+            ]);
+        }
         let bin = driver_binary();
         if !bin.exists() {
             eprintln!("[testkit] driver binary not built at {bin:?} — skipping");
@@ -67,6 +94,17 @@ impl McpDriver {
         }
 
         let mut reaper = ChildReaper::new();
+        let daemon = if args.is_empty() {
+            // Environment that changes tool behavior belongs on the daemon,
+            // because the stdio process is now only a transport proxy.
+            Some(if overlay_enabled {
+                TestDaemon::spawn_with_overlay(&bin, &mut reaper, &daemon_env)?
+            } else {
+                TestDaemon::spawn(&bin, &mut reaper, &daemon_env)?
+            })
+        } else {
+            None
+        };
         let mut cmd = Command::new(&bin);
         let stderr = if std::env::var_os("CUA_TEST_DRIVER_STDERR").is_some() {
             Stdio::inherit()
@@ -81,10 +119,12 @@ impl McpDriver {
             // A test that exercises telemetry can explicitly override this
             // through `spawn_with_env` / `spawn_named_with_env` below.
             .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false");
-        cmd.args(args);
-        #[cfg(not(target_os = "macos"))]
-        cmd.env("CUA_DRIVER_RS_MCP_NO_RELAUNCH", "1");
-        for (key, value) in env {
+        if let Some(daemon) = &daemon {
+            cmd.args(["mcp", "--socket", &daemon.socket]);
+        } else {
+            cmd.args(args);
+        }
+        for (key, value) in &daemon_env {
             cmd.env(key, value);
         }
         let mut driver = spawn_in_job(&mut cmd)
@@ -113,6 +153,7 @@ impl McpDriver {
 
         let mut d = McpDriver {
             reaper,
+            _daemon: daemon,
             stdin,
             rx,
             next_id: 2,
@@ -154,11 +195,7 @@ impl McpDriver {
             );
             return None;
         }
-        Self::spawn_internal(
-            &[("CUA_DRIVER_RS_MCP_FORCE_PROXY", "1")],
-            &["mcp", "--socket", &socket],
-            recording_label,
-        )
+        Self::spawn_internal(&[], &["mcp", "--socket", &socket], recording_label, false)
     }
 
     fn initialize(&mut self) {
@@ -400,7 +437,10 @@ fn update_behavior_video_status(output_dir: &std::path::Path, status: &str) {
     if let Some(field) = timestamp_field {
         manifest["behavior_video"][field] = Value::from(unix_ms());
     }
-    let _ = std::fs::write(path, serde_json::to_vec_pretty(&manifest).unwrap_or_default());
+    let _ = std::fs::write(
+        path,
+        serde_json::to_vec_pretty(&manifest).unwrap_or_default(),
+    );
 }
 
 fn mark_behavior_video_baseline_ready(output_dir: &std::path::Path) {
@@ -412,7 +452,10 @@ fn mark_behavior_video_baseline_ready(output_dir: &std::path::Path) {
         return;
     };
     manifest["behavior_video"]["baseline_ready_at_unix_ms"] = Value::from(unix_ms());
-    let _ = std::fs::write(path, serde_json::to_vec_pretty(&manifest).unwrap_or_default());
+    let _ = std::fs::write(
+        path,
+        serde_json::to_vec_pretty(&manifest).unwrap_or_default(),
+    );
 }
 
 fn unix_ms() -> u64 {

@@ -15,7 +15,7 @@
 //! so concurrent MCP sessions clobbered each other last-writer-wins → one
 //! shared cursor. It now keeps a keyed [`RenderMap`] (`IndexMap<CursorKey,
 //! RenderState>`): each declared `session` owns its own cursor with its own
-//! palette, and the ~125 Hz tick composites them all into the single layered
+//! visual state, and the ~125 Hz tick composites them all into the single layered
 //! window. `IndexMap` gives deterministic insertion-ordered iteration = stable
 //! per-session z-order frame to frame. The lifecycle (lazy create, per-key
 //! arrival isolation, `session_end` removal, resurrection tombstone) mirrors
@@ -38,7 +38,7 @@ use std::time::Instant;
 
 use cursor_overlay::{
     CursorConfig, CursorKey, KeyedOverlayCommand, MotionConfig, OverlayCommand, OverlayMsg,
-    Palette, RenderStateCore, ZOrderEnforcer,
+    RenderStateCore, ZOrderEnforcer,
 };
 use indexmap::IndexMap;
 
@@ -96,8 +96,7 @@ struct RenderMap {
     /// timer resolution defaults to 15ms so a hardcoded 8ms would run the
     /// animation at half speed).
     last_tick: Instant,
-    /// Frozen launch-time config used as the template for lazily-created
-    /// cursors (its palette is overridden per-key via `Palette::for_instance`).
+    /// Frozen launch-time config used as the template for lazily-created cursors.
     template: CursorConfig,
     /// Render-side tombstone of permanently-ended session cursor keys. A `Cmd`
     /// for a key in here is dropped WITHOUT get-or-create, so an in-flight
@@ -111,13 +110,12 @@ struct RenderMap {
     last_active: Option<CursorKey>,
 }
 
-/// Build the `RenderState` for a lazily-created cursor key: derive from the
-/// launch template but give each non-default key its own palette so distinct
-/// sessions get distinct colours automatically.
+/// Build the `RenderState` for a lazily-created session cursor from the
+/// process launch template.
 fn render_state_for_key(template: &CursorConfig, key: &str) -> RenderState {
-    let mut rs = RenderState::new(template.clone());
-    rs.core.palette = Palette::for_instance(key);
-    rs
+    let mut config = template.clone();
+    config.cursor_id = key.to_owned();
+    RenderState::new(config)
 }
 
 /// Apply one inbound [`OverlayMsg`] to the render map (drain step). Factored
@@ -167,23 +165,63 @@ fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
 }
 
 pub fn init(cfg: CursorConfig) {
-    let (tx, rx) = std::sync::mpsc::sync_channel(4096);
-    let _ = CMD_TX.set(tx);
-    *CMD_RX_CELL.lock().unwrap() = Some(rx);
-    *ARRIVAL_TX.lock().unwrap() = Some(HashMap::new());
-    let mut cursors = IndexMap::new();
-    cursors.insert("default".to_owned(), RenderState::new(cfg.clone()));
-    *RENDER.lock().unwrap() = Some(RenderMap {
-        cursors,
-        virt_x: 0,
-        virt_y: 0,
-        virt_w: 1920,
-        virt_h: 1080,
-        last_tick: Instant::now(),
-        template: cfg,
-        ended: HashSet::new(),
-        last_active: None,
+    static INITIALIZED: OnceLock<()> = OnceLock::new();
+    INITIALIZED.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::sync_channel(4096);
+        CMD_TX
+            .set(tx)
+            .expect("cursor overlay sender is initialized exactly once");
+        *CMD_RX_CELL.lock().unwrap() = Some(rx);
+        *ARRIVAL_TX.lock().unwrap() = Some(HashMap::new());
+        let mut cursors = IndexMap::new();
+        cursors.insert("default".to_owned(), RenderState::new(cfg.clone()));
+        *RENDER.lock().unwrap() = Some(RenderMap {
+            cursors,
+            virt_x: 0,
+            virt_y: 0,
+            virt_w: 1920,
+            virt_h: 1080,
+            last_tick: Instant::now(),
+            template: cfg,
+            ended: HashSet::new(),
+            last_active: None,
+        });
     });
+    cua_driver_core::cursor_events::install_cursor_event_sink(std::sync::Arc::new(
+        |event: cua_driver_core::cursor_events::CursorEvent| {
+            use cua_driver_core::cursor_events::{CursorEvent, CursorEventPhase};
+            let (session, cmd) = match event {
+                CursorEvent::SetSessionLabel { session, label } => {
+                    (session, OverlayCommand::SetSessionLabel(label))
+                }
+                CursorEvent::Action {
+                    session,
+                    phase: CursorEventPhase::Begin,
+                    semantics,
+                } => (
+                    session,
+                    OverlayCommand::BeginAction {
+                        action: semantics.action,
+                        delivery: semantics.delivery,
+                        target: semantics.target,
+                    },
+                ),
+                CursorEvent::Action {
+                    session,
+                    phase: CursorEventPhase::End,
+                    semantics,
+                } => (session, OverlayCommand::EndAction(semantics.action)),
+                CursorEvent::SelectTheme { session, selection } => (
+                    session,
+                    OverlayCommand::SetTheme {
+                        theme_id: selection.theme_id,
+                        reduced_motion: selection.reduced_motion,
+                    },
+                ),
+            };
+            send_command(session, cmd);
+        },
+    ));
 }
 
 /// Send a keyed command from any thread (MCP tool, etc.). Non-blocking; drops
@@ -221,6 +259,12 @@ fn wake_overlay() {
     // arm the ACTIVE-period timer. The WM_TIMER handler re-confirms the cadence
     // from render state, so an over-eager wake just costs one cheap idle tick.
     TIMER_PERIOD_MS.store(TIMER_MS_ACTIVE, Relaxed);
+    // Raise the 1 ms timer resolution alongside the ACTIVE arm — this is the
+    // only wake path that bypasses the WM_TIMER re-arm (it pre-stores ACTIVE,
+    // so the handler's cadence flip won't fire). `timeBeginPeriod` is
+    // process-global and thread-safe; the atomic in the helper keeps the
+    // begin/end calls balanced across this and the render thread.
+    set_timer_resolution_raised(true);
     unsafe {
         use windows::Win32::Foundation::HWND;
         use windows::Win32::UI::WindowsAndMessaging::SetTimer;
@@ -286,6 +330,25 @@ pub fn current_motion(key: &str) -> MotionConfig {
         .unwrap_or_default()
 }
 
+pub fn current_theme_state(
+    key: &str,
+) -> Option<(
+    String,
+    String,
+    String,
+    Option<String>,
+    cursor_overlay::CursorVisualState,
+)> {
+    let guard = RENDER.lock().ok()?;
+    let map = guard.as_ref()?;
+    let state = map
+        .cursors
+        .get(key)
+        .or_else(|| map.cursors.get("default"))?;
+    let (id, version, profile, fallback) = state.core.active_theme_metadata();
+    Some((id, version, profile, fallback, state.core.visual.clone()))
+}
+
 /// Current screen position of the cursor for `key` (the off-screen sentinel
 /// `(-200, -200)` if it has never been placed). A session with no own cursor
 /// yet reports the sentinel so the click path treats it as first-placement.
@@ -293,7 +356,11 @@ pub fn current_position(key: &str) -> (f64, f64) {
     RENDER
         .lock()
         .ok()
-        .and_then(|g| g.as_ref().and_then(|m| m.cursors.get(key)).map(|rs| rs.core.pos))
+        .and_then(|g| {
+            g.as_ref()
+                .and_then(|m| m.cursors.get(key))
+                .map(|rs| rs.core.pos)
+        })
         .unwrap_or((-200.0, -200.0))
 }
 
@@ -304,7 +371,9 @@ pub fn current_position(key: &str) -> (f64, f64) {
 /// seed was applied. Mirrors `platform_macos::cursor::overlay::seed_start_*`.
 fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
     let mut guard = RENDER.lock().unwrap();
-    let Some(map) = guard.as_mut() else { return false };
+    let Some(map) = guard.as_mut() else {
+        return false;
+    };
     seed_start_in_map(map, key, target_x, target_y)
 }
 
@@ -459,21 +528,43 @@ impl RenderState {
 
     /// True while the render loop must keep ticking at frame cadence because
     /// the next tick can still change pixels: an in-flight glide path, a
-    /// spring-settle, a click pulse, or an idle-fade that has not yet fully
-    /// faded the cursor out. A brand-new sentinel cursor (off-screen at
-    /// `(-200, -200)`) and a cursor that has already faded to `idle_alpha ≈ 0`
-    /// are both quiescent, so `mcp`/`serve` with no agent activity can let the
-    /// timer go cheap instead of compositing a full virtual-screen pixmap at
-    /// ~125 Hz. Mirrors `platform_macos::cursor::overlay`'s `needs_frame_tick`.
+    /// spring-settle, a click pulse, or an idle-fade actively fading
+    /// (`0.004 <= idle_alpha < 1.0`). A brand-new sentinel cursor (off-screen
+    /// at `(-200, -200)`), a cursor that has already faded to
+    /// `idle_alpha ≈ 0`, AND a cursor resting at constant `idle_alpha == 1.0`
+    /// waiting out the idle-hide countdown are all non-rendering states: the
+    /// countdown phase leaves every frame pixel-identical, so compositing a
+    /// full virtual-screen pixmap through it burned ~1 core for the whole
+    /// `idle_hide_ms` window after every action (render-gate fix; the
+    /// countdown itself is advanced by [`RenderState::in_idle_countdown`]
+    /// ticks at the slow cadence).
     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     fn needs_frame_tick(&self) -> bool {
         self.core.path.is_some()
             || self.core.spring.is_some()
             || self.core.click_t.is_some()
+            || self.core.session_badge_needs_frame_tick()
             || (self.core.motion.idle_hide_ms > 0.0
                 && self.core.visible
                 && self.core.pos.0 >= -100.0
-                && self.core.idle_alpha >= 0.004)
+                && self.core.idle_alpha >= 0.004
+                && self.core.idle_alpha < 1.0)
+    }
+
+    /// True while the cursor rests on-screen at full alpha with idle-hide
+    /// pending: pixels are static (alpha pinned at 1.0) but `idle_secs` must
+    /// keep accruing wall-clock time so the fade still starts on schedule.
+    /// Ticked at the slow IDLE cadence; see the `real_dt` catch-up in the
+    /// WM_TIMER handler, which compensates for the 0.05 s motion-dt clamp.
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    fn in_idle_countdown(&self) -> bool {
+        self.core.path.is_none()
+            && self.core.spring.is_none()
+            && self.core.click_t.is_none()
+            && self.core.motion.idle_hide_ms > 0.0
+            && self.core.visible
+            && self.core.pos.0 >= -100.0
+            && self.core.idle_alpha >= 1.0
     }
 }
 
@@ -491,16 +582,15 @@ fn render_map_needs_frame_tick(map: &RenderMap) -> bool {
 
 #[cfg(target_os = "windows")]
 fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMsg>) {
-    use windows::Win32::Media::timeBeginPeriod;
+    use windows::core::PCWSTR;
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::WindowsAndMessaging::*;
-    use windows::core::PCWSTR;
 
-    // Raise multimedia timer resolution to 1ms so SetTimer can deliver
-    // WM_TIMER messages at ~8ms intervals (default is ~15ms).
-    unsafe {
-        let _ = timeBeginPeriod(1);
-    }
+    // NOTE: the 1 ms multimedia timer resolution (`timeBeginPeriod`) is NOT
+    // raised unconditionally here any more — it is scoped to the ACTIVE
+    // render cadence via `set_timer_resolution_raised` so an idle daemon no
+    // longer holds the global resolution at 1 ms for its whole lifetime
+    // (it raises system-wide timer-interrupt/wakeup rates and power draw).
 
     // Collect virtual screen bounds (all monitors).
     let virt_x = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
@@ -580,6 +670,9 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         SetTimer(hwnd, TIMER_ID, TIMER_MS_ACTIVE, None);
     }
     TIMER_PERIOD_MS.store(TIMER_MS_ACTIVE, std::sync::atomic::Ordering::Relaxed);
+    // Timer starts ACTIVE, so the 1 ms resolution is needed until the first
+    // quiescent tick parks the loop (and lowers it again).
+    set_timer_resolution_raised(true);
 
     // Store hwnd and rx globally for the wnd_proc callback.
     OVERLAY_HWND.store(hwnd.0 as isize, std::sync::atomic::Ordering::Relaxed);
@@ -597,6 +690,10 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
             DispatchMessageW(&msg);
         }
     }
+
+    // Message loop ended (WM_DESTROY): release the raised timer resolution
+    // if the loop went down while still at the ACTIVE cadence.
+    set_timer_resolution_raised(false);
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -611,11 +708,367 @@ static CMD_RX_WIN: Mutex<Option<std::sync::mpsc::Receiver<OverlayMsg>>> = Mutex:
 static LAST_ZTICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static Z_ORDER: OnceLock<WinZOrderEnforcer> = OnceLock::new();
 
+// ── Scoped multimedia timer resolution ────────────────────────────────────
+//
+// `timeBeginPeriod(1)` raises the GLOBAL Windows timer resolution to 1 ms —
+// more timer interrupts and CPU wakeups machine-wide. The overlay only needs
+// it while WM_TIMER runs at the 8 ms ACTIVE cadence, so it is raised on the
+// IDLE→ACTIVE flip and released on ACTIVE→IDLE instead of being held for the
+// daemon's whole lifetime (the old behaviour leaked it: `timeBeginPeriod` at
+// thread start with no `timeEndPeriod` anywhere).
+/// Tracks whether we currently hold a `timeBeginPeriod(1)` request. The lock
+/// covers both the state transition and the WinMM call: an atomic swap alone
+/// permits `timeEndPeriod` on one thread to overtake a delayed
+/// `timeBeginPeriod` on another, leaving the process raised while the flag
+/// says it is not.
+static TIMER_RES_RAISED: Mutex<bool> = Mutex::new(false);
+
+#[cfg(target_os = "windows")]
+fn set_timer_resolution_raised(raise: bool) {
+    use windows::Win32::Media::{timeBeginPeriod, timeEndPeriod};
+    let mut raised = TIMER_RES_RAISED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if *raised == raise {
+        return;
+    }
+    unsafe {
+        if raise {
+            let _ = timeBeginPeriod(1);
+        } else {
+            let _ = timeEndPeriod(1);
+        }
+    }
+    *raised = raise;
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_timer_resolution_raised(_raise: bool) {}
+
+// ── Dirty-rect render surface ─────────────────────────────────────────────
+//
+// The composite path used to rebuild everything per frame: allocate + zero a
+// full virtual-screen RGBA pixmap (~28 MB on a large desktop), create a full
+// DIB section, swizzle EVERY pixel RGBA→BGRA, `UpdateLayeredWindow` the whole
+// surface, then free it all — ~52 ms/frame measured, which saturated a core
+// whenever the loop ran at frame cadence. Cursors only ever touch a tiny
+// region, so the surface is now persistent and only the union of last frame's
+// and this frame's cursor bounds is cleared, repainted, swizzled, and pushed
+// via `UpdateLayeredWindowIndirect(prcDirty)`. The surface is freed whenever
+// the loop parks at the IDLE cadence (the DWM keeps its own copy of the
+// layered surface), so idle memory returns to baseline.
+
+/// Half-open pixel rect `[x0, x1) × [y0, y1)` in overlay-window-local
+/// coordinates.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct DirtyRect {
+    x0: i32,
+    y0: i32,
+    x1: i32,
+    y1: i32,
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+impl DirtyRect {
+    fn union(a: Option<DirtyRect>, b: Option<DirtyRect>) -> Option<DirtyRect> {
+        match (a, b) {
+            (Some(a), Some(b)) => Some(DirtyRect {
+                x0: a.x0.min(b.x0),
+                y0: a.y0.min(b.y0),
+                x1: a.x1.max(b.x1),
+                y1: a.y1.max(b.y1),
+            }),
+            (r, None) | (None, r) => r,
+        }
+    }
+
+    /// Clamp to `[0, w) × [0, h)`; `None` if nothing remains.
+    fn clamped(self, w: i32, h: i32) -> Option<DirtyRect> {
+        let r = DirtyRect {
+            x0: self.x0.max(0),
+            y0: self.y0.max(0),
+            x1: self.x1.min(w),
+            y1: self.y1.min(h),
+        };
+        (r.x1 > r.x0 && r.y1 > r.y0).then_some(r)
+    }
+}
+
+/// Conservative half-extent for the checked-in theme plus the session badge.
+/// The badge is up to 188 px wide and clamps independently at display edges,
+/// so a cursor at an edge can have badge pixels almost 188 px to one side.
+/// Custom themes use a full-surface dirty rect because their bounded artifact
+/// coordinates can legitimately extend beyond this default-theme envelope.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+const CURSOR_PAD: i32 = cursor_overlay::session_badge::BADGE_MAX_WIDTH as i32 + 12;
+
+#[cfg(target_os = "windows")]
+struct WinSurface {
+    pixmap: tiny_skia::Pixmap,
+    /// Memory DC with the DIB selected, stored as isize (HDC is !Send).
+    hdc_mem: isize,
+    /// The DIB section bitmap handle.
+    hbmp: isize,
+    /// Pointer to the DIB's BGRA pixel bits (owned by the DIB section).
+    bits: *mut u8,
+    w: i32,
+    h: i32,
+    virt_x: i32,
+    virt_y: i32,
+}
+
+#[cfg(target_os = "windows")]
+impl WinSurface {
+    unsafe fn create(virt_x: i32, virt_y: i32, w: i32, h: i32) -> Option<WinSurface> {
+        use windows::Win32::Graphics::Gdi::*;
+
+        let pixmap = tiny_skia::Pixmap::new(w.max(1) as u32, h.max(1) as u32)?;
+        let hdc_screen = GetDC(None);
+        let hdc_mem = CreateCompatibleDC(hdc_screen);
+        let bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: w,
+                biHeight: -h, // negative = top-down
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut bits_ptr = std::ptr::null_mut::<std::ffi::c_void>();
+        let hbmp = CreateDIBSection(hdc_mem, &bmi, DIB_RGB_COLORS, &mut bits_ptr, None, 0);
+        ReleaseDC(None, hdc_screen);
+        let Ok(hbmp) = hbmp else {
+            let _ = DeleteDC(hdc_mem);
+            return None;
+        };
+        if bits_ptr.is_null() {
+            let _ = DeleteObject(hbmp);
+            let _ = DeleteDC(hdc_mem);
+            return None;
+        }
+        SelectObject(hdc_mem, hbmp);
+        Some(WinSurface {
+            pixmap,
+            hdc_mem: hdc_mem.0 as isize,
+            hbmp: hbmp.0 as isize,
+            bits: bits_ptr as *mut u8,
+            w,
+            h,
+            virt_x,
+            virt_y,
+        })
+    }
+
+    /// Zero the pixmap pixels inside `r` (rect must already be clamped).
+    fn clear_rect(&mut self, r: DirtyRect) {
+        let w = self.w as usize;
+        let data = self.pixmap.data_mut();
+        let row_len = (r.x1 - r.x0) as usize * 4;
+        for y in r.y0..r.y1 {
+            let start = (y as usize * w + r.x0 as usize) * 4;
+            data[start..start + row_len].fill(0);
+        }
+    }
+
+    /// Copy the pixels inside `r` from the pixmap (premultiplied RGBA) into
+    /// the DIB bits (premultiplied BGRA). Only the dirty region is touched —
+    /// this replaces the old full-surface per-frame swizzle.
+    fn swizzle_rect(&mut self, r: DirtyRect) {
+        let w = self.w as usize;
+        let src = self.pixmap.data();
+        // SAFETY: `bits` points at a live DIB section of exactly w*h*4 bytes;
+        // the DIB outlives `self` (freed only in Drop) and only this (overlay)
+        // thread touches it.
+        let dst = unsafe { std::slice::from_raw_parts_mut(self.bits, w * self.h as usize * 4) };
+        for y in r.y0..r.y1 {
+            let row = (y as usize * w + r.x0 as usize) * 4;
+            let row_end = (y as usize * w + r.x1 as usize) * 4;
+            let (s, d) = (&src[row..row_end], &mut dst[row..row_end]);
+            for i in (0..s.len()).step_by(4) {
+                d[i] = s[i + 2]; // B
+                d[i + 1] = s[i + 1]; // G
+                d[i + 2] = s[i]; // R
+                d[i + 3] = s[i + 3]; // A
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for WinSurface {
+    fn drop(&mut self) {
+        use windows::Win32::Graphics::Gdi::{DeleteDC, DeleteObject, HBITMAP, HDC};
+        unsafe {
+            let _ = DeleteObject(HBITMAP(self.hbmp as *mut _));
+            let _ = DeleteDC(HDC(self.hdc_mem as *mut _));
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+thread_local! {
+    /// The persistent render surface. Overlay-thread only. `None` while the
+    /// loop is parked at the IDLE cadence (freed to keep idle memory flat).
+    static SURFACE: std::cell::RefCell<Option<WinSurface>> =
+        const { std::cell::RefCell::new(None) };
+    /// Window-local region painted by the previous rendered frame. Survives
+    /// surface teardown so the first frame after a re-park correctly clears
+    /// the stale cursor pixels the DWM is still displaying.
+    static PREV_DIRTY: std::cell::Cell<Option<DirtyRect>> =
+        const { std::cell::Cell::new(None) };
+    /// The first `UpdateLayeredWindowIndirect` for each newly-created surface
+    /// must push the full surface to establish the layered-window backing
+    /// store. Surface recreation and idle teardown reset this flag.
+    static FIRST_PRESENT: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+/// Paint this frame's cursors into the persistent surface and return the
+/// window-local region that must be pushed to the screen (`None` = nothing
+/// painted and nothing stale to erase — skip the present entirely).
+#[cfg(target_os = "windows")]
+fn composite_dirty(map: &RenderMap) -> Option<DirtyRect> {
+    let (w, h) = (map.virt_w.max(1), map.virt_h.max(1));
+    SURFACE.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if slot.as_ref().map(|s| (s.virt_x, s.virt_y, s.w, s.h))
+            != Some((map.virt_x, map.virt_y, w, h))
+        {
+            *slot = unsafe { WinSurface::create(map.virt_x, map.virt_y, w, h) };
+            FIRST_PRESENT.with(|first| first.set(true));
+        }
+        let surf = slot.as_mut()?;
+
+        // Union of every cursor that will produce pixels this frame
+        // (mirrors paint_cursor's own visibility early-return).
+        let mut current: Option<DirtyRect> = None;
+        for rs in map.cursors.values() {
+            if !rs.core.visible || rs.core.pos.0 < -100.0 || rs.core.idle_alpha < 0.004 {
+                continue;
+            }
+            let cx = (rs.core.pos.0 - map.virt_x as f64).round() as i32;
+            let cy = (rs.core.pos.1 - map.virt_y as f64).round() as i32;
+            let custom_theme = rs
+                .core
+                .theme
+                .as_deref()
+                .is_some_and(|theme| theme.id != cursor_overlay::DEFAULT_THEME_ID);
+            let r = if custom_theme {
+                Some(DirtyRect {
+                    x0: 0,
+                    y0: 0,
+                    x1: w,
+                    y1: h,
+                })
+            } else {
+                DirtyRect {
+                    x0: cx - CURSOR_PAD,
+                    y0: cy - CURSOR_PAD,
+                    x1: cx + CURSOR_PAD,
+                    y1: cy + CURSOR_PAD,
+                }
+                .clamped(w, h)
+            };
+            current = DirtyRect::union(current, r);
+        }
+
+        let prev = PREV_DIRTY.with(std::cell::Cell::get);
+        for r in [prev, current].into_iter().flatten() {
+            surf.clear_rect(r);
+        }
+        for rs in map.cursors.values() {
+            cursor_overlay::paint_cursor(
+                &mut surf.pixmap,
+                &rs.core,
+                map.virt_x as f64,
+                map.virt_y as f64,
+                None, // focus-rect is macOS-only
+                1.0,
+            );
+        }
+        PREV_DIRTY.with(|p| p.set(current));
+
+        let upload = DirtyRect::union(prev, current)?;
+        surf.swizzle_rect(upload);
+        Some(upload)
+    })
+}
+
+/// Push `dirty` from the persistent surface to the layered window via
+/// `UpdateLayeredWindowIndirect`. The DWM copies the region into its own
+/// backing store, so the surface itself may be freed afterwards.
+#[cfg(target_os = "windows")]
+unsafe fn present_surface(hwnd: windows::Win32::Foundation::HWND, dirty: DirtyRect) {
+    use windows::Win32::Foundation::{COLORREF, POINT, RECT, SIZE};
+    use windows::Win32::Graphics::Gdi::{GetDC, ReleaseDC, BLENDFUNCTION, HDC};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        UpdateLayeredWindowIndirect, ULW_ALPHA, UPDATELAYEREDWINDOWINFO,
+    };
+
+    SURFACE.with(|cell| {
+        let slot = cell.borrow();
+        let Some(surf) = slot.as_ref() else { return };
+        let dirty = if FIRST_PRESENT.with(std::cell::Cell::get) {
+            DirtyRect {
+                x0: 0,
+                y0: 0,
+                x1: surf.w,
+                y1: surf.h,
+            }
+        } else {
+            dirty
+        };
+        let hdc_screen = GetDC(None);
+        let pt_dst = POINT {
+            x: surf.virt_x,
+            y: surf.virt_y,
+        };
+        let sz = SIZE {
+            cx: surf.w,
+            cy: surf.h,
+        };
+        let pt_src = POINT { x: 0, y: 0 };
+        let blend = BLENDFUNCTION {
+            BlendOp: 0, // AC_SRC_OVER
+            BlendFlags: 0,
+            SourceConstantAlpha: 255,
+            AlphaFormat: 1, // AC_SRC_ALPHA
+        };
+        let rc_dirty = RECT {
+            left: dirty.x0,
+            top: dirty.y0,
+            right: dirty.x1,
+            bottom: dirty.y1,
+        };
+        let info = UPDATELAYEREDWINDOWINFO {
+            cbSize: std::mem::size_of::<UPDATELAYEREDWINDOWINFO>() as u32,
+            hdcDst: hdc_screen,
+            pptDst: &pt_dst,
+            psize: &sz,
+            hdcSrc: HDC(surf.hdc_mem as *mut _),
+            pptSrc: &pt_src,
+            crKey: COLORREF(0),
+            pblend: &blend,
+            dwFlags: ULW_ALPHA,
+            prcDirty: &rc_dirty,
+        };
+        if UpdateLayeredWindowIndirect(hwnd, &info).as_bool() {
+            FIRST_PRESENT.with(|f| f.set(false));
+        }
+        ReleaseDC(None, hdc_screen);
+    });
+}
+
 // ── Idle render gate (issue #1808) ────────────────────────────────────────
 //
-// The overlay window timer is re-armed between two cadences:
+// The overlay window timer is re-armed between three cadences:
 //   * ACTIVE  (`TIMER_MS_ACTIVE`, ~125 Hz) while any cursor is animating /
 //     fading — this is what produces a smooth glide + click pulse.
+//   * HOVER   (`TIMER_MS_HOVER`, 12.5 Hz) while a revealed cursor can show its
+//     session badge again under the user's hardware pointer.
 //   * IDLE    (`TIMER_MS_IDLE`, a slow heartbeat) when every cursor is
 //     quiescent — the handler then only drains the command channel cheaply
 //     and re-arms ACTIVE the instant a command arrives. No full-screen pixmap
@@ -628,9 +1081,10 @@ static Z_ORDER: OnceLock<WinZOrderEnforcer> = OnceLock::new();
 // armed at; the WM_TIMER handler flips it based on `render_map_needs_frame_tick`.
 const TIMER_ID: usize = 1;
 const TIMER_MS_ACTIVE: u32 = 8; // ~125 Hz, matches the C# reference render rate
+const TIMER_MS_HOVER: u32 = 80; // low-cost hardware-pointer hover sampling
 const TIMER_MS_IDLE: u32 = 250; // slow heartbeat: drain channel, stay responsive
 /// Current armed timer cadence in ms. Compared against the desired cadence each
-/// WM_TIMER so we only call `SetTimer` (re-arm) on an actual active↔idle flip.
+/// WM_TIMER so we only call `SetTimer` when the desired cadence changes.
 static TIMER_PERIOD_MS: std::sync::atomic::AtomicU32 =
     std::sync::atomic::AtomicU32::new(TIMER_MS_ACTIVE);
 
@@ -662,7 +1116,9 @@ unsafe extern "system" fn wnd_proc(
                 static FPS_PATH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
                 static FPS_FRAMES: AtomicU64 = AtomicU64::new(0);
                 static FPS_LAST: AtomicU64 = AtomicU64::new(0);
-                if let Some(path) = FPS_PATH.get_or_init(|| std::env::var("CUA_DRIVER_RS_OVERLAY_FPS_FILE").ok()) {
+                if let Some(path) =
+                    FPS_PATH.get_or_init(|| std::env::var("CUA_DRIVER_RS_OVERLAY_FPS_FILE").ok())
+                {
                     let n = FPS_FRAMES.fetch_add(1, Relaxed) + 1;
                     let last = FPS_LAST.load(Relaxed);
                     if last == 0 {
@@ -670,11 +1126,22 @@ unsafe extern "system" fn wnd_proc(
                     } else if now_ms.wrapping_sub(last) >= 1000 {
                         let secs = (now_ms - last) as f64 / 1000.0;
                         let fps = n as f64 / secs.max(1e-3);
-                        let cursors = RENDER.lock().ok()
-                            .and_then(|g| g.as_ref().map(|m| m.cursors.len())).unwrap_or(0);
-                        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                        let cursors = RENDER
+                            .lock()
+                            .ok()
+                            .and_then(|g| g.as_ref().map(|m| m.cursors.len()))
+                            .unwrap_or(0);
+                        if let Ok(mut f) = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(path)
+                        {
                             use std::io::Write;
-                            let _ = writeln!(f, "overlay fps={fps:.1} avg_dt_ms={:.1} cursors={cursors}", secs * 1000.0 / n as f64);
+                            let _ = writeln!(
+                                f,
+                                "overlay fps={fps:.1} avg_dt_ms={:.1} cursors={cursors}",
+                                secs * 1000.0 / n as f64
+                            );
                         }
                         FPS_FRAMES.store(0, Relaxed);
                         FPS_LAST.store(now_ms, Relaxed);
@@ -696,7 +1163,7 @@ unsafe extern "system" fn wnd_proc(
             // the slow IDLE cadence below.
             let was_active =
                 TIMER_PERIOD_MS.load(std::sync::atomic::Ordering::Relaxed) == TIMER_MS_ACTIVE;
-            let (pixmap, arrived, pinned_wid, needs_tick) = {
+            let (upload, arrived, pinned_wid, needs_tick, needs_hover_poll) = {
                 let mut guard = RENDER.lock().unwrap();
                 if let Some(map) = guard.as_mut() {
                     // Drain the channel via get-or-create; track the last-touched
@@ -714,10 +1181,10 @@ unsafe extern "system" fn wnd_proc(
                     }
 
                     let now = Instant::now();
-                    let dt = now
-                        .duration_since(map.last_tick)
-                        .as_secs_f64()
-                        .clamp(0.0, 0.05);
+                    let real_dt = now.duration_since(map.last_tick).as_secs_f64();
+                    // Clamped dt for the motion physics: a large gap between
+                    // ticks must not teleport an in-flight glide.
+                    let dt = real_dt.clamp(0.0, 0.05);
                     map.last_tick = now;
 
                     // Tick every cursor; record the ones that just arrived.
@@ -726,20 +1193,46 @@ unsafe extern "system" fn wnd_proc(
                         if rs.tick(dt) {
                             arrived.push(k.clone());
                         }
+                        // Idle-countdown wall-clock catch-up (render-gate fix):
+                        // cursors parked in the constant-alpha countdown tick at
+                        // the slow IDLE cadence, where the 0.05 s motion clamp
+                        // would stretch the `idle_hide_ms` countdown ~5x. Credit
+                        // the unclamped remainder so the fade starts on real
+                        // time — but never advance past `fade_start`, so the
+                        // 180 ms fade itself always plays out at frame cadence
+                        // (a single 250 ms step would otherwise skip the fade
+                        // and pop the cursor out).
+                        if real_dt > dt && rs.in_idle_countdown() {
+                            let fade_start = rs.core.motion.idle_hide_ms / 1000.0;
+                            rs.core.idle_secs =
+                                (rs.core.idle_secs + (real_dt - dt)).min(fade_start);
+                        }
+                    }
+                    let mut pointer = POINT::default();
+                    let pointer = GetCursorPos(&mut pointer)
+                        .ok()
+                        .map(|_| (f64::from(pointer.x), f64::from(pointer.y)));
+                    let mut hover_changed = false;
+                    for rs in map.cursors.values_mut() {
+                        hover_changed |= rs.core.update_session_badge_hover(pointer);
                     }
 
                     // After ticking: does any cursor still need frame ticks?
                     let needs_tick = render_map_needs_frame_tick(map);
+                    let needs_hover_poll = map
+                        .cursors
+                        .values()
+                        .any(|rs| rs.core.session_badge_needs_hover_poll());
 
                     // Render only when something can have changed pixels this
                     // frame: a fresh command, a still-running animation, or the
                     // final settle frame as the previous animation winds down
                     // (`was_active && !needs_tick`). A fully-quiescent idle tick
                     // returns `None` here and does no compositing at all.
-                    let should_render = had_msg || needs_tick || was_active;
+                    let should_render = had_msg || hover_changed || needs_tick || was_active;
 
                     if !should_render {
-                        (None, arrived, None, needs_tick)
+                        (None, arrived, None, needs_tick, needs_hover_poll)
                     } else {
                         // Decide where to pin the single overlay window in z.
                         //
@@ -771,40 +1264,28 @@ unsafe extern "system" fn wnd_proc(
                         }
                         let pinned = unsafe { topmost_of(&driven) };
 
-                        // Composite every cursor into ONE virtual-screen pixmap.
-                        // While ACTIVE this runs every ~8ms, so a steady
-                        // per-frame blit keeps resting cursors flicker-free as
-                        // others animate; once the loop goes idle the whole block
-                        // is skipped (the `should_render` gate above).
-                        let w = map.virt_w.max(1) as u32;
-                        let h = map.virt_h.max(1) as u32;
-                        let mut pm = tiny_skia::Pixmap::new(w.max(1), h.max(1))
-                            .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
-                        for (_k, rs) in &map.cursors {
-                            // TODO: thread `GetDpiForWindow` / per-monitor
-                            // DPI awareness here so cursors render crisp on
-                            // HiDPI Windows displays. For now we default to
-                            // 1.0 — preserves pre-retina-fix behaviour on
-                            // Windows.
-                            cursor_overlay::paint_cursor(
-                                &mut pm,
-                                &rs.core,
-                                map.virt_x as f64,
-                                map.virt_y as f64,
-                                None, // focus-rect is macOS-only
-                                1.0,
-                            );
-                        }
+                        // Dirty-rect composite: paint only the union of last
+                        // frame's and this frame's cursor bounds into the
+                        // persistent surface (see `composite_dirty`). The old
+                        // path re-allocated, fully repainted, and fully
+                        // swizzled a virtual-screen pixmap every frame —
+                        // ~52 ms/frame on a large desktop.
+                        //
+                        // TODO: thread `GetDpiForWindow` / per-monitor DPI
+                        // awareness into the paint so cursors render crisp on
+                        // HiDPI Windows displays (backing_scale stays 1.0 —
+                        // preserves pre-retina-fix behaviour on Windows).
+                        let upload = composite_dirty(map);
 
-                        (Some(pm), arrived, pinned, needs_tick)
+                        (upload, arrived, pinned, needs_tick, needs_hover_poll)
                     }
                 } else {
-                    (None, Vec::new(), None, false)
+                    (None, Vec::new(), None, false, false)
                 }
             };
 
-            if let Some(pm) = pixmap {
-                update_layered_window(hwnd, &pm);
+            if let Some(dirty) = upload {
+                unsafe { present_surface(hwnd, dirty) };
 
                 // Z-order maintenance every 80ms — delegate to the cross-platform
                 // ZOrderEnforcer so the contract for "z+1 of the application under
@@ -834,12 +1315,29 @@ unsafe extern "system" fn wnd_proc(
             // same period every tick would itself be needless work.
             let desired_ms = if needs_tick {
                 TIMER_MS_ACTIVE
+            } else if needs_hover_poll {
+                TIMER_MS_HOVER
             } else {
                 TIMER_MS_IDLE
             };
-            if TIMER_PERIOD_MS.swap(desired_ms, std::sync::atomic::Ordering::Relaxed) != desired_ms {
+            // Hold the 1 ms global timer resolution only while at the ACTIVE
+            // cadence (the helper no-ops unless the raised state changes).
+            set_timer_resolution_raised(desired_ms == TIMER_MS_ACTIVE);
+            if TIMER_PERIOD_MS.swap(desired_ms, std::sync::atomic::Ordering::Relaxed) != desired_ms
+            {
                 unsafe {
                     SetTimer(hwnd, TIMER_ID, desired_ms, None);
+                }
+                if desired_ms == TIMER_MS_IDLE {
+                    // Parked: free the render surface (pixmap + DIB, tens of
+                    // MB on a large desktop). The DWM keeps its own copy of
+                    // the layered window's contents, and PREV_DIRTY survives
+                    // so the next rendered frame clears any stale cursor
+                    // pixels before presenting.
+                    SURFACE.with(|cell| {
+                        cell.borrow_mut().take();
+                    });
+                    FIRST_PRESENT.with(|first| first.set(true));
                 }
             }
 
@@ -851,105 +1349,6 @@ unsafe extern "system" fn wnd_proc(
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
-}
-
-// ── UpdateLayeredWindow helper ────────────────────────────────────────────
-
-#[cfg(target_os = "windows")]
-unsafe fn update_layered_window(
-    hwnd: windows::Win32::Foundation::HWND,
-    pixmap: &tiny_skia::Pixmap,
-) {
-    use windows::Win32::Foundation::*;
-    use windows::Win32::Graphics::Gdi::*;
-    use windows::Win32::UI::WindowsAndMessaging::{UpdateLayeredWindow, ULW_ALPHA};
-
-    let w = pixmap.width() as i32;
-    let h = pixmap.height() as i32;
-    if w <= 0 || h <= 0 {
-        return;
-    }
-
-    let hdc_screen = GetDC(None);
-    let hdc_mem = CreateCompatibleDC(hdc_screen);
-
-    // Create a 32-bit top-down DIB section (BGRA).
-    let bmi = BITMAPINFO {
-        bmiHeader: BITMAPINFOHEADER {
-            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-            biWidth: w,
-            biHeight: -h, // negative = top-down
-            biPlanes: 1,
-            biBitCount: 32,
-            biCompression: BI_RGB.0,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-
-    let mut bits_ptr = std::ptr::null_mut::<std::ffi::c_void>();
-    let hbmp = CreateDIBSection(hdc_mem, &bmi, DIB_RGB_COLORS, &mut bits_ptr, None, 0);
-    if hbmp.is_err() || bits_ptr.is_null() {
-        let _ = DeleteDC(hdc_mem);
-        ReleaseDC(None, hdc_screen);
-        return;
-    }
-    let hbmp = hbmp.unwrap();
-    SelectObject(hdc_mem, hbmp);
-
-    // Copy pixels: tiny-skia produces premultiplied RGBA; Win32 expects premultiplied BGRA.
-    let src = pixmap.data();
-    let dst = std::slice::from_raw_parts_mut(bits_ptr as *mut u8, (w * h * 4) as usize);
-    for i in 0..(w * h) as usize {
-        let r = src[i * 4];
-        let g = src[i * 4 + 1];
-        let b = src[i * 4 + 2];
-        let a = src[i * 4 + 3];
-        // Swap R <-> B for BGRA.
-        dst[i * 4] = b;
-        dst[i * 4 + 1] = g;
-        dst[i * 4 + 2] = r;
-        dst[i * 4 + 3] = a;
-    }
-
-    // UpdateLayeredWindow.
-    let virt_x;
-    let virt_y;
-    {
-        let guard = RENDER.lock().unwrap();
-        if let Some(map) = &*guard {
-            virt_x = map.virt_x;
-            virt_y = map.virt_y;
-        } else {
-            virt_x = 0;
-            virt_y = 0;
-        }
-    }
-
-    let pt_src = POINT { x: 0, y: 0 };
-    let pt_dst = POINT { x: virt_x, y: virt_y };
-    let sz = SIZE { cx: w, cy: h };
-    let blend = BLENDFUNCTION {
-        BlendOp: 0, // AC_SRC_OVER
-        BlendFlags: 0,
-        SourceConstantAlpha: 255,
-        AlphaFormat: 1, // AC_SRC_ALPHA
-    };
-    let _ = UpdateLayeredWindow(
-        hwnd,
-        hdc_screen,
-        Some(&pt_dst),
-        Some(&sz),
-        hdc_mem,
-        Some(&pt_src),
-        COLORREF(0),
-        Some(&blend),
-        ULW_ALPHA,
-    );
-
-    let _ = DeleteObject(hbmp);
-    let _ = DeleteDC(hdc_mem);
-    ReleaseDC(None, hdc_screen);
 }
 
 // ── Z-order enforcer (Windows impl of cursor_overlay::ZOrderEnforcer) ────
@@ -971,10 +1370,14 @@ struct WinZOrderEnforcer {
 unsafe fn topmost_of(ids: &[u64]) -> Option<u64> {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{GetTopWindow, GetWindow, GW_HWNDNEXT};
-    if ids.is_empty() { return None; }
+    if ids.is_empty() {
+        return None;
+    }
     let mut h = GetTopWindow(None).unwrap_or(HWND(std::ptr::null_mut()));
     while !h.0.is_null() {
-        if ids.contains(&(h.0 as u64)) { return Some(h.0 as u64); }
+        if ids.contains(&(h.0 as u64)) {
+            return Some(h.0 as u64);
+        }
         h = GetWindow(h, GW_HWNDNEXT).unwrap_or(HWND(std::ptr::null_mut()));
     }
     ids.first().copied()
@@ -991,7 +1394,11 @@ impl ZOrderEnforcer for WinZOrderEnforcer {
 
             let pinned_target = target.and_then(|wid| {
                 let h = HWND(wid as *mut _);
-                if IsWindow(h).as_bool() { Some(h) } else { None }
+                if IsWindow(h).as_bool() {
+                    Some(h)
+                } else {
+                    None
+                }
             });
 
             // The overlay must sit JUST above the pinned target window so the
@@ -1035,7 +1442,11 @@ impl ZOrderEnforcer for WinZOrderEnforcer {
             let insert_after = match pinned_target {
                 Some(target) => {
                     let prev = GetWindow(target, GW_HWNDPREV).unwrap_or(HWND(std::ptr::null_mut()));
-                    if !prev.0.is_null() { prev } else { HWND_TOP }
+                    if !prev.0.is_null() {
+                        prev
+                    } else {
+                        HWND_TOP
+                    }
                 }
                 None => HWND_TOP,
             };
@@ -1065,9 +1476,18 @@ impl ZOrderEnforcer for WinZOrderEnforcer {
 mod tests {
     use super::*;
 
+    #[test]
+    fn keyed_render_state_carries_the_session_color_identity() {
+        let state = render_state_for_key(&CursorConfig::default(), "session-blueprint");
+        assert_eq!(state.core.cfg.cursor_id, "session-blueprint");
+    }
+
     fn empty_map() -> RenderMap {
         let mut cursors = IndexMap::new();
-        cursors.insert("default".to_owned(), RenderState::new(CursorConfig::default()));
+        cursors.insert(
+            "default".to_owned(),
+            RenderState::new(CursorConfig::default()),
+        );
         RenderMap {
             cursors,
             virt_x: 0,
@@ -1084,8 +1504,84 @@ mod tests {
     fn move_msg(key: &str, x: f64, y: f64) -> OverlayMsg {
         OverlayMsg::Cmd(KeyedOverlayCommand {
             key: key.to_owned(),
-            cmd: OverlayCommand::MoveTo { x, y, end_heading_radians: 0.0 },
+            cmd: OverlayCommand::MoveTo {
+                x,
+                y,
+                end_heading_radians: 0.0,
+            },
         })
+    }
+
+    #[test]
+    fn default_dirty_envelope_covers_edge_clamped_session_badges() {
+        assert!(
+            CURSOR_PAD as f32 >= cursor_overlay::session_badge::BADGE_MAX_WIDTH + 8.0,
+            "a cursor at a display edge can have the entire badge on one side"
+        );
+    }
+
+    #[test]
+    fn idle_countdown_does_not_request_frame_ticks_but_fade_does() {
+        let mut map = empty_map();
+        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
+
+        // Run the glide + spring settle to completion.
+        for _ in 0..2000 {
+            for rs in map.cursors.values_mut() {
+                rs.tick(0.016);
+            }
+            if !render_map_needs_frame_tick(&map) {
+                break;
+            }
+        }
+        let rs = &map.cursors["sessA"];
+        assert!(
+            rs.core.path.is_none() && rs.core.spring.is_none(),
+            "glide must have completed"
+        );
+
+        // Landed cursor at constant alpha 1.0, idle-hide pending: this is the
+        // countdown phase. Pixels cannot change, so it must NOT demand frame
+        // ticks (the render-gate fix — previously this phase composited the
+        // full virtual screen at frame cadence for the whole idle_hide_ms
+        // window), but it must still be ticked for wall-clock accrual.
+        assert!((rs.core.idle_alpha - 1.0).abs() < f64::EPSILON);
+        assert!(
+            !render_map_needs_frame_tick(&map),
+            "constant-alpha countdown must not request frame ticks"
+        );
+        assert!(
+            rs.in_idle_countdown(),
+            "landed cursor with idle-hide pending must report in_idle_countdown"
+        );
+
+        // Advance idle_secs to the fade window: the fade animates pixels, so
+        // frame ticks are required again until alpha reaches ~0.
+        let fade_start = map.cursors["sessA"].core.motion.idle_hide_ms / 1000.0;
+        for rs in map.cursors.values_mut() {
+            rs.core.idle_secs = fade_start;
+        }
+        for rs in map.cursors.values_mut() {
+            rs.tick(0.016);
+        }
+        let rs = &map.cursors["sessA"];
+        assert!(rs.core.idle_alpha < 1.0 && rs.core.idle_alpha >= 0.004);
+        assert!(
+            rs.needs_frame_tick(),
+            "an actively fading cursor must request frame ticks"
+        );
+        assert!(!rs.in_idle_countdown());
+
+        // Run the fade out: fully hidden must be quiescent again.
+        for _ in 0..60 {
+            for rs in map.cursors.values_mut() {
+                rs.tick(0.016);
+            }
+        }
+        assert!(
+            !render_map_needs_frame_tick(&map),
+            "fully faded cursor must be quiescent"
+        );
     }
 
     #[test]
@@ -1126,15 +1622,18 @@ mod tests {
     }
 
     #[test]
-    fn lazily_created_cursors_get_distinct_palettes() {
+    fn lazily_created_cursors_inherit_the_selected_theme() {
         let mut map = empty_map();
         apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
         apply_msg(&mut map, move_msg("sessB", 20.0, 20.0));
-        let a = &map.cursors["sessA"].core.palette;
-        let b = &map.cursors["sessB"].core.palette;
-        let def = &map.cursors["default"].core.palette;
-        assert_ne!(a.name, def.name);
-        assert_ne!(b.name, def.name);
+        assert_eq!(
+            map.cursors["sessA"].core.cfg.theme_id,
+            map.cursors["default"].core.cfg.theme_id
+        );
+        assert_eq!(
+            map.cursors["sessB"].core.cfg.theme_id,
+            map.cursors["default"].core.cfg.theme_id
+        );
     }
 
     #[test]
@@ -1162,8 +1661,14 @@ mod tests {
         // A late in-flight Cmd for the ended session must be dropped WITHOUT
         // re-inserting (no get-or-create resurrection).
         let resolved = apply_msg(&mut map, move_msg("sessA", 99.0, 99.0));
-        assert!(resolved.is_none(), "ended-session Cmd must be dropped, not resolved");
-        assert!(!map.cursors.contains_key("sessA"), "tombstone must block resurrection");
+        assert!(
+            resolved.is_none(),
+            "ended-session Cmd must be dropped, not resolved"
+        );
+        assert!(
+            !map.cursors.contains_key("sessA"),
+            "tombstone must block resurrection"
+        );
         assert_eq!(map.cursors.len(), 1);
     }
 
@@ -1182,11 +1687,14 @@ mod tests {
     #[test]
     fn seed_moves_sentinel_cursor_on_screen_for_first_action() {
         let mut map = empty_map(); // 100x100 frame at origin
-        // No "sessA" cursor exists yet — the seed must get-or-create it.
+                                   // No "sessA" cursor exists yet — the seed must get-or-create it.
         let seeded = seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
         assert!(seeded, "sentinel cursor must be seeded");
         let pos = map.cursors["sessA"].core.pos;
-        assert!(pos.0 > -50.0 && pos.1 > -50.0, "seed must be on-screen, got {pos:?}");
+        assert!(
+            pos.0 > -50.0 && pos.1 > -50.0,
+            "seed must be on-screen, got {pos:?}"
+        );
         assert!(
             (pos.0 - 60.0).abs() > 4.0 || (pos.1 - 60.0).abs() > 4.0,
             "seed must differ from target to produce a visible glide, got {pos:?}"
@@ -1200,7 +1708,11 @@ mod tests {
         map.cursors.get_mut("sessA").unwrap().core.pos = (30.0, 30.0);
         let seeded_again = seed_start_in_map(&mut map, &"sessA".to_owned(), 80.0, 80.0);
         assert!(!seeded_again, "on-screen cursor must not be re-seeded");
-        assert_eq!(map.cursors["sessA"].core.pos, (30.0, 30.0), "pos must be untouched");
+        assert_eq!(
+            map.cursors["sessA"].core.pos,
+            (30.0, 30.0),
+            "pos must be untouched"
+        );
     }
 
     #[test]
@@ -1209,7 +1721,10 @@ mod tests {
         map.ended.insert("sessA".to_owned());
         let seeded = seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
         assert!(!seeded, "ended session must not be seeded");
-        assert!(!map.cursors.contains_key("sessA"), "ended session must not be resurrected");
+        assert!(
+            !map.cursors.contains_key("sessA"),
+            "ended session must not be resurrected"
+        );
     }
 
     #[test]
@@ -1282,6 +1797,9 @@ mod tests {
         map.last_active = k;
         assert_eq!(map.last_active.as_deref(), Some("sessA"));
         apply_msg(&mut map, OverlayMsg::Remove("sessA".to_owned()));
-        assert_eq!(map.last_active, None, "removing the active cursor must clear last_active");
+        assert_eq!(
+            map.last_active, None,
+            "removing the active cursor must clear last_active"
+        );
     }
 }

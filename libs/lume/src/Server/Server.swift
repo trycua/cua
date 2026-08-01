@@ -473,7 +473,37 @@ final class Server: @unchecked Sendable {
             return HTTPResponse(statusCode: .notFound, body: "Not found")
         }
 
-        let response = try await route.handler(request)
+        let operation = TelemetryClient.httpOperation(method: route.method, routePath: route.path)
+        let startedAt = Date()
+        let response: HTTPResponse
+        do {
+            response = try await route.handler(request)
+            let success = response.statusCode.rawValue < 400
+            let errorClass: TelemetryErrorClass
+            switch response.statusCode {
+            case .badRequest: errorClass = .invalidParams
+            case .notFound: errorClass = .notFound
+            case .internalServerError: errorClass = .internalError
+            default: errorClass = .none
+            }
+            TelemetryClient.shared.recordOperationCompleted(
+                operation: operation,
+                transport: .http,
+                success: success,
+                errorClass: errorClass,
+                elapsed: Date().timeIntervalSince(startedAt),
+                phase: response.statusCode == .accepted ? "accepted" : "completed"
+            )
+        } catch {
+            TelemetryClient.shared.recordOperationCompleted(
+                operation: operation,
+                transport: .http,
+                success: false,
+                errorClass: .internalError,
+                elapsed: Date().timeIntervalSince(startedAt)
+            )
+            throw error
+        }
 
         Logger.info(
             "Sending response",

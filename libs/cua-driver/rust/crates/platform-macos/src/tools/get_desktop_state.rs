@@ -12,7 +12,12 @@
 //! `structuredContent` object.
 
 use async_trait::async_trait;
-use cua_driver_core::{protocol::{ToolResult, Content}, tool::{Tool, ToolDef}};
+use cua_driver_contract::GetDesktopStateInput;
+use cua_driver_core::{
+    protocol::{Content, ToolResult},
+    tool::{Tool, ToolDef},
+    tool_args::parse_typed_input,
+};
 use serde_json::Value;
 
 use super::get_screen_size::main_screen_size;
@@ -47,35 +52,20 @@ fn def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for GetDesktopStateTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use cua_driver_core::tool_args::ArgsExt;
-
-        // Gate on the global capture_scope (re-read from the persisted config,
-        // the same value set_config writes): a full-display capture is a
-        // desktop-scope operation, available only under capture_scope="desktop".
-        let scope = super::load_driver_config().capture_scope;
-        if scope != "desktop" {
-            return ToolResult::error(format!(
-                "get_desktop_state requires capture_scope=\"desktop\" (current scope is \
-                 \"{scope}\"). Full-display capture is a desktop-scope operation; call \
-                 set_config with capture_scope=desktop first (it also enables window-less \
-                 screen-absolute click/scroll). For a single window, use \
-                 get_window_state(pid, window_id) instead."
-            ))
-            .with_structured(serde_json::json!({
-                "code": "desktop_scope_disabled",
-                "capture_scope": scope,
-                "suggestion": "set_config capture_scope=desktop",
-            }));
-        }
-
-        let screenshot_out_file = args.opt_str("screenshot_out_file").map(|s| {
+        let input = match parse_typed_input::<GetDesktopStateInput>("get_desktop_state", args) {
+            Ok(input) => input,
+            Err(result) => return result,
+        };
+        let screenshot_out_file = input.screenshot_out_file.map(|s| {
             // Expand ~ prefix (mirrors get_window_state).
-            if s.starts_with("~/") {
+            if let Some(relative) = s.strip_prefix("~/") {
                 let home = std::env::var("HOME").unwrap_or_default();
-                format!("{home}/{}", &s[2..])
+                format!("{home}/{relative}")
             } else {
                 s
             }
@@ -123,6 +113,7 @@ impl Tool for GetDesktopStateTool {
 
         let mut structured = serde_json::json!({
             "platform": "macos",
+            "display": "primary",
             "screenshot_width": screenshot_width,
             "screenshot_height": screenshot_height,
             "screen_width": screen_width,
@@ -134,7 +125,12 @@ impl Tool for GetDesktopStateTool {
             structured["screenshot_file_path"] = serde_json::json!(fp);
         }
 
-        ToolResult { content, is_error: None, structured_content: Some(structured) }
+        ToolResult {
+            content,
+            is_error: None,
+            structured_content: Some(structured),
+            action_record: None,
+        }
     }
 }
 
@@ -152,11 +148,20 @@ mod tests {
 
         let props = d.input_schema["properties"].as_object().unwrap();
         assert!(!props.contains_key("pid"), "must not accept pid");
-        assert!(!props.contains_key("window_id"), "must not accept window_id");
-        assert!(!props.contains_key("capture_mode"), "must not accept capture_mode");
+        assert!(
+            !props.contains_key("window_id"),
+            "must not accept window_id"
+        );
+        assert!(
+            !props.contains_key("capture_mode"),
+            "must not accept capture_mode"
+        );
         assert!(props.contains_key("session"));
         assert!(props.contains_key("screenshot_out_file"));
-        assert_eq!(d.input_schema["additionalProperties"], serde_json::json!(false));
+        assert_eq!(
+            d.input_schema["additionalProperties"],
+            serde_json::json!(false)
+        );
     }
 
     #[test]

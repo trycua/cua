@@ -22,7 +22,10 @@ impl Request {
     }
 
     pub fn tool_call(&self) -> anyhow::Result<ToolCall> {
-        let params = self.params.as_ref().ok_or_else(|| anyhow::anyhow!("missing params"))?;
+        let params = self
+            .params
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("missing params"))?;
         let name = params
             .get("name")
             .and_then(|v| v.as_str())
@@ -167,11 +170,7 @@ fn capability_declared(capabilities: Option<&Value>, name: &str) -> bool {
         .is_some_and(|caps| caps.contains_key(name))
 }
 
-fn nested_capability_declared(
-    capabilities: Option<&Value>,
-    parent: &str,
-    child: &str,
-) -> bool {
+fn nested_capability_declared(capabilities: Option<&Value>, parent: &str, child: &str) -> bool {
     capabilities
         .and_then(|v| v.get(parent))
         .and_then(Value::as_object)
@@ -208,14 +207,23 @@ pub struct RpcError {
 
 impl Response {
     pub fn ok(id: Value, result: Value) -> Self {
-        Self { jsonrpc: "2.0", id, body: ResponseBody::Result { result } }
+        Self {
+            jsonrpc: "2.0",
+            id,
+            body: ResponseBody::Result { result },
+        }
     }
 
     pub fn error(id: Value, code: i64, message: impl Into<String>) -> Self {
         Self {
             jsonrpc: "2.0",
             id,
-            body: ResponseBody::Error { error: RpcError { code, message: message.into() } },
+            body: ResponseBody::Error {
+                error: RpcError {
+                    code,
+                    message: message.into(),
+                },
+            },
         }
     }
 
@@ -240,7 +248,7 @@ pub enum Content {
         annotations: Option<Value>,
     },
     Image {
-        data: String,     // base64-encoded PNG
+        data: String, // base64-encoded PNG
         #[serde(rename = "mimeType")]
         mime_type: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -250,15 +258,26 @@ pub enum Content {
 
 impl Content {
     pub fn text(text: impl Into<String>) -> Self {
-        Content::Text { text: text.into(), annotations: None }
+        Content::Text {
+            text: text.into(),
+            annotations: None,
+        }
     }
 
     pub fn image_png(data_base64: String) -> Self {
-        Content::Image { data: data_base64, mime_type: "image/png".into(), annotations: None }
+        Content::Image {
+            data: data_base64,
+            mime_type: "image/png".into(),
+            annotations: None,
+        }
     }
 
     pub fn image_jpeg(data_base64: String) -> Self {
-        Content::Image { data: data_base64, mime_type: "image/jpeg".into(), annotations: None }
+        Content::Image {
+            data: data_base64,
+            mime_type: "image/jpeg".into(),
+            annotations: None,
+        }
     }
 }
 
@@ -270,19 +289,39 @@ pub struct ToolResult {
     pub is_error: Option<bool>,
     #[serde(rename = "structuredContent", skip_serializing_if = "Option::is_none")]
     pub structured_content: Option<Value>,
+    /// Rich actuator facts retained inside the daemon. This is deliberately
+    /// skipped by serde so the nonbreaking truth-layer migration cannot alter
+    /// the MCP result envelope or its legacy structured payload.
+    #[serde(skip)]
+    pub action_record: Option<crate::action_record::ActionExecutionRecord>,
 }
 
 impl ToolResult {
     pub fn text(msg: impl Into<String>) -> Self {
-        Self { content: vec![Content::text(msg)], ..Default::default() }
+        Self {
+            content: vec![Content::text(msg)],
+            ..Default::default()
+        }
     }
 
     pub fn error(msg: impl Into<String>) -> Self {
-        Self { content: vec![Content::text(msg)], is_error: Some(true), ..Default::default() }
+        Self {
+            content: vec![Content::text(msg)],
+            is_error: Some(true),
+            ..Default::default()
+        }
     }
 
     pub fn with_structured(mut self, v: Value) -> Self {
         self.structured_content = Some(v);
+        self
+    }
+
+    pub fn with_action_record(
+        mut self,
+        record: crate::action_record::ActionExecutionRecord,
+    ) -> Self {
+        self.action_record = Some(record);
         self
     }
 }
@@ -330,17 +369,16 @@ fn agent_instructions() -> String {
     format!(
         r#"cua-driver: cross-platform background computer-use automation.
 
-Tools let you interact with any app without stealing keyboard focus or moving the visible cursor. Prefer element_index ({tree_kind}) paths over pixel coordinates — they work on backgrounded/hidden windows.
+Tools operate apps without stealing focus or moving the real pointer. Prefer `element_index` ({tree_kind}) over pixels; it works on backgrounded or hidden windows.
 
 Workflow per turn:
-0. start_session(session) once at the start of a run → declares THIS run's identity (a stable id you choose, e.g. "research-1"). Pass that same `session` on every action below. It owns your agent cursor (a distinct color per id) and follows the run across apps/windows. End with end_session(session) when done. Concurrent runs/subagents each use their OWN `session`. (Omitting `session` still works, just with no cursor.)
-1. launch_app  → idempotent, returns pid + windows array in one call. Pass creates_new_application_instance:true if another run may touch the same app, so you get your own window.
-2. (skip list_windows when launch_app already returned a single window)
-3. get_window_state(pid, window_id) → refresh the {tree_kind} snapshot, get element indices
-4. click/type_text/press_key using element_index from step 3 (+ your `session`)
-5. get_window_state(pid, window_id) again → verify the action landed
+0. `start_session(session)` once per run; reuse that id on actions. Concurrent runs use distinct ids. End it when done.
+1. `launch_app` returns pid and windows. Use `creates_new_application_instance:true` when another run may touch the app.
+2. `get_window_state(pid, window_id)` refreshes the tree and element indices.
+3. Act with the fresh index.
+4. `verify_state(pid, window_id, expect)` checks bounded structured postconditions. `unknown` is not success. Set `include_screenshot:true` when the multimodal agent should also read visual evidence and decide whether to stop, retry, or advance the ladder.
 
-Agent cursor: a per-SESSION overlay cursor visualises where a run is acting without moving the real pointer. It is shown only for a DECLARED session (pass `session`), is color-coded by the session id, and is removed by end_session or the idle-TTL. The same id over MCP, the CLI, or the raw socket drives the same cursor. set_agent_cursor_* tools hide/show/customise it. Note: a pure accessibility-action (element_index) click snaps the cursor with a brief pulse on its first action rather than a long glide, so it can be easy to miss — issue a pixel click or move_cursor first for a visibly gliding demo/recording.
+A declared session owns a colored agent-cursor overlay; it never moves the real pointer. Pure accessibility actions show only a brief first pulse. Use `move_cursor` or a pixel action first when a recording needs a visible glide.
 
 If a `cua-driver` skill is loaded in your harness (Claude Code / Codex / OpenClaw / OpenCode dirs), prefer its detailed workflow — SKILL.md plus {platform_skill_pointer}. Install with `cua-driver skills install` if not yet present."#
     )
@@ -359,7 +397,10 @@ mod image_mime_type_tests {
         let c = Content::image_png("ZmFrZQ==".into());
         let v = serde_json::to_value(&c).expect("serialize");
         assert_eq!(v.get("type").and_then(|t| t.as_str()), Some("image"));
-        assert_eq!(v.get("mimeType").and_then(|t| t.as_str()), Some("image/png"));
+        assert_eq!(
+            v.get("mimeType").and_then(|t| t.as_str()),
+            Some("image/png")
+        );
         assert_eq!(v.get("data").and_then(|t| t.as_str()), Some("ZmFrZQ=="));
     }
 
@@ -368,7 +409,10 @@ mod image_mime_type_tests {
         let c = Content::image_jpeg("ZmFrZQ==".into());
         let v = serde_json::to_value(&c).expect("serialize");
         assert_eq!(v.get("type").and_then(|t| t.as_str()), Some("image"));
-        assert_eq!(v.get("mimeType").and_then(|t| t.as_str()), Some("image/jpeg"));
+        assert_eq!(
+            v.get("mimeType").and_then(|t| t.as_str()),
+            Some("image/jpeg")
+        );
     }
 
     /// Text parts must not grow a mimeType field — the field belongs to
@@ -379,7 +423,61 @@ mod image_mime_type_tests {
         let c = Content::text("hi");
         let v = serde_json::to_value(&c).expect("serialize");
         assert_eq!(v.get("type").and_then(|t| t.as_str()), Some("text"));
-        assert!(v.get("mimeType").is_none(), "text content must not carry mimeType");
+        assert!(
+            v.get("mimeType").is_none(),
+            "text content must not carry mimeType"
+        );
+    }
+}
+
+#[cfg(test)]
+mod action_record_wire_tests {
+    use super::ToolResult;
+    use crate::action_record::{
+        ActionEffect, ActionExecutionRecord, ActionTransport, ActualDelivery, RequestedDelivery,
+    };
+
+    #[test]
+    fn internal_action_record_never_changes_mcp_serialization() {
+        let legacy = serde_json::json!({
+            "path": "cgevent",
+            "verified": false,
+            "effect": "unverifiable",
+        });
+        let plain = ToolResult::text("clicked").with_structured(legacy.clone());
+        let with_truth = ToolResult::text("clicked")
+            .with_structured(legacy)
+            .with_action_record(
+                ActionExecutionRecord::builder(
+                    ActionEffect::Unverifiable,
+                    ActionTransport::MacosCgEventPid,
+                    RequestedDelivery::Background,
+                )
+                .actual_delivery(ActualDelivery::Background)
+                .build()
+                .expect("valid action record"),
+            );
+        assert_eq!(
+            serde_json::to_value(plain).expect("serialize plain result"),
+            serde_json::to_value(with_truth).expect("serialize result with internal truth"),
+        );
+    }
+}
+
+#[cfg(test)]
+mod agent_instruction_tests {
+    use super::agent_instructions;
+
+    #[test]
+    fn instructions_route_structured_and_visual_verification_to_the_right_owner() {
+        let instructions = agent_instructions();
+        assert!(instructions.contains("verify_state"));
+        assert!(instructions.contains("`unknown` is not success"));
+        assert!(instructions.contains("multimodal agent"));
+        assert!(
+            instructions.split_whitespace().count() <= 200,
+            "initialize instructions should stay within the documented context budget"
+        );
     }
 }
 
@@ -443,7 +541,10 @@ mod initialize_metadata_tests {
 
         let debug = format!("{metadata:?}");
         for forbidden in ["secret", "prompt", "task", "arbitrary", "payload"] {
-            assert!(!debug.contains(forbidden), "metadata leaked {forbidden}: {debug}");
+            assert!(
+                !debug.contains(forbidden),
+                "metadata leaked {forbidden}: {debug}"
+            );
         }
     }
 

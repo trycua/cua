@@ -35,11 +35,84 @@ mod set_config;
 mod type_text_chars;
 mod zoom;
 
-use cua_driver_core::tool::ToolRegistry;
+use cua_driver_core::{
+    tool::{Tool, ToolRegistry},
+    window_target::{PidOnlyWindowTargetGuard, WindowTargetCandidate, WindowTargetCandidates},
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::{ax::cache::ElementCache, cursor::state::CursorRegistry};
+
+fn pid_window_target_candidates(pid: i64) -> Vec<WindowTargetCandidate> {
+    let Ok(pid) = i32::try_from(pid) else {
+        return Vec::new();
+    };
+    window_target_candidates_for_pid(crate::windows::all_windows(), pid)
+}
+
+fn window_target_candidates_for_pid(
+    windows: impl IntoIterator<Item = crate::windows::WindowInfo>,
+    pid: i32,
+) -> Vec<WindowTargetCandidate> {
+    windows
+        .into_iter()
+        .filter(|window| window.pid == pid)
+        .map(|window| WindowTargetCandidate {
+            window_id: u64::from(window.window_id),
+            title: window.title,
+            app_name: Some(window.app_name),
+            is_on_screen: window.is_on_screen,
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod pid_window_target_tests {
+    use super::*;
+    use cua_driver_core::window_target::{resolve_pid_window_target, PidWindowTargetResolution};
+
+    fn window(window_id: u32, pid: i32) -> crate::windows::WindowInfo {
+        crate::windows::WindowInfo {
+            window_id,
+            pid,
+            app_name: "Editor".into(),
+            title: format!("Document {window_id}"),
+            bounds: crate::windows::WindowBounds {
+                x: 0.0,
+                y: 0.0,
+                width: 640.0,
+                height: 480.0,
+            },
+            layer: 0,
+            z_index: 1,
+            is_on_screen: true,
+            on_current_space: None,
+            space_ids: None,
+        }
+    }
+
+    #[test]
+    fn same_pid_sibling_windows_are_ambiguous() {
+        let candidates =
+            window_target_candidates_for_pid([window(7, 42), window(8, 42), window(9, 99)], 42);
+        assert!(matches!(
+            resolve_pid_window_target(candidates),
+            PidWindowTargetResolution::Ambiguous(windows)
+                if windows.iter().map(|window| window.window_id).collect::<Vec<_>>() == [7, 8]
+        ));
+    }
+}
+
+fn pid_window_guarded<T: Tool + 'static>(
+    tool: T,
+    candidates: &WindowTargetCandidates,
+) -> Box<dyn Tool> {
+    Box::new(PidOnlyWindowTargetGuard::new(
+        Box::new(tool),
+        candidates.clone(),
+    ))
+}
 
 pub use check_permissions::{
     request_from_launchservices_host as request_permissions_from_launchservices_host,
@@ -649,16 +722,47 @@ pub fn register_all(
     ));
     registry.register(Box::new(launch_app::LaunchAppTool));
     registry.register(Box::new(kill_app::KillAppTool));
-    registry.register(Box::new(bring_to_front::BringToFrontTool));
-    registry.register(Box::new(click::ClickTool::new(state.clone())));
-    registry.register(Box::new(double_click::DoubleClickTool::new(state.clone())));
-    registry.register(Box::new(right_click::RightClickTool::new(state.clone())));
-    registry.register(Box::new(drag::DragTool::new(state.clone())));
-    registry.register(Box::new(type_text::TypeTextTool::new(state.clone())));
-    registry.register(Box::new(press_key::PressKeyTool::new(state.clone())));
-    registry.register(Box::new(hotkey::HotkeyTool::new(state.clone())));
-    registry.register(Box::new(set_value::SetValueTool::new(state.clone())));
-    registry.register(Box::new(scroll::ScrollTool::new(state.clone())));
+    let pid_window_candidates: WindowTargetCandidates = Arc::new(pid_window_target_candidates);
+    registry.register(pid_window_guarded(
+        bring_to_front::BringToFrontTool,
+        &pid_window_candidates,
+    ));
+    registry.register(pid_window_guarded(
+        click::ClickTool::new(state.clone()),
+        &pid_window_candidates,
+    ));
+    registry.register(pid_window_guarded(
+        double_click::DoubleClickTool::new(state.clone()),
+        &pid_window_candidates,
+    ));
+    registry.register(pid_window_guarded(
+        right_click::RightClickTool::new(state.clone()),
+        &pid_window_candidates,
+    ));
+    registry.register(pid_window_guarded(
+        drag::DragTool::new(state.clone()),
+        &pid_window_candidates,
+    ));
+    registry.register(pid_window_guarded(
+        type_text::TypeTextTool::new(state.clone()),
+        &pid_window_candidates,
+    ));
+    registry.register(pid_window_guarded(
+        press_key::PressKeyTool::new(state.clone()),
+        &pid_window_candidates,
+    ));
+    registry.register(pid_window_guarded(
+        hotkey::HotkeyTool::new(state.clone()),
+        &pid_window_candidates,
+    ));
+    registry.register(pid_window_guarded(
+        set_value::SetValueTool::new(state.clone()),
+        &pid_window_candidates,
+    ));
+    registry.register(pid_window_guarded(
+        scroll::ScrollTool::new(state.clone()),
+        &pid_window_candidates,
+    ));
     // The standalone `screenshot` tool was removed (#1692). The pixel-grounding
     // screenshot the Claude Code computer-use compat loop relies on now comes
     // from `get_window_state` (which always returns BOTH the tree AND a

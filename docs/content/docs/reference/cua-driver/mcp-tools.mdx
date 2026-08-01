@@ -308,7 +308,7 @@ When `from_zoom` is true, coordinates are in the last zoom image for this pid; t
 - `steps` (integer, optional): Number of intermediate mouseDragged events linearly interpolated along the path. Default: 20. range: 1–200
 - `to_x` (number, required): Drag-end X in window-local screenshot pixels.
 - `to_y` (number, required): Drag-end Y in window-local screenshot pixels.
-- `window_id` (integer, optional): CGWindowID for the window the pixel coordinates were measured against. Optional — when omitted the driver picks the frontmost window of pid.
+- `window_id` (integer, optional): CGWindowID for the window the pixel coordinates were measured against. Optional only when pid owns exactly one eligible top-level window; otherwise the action refuses with ambiguous_window_target.
 
 ```json
 {"from_x":100,"from_y":200,"to_x":100,"to_y":200}

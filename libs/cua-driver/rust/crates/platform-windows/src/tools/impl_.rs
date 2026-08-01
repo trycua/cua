@@ -245,6 +245,7 @@ use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef, ToolRegistry},
     tool_args::{parse_typed_input, parse_typed_projection},
+    window_target::{PidOnlyWindowTargetGuard, WindowTargetCandidate, WindowTargetCandidates},
 };
 use serde_json::{json, Value};
 use std::sync::{Arc, RwLock};
@@ -252,6 +253,39 @@ use std::sync::{Arc, RwLock};
 use crate::uia::ElementCache;
 use cursor_overlay::CursorRegistry;
 use windows::core::Interface as _;
+
+fn window_target_candidates_for_pid(
+    windows: impl IntoIterator<Item = crate::win32::WindowInfo>,
+    pid: u32,
+) -> Vec<WindowTargetCandidate> {
+    windows
+        .into_iter()
+        .filter(|window| window.pid == pid)
+        .map(|window| WindowTargetCandidate {
+            window_id: window.hwnd,
+            title: window.title,
+            app_name: None,
+            is_on_screen: window.is_on_screen,
+        })
+        .collect()
+}
+
+fn pid_window_target_candidates(pid: i64) -> Vec<WindowTargetCandidate> {
+    let Ok(pid) = u32::try_from(pid) else {
+        return Vec::new();
+    };
+    window_target_candidates_for_pid(crate::win32::list_windows(Some(pid)), pid)
+}
+
+fn pid_window_guarded<T: Tool + 'static>(
+    tool: T,
+    candidates: &WindowTargetCandidates,
+) -> Box<dyn Tool> {
+    Box::new(PidOnlyWindowTargetGuard::new(
+        Box::new(tool),
+        candidates.clone(),
+    ))
+}
 
 /// The cursor key for an anonymous (cursor-less) call. A run opts into a cursor
 /// by declaring a `session`; without one, every cursor op short-circuits on
@@ -8645,35 +8679,63 @@ pub fn build_registry_with_provider(
     ));
     r.register(Box::new(LaunchAppTool));
     r.register(Box::new(KillAppTool));
-    r.register(Box::new(BringToFrontTool));
+    let pid_window_candidates: WindowTargetCandidates = Arc::new(pid_window_target_candidates);
+    r.register(pid_window_guarded(BringToFrontTool, &pid_window_candidates));
     r.register(Box::new(DebugWindowInfoTool));
-    r.register(Box::new(ClickTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(DoubleClickTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(RightClickTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(DragTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(TypeTextTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(PressKeyTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(HotkeyTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(SetValueTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(ScrollTool {
-        state: state.clone(),
-    }));
+    r.register(pid_window_guarded(
+        ClickTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
+    r.register(pid_window_guarded(
+        DoubleClickTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
+    r.register(pid_window_guarded(
+        RightClickTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
+    r.register(pid_window_guarded(
+        DragTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
+    r.register(pid_window_guarded(
+        TypeTextTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
+    r.register(pid_window_guarded(
+        PressKeyTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
+    r.register(pid_window_guarded(
+        HotkeyTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
+    r.register(pid_window_guarded(
+        SetValueTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
+    r.register(pid_window_guarded(
+        ScrollTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
     // `screenshot` / `ScreenshotCompatTool` removed from the tool surface
     // — `get_window_state` (which now always returns a screenshot) is the
     // single canonical path for getting a window screenshot. Reasons:
@@ -9169,6 +9231,37 @@ mod browser_launch_guard_tests {
         ));
         assert!(!contains_remote_debugging_flag(
             r#"--user-data-dir=C:\Temp\profile"#
+        ));
+    }
+}
+
+#[cfg(test)]
+mod pid_window_target_tests {
+    use super::*;
+    use cua_driver_core::window_target::{resolve_pid_window_target, PidWindowTargetResolution};
+
+    fn window(hwnd: u64, pid: u32) -> crate::win32::WindowInfo {
+        crate::win32::WindowInfo {
+            hwnd,
+            pid,
+            title: format!("Document {hwnd}"),
+            x: 0,
+            y: 0,
+            width: 640,
+            height: 480,
+            is_on_screen: true,
+            minimized: false,
+        }
+    }
+
+    #[test]
+    fn same_pid_sibling_windows_are_ambiguous() {
+        let candidates =
+            window_target_candidates_for_pid([window(7, 42), window(8, 42), window(9, 99)], 42);
+        assert!(matches!(
+            resolve_pid_window_target(candidates),
+            PidWindowTargetResolution::Ambiguous(windows)
+                if windows.iter().map(|window| window.window_id).collect::<Vec<_>>() == [7, 8]
         ));
     }
 }

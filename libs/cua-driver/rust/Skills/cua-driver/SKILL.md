@@ -223,6 +223,13 @@ expressible window-scoped postcondition. In effective desktop scope,
 `verify_state` is intentionally refused with `window_scope_disabled`; verify
 with a fresh `get_desktop_state` result and agent-owned visual/semantic reading.
 
+After each state-changing action, verify the actual task postconditions now
+checkable, not only whether the action was delivered. Once all task
+postconditions are satisfied, stop issuing actions immediately, end the
+session, and report completion. Do
+not perform exploratory, corrective, or cleanup GUI actions after verified
+completion.
+
 - **Before** — the pre-action snapshot resolves the `element_index`
   you're about to use. Indices from previous turns are stale; the
   server replaces the element index map on every snapshot, keyed

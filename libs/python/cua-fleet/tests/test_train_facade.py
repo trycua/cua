@@ -14,7 +14,7 @@ def test_package_metadata_pins_binding_bearing_cua_train() -> None:
     project = tomllib.loads((PACKAGE_ROOT / "pyproject.toml").read_text())["project"]
 
     assert project["requires-python"] == ">=3.10"
-    assert project["dependencies"] == ["cua-train==0.1.1"]
+    assert project["dependencies"] == ["cua-train==0.1.2"]
 
 
 def test_cua_fleet_reexports_train_client(monkeypatch) -> None:

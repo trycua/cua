@@ -1,6 +1,63 @@
 //! AX action dispatch — the preferred click/interaction path for indexed elements.
 
 use crate::ax::bindings::*;
+use core_foundation::base::{CFRelease, CFTypeRef};
+
+const MAX_SELECTION_ANCESTORS: usize = 8;
+
+fn is_selectable_container_role(role: &str) -> bool {
+    matches!(role, "AXRow" | "AXCell" | "AXListItem")
+}
+
+/// Select the nearest list-like element at or above `element_ptr` and confirm
+/// the write through `AXSelected` read-back.
+///
+/// Finder and other AppKit collection views commonly expose an item's label as
+/// an actionable child (`AXTextField`) while the selectable object is its
+/// parent `AXRow`. Neither object necessarily advertises `AXPress`, and Finder
+/// can return `kAXErrorCannotComplete` for a press on the row. A pointer click
+/// selects that row, so the AX equivalent is to set the row's `AXSelected`
+/// attribute rather than treating the failed press as terminal.
+///
+/// The fallback is deliberately limited to standard selectable container
+/// roles, bounded ancestor traversal, and a successful read-back. It therefore
+/// cannot turn an arbitrary failed button press into a claimed success.
+pub fn select_nearest_container(element_ptr: usize) -> Option<String> {
+    let mut current = element_ptr as AXUIElementRef;
+    let mut owns_current = false;
+
+    for _ in 0..MAX_SELECTION_ANCESTORS {
+        let role = unsafe { copy_string_attr(current, "AXRole") }.unwrap_or_default();
+        if is_selectable_container_role(&role)
+            && unsafe { copy_bool_attr(current, "AXSelected") }.is_some()
+        {
+            let err = unsafe { set_bool_attr_true(current, "AXSelected") };
+            if err == kAXErrorSuccess
+                && unsafe { copy_bool_attr(current, "AXSelected") } == Some(true)
+            {
+                if owns_current {
+                    unsafe { CFRelease(current as CFTypeRef) };
+                }
+                return Some(role);
+            }
+        }
+
+        let parent = unsafe { copy_element_attr(current, "AXParent") };
+        if owns_current {
+            unsafe { CFRelease(current as CFTypeRef) };
+        }
+        let Some(parent) = parent else {
+            return None;
+        };
+        current = parent;
+        owns_current = true;
+    }
+
+    if owns_current {
+        unsafe { CFRelease(current as CFTypeRef) };
+    }
+    None
+}
 
 fn ensure_ax_enabled(enabled: Option<bool>, action: &str) -> anyhow::Result<()> {
     if enabled == Some(false) {
@@ -64,6 +121,16 @@ mod tests {
     fn enabled_or_unreported_state_is_allowed() {
         assert!(ensure_ax_enabled(Some(true), "AXPress").is_ok());
         assert!(ensure_ax_enabled(None, "AXPress").is_ok());
+    }
+
+    #[test]
+    fn selection_fallback_is_limited_to_collection_item_roles() {
+        for role in ["AXRow", "AXCell", "AXListItem"] {
+            assert!(is_selectable_container_role(role), "{role}");
+        }
+        for role in ["AXButton", "AXTextField", "AXWindow", "AXOutline"] {
+            assert!(!is_selectable_container_role(role), "{role}");
+        }
     }
 }
 

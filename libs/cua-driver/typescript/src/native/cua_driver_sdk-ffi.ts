@@ -533,6 +533,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_driver_sdk_fn_method_cuadriver_set_window_frame": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_driver_sdk_fn_method_cuadriver_shutdown": {
       args: [FfiType.Handle],
       ret: FfiType.Handle,
@@ -654,6 +659,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_driver_sdk_fn_method_cuadriversession_set_agent_cursor_theme": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_fn_method_cuadriversession_set_window_frame": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
@@ -938,6 +948,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_driver_sdk_checksum_method_cuadriver_set_window_frame": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_driver_sdk_checksum_method_cuadriver_shutdown": {
       args: [],
       ret: FfiType.UInt16,
@@ -1059,6 +1074,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_driver_sdk_checksum_method_cuadriversession_set_agent_cursor_theme": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_cuadriversession_set_window_frame": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -1303,6 +1323,7 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_method_cuadriver_set_agent_cursor_enabled(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_set_agent_cursor_motion(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_set_agent_cursor_theme(uniffiSelf: bigint, input: Uint8Array): bigint;
+    uniffi_cua_driver_sdk_fn_method_cuadriver_set_window_frame(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_shutdown(uniffiSelf: bigint): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_socket_path(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_method_cuadriver_start_session(uniffiSelf: bigint, input: Uint8Array): bigint;
@@ -1328,6 +1349,7 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_method_cuadriversession_set_agent_cursor_enabled(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_set_agent_cursor_motion(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_set_agent_cursor_theme(uniffiSelf: bigint, input: Uint8Array): bigint;
+    uniffi_cua_driver_sdk_fn_method_cuadriversession_set_window_frame(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_start_session(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_type_text(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_verify_state(uniffiSelf: bigint, input: Uint8Array): bigint;
@@ -1384,6 +1406,7 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_checksum_method_cuadriver_set_agent_cursor_enabled(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_set_agent_cursor_motion(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_set_agent_cursor_theme(): number;
+    uniffi_cua_driver_sdk_checksum_method_cuadriver_set_window_frame(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_shutdown(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_socket_path(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_start_session(): number;
@@ -1409,6 +1432,7 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_set_agent_cursor_enabled(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_set_agent_cursor_motion(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_set_agent_cursor_theme(): number;
+    uniffi_cua_driver_sdk_checksum_method_cuadriversession_set_window_frame(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_start_session(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_type_text(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_verify_state(): number;

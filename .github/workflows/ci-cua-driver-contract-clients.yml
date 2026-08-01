@@ -164,26 +164,13 @@ jobs:
         working-directory: libs/cua-driver/typescript
         run: npm ci
 
-      - name: Generate contract files for bootstrap artifact
+      - name: Verify generated files
         working-directory: libs/cua-driver/rust
-        run: cargo run --locked -p cua-driver-contract --bin cua-contract-gen -- all
+        run: cargo run --locked -p cua-driver-contract --bin cua-contract-gen -- all --check
 
-      - name: Generate UniFFI bindings for bootstrap artifact
+      - name: Verify generated UniFFI bindings
         working-directory: libs/cua-driver
-        run: node scripts/generate-uniffi-bindings.mjs
-
-      - name: Upload generated contract and SDK bindings
-        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
-        with:
-          name: cua-driver-generated-bindings-${{ github.sha }}
-          if-no-files-found: error
-          path: |
-            libs/cua-driver/contract/manifest.json
-            libs/cua-driver/python/.cua-driver-uniffi-generated-files
-            libs/cua-driver/python/src/cua_driver/_native.py
-            libs/cua-driver/python/src/cua_driver/_native_contract.py
-            libs/cua-driver/typescript/.cua-driver-uniffi-generated-files
-            libs/cua-driver/typescript/src/native/*.ts
+        run: node scripts/generate-uniffi-bindings.mjs --check
 
       - name: Verify generated public C ABI header
         working-directory: libs/cua-driver/rust

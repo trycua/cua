@@ -2205,12 +2205,11 @@
         "additionalProperties": false,
         "properties": {
           "height": {
-            "exclusiveMinimum": 0,
+            "minimum": 1,
             "type": "number"
           },
           "pid": {
-            "format": "uint32",
-            "minimum": 0,
+            "minimum": 1,
             "type": "integer"
           },
           "session": {
@@ -2218,12 +2217,11 @@
             "type": "string"
           },
           "width": {
-            "exclusiveMinimum": 0,
+            "minimum": 1,
             "type": "number"
           },
           "window_id": {
-            "format": "uint64",
-            "minimum": 0,
+            "minimum": 1,
             "type": "integer"
           },
           "x": {

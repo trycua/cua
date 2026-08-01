@@ -3,7 +3,7 @@ import asyncio
 import json
 import os
 import time
-from cyclops_sdk import (
+from fleet_sdk import (
     CreateClaimRequest,
     CreatePoolRequest,
     CyclopsClient,

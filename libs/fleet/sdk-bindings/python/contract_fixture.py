@@ -2,7 +2,7 @@ import asyncio
 import json
 from dataclasses import dataclass
 
-from cyclops_sdk import (ClaimSpec, CreateClaimRequest, CreatePoolRequest, CyclopsClient,
+from fleet_sdk import (ClaimSpec, CreateClaimRequest, CreatePoolRequest, CyclopsClient,
     CyclopsConfiguration, CyclopsCredentials, HttpClient, HttpRequest, HttpResponse, PoolSpec,
     PoolTemplate, Sandbox, SandboxService, SandboxTemplateRef, VmTemplate)
 

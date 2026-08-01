@@ -695,7 +695,7 @@ internal open class UniffiVTableCallbackInterfaceHttpClient(
 // We now use JNA's "direct mapping" - unclear if same considerations apply exactly.
 internal object IntegrityCheckingUniffiLib {
     init {
-        Native.register(IntegrityCheckingUniffiLib::class.java, findLibraryName(componentName = "cyclops_sdk"))
+        Native.register(IntegrityCheckingUniffiLib::class.java, findLibraryName(componentName = "fleet_sdk"))
         uniffiCheckContractApiVersion(this)
         uniffiCheckApiChecksums(this)
     }
@@ -756,7 +756,7 @@ internal object UniffiLib {
 
 
     init {
-        Native.register(UniffiLib::class.java, findLibraryName(componentName = "cyclops_sdk"))
+        Native.register(UniffiLib::class.java, findLibraryName(componentName = "fleet_sdk"))
         uniffiCallbackInterfaceAccessTokenProvider.register(this)
         uniffiCallbackInterfaceHttpClient.register(this)
         ai.cua.cyclops.sdk.schema.uniffiEnsureInitialized()

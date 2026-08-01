@@ -19,4 +19,4 @@ pub use types::{
     ResourceMetadata, Sandbox,
 };
 
-uniffi::setup_scaffolding!("cyclops_sdk");
+uniffi::setup_scaffolding!("fleet_sdk");

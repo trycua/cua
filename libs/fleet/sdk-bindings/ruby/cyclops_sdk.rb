@@ -1,7 +1,7 @@
 require_relative "cyclops_sdk/schema"
 require_relative "cyclops_sdk/sdk"
 
-module CyclopsSdk
+module FleetSdk
   CyclopsSdkSchema.constants(false).each do |name|
     const_set(name, CyclopsSdkSchema.const_get(name)) unless const_defined?(name, false)
   end

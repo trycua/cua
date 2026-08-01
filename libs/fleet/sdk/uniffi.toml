@@ -2,7 +2,7 @@
 cdylib_name = "cyclops_sdk"
 
 [bindings.python.external_packages]
-cyclops_sdk_schema = "cyclops_sdk"
+cyclops_sdk_schema = "fleet_sdk"
 
 [bindings.kotlin]
 package_name = "ai.cua.cyclops.sdk"

@@ -28,7 +28,7 @@ import traceback
 import typing
 import asyncio
 import platform
-import cyclops_sdk
+import fleet_sdk
 
 
 # Used for default argument values
@@ -832,36 +832,36 @@ class _UniffiForeignFutureResultRustBuffer(ctypes.Structure):
     ]
 _UNIFFI_FOREIGN_FUTURE_COMPLETERUST_BUFFER = ctypes.CFUNCTYPE(None,ctypes.c_uint64,_UniffiForeignFutureResultRustBuffer,
 )
-_UNIFFI_CALLBACK_INTERFACE_CYCLOPS_SDK_ACCESS_TOKEN_PROVIDER_METHOD0 = ctypes.CFUNCTYPE(None,ctypes.c_uint64,ctypes.c_int8,_UNIFFI_FOREIGN_FUTURE_COMPLETERUST_BUFFER,ctypes.c_uint64,ctypes.POINTER(_UniffiForeignFutureDroppedCallbackStruct),
+_UNIFFI_CALLBACK_INTERFACE_FLEET_SDK_ACCESS_TOKEN_PROVIDER_METHOD0 = ctypes.CFUNCTYPE(None,ctypes.c_uint64,ctypes.c_int8,_UNIFFI_FOREIGN_FUTURE_COMPLETERUST_BUFFER,ctypes.c_uint64,ctypes.POINTER(_UniffiForeignFutureDroppedCallbackStruct),
 )
-_UNIFFI_CALLBACK_INTERFACE_CLONE_CYCLOPS_SDK_ACCESS_TOKEN_PROVIDER = ctypes.CFUNCTYPE(ctypes.c_uint64,ctypes.c_uint64,
+_UNIFFI_CALLBACK_INTERFACE_CLONE_FLEET_SDK_ACCESS_TOKEN_PROVIDER = ctypes.CFUNCTYPE(ctypes.c_uint64,ctypes.c_uint64,
 )
-_UNIFFI_CALLBACK_INTERFACE_FREE_CYCLOPS_SDK_ACCESS_TOKEN_PROVIDER = ctypes.CFUNCTYPE(None,ctypes.c_uint64,
+_UNIFFI_CALLBACK_INTERFACE_FREE_FLEET_SDK_ACCESS_TOKEN_PROVIDER = ctypes.CFUNCTYPE(None,ctypes.c_uint64,
 )
-class _UniffiVTableCallbackInterfaceCyclopsSdkAccessTokenProvider(ctypes.Structure):
+class _UniffiVTableCallbackInterfaceFleetSdkAccessTokenProvider(ctypes.Structure):
     _fields_ = [
-        ("uniffi_free", _UNIFFI_CALLBACK_INTERFACE_FREE_CYCLOPS_SDK_ACCESS_TOKEN_PROVIDER),
-        ("uniffi_clone", _UNIFFI_CALLBACK_INTERFACE_CLONE_CYCLOPS_SDK_ACCESS_TOKEN_PROVIDER),
-        ("get_access_token", _UNIFFI_CALLBACK_INTERFACE_CYCLOPS_SDK_ACCESS_TOKEN_PROVIDER_METHOD0),
+        ("uniffi_free", _UNIFFI_CALLBACK_INTERFACE_FREE_FLEET_SDK_ACCESS_TOKEN_PROVIDER),
+        ("uniffi_clone", _UNIFFI_CALLBACK_INTERFACE_CLONE_FLEET_SDK_ACCESS_TOKEN_PROVIDER),
+        ("get_access_token", _UNIFFI_CALLBACK_INTERFACE_FLEET_SDK_ACCESS_TOKEN_PROVIDER_METHOD0),
     ]
 _UniffiLib.uniffi_cyclops_sdk_fn_init_callback_vtable_accesstokenprovider.argtypes = (
-    ctypes.POINTER(_UniffiVTableCallbackInterfaceCyclopsSdkAccessTokenProvider),
+    ctypes.POINTER(_UniffiVTableCallbackInterfaceFleetSdkAccessTokenProvider),
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_init_callback_vtable_accesstokenprovider.restype = None
-_UNIFFI_CALLBACK_INTERFACE_CYCLOPS_SDK_HTTP_CLIENT_METHOD0 = ctypes.CFUNCTYPE(None,ctypes.c_uint64,_UniffiRustBuffer,_UNIFFI_FOREIGN_FUTURE_COMPLETERUST_BUFFER,ctypes.c_uint64,ctypes.POINTER(_UniffiForeignFutureDroppedCallbackStruct),
+_UNIFFI_CALLBACK_INTERFACE_FLEET_SDK_HTTP_CLIENT_METHOD0 = ctypes.CFUNCTYPE(None,ctypes.c_uint64,_UniffiRustBuffer,_UNIFFI_FOREIGN_FUTURE_COMPLETERUST_BUFFER,ctypes.c_uint64,ctypes.POINTER(_UniffiForeignFutureDroppedCallbackStruct),
 )
-_UNIFFI_CALLBACK_INTERFACE_CLONE_CYCLOPS_SDK_HTTP_CLIENT = ctypes.CFUNCTYPE(ctypes.c_uint64,ctypes.c_uint64,
+_UNIFFI_CALLBACK_INTERFACE_CLONE_FLEET_SDK_HTTP_CLIENT = ctypes.CFUNCTYPE(ctypes.c_uint64,ctypes.c_uint64,
 )
-_UNIFFI_CALLBACK_INTERFACE_FREE_CYCLOPS_SDK_HTTP_CLIENT = ctypes.CFUNCTYPE(None,ctypes.c_uint64,
+_UNIFFI_CALLBACK_INTERFACE_FREE_FLEET_SDK_HTTP_CLIENT = ctypes.CFUNCTYPE(None,ctypes.c_uint64,
 )
-class _UniffiVTableCallbackInterfaceCyclopsSdkHttpClient(ctypes.Structure):
+class _UniffiVTableCallbackInterfaceFleetSdkHttpClient(ctypes.Structure):
     _fields_ = [
-        ("uniffi_free", _UNIFFI_CALLBACK_INTERFACE_FREE_CYCLOPS_SDK_HTTP_CLIENT),
-        ("uniffi_clone", _UNIFFI_CALLBACK_INTERFACE_CLONE_CYCLOPS_SDK_HTTP_CLIENT),
-        ("execute", _UNIFFI_CALLBACK_INTERFACE_CYCLOPS_SDK_HTTP_CLIENT_METHOD0),
+        ("uniffi_free", _UNIFFI_CALLBACK_INTERFACE_FREE_FLEET_SDK_HTTP_CLIENT),
+        ("uniffi_clone", _UNIFFI_CALLBACK_INTERFACE_CLONE_FLEET_SDK_HTTP_CLIENT),
+        ("execute", _UNIFFI_CALLBACK_INTERFACE_FLEET_SDK_HTTP_CLIENT_METHOD0),
     ]
 _UniffiLib.uniffi_cyclops_sdk_fn_init_callback_vtable_httpclient.argtypes = (
-    ctypes.POINTER(_UniffiVTableCallbackInterfaceCyclopsSdkHttpClient),
+    ctypes.POINTER(_UniffiVTableCallbackInterfaceFleetSdkHttpClient),
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_init_callback_vtable_httpclient.restype = None
 _UniffiLib.uniffi_cyclops_sdk_fn_method_accesstokenprovider_get_access_token.argtypes = (
@@ -1318,7 +1318,7 @@ class _UniffiFfiConverterOptionalTypeOSGymSandboxClaimStatus(_UniffiConverterRus
     @classmethod
     def check_lower(cls, value):
         if value is not None:
-            cyclops_sdk._UniffiFfiConverterTypeOSGymSandboxClaimStatus.check_lower(value)
+            fleet_sdk._UniffiFfiConverterTypeOSGymSandboxClaimStatus.check_lower(value)
 
     @classmethod
     def write(cls, value, buf):
@@ -1327,7 +1327,7 @@ class _UniffiFfiConverterOptionalTypeOSGymSandboxClaimStatus(_UniffiConverterRus
             return
 
         buf.write_u8(1)
-        cyclops_sdk._UniffiFfiConverterTypeOSGymSandboxClaimStatus.write(value, buf)
+        fleet_sdk._UniffiFfiConverterTypeOSGymSandboxClaimStatus.write(value, buf)
 
     @classmethod
     def read(cls, buf):
@@ -1335,13 +1335,13 @@ class _UniffiFfiConverterOptionalTypeOSGymSandboxClaimStatus(_UniffiConverterRus
         if flag == 0:
             return None
         elif flag == 1:
-            return cyclops_sdk._UniffiFfiConverterTypeOSGymSandboxClaimStatus.read(buf)
+            return fleet_sdk._UniffiFfiConverterTypeOSGymSandboxClaimStatus.read(buf)
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
 @dataclass
 class Claim:
-    def __init__(self, *, api_version:str, kind:str, metadata:ResourceMetadata, spec:cyclops_sdk.ClaimSpec, status:typing.Optional[cyclops_sdk.OsGymSandboxClaimStatus]):
+    def __init__(self, *, api_version:str, kind:str, metadata:ResourceMetadata, spec:fleet_sdk.ClaimSpec, status:typing.Optional[fleet_sdk.OsGymSandboxClaimStatus]):
         self.api_version = api_version
         self.kind = kind
         self.metadata = metadata
@@ -1373,7 +1373,7 @@ class _UniffiFfiConverterTypeClaim(_UniffiConverterRustBuffer):
             api_version=_UniffiFfiConverterString.read(buf),
             kind=_UniffiFfiConverterString.read(buf),
             metadata=_UniffiFfiConverterTypeResourceMetadata.read(buf),
-            spec=cyclops_sdk._UniffiFfiConverterTypeClaimSpec.read(buf),
+            spec=fleet_sdk._UniffiFfiConverterTypeClaimSpec.read(buf),
             status=_UniffiFfiConverterOptionalTypeOSGymSandboxClaimStatus.read(buf),
         )
 
@@ -1382,7 +1382,7 @@ class _UniffiFfiConverterTypeClaim(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.check_lower(value.api_version)
         _UniffiFfiConverterString.check_lower(value.kind)
         _UniffiFfiConverterTypeResourceMetadata.check_lower(value.metadata)
-        cyclops_sdk._UniffiFfiConverterTypeClaimSpec.check_lower(value.spec)
+        fleet_sdk._UniffiFfiConverterTypeClaimSpec.check_lower(value.spec)
         _UniffiFfiConverterOptionalTypeOSGymSandboxClaimStatus.check_lower(value.status)
 
     @staticmethod
@@ -1390,7 +1390,7 @@ class _UniffiFfiConverterTypeClaim(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.write(value.api_version, buf)
         _UniffiFfiConverterString.write(value.kind, buf)
         _UniffiFfiConverterTypeResourceMetadata.write(value.metadata, buf)
-        cyclops_sdk._UniffiFfiConverterTypeClaimSpec.write(value.spec, buf)
+        fleet_sdk._UniffiFfiConverterTypeClaimSpec.write(value.spec, buf)
         _UniffiFfiConverterOptionalTypeOSGymSandboxClaimStatus.write(value.status, buf)
 
 
@@ -1401,7 +1401,7 @@ class _UniffiFfiConverterOptionalTypeOSGymWorkspacePoolStatus(_UniffiConverterRu
     @classmethod
     def check_lower(cls, value):
         if value is not None:
-            cyclops_sdk._UniffiFfiConverterTypeOSGymWorkspacePoolStatus.check_lower(value)
+            fleet_sdk._UniffiFfiConverterTypeOSGymWorkspacePoolStatus.check_lower(value)
 
     @classmethod
     def write(cls, value, buf):
@@ -1410,7 +1410,7 @@ class _UniffiFfiConverterOptionalTypeOSGymWorkspacePoolStatus(_UniffiConverterRu
             return
 
         buf.write_u8(1)
-        cyclops_sdk._UniffiFfiConverterTypeOSGymWorkspacePoolStatus.write(value, buf)
+        fleet_sdk._UniffiFfiConverterTypeOSGymWorkspacePoolStatus.write(value, buf)
 
     @classmethod
     def read(cls, buf):
@@ -1418,7 +1418,7 @@ class _UniffiFfiConverterOptionalTypeOSGymWorkspacePoolStatus(_UniffiConverterRu
         if flag == 0:
             return None
         elif flag == 1:
-            return cyclops_sdk._UniffiFfiConverterTypeOSGymWorkspacePoolStatus.read(buf)
+            return fleet_sdk._UniffiFfiConverterTypeOSGymWorkspacePoolStatus.read(buf)
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
@@ -1428,7 +1428,7 @@ class Pool:
     UniFFI cannot emit aliases for external record types. Generated bindings use
     `OSGymWorkspacePoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
 """
-    def __init__(self, *, api_version:str, kind:str, metadata:ResourceMetadata, spec:cyclops_sdk.PoolSpec, status:typing.Optional[cyclops_sdk.OsGymWorkspacePoolStatus]):
+    def __init__(self, *, api_version:str, kind:str, metadata:ResourceMetadata, spec:fleet_sdk.PoolSpec, status:typing.Optional[fleet_sdk.OsGymWorkspacePoolStatus]):
         self.api_version = api_version
         self.kind = kind
         self.metadata = metadata
@@ -1460,7 +1460,7 @@ class _UniffiFfiConverterTypePool(_UniffiConverterRustBuffer):
             api_version=_UniffiFfiConverterString.read(buf),
             kind=_UniffiFfiConverterString.read(buf),
             metadata=_UniffiFfiConverterTypeResourceMetadata.read(buf),
-            spec=cyclops_sdk._UniffiFfiConverterTypePoolSpec.read(buf),
+            spec=fleet_sdk._UniffiFfiConverterTypePoolSpec.read(buf),
             status=_UniffiFfiConverterOptionalTypeOSGymWorkspacePoolStatus.read(buf),
         )
 
@@ -1469,7 +1469,7 @@ class _UniffiFfiConverterTypePool(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.check_lower(value.api_version)
         _UniffiFfiConverterString.check_lower(value.kind)
         _UniffiFfiConverterTypeResourceMetadata.check_lower(value.metadata)
-        cyclops_sdk._UniffiFfiConverterTypePoolSpec.check_lower(value.spec)
+        fleet_sdk._UniffiFfiConverterTypePoolSpec.check_lower(value.spec)
         _UniffiFfiConverterOptionalTypeOSGymWorkspacePoolStatus.check_lower(value.status)
 
     @staticmethod
@@ -1477,14 +1477,14 @@ class _UniffiFfiConverterTypePool(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.write(value.api_version, buf)
         _UniffiFfiConverterString.write(value.kind, buf)
         _UniffiFfiConverterTypeResourceMetadata.write(value.metadata, buf)
-        cyclops_sdk._UniffiFfiConverterTypePoolSpec.write(value.spec, buf)
+        fleet_sdk._UniffiFfiConverterTypePoolSpec.write(value.spec, buf)
         _UniffiFfiConverterOptionalTypeOSGymWorkspacePoolStatus.write(value.status, buf)
 
 class _UniffiFfiConverterOptionalTypeClaimSpec(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
         if value is not None:
-            cyclops_sdk._UniffiFfiConverterTypeClaimSpec.check_lower(value)
+            fleet_sdk._UniffiFfiConverterTypeClaimSpec.check_lower(value)
 
     @classmethod
     def write(cls, value, buf):
@@ -1493,7 +1493,7 @@ class _UniffiFfiConverterOptionalTypeClaimSpec(_UniffiConverterRustBuffer):
             return
 
         buf.write_u8(1)
-        cyclops_sdk._UniffiFfiConverterTypeClaimSpec.write(value, buf)
+        fleet_sdk._UniffiFfiConverterTypeClaimSpec.write(value, buf)
 
     @classmethod
     def read(cls, buf):
@@ -1501,13 +1501,13 @@ class _UniffiFfiConverterOptionalTypeClaimSpec(_UniffiConverterRustBuffer):
         if flag == 0:
             return None
         elif flag == 1:
-            return cyclops_sdk._UniffiFfiConverterTypeClaimSpec.read(buf)
+            return fleet_sdk._UniffiFfiConverterTypeClaimSpec.read(buf)
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
 @dataclass
 class CreateClaimRequest:
-    def __init__(self, *, pool:Pool, spec:typing.Optional[cyclops_sdk.ClaimSpec]):
+    def __init__(self, *, pool:Pool, spec:typing.Optional[fleet_sdk.ClaimSpec]):
         self.pool = pool
         self.spec = spec
 
@@ -1543,7 +1543,7 @@ class _UniffiFfiConverterTypeCreateClaimRequest(_UniffiConverterRustBuffer):
 
 @dataclass
 class CreatePoolRequest:
-    def __init__(self, *, namespace:str, spec:cyclops_sdk.PoolSpec):
+    def __init__(self, *, namespace:str, spec:fleet_sdk.PoolSpec):
         self.namespace = namespace
         self.spec = spec
 
@@ -1564,18 +1564,18 @@ class _UniffiFfiConverterTypeCreatePoolRequest(_UniffiConverterRustBuffer):
     def read(buf):
         return CreatePoolRequest(
             namespace=_UniffiFfiConverterString.read(buf),
-            spec=cyclops_sdk._UniffiFfiConverterTypePoolSpec.read(buf),
+            spec=fleet_sdk._UniffiFfiConverterTypePoolSpec.read(buf),
         )
 
     @staticmethod
     def check_lower(value):
         _UniffiFfiConverterString.check_lower(value.namespace)
-        cyclops_sdk._UniffiFfiConverterTypePoolSpec.check_lower(value.spec)
+        fleet_sdk._UniffiFfiConverterTypePoolSpec.check_lower(value.spec)
 
     @staticmethod
     def write(value, buf):
         _UniffiFfiConverterString.write(value.namespace, buf)
-        cyclops_sdk._UniffiFfiConverterTypePoolSpec.write(value.spec, buf)
+        fleet_sdk._UniffiFfiConverterTypePoolSpec.write(value.spec, buf)
 
 
 class CyclopsCredentialsProtocol(typing.Protocol):
@@ -2522,7 +2522,7 @@ class AccessTokenProviderImpl(AccessTokenProvider):
 class _UniffiTraitImplAccessTokenProviderImpl:
     # For each method, generate a callback function to pass to Rust
 
-    @_UNIFFI_CALLBACK_INTERFACE_CYCLOPS_SDK_ACCESS_TOKEN_PROVIDER_METHOD0
+    @_UNIFFI_CALLBACK_INTERFACE_FLEET_SDK_ACCESS_TOKEN_PROVIDER_METHOD0
     def get_access_token(
             uniffi_handle,
             force_refresh,
@@ -2561,16 +2561,16 @@ class _UniffiTraitImplAccessTokenProviderImpl:
             _UniffiFfiConverterTypeAccessTokenProviderError.lower,
         )
 
-    @_UNIFFI_CALLBACK_INTERFACE_FREE_CYCLOPS_SDK_ACCESS_TOKEN_PROVIDER
+    @_UNIFFI_CALLBACK_INTERFACE_FREE_FLEET_SDK_ACCESS_TOKEN_PROVIDER
     def _uniffi_free(uniffi_handle):
         _UniffiFfiConverterTypeAccessTokenProvider._handle_map.remove(uniffi_handle)
 
-    @_UNIFFI_CALLBACK_INTERFACE_CLONE_CYCLOPS_SDK_ACCESS_TOKEN_PROVIDER
+    @_UNIFFI_CALLBACK_INTERFACE_CLONE_FLEET_SDK_ACCESS_TOKEN_PROVIDER
     def _uniffi_clone(uniffi_handle):
         return _UniffiFfiConverterTypeAccessTokenProvider._handle_map.clone(uniffi_handle)
 
     # Generate the FFI VTable.  This has a field for each callback interface method.
-    _uniffi_vtable = _UniffiVTableCallbackInterfaceCyclopsSdkAccessTokenProvider(
+    _uniffi_vtable = _UniffiVTableCallbackInterfaceFleetSdkAccessTokenProvider(
         _uniffi_free,
         _uniffi_clone,
         get_access_token,
@@ -3123,7 +3123,7 @@ class HttpClientImpl(HttpClient):
 class _UniffiTraitImplHttpClientImpl:
     # For each method, generate a callback function to pass to Rust
 
-    @_UNIFFI_CALLBACK_INTERFACE_CYCLOPS_SDK_HTTP_CLIENT_METHOD0
+    @_UNIFFI_CALLBACK_INTERFACE_FLEET_SDK_HTTP_CLIENT_METHOD0
     def execute(
             uniffi_handle,
             request,
@@ -3162,16 +3162,16 @@ class _UniffiTraitImplHttpClientImpl:
             _UniffiFfiConverterTypeHttpError.lower,
         )
 
-    @_UNIFFI_CALLBACK_INTERFACE_FREE_CYCLOPS_SDK_HTTP_CLIENT
+    @_UNIFFI_CALLBACK_INTERFACE_FREE_FLEET_SDK_HTTP_CLIENT
     def _uniffi_free(uniffi_handle):
         _UniffiFfiConverterTypeHttpClient._handle_map.remove(uniffi_handle)
 
-    @_UNIFFI_CALLBACK_INTERFACE_CLONE_CYCLOPS_SDK_HTTP_CLIENT
+    @_UNIFFI_CALLBACK_INTERFACE_CLONE_FLEET_SDK_HTTP_CLIENT
     def _uniffi_clone(uniffi_handle):
         return _UniffiFfiConverterTypeHttpClient._handle_map.clone(uniffi_handle)
 
     # Generate the FFI VTable.  This has a field for each callback interface method.
-    _uniffi_vtable = _UniffiVTableCallbackInterfaceCyclopsSdkHttpClient(
+    _uniffi_vtable = _UniffiVTableCallbackInterfaceFleetSdkHttpClient(
         _uniffi_free,
         _uniffi_clone,
         execute,

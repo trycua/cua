@@ -17,7 +17,7 @@ require 'ffi'
 require 'monitor'
 
 
-module CyclopsSdk
+module FleetSdk
   def self.uniffi_in_range(i, type_name, min, max)
   raise TypeError, "no implicit conversion of #{i} into Integer" unless i.respond_to?(:to_int)
   i = i.to_int
@@ -85,15 +85,15 @@ private_constant :UniffiHandleMap
          :data,     :pointer
 
   def self.alloc(size)
-    return CyclopsSdk.rust_call(:ffi_cyclops_sdk_rustbuffer_alloc, size)
+    return FleetSdk.rust_call(:ffi_cyclops_sdk_rustbuffer_alloc, size)
   end
 
   def self.reserve(rbuf, additional)
-    return CyclopsSdk.rust_call(:ffi_cyclops_sdk_rustbuffer_reserve, rbuf, additional)
+    return FleetSdk.rust_call(:ffi_cyclops_sdk_rustbuffer_reserve, rbuf, additional)
   end
 
   def free
-    CyclopsSdk.rust_call(:ffi_cyclops_sdk_rustbuffer_free, self)
+    FleetSdk.rust_call(:ffi_cyclops_sdk_rustbuffer_free, self)
   end
 
   def capacity
@@ -1154,17 +1154,17 @@ class RustBufferBuilder
   end
 
   def write_U16(v)
-    v = CyclopsSdk::uniffi_in_range(v, "u16", 0, 2**16)
+    v = FleetSdk::uniffi_in_range(v, "u16", 0, 2**16)
     pack_into(2, 'S>', v)
   end
 
   def write_U32(v)
-    v = CyclopsSdk::uniffi_in_range(v, "u32", 0, 2**32)
+    v = FleetSdk::uniffi_in_range(v, "u32", 0, 2**32)
     pack_into(4, 'L>', v)
   end
 
   def write_U64(v)
-    v = CyclopsSdk::uniffi_in_range(v, "u64", 0, 2**64)
+    v = FleetSdk::uniffi_in_range(v, "u64", 0, 2**64)
     pack_into(8, 'Q>', v)
   end
 
@@ -1173,13 +1173,13 @@ class RustBufferBuilder
   end
 
   def write_String(v)
-    v = CyclopsSdk::uniffi_utf8(v)
+    v = FleetSdk::uniffi_utf8(v)
     pack_into 4, 'l>', v.bytes.size
     write v
   end
 
   def write_Bytes(v)
-    v = CyclopsSdk::uniffi_bytes(v)
+    v = FleetSdk::uniffi_bytes(v)
     pack_into 4, 'l>', v.bytes.size
     write v
   end
@@ -2399,7 +2399,7 @@ end
   # to the actual instance, only its underlying handle.
   def self.uniffi_define_finalizer_by_handle(handle, object_id)
     Proc.new do |_id|
-      CyclopsSdk.rust_call(
+      FleetSdk.rust_call(
         :uniffi_cyclops_sdk_fn_free_cyclopsclient,
         handle
       )
@@ -2416,7 +2416,7 @@ end
   end
 
   def uniffi_clone_handle()
-    return CyclopsSdk.rust_call(
+    return FleetSdk.rust_call(
       :uniffi_cyclops_sdk_fn_clone_cyclopsclient,
       @handle
     )
@@ -2434,39 +2434,39 @@ end
     # Call the (fallible) function before creating any half-baked object instances.
     # Lightly yucky way to bypass the usual "initialize" logic
     # and just create a new instance with the required handle.
-    return uniffi_allocate(CyclopsSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect,RustBuffer.alloc_from_TypeCyclopsConfiguration(configuration),(HttpClient.uniffi_lower http_client)))
+    return uniffi_allocate(FleetSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect,RustBuffer.alloc_from_TypeCyclopsConfiguration(configuration),(HttpClient.uniffi_lower http_client)))
   end
   def self.connect_browser_with_access_token(configuration, access_token)
         configuration = configuration
         RustBuffer.check_lower_TypeCyclopsTokenProviderConfiguration(configuration)
-        access_token = CyclopsSdk::uniffi_utf8(access_token)
+        access_token = FleetSdk::uniffi_utf8(access_token)
 
     # Call the (fallible) function before creating any half-baked object instances.
     # Lightly yucky way to bypass the usual "initialize" logic
     # and just create a new instance with the required handle.
-    return uniffi_allocate(CyclopsSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_browser_with_access_token,RustBuffer.alloc_from_TypeCyclopsTokenProviderConfiguration(configuration),RustBuffer.allocFromString(access_token)))
+    return uniffi_allocate(FleetSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_browser_with_access_token,RustBuffer.alloc_from_TypeCyclopsTokenProviderConfiguration(configuration),RustBuffer.allocFromString(access_token)))
   end
   def self.connect_with_access_token(configuration, access_token, http_client)
         configuration = configuration
         RustBuffer.check_lower_TypeCyclopsTokenProviderConfiguration(configuration)
-        access_token = CyclopsSdk::uniffi_utf8(access_token)
+        access_token = FleetSdk::uniffi_utf8(access_token)
 
         http_client = http_client
         (HttpClient.uniffi_check_lower http_client)
     # Call the (fallible) function before creating any half-baked object instances.
     # Lightly yucky way to bypass the usual "initialize" logic
     # and just create a new instance with the required handle.
-    return uniffi_allocate(CyclopsSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token,RustBuffer.alloc_from_TypeCyclopsTokenProviderConfiguration(configuration),RustBuffer.allocFromString(access_token),(HttpClient.uniffi_lower http_client)))
+    return uniffi_allocate(FleetSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token,RustBuffer.alloc_from_TypeCyclopsTokenProviderConfiguration(configuration),RustBuffer.allocFromString(access_token),(HttpClient.uniffi_lower http_client)))
   end
   def self.connect_with_access_token_and_native_http_client(configuration, access_token)
         configuration = configuration
         RustBuffer.check_lower_TypeCyclopsTokenProviderConfiguration(configuration)
-        access_token = CyclopsSdk::uniffi_utf8(access_token)
+        access_token = FleetSdk::uniffi_utf8(access_token)
 
     # Call the (fallible) function before creating any half-baked object instances.
     # Lightly yucky way to bypass the usual "initialize" logic
     # and just create a new instance with the required handle.
-    return uniffi_allocate(CyclopsSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_and_native_http_client,RustBuffer.alloc_from_TypeCyclopsTokenProviderConfiguration(configuration),RustBuffer.allocFromString(access_token)))
+    return uniffi_allocate(FleetSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_and_native_http_client,RustBuffer.alloc_from_TypeCyclopsTokenProviderConfiguration(configuration),RustBuffer.allocFromString(access_token)))
   end
   def self.connect_with_access_token_provider(configuration, token_provider, http_client)
         configuration = configuration
@@ -2478,7 +2478,7 @@ end
     # Call the (fallible) function before creating any half-baked object instances.
     # Lightly yucky way to bypass the usual "initialize" logic
     # and just create a new instance with the required handle.
-    return uniffi_allocate(CyclopsSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider,RustBuffer.alloc_from_TypeCyclopsTokenProviderConfiguration(configuration),(AccessTokenProvider.uniffi_lower token_provider),(HttpClient.uniffi_lower http_client)))
+    return uniffi_allocate(FleetSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider,RustBuffer.alloc_from_TypeCyclopsTokenProviderConfiguration(configuration),(AccessTokenProvider.uniffi_lower token_provider),(HttpClient.uniffi_lower http_client)))
   end
   def self.connect_with_access_token_provider_and_native_http_client(configuration, token_provider)
         configuration = configuration
@@ -2488,7 +2488,7 @@ end
     # Call the (fallible) function before creating any half-baked object instances.
     # Lightly yucky way to bypass the usual "initialize" logic
     # and just create a new instance with the required handle.
-    return uniffi_allocate(CyclopsSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client,RustBuffer.alloc_from_TypeCyclopsTokenProviderConfiguration(configuration),(AccessTokenProvider.uniffi_lower token_provider)))
+    return uniffi_allocate(FleetSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client,RustBuffer.alloc_from_TypeCyclopsTokenProviderConfiguration(configuration),(AccessTokenProvider.uniffi_lower token_provider)))
   end
   def self.connect_with_native_http_client(configuration)
         configuration = configuration
@@ -2496,14 +2496,14 @@ end
     # Call the (fallible) function before creating any half-baked object instances.
     # Lightly yucky way to bypass the usual "initialize" logic
     # and just create a new instance with the required handle.
-    return uniffi_allocate(CyclopsSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_native_http_client,RustBuffer.alloc_from_TypeCyclopsConfiguration(configuration)))
+    return uniffi_allocate(FleetSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_native_http_client,RustBuffer.alloc_from_TypeCyclopsConfiguration(configuration)))
   end
 
 
   def create_claim(request)
         request = request
         RustBuffer.check_lower_TypeCreateClaimRequest(request)
-    result = CyclopsSdk.uniffi_rust_future_rust_buffer(
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
       SdkError,
       UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_claim(uniffi_clone_handle(),RustBuffer.alloc_from_TypeCreateClaimRequest(request),RustCallStatus.new),
     )
@@ -2512,7 +2512,7 @@ end
   def delete_claim(claim)
         claim = claim
         RustBuffer.check_lower_TypeClaim(claim)
-      CyclopsSdk.uniffi_rust_future_void(
+      FleetSdk.uniffi_rust_future_void(
         SdkError,
         UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_claim(uniffi_clone_handle(),RustBuffer.alloc_from_TypeClaim(claim),RustCallStatus.new),
       )
@@ -2521,16 +2521,16 @@ end
   def get_claim(claim)
         claim = claim
         RustBuffer.check_lower_TypeClaim(claim)
-    result = CyclopsSdk.uniffi_rust_future_rust_buffer(
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
       SdkError,
       UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_claim(uniffi_clone_handle(),RustBuffer.alloc_from_TypeClaim(claim),RustCallStatus.new),
     )
     return result.consumeIntoTypeClaim
   end
   def list_claims(namespace)
-        namespace = CyclopsSdk::uniffi_utf8(namespace)
+        namespace = FleetSdk::uniffi_utf8(namespace)
 
-    result = CyclopsSdk.uniffi_rust_future_rust_buffer(
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
 
       SdkError,
 
@@ -2542,7 +2542,7 @@ end
   def wait_claim(claim)
         claim = claim
         RustBuffer.check_lower_TypeClaim(claim)
-    result = CyclopsSdk.uniffi_rust_future_rust_buffer(
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
       SdkError,
       UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim(uniffi_clone_handle(),RustBuffer.alloc_from_TypeClaim(claim),RustCallStatus.new),
     )
@@ -2551,7 +2551,7 @@ end
   def create_pool(request)
         request = request
         RustBuffer.check_lower_TypeCreatePoolRequest(request)
-    result = CyclopsSdk.uniffi_rust_future_rust_buffer(
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
       SdkError,
       UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_pool(uniffi_clone_handle(),RustBuffer.alloc_from_TypeCreatePoolRequest(request),RustCallStatus.new),
     )
@@ -2560,16 +2560,16 @@ end
   def delete_pool(pool)
         pool = pool
         RustBuffer.check_lower_TypePool(pool)
-      CyclopsSdk.uniffi_rust_future_void(
+      FleetSdk.uniffi_rust_future_void(
         SdkError,
         UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_pool(uniffi_clone_handle(),RustBuffer.alloc_from_TypePool(pool),RustCallStatus.new),
       )
   end
 
   def get_pool(name)
-        name = CyclopsSdk::uniffi_utf8(name)
+        name = FleetSdk::uniffi_utf8(name)
 
-    result = CyclopsSdk.uniffi_rust_future_rust_buffer(
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
 
       SdkError,
 
@@ -2579,9 +2579,9 @@ end
     return result.consumeIntoTypePool
   end
   def list_pools(namespace)
-        namespace = CyclopsSdk::uniffi_utf8(namespace)
+        namespace = FleetSdk::uniffi_utf8(namespace)
 
-    result = CyclopsSdk.uniffi_rust_future_rust_buffer(
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
 
       SdkError,
 
@@ -2593,7 +2593,7 @@ end
   def update_pool(pool)
         pool = pool
         RustBuffer.check_lower_TypePool(pool)
-    result = CyclopsSdk.uniffi_rust_future_rust_buffer(
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
       SdkError,
       UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_update_pool(uniffi_clone_handle(),RustBuffer.alloc_from_TypePool(pool),RustCallStatus.new),
     )
@@ -2602,13 +2602,13 @@ end
   def service_request(sandbox, service, path, request)
         sandbox = sandbox
         RustBuffer.check_lower_TypeSandbox(sandbox)
-        service = CyclopsSdk::uniffi_utf8(service)
+        service = FleetSdk::uniffi_utf8(service)
 
-        path = CyclopsSdk::uniffi_utf8(path)
+        path = FleetSdk::uniffi_utf8(path)
 
         request = request
         RustBuffer.check_lower_TypeHttpRequest(request)
-    result = CyclopsSdk.uniffi_rust_future_rust_buffer(
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
       SdkError,
       UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request(uniffi_clone_handle(),RustBuffer.alloc_from_TypeSandbox(sandbox),RustBuffer.allocFromString(service),RustBuffer.allocFromString(path),RustBuffer.alloc_from_TypeHttpRequest(request),RustCallStatus.new),
     )
@@ -2633,7 +2633,7 @@ end
   # to the actual instance, only its underlying handle.
   def self.uniffi_define_finalizer_by_handle(handle, object_id)
     Proc.new do |_id|
-      CyclopsSdk.rust_call(
+      FleetSdk.rust_call(
         :uniffi_cyclops_sdk_fn_free_accesstokenprovider,
         handle
       )
@@ -2650,7 +2650,7 @@ end
   end
 
   def uniffi_clone_handle()
-    return CyclopsSdk.rust_call(
+    return FleetSdk.rust_call(
       :uniffi_cyclops_sdk_fn_clone_accesstokenprovider,
       @handle
     )
@@ -2665,7 +2665,7 @@ end
   def get_access_token(force_refresh)
         force_refresh = force_refresh ? true : false
 
-    result = CyclopsSdk.uniffi_rust_future_rust_buffer(
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
 
       AccessTokenProviderError,
 
@@ -2693,7 +2693,7 @@ end
   # to the actual instance, only its underlying handle.
   def self.uniffi_define_finalizer_by_handle(handle, object_id)
     Proc.new do |_id|
-      CyclopsSdk.rust_call(
+      FleetSdk.rust_call(
         :uniffi_cyclops_sdk_fn_free_httpclient,
         handle
       )
@@ -2713,7 +2713,7 @@ end
   end
 
   def uniffi_clone_handle()
-    return CyclopsSdk.rust_call(
+    return FleetSdk.rust_call(
       :uniffi_cyclops_sdk_fn_clone_httpclient,
       @handle
     )
@@ -2732,7 +2732,7 @@ end
   def execute(request)
         request = request
         RustBuffer.check_lower_TypeHttpRequest(request)
-    result = CyclopsSdk.uniffi_rust_future_rust_buffer(
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
       HttpError,
       UniFFILib.uniffi_cyclops_sdk_fn_method_httpclient_execute(uniffi_clone_handle(),RustBuffer.alloc_from_TypeHttpRequest(request),RustCallStatus.new),
     )
@@ -2749,12 +2749,12 @@ module UniffiCallbackInterfaceHttpClient
     dropped_callback[:free] = UNIFFI_DROPPED_CALLBACK
     result = UniFFILib::ForeignFutureResultRustBuffer.new
     status = RustCallStatus.new
-    CyclopsSdk.uniffi_trait_interface_call(
+    FleetSdk.uniffi_trait_interface_call(
       status,
       Proc.new { HttpClient.uniffi_handle_map.get(uniffi_handle).execute(request.consumeIntoTypeHttpRequest) },
       Proc.new { |response| result[:return_value] = RustBuffer.alloc_from_TypeHttpResponse(response) },
       HttpError,
-      Proc.new { |error| CyclopsSdk.uniffi_lower_http_error(error) }
+      Proc.new { |error| FleetSdk.uniffi_lower_http_error(error) }
     )
     result[:call_status] = status
     future_callback.call(callback_data, result)
@@ -2791,7 +2791,7 @@ end
   # to the actual instance, only its underlying handle.
   def self.uniffi_define_finalizer_by_handle(handle, object_id)
     Proc.new do |_id|
-      CyclopsSdk.rust_call(
+      FleetSdk.rust_call(
         :uniffi_cyclops_sdk_fn_free_cyclopscredentials,
         handle
       )
@@ -2808,7 +2808,7 @@ end
   end
 
   def uniffi_clone_handle()
-    return CyclopsSdk.rust_call(
+    return FleetSdk.rust_call(
       :uniffi_cyclops_sdk_fn_clone_cyclopscredentials,
       @handle
     )
@@ -2818,11 +2818,11 @@ end
     return inst.uniffi_clone_handle()
   end
   def initialize(client_id, client_secret)
-        client_id = CyclopsSdk::uniffi_utf8(client_id)
+        client_id = FleetSdk::uniffi_utf8(client_id)
 
-        client_secret = CyclopsSdk::uniffi_utf8(client_secret)
+        client_secret = FleetSdk::uniffi_utf8(client_secret)
 
-    handle = CyclopsSdk.rust_call(:uniffi_cyclops_sdk_fn_constructor_cyclopscredentials_new,RustBuffer.allocFromString(client_id),RustBuffer.allocFromString(client_secret))
+    handle = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_constructor_cyclopscredentials_new,RustBuffer.allocFromString(client_id),RustBuffer.allocFromString(client_secret))
     @handle = handle
     ObjectSpace.define_finalizer(self, self.class.uniffi_define_finalizer_by_handle(handle, self.object_id))
   end

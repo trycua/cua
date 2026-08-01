@@ -239,8 +239,8 @@ def check(root: Path) -> None:
         ("Swift concurrent SDK calls", r"async\s+let\s+first\s*=\s*concurrentClient\.serviceRequest"),
     ])
     require_all(source["ruby_live"], files["ruby_live"], [
-        ("Ruby live Net HTTP callback", r"class\s+NetHttpClient\s*<\s*CyclopsSdk::HttpClient"),
-        ("Ruby live typed pool", r"CyclopsSdk::PoolSpec\.new.*CyclopsSdk::SandboxService\.new\(name:\s*\x27mcp\x27,\s*target_port:\s*3000"),
+        ("Ruby live Net HTTP callback", r"class\s+NetHttpClient\s*<\s*FleetSdk::HttpClient"),
+        ("Ruby live typed pool", r"FleetSdk::PoolSpec\.new.*FleetSdk::SandboxService\.new\(name:\s*\x27mcp\x27,\s*target_port:\s*3000"),
         ("Ruby live typed claim", r"CreateClaimRequest\.new\(pool:\s*pool,\s*spec:\s*nil\)"),
         ("Ruby live MCP retry", r"\[502,\s*503,\s*504\]\.include\?\(response\.status\)"),
         ("Ruby live cleanup", r"client\.delete_claim.*client\.delete_pool"),
@@ -252,8 +252,8 @@ def check(root: Path) -> None:
         ("Ruby mutex-safe callback", r"@mutex\s*=\s*Mutex\.new"),
         ("Ruby mutex queue access", r"@mutex\.synchronize\s+do"),
         ("Ruby exact headers and body comparison", r"actual\s*==\s*\[item\.method,\s*item\.url,\s*item\.headers,\s*item\.body\]"),
-        ("Ruby callback transport constructor", r"raise\s+CyclopsSdk::HttpError::Transport\.new\("),
-        ("Ruby future transport assertion", r"rescue\s+CyclopsSdk::SdkError::Transport\s*=>\s*error"),
+        ("Ruby callback transport constructor", r"raise\s+FleetSdk::HttpError::Transport\.new\("),
+        ("Ruby future transport assertion", r"rescue\s+FleetSdk::SdkError::Transport\s*=>\s*error"),
         ("Ruby concurrent SDK threads", r"Thread\.new\s+do"),
     ])
     require_all(source["python_test"], files["python_test"], [

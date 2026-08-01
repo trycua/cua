@@ -169,7 +169,7 @@ await client.delete_pool(pool)
 ```
 
 The Kotlin package is `ai.cua.cyclops.sdk`; Swift compiles as `CyclopsSdk`;
-Python and Ruby expose records through their public `cyclops_sdk` facade. The
+Python exposes records through its public `fleet_sdk` facade; Ruby exposes its generated `FleetSdk` module. The
 checked-in contract tests and examples above are the executable, per-language
 forms of this lifecycle.
 

@@ -3,7 +3,7 @@ import unittest
 from contract_fixture import (ScriptedHttpClient, client, expected_lifecycle,
     expected_service_calls, offline_sandbox, pool_spec, run_lifecycle,
     service_request)
-from cyclops_sdk import CreatePoolRequest, HttpClient, HttpError, SdkError
+from fleet_sdk import CreatePoolRequest, HttpClient, HttpError, SdkError
 
 class AsyncClientContractTest(unittest.IsolatedAsyncioTestCase):
     async def test_full_typed_lifecycle_has_exact_native_callback_contract(self):

@@ -5,6 +5,9 @@
 
 use cua_driver_core::tool::ToolRegistry;
 
+#[cfg(any(target_os = "linux", test))]
+mod process_control;
+
 #[cfg(target_os = "linux")]
 mod impl_;
 #[cfg(target_os = "linux")]

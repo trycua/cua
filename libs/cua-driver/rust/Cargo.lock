@@ -2982,6 +2982,7 @@ dependencies = [
  "reis",
  "serde",
  "serde_json",
+ "shlex",
  "thiserror 1.0.69",
  "tiny-skia",
  "tokio",

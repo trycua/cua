@@ -213,3 +213,24 @@ def test_sync_pool_matches_blocking_context_manager(monkeypatch):
 
     assert claim_client.released == ["claim-1"]
     assert claim_client.closed is True
+
+@pytest.mark.asyncio
+async def test_reconcile_preserves_replicas_and_named_services(monkeypatch):
+    client = FakeFleetClient()
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
+
+    await Pool.reconcile(
+        {
+            "name": "foo",
+            "image": Image.from_registry("registry.example/workspace:latest"),
+            "replicas": 2,
+            "services": {"server": 8000, "mcp": 3000},
+        }
+    )
+
+    request = client.created[0]
+    assert request.spec.replicas == 2
+    assert [(service.name, service.target_port) for service in request.spec.services] == [
+        ("server", 8000),
+        ("mcp", 3000),
+    ]

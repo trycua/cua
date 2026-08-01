@@ -4,7 +4,7 @@
 //! swap before driving a focus-proxy target — a window that only accepts input
 //! while its host app genuinely holds activation. The macOS input rungs never
 //! need this internally: every `CGEvent.postToPid` dispatch reaches a
-//! backgrounded window, and the `dispatch:"foreground"` rung does its own
+//! backgrounded window, and the `delivery_mode:"foreground"` rung does its own
 //! sub-millisecond front→act→restore flash. The one surface that flash can't
 //! satisfy is a remote-desktop client (e.g. Microsoft's Windows App / RDP),
 //! which re-establishes its keyboard channel with the remote host *on
@@ -12,15 +12,17 @@
 //! — not flashed and restored. `bring_to_front` is that explicit, persistent
 //! activation.
 //!
-//! It activates the owning app by pid via `-[NSRunningApplication
-//! activateWithOptions:]` (the same Cocoa call `focus_steal::restore_focus`
-//! uses, and the same effect as `open -b <bundle-id>`). `window_id` is accepted
-//! for cross-platform parity but activation is app-level: the app's key window
-//! comes forward. Unlike the rest of the macOS driver this DOES steal
-//! foreground — it is an explicit opt-in, never called by the input ladder.
+//! It fronts the exact window through WindowServer's
+//! `SLPSSetFrontProcessWithOptions` and falls back to
+//! `-[NSRunningApplication activateWithOptions:]` when that SPI is unavailable.
+//! Unlike the rest of the macOS driver this DOES steal foreground — it is an
+//! explicit opt-in, never called by the input ladder.
 
 use async_trait::async_trait;
-use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{
+    protocol::ToolResult,
+    tool::{Tool, ToolDef},
+};
 use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
 use serde_json::Value;
 
@@ -31,17 +33,16 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "bring_to_front".into(),
-        description:
-            "Persistently activate an app so it genuinely holds macOS foreground, \
+        description: "Persistently activate an app so it genuinely holds macOS foreground, \
              then leave it there. Most input does NOT need this — every macOS \
-             dispatch reaches backgrounded windows, and `dispatch:\"foreground\"` \
+             dispatch reaches backgrounded windows, and `delivery_mode:\"foreground\"` \
              does its own brief front→act→restore. Reach for `bring_to_front` only \
              for a focus-proxy surface that re-arms its own input channel on \
              activation and must stay frontmost across the interaction — chiefly a \
              remote-desktop client (Microsoft Windows App / RDP), where the brief \
-             flash drops keystrokes. Activates the owning app by pid (\
-             `NSRunningApplication.activate`); `window_id` is accepted for parity \
-             but activation is app-level. This DOES steal foreground — explicit \
+             flash drops keystrokes. Fronts the exact macOS window through \
+             WindowServer when `window_id` is present, with app-level Cocoa \
+             activation as a fallback. This DOES steal foreground — explicit \
              opt-in, never used by the input ladder."
             .into(),
         input_schema: serde_json::json!({
@@ -62,7 +63,9 @@ fn def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for BringToFrontTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         let pid = match args.get("pid").and_then(Value::as_i64) {
@@ -82,18 +85,23 @@ impl Tool for BringToFrontTool {
         };
         let window_id = args.get("window_id").and_then(Value::as_i64);
 
-        // `-[NSRunningApplication activateWithOptions:]` is documented
-        // thread-safe. ActivateAllWindows brings the app's windows forward (not
-        // just the key one) so a multi-window target lands fully frontmost.
-        // The BOOL return tells us whether Cocoa actually accepted the swap —
-        // `None` here means the pid has no running app at all.
-        let activation = unsafe {
+        let skylight_activated = window_id
+            .and_then(|value| u32::try_from(value).ok())
+            .is_some_and(|window_id| {
+                crate::input::skylight::set_front_process_persistently(pid, window_id)
+            });
+
+        // Cocoa activation is the public fallback. On recent macOS it may
+        // accept a request from a background process without actually changing
+        // WindowServer ownership, which is why the exact-window SkyLight path
+        // runs first.
+        let activation = skylight_activated.then_some(true).or_else(|| unsafe {
             NSRunningApplication::runningApplicationWithProcessIdentifier(pid).map(|app| {
                 app.activateWithOptions(
                     NSApplicationActivationOptions::NSApplicationActivateAllWindows,
                 )
             })
-        };
+        });
 
         let activated = match activation {
             None => {
@@ -122,11 +130,13 @@ impl Tool for BringToFrontTool {
             }));
         }
 
-        ToolResult::text(format!("Brought pid {pid} to the foreground."))
-            .with_structured(serde_json::json!({
+        ToolResult::text(format!("Brought pid {pid} to the foreground.")).with_structured(
+            serde_json::json!({
                 "pid": pid,
                 "window_id": window_id,
                 "activated": true,
-            }))
+                "path": if skylight_activated { "skylight" } else { "cocoa" },
+            }),
+        )
     }
 }

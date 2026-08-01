@@ -279,6 +279,14 @@ final class LumeController {
         }
     }
 
+    /// Classifies resize-guard contention using the transaction marker as the
+    /// authoritative signal. A running VM intentionally holds the guard for
+    /// its lifetime, so lock contention without a marker is not an interrupted
+    /// resize and must not suggest rollback.
+    private func resizeGuardContentionError(_ vmDir: VMDirectory, name: String) -> DiskResizeError {
+        vmDir.hasResizeMarker() ? .resizeInProgress(name) : .vmRunning(name)
+    }
+
     @MainActor
     public func clone(
         name: String, newName: String, sourceLocation: String? = nil, destLocation: String? = nil
@@ -301,7 +309,7 @@ final class LumeController {
             // Check if source VM is still being provisioned
             let sourceVmDir = try home.getVMDirectory(normalizedName, storage: actualSourceLocation)
             guard let resizeGuard = try sourceVmDir.tryAcquireResizeGuard(exclusive: false) else {
-                throw DiskResizeError.resizeInProgress(normalizedName)
+                throw resizeGuardContentionError(sourceVmDir, name: normalizedName)
             }
             defer {
                 flock(resizeGuard.fileDescriptor, LOCK_UN)
@@ -313,7 +321,7 @@ final class LumeController {
             let destinationVmDir = try home.getVMDirectory(normalizedNewName, storage: destLocation)
             guard let destinationGuard = try destinationVmDir.tryAcquireResizeGuard(exclusive: true)
             else {
-                throw DiskResizeError.resizeInProgress(normalizedNewName)
+                throw resizeGuardContentionError(destinationVmDir, name: normalizedNewName)
             }
             defer {
                 flock(destinationGuard.fileDescriptor, LOCK_UN)
@@ -516,6 +524,13 @@ final class LumeController {
             throw error
         }
 
+        let provisioningStartedAt = Date()
+        TelemetryClient.shared.recordProvisioningStarted(
+            transport: .cli,
+            guestOS: os,
+            asynchronous: false
+        )
+
         do {
             // Use createInternal which handles all the actual work
             try await createInternal(
@@ -539,12 +554,28 @@ final class LumeController {
             // Clear provisioning marker on success
             vmDir.clearProvisioningMarker()
             Logger.info("Provisioning marker cleared", metadata: ["name": name])
+            TelemetryClient.shared.recordProvisioningCompleted(
+                transport: .cli,
+                guestOS: os,
+                asynchronous: false,
+                success: true,
+                errorClass: .none,
+                elapsed: Date().timeIntervalSince(provisioningStartedAt)
+            )
 
         } catch {
             // Clean up the pre-created directory on failure. If deletion fails, keep the
             // provisioning marker intact so the leftover VM remains discoverable.
             cleanupFailedCreateVMDirectory(vmDir, context: "creation")
             Logger.error("Failed to create VM", metadata: ["error": error.localizedDescription])
+            TelemetryClient.shared.recordProvisioningCompleted(
+                transport: .cli,
+                guestOS: os,
+                asynchronous: false,
+                success: false,
+                errorClass: .operationError,
+                elapsed: Date().timeIntervalSince(provisioningStartedAt)
+            )
             throw error
         }
     }
@@ -574,7 +605,8 @@ final class LumeController {
         ipsw: String?,
         storage: String? = nil,
         unattendedConfig: UnattendedConfig? = nil,
-        networkMode: NetworkMode = .nat
+        networkMode: NetworkMode = .nat,
+        telemetryTransport: TelemetryTransport = .http
     ) throws {
         Logger.info(
             "Starting async VM creation",
@@ -619,6 +651,12 @@ final class LumeController {
             throw error
         }
 
+        let provisioningStartedAt = Date()
+        TelemetryClient.shared.recordProvisioningStarted(
+            transport: telemetryTransport,
+            guestOS: os,
+            asynchronous: true
+        )
         Logger.info("Spawning background task for VM creation", metadata: ["name": name])
 
         // All parameters passed to Task are value types (Sendable)
@@ -647,6 +685,14 @@ final class LumeController {
                 // Clear marker on success
                 vmDir.clearProvisioningMarker()
                 Logger.info("Async VM creation completed successfully", metadata: ["name": name])
+                TelemetryClient.shared.recordProvisioningCompleted(
+                    transport: telemetryTransport,
+                    guestOS: os,
+                    asynchronous: true,
+                    success: true,
+                    errorClass: .none,
+                    elapsed: Date().timeIntervalSince(provisioningStartedAt)
+                )
 
             } catch {
                 // Clean up the pre-created directory on failure. If deletion fails, keep the
@@ -654,6 +700,14 @@ final class LumeController {
                 controller.cleanupFailedCreateVMDirectory(vmDir, context: "async creation")
                 Logger.error("Async VM creation failed",
                             metadata: ["name": name, "error": error.localizedDescription])
+                TelemetryClient.shared.recordProvisioningCompleted(
+                    transport: telemetryTransport,
+                    guestOS: os,
+                    asynchronous: true,
+                    success: false,
+                    errorClass: .operationError,
+                    elapsed: Date().timeIntervalSince(provisioningStartedAt)
+                )
             }
         }
     }
@@ -863,7 +917,7 @@ final class LumeController {
             }
 
             guard let resizeGuard = try vmDir.tryAcquireResizeGuard(exclusive: true) else {
-                throw DiskResizeError.resizeInProgress(normalizedName)
+                throw resizeGuardContentionError(vmDir, name: normalizedName)
             }
             defer {
                 flock(resizeGuard.fileDescriptor, LOCK_UN)
@@ -982,6 +1036,7 @@ final class LumeController {
     public func runVM(
         name: String,
         noDisplay: Bool = false,
+        displayMode: DisplayMode? = nil,
         sharedDirectories: [SharedDirectory] = [],
         mount: Path? = nil,
         registry: String = "ghcr.io",
@@ -993,15 +1048,18 @@ final class LumeController {
         diskPath: Path? = nil,
         nvramPath: Path? = nil,
         usbMassStoragePaths: [Path]? = nil,
+        additionalDiskPaths: [Path]? = nil,
         networkMode: NetworkMode? = nil,
-        clipboard: Bool = false
+        clipboard: Bool = false,
+        telemetryTransport: TelemetryTransport = .cli
     ) async throws {
         let normalizedName = normalizeVMName(name: name)
+        let effectiveDisplayMode = displayMode ?? (noDisplay ? .none : .vnc)
         Logger.info(
             "Running VM",
             metadata: [
                 "name": normalizedName,
-                "no_display": "\(noDisplay)",
+                "display_mode": effectiveDisplayMode.rawValue,
                 "shared_directories":
                     "\(sharedDirectories.map( { $0.string } ).joined(separator: ", "))",
                 "mount": mount?.path ?? "none",
@@ -1011,6 +1069,7 @@ final class LumeController {
                 "disk_path_override": diskPath?.path ?? "none",
                 "nvram_path_override": nvramPath?.path ?? "none",
                 "usb_storage_devices": "\(usbMassStoragePaths?.count ?? 0)",
+                "additional_disks": "\(additionalDiskPaths?.count ?? 0)",
                 "network_override": networkMode?.description ?? "vm-config",
             ])
 
@@ -1098,23 +1157,27 @@ final class LumeController {
             // Validate parameters using the located VMDirectory
             try validateRunParameters(
                 vmDir: vmDir, // Pass vmDir
+                primaryDiskPath: diskPath ?? vmDir.diskPath,
                 sharedDirectories: sharedDirectories,
                 mount: mount,
-                usbMassStoragePaths: usbMassStoragePaths
+                usbMassStoragePaths: usbMassStoragePaths,
+                additionalDiskPaths: additionalDiskPaths
             )
 
             // Load the VM directly using the located VMDirectory and storage context
             let vm = try self.loadVM(vmDir: vmDir, storage: effectiveStorage, diskPath: diskPath, nvramPath: nvramPath)
+            vm.telemetryTransport = telemetryTransport
 
             SharedVM.shared.setVM(name: normalizedName, vm: vm)
             try await vm.run(
-                noDisplay: noDisplay,
+                displayMode: effectiveDisplayMode,
                 sharedDirectories: sharedDirectories,
                 mount: mount,
                 vncPort: vncPort,
                 vncPassword: vncPassword,
                 recoveryMode: recoveryMode,
                 usbMassStoragePaths: usbMassStoragePaths,
+                additionalDiskPaths: additionalDiskPaths,
                 networkMode: networkMode,
                 clipboard: clipboard)
             Logger.info("VM started successfully", metadata: ["name": normalizedName])
@@ -1267,7 +1330,7 @@ final class LumeController {
             // Get the VM directory
             let vmDir = try home.getVMDirectory(name, storage: actualLocation)
             guard let resizeGuard = try vmDir.tryAcquireResizeGuard(exclusive: false) else {
-                throw DiskResizeError.resizeInProgress(name)
+                throw resizeGuardContentionError(vmDir, name: name)
             }
             defer {
                 flock(resizeGuard.fileDescriptor, LOCK_UN)
@@ -1576,13 +1639,40 @@ final class LumeController {
 
     private func validateRunParameters(
         vmDir: VMDirectory, // Changed signature: accept VMDirectory
+        primaryDiskPath: Path,
         sharedDirectories: [SharedDirectory]?,
         mount: Path?,
-        usbMassStoragePaths: [Path]? = nil
+        usbMassStoragePaths: [Path]? = nil,
+        additionalDiskPaths: [Path]? = nil
     ) throws {
         // VM existence is confirmed by having vmDir, no need for validateVMExists
         if let dirs = sharedDirectories {
             try self.validateSharedDirectories(dirs)
+        }
+
+        // Validate additional disk paths
+        if let extraDisks = additionalDiskPaths {
+            let canonicalPrimaryDiskPath =
+                primaryDiskPath.url.resolvingSymlinksInPath().standardizedFileURL.path(
+                    percentEncoded: false)
+            var canonicalAdditionalDiskPaths = Swift.Set<String>()
+
+            for path in extraDisks {
+                if !FileManager.default.fileExists(atPath: path.path) {
+                    throw ValidationError("Additional disk image not found: \(path.path)")
+                }
+
+                let canonicalPath =
+                    path.url.resolvingSymlinksInPath().standardizedFileURL.path(
+                        percentEncoded: false)
+                if canonicalPath == canonicalPrimaryDiskPath {
+                    throw ValidationError(
+                        "Additional disk image must differ from the primary boot disk: \(path.path)")
+                }
+                guard canonicalAdditionalDiskPaths.insert(canonicalPath).inserted else {
+                    throw ValidationError("Duplicate additional disk image: \(path.path)")
+                }
+            }
         }
 
         // Validate USB mass storage paths

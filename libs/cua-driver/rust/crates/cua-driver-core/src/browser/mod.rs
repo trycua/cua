@@ -1,8 +1,7 @@
 //! Platform-agnostic browser-tool v1 core.
 //!
-//! Five typed tools — `get_browser_state` (strictly read-only),
-//! `browser_prepare`, `browser_navigate`, `browser_click`,
-//! `browser_type` — over an exact-or-refused binding model:
+//! Typed browser inspection, preparation, navigation, input, dialog, upload,
+//! and download tools over an exact-or-refused binding model:
 //!
 //! - The native entrypoint is `pid + window_id`. Browser target ids,
 //!   tab ids, and page refs (`p<snapshot>:<index>`) are opaque,
@@ -39,12 +38,19 @@
 pub mod approval;
 pub mod binding;
 pub mod cdp_ws;
+pub mod download;
 pub mod engine;
+mod grant;
 #[cfg(test)]
 pub(crate) mod mock_cdp;
+mod mutation;
 pub mod platform;
+pub mod pointer;
 mod prepare;
+mod reconnect;
 pub mod refusal;
+mod semantic;
+mod setup_descriptor;
 pub mod store;
 pub mod tools;
 pub mod types;
@@ -53,13 +59,18 @@ mod v2_tests;
 
 pub use engine::BrowserEngine;
 pub use platform::{
-    BrowserPlatform, PrepareAction, PrepareAuthorization, PrepareOutcome, PrepareProfile,
-    PrepareProfileMode, PrepareRequest, PrepareSideEffects,
+    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
+    BrowserVisualActionKind, ExistingProfileSetupOutcome, ExistingProfileSetupRequest,
+    PrepareAction, PrepareAttachment, PrepareAttachmentKind, PrepareAuthorization, PrepareOutcome,
+    PrepareProfile, PrepareProfileMode, PrepareRequest, PrepareSideEffects, PrepareStrategy,
 };
 pub use refusal::{BrowserRefusal, BrowserRefusalCode};
+pub use setup_descriptor::{
+    existing_profile_setup_descriptor, BrowserSetupDescriptor, EXISTING_PROFILE_SETUP_READY_TIMEOUT,
+};
 pub use tools::register_browser_tools;
 pub use types::{
-    BindingQuality, BrowserClassification, BrowserEngineFamily, EndpointOwnershipMethod,
-    EndpointOwnershipProof, NativeOwnershipMethod, NativeOwnershipProof, NativeWindowInfo,
-    OwnedEndpoint, ProcessFingerprint, Rect,
+    BindingQuality, BrowserClassification, BrowserEngineFamily, BrowserProduct,
+    EndpointOwnershipMethod, EndpointOwnershipProof, NativeOwnershipMethod, NativeOwnershipProof,
+    NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };

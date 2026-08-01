@@ -22,6 +22,7 @@ use anyhow::{bail, Context, Result};
 use std::time::Duration;
 
 use windows::{
+    core::Interface,
     Graphics::{
         Capture::{Direct3D11CaptureFramePool, GraphicsCaptureItem},
         DirectX::{Direct3D11::IDirect3DDevice, DirectXPixelFormat},
@@ -32,9 +33,8 @@ use windows::{
             Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_0},
             Direct3D11::{
                 D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D,
-                D3D11_CPU_ACCESS_READ, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-                D3D11_MAPPED_SUBRESOURCE, D3D11_MAP_READ, D3D11_SDK_VERSION,
-                D3D11_TEXTURE2D_DESC, D3D11_USAGE_STAGING,
+                D3D11_CPU_ACCESS_READ, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_MAPPED_SUBRESOURCE,
+                D3D11_MAP_READ, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11_USAGE_STAGING,
             },
             Dxgi::IDXGIDevice,
         },
@@ -44,7 +44,6 @@ use windows::{
         },
         UI::WindowsAndMessaging::IsIconic,
     },
-    core::Interface,
 };
 
 /// Capture a window via WGC, returning BGRA pixels + (width, height).
@@ -85,7 +84,9 @@ unsafe fn wgc_capture_impl(hwnd: HWND) -> Result<(Vec<u8>, u32, u32)> {
 
     // 2. DXGI device interface for the D3D11 device, then the WinRT
     //    IDirect3DDevice wrapper that GraphicsCaptureFramePool needs.
-    let dxgi_device: IDXGIDevice = d3d_device.cast().context("ID3D11Device → IDXGIDevice cast")?;
+    let dxgi_device: IDXGIDevice = d3d_device
+        .cast()
+        .context("ID3D11Device → IDXGIDevice cast")?;
     let inspectable = CreateDirect3D11DeviceFromDXGIDevice(&dxgi_device)
         .context("CreateDirect3D11DeviceFromDXGIDevice failed")?;
     let direct3d_device: IDirect3DDevice = inspectable
@@ -96,12 +97,10 @@ unsafe fn wgc_capture_impl(hwnd: HWND) -> Result<(Vec<u8>, u32, u32)> {
     let interop_factory: IGraphicsCaptureItemInterop =
         windows::core::factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()
             .context("IGraphicsCaptureItemInterop activation factory")?;
-    let item: GraphicsCaptureItem = interop_factory
-        .CreateForWindow(hwnd)
-        .context(
-            "IGraphicsCaptureItemInterop::CreateForWindow failed — \
+    let item: GraphicsCaptureItem = interop_factory.CreateForWindow(hwnd).context(
+        "IGraphicsCaptureItemInterop::CreateForWindow failed — \
              requires Win10 1903+ and the target window must exist",
-        )?;
+    )?;
     let item_size = item.Size().context("GraphicsCaptureItem::Size")?;
     if item_size.Width <= 0 || item_size.Height <= 0 {
         bail!(
@@ -153,13 +152,18 @@ unsafe fn wgc_capture_impl(hwnd: HWND) -> Result<(Vec<u8>, u32, u32)> {
     //    NULL until one's available. 50 ms polling interval keeps the
     //    "frame finally arrived" detection latency low without burning
     //    CPU on a tight spin.
-    session.StartCapture().context("GraphicsCaptureSession::StartCapture")?;
+    session
+        .StartCapture()
+        .context("GraphicsCaptureSession::StartCapture")?;
 
     let deadline = std::time::Instant::now() + Duration::from_millis(1500);
     let mut frame_opt = None;
     while std::time::Instant::now() < deadline {
         match pool.TryGetNextFrame() {
-            Ok(f) => { frame_opt = Some(f); break; }
+            Ok(f) => {
+                frame_opt = Some(f);
+                break;
+            }
             Err(_) => {
                 // TryGetNextFrame returns an error when no frame is
                 // available yet. Wait briefly, retry.
@@ -167,11 +171,13 @@ unsafe fn wgc_capture_impl(hwnd: HWND) -> Result<(Vec<u8>, u32, u32)> {
             }
         }
     }
-    let frame = frame_opt.ok_or_else(|| anyhow::anyhow!(
-        "WGC TryGetNextFrame returned no frame within 1500 ms — \
+    let frame = frame_opt.ok_or_else(|| {
+        anyhow::anyhow!(
+            "WGC TryGetNextFrame returned no frame within 1500 ms — \
          DWM may not be compositing this window (cloaked / not actually \
          rendered). Fall through to screen-region BitBlt."
-    ))?;
+        )
+    })?;
 
     // 8. Pull the underlying ID3D11Texture2D out of the WinRT frame
     //    surface via the IDirect3DDxgiInterfaceAccess shim.

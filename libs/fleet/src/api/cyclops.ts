@@ -176,8 +176,7 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
     url.startsWith("/api/gateway") ||
     url.startsWith("/api/k8s") ||
     url.startsWith("/api/orch") ||
-    url.startsWith("/api/namespaces") ||
-    url.startsWith("/api/pool-templates")
+    url.startsWith("/api/namespaces")
   ) {
     const { getToken } = await import("../auth/keycloak")
     const token = await getToken()
@@ -563,12 +562,9 @@ export const namespacesApi = {
     }),
 }
 
-// ── Pool templates ─────────────────────────────────────────────────────
+// ── Pool config shape ──────────────────────────────────────────────────
 //
-// Per-user saved pool configs, persisted in Redis by the backend
-// (/api/pool-templates). The stored `config` is exactly the object the SPA
-// passes to api.createPool — so creating a pool from a template just feeds
-// it back into the New pool form.
+// The object the SPA passes to api.createPool.
 
 // Optional autoscaling extension. Threaded verbatim onto the pool's
 // generated OSGymSandboxWarmPool.spec.autoscaling by the compat shim,
@@ -596,34 +592,6 @@ export interface PoolTemplateConfig {
     livenessProbe?: Record<string, unknown>
   }
   autoscaling?: PoolAutoscalingConfig
-}
-
-export interface PoolTemplate {
-  user: string
-  name: string
-  createdAt: string
-  config: PoolTemplateConfig
-}
-
-const httpPoolTemplates = <T>(path: string, init?: RequestInit) =>
-  fetchJson<T>(`/api/pool-templates${path}`, init)
-
-export const poolTemplatesApi = {
-  list: async (): Promise<PoolTemplate[]> => {
-    const res = await httpPoolTemplates<PoolTemplate[]>("")
-    return res ?? []
-  },
-
-  create: (name: string, config: PoolTemplateConfig) =>
-    httpPoolTemplates<PoolTemplate>("", {
-      method: "POST",
-      body: JSON.stringify({ name, config }),
-    }),
-
-  remove: (name: string) =>
-    httpPoolTemplates<void>(`/${encodeURIComponent(name)}`, {
-      method: "DELETE",
-    }),
 }
 
 // ── User API keys ─────────────────────────────────────────────────────

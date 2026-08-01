@@ -21,10 +21,9 @@
 // verbs into `admin`. Capsule creates that binding only for a governed owner.
 // This package preserves the historical group-owner regression from the
 // retired Kopf lifecycle: dynamic oidc:user-<sub> groups could be removed when
-// Flux reapplied CapsuleConfiguration.userGroups. The current backend creates
-// and validates direct User owners before namespace creation; its first-use
-// lifecycle is covered by the backend Tenant tests, not by this historical
-// negative-control package.
+// Flux reapplied CapsuleConfiguration.userGroups. The standalone controller
+// now reconciles direct User owners independently of namespace creation;
+// controller tests cover that lifecycle instead of this historical negative control.
 //
 // Two tests, both against a real apiserver with no Capsule operator:
 //

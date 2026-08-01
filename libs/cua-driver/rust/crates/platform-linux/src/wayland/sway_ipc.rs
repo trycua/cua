@@ -171,6 +171,60 @@ pub fn window_for_app_id(app_id: &str) -> Option<Window> {
         .max_by_key(|window| (window.focused, window.visible))
 }
 
+fn focus_container(id: u64) -> bool {
+    let selector = format!("[con_id={id}]");
+    Command::new("swaymsg")
+        .args([selector.as_str(), "focus"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// Briefly focus one compositor-attested container, run `body`, then restore
+/// the previously focused container. The caller must already have verified the
+/// target container's PID and id through [`window_for_id`].
+pub fn with_focused_container<T>(
+    id: u64,
+    body: impl FnOnce() -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    let prior = list_windows()
+        .ok_or_else(|| anyhow::anyhow!("Sway IPC tree is unavailable"))?
+        .into_iter()
+        .find(|window| window.focused)
+        .map(|window| window.id);
+    if !focus_container(id) {
+        anyhow::bail!("Sway refused to focus exact container {id}");
+    }
+    std::thread::sleep(std::time::Duration::from_millis(80));
+    if !window_for_id(id).is_some_and(|window| window.focused) {
+        anyhow::bail!("Sway did not confirm focus on exact container {id}");
+    }
+    let result = body();
+    let restore = prior
+        .filter(|prior| *prior != id)
+        .map(|prior| {
+            if !focus_container(prior) {
+                anyhow::bail!("Sway could not restore prior container {prior}");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(80));
+            if !window_for_id(prior).is_some_and(|window| window.focused) {
+                anyhow::bail!("Sway did not confirm restored container {prior}");
+            }
+            Ok(())
+        })
+        .transpose();
+    match (result, restore) {
+        (Ok(value), Ok(_)) => Ok(value),
+        (Err(error), Ok(_)) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+        (Err(error), Err(restore)) => Err(error.context(format!(
+            "the prior Sway focus also could not be restored: {restore}"
+        ))),
+    }
+}
+
 pub fn window_origin_for_pid(pid: u32) -> Option<(i32, i32)> {
     window_for_pid(pid).map(|window| (window.x, window.y))
 }

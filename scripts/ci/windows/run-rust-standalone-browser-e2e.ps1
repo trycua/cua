@@ -24,6 +24,7 @@ $recordings = Join-Path $artifactDir "recordings"
 New-Item -ItemType Directory -Force $recordings | Out-Null
 $env:CUA_E2E_DECLARATIONS_FILE = Join-Path $artifactDir "cases.jsonl"
 $env:CUA_E2E_ENVIRONMENT_FILE = Join-Path $artifactDir "environment.jsonl"
+$env:CUA_E2E_BROWSER_PROVENANCE_FILE = Join-Path $artifactDir "browser-provenance.jsonl"
 $env:CUA_E2E_RESULTS_FILE = Join-Path $artifactDir "results.jsonl"
 $env:CUA_E2E_RECORDINGS_ROOT = $recordings
 $env:CUA_TEST_WORKSPACE_ROOT = $rustRoot
@@ -36,6 +37,7 @@ $env:CUA_TEST_DRIVER_STDERR = "1"
 foreach ($path in @(
     $env:CUA_E2E_DECLARATIONS_FILE,
     $env:CUA_E2E_ENVIRONMENT_FILE,
+    $env:CUA_E2E_BROWSER_PROVENANCE_FILE,
     $env:CUA_E2E_RESULTS_FILE
 )) {
     New-Item -ItemType File -Path $path | Out-Null
@@ -117,12 +119,21 @@ if (-not (Test-Path $env:CUA_TEST_DRIVER_BIN)) {
 
 $tests = @(
     "standalone_browser_background_type",
+    "standalone_browser_type_replace",
+    "standalone_browser_owned_permission_prompt",
+    "standalone_browser_dialogs",
+    "standalone_browser_download",
+    "standalone_browser_existing_profile",
+    "standalone_browser_existing_profile_setup",
     "standalone_browser_frames",
     "standalone_browser_multi_tab",
+    "standalone_browser_pointer_actions",
     "standalone_browser_prepare_isolated",
     "standalone_browser_roundtrip",
+    "standalone_browser_semantic_state",
     "standalone_browser_stale_ref",
     "standalone_browser_trusted_click",
+    "standalone_browser_upload",
     "standalone_browser_window_collision"
 )
 $failureCount = 0

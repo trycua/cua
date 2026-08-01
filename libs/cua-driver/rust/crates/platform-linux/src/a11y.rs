@@ -13,10 +13,10 @@
 //! embed the same Chromium.
 //!
 //! A real screen reader turns the Chromium signal on. Doing that ourselves is
-//! unsafe on GNOME: its settings daemon treats the signal as a user request and
-//! launches Orca. GNOME therefore gets only the generic `IsEnabled` signal by
-//! default. Other desktops retain the Chromium signal for compatibility, and a
-//! caller can choose either policy explicitly with
+//! unsafe on GNOME and COSMIC: their session services treat the signal as a user
+//! request and launch Orca. Those desktops therefore get only the generic
+//! `IsEnabled` signal by default. Other desktops retain the Chromium signal for
+//! compatibility, and a caller can choose either policy explicitly with
 //! `CUA_DRIVER_RS_A11Y_ADVERTISE_MODE`.
 //!
 //! Everything here is best-effort. A session without an accessibility bus (some
@@ -153,12 +153,13 @@ fn advertise_mode_from(
 }
 
 fn desktop_default_mode(desktop: Option<&str>) -> AdvertiseMode {
-    let is_gnome = desktop.is_some_and(|desktop| {
+    let launches_screen_reader = desktop.is_some_and(|desktop| {
         desktop
             .split([':', ';'])
-            .any(|part| part.trim().eq_ignore_ascii_case("gnome"))
+            .map(str::trim)
+            .any(|part| part.eq_ignore_ascii_case("gnome") || part.eq_ignore_ascii_case("cosmic"))
     });
-    if is_gnome {
+    if launches_screen_reader {
         AdvertiseMode::IsEnabledOnly
     } else {
         AdvertiseMode::All
@@ -179,6 +180,18 @@ mod tests {
     fn gnome_default_does_not_claim_a_screen_reader() {
         assert_eq!(
             advertise_mode_from(false, None, Some("ubuntu:GNOME")),
+            AdvertiseMode::IsEnabledOnly
+        );
+    }
+
+    #[test]
+    fn cosmic_default_does_not_claim_a_screen_reader() {
+        assert_eq!(
+            advertise_mode_from(false, None, Some("COSMIC")),
+            AdvertiseMode::IsEnabledOnly
+        );
+        assert_eq!(
+            advertise_mode_from(false, None, Some("pop:COSMIC")),
             AdvertiseMode::IsEnabledOnly
         );
     }

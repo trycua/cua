@@ -102,7 +102,8 @@ func sipRecoveryAutomation() async throws {
         let verb = state == .off ? "disable" : "enable"
         let result = state == .off ? "off" : "on"
         #expect(driver.events.contains("type:csrutil \(verb)"))
-        #expect(driver.events.contains("text:enter password for user lume:"))
+        let expectedPrompt = state == .off ? "text:enter password for user lume:" : "text:password"
+        #expect(driver.events.contains(expectedPrompt))
         #expect(driver.events.contains("key:y") == (state == .off))
         #expect(driver.events.contains("text:system integrity protection is \(result)."))
         #expect(driver.events.contains("sensitive-input"))

@@ -30,14 +30,14 @@ that exact commit.
 - Keep the named golden VM stopped and never run tests in it directly.
 - Put no repository credentials, signing secrets, or maintainer private SSH
   keys in the guest. A host public key is sufficient for source sync.
-- Grant TCC permissions through `CuaDriver.app`. Do not edit `TCC.db`.
+- Grant TCC permissions through `CuaDriverLocal.app`. Do not edit `TCC.db`.
 - Require a certificate-backed local signature. An ad-hoc signature invalidates
   the inherited grants on the next build.
 - Clone one worker per run, retrieve its evidence, then delete the worker.
 
 SIP-off does not grant or bypass TCC. It makes the disposable behavior lane
 repeatable while the private seed carries grants obtained through the normal
-`CuaDriver.app` prompt flow. The SIP-on check below owns the separate claim that
+`CuaDriverLocal.app` prompt flow. The SIP-on check below owns the separate claim that
 the supported permission flow still works with normal platform protection.
 
 ## Create the private seed
@@ -134,10 +134,10 @@ security unlock-keychain "$SIGNING_KEYCHAIN"
 export CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN="$SIGNING_KEYCHAIN"
 ```
 
-The first local install creates and imports the self-signed identity. It may
-fall back to an ad-hoc signature until the new certificate is trusted; this is
-safe only because TCC has not been granted yet. Run it once, then open Keychain
-Access in the VM display, select the `cua-driver-signing` keychain, open
+The first strict local install creates and imports the self-signed identity,
+then stops without replacing the app if the new certificate is not usable yet.
+Run it once, then open Keychain Access in the VM display, select the
+`cua-driver-signing` keychain, open
 `CuaDriver Local Signing (cua-driver-rs)`, and set Trust to Always Trust. Back
 in Terminal, give Apple tooling access to the private key without storing the
 keychain password in the image or repository:
@@ -145,7 +145,8 @@ keychain password in the image or repository:
 ```bash
 cd ~/cua
 export CUA_DRIVER_SOURCE_SHA="$(cat .cua-e2e-source-sha)"
-bash libs/cua-driver/scripts/install-local.sh --release --autostart
+bash libs/cua-driver/scripts/install-local.sh \
+  --release --autostart --require-stable-signing
 
 read -r -s -p 'Keychain password: ' KEYCHAIN_PASSWORD; echo
 security set-key-partition-list \
@@ -158,8 +159,9 @@ Rerun the installer and require its `signed staged app with a stable local
 identity` message before granting permissions through the app-owned flow:
 
 ```bash
-bash libs/cua-driver/scripts/install-local.sh --release --autostart
-~/.local/bin/cua-driver permissions grant
+bash libs/cua-driver/scripts/install-local.sh \
+  --release --autostart --require-stable-signing
+~/.local/bin/cua-driver-local permissions grant
 ```
 
 Complete the Accessibility and Screen Recording prompts. Tahoe 26 also asks
@@ -171,14 +173,17 @@ remaining consent paths before freezing the seed:
 osascript -e \
   'tell application "System Events" to get name of first application process whose frontmost is true'
 
-# The installed app owns driver-side app enumeration.
-~/.local/bin/cua-driver list_apps '{}'
+# The installed app owns driver-side app enumeration. This uses NSWorkspace and
+# must not require Automation access to System Events.
+~/.local/bin/cua-driver-local list_apps '{}'
 
 # A desktop screenshot triggers Tahoe's direct-capture/private-window prompt.
-~/.local/bin/cua-driver call set_config '{"capture_scope":"desktop"}'
-~/.local/bin/cua-driver call get_desktop_state '{}' \
+~/.local/bin/cua-driver-local call start_session \
+  '{"session":"seed-desktop-consent","capture_scope":"desktop"}'
+~/.local/bin/cua-driver-local call get_desktop_state \
+  '{"session":"seed-desktop-consent"}' \
   > /tmp/cua-driver-seed-desktop-state.json
-~/.local/bin/cua-driver call set_config '{"capture_scope":"window"}'
+~/.local/bin/cua-driver-local call end_session '{"session":"seed-desktop-consent"}'
 jq -e '
   .screenshot_mime_type == "image/png"
   and .screenshot_width > 0
@@ -187,24 +192,35 @@ jq -e '
 ' /tmp/cua-driver-seed-desktop-state.json >/dev/null
 ```
 
-Choose Allow for both `Terminal` -> `System Events` and `CuaDriver` ->
-`System Events`, and choose Allow on the CuaDriver direct-capture prompt. These
-are normal macOS consent flows; do not edit `TCC.db`. Rerun the commands and
-require them to finish without another prompt. Then verify the daemon's own
-identity, live capture permission, stable signature, and SIP state:
+Choose Allow for `Terminal` -> `System Events` and on the CuaDriverLocal
+direct-capture prompt. CuaDriverLocal app enumeration must not ask for System
+Events. Target-specific Automation prompts may still appear later when a user
+explicitly requests an Apple Events-backed browser or app operation; do not
+pre-grant those in the seed. These are normal macOS consent flows; do not edit
+`TCC.db`. Rerun the commands and require them to finish without another prompt.
+Then verify the daemon's own
+identity and the read-only status contract before running the explicit
+LaunchServices-hosted grant flow. The first command must not raise a dialog;
+the second is intentionally prompt-capable and must be run by the human:
 
 ```bash
-~/.local/bin/cua-driver permissions status --json | jq -e '
+~/.local/bin/cua-driver-local permissions status --json | jq -e '
   .accessibility == true
   and .screen_recording == true
-  and .screen_recording_capturable == true
+  and .screen_recording_capturable == null
+  and .direct_capture_status == "not_checked"
   and .source.attribution == "driver-daemon"
 '
-codesign -d -r- /Applications/CuaDriver.app 2>&1 | grep 'certificate leaf'
+~/.local/bin/cua-driver-local permissions grant
+~/.local/bin/cua-driver-local permissions status --json | jq -e '
+  .accessibility == true
+  and .screen_recording == true
+'
+codesign -d -r- /Applications/CuaDriverLocal.app 2>&1 | grep 'certificate leaf'
 csrutil status
 ```
 
-All three commands must succeed, and `csrutil status` must report disabled.
+All five commands must succeed, and `csrutil status` must report disabled.
 Stop the builder and clone it to a date/version-named private seed plus two
 stopped backups:
 
@@ -225,10 +241,11 @@ Lume version, CLT version, Rust version, Node version, and signing-certificate
 hash in the maintainer log. Also record that the following consent paths were
 granted and then rerun without prompts:
 
-- `CuaDriver.app`: Accessibility and Screen Recording
+- `CuaDriverLocal.app`: Accessibility and Screen Recording
 - Terminal controlling System Events
-- CuaDriver controlling System Events
-- CuaDriver direct screen and audio capture without the system picker
+- CuaDriverLocal direct screen capture without the system picker. macOS labels
+  this combined consent as screen and system-audio access even though Cua
+  Driver's current ScreenCaptureKit recorder does not enable audio capture.
 
 Build a new seed instead of updating one in place.
 
@@ -271,17 +288,124 @@ cd ~/cua
 libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser
 ```
 
-This adds eight adversarial installed-browser rows and writes their separate
-typed results and MP4 evidence under
+This adds the declared adversarial installed-browser rows and writes their
+separate typed results and MP4 evidence under
 `artifacts/cua-driver/macos-standalone-browser/`. Missing external browsers are
 a hard failure for this option; they never shrink the reported matrix. On a
 repeat run, the entrypoint preserves the previous standalone-browser evidence
-in a temporary archive before creating a fresh artifact directory.
+in a temporary archive before creating a fresh artifact directory. The
+entrypoint temporarily restarts the disposable worker daemon in unrestricted
+mode for the authorized existing-profile success rows, then restores its
+standard autostart daemon even when a browser row fails.
+
+On macOS Tahoe, first-use Chrome can present a native local-network discovery
+prompt over `chrome://inspect/#remote-debugging`. The standalone-browser lane
+uses loopback DevTools and does not need LAN discovery. Before freezing a seed
+that will run this optional lane, launch Chrome on that exact page in the VM
+display, choose **Don't Allow**, quit Chrome, then relaunch the page and require
+that the prompt does not return. Do not answer or dismiss OS consent UI while
+the behavior matrix is running. If an existing immutable seed lacks this
+decision, clone it to a new versioned seed, complete this setup there, stop it,
+and use that new seed for workers; never update the original seed in place.
 
 The entrypoint refuses the wrong OS, user session, SIP state, dirty or
 unidentified source, missing dependencies, ad-hoc signature, stale installed
 daemon, unusable TCC grants, or missing Terminal/CuaDriver Automation grants.
 It reinstalls the exact source commit and then runs the canonical macOS matrix.
+
+## Build isolation across reruns
+
+The entrypoint builds in a Cargo target directory owned by one invocation,
+nested under the exact source SHA:
+
+```
+~/Library/Caches/cua-driver-e2e/cargo-target/<source-sha>/<run-id>
+```
+
+Nothing is ever deleted to make that true. The seed image's `rust/target`, and
+every previous invocation's namespace stay untouched and unused. A rerun cannot
+inherit build state from another commit or an earlier run of the same commit,
+which is the shape that produced duplicate Swift bridge symbols during 0.13.0
+certification. The Tauri harness inherits the same run-owned Cargo namespace.
+The Electron harness archives any inherited `node_modules` tree and reinstalls
+from its lockfile for the current run.
+
+- `CUA_E2E_CARGO_TARGET_ROOT=<absolute dir>` moves the namespace root, for
+  example onto a larger volume.
+
+The runner records the namespace it used in
+`artifacts/cua-driver/macos/cargo-target-dir.txt`, and the matrix reads the
+built driver binary out of that same directory. Before a new invocation starts,
+the runner moves the previous canonical artifact directory to
+`artifacts/cua-driver/macos-history/<run-id>`, so logs and retry evidence from
+the prior run cannot be mistaken for the current run.
+
+## Retry exactly one flaky cell
+
+The runner has no automatic retries. A retry has to be authorized on the command
+line for one exact cell, and it can never convert a real persistent failure into
+a pass.
+
+```bash
+cd ~/cua
+# Full matrix, plus at most one retry of one cell if that cell is the only failure.
+libs/cua-driver/tests/runners/macos-lume/run-all.sh \
+  --retry-cell macos-electron-drag-px-foreground \
+  --retry-harness electron \
+  --retry-attempts 2
+```
+
+Cell ids are the ones in `results.jsonl` and `summary.md`, such as
+`macos-electron-drag-px-foreground`. `--retry-attempts` accepts 1-3 and defaults
+to 1. `--retry-harness` is optional and must match the failing row's harness.
+
+After a failing full matrix the runner retries only when all of these hold:
+
+- exactly one typed cell did not pass, and it is the `--retry-cell` selection;
+- the only failing lane is `shared-app-matrix`;
+- the environment preflight, typed report validation, and trajectory-video
+  checks all passed;
+- the failure record contains exactly one failure signal.
+
+Otherwise it prints why the retry was refused and exits with the matrix's
+failure. Only shared web-action cells are retryable: they are the cells a
+single-cell filter can select without leaving another lane with no cells to run.
+Reproduce a native, capture, or embedded-browser failure with a full rerun.
+
+To rerun just that cell later in the same booted worker after the first run
+already restored standard mode, use `--retry-only`. It reinstalls the exact
+commit, then starts and verifies the unrestricted worker daemon before running
+the selection, so the retry cannot silently execute against the standard daemon:
+
+```bash
+cd ~/cua
+libs/cua-driver/tests/runners/macos-lume/run-all.sh \
+  --retry-only \
+  --retry-cell macos-electron-drag-px-foreground \
+  --retry-harness electron \
+  --retry-attempts 3
+```
+
+Every attempt keeps its own evidence under `artifacts/cua-driver/macos/`:
+
+- `attempts/attempt-1-full-matrix/` holds the failing full matrix's typed rows,
+  summary, logs, and MP4 trajectories.
+- `attempts/retry-<n>/` holds each superseded retry attempt.
+- The artifact root holds the final attempt.
+- `retry-record.json` records the selection, the initial failing cells and
+  lanes, every attempt with its exit code and evidence path, and a
+  `final_status` of `pass-after-retry`, `fail-persistent`, `pass-retry-only`, or
+  `fail-retry-only`.
+- `summary.md` gains a **Retry provenance** section, so the human-facing report
+  still states the initial failure that a green retry followed.
+- `failures.json` classifies what failed in the last attempt: failing lanes,
+  video failures, preflight, and report validation.
+
+The run exits non-zero when the selected cell fails every allowed attempt.
+It also exits non-zero if the filter produces anything other than exactly that
+one cell, so the retry record never overstates the precision of the rerun.
+Report a retried pass as a retried pass, with the record above; a cell that
+needs a retry on every certification run is a defect, not a flake.
 
 Pull evidence before deleting the worker, even after a failed run:
 
@@ -298,9 +422,35 @@ lume delete "$WORKER" --force
 ```
 
 The host stores the pulled summary, typed JSONL rows, environment record, logs,
-screenshots, and MP4 trajectories under `artifacts/cua-driver/vm/`, which Git
-ignores. A setup failure is an environment failure, not permission to report a
-smaller green matrix.
+screenshots, MP4 trajectories, and any retry record under
+`artifacts/cua-driver/vm/`, which Git ignores. A setup failure is an environment
+failure, not permission to report a smaller green matrix.
+
+The runner owns the worker daemon's lifecycle through one code path: it unloads
+the standard autostart agent, starts the unrestricted daemon, verifies the mode,
+watchdogs it, and restores the standard autostart daemon from an `EXIT` trap
+after success or failure. A restoration that does not come back in standard mode
+fails an otherwise green run. Every matrix attempt, including a targeted retry,
+goes through that same owner.
+
+If the GUI login session ends while the trap is running, launchd has no GUI
+domain in which to start the daemon. The runner records
+`standard-daemon-restore-deferred.txt` and leaves the installed LaunchAgent in
+place so macOS loads it in standard mode at the next GUI login. This is the only
+deferred restoration case; a live GUI session that cannot return to standard
+mode still fails the run.
+
+## Test the runner itself
+
+The runner's shell helpers, including status matching, build-namespace selection,
+option validation, retry bookkeeping, evidence archiving, and daemon restoration, are
+covered by host-side tests that need no VM:
+
+```bash
+python -m pytest libs/cua-driver/scripts/tests/test_macos_lume_runner.py -v
+bash -n libs/cua-driver/tests/runners/macos-lume/run-all.sh
+bash -n scripts/ci/macos/run-rust-e2e.sh
+```
 
 ## Validate the SIP-on permission flow
 
@@ -315,9 +465,9 @@ golden image's inherited grants.
 4. In the VM display, reset only the disposable worker's grants:
 
    ```bash
-   tccutil reset Accessibility com.trycua.driver
-   tccutil reset ScreenCapture com.trycua.driver
-   ~/.local/bin/cua-driver permissions grant
+   tccutil reset Accessibility com.trycua.driver.local
+   tccutil reset ScreenCapture com.trycua.driver.local
+   ~/.local/bin/cua-driver-local permissions grant
    ```
 
 5. Complete the prompts and require the same four-field

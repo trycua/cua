@@ -3,8 +3,6 @@ title: Best-effort background
 description: How Cua Driver tries to operate apps without taking focus, moving the cursor, or raising windows, and when it must fall back to foreground.
 ---
 
-# Best-effort background
-
 Best-effort background means Cua Driver tries to operate a target app while preserving the user's active desktop. The default paths do not move the real pointer, do not raise the target window, and do not switch the user's frontmost app.
 
 This is a best effort rather than an absolute promise. Most app automation can stay in the background through accessibility actions, routed input, and window-specific capture. A small set of apps and OS surfaces only accept real foreground input, so the driver reports that limit and lets the caller choose a foreground escalation for that specific action.
@@ -45,8 +43,8 @@ The Linux recordings below make that separation visible. Synthetic pointers act 
 
 <div className="not-prose my-8 grid gap-5 md:grid-cols-2">
   <VideoDemo
-    src="https://github.com/user-attachments/assets/13ab4c27-246b-4370-ab48-0082e5449830"
-    poster="https://github.com/user-attachments/assets/d91bb946-700a-4a48-8e05-c08f5c103ea4"
+    src="https://trycua.github.io/assets/videos/cua-driver/linux-multi-pointers.mp4"
+    poster="https://trycua.github.io/assets/posters/cua-driver/linux-multi-pointers.jpg"
     title="Four pointers across two XFCE windows"
     sourceUrl="https://x.com/trycua/status/2067639340738761015"
   >
@@ -54,14 +52,27 @@ The Linux recordings below make that separation visible. Synthetic pointers act 
   </VideoDemo>
 
   <VideoDemo
-    src="https://github.com/user-attachments/assets/6ecc0826-4ecf-41d9-a8ae-6705a6af5e26"
-    poster="https://github.com/user-attachments/assets/4d84b685-3cba-488a-87e0-3a5b048ea4a8"
+    src="https://trycua.github.io/assets/videos/cua-driver/linux-wayland-16-cursors.mp4"
+    poster="https://trycua.github.io/assets/posters/cua-driver/linux-wayland-16-cursors.jpg"
     title="Sixteen background windows on Wayland"
     sourceUrl="https://x.com/trycua/status/2067639344698179789"
   >
     Sixteen pointers draw in separate windows around a foreground window that Cua Driver does not operate.
   </VideoDemo>
 </div>
+
+The next recording shows the same background behavior during a complete development loop on macOS.
+The agent tests and fixes an app while the terminal remains in front.
+
+<VideoDemo
+  className="my-8"
+  src="https://trycua.github.io/assets/videos/cua-driver/macos-background-dev-loop.mp4"
+  poster="https://trycua.github.io/assets/posters/cua-driver/macos-background-dev-loop.jpg"
+  title="Fix and check an app without taking over the desktop"
+  sourceUrl="https://x.com/trycua/status/2047383205444251889"
+>
+  The terminal stays active while Cua Driver operates Chrome and a native task app behind it.
+</VideoDemo>
 
 ## How fallback works
 

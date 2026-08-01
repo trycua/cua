@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "repository": "trycua/cua",
+  "managedBlockVersion": 1,
+  "products": [
+    {
+      "key": "cua-driver-rs",
+      "displayName": "Cua Driver",
+      "tagPatterns": [
+        "^cua-driver-rs-v(?P<version>[0-9]+\\.[0-9]+\\.[0-9]+)$"
+      ],
+      "pathEras": [
+        {
+          "id": "driver-rs-original",
+          "firstVersion": "0.1.3",
+          "lastVersion": "0.2.18",
+          "paths": ["libs/cua-driver-rs"],
+          "excludePaths": []
+        },
+        {
+          "id": "driver-rs-current",
+          "firstVersion": "0.3.0",
+          "lastVersion": null,
+          "paths": ["libs/cua-driver"],
+          "excludePaths": [
+            "libs/cua-driver/docs",
+            "libs/cua-driver/python",
+            "libs/cua-driver/tests"
+          ]
+        }
+      ],
+      "disconnectedTags": []
+    },
+    {
+      "key": "lume",
+      "displayName": "Lume",
+      "tagPatterns": [
+        "^v(?P<version>0\\.1\\.(?:[0-9]|10|11|12|13))$",
+        "^lume-v(?P<version>[0-9]+\\.[0-9]+\\.[0-9]+)$"
+      ],
+      "pathEras": [
+        {
+          "id": "lume-standalone",
+          "firstVersion": "0.1.0",
+          "lastVersion": "0.1.10",
+          "paths": [
+            "Package.swift",
+            "resources",
+            "scripts",
+            "src",
+            "tests"
+          ],
+          "excludePaths": []
+        },
+        {
+          "id": "lume-monorepo",
+          "firstVersion": "0.1.11",
+          "lastVersion": null,
+          "paths": ["libs/lume"],
+          "excludePaths": []
+        }
+      ],
+      "disconnectedTags": ["v0.1.1"]
+    }
+  ],
+  "securityExclusions": {
+    "pullRequests": [],
+    "commits": [],
+    "tags": []
+  }
+}

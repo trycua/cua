@@ -9,8 +9,8 @@ import { Steps, Step } from 'fumadocs-ui/components/steps';
 When a desktop app has **no API** and only runs **behind the corporate VPN**, drive it where it already runs, on the Windows box inside the network. **Cua Driver** runs on that machine and exposes the app through MCP stdio tools, so the desktop session, app traffic, and staged files stay inside the VPN boundary. **No data leaves the VPN boundary.**
 
 <VideoDemo
-  src="https://github.com/user-attachments/assets/77dbfdb2-2b02-4a9d-8f7e-4710f59de803"
-  poster="https://github.com/user-attachments/assets/462a7309-87b4-4d50-b1fc-295314912861"
+  src="https://trycua.github.io/assets/videos/cua-driver/windows-legacy-postal-app.mp4"
+  poster="https://trycua.github.io/assets/posters/cua-driver/windows-legacy-postal-app.jpg"
   title="Drive a legacy postal app while the terminal stays in front"
   sourceUrl="https://x.com/trycua/status/2059693301276565841"
 >
@@ -79,6 +79,6 @@ When a desktop app has **no API** and only runs **behind the corporate VPN**, dr
 
 ## Scale this out
 
-When the same workflow must run across many employees, regions, or tenants at once, move it onto **Cua Sandbox** cloud Windows desktops and fan out the jobs. Start with [Run sandboxes in parallel](/how-to-guides/sandbox/scale-out) and [Your first cloud sandbox](/tutorials/your-first-cloud-sandbox).
+When the same workflow must run concurrently, use local Cua Sandbox Windows VMs and cap concurrency to the resources available on the host. Start with [Run sandboxes in parallel](/how-to-guides/sandbox/scale-out) and [Your first local sandbox](/tutorials/your-first-local-sandbox).
 
-The driving logic stays the same. The host changes from your VPN-connected Windows box to a fleet of cloud desktops with the VPN configuration baked into the image. See [Choose and build a sandbox image](/how-to-guides/sandbox/images).
+The driving logic stays the same. Each local Windows VM needs the VPN configuration and application included in its starting image. See [Choose and build a sandbox image](/how-to-guides/sandbox/images).

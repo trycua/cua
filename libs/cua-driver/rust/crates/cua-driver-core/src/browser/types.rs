@@ -51,6 +51,26 @@ pub enum BrowserEngineFamily {
     Unknown,
 }
 
+/// Browser product identity attested by the platform adapter. Engine family
+/// alone is insufficient for acting setup because Chromium products expose
+/// different internal URLs and accessibility labels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserProduct {
+    GoogleChrome,
+    Chromium,
+    MicrosoftEdge,
+    Brave,
+    Vivaldi,
+    Opera,
+    Arc,
+    Electron,
+    Firefox,
+    Safari,
+    #[default]
+    Other,
+}
+
 /// Platform adapter's verdict on whether a pid is a browser and which
 /// engine family it belongs to. `supports_cdp` is the gate for the whole
 /// browser-tool route in v1 (Chromium-family only).
@@ -58,6 +78,9 @@ pub enum BrowserEngineFamily {
 pub struct BrowserClassification {
     pub is_browser: bool,
     pub engine: BrowserEngineFamily,
+    /// Stable product identity used for product-specific setup policy.
+    #[serde(default)]
+    pub product_kind: BrowserProduct,
     /// Human-readable product name, e.g. "Google Chrome", "Microsoft Edge".
     pub product: Option<String>,
     /// Release channel when known, e.g. "stable", "canary".
@@ -125,10 +148,18 @@ pub enum EndpointOwnershipMethod {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EndpointOwnershipProof {
     pub method: EndpointOwnershipMethod,
-    /// Pid the endpoint was attributed to. Core refuses with
-    /// `browser_endpoint_owner_mismatch` when this does not equal the
+    /// Stable process identity the platform attributed the endpoint to. For a
+    /// platform-proven browser process tree this is the authorized tree root;
+    /// `listener_pid` may retain the exact child socket owner. Core refuses
+    /// with `browser_endpoint_owner_mismatch` when this does not equal the
     /// target pid.
     pub owner_pid: i64,
+    /// Exact process that owned the listening socket when the platform can
+    /// prove it separately from the stable authorization root. Isolated
+    /// browser launch uses this to follow a promoted runtime process without
+    /// weakening later endpoint authorization to exact-listener equality.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listener_pid: Option<i64>,
     pub detail: Option<String>,
 }
 
@@ -250,5 +281,31 @@ mod tests {
         };
         let b = a.clone();
         assert!(a.matches(&b));
+    }
+
+    #[test]
+    fn endpoint_listener_pid_is_wire_compatible_and_optional() {
+        let legacy = serde_json::json!({
+            "method": "listening_socket_pid",
+            "owner_pid": 42,
+            "detail": "legacy proof"
+        });
+        let proof: EndpointOwnershipProof =
+            serde_json::from_value(legacy).expect("deserialize legacy endpoint proof");
+        assert_eq!(proof.owner_pid, 42);
+        assert_eq!(proof.listener_pid, None);
+        assert!(serde_json::to_value(&proof)
+            .expect("serialize endpoint proof")
+            .get("listener_pid")
+            .is_none());
+
+        let with_listener = EndpointOwnershipProof {
+            listener_pid: Some(43),
+            ..proof
+        };
+        assert_eq!(
+            serde_json::to_value(with_listener).expect("serialize listener proof")["listener_pid"],
+            43
+        );
     }
 }

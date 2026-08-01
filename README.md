@@ -7,7 +7,7 @@
     </picture>
   </a>
 
-  <p align="center">Build, benchmark, and deploy agents that use computers</p>
+  <p align="center">Scale computer-use 2.0 with open-source drivers, cross-OS fleets, and benchmarks for training, evaluation, and data generation.</p>
 
   <p align="center">
     <a href="https://cua.ai" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/cua.ai-0ea5e9" alt="cua.ai"></a>
@@ -75,13 +75,11 @@ Drive native desktop apps **in the background**. Agents click, type, and verify 
 irm https://cua.ai/driver/install.ps1 | iex
 ```
 
-Then wire it into Claude Code as an MCP server and your agent can drive the desktop in the background:
+Then follow the post-install instructions.
 
-```bash
-claude mcp add --transport stdio cua-driver -- cua-driver mcp
-```
+**[Drive your first app](https://cua.ai/docs/tutorials/drive-your-first-app)** | **[Installation](https://cua.ai/docs/how-to-guides/driver/install)** | **[CLI Reference](https://cua.ai/docs/reference/cua-driver/cli-reference)**
 
-Full tool reference, architecture notes, and the optional agent skill pack live here: [`libs/cua-driver/README.md`](libs/cua-driver/README.md).
+Source documentation, architecture notes, and the optional agent skill pack live in [`libs/cua-driver/README.md`](libs/cua-driver/README.md).
 
 ---
 
@@ -176,6 +174,22 @@ of Setup Assistant on its first display boot; see [issue #2155](https://github.c
 - [Blog](https://cua.ai/blog) — Tutorials, updates, and research
 - [Discord](https://discord.com/invite/mVnXXpdE85) — Community support and discussions
 - [GitHub Issues](https://github.com/trycua/cua/issues) — Bug reports and feature requests
+
+## Citation
+
+If Cua supports your research, please cite the software:
+
+```bibtex
+@software{cua2025,
+  author  = {{Cua AI, Inc.}},
+  title   = {Cua},
+  year    = {2025},
+  url     = {https://github.com/trycua/cua},
+  license = {MIT}
+}
+```
+
+For reproducibility, include the Cua release or commit used in your experiments. Citation metadata is also available in [`CITATION.cff`](CITATION.cff).
 
 ## Contributing
 

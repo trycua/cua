@@ -21,36 +21,73 @@ scripts/ci/windows/run-rust-standalone-browser-e2e.ps1
 The runners require an existing desktop user session and a fresh artifact
 directory. They stage the repo-owned Electron foreground sentinel when the
 fixture is absent and execute each scenario in an independent Cargo process.
-In a pure native Wayland session, the Unix runner also enables the driver's
-native Wayland backend and launches the sentinel through Wayland, so the result
-cannot silently fall back to X11. To exercise the same matrix in the repo-owned
-native Sway session, run:
+In a Wayland session, the Unix runner also enables the driver's native Wayland
+backend and launches the sentinel and test browsers through Wayland, so GNOME
+and KDE cannot silently fall back to X11 merely because they retain `DISPLAY`
+for XWayland. To exercise the same matrix in the repo-owned native Sway session,
+run:
 
 ```bash
 CUA_E2E_WAYLAND_RUNNER="$PWD/scripts/ci/run-rust-standalone-browser-e2e.sh" \
   scripts/ci/linux/run-rust-e2e-wayland.sh
 ```
 
+To prove the fail-closed boundary without a compositor-specific identity
+adapter, run the same browser runner in a native Wayland session with
+`CUA_E2E_WAYLAND_SESSION=generic` on the Sway worker. That environment selects
+only the real-browser generic-Wayland refusal row. The harness retains
+`SWAYSOCK` as an out-of-band focus and z-order oracle, while the spawned Cua
+Driver daemon receives an intentionally unusable socket path and cannot use
+Sway identity.
+Ordinary attachment rows are not applicable because the lane deliberately
+withholds exact compositor identity from the product under test.
+
 When a Nix-store Chromium is used on a non-NixOS VM, its SUID sandbox helper
 cannot carry the required root ownership. Set `CUA_E2E_BROWSER_NO_SANDBOX=1`
 only for that isolated test VM; ordinary installed-browser runs keep Chromium's
 sandbox enabled.
 
+Snap-confined Chromium is not a portable Xvfb certification target. Its launch
+can depend on a real login-session cgroup in addition to X11 authentication,
+so an SSH-created Xvfb session may reject the browser before its CDP endpoint
+starts. Use a distribution-native browser package for X11 certification, or
+run the snap in its real logged-in desktop session. Treat this as a runner
+preflight failure, not a Cua Driver behavioral result.
+
 Release validation sets `CUA_TEST_REQUIRE_EXTERNAL_BROWSERS=1` so a missing
 browser fails instead of silently omitting the suite.
+
+By default, Linux preserves the compatibility lane's historical product
+selection: Chrome when installed, otherwise Chromium, plus Edge when present.
+Maintainer certification runs can request an exact product set:
+
+```bash
+CUA_E2E_BROWSER_PRODUCTS=chrome,chromium,edge \
+  scripts/ci/run-rust-standalone-browser-e2e.sh
+```
+
+Every named product is mandatory. An unknown name, duplicate name, or missing
+executable fails before a behavioral row runs, so the matrix cannot silently
+shrink. Use `CUA_E2E_BROWSER_BIN` with `CUA_E2E_BROWSER_NAME` only for a
+single-product diagnostic run. Every launched product also appends its
+CDP-reported product, version, protocol version, user agent, and exact source
+SHA to `browser-provenance.jsonl` beside the matrix report.
+On Linux the runner compiles `cua-driver` with `portal-input`, matching the
+published artifact so representative GNOME/KDE runs exercise the libei
+fallback instead of a default-feature `wtype` refusal.
 
 For the test layout and the distinction between unit tests, shared harnesses,
 and native harnesses, see
 `libs/cua-driver/docs/test-harnesses-guide.md`.
 
-| Runner | Session | Canonical command |
-| --- | --- | --- |
-| `linux/run-rust-e2e.sh` | Existing Linux X11 or Wayland desktop | no selector |
-| `linux/run-rust-e2e-wayland.sh` | Headless native Sway session | no selector |
-| `linux/run-rust-e2e-inject.sh` | Nested `cua-compositor` session | no selector |
-| `linux/run-rust-e2e-desktop.sh` | Existing representative Linux desktop | no selector |
-| `windows/run-rust-e2e.ps1` | Windows console/RDP user session | `-RequireGui` |
-| `macos/run-rust-e2e.sh` | Logged-in macOS session already prepared by the maintainer wrapper | no selector |
+| Runner                          | Session                                                            | Canonical command |
+| ------------------------------- | ------------------------------------------------------------------ | ----------------- |
+| `linux/run-rust-e2e.sh`         | Existing Linux X11 or Wayland desktop                              | no selector       |
+| `linux/run-rust-e2e-wayland.sh` | Headless native Sway session                                       | no selector       |
+| `linux/run-rust-e2e-inject.sh`  | Nested `cua-compositor` session                                    | no selector       |
+| `linux/run-rust-e2e-desktop.sh` | Existing representative Linux desktop                              | no selector       |
+| `windows/run-rust-e2e.ps1`      | Windows console/RDP user session                                   | `-RequireGui`     |
+| `macos/run-rust-e2e.sh`         | Logged-in macOS session already prepared by the maintainer wrapper | no selector       |
 
 Use the command without a selector for the canonical complete run. CI sets the
 private `CUA_E2E_INTERNAL_LANE` partition to `shared`, `native`, or `capture`

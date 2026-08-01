@@ -19,10 +19,12 @@ uuid = { workspace = true }
 # to frame (a plain HashMap would flicker overlapping cursors).
 indexmap = "2"
 cua-driver-core = { path = "../cua-driver-core" }
+cua-driver-contract = { path = "../cua-driver-contract" }
 cursor-overlay = { path = "../cursor-overlay" }
 pip-preview = { path = "../pip-preview" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+clipboard-rs = "0.3.5"
 # macOS system bindings
 core-foundation = "0.10"
 core-graphics = { version = "0.24", features = ["highsierra", "elcapitan"] }

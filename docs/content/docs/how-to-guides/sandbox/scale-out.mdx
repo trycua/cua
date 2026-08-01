@@ -8,7 +8,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 Because `Sandbox.ephemeral` and `Sandbox.create` are async, you can **run many sandboxes at the same time** using `asyncio`.
 
 <Callout type="info">
-  Cloud sandboxes are billed per second of runtime. Running many sandboxes in parallel incurs charges proportional to wall-clock time times number of sandboxes. Use local=True during development to avoid costs.
+  Every local sandbox consumes host CPU, memory, and disk. Start with low concurrency and increase it only after observing host resource use.
 </Callout>
 
 ## Run a fixed set concurrently
@@ -20,7 +20,7 @@ import asyncio
 from cua import Sandbox, Image
 
 async def run_task(task: str) -> str:
-    async with Sandbox.ephemeral(Image.linux()) as sb:
+    async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
         result = await sb.shell.run(f"echo '{task}'")
         return result.stdout.strip()
 
@@ -44,7 +44,7 @@ MAX_CONCURRENT = 5
 
 async def process_item(sem: asyncio.Semaphore, item: str) -> dict:
     async with sem:
-        async with Sandbox.ephemeral(Image.linux()) as sb:
+        async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
             result = await sb.shell.run(f"python /app/process.py '{item}'")
             return {'item': item, 'output': result.stdout, 'ok': result.success}
 
@@ -70,7 +70,7 @@ async def worker(queue: asyncio.Queue, worker_id: int):
         task = await queue.get()
         if task is None:
             break
-        async with Sandbox.ephemeral(Image.linux()) as sb:
+        async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
             result = await sb.shell.run(task)
             print(f'[worker-{worker_id}] {result.stdout.strip()}')
         queue.task_done()

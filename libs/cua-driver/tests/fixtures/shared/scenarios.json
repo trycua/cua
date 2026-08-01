@@ -77,7 +77,7 @@
    {
     "id": "accelerator",
     "kind": "keyboard_accelerator",
-    "description": "Ctrl+Shift+H increments the counter via KeyBinding. Tests press_key / hotkey delivering to background windows.",
+    "description": "Ctrl+Shift+H increments the counter via KeyBinding. Tests foreground letter delivery through press_key / hotkey and background refusal behavior.",
     "controls": {
      "label_aid": "lbl-accel-count"
     },

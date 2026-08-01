@@ -52,6 +52,18 @@ pub enum BrowserRefusalCode {
     /// The platform adapter requires explicit user/caller consent
     /// before it will prepare an endpoint.
     BrowserConsentRequired,
+    /// A person explicitly dismissed or denied the browser-owned consent UI.
+    BrowserConsentRevoked,
+    /// The fixed reconnect attempt/deadline policy was exhausted.
+    BrowserReconnectExhausted,
+    /// A typing operation delivered only a proven prefix of the request.
+    BrowserInputIncomplete,
+    /// A semantic ref is live, but it does not declare the requested typed
+    /// browser action.
+    BrowserActionUnavailable,
+    /// The live top-level document left the origin set approved in the
+    /// bounded session manifest. Further browser input is paused.
+    BrowserOriginOutsideScope,
 }
 
 impl BrowserRefusalCode {
@@ -69,6 +81,11 @@ impl BrowserRefusalCode {
             Self::BrowserInputTrustUnavailable => "browser_input_trust_unavailable",
             Self::BrowserEndpointOwnerMismatch => "browser_endpoint_owner_mismatch",
             Self::BrowserConsentRequired => "browser_consent_required",
+            Self::BrowserConsentRevoked => "browser_consent_revoked",
+            Self::BrowserReconnectExhausted => "browser_reconnect_exhausted",
+            Self::BrowserInputIncomplete => "browser_input_incomplete",
+            Self::BrowserActionUnavailable => "browser_action_unavailable",
+            Self::BrowserOriginOutsideScope => "browser_origin_outside_scope",
         }
     }
 }
@@ -156,6 +173,26 @@ mod tests {
             (
                 BrowserRefusalCode::BrowserConsentRequired,
                 "browser_consent_required",
+            ),
+            (
+                BrowserRefusalCode::BrowserConsentRevoked,
+                "browser_consent_revoked",
+            ),
+            (
+                BrowserRefusalCode::BrowserReconnectExhausted,
+                "browser_reconnect_exhausted",
+            ),
+            (
+                BrowserRefusalCode::BrowserInputIncomplete,
+                "browser_input_incomplete",
+            ),
+            (
+                BrowserRefusalCode::BrowserActionUnavailable,
+                "browser_action_unavailable",
+            ),
+            (
+                BrowserRefusalCode::BrowserOriginOutsideScope,
+                "browser_origin_outside_scope",
             ),
         ];
         for (code, wire) in all {

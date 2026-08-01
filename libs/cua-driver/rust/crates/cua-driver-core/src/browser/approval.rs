@@ -20,11 +20,29 @@ pub const MCP_HOST_APPROVAL_ARG: &str = "_cua_browser_prepare_mcp_host_approved"
 pub const MAX_APPROVAL_TTL: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Debug, Serialize, Deserialize)]
-struct ApprovalArtifact {
+struct IsolatedApprovalArtifact {
     schema: String,
     token: String,
     pid: i64,
     profile: PrepareProfile,
+    expires_unix_ms: u128,
+}
+
+/// Exact public operation authorized by an interactive existing-profile
+/// approval. Transport identity is intentionally absent: the daemon binds it
+/// when consuming the artifact and minting its in-memory grant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExistingProfileApprovalScope {
+    pub pid: i64,
+    pub window_id: u64,
+    pub session: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ExistingProfileApprovalArtifact {
+    schema: String,
+    token: String,
+    scope: ExistingProfileApprovalScope,
     expires_unix_ms: u128,
 }
 
@@ -90,7 +108,7 @@ pub fn mint_prepare_approval(pid: i64, profile: PrepareProfile) -> Result<String
             .map_err(|error| refusal(format!("could not restrict approval directory: {error}")))?;
     }
 
-    let artifact = ApprovalArtifact {
+    let artifact = IsolatedApprovalArtifact {
         schema: "cua-browser-prepare-approval-v1".to_owned(),
         token: token.clone(),
         pid,
@@ -116,6 +134,55 @@ pub fn mint_prepare_approval(pid: i64, profile: PrepareProfile) -> Result<String
     Ok(token)
 }
 
+fn persist_artifact<T: Serialize>(token: &str, artifact: &T) -> Result<(), BrowserRefusal> {
+    let root = approval_root();
+    fs::create_dir_all(&root)
+        .map_err(|error| refusal(format!("could not create approval directory: {error}")))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700))
+            .map_err(|error| refusal(format!("could not restrict approval directory: {error}")))?;
+    }
+    let path = artifact_path(token)?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(path)
+        .map_err(|error| refusal(format!("could not create approval artifact: {error}")))?;
+    let bytes = serde_json::to_vec(artifact)
+        .map_err(|error| refusal(format!("could not encode approval artifact: {error}")))?;
+    file.write_all(&bytes)
+        .and_then(|_| file.sync_all())
+        .map_err(|error| refusal(format!("could not persist approval artifact: {error}")))
+}
+
+/// Mint a single-use artifact for the exact existing-profile request shown to
+/// the person at the interactive approval boundary.
+pub fn mint_existing_profile_approval(
+    scope: ExistingProfileApprovalScope,
+) -> Result<String, BrowserRefusal> {
+    if scope.pid <= 0 || scope.window_id == 0 || scope.session.trim().is_empty() {
+        return Err(refusal(
+            "existing-profile approval requires a positive pid/window_id and explicit session",
+        ));
+    }
+    let token = Uuid::new_v4().to_string();
+    let artifact = ExistingProfileApprovalArtifact {
+        schema: "cua-browser-existing-profile-approval-v1".to_owned(),
+        token: token.clone(),
+        scope,
+        expires_unix_ms: now_unix_ms()? + MAX_APPROVAL_TTL.as_millis(),
+    };
+    persist_artifact(&token, &artifact)?;
+    Ok(token)
+}
+
 /// Consume approval evidence. The artifact is removed before any semantic
 /// validation so malformed, mismatched, and expired attempts are single-use.
 pub fn consume_prepare_approval(
@@ -129,7 +196,7 @@ pub fn consume_prepare_approval(
         .map_err(|_| refusal("browser preparation approval token is missing or expired"))?;
     fs::remove_file(&path)
         .map_err(|error| refusal(format!("could not consume approval artifact: {error}")))?;
-    let artifact: ApprovalArtifact = serde_json::from_slice(&bytes)
+    let artifact: IsolatedApprovalArtifact = serde_json::from_slice(&bytes)
         .map_err(|_| refusal("browser preparation approval artifact is invalid"))?;
     if artifact.schema != "cua-browser-prepare-approval-v1"
         || artifact.token != token
@@ -139,6 +206,31 @@ pub fn consume_prepare_approval(
     {
         return Err(refusal(
             "browser preparation approval does not match this pid/profile request or has expired",
+        ));
+    }
+    Ok(())
+}
+
+/// Consume an existing-profile artifact before validating it. A mismatch is
+/// deliberately destructive so an artifact can never become a probing oracle.
+pub fn consume_existing_profile_approval(
+    token: &str,
+    scope: &ExistingProfileApprovalScope,
+) -> Result<(), BrowserRefusal> {
+    let path = artifact_path(token)?;
+    let bytes = fs::read(&path)
+        .map_err(|_| refusal("browser preparation approval token is missing or expired"))?;
+    fs::remove_file(&path)
+        .map_err(|error| refusal(format!("could not consume approval artifact: {error}")))?;
+    let artifact: ExistingProfileApprovalArtifact = serde_json::from_slice(&bytes)
+        .map_err(|_| refusal("browser preparation approval artifact is invalid"))?;
+    if artifact.schema != "cua-browser-existing-profile-approval-v1"
+        || artifact.token != token
+        || artifact.scope != *scope
+        || artifact.expires_unix_ms < now_unix_ms()?
+    {
+        return Err(refusal(
+            "browser preparation approval does not match this pid/window/session request or has expired",
         ));
     }
     Ok(())
@@ -177,5 +269,31 @@ mod tests {
             assert!(validate_profile(&named(name)).is_err(), "accepted {name:?}");
         }
         validate_profile(&named("research_2026-07")).unwrap();
+    }
+
+    #[test]
+    fn existing_profile_approval_is_exact_and_single_use() {
+        let scope = ExistingProfileApprovalScope {
+            pid: 42,
+            window_id: 7,
+            session: "approval-existing".to_owned(),
+        };
+        let token = mint_existing_profile_approval(scope.clone()).unwrap();
+        consume_existing_profile_approval(&token, &scope).unwrap();
+        assert!(consume_existing_profile_approval(&token, &scope).is_err());
+    }
+
+    #[test]
+    fn existing_profile_mismatch_consumes_artifact() {
+        let scope = ExistingProfileApprovalScope {
+            pid: 42,
+            window_id: 7,
+            session: "approval-existing-mismatch".to_owned(),
+        };
+        let token = mint_existing_profile_approval(scope.clone()).unwrap();
+        let mut wrong = scope.clone();
+        wrong.window_id = 8;
+        assert!(consume_existing_profile_approval(&token, &wrong).is_err());
+        assert!(consume_existing_profile_approval(&token, &scope).is_err());
     }
 }

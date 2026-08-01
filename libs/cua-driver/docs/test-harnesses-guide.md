@@ -62,12 +62,12 @@ cua/
 
 The important separation is:
 
-| Layer | Owns | Does not own |
-| --- | --- | --- |
-| Rust integration test | Scenarios, driver calls, assertions, action metadata | OS setup and fixture compilation |
-| `cua-driver-testkit` | Session helpers, fixture launching, screenshots, recordings, trajectories | The scenario list |
-| Fixture app | Visible controls and externally observable state markers | Driver correctness assertions |
-| OS runner | Build environment, user session, test selection, artifact collection | Test behavior definitions |
+| Layer                 | Owns                                                                      | Does not own                     |
+| --------------------- | ------------------------------------------------------------------------- | -------------------------------- |
+| Rust integration test | Scenarios, driver calls, assertions, action metadata                      | OS setup and fixture compilation |
+| `cua-driver-testkit`  | Session helpers, fixture launching, screenshots, recordings, trajectories | The scenario list                |
+| Fixture app           | Visible controls and externally observable state markers                  | Driver correctness assertions    |
+| OS runner             | Build environment, user session, test selection, artifact collection      | Test behavior definitions        |
 
 There is deliberately no second Python E2E implementation that the Rust suite
 has to mirror.
@@ -100,13 +100,13 @@ refusal and the absence of focus or input side effects.
 These run without a repo-local GUI application and normally run without
 `--ignored`:
 
-| Location or prefix | What it proves |
-| --- | --- |
-| `rust/crates/*/src/**` | Core driver, platform-independent logic, schemas, and helpers |
-| `protocol_*_test.rs` | MCP handshake, tool calls, sessions, media, and errors |
-| `schema_*_test.rs` | Shared schema and backend consistency |
-| `transport_config_persistence_test.rs` | CLI/MCP configuration persistence |
-| `protocol_element_token_test.rs` | Element-token protocol behavior |
+| Location or prefix                     | What it proves                                                |
+| -------------------------------------- | ------------------------------------------------------------- |
+| `rust/crates/*/src/**`                 | Core driver, platform-independent logic, schemas, and helpers |
+| `protocol_*_test.rs`                   | MCP handshake, tool calls, sessions, media, and errors        |
+| `schema_*_test.rs`                     | Shared schema and backend consistency                         |
+| `transport_config_persistence_test.rs` | CLI/MCP configuration persistence                             |
+| `protocol_element_token_test.rs`       | Element-token protocol behavior                               |
 
 These tests should be fast, deterministic, and safe to run on ordinary CI
 workers. They do not prove that a real click, key, scroll, or background input
@@ -126,9 +126,9 @@ ordinary unit command.
 
 The canonical E2E suite has two behavior owners:
 
-| Owner | Purpose |
-| --- | --- |
-| Shared app | Same web behavior tested through Electron and Tauri |
+| Owner          | Purpose                                              |
+| -------------- | ---------------------------------------------------- |
+| Shared app     | Same web behavior tested through Electron and Tauri  |
 | Native harness | Toolkit-specific controls and native window behavior |
 
 WebView, CDP, and page-tool integration stays inside the shared or native
@@ -149,16 +149,16 @@ invocation.
 
 Runner: `scripts/ci/windows/run-rust-e2e.ps1`
 
-| Runner area | Rust test | Real harness or app |
-| --- | --- | --- |
-| Shared app matrix | `cross_platform_behavior_test.rs` | Electron and Tauri |
-| Native controls | `harness_wpf_test.rs` | Repo-local WPF app |
-| Native controls | `harness_winui3_test.rs` | Repo-local WinUI3 app |
-| Web integration | `harness_web_test.rs` | WebView2 and Electron |
-| Capture contract | `capture_contract_test.rs` | WPF plus driver tree/image output |
-| Launch contract | `launch_windows_test.rs` | Repo-local Electron launch and focus behavior |
-| Agent cursor | `agent_cursor_windows_test.rs` | Source-built cursor overlay and pixel evidence |
-| Desktop scope | `desktop_scope_windows_test.rs` | Windowless desktop input and scope rejection |
+| Runner area       | Rust test                         | Real harness or app                            |
+| ----------------- | --------------------------------- | ---------------------------------------------- |
+| Shared app matrix | `cross_platform_behavior_test.rs` | Electron and Tauri                             |
+| Native controls   | `harness_wpf_test.rs`             | Repo-local WPF app                             |
+| Native controls   | `harness_winui3_test.rs`          | Repo-local WinUI3 app                          |
+| Web integration   | `harness_web_test.rs`             | WebView2 and Electron                          |
+| Capture contract  | `capture_contract_test.rs`        | WPF plus driver tree/image output              |
+| Launch contract   | `launch_windows_test.rs`          | Repo-local Electron launch and focus behavior  |
+| Agent cursor      | `agent_cursor_windows_test.rs`    | Source-built cursor overlay and pixel evidence |
+| Desktop scope     | `desktop_scope_windows_test.rs`   | Windowless desktop input and scope rejection   |
 
 Cross-cutting instrumentation used by these rows includes the testkit
 `DesktopObserver`, capture validation, cursor evidence, and desktop-scope
@@ -174,16 +174,16 @@ background delivery is tested.
 
 Runner: `libs/cua-driver/tests/runners/macos-lume/run-all.sh`
 
-| Runner area | Rust test | Real harness or app |
-| --- | --- | --- |
-| Shared app matrix | `cross_platform_behavior_test.rs` | Electron and Tauri |
-| Native web matrix | `cross_platform_behavior_test.rs` | Repo-local WKWebView host |
-| Native controls | `harness_appkit_test.rs` | Repo-local AppKit app |
-| Native controls | `harness_swiftui_test.rs` | Repo-local SwiftUI app |
-| Installed app launch | `installed_app_launch_macos_test.rs` | Calculator and TextEdit |
-| Installed app AX delivery | `installed_app_textedit_macos_test.rs` | TextEdit |
-| Capture contract | `capture_contract_test.rs` | Installed driver and macOS capture APIs |
-| Desktop scope | `desktop_scope_macos_test.rs` | macOS window and desktop scope |
+| Runner area               | Rust test                              | Real harness or app                     |
+| ------------------------- | -------------------------------------- | --------------------------------------- |
+| Shared app matrix         | `cross_platform_behavior_test.rs`      | Electron and Tauri                      |
+| Native web matrix         | `cross_platform_behavior_test.rs`      | Repo-local WKWebView host               |
+| Native controls           | `harness_appkit_test.rs`               | Repo-local AppKit app                   |
+| Native controls           | `harness_swiftui_test.rs`              | Repo-local SwiftUI app                  |
+| Installed app launch      | `installed_app_launch_macos_test.rs`   | Calculator and TextEdit                 |
+| Installed app AX delivery | `installed_app_textedit_macos_test.rs` | TextEdit                                |
+| Capture contract          | `capture_contract_test.rs`             | Installed driver and macOS capture APIs |
+| Desktop scope             | `desktop_scope_macos_test.rs`          | macOS window and desktop scope          |
 
 The WKWebView host runs the same typed shared-web catalog as Electron and
 Tauri. Calculator and TextEdit add typed supporting rows for built-in app
@@ -197,12 +197,12 @@ to `scripts/ci/macos/run-rust-e2e.sh`.
 
 Runner: `scripts/ci/linux/run-rust-e2e.sh`
 
-| Runner area | Rust test | Real harness or app |
-| --- | --- | --- |
-| Shared app matrix | `cross_platform_behavior_test.rs` | Electron and Tauri |
-| Native controls | `harness_gtk3_test.rs` | Repo-local GTK3 app |
-| Capture contract | `capture_contract_test.rs` | Linux capture backend |
-| Desktop scope | `desktop_scope_linux_test.rs` | X11/Wayland desktop scope |
+| Runner area       | Rust test                         | Real harness or app       |
+| ----------------- | --------------------------------- | ------------------------- |
+| Shared app matrix | `cross_platform_behavior_test.rs` | Electron and Tauri        |
+| Native controls   | `harness_gtk3_test.rs`            | Repo-local GTK3 app       |
+| Capture contract  | `capture_contract_test.rs`        | Linux capture backend     |
+| Desktop scope     | `desktop_scope_linux_test.rs`     | X11/Wayland desktop scope |
 
 Linux has separate X11 and Wayland concerns. Nix supplies the reproducible
 build and desktop environment, but the E2E test still needs an actual X11 or
@@ -230,14 +230,14 @@ delivery, refusal, and unproven-action ledger.
 
 These terms describe different dimensions:
 
-| Term | Meaning |
-| --- | --- |
-| AX | Address a target through its accessibility/UI automation element |
-| PX | Address a target by screen coordinates or pointer geometry |
-| Foreground | The target may be brought to the foreground for delivery |
-| Background | The target should receive the action without being raised or stealing focus |
-| Window scope | Capture or action is limited to one target window |
-| Desktop scope | Capture or action covers the full desktop |
+| Term          | Meaning                                                                     |
+| ------------- | --------------------------------------------------------------------------- |
+| AX            | Address a target through its accessibility/UI automation element            |
+| PX            | Address a target by screen coordinates or pointer geometry                  |
+| Foreground    | The target may be brought to the foreground for delivery                    |
+| Background    | The target should receive the action without being raised or stealing focus |
+| Window scope  | Capture or action is limited to one target window                           |
+| Desktop scope | Capture or action covers the full desktop                                   |
 
 The shared and native action matrices should test left click, right click,
 double click, typing, keys, hotkeys, scroll, child windows, and drag across
@@ -267,14 +267,14 @@ sentinel journals keyboard, pointer, wheel, visibility, focus, and heartbeat
 events while it fully covers the target. Background rows opt into both pieces
 of instrumentation directly; there is no special guard suite.
 
-| Invariant or scenario | What it checks |
-| --- | --- |
+| Invariant or scenario     | What it checks                                                               |
+| ------------------------- | ---------------------------------------------------------------------------- |
 | Background click/type/key | The target action does not move focus away from the user's foreground window |
-| Minimized app launch | `launch_app(start_minimized=true)` does not raise the new app |
-| Background hotkey | A keyboard chord does not steal focus |
-| Child-window click | A target-created window does not unexpectedly become foreground |
-| Background screenshot | Reading the target does not change focus or z-order |
-| Agent cursor visibility | The cursor appears in the captured pixels when enabled and moved |
+| Minimized app launch      | `launch_app(start_minimized=true)` does not raise the new app                |
+| Background hotkey         | A keyboard chord does not steal focus                                        |
+| Child-window click        | A target-created window does not unexpectedly become foreground              |
+| Background screenshot     | Reading the target does not change focus or z-order                          |
+| Agent cursor visibility   | The cursor appears in the captured pixels when enabled and moved             |
 
 The sentinel contract fails closed when the target is only partly covered or
 the heartbeat stops. Before any behavioral cells run, the strict environment
@@ -343,6 +343,10 @@ need normal test output and logs; they do not need desktop video.
   posture. A 300 ms baseline precedes dispatch, and capture continues through
   external oracle collection. `trajectory.json` must finish with
   `behavior_video.status = "finalized"`.
+- Use `agent_cursor_showcase_test` for cursor review media. Shared behavior
+  matrix daemons deliberately use `--no-overlay` so synthetic cursor pixels do
+  not contaminate action oracles; their videos prove tool behavior, not cursor
+  rendering.
 - Windows hosted runs use `GetConsoleWindow` to select the inherited
   HostedComputeAgent/runner console, verify its identity, and minimize it
   through `ShowWindow(SW_MINIMIZE)` before fixture or sentinel posture is

@@ -21,8 +21,11 @@
 use std::cell::RefCell;
 
 use anyhow::{bail, Context};
+use windows::core::{Interface, BSTR};
 use windows::Win32::Foundation::{HWND, RECT};
-use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
+use windows::Win32::Graphics::Dwm::{
+    DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
+};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
 };
@@ -30,14 +33,14 @@ use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
     IUIAutomationTogglePattern, TreeScope_Children, TreeScope_Subtree,
     UIA_AcceleratorKeyPropertyId, UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId,
-    UIA_CONTROLTYPE_ID, UIA_HyperlinkControlTypeId, UIA_InvokePatternId,
-    UIA_ListItemControlTypeId, UIA_MenuItemControlTypeId, UIA_PROPERTY_ID,
-    UIA_RadioButtonControlTypeId, UIA_SplitButtonControlTypeId, UIA_TabItemControlTypeId,
-    UIA_TogglePatternId, UIA_TreeItemControlTypeId,
+    UIA_HyperlinkControlTypeId, UIA_InvokePatternId, UIA_ListItemControlTypeId,
+    UIA_MenuItemControlTypeId, UIA_RadioButtonControlTypeId, UIA_SplitButtonControlTypeId,
+    UIA_TabItemControlTypeId, UIA_TogglePatternId, UIA_TreeItemControlTypeId, UIA_CONTROLTYPE_ID,
+    UIA_PROPERTY_ID,
 };
-use windows::core::{BSTR, Interface};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
+    GetAncestor, GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
+    IsIconic, IsWindow, IsWindowVisible, GA_ROOT,
 };
 
 use crate::win32::windows::WindowInfo;
@@ -265,9 +268,7 @@ pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
             // returned ✅ but the menu never opened.)
             let has_invoke = elem.GetCurrentPattern(UIA_InvokePatternId).is_ok();
             let has_expand = elem
-                .GetCurrentPattern(
-                    windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId,
-                )
+                .GetCurrentPattern(windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId)
                 .is_ok();
             if !has_invoke && !has_expand {
                 continue;
@@ -314,9 +315,7 @@ pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
         // in that case. Pure-Invoke leaves (buttons, links, etc.) go
         // through Invoke as before.
         let winner_has_expand = winner
-            .GetCurrentPattern(
-                windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId,
-            )
+            .GetCurrentPattern(windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId)
             .is_ok();
         let winner_has_invoke = winner.GetCurrentPattern(UIA_InvokePatternId).is_ok();
         // UWP foreground-steal bypass: gate the entire activation block on
@@ -375,10 +374,7 @@ pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
 /// their keyboard accelerators are surfaced through UI Automation instead.
 /// This helper keeps that routing narrow by requiring an advertised
 /// AcceleratorKey match before invoking anything.
-pub fn try_invoke_accelerator_in_window(
-    hwnd: isize,
-    combo: &str,
-) -> anyhow::Result<(bool, usize)> {
+pub fn try_invoke_accelerator_in_window(hwnd: isize, combo: &str) -> anyhow::Result<(bool, usize)> {
     if hwnd == 0 {
         bail!("invalid target hwnd 0");
     }
@@ -412,14 +408,17 @@ pub fn try_invoke_accelerator_in_window(
             };
             // Primary match: the UIA AcceleratorKey property — the conventional
             // place a WinUI / XAML control advertises its shortcut.
-            let mut accelerator: Option<String> = read_current_bstr(&elem, UIA_AcceleratorKeyPropertyId);
+            let mut accelerator: Option<String> =
+                read_current_bstr(&elem, UIA_AcceleratorKeyPropertyId);
             // Fallback match: many shipping XAML apps (e.g. modern Notepad)
             // don't set AcceleratorKey at all and instead encode the shortcut
             // in the visible element name as a parenthetical hint like
             // "Bold (Ctrl+B)". Scan the Name property for that pattern so
             // toolbar buttons remain reachable via hotkey.
             if accelerator.is_none() {
-                if let Some(name) = read_current_bstr(&elem, windows::Win32::UI::Accessibility::UIA_NamePropertyId) {
+                if let Some(name) =
+                    read_current_bstr(&elem, windows::Win32::UI::Accessibility::UIA_NamePropertyId)
+                {
                     if let Some(extracted) = extract_shortcut_from_name(&name) {
                         accelerator = Some(extracted);
                     }
@@ -603,9 +602,10 @@ fn extract_shortcut_from_name(name: &str) -> Option<String> {
     // parentheticals (e.g. "(2)" or "(beta)").
     let has_modifier = inner.split('+').any(|tok| {
         let t = tok.trim().to_ascii_lowercase();
-        matches!(t.as_str(),
-            "ctrl" | "control" | "shift" | "alt" |
-            "win" | "windows" | "meta" | "cmd" | "command")
+        matches!(
+            t.as_str(),
+            "ctrl" | "control" | "shift" | "alt" | "win" | "windows" | "meta" | "cmd" | "command"
+        )
     });
     if has_modifier {
         Some(inner.to_owned())
@@ -625,14 +625,27 @@ unsafe fn window_info_from_uia_element(elem: &IUIAutomationElement) -> Option<Wi
     }
     let hwnd = HWND(raw.0);
 
-    // Drop minimized / off-screen windows. UIA's IsOffscreen flag covers
-    // both "iconic" and "behind another window such that no part is visible"
-    // — for top-level windows it matches the EnumWindows path's intent of
-    // showing only currently-visible candidates.
-    if let Ok(flag) = elem.CurrentIsOffscreen() {
-        if flag.as_bool() {
-            return None;
-        }
+    // UIA is authoritative about whether the provider considers the element
+    // off-screen. An unknown value is tolerated for normal UIA geometry, but
+    // the Win32 fallback below requires an explicit `false`.
+    let is_offscreen = elem.CurrentIsOffscreen().ok().map(|flag| flag.as_bool());
+    if let Some(true) = is_offscreen {
+        return None;
+    }
+
+    let prefer_win32_bounds = !elem
+        .CurrentBoundingRectangle()
+        .ok()
+        .is_some_and(rect_is_valid);
+
+    if !IsWindow(hwnd).as_bool() {
+        return None;
+    }
+
+    // A UIA desktop child must still resolve to the same top-level HWND.
+    // Reject child/inherited handles before reading any identity or geometry.
+    if GetAncestor(hwnd, GA_ROOT) != hwnd {
+        return None;
     }
 
     // Resolve pid via the standard Win32 path. We deliberately do not trust
@@ -640,9 +653,46 @@ unsafe fn window_info_from_uia_element(elem: &IUIAutomationElement) -> Option<Wi
     // windows by (hwnd, pid) tuples obtained from `GetWindowThreadProcessId`,
     // and we want bit-identical agreement.
     let mut pid: u32 = 0;
-    let _ = GetWindowThreadProcessId(hwnd, Some(&mut pid));
-    if pid == 0 {
+    let thread_id = GetWindowThreadProcessId(hwnd, Some(&mut pid));
+    if thread_id == 0 || pid == 0 {
         return None;
+    }
+
+    if prefer_win32_bounds {
+        // The element came from this process's UIA desktop root, which already
+        // constrains it to the caller's desktop and session. For the exceptional
+        // Win32 path, also require an explicitly on-screen, capturable window.
+        if is_offscreen != Some(false)
+            || !IsWindowVisible(hwnd).as_bool()
+            || IsIconic(hwnd).as_bool()
+            || window_is_cloaked(hwnd)
+        {
+            return None;
+        }
+        let uia_pid = elem.CurrentProcessId().ok()?;
+        if uia_pid <= 0 || uia_pid as u32 != pid {
+            return None;
+        }
+    }
+
+    let (x, y, width, height) = window_bounds(hwnd, prefer_win32_bounds)?;
+
+    if prefer_win32_bounds {
+        // Re-read both sides of the identity after geometry lookup so a stale
+        // or reused HWND cannot be accepted as the original UIA window.
+        let mut pid_after = 0u32;
+        let thread_after = GetWindowThreadProcessId(hwnd, Some(&mut pid_after));
+        if !IsWindow(hwnd).as_bool()
+            || elem.CurrentNativeWindowHandle().ok() != Some(hwnd)
+            || elem
+                .CurrentProcessId()
+                .ok()
+                .is_none_or(|candidate| candidate <= 0 || candidate as u32 != pid)
+            || thread_after != thread_id
+            || pid_after != pid
+        {
+            return None;
+        }
     }
 
     // Title — prefer Win32 GetWindowTextW for parity with the EnumWindows path.
@@ -661,35 +711,124 @@ unsafe fn window_info_from_uia_element(elem: &IUIAutomationElement) -> Option<Wi
         return None;
     }
 
-    let (x, y, w, h) = window_bounds(hwnd);
-
     Some(WindowInfo {
         hwnd: hwnd.0 as u64,
         pid,
         title,
         x,
         y,
-        width: w,
-        height: h,
+        width,
+        height,
         is_on_screen: true,
         minimized: false,
     })
 }
 
-/// Bounds via DWM extended frame (excludes drop-shadow on W11) with
-/// `GetWindowRect` fallback — same logic as the EnumWindows path.
-fn window_bounds(hwnd: HWND) -> (i32, i32, i32, i32) {
+fn rect_is_valid(rect: RECT) -> bool {
+    rect.right > rect.left && rect.bottom > rect.top
+}
+
+fn window_is_cloaked(hwnd: HWND) -> bool {
+    let mut cloaked = 0u32;
     unsafe {
-        let mut rect = RECT::default();
-        let ok = DwmGetWindowAttribute(
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_CLOAKED,
+            &mut cloaked as *mut u32 as *mut _,
+            std::mem::size_of::<u32>() as u32,
+        )
+        .is_err()
+            || cloaked != 0
+    }
+}
+
+fn select_window_rect(
+    prefer_win32: bool,
+    dwm_rect: Option<RECT>,
+    win32_rect: Option<RECT>,
+) -> Option<RECT> {
+    if prefer_win32 {
+        win32_rect.filter(|rect| rect_is_valid(*rect))
+    } else {
+        dwm_rect
+            .filter(|rect| rect_is_valid(*rect))
+            .or_else(|| win32_rect.filter(|rect| rect_is_valid(*rect)))
+    }
+}
+
+/// Bounds via DWM extended frame (excludes drop-shadow on W11) with
+/// `GetWindowRect` fallback. Invalid UIA geometry prefers the latter directly.
+/// The driver is Per-Monitor V2 aware, so both sources use physical pixels.
+fn window_bounds(hwnd: HWND, prefer_win32: bool) -> Option<(i32, i32, i32, i32)> {
+    unsafe {
+        let mut dwm_rect = RECT::default();
+        let dwm_rect = DwmGetWindowAttribute(
             hwnd,
             DWMWA_EXTENDED_FRAME_BOUNDS,
-            &mut rect as *mut RECT as *mut _,
+            &mut dwm_rect as *mut RECT as *mut _,
             std::mem::size_of::<RECT>() as u32,
-        );
-        if ok.is_err() {
-            let _ = GetWindowRect(hwnd, &mut rect);
+        )
+        .ok()
+        .map(|()| dwm_rect);
+
+        // API success does not guarantee usable geometry. This is the actual
+        // source-selection rule: invalid DWM data falls through to Win32 too.
+        let need_win32 = prefer_win32 || dwm_rect.is_none_or(|rect| !rect_is_valid(rect));
+        let mut win32_rect = RECT::default();
+        let win32_rect = need_win32
+            .then(|| {
+                GetWindowRect(hwnd, &mut win32_rect)
+                    .ok()
+                    .map(|()| win32_rect)
+            })
+            .flatten();
+
+        let rect = select_window_rect(prefer_win32, dwm_rect, win32_rect)?;
+        Some((
+            rect.left,
+            rect.top,
+            rect.right - rect.left,
+            rect.bottom - rect.top,
+        ))
+    }
+}
+
+#[cfg(test)]
+mod bounds_fallback_tests {
+    use super::select_window_rect;
+    use windows::Win32::Foundation::RECT;
+
+    fn rect() -> RECT {
+        RECT {
+            left: 200,
+            top: 52,
+            right: 1400,
+            bottom: 852,
         }
-        (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
+    }
+
+    #[test]
+    fn invalid_uia_bounds_prefer_the_reported_win32_rect() {
+        let win32 = rect();
+        assert_eq!(select_window_rect(true, None, Some(win32)), Some(win32));
+    }
+
+    #[test]
+    fn normal_windows_keep_valid_dwm_geometry() {
+        let dwm = rect();
+        let mut win32 = dwm;
+        win32.left -= 8;
+        assert_eq!(select_window_rect(false, Some(dwm), Some(win32)), Some(dwm));
+    }
+
+    #[test]
+    fn invalid_dwm_geometry_falls_through_and_invalid_win32_fails_closed() {
+        let empty = RECT::default();
+        let win32 = rect();
+        assert_eq!(
+            select_window_rect(false, Some(empty), Some(win32)),
+            Some(win32)
+        );
+        assert!(select_window_rect(true, Some(win32), Some(empty)).is_none());
     }
 }

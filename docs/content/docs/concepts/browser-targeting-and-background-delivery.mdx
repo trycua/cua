@@ -3,8 +3,6 @@ title: "Browser Targeting and Background Delivery"
 description: "Why browser automation needs an exact native-window-to-tab binding, and how CDP adds a full-background rung to Cua Driver."
 ---
 
-# Browser Targeting and Background Delivery
-
 A browser presents two identities at once. The desktop knows a native process
 and window; the browser runtime knows DevTools targets and tabs. Acting safely
 in the background requires proof that both identities describe the same
@@ -17,6 +15,12 @@ Agents still begin with `list_apps` and `list_windows`. They select a concrete
 `get_browser_state` correlates that native window with a browser target and
 mints opaque target and tab capabilities. Raw DevTools target identifiers are
 not part of the public contract.
+
+Selected-tab state is deliberately tri-state. `active: true` or `false` is
+reported only when the native window title uniquely identifies one DevTools
+tab. Duplicate titles, empty titles, and other ambiguity produce `active:
+null` for every candidate instead of treating DevTools list order as native
+selection evidence. A caller can still target an explicit returned tab id.
 
 This preserves one targeting model across native and web content. It also
 prevents a browser helper from choosing the first tab, first window, or first
@@ -54,12 +58,23 @@ default click uses `Input.dispatchMouseEvent`, but Chromium's standalone window
 is known to activate on that route on macOS and Linux. Cua Driver returns
 `browser_input_trust_unavailable` there before dispatch. Standalone Chrome and
 Edge on Windows, and the bounded embedded Electron route, have passing trusted
-background evidence.
+background evidence. The same trust distinction applies to hover,
+right-click, double-click, scroll, and drag through `browser_pointer`.
 
 A caller must explicitly request `input_route: "dom_event"` to invoke an
 element's DOM click behavior. That route is synthetic even when it preserves
 full-background posture. The driver does not silently change trust models to
 make a call appear successful.
+
+Page-owned JavaScript dialogs are modeled as short-lived capabilities rather
+than native-window guesses. Inspection returns the kind and an opaque dialog
+generation; accept or dismiss succeeds only while that exact dialog remains
+current. The page's initial creation of a Chromium native modal may activate
+the browser; after occlusion is re-established, inspection and resolution do
+not require another activation. File assignment bypasses native pickers through an exact live file
+input ref. Downloads additionally cross an open-world filesystem boundary, so
+they require host approval, a canonical destination directory, exact event
+correlation, and path-free output.
 
 ## Capabilities have a lifetime
 
@@ -74,16 +89,92 @@ now belongs to another document.
 ## Why setup is explicit
 
 Browser inspection never enables remote debugging or restarts a browser as a
-side effect. `browser_prepare` is a separate destructive approval boundary. It
+side effect. `browser_prepare` is a separate explicit authorization boundary. It
 may launch another browser with a driver-owned `isolated_new` or
-`isolated_named` profile, but it never copies, modifies, restarts, or terminates
-the selected user profile. Remote-debugging arguments passed through
+`isolated_named` profile. For an existing supported Chromium profile, a
+stronger operation-bound grant may instead authorize one exact-window AX,
+UIA, or AT-SPI setup of the browser's per-instance remote-debugging switch. The
+route is proven for Chrome and Edge on macOS and Windows and for Chrome in the
+validated Linux X11 and Sway lanes. It never copies profile data, edits profile
+files, restarts, or terminates the selected process, and it reports its
+temporary-tab and setting effects. Remote-debugging arguments passed through
 `launch_app` are refused.
 
-An MCP host supplies approval through its destructive-tool approval path.
-Direct CLI and raw-socket callers use a short-lived, single-use token minted by
-the interactive `browser-approve` command. A Boolean supplied by the model is
-not treated as user consent.
+Current macOS Chrome can expose the native address field and selected internal
+tab while withholding that page's web AX subtree. In that case, the macOS
+adapter uses only the temporary tab that it created and navigated to the fixed
+internal URL, requires the committed address value and expected selected-tab
+title with no active omnibox edit, then requires one unique checkbox-shaped
+control inside a bounded setup-page region. The click is PID-routed to the
+revalidated unchanged browser window and the same control's state transition is
+verified. Because macOS delivers that bounded pixel action through global input,
+the driver may briefly foreground the exact approved window, then restore the
+previous frontmost app. The result reports both the foreground and global-input
+effects. Unsupported appearance, scale, zoom, window-size, or toolbar geometry
+is refused without a click. It does not generalize that fallback to web pages or
+arbitrary dialogs.
+
+The setup transition and protocol attachment are separate proofs. A listener
+must be loopback-only, attributed to the approved pid, and either discoverable
+as DevTools or correlated with the exact approved checkbox transition. The
+driver then requires a successful DevTools WebSocket claim before reporting an
+attachment; a bare browser-owned loopback listener is not sufficient.
+
+For an existing authenticated profile, standard mode requires either the
+trusted launch option `--grant existing-profile` or an authorization callback
+supplied by an embedding host. Bounded mode requires a matching reviewed
+manifest. Unrestricted mode requires launch-time risk acceptance. A Boolean
+supplied by the model and ordinary MCP destructive-tool approval do not
+authorize this boundary.
+
+An existing authenticated profile has a stronger boundary than a
+driver-created isolated profile. Attaching exposes the profile's live pages,
+cookies, and storage to the browser protocol, so ordinary MCP transport
+approval is not enough. The attachment grant is bound to one runtime, process
+fingerprint, native window, and named driver session.
+
+## The CDP trust boundary
+
+CDP is used because it is the only supported Chromium interface that can
+address an exact inactive tab, inspect its document, and perform declared
+background operations without borrowing the person's keyboard or pointer.
+That power is also the reason Cua Driver treats attachment as a security
+boundary rather than a connection detail. CDP exposes broad browser authority,
+including page runtime, DOM, network, storage, and cookie domains; it is not a
+least-privilege API for one button or one tab.
+
+A loopback listener prevents remote hosts from connecting directly, but
+loopback is not authentication. Another process running as the same operating
+system user may be able to discover and connect to an exposed endpoint. Cua
+Driver's PID ownership proof, native-window correlation, scoped capabilities,
+and approval grant prevent the driver from attaching to the wrong endpoint;
+they cannot turn the Chromium endpoint itself into an authenticated service or
+protect it from unrelated local software.
+
+Use a driver-owned isolated profile by default. Attach an existing profile
+only when the task genuinely needs its authenticated session, only on a trusted
+machine, and only for the duration of that task. An endpoint that the browser
+already exposes can use the ordinary exact binding route without another setup
+transition because Cua Driver did not create or widen the listener. That does
+not reduce the endpoint's authority: the operator is responsible for how that
+browser was started and for closing remote debugging when it is no longer
+needed.
+
+Chromium applies its own protections to remote debugging on default profiles.
+Cua Driver does not bypass those protections, copy a profile, or weaken the
+browser's data encryption. See Chromium's
+[remote-debugging security guidance](https://developer.chrome.com/blog/remote-debugging-port)
+and the [Chrome DevTools Protocol domains](https://chromedevtools.github.io/devtools-protocol/)
+for the underlying browser boundary.
+
+Chrome can ask for consent whenever a genuinely new browser-level socket is
+opened. Cua Driver therefore keeps one socket for each approved connection
+generation and multiplexes tabs over it. If the socket drops, one reconnect
+leader re-proves process, endpoint, and native-window identity before it may
+press the exact browser-owned consent action. A successful reconnect changes
+the generation and makes every old target, tab, snapshot, and ref stale. This
+is deliberate: silently remapping an old capability could act on a different
+tab after a browser lifecycle change.
 
 ## Platform meaning
 

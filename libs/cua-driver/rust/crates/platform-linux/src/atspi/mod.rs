@@ -22,6 +22,12 @@ pub struct AtspiNode {
     pub role: String,
     pub name: Option<String>,
     pub value: Option<String>,
+    /// Checked state when the accessibility backend exposes one for a toggle.
+    pub checked: Option<bool>,
+    /// Enabled state when the accessibility backend returned a state set.
+    pub enabled: Option<bool>,
+    /// Toggle/selection state for selectable controls.
+    pub selected: Option<bool>,
     pub description: Option<String>,
     pub actions: Vec<String>,
     /// For AT-SPI: element_key = element_index as u64.
@@ -33,18 +39,50 @@ pub struct AtspiNode {
     /// `element_index` of the nearest actionable ancestor, if any.
     /// Mirrors what the markdown indent shows.
     pub parent_element_index: Option<usize>,
+    /// True when the native AT-SPI walker observed this node below renderer
+    /// web content. Browser-owned consent UI must never match such nodes.
+    pub in_web_content: bool,
 }
 
 pub struct AtspiTreeResult {
     pub tree_markdown: String,
     pub nodes: Vec<AtspiNode>,
     pub bounds: Vec<(usize, i32, i32, u32, u32)>,
+    /// True only for a native AT-SPI walk. The X11 property fallback is a
+    /// partial discovery aid and must not prove verification predicates.
+    pub trusted: bool,
 }
 
 /// Walk the AT-SPI tree for a window identified by (pid, xid).
 /// Falls back to a minimal X11 property tree if AT-SPI is unavailable.
 pub fn walk_tree(pid: u32, xid: u64, query: Option<&str>) -> AtspiTreeResult {
     walk_tree_bounded(pid, xid, query, None, None)
+}
+
+/// Best-effort accessibility snapshot for synchronous trajectory evidence.
+///
+/// Recording brackets an action with before/after captures, so it must use a
+/// smaller budget than the transport's tool-call deadline. Unlike the
+/// interactive tree walker, evidence capture makes one attempt and accepts an
+/// unavailable tree when the target renderer is blocked.
+pub(crate) fn walk_tree_for_recording(
+    pid: u32,
+    xid: u64,
+    timeout: std::time::Duration,
+) -> AtspiTreeResult {
+    if let Ok(Some((tree_markdown, nodes, bounds))) =
+        native::walk_tree_bounded_with_timeout(pid, xid, None, None, timeout)
+    {
+        if !tree_markdown.is_empty() {
+            return AtspiTreeResult {
+                tree_markdown,
+                nodes,
+                bounds,
+                trusted: true,
+            };
+        }
+    }
+    walk_via_x11_properties(xid, None)
 }
 
 /// Walk the AT-SPI tree with caller-supplied caps. `None` for either cap
@@ -84,6 +122,7 @@ pub fn walk_tree_bounded(
                     tree_markdown: md,
                     nodes,
                     bounds,
+                    trusted: true,
                 };
             }
         }
@@ -201,6 +240,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
                 tree_markdown: String::new(),
                 nodes: vec![],
                 bounds: vec![],
+                trusted: false,
             }
         }
     };
@@ -225,6 +265,9 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
             Some(title.clone())
         },
         value: None,
+        checked: None,
+        enabled: None,
+        selected: None,
         description: if wm_class.is_empty() {
             None
         } else {
@@ -234,6 +277,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
         element_key: xid,
         depth: 0,
         parent_element_index: None,
+        in_web_content: false,
     };
     md.push_str(&format!(
         "- [0] window \"{}\" [actions=[activate]]\n",
@@ -252,6 +296,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
         tree_markdown,
         nodes,
         bounds: vec![],
+        trusted: false,
     }
 }
 

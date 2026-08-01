@@ -9,8 +9,9 @@
 //! 2. Filter candidates whose CDP window bounds match the native bounds
 //!    within `tolerance` device pixels.
 //! 3. Exactly one bounds match → **Exact** binding.
-//! 4. Multiple distinct CDP windows remain ambiguous. Maximized windows
-//!    can share bounds, so titles are not strong enough to choose one.
+//! 4. Multiple distinct CDP windows can share maximized bounds. One unique
+//!    active-tab title match disambiguates them; duplicate or absent title
+//!    matches remain ambiguous.
 //! 5. No bounds match → a unique title match degrades to **Heuristic**
 //!    (read-only); otherwise **None**.
 
@@ -83,6 +84,35 @@ pub fn cardinality_exact_candidate(
 /// equality) is the tie-break; empty tab titles never match.
 fn title_matches(native_title: &str, candidate_title: &str) -> bool {
     !candidate_title.is_empty() && native_title.contains(candidate_title)
+}
+
+/// Prove the selected page in one already-correlated browser window without
+/// activating a target. Chromium exposes the native window title but no
+/// browser-level selected-tab bit. A unique title match is therefore proof;
+/// duplicate, empty, absent, or substring-colliding titles remain unknown.
+/// Embedded single-page endpoints are selected by cardinality.
+pub fn selected_tab_target_id<'a>(
+    native_title: &str,
+    candidates: &'a [CdpWindowCandidate],
+    cdp_window_id: Option<i64>,
+) -> Option<&'a str> {
+    let tabs = candidates
+        .iter()
+        .filter(|candidate| match cdp_window_id {
+            Some(window_id) => candidate.cdp_window_id == Some(window_id),
+            None => candidate.cdp_window_id.is_none(),
+        })
+        .collect::<Vec<_>>();
+
+    if cdp_window_id.is_none() {
+        return (tabs.len() == 1).then(|| tabs[0].cdp_target_id.as_str());
+    }
+
+    let title_hits = tabs
+        .into_iter()
+        .filter(|candidate| title_matches(native_title, &candidate.title))
+        .collect::<Vec<_>>();
+    (title_hits.len() == 1).then(|| title_hits[0].cdp_target_id.as_str())
 }
 
 /// Reduce page targets to one representative per proven CDP window.
@@ -160,7 +190,19 @@ pub fn correlate(
                 _ => BindingOutcome::None,
             }
         }
-        _ => BindingOutcome::Ambiguous(bounds_matches.len()),
+        _ => {
+            let title_hits = bounds_matches
+                .iter()
+                .filter(|candidate| title_matches(&native.title, &candidate.title))
+                .collect::<Vec<_>>();
+            match title_hits.as_slice() {
+                [candidate] if candidate.cdp_window_id.is_some() => BindingOutcome::Bound {
+                    candidate: (**candidate).clone(),
+                    quality: BindingQuality::Exact,
+                },
+                _ => BindingOutcome::Ambiguous(bounds_matches.len()),
+            }
+        }
     }
 }
 
@@ -271,7 +313,7 @@ mod tests {
         assert!(matches!(
             correlate(
                 &native("Docs - Chrome", visible_frame),
-                &[candidate.clone()],
+                std::slice::from_ref(&candidate),
                 8.0
             ),
             BindingOutcome::Bound {
@@ -316,12 +358,68 @@ mod tests {
     }
 
     #[test]
-    fn distinct_maximized_windows_with_shared_bounds_are_ambiguous() {
+    fn selected_tab_requires_one_unique_native_title_match() {
+        let tabs = [cand("first", "Checkout", B), cand("second", "Cart", B)];
+        assert_eq!(
+            selected_tab_target_id("Cart - Chrome", &tabs, Some(1)),
+            Some("second")
+        );
+
+        let duplicate_titles = [cand("first", "Checkout", B), cand("second", "Checkout", B)];
+        assert_eq!(
+            selected_tab_target_id("Checkout - Chrome", &duplicate_titles, Some(1)),
+            None
+        );
+
+        let substring_collision = [cand("first", "Mail", B), cand("second", "Mail Inbox", B)];
+        assert_eq!(
+            selected_tab_target_id("Mail Inbox - Chrome", &substring_collision, Some(1)),
+            None
+        );
+
+        let empty_titles = [cand("first", "", B), cand("second", "", B)];
+        assert_eq!(
+            selected_tab_target_id("Chrome", &empty_titles, Some(1)),
+            None
+        );
+    }
+
+    #[test]
+    fn embedded_single_page_is_selected_by_cardinality_only() {
+        let one = [embedded_cand("only", "Fixture")];
+        assert_eq!(selected_tab_target_id("Fixture", &one, None), Some("only"));
+
+        let two = [
+            embedded_cand("first", "Fixture"),
+            embedded_cand("second", "Fixture"),
+        ];
+        assert_eq!(selected_tab_target_id("Fixture", &two, None), None);
+    }
+
+    #[test]
+    fn unique_title_disambiguates_distinct_maximized_windows_with_shared_bounds() {
         let n = native("Docs - Chrome", B);
         let mut other_window = cand("t2", "Docs", B);
         other_window.cdp_window_id = Some(2);
         let cands = [cand("t1", "Mail", B), other_window];
-        assert_eq!(correlate(&n, &cands, 4.0), BindingOutcome::Ambiguous(2));
+        match correlate(&n, &cands, 4.0) {
+            BindingOutcome::Bound { candidate, quality } => {
+                assert_eq!(candidate.cdp_target_id, "t2");
+                assert_eq!(quality, BindingQuality::Exact);
+            }
+            other => panic!("expected title-disambiguated exact bound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn duplicate_titles_keep_distinct_maximized_windows_ambiguous() {
+        let n = native("Docs - Chrome", B);
+        let mut other_window = cand("t2", "Docs", B);
+        other_window.cdp_window_id = Some(2);
+        assert_eq!(
+            correlate(&n, &[cand("t1", "Docs", B), other_window], 4.0),
+            BindingOutcome::Ambiguous(2)
+        );
     }
 
     #[test]

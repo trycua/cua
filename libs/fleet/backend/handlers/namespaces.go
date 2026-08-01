@@ -50,52 +50,39 @@ var (
 	k8sClientOnce sync.Once
 	k8sClient     *http.Client
 	k8sAPIServer  string
-	// k8sDirectAPIServer always targets the in-cluster apiserver. The
-	// impersonated path may instead use Capsule Proxy for tenant filtering.
-	k8sDirectAPIServer string
-	k8sSAToken         string
+	k8sSAToken    string
 )
 
 // overrideK8sClient is used by tests to inject a fake K8s API server.
 // It sets the client AND marks the Once as done so initK8sClient() is a no-op.
 func overrideK8sClient(client *http.Client, apiServer, saToken string) {
-	overrideK8sClientTargets(client, apiServer, apiServer, saToken)
-}
-
-func overrideK8sClientTargets(
-	client *http.Client, impersonatedServer, directServer, saToken string,
-) {
 	k8sClientOnce.Do(func() {}) // exhaust the Once
 	k8sClient = client
-	k8sAPIServer = impersonatedServer
-	k8sDirectAPIServer = directServer
+	k8sAPIServer = apiServer
 	k8sSAToken = saToken
 }
 
 func initK8sClient() {
 	k8sClientOnce.Do(func() {
-		// Direct in-cluster apiserver address. ServiceAccount-only control-plane
-		// operations must not depend on Capsule Proxy behavior.
-		host := os.Getenv("KUBERNETES_SERVICE_HOST")
-		port := os.Getenv("KUBERNETES_SERVICE_PORT")
-		if host == "" {
-			host = "kubernetes.default.svc"
-		}
-		if port == "" {
-			port = "443"
-		}
-		if strings.Contains(host, ":") {
-			host = "[" + host + "]"
-		}
-		k8sDirectAPIServer = fmt.Sprintf("https://%s:%s", host, port)
-
 		// Capsule Proxy — filters list responses by Tenant ownership.
 		// Falls back to direct K8s API if CAPSULE_PROXY_ADDR is not set.
 		if proxyAddr := os.Getenv("CAPSULE_PROXY_ADDR"); proxyAddr != "" {
 			k8sAPIServer = proxyAddr
 			slog.Info("k8sImpersonate: using Capsule Proxy", "addr", proxyAddr)
 		} else {
-			k8sAPIServer = k8sDirectAPIServer
+			// In-cluster: KUBERNETES_SERVICE_HOST + KUBERNETES_SERVICE_PORT
+			host := os.Getenv("KUBERNETES_SERVICE_HOST")
+			port := os.Getenv("KUBERNETES_SERVICE_PORT")
+			if host == "" {
+				host = "kubernetes.default.svc"
+			}
+			if port == "" {
+				port = "443"
+			}
+			if strings.Contains(host, ":") {
+				host = "[" + host + "]"
+			}
+			k8sAPIServer = fmt.Sprintf("https://%s:%s", host, port)
 			slog.Info("k8sImpersonate: using K8s API directly", "addr", k8sAPIServer)
 		}
 
@@ -147,12 +134,25 @@ func (h Handlers) k8sImpersonate(
 
 	// K8s impersonation headers — the SA needs the "impersonate" verb
 	// on users and groups (granted by cyclops-cs-impersonator ClusterRole).
-	// Prefixes resolve from OpenFeature (see package identity) so Tenant
-	// provisioning, impersonation, and apiserver flags stay aligned.
+	// Prefixes resolve from OpenFeature (see package identity) so the backend,
+	// standalone Tenant controller, and apiserver flags stay aligned.
 	req.Header.Set("Impersonate-User", identity.ImpersonateUser(ctx, userSub))
 	req.Header.Set("Impersonate-Group", identity.ImpersonateGroup(ctx, userSub))
 
 	return k8sClient.Do(req)
+}
+
+const k8sResponseBodyLimit = 64 << 10
+
+func readBoundedK8sBody(r io.Reader) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(r, k8sResponseBodyLimit+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > k8sResponseBodyLimit {
+		return nil, fmt.Errorf("response body exceeds %d bytes", k8sResponseBodyLimit)
+	}
+	return body, nil
 }
 
 // Adoption-wait tuning. Capsule normally adopts within a second or two; the
@@ -229,8 +229,8 @@ func (h Handlers) ListNamespaces(w http.ResponseWriter, r *http.Request) {
 	// fail-closed: even if Capsule Proxy isn't filtering (e.g. while
 	// CapsuleConfiguration.userGroups is being reconciled, or right after a
 	// capsule-proxy restart with a cold cache), the apiserver only returns the
-	// caller's namespaces. The personal Tenant name follows the "user-<sub>"
-	// convention, and the selector is derived from the authenticated subject,
+	// caller's namespaces. The Tenant name follows the standalone controller
+	// convention "user-<sub>" and is derived from the authenticated subject,
 	// so a caller can never widen it to another tenant.
 	selector := "capsule.clastix.io/tenant=" + identity.PersonalGroup(ctx, user.ID)
 	path := "/api/v1/namespaces?labelSelector=" + url.QueryEscape(selector)
@@ -332,23 +332,11 @@ func (h Handlers) CreateNamespace(w http.ResponseWriter, r *http.Request) {
 	))
 	defer span.End()
 
-	// Tenant provisioning is just-in-time so a freshly authenticated user can
-	// create their first namespace without waiting for a separate reconciler.
-	// This request runs as the backend ServiceAccount (not as the user) and
-	// fails closed if an existing Tenant has unexpected ownership or roles.
-	tenantName, err := h.ensurePersonalTenant(ctx, user.ID)
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "personal tenant ensure failed")
-		slog.Warn("namespace create: personal tenant ensure failed", "err", err)
-		writeErr(w, http.StatusBadGateway, "could not ensure personal tenant")
-		return
-	}
-
 	// Build K8s Namespace object with Capsule tenant label.
 	// The label tells Capsule which Tenant owns this namespace.
-	// The prefix resolves from OpenFeature through the same identity helper used
-	// above, so the Tenant and namespace label cannot drift.
+	// Tenant name follows the standalone controller convention (user-<sub>);
+	// the shared identity helper keeps the label and controller in sync.
+	tenantName := identity.PersonalGroup(ctx, user.ID)
 	nsObj := map[string]interface{}{
 		"apiVersion": "v1",
 		"kind":       "Namespace",
@@ -367,58 +355,34 @@ func (h Handlers) CreateNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Capsule's admission webhook observes Tenants through an informer cache.
-	// Immediately after first-use Tenant creation, that cache can briefly lag
-	// both the object and its status.owners update. Retry only the exact Capsule
-	// missing-Tenant 500 and non-owned-Tenant 400; every other transport or
-	// admission failure is returned immediately.
-	retryCtx, cancelRetry := context.WithTimeout(ctx, tenantInformerWaitTimeout)
-	defer cancelRetry()
-	var respStatus int
-	var respBody []byte
-	for {
-		resp, requestErr := h.k8sImpersonate(
-			retryCtx, "POST", "/api/v1/namespaces", bytes.NewReader(body), user.ID,
-		)
-		if requestErr != nil {
-			span.RecordError(requestErr)
-			span.SetStatus(codes.Error, "namespace create request failed")
-			slog.Warn("namespace create: k8s request failed", "err", requestErr)
-			writeErr(w, http.StatusBadGateway, "kubectl-proxy unavailable")
-			return
-		}
-		respStatus = resp.StatusCode
-		respBody, err = readBoundedK8sBody(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, "namespace create response failed")
-			writeErr(w, http.StatusBadGateway, "bad response from k8s")
-			return
-		}
-		if !isPersonalTenantAdmissionCacheLag(respStatus, respBody, tenantName) {
-			break
-		}
-		select {
-		case <-time.After(tenantInformerWaitStep):
-		case <-retryCtx.Done():
-			span.RecordError(retryCtx.Err())
-			span.SetStatus(codes.Error, "namespace create cancelled during tenant readiness wait")
-			writeErr(w, http.StatusBadGateway, "namespace create cancelled")
-			return
-		}
+	resp, err := h.k8sImpersonate(ctx, "POST", "/api/v1/namespaces", bytes.NewReader(body), user.ID)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "namespace create request failed")
+		slog.Warn("namespace create: k8s request failed", "err", err)
+		writeErr(w, http.StatusBadGateway, "kubectl-proxy unavailable")
+		return
+	}
+	defer resp.Body.Close()
+
+	respBody, err := readBoundedK8sBody(resp.Body)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "namespace create response failed")
+		writeErr(w, http.StatusBadGateway, "bad response from k8s")
+		return
 	}
 
-	if respStatus == http.StatusConflict {
+	if resp.StatusCode == http.StatusConflict {
 		span.SetAttributes(attribute.Int("http.status_code", http.StatusConflict))
 		writeErr(w, http.StatusConflict, "namespace already exists")
 		return
 	}
-	if respStatus != http.StatusCreated {
+	if resp.StatusCode != http.StatusCreated {
 		span.SetStatus(codes.Error, "namespace create returned non-201")
-		span.SetAttributes(attribute.Int("http.status_code", respStatus))
-		slog.Warn("namespace create: k8s error", "status", respStatus, "body", string(respBody))
-		writeErr(w, respStatus, "k8s: "+string(respBody))
+		span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
+		slog.Warn("namespace create: k8s error", "status", resp.StatusCode, "body", string(respBody))
+		writeErr(w, resp.StatusCode, "k8s: "+string(respBody))
 		return
 	}
 

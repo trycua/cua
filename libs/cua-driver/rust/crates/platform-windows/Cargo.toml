@@ -12,6 +12,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 async-trait = "0.1"
 cua-driver-core = { path = "../cua-driver-core" }
+cua-driver-contract = { path = "../cua-driver-contract" }
 cursor-overlay = { path = "../cursor-overlay" }
 pip-preview = { path = "../pip-preview" }
 # IndexMap gives the keyed cursor render collection deterministic
@@ -22,12 +23,14 @@ indexmap = "2"
 tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
+clipboard-rs = "0.3.5"
 image = { workspace = true }
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_UI_Accessibility",
     "Win32_UI_WindowsAndMessaging",
     "Win32_System_Threading",
+    "Win32_System_SystemInformation",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Dwm",

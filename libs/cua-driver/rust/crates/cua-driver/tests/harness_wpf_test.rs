@@ -5,15 +5,14 @@
 //! get mapped into the sandbox by the legacy Windows Sandbox runner.
 //!
 //! Each scenario covers a Win32 hosting pattern the agent should handle:
-//!   - counter        : UIA Invoke on a plain WPF button
-//!   - text_body      : get_window_state extracts known marker text
-//!   - message_box    : modal MessageBox enumeration
-//!   - bottom_strip   : Save/Cancel buttons present in the UIA tree
-//!                      (regression guard for the GetClientRect-vs-
-//!                      GetWindowRect capture bug fixed in #1696)
-//!   - owned_popup    : owned secondary window discovered via list_windows
-//!   - layered_popup  : WS_EX_LAYERED window enumerated and captured
-//!   - child_hwnd     : native Win32 BUTTON child HWND visible in tree
+//! - counter: UIA Invoke on a plain WPF button
+//! - text_body: get_window_state extracts known marker text
+//! - message_box: modal MessageBox enumeration
+//! - bottom_strip: Save/Cancel buttons present in the UIA tree (regression
+//!   guard for the GetClientRect-vs-GetWindowRect capture bug fixed in #1696)
+//! - owned_popup: owned secondary window discovered via list_windows
+//! - layered_popup: WS_EX_LAYERED window enumerated and captured
+//! - child_hwnd: native Win32 BUTTON child HWND visible in tree
 //!
 //! Run via the sandbox runner:
 //!   ..\tests\runners\windows-sandbox\run-tests-in-sandbox.ps1 harness_wpf
@@ -25,7 +24,7 @@
 //! sandbox runner unignores them explicitly via the `--ignored` arg.
 //!
 //! **Foreground-lock caveat:** a handful of these tests (`double_click`,
-//! `right_click`, `type_text`) rely on `dispatch:"foreground"` to reach
+//! `right_click`, `type_text`) rely on `delivery_mode:"foreground"` to reach
 //! WPF's input chain reliably. Windows' system-wide foreground-lock
 //! kicks in after ~30s with no real user input — once that happens,
 //! `SetForegroundWindow` is denied for non-UIAccess processes and the
@@ -96,7 +95,7 @@ fn launch_harness_with_state_file(
     // wait happens via polling in find_window. A 200ms-only
     // wait turned out to be too short for the harness to establish
     // foreground reliably under test-batch load, which caused
-    // SetForegroundWindow-needing tests (dispatch:foreground) to
+    // SetForegroundWindow-needing tests (delivery_mode:foreground) to
     // fail with a foreground-lock rejection.
     std::thread::sleep(Duration::from_millis(800));
     Some(pid)
@@ -169,6 +168,15 @@ fn window_bounds(driver: &mut McpDriver, pid: u32, wid: u64) -> (f64, f64, f64, 
 }
 
 fn pixel_center(state: &ToolResponse, target_id: &str, window: (f64, f64, f64, f64)) -> (f64, f64) {
+    let (x, y, width, height) = pixel_frame(state, target_id, window);
+    (x + width / 2.0, y + height / 2.0)
+}
+
+fn pixel_frame(
+    state: &ToolResponse,
+    target_id: &str,
+    window: (f64, f64, f64, f64),
+) -> (f64, f64, f64, f64) {
     let target_index = ax::element_index_by_id(state.text(), target_id)
         .unwrap_or_else(|| panic!("missing PX target {target_id:?}: {}", state.text()));
     let elements = state.structured()["elements"]
@@ -196,11 +204,15 @@ fn pixel_center(state: &ToolResponse, target_id: &str, window: (f64, f64, f64, f
     let scale_y = screenshot_h / window_h;
     let x = (target["x"].as_f64().unwrap_or(0.0) + target_w / 2.0 - window_x) * scale_x;
     let y = (target["y"].as_f64().unwrap_or(0.0) + target_h / 2.0 - window_y) * scale_y;
+    let width = target_w * scale_x;
+    let height = target_h * scale_y;
+    let x = x - width / 2.0;
+    let y = y - height / 2.0;
     assert!(
-        x >= 0.0 && x < screenshot_w && y >= 0.0 && y < screenshot_h,
-        "WPF PX target center ({x:.1}, {y:.1}) is outside the capture ({screenshot_w:.1}x{screenshot_h:.1})"
+        x >= 0.0 && x + width <= screenshot_w && y >= 0.0 && y + height <= screenshot_h,
+        "WPF PX target frame ({x:.1}, {y:.1}, {width:.1}, {height:.1}) is outside the capture ({screenshot_w:.1}x{screenshot_h:.1})"
     );
-    (x, y)
+    (x, y, width, height)
 }
 
 fn wait_for_fixture_file_text(path: &std::path::Path, id: &str, expected: &str) {
@@ -496,8 +508,8 @@ fn harness_wpf_left_click_px_background() {
             click.text()
         );
         assert_eq!(
-            click.structured()["path"].as_str(),
-            Some("ax"),
+            click.action_route(),
+            Some("accessibility"),
             "WPF PX background click used an unexpected driver route: {}",
             click.text()
         );
@@ -523,7 +535,7 @@ fn harness_wpf_type_text() {
             // WPF's TextBox needs *keyboard focus* for WM_CHAR delivery — and
             // PostMessage(WM_LBUTTONDOWN) doesn't reliably transfer keyboard
             // focus (WPF's input system treats posted events differently from
-            // real ones). Use dispatch:"foreground" → SendInput synthesizes
+            // real ones). Use delivery_mode:"foreground" → SendInput synthesizes
             // an OS-level click that WPF treats identically to a user mouse,
             // landing actual keyboard focus on the TextBox.
             let _ = driver.call(
@@ -654,7 +666,7 @@ fn harness_wpf_right_click() {
             let snap = snapshot(driver, pid, wid);
             let idx = ax::element_index_by_id(snap.text(), "border-click-target")
                 .expect("border-click-target not in snapshot");
-            // Same dispatch:foreground rationale as type_text — PostMessage
+            // Same delivery_mode:foreground rationale as type_text — PostMessage
             // WM_RBUTTONDOWN doesn't always reach WPF's MouseRightButtonDown
             // routed-event chain (intermittent in batch runs).
             let resp = driver.call(
@@ -697,7 +709,7 @@ fn harness_wpf_double_click() {
             let snap = snapshot(driver, pid, wid);
             let idx = ax::element_index_by_id(snap.text(), "border-click-target")
                 .expect("border-click-target not in snapshot");
-            // dispatch:foreground for the same reason as right_click —
+            // delivery_mode:foreground for the same reason as right_click —
             // PostMessage WM_LBUTTONDOWN ×2 doesn't always reach WPF's
             // MouseDoubleClick / ClickCount=2 path under test-batch load.
             let resp = driver.call(
@@ -768,6 +780,43 @@ fn harness_wpf_press_key_accelerator() {
                 Observation::refused(code, passed, response.text(), Evidence::default())
             })
             .expect("required WPF session did not start")
+        },
+    );
+}
+
+#[test]
+#[ignore]
+fn harness_wpf_press_key_letter_accelerator() {
+    run_foreground_case(
+        "press_key",
+        Targeting::Ax,
+        DriverRoute::WindowsSendInput,
+        Vec::new(),
+        |pid, wid, driver| {
+            focus_harness(driver, pid, wid);
+            let response = driver.call(
+                "press_key",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "key": "h",
+                    "modifiers": ["ctrl", "shift"],
+                    "delivery_mode": "foreground"
+                }),
+            );
+            assert!(
+                !response.is_error(),
+                "WPF foreground letter press_key failed: {}",
+                response.text()
+            );
+            std::thread::sleep(Duration::from_millis(300));
+            let post = snapshot(driver, pid, wid);
+            assert!(
+                post.text().contains("accel_fired=1"),
+                "WPF letter press_key did not fire Ctrl+Shift+H: {}",
+                snapshot_lines_containing(post.text(), &["accel_fired"])
+            );
+            Vec::new()
         },
     );
 }
@@ -1095,7 +1144,7 @@ fn harness_wpf_slider_drag() {
     // Regression guard for the SendInput drag path. PostMessage drag
     // doesn't update GetKeyState, so WPF's Thumb-drag handler (which
     // polls Mouse.LeftButton via GetKeyState) never sees the button
-    // held — the thumb stays put. dispatch:"foreground" routes through
+    // held — the thumb stays put. delivery_mode:"foreground" routes through
     // send_drag_synthesized which goes via the system input queue and
     // DOES update GetKeyState, so the thumb actually tracks.
     //
@@ -1116,19 +1165,17 @@ fn harness_wpf_slider_drag() {
                 pre.text().contains("slider_value=0"),
                 "initial slider_value=0 missing"
             );
+            let (x, y, width, height) =
+                pixel_frame(&pre, "sld-value", window_bounds(driver, pid, wid));
 
             let resp = driver.call(
                 "drag",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid,
-                    // Window-local coords along the slider TRACK. The track row sits at
-                    // window-local y≈304 (verified on the VM: y=275 landed ~29px above
-                    // it, on empty GroupBox space, so the thumb never moved); the thumb
-                    // rests at the left (x≈44) at value=0. Dragging left→right advances
-                    // the value. (TODO: derive these from the `sld-value` element frame
-                    // in get_window_state for DPI/placement independence.)
-                    "from_x": 44.0, "from_y": 304.0,
-                    "to_x": 330.0, "to_y": 304.0,
+                    // Resolve the live UIA frame so fixture reordering and DPI
+                    // scaling cannot silently move this drag onto another control.
+                    "from_x": x + width * 0.05, "from_y": y + height / 2.0,
+                    "to_x": x + width * 0.90, "to_y": y + height / 2.0,
                     "duration_ms": 700, "steps": 40,
                     "delivery_mode": "foreground"
                 }),
@@ -1276,7 +1323,7 @@ fn harness_wpf_checkbox_toggle() {
             // CheckBox exposes UIA TogglePattern (actions=[toggle]), not Invoke.
             // cua-driver's click tool tries UIA Invoke first; for elements that
             // don't support it the PostMessage fallback path runs. Use
-            // dispatch:"foreground" to land a SendInput click that WPF
+            // delivery_mode:"foreground" to land a SendInput click that WPF
             // recognises as a real user click and processes through Toggle.
             let resp = driver.call(
                 "click",
@@ -1316,7 +1363,7 @@ fn harness_wpf_radio_select() {
             let snap = snapshot(driver, pid, wid);
             let idx = ax::element_index_by_id(snap.text(), "rdo-high").expect("rdo-high missing");
             // RadioButton exposes SelectionItem pattern (actions=[select]).
-            // Same dispatch:foreground rationale as the checkbox test.
+            // Same delivery_mode:foreground rationale as the checkbox test.
             let response = driver.call(
                 "click",
                 serde_json::json!({

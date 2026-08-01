@@ -58,6 +58,25 @@ enum PixelActivationPolicy {
     ForegroundAssist,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct SelectionPixelTarget {
+    screen_x: f64,
+    screen_y: f64,
+    window_x: f64,
+    window_y: f64,
+}
+
+fn selection_readback_confirms(before: bool, after: bool, has_modifiers: bool) -> bool {
+    if has_modifiers {
+        after != before
+    } else {
+        after
+    }
+}
+
+const SELECTION_READBACK_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+const SELECTION_READBACK_POLL: std::time::Duration = std::time::Duration::from_millis(25);
+
 fn pixel_activation_policy(
     button: &str,
     effective_foreground: bool,
@@ -163,7 +182,7 @@ fn def() -> &'static ToolDef {
                 "delivery_mode": {
                     "type": "string",
                     "enum": ["background", "foreground"],
-                    "description": "Best-effort-background ladder rung (default \"background\"). \"background\": perform the AX action or post the CGEvent without fronting. \"foreground\": briefly front the window, act, let transient UI settle, then restore the prior frontmost app. Requires window_id. A generic click has no independent postcondition read-back, so its action effect remains unverifiable — confirm the effect from a fresh state snapshot. Use the agent loop: background AX (element_index) → snapshot → background pixel (x/y) → snapshot → delivery_mode:\"foreground\"."
+                    "description": "Best-effort-background ladder rung (default \"background\"). \"background\": perform the AX action or post the CGEvent without fronting. \"foreground\": briefly front the window, act, let transient UI settle, then restore the prior frontmost app. Requires window_id. A generic click has no independent postcondition read-back, except selection of list-like AX rows whose AXSelected state can be confirmed; otherwise confirm the effect from a fresh state snapshot. Use the agent loop: background AX (element_index) → snapshot → background pixel (x/y) → snapshot → delivery_mode:\"foreground\"."
                 },
                 "scope": {
                     "type": "string",
@@ -457,6 +476,39 @@ impl Tool for ClickTool {
                     .update_position(&cursor_key, cx, cy);
             }
 
+            // Finder icon/list items can expose a readable AXSelected state
+            // while refusing both AXSelected writes and AXPress. Resolve a
+            // verified coordinate frame only for those collection-like
+            // elements so perform_ax_click can cross that one failed semantic
+            // rung internally and confirm the result by AX read-back.
+            let selection_candidate = if effective_action == "press" {
+                tokio::task::spawn_blocking(move || {
+                    crate::input::ax_actions::nearest_container_selection_state(element_ptr)
+                        .is_some()
+                })
+                .await
+                .unwrap_or(false)
+            } else {
+                false
+            };
+            let selection_pixel = if selection_candidate {
+                if let Some((cx, cy)) = center {
+                    super::px_frame::resolve_or_refuse(wid)
+                        .await
+                        .ok()
+                        .map(|frame| SelectionPixelTarget {
+                            screen_x: cx,
+                            screen_y: cy,
+                            window_x: cx - frame.bounds.x,
+                            window_y: cy - frame.bounds.y,
+                        })
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
             // Capture prior frontmost, arm the wildcard suppressor in the
             // snapshot, then arm a targeted suppressor across the AX action
@@ -479,6 +531,7 @@ impl Tool for ClickTool {
             // not the shared "default" one (which would light the wrong cursor
             // and stomp default for a non-default session).
             let ck = cursor_key.clone();
+            let selection_modifiers = modifiers.clone();
             let result = focus_guard::with_focus_suppressed(
                 if foreground { None } else { Some(pid) },
                 prior_front,
@@ -498,6 +551,8 @@ impl Tool for ClickTool {
                                         wid,
                                         &action_clone,
                                         &ck,
+                                        selection_pixel,
+                                        &selection_modifiers,
                                     )?);
                                     std::thread::sleep(std::time::Duration::from_millis(150));
                                     Ok(())
@@ -508,8 +563,17 @@ impl Tool for ClickTool {
                             })?;
                             Ok((outcome, fronted))
                         } else {
-                            perform_ax_click(element_ptr, idx, pid, wid, &action_clone, &ck)
-                                .map(|outcome| (outcome, false))
+                            perform_ax_click(
+                                element_ptr,
+                                idx,
+                                pid,
+                                wid,
+                                &action_clone,
+                                &ck,
+                                selection_pixel,
+                                &selection_modifiers,
+                            )
+                            .map(|outcome| (outcome, false))
                         }
                     })
                     .await
@@ -521,7 +585,16 @@ impl Tool for ClickTool {
             let changes = super::finish_window_observation(snapshot, &args).await;
 
             match result {
-                Ok(Ok(((mut msg, needs_webkit_delay, suspected_noop), fronted))) => {
+                Ok(Ok((
+                    (
+                        mut msg,
+                        needs_webkit_delay,
+                        suspected_noop,
+                        selection_verified,
+                        selection_via_pixel,
+                    ),
+                    fronted,
+                ))) => {
                     // For text inputs, wait 800ms for WebKit DOM focus to settle
                     // before returning — matches the Swift reference behaviour.
                     if needs_webkit_delay {
@@ -538,10 +611,27 @@ impl Tool for ClickTool {
                     //   * unverifiable — dispatched fine, driver just can't confirm;
                     //     the caller verifies via screenshot.
                     let mut structured = serde_json::json!({
-                        "path": if fronted { "ax_fg" } else { "ax" },
-                        "verified": false,
-                        "effect": if suspected_noop { "suspected_noop" } else { "unverifiable" },
+                        "path": if selection_via_pixel {
+                            if fronted { "cgevent_fg" } else { "cgevent" }
+                        } else if fronted {
+                            "ax_fg"
+                        } else {
+                            "ax"
+                        },
+                        "verified": selection_verified,
+                        "effect": if selection_verified {
+                            "confirmed"
+                        } else if suspected_noop {
+                            "suspected_noop"
+                        } else {
+                            "unverifiable"
+                        },
                     });
+                    if selection_verified {
+                        structured["evidence"] = serde_json::json!([
+                            { "kind": "accessibility_readback" }
+                        ]);
+                    }
                     if suspected_noop {
                         structured["escalation"] = serde_json::json!({
                             "recommended": "px",
@@ -916,7 +1006,8 @@ impl Tool for ClickTool {
 
 // ── AX click implementation (blocking) ───────────────────────────────────────
 
-/// Returns `(summary_text, needs_webkit_delay, suspected_noop)`.
+/// Returns `(summary_text, needs_webkit_delay, suspected_noop,
+/// selection_verified, selection_via_pixel)`.
 ///
 /// `suspected_noop` is true when the element did not advertise the action we
 /// dispatched — AXUIElementPerformAction returns success regardless, so this is
@@ -930,7 +1021,9 @@ fn perform_ax_click(
     window_id: u32,
     action_str: &str,
     cursor_key: &str,
-) -> anyhow::Result<(String, bool, bool)> {
+    selection_pixel: Option<SelectionPixelTarget>,
+    modifiers: &[String],
+) -> anyhow::Result<(String, bool, bool, bool, bool)> {
     let ax_action = map_action(action_str);
     let element = element_ptr as AXUIElementRef;
 
@@ -944,13 +1037,99 @@ fn perform_ax_click(
     // (AX returns success even when the element doesn't advertise the action).
     let advertised = unsafe { copy_action_names(element) };
 
-    let err = unsafe { crate::ax::bindings::perform_action(element, ax_action) };
-    if err != crate::ax::bindings::kAXErrorSuccess {
-        anyhow::bail!("AXUIElementPerformAction({ax_action}) returned {err}");
-    }
-
     let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
     let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
+
+    // A click on an AppKit collection item is frequently represented by a
+    // label child or row that does not advertise AXPress. Prefer a bounded,
+    // read-back-verified AXSelected write over dispatching a known hollow press
+    // or forcing the caller onto a less stable pixel coordinate.
+    if ax_action == "AXPress" && !advertised.iter().any(|action| action == ax_action) {
+        if modifiers.is_empty() {
+            if let Some(selected_role) =
+                crate::input::ax_actions::select_nearest_container(element_ptr)
+            {
+                return Ok((
+                    format!(
+                        "✅ Selected nearest {selected_role} for [{idx}] {role} \"{title}\"; \
+                         confirmed AXSelected=true."
+                    ),
+                    false,
+                    false,
+                    true,
+                    false,
+                ));
+            }
+        }
+
+        if let (Some(target), Some((selected_role, before))) = (
+            selection_pixel,
+            crate::input::ax_actions::nearest_container_selection_state(element_ptr),
+        ) {
+            let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+            crate::input::mouse::click_at_xy_with_window_local(
+                pid,
+                target.screen_x,
+                target.screen_y,
+                target.window_x,
+                target.window_y,
+                window_id,
+                1,
+                &modifier_refs,
+            )?;
+            let deadline = std::time::Instant::now() + SELECTION_READBACK_TIMEOUT;
+            loop {
+                if let Some((_, after)) =
+                    crate::input::ax_actions::nearest_container_selection_state(element_ptr)
+                {
+                    let verified =
+                        selection_readback_confirms(before, after, !modifiers.is_empty());
+                    if verified {
+                        return Ok((
+                            format!(
+                                "✅ Selected nearest {selected_role} for [{idx}] {role} \
+                                 \"{title}\"; AX selection write was unavailable, so a \
+                                 coordinate click was delivered and confirmed by AXSelected \
+                                 read-back."
+                            ),
+                            false,
+                            false,
+                            true,
+                            true,
+                        ));
+                    }
+                }
+                if std::time::Instant::now() >= deadline {
+                    break;
+                }
+                std::thread::sleep(SELECTION_READBACK_POLL);
+            }
+        }
+    }
+
+    let err = unsafe { crate::ax::bindings::perform_action(element, ax_action) };
+    if err != crate::ax::bindings::kAXErrorSuccess {
+        // Some collection rows claim a click-like action but Finder returns
+        // kAXErrorCannotComplete. Use the same verified selection fallback
+        // before surfacing the dispatch error.
+        if ax_action == "AXPress" {
+            if let Some(selected_role) =
+                crate::input::ax_actions::select_nearest_container(element_ptr)
+            {
+                return Ok((
+                    format!(
+                        "✅ Selected nearest {selected_role} for [{idx}] {role} \"{title}\" \
+                         after AXPress returned {err}; confirmed AXSelected=true."
+                    ),
+                    false,
+                    false,
+                    true,
+                    false,
+                ));
+            }
+        }
+        anyhow::bail!("AXUIElementPerformAction({ax_action}) returned {err}");
+    }
 
     let mut summary = format!("✅ Performed {ax_action} on [{idx}] {role} \"{title}\".");
 
@@ -1033,7 +1212,26 @@ fn perform_ax_click(
     let _ = pid;
     let _ = window_id; // used by caller context
 
-    Ok((summary, needs_webkit_delay, suspected_noop))
+    Ok((summary, needs_webkit_delay, suspected_noop, false, false))
+}
+
+#[cfg(test)]
+mod selection_fallback_tests {
+    use super::selection_readback_confirms;
+
+    #[test]
+    fn plain_click_requires_selected_readback() {
+        assert!(selection_readback_confirms(false, true, false));
+        assert!(selection_readback_confirms(true, true, false));
+        assert!(!selection_readback_confirms(false, false, false));
+    }
+
+    #[test]
+    fn modified_click_requires_a_selection_transition() {
+        assert!(selection_readback_confirms(false, true, true));
+        assert!(selection_readback_confirms(true, false, true));
+        assert!(!selection_readback_confirms(true, true, true));
+    }
 }
 
 fn map_action(action: &str) -> &'static str {

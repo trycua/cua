@@ -12,7 +12,7 @@ description: Reference for every MCP tool Cua Driver exposes
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-`cua-driver` exposes 52 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
+`cua-driver` exposes 53 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
 
 Tool names are `snake_case`. Responses are MCP `CallTool.Result` envelopes: a text content block prefixed with a `✅` summary (or the error reason on failure), plus optional image or structured-content blocks on tools that produce them. See the [CLI reference](/reference/cua-driver/cli-reference) for CLI-specific options like `--socket` and `--screenshot-out-file`.
 
@@ -198,6 +198,24 @@ Persistently activate an app so it genuinely holds macOS foreground, then leave 
 
 ```json
 {"pid":844}
+```
+
+### `set_window_frame`
+
+Set one exact top-level window's frame in the desktop-coordinate space reported by list_windows and verify the resulting geometry through an independent readback.
+
+**Arguments:**
+
+- `height` (number, required): range: 1–unbounded
+- `pid` (integer, required): range: 1–unbounded
+- `session` (string, optional): Optional session id.
+- `width` (number, required): range: 1–unbounded
+- `window_id` (integer, required): range: 1–unbounded
+- `x` (number, required)
+- `y` (number, required)
+
+```json
+{"height":1,"pid":844,"width":1,"window_id":10725,"x":100,"y":200}
 ```
 
 ### `click`

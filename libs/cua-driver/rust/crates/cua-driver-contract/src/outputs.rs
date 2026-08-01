@@ -325,6 +325,7 @@ pub enum ActionRoute {
     Accessibility,
     SyntheticEvents,
     GlobalInput,
+    SystemApi,
     Dom,
     TrustedInput,
 }
@@ -565,6 +566,7 @@ mod tests {
                 "accessibility",
                 "synthetic_events",
                 "global_input",
+                "system_api",
                 "dom",
                 "trusted_input"
             ])

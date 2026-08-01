@@ -8002,6 +8002,186 @@ impl Tool for TypeTextCharsTool {
 // keyed on pid. Marked `destructive: true` so MCP clients with permission
 // gating prompt before invoking.
 
+// ── set_window_frame ──────────────────────────────────────────────────────
+
+pub struct SetWindowFrameTool;
+
+static SET_WINDOW_FRAME_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+#[async_trait]
+impl Tool for SetWindowFrameTool {
+    fn def(&self) -> &ToolDef {
+        SET_WINDOW_FRAME_DEF.get_or_init(|| {
+            let contract = cua_driver_contract::tool_contract("set_window_frame")
+                .expect("set_window_frame contract");
+            ToolDef {
+                name: contract.name,
+                description: contract.description,
+                input_schema: contract.input_schema,
+                read_only: contract.annotations.read_only,
+                destructive: contract.annotations.destructive,
+                idempotent: contract.annotations.idempotent,
+                open_world: contract.annotations.open_world,
+            }
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        use cua_driver_contract::SetWindowFrameInput;
+        use cua_driver_core::action_record::{
+            effect_from_value_readback, ActionEvidence, ActionExecutionRecord, ActionTransport,
+            ActualDelivery, EvidenceKind, RequestedDelivery,
+        };
+
+        let input: SetWindowFrameInput =
+            match cua_driver_core::tool_args::parse_typed_input("set_window_frame", args) {
+                Ok(input) => input,
+                Err(result) => return result,
+            };
+        let outcome = tokio::task::spawn_blocking(move || {
+            use windows::Win32::{
+                Foundation::{HWND, RECT},
+                UI::WindowsAndMessaging::{
+                    GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindow, IsZoomed,
+                    SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER,
+                },
+            };
+
+            let values = [input.x, input.y, input.width, input.height];
+            if values.iter().any(|value| !value.is_finite())
+                || input.width <= 0.0
+                || input.height <= 0.0
+            {
+                return Err(
+                    "x/y must be finite and width/height must be finite positive numbers"
+                        .to_owned(),
+                );
+            }
+            let to_i32 = |name: &str, value: f64| -> Result<i32, String> {
+                let rounded = value.round();
+                if rounded < i32::MIN as f64 || rounded > i32::MAX as f64 {
+                    Err(format!("{name} is out of range for a Windows window coordinate"))
+                } else {
+                    Ok(rounded as i32)
+                }
+            };
+            let x = to_i32("x", input.x)?;
+            let y = to_i32("y", input.y)?;
+            let width = to_i32("width", input.width)?;
+            let height = to_i32("height", input.height)?;
+            if width <= 0 || height <= 0 {
+                return Err("width/height must round to positive Windows window sizes".to_owned());
+            }
+            let hwnd = HWND(input.window_id as usize as *mut std::ffi::c_void);
+            if !unsafe { IsWindow(hwnd).as_bool() } {
+                return Err(format!("window_id {} is closed, stale, or invalid", input.window_id));
+            }
+            let mut owner_pid = 0_u32;
+            unsafe { GetWindowThreadProcessId(hwnd, Some(&mut owner_pid)) };
+            if owner_pid != input.pid {
+                return Err(format!(
+                    "window_id {} belongs to pid {owner_pid}, not pid {}",
+                    input.window_id, input.pid
+                ));
+            }
+            if unsafe { IsIconic(hwnd).as_bool() } {
+                return Err(format!(
+                    "window_id {} is minimized; restore it with bring_to_front before setting its frame",
+                    input.window_id
+                ));
+            }
+            if unsafe { IsZoomed(hwnd).as_bool() } {
+                return Err(format!(
+                    "window_id {} is maximized; restore it before setting its frame",
+                    input.window_id
+                ));
+            }
+            let mut before = RECT::default();
+            unsafe { GetWindowRect(hwnd, &mut before) }
+                .map_err(|error| format!("could not read the current window frame: {error}"))?;
+            let mutation_error = unsafe {
+                SetWindowPos(
+                    hwnd,
+                    HWND::default(),
+                    x,
+                    y,
+                    width,
+                    height,
+                    SWP_NOACTIVATE | SWP_NOZORDER,
+                )
+            }
+            .err()
+            .map(|error| format!("SetWindowPos failed: {error}"));
+
+            let requested = (x, y, width, height);
+            let mut observed = None;
+            for _ in 0..6 {
+                let mut rect = RECT::default();
+                if unsafe { GetWindowRect(hwnd, &mut rect) }.is_ok() {
+                    observed = Some((
+                        rect.left,
+                        rect.top,
+                        rect.right - rect.left,
+                        rect.bottom - rect.top,
+                    ));
+                    if observed == Some(requested) {
+                        break;
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(40));
+            }
+            let before = (
+                before.left,
+                before.top,
+                before.right - before.left,
+                before.bottom - before.top,
+            );
+            let changed = observed.is_some_and(|observed| before != observed);
+            Ok((requested, observed, changed, mutation_error))
+        })
+        .await;
+
+        let (requested, observed, changed, mutation_error) = match outcome {
+            Ok(Ok(outcome)) => outcome,
+            Ok(Err(error)) => return ToolResult::error(format!("set_window_frame: {error}")),
+            Err(error) => {
+                return ToolResult::error(format!(
+                    "set_window_frame: blocking task failed: {error}"
+                ));
+            }
+        };
+        let confirmed = observed == Some(requested);
+        let effect = effect_from_value_readback(confirmed, changed, observed.is_some());
+        let mut record = ActionExecutionRecord::builder(
+            effect,
+            ActionTransport::WindowsSetWindowPos,
+            RequestedDelivery::NotApplicable,
+        )
+        .actual_delivery(ActualDelivery::NotApplicable)
+        .detail(format!(
+            "requested={requested:?} observed={observed:?} mutation_error={mutation_error:?}"
+        ));
+        if observed.is_some() {
+            record = record.evidence(ActionEvidence {
+                kind: EvidenceKind::ValueReadback,
+                detail: if confirmed {
+                    "GetWindowRect matched the requested frame".into()
+                } else {
+                    "GetWindowRect returned a frame that did not match the request".into()
+                },
+            });
+        }
+        ToolResult::text(if confirmed {
+            "Set and verified the requested window frame."
+        } else if observed.is_none() {
+            "The native window mutation was attempted, but its resulting frame could not be read back."
+        } else {
+            "The window frame did not settle at the requested geometry."
+        })
+        .with_action_record(record.build().expect("set_window_frame record is valid"))
+    }
+}
+
 // ── bring_to_front ────────────────────────────────────────────────────────
 
 pub struct BringToFrontTool;
@@ -8705,6 +8885,7 @@ pub fn build_registry_with_provider(
     r.register(Box::new(KillAppTool));
     let pid_window_candidates: WindowTargetCandidates = Arc::new(pid_window_target_candidates);
     r.register(pid_window_guarded(BringToFrontTool, &pid_window_candidates));
+    r.register(Box::new(SetWindowFrameTool));
     r.register(Box::new(DebugWindowInfoTool));
     r.register(pid_window_guarded(
         ClickTool {

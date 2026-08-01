@@ -65,6 +65,21 @@ Use whichever combination matches the host. When in doubt, run
 `cua-driver doctor` — it reports the platform and the right entry
 point.
 
+## Choose a semantic system operation before a GUI path
+
+Before opening or operating an application, classify the requested outcome. If
+the caller already has a purpose-built API, CLI, or filesystem operation that
+can complete a non-GUI outcome directly, use it before Cua Driver. File moves,
+renames, copies, directory creation, archive extraction, data conversion, and
+process inspection should not be performed by opening Finder, Explorer, or a
+Linux file manager and imitating a user.
+
+Use Cua Driver when the outcome lives in an application's UI or window state,
+or when the user explicitly asks to operate that GUI. Once the task crosses
+that boundary, do not replace Cua's targeted and verified actions with shell
+scripts that mutate the app UI. A shell is a capability of the calling agent,
+not of the Cua Driver MCP server; an MCP-only client must not assume one exists.
+
 ## The no-foreground principle (window phase)
 
 In a strict `window` session, and during the initial window phase of an
@@ -88,7 +103,7 @@ that phase only after the complete window ladder below has been attempted and
 verified, followed by `escalate_session`. Never infer desktop permission from a
 failed action or a proxy/transport session id.
 
-## Defaults — always prefer cua-driver over shell shims
+## GUI transport defaults — prefer cua-driver over GUI shell shims
 
 **Default transport is the `cua-driver` CLI** — `Bash` shelling out
 to `cua-driver <tool-name> '<JSON-args>'`. MCP tools (prefix
@@ -678,6 +693,7 @@ against a specific window.
 | Intent                           | Tool                                                                                                            | Notes                                                                                                                                                                                                                 |
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | List an app's windows            | `list_windows({pid})`                                                                                           | returns `window_id`, `title`, `bounds`, `z_index`, `is_on_screen`, `on_current_space`. Already included in `launch_app`'s response — only call this for long-lived pids                                               |
+| Set an exact window frame        | `set_window_frame({pid, window_id, x, y, width, height})`                                                       | uses the platform window manager and returns `confirmed` only after geometry readback; inspect `list_windows` again before continuing when the result is not confirmed                                                |
 | Snapshot a window                | `get_window_state({pid, window_id})`                                                                            | returns `tree_markdown` + `screenshot_*`; populates the `(pid, window_id)` element_index cache                                                                                                                        |
 | Verify a postcondition           | `verify_state({pid, window_id, expect, include_screenshot?})`                                                   | polls bounded structured predicates; returns `satisfied`, `unsatisfied`, or `unknown`. Optional final image is interpreted by the agent harness, never by the driver                                                 |
 | Left click                       | `click({pid, window_id, element_index})`                                                                        | default `action: "press"`. Pixel form: `click({pid, x, y})` (window_id optional) — `modifier: ["cmd"\|"ctrl"]`                                                                                                        |

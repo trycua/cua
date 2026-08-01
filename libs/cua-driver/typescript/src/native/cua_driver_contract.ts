@@ -323,6 +323,7 @@ export enum ActionRoute {
     Accessibility,
     SyntheticEvents,
     GlobalInput,
+    SystemApi,
     Dom,
     TrustedInput
 }
@@ -336,8 +337,9 @@ const FfiConverterTypeActionRoute = (() => {
                 case 1: return ActionRoute.Accessibility;
                 case 2: return ActionRoute.SyntheticEvents;
                 case 3: return ActionRoute.GlobalInput;
-                case 4: return ActionRoute.Dom;
-                case 5: return ActionRoute.TrustedInput;
+                case 4: return ActionRoute.SystemApi;
+                case 5: return ActionRoute.Dom;
+                case 6: return ActionRoute.TrustedInput;
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -346,8 +348,9 @@ const FfiConverterTypeActionRoute = (() => {
                 case ActionRoute.Accessibility: return ordinalConverter.write(1, into);
                 case ActionRoute.SyntheticEvents: return ordinalConverter.write(2, into);
                 case ActionRoute.GlobalInput: return ordinalConverter.write(3, into);
-                case ActionRoute.Dom: return ordinalConverter.write(4, into);
-                case ActionRoute.TrustedInput: return ordinalConverter.write(5, into);
+                case ActionRoute.SystemApi: return ordinalConverter.write(4, into);
+                case ActionRoute.Dom: return ordinalConverter.write(5, into);
+                case ActionRoute.TrustedInput: return ordinalConverter.write(6, into);
             }
         }
         allocationSize(value: TypeName): number {
@@ -2657,6 +2660,72 @@ const FfiConverterTypeSetAgentCursorThemeOutput = (() => {
     return new FFIConverter();
 })();
 
+export type SetWindowFrameInput = {
+    pid: number,
+    windowId: bigint,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    /**
+     * Optional session id.
+     */
+    session?: string
+}
+
+/**
+ * Generated factory for {@link SetWindowFrameInput} record objects.
+ */
+export const SetWindowFrameInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SetWindowFrameInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SetWindowFrameInput>,
+    });
+})();
+
+const FfiConverterTypeSetWindowFrameInput = (() => {
+    type TypeName = SetWindowFrameInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                pid: FfiConverterUInt32.read(from),
+                windowId: FfiConverterUInt64.read(from),
+                x: FfiConverterFloat64.read(from),
+                y: FfiConverterFloat64.read(from),
+                width: FfiConverterFloat64.read(from),
+                height: FfiConverterFloat64.read(from),
+                session: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterUInt32.write(value.pid, into);
+            FfiConverterUInt64.write(value.windowId, into);
+            FfiConverterFloat64.write(value.x, into);
+            FfiConverterFloat64.write(value.y, into);
+            FfiConverterFloat64.write(value.width, into);
+            FfiConverterFloat64.write(value.height, into);
+            FfiConverterOptionalString.write(value.session, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterUInt32.allocationSize(value.pid) +
+             FfiConverterUInt64.allocationSize(value.windowId) +
+             FfiConverterFloat64.allocationSize(value.x) +
+             FfiConverterFloat64.allocationSize(value.y) +
+             FfiConverterFloat64.allocationSize(value.width) +
+             FfiConverterFloat64.allocationSize(value.height) +
+             FfiConverterOptionalString.allocationSize(value.session);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type StartSessionInput = {
     /**
      * Stable session id for this run (e.g. "research-run-1").
@@ -3221,6 +3290,7 @@ export default Object.freeze({
     FfiConverterTypeSetAgentCursorMotionOutput,
     FfiConverterTypeSetAgentCursorThemeInput,
     FfiConverterTypeSetAgentCursorThemeOutput,
+    FfiConverterTypeSetWindowFrameInput,
     FfiConverterTypeStartSessionInput,
     FfiConverterTypeStartSessionOutput,
     FfiConverterTypeStatePredicate,

@@ -168,6 +168,7 @@
               "accessibility",
               "synthetic_events",
               "global_input",
+              "system_api",
               "dom",
               "trusted_input"
             ],
@@ -516,6 +517,7 @@
               "accessibility",
               "synthetic_events",
               "global_input",
+              "system_api",
               "dom",
               "trusted_input"
             ],
@@ -1349,6 +1351,7 @@
               "accessibility",
               "synthetic_events",
               "global_input",
+              "system_api",
               "dom",
               "trusted_input"
             ],
@@ -1509,6 +1512,7 @@
               "accessibility",
               "synthetic_events",
               "global_input",
+              "system_api",
               "dom",
               "trusted_input"
             ],
@@ -1671,6 +1675,7 @@
               "accessibility",
               "synthetic_events",
               "global_input",
+              "system_api",
               "dom",
               "trusted_input"
             ],
@@ -1853,6 +1858,7 @@
               "accessibility",
               "synthetic_events",
               "global_input",
+              "system_api",
               "dom",
               "trusted_input"
             ],
@@ -2175,6 +2181,182 @@
       }
     },
     {
+      "name": "set_window_frame",
+      "description": "Set one exact top-level window's frame in the desktop-coordinate space reported by list_windows and verify the resulting geometry through an independent readback.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "capabilities": [
+        "window.frame.set"
+      ],
+      "annotations": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": false
+      },
+      "schema_mode": "portable_subset",
+      "cursor_semantics": {
+        "action": "app"
+      },
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "height": {
+            "minimum": 1,
+            "type": "number"
+          },
+          "pid": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "session": {
+            "description": "Optional session id.",
+            "type": "string"
+          },
+          "width": {
+            "minimum": 1,
+            "type": "number"
+          },
+          "window_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "x": {
+            "type": "number"
+          },
+          "y": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "pid",
+          "window_id",
+          "x",
+          "y",
+          "width",
+          "height"
+        ],
+        "type": "object"
+      },
+      "success_output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "delivery": {
+            "additionalProperties": false,
+            "properties": {
+              "delivered_count": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "mode": {
+                "enum": [
+                  "background",
+                  "foreground",
+                  "not_applicable",
+                  "unknown"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "mode"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "effect": {
+            "enum": [
+              "confirmed",
+              "partial",
+              "unverifiable",
+              "suspected_noop",
+              "refused"
+            ],
+            "type": "string"
+          },
+          "escalation": {
+            "additionalProperties": false,
+            "properties": {
+              "reason": {
+                "enum": [
+                  "route_unavailable",
+                  "delivery_failed",
+                  "effect_unconfirmed",
+                  "suspected_noop",
+                  "permission_required"
+                ],
+                "type": "string"
+              },
+              "target": {
+                "enum": [
+                  "pixel",
+                  "foreground",
+                  "page",
+                  "session"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "reason"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "evidence": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "value_readback",
+                    "window_change"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "route": {
+            "enum": [
+              "accessibility",
+              "synthetic_events",
+              "global_input",
+              "system_api",
+              "dom",
+              "trusted_input"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "effect",
+          "route"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "start_session",
       "description": "Declare a session — a named, color-coded identity for THIS agent run. Pass a stable `session` id and choose capture_scope=auto|window|desktop; the agent cursor, capture policy, per-session config, and recording all key on it, and it follows the run across any apps/windows. The cursor's color is derived from the id, so distinct runs are visually distinct. A cursor is shown only for a declared session — call this (or pass `session` on your first action) to opt in. Idempotent: re-calling with the same id just refreshes its idle-TTL. End it with `end_session` (or let the idle-TTL reclaim it). Concurrent runs/subagents each pass their own `session` to get their own cursor.",
       "platforms": [
@@ -2458,6 +2640,7 @@
               "accessibility",
               "synthetic_events",
               "global_input",
+              "system_api",
               "dom",
               "trusted_input"
             ],

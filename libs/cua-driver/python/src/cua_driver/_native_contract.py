@@ -1187,9 +1187,11 @@ class ActionRoute(enum.Enum):
 
     GLOBAL_INPUT = 2
 
-    DOM = 3
+    SYSTEM_API = 3
 
-    TRUSTED_INPUT = 4
+    DOM = 4
+
+    TRUSTED_INPUT = 5
 
 
 
@@ -1204,8 +1206,10 @@ class _UniffiFfiConverterTypeActionRoute(_UniffiConverterRustBuffer):
         if variant == 3:
             return ActionRoute.GLOBAL_INPUT
         if variant == 4:
-            return ActionRoute.DOM
+            return ActionRoute.SYSTEM_API
         if variant == 5:
+            return ActionRoute.DOM
+        if variant == 6:
             return ActionRoute.TRUSTED_INPUT
         raise InternalError("Raw enum value doesn't match any cases")
 
@@ -1216,6 +1220,8 @@ class _UniffiFfiConverterTypeActionRoute(_UniffiConverterRustBuffer):
         if value == ActionRoute.SYNTHETIC_EVENTS:
             return
         if value == ActionRoute.GLOBAL_INPUT:
+            return
+        if value == ActionRoute.SYSTEM_API:
             return
         if value == ActionRoute.DOM:
             return
@@ -1231,10 +1237,12 @@ class _UniffiFfiConverterTypeActionRoute(_UniffiConverterRustBuffer):
             buf.write_i32(2)
         if value == ActionRoute.GLOBAL_INPUT:
             buf.write_i32(3)
-        if value == ActionRoute.DOM:
+        if value == ActionRoute.SYSTEM_API:
             buf.write_i32(4)
-        if value == ActionRoute.TRUSTED_INPUT:
+        if value == ActionRoute.DOM:
             buf.write_i32(5)
+        if value == ActionRoute.TRUSTED_INPUT:
+            buf.write_i32(6)
 
 
 
@@ -4018,6 +4026,72 @@ class _UniffiFfiConverterTypeSetAgentCursorThemeOutput(_UniffiConverterRustBuffe
         _UniffiFfiConverterString.write(value.session, buf)
         _UniffiFfiConverterTypeCursorThemeOutput.write(value.theme, buf)
 
+@dataclass
+class SetWindowFrameInput:
+    def __init__(self, *, pid:int, window_id:int, x:float, y:float, width:float, height:float, session:typing.Optional[str]):
+        self.pid = pid
+        self.window_id = window_id
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.session = session
+
+
+
+
+    def __str__(self):
+        return "SetWindowFrameInput(pid={}, window_id={}, x={}, y={}, width={}, height={}, session={})".format(self.pid, self.window_id, self.x, self.y, self.width, self.height, self.session)
+    def __eq__(self, other):
+        if self.pid != other.pid:
+            return False
+        if self.window_id != other.window_id:
+            return False
+        if self.x != other.x:
+            return False
+        if self.y != other.y:
+            return False
+        if self.width != other.width:
+            return False
+        if self.height != other.height:
+            return False
+        if self.session != other.session:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeSetWindowFrameInput(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return SetWindowFrameInput(
+            pid=_UniffiFfiConverterUInt32.read(buf),
+            window_id=_UniffiFfiConverterUInt64.read(buf),
+            x=_UniffiFfiConverterFloat64.read(buf),
+            y=_UniffiFfiConverterFloat64.read(buf),
+            width=_UniffiFfiConverterFloat64.read(buf),
+            height=_UniffiFfiConverterFloat64.read(buf),
+            session=_UniffiFfiConverterOptionalString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterUInt32.check_lower(value.pid)
+        _UniffiFfiConverterUInt64.check_lower(value.window_id)
+        _UniffiFfiConverterFloat64.check_lower(value.x)
+        _UniffiFfiConverterFloat64.check_lower(value.y)
+        _UniffiFfiConverterFloat64.check_lower(value.width)
+        _UniffiFfiConverterFloat64.check_lower(value.height)
+        _UniffiFfiConverterOptionalString.check_lower(value.session)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterUInt32.write(value.pid, buf)
+        _UniffiFfiConverterUInt64.write(value.window_id, buf)
+        _UniffiFfiConverterFloat64.write(value.x, buf)
+        _UniffiFfiConverterFloat64.write(value.y, buf)
+        _UniffiFfiConverterFloat64.write(value.width, buf)
+        _UniffiFfiConverterFloat64.write(value.height, buf)
+        _UniffiFfiConverterOptionalString.write(value.session, buf)
+
 class _UniffiFfiConverterOptionalTypeCaptureScope(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -4643,6 +4717,7 @@ __all__ = [
     "SetAgentCursorMotionOutput",
     "SetAgentCursorThemeInput",
     "SetAgentCursorThemeOutput",
+    "SetWindowFrameInput",
     "StartSessionInput",
     "StartSessionOutput",
     "WindowPredicate",

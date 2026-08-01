@@ -222,7 +222,7 @@ impl ToolDef {
 ///   `accessibility.element_tokens` (Surface 6 — tool accepts the
 ///   opaque `element_token` arg alongside the integer `element_index`)
 /// - `app.launch`, `app.list`, `app.kill`, `window.list`,
-///   `window.activate`, `window.debug_info`
+///   `window.activate`, `window.frame.set`, `window.debug_info`
 /// - `system.permissions.tcc`,
 ///   `system.permissions.tcc.accessibility`,
 ///   `system.permissions.tcc.screen_recording`
@@ -329,6 +329,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "kill_app" => &["app.kill"],
         "list_windows" => &["window.list"],
         "bring_to_front" => &["window.activate"],
+        "set_window_frame" => &["window.frame.set"],
         "debug_window_info" => &["window.debug_info"],
 
         // ── permissions / config ─────────────────────────────────────
@@ -2286,6 +2287,7 @@ fn is_physical_desktop_action(tool: &str) -> bool {
             | "hotkey"
             | "set_value"
             | "bring_to_front"
+            | "set_window_frame"
     )
 }
 
@@ -4128,6 +4130,7 @@ mod capability_tests {
         "kill_app",
         "list_windows",
         "bring_to_front",
+        "set_window_frame",
         "debug_window_info",
         // permissions / config
         "check_permissions",
@@ -4205,6 +4208,7 @@ mod capability_tests {
         "app.kill",
         "window.list",
         "window.activate",
+        "window.frame.set",
         "window.debug_info",
         // permissions
         "system.permissions.tcc",

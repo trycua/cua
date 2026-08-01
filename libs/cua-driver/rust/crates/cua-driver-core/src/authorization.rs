@@ -254,6 +254,7 @@ const DESKTOP_INPUT_OPERATIONS: &[&str] = &[
     "hotkey",
     "set_value",
     "bring_to_front",
+    "set_window_frame",
 ];
 const DESKTOP_INPUT_SCOPE_KEYS: &[&str] = &[
     "daemon_generation",
@@ -846,6 +847,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "set_value"
         | "launch_app"
         | "bring_to_front"
+        | "set_window_frame"
         | "start_session"
         | "end_session"
         | "set_agent_cursor_enabled"
@@ -1737,6 +1739,10 @@ mod tests {
         );
         assert_eq!(
             ids("type_text_chars", serde_json::json!({})),
+            vec!["desktop_input"]
+        );
+        assert_eq!(
+            ids("set_window_frame", serde_json::json!({})),
             vec!["desktop_input"]
         );
         assert_eq!(

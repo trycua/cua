@@ -116,12 +116,25 @@ pub unsafe fn element_at_screen_position(pid: i32, x: f64, y: f64) -> Option<AXU
 // ── AXValue functions ────────────────────────────────────────────────────────
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
+    pub fn AXValueCreate(the_type: AXValueType, value_ptr: *const c_void) -> AXValueRef;
     pub fn AXValueGetType(value: AXValueRef) -> AXValueType;
     pub fn AXValueGetValue(
         value: AXValueRef,
         the_type: AXValueType,
         value_ptr: *mut c_void,
     ) -> bool;
+}
+
+#[repr(C)]
+struct CGPointValue {
+    x: f64,
+    y: f64,
+}
+
+#[repr(C)]
+struct CGSizeValue {
+    width: f64,
+    height: f64,
 }
 
 // ── Helper functions ──────────────────────────────────────────────────────────
@@ -544,6 +557,53 @@ pub unsafe fn set_number_attr(element: AXUIElementRef, attr_name: &str, value: f
     let attr = CFStr::new(attr_name);
     let cf_value = CFNumber::from(value);
     AXUIElementSetAttributeValue(element, attr.as_concrete_TypeRef(), cf_value.as_CFTypeRef())
+}
+
+/// Set an AX CGPoint attribute such as `AXPosition`.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
+pub unsafe fn set_point_attr(element: AXUIElementRef, attr_name: &str, x: f64, y: f64) -> AXError {
+    let attr = CFStr::new(attr_name);
+    let point = CGPointValue { x, y };
+    let value = AXValueCreate(
+        kAXValueCGPointType,
+        &point as *const CGPointValue as *const c_void,
+    );
+    if value.is_null() {
+        return kAXErrorFailure;
+    }
+    let result =
+        AXUIElementSetAttributeValue(element, attr.as_concrete_TypeRef(), value as CFTypeRef);
+    CFRelease(value as CFTypeRef);
+    result
+}
+
+/// Set an AX CGSize attribute such as `AXSize`.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
+pub unsafe fn set_size_attr(
+    element: AXUIElementRef,
+    attr_name: &str,
+    width: f64,
+    height: f64,
+) -> AXError {
+    let attr = CFStr::new(attr_name);
+    let size = CGSizeValue { width, height };
+    let value = AXValueCreate(
+        kAXValueCGSizeType,
+        &size as *const CGSizeValue as *const c_void,
+    );
+    if value.is_null() {
+        return kAXErrorFailure;
+    }
+    let result =
+        AXUIElementSetAttributeValue(element, attr.as_concrete_TypeRef(), value as CFTypeRef);
+    CFRelease(value as CFTypeRef);
+    result
 }
 
 /// Set an AX attribute to a CFBoolean true value.

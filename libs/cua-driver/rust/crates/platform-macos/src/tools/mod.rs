@@ -15,6 +15,7 @@ mod press_key;
 mod right_click;
 mod scroll;
 mod set_value;
+mod set_window_frame;
 mod type_text;
 // `screenshot` / `screenshot_compat` modules removed in PR #1692 —
 // `get_window_state` capture_mode:"vision" is the canonical screenshot
@@ -728,6 +729,7 @@ pub fn register_all(
         bring_to_front::BringToFrontTool,
         &pid_window_candidates,
     ));
+    registry.register(Box::new(set_window_frame::SetWindowFrameTool));
     registry.register(pid_window_guarded(
         click::ClickTool::new(state.clone()),
         &pid_window_candidates,

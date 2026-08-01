@@ -28,6 +28,7 @@ It also covers the portable whole-desktop loop:
 - `get_screen_size`
 - `get_cursor_position`
 - `move_cursor` with the required `scope="desktop"`
+- `set_window_frame` for exact, read-back-verified top-level window geometry
 - `click` with the required `scope="desktop"`
 - `drag` and `scroll` in native desktop coordinates
 - `type_text`, `press_key`, and `hotkey` against the foreground application

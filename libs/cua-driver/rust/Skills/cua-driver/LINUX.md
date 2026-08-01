@@ -8,6 +8,12 @@ supported: `click`, `type_text`, scroll, `press_key`, `screenshot`,
 `launch_app`, `list_apps`, `list_windows`, `get_window_state`, and
 session recording.
 
+On X11, `set_window_frame({pid, window_id, x, y, width, height})` sends an
+EWMH window-manager request and confirms it against `list_windows` geometry.
+Wayland has no portable protocol for setting another application's top-level
+geometry, so this tool refuses there unless a future compositor-owned adapter
+can provide exact targeting and readback.
+
 AT-SPI is talked to natively over D-Bus (the `atspi`/zbus crate) — no
 `pyatspi` or GObject-introspection typelibs are required at runtime.
 

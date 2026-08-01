@@ -1053,6 +1053,19 @@ impl ToolRegistry {
                 return protected_consent_refusal(error);
             }
         }
+        if has_adapter("clipboard") {
+            if let Err(error) = self
+                .authorize_clipboard(
+                    resolved_name,
+                    &public_args,
+                    context,
+                    runtime_session.as_deref(),
+                )
+                .await
+            {
+                return protected_consent_refusal(error);
+            }
+        }
         if has_adapter("file_transfer_and_output") {
             if let Err(refusal) = self
                 .authorize_file_transfer(
@@ -1642,6 +1655,59 @@ impl ToolRegistry {
         Ok(())
     }
 
+    async fn authorize_clipboard(
+        &self,
+        tool_name: &str,
+        args: &Value,
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+        lifecycle_session: Option<&str>,
+    ) -> Result<(), crate::consent::ConsentError> {
+        if context.mode() != crate::authorization::PermissionMode::Bounded {
+            return Ok(());
+        }
+        let (operation, content_kind, summary) = if tool_name == "clipboard_read" {
+            (
+                "read",
+                if args.get("include_text").and_then(Value::as_bool) == Some(true) {
+                    "text_and_types"
+                } else {
+                    "types"
+                },
+                "Allow Cua to read the current system clipboard",
+            )
+        } else {
+            let kind = if args.get("text").and_then(Value::as_str).is_some() {
+                "text"
+            } else if args.get("image_path").and_then(Value::as_str).is_some() {
+                "image"
+            } else {
+                "file_url"
+            };
+            (
+                "write",
+                kind,
+                "Allow Cua to replace the current system clipboard",
+            )
+        };
+        self.protected_resource_grants
+            .authorize(
+                context,
+                "clipboard",
+                crate::authorization::RiskClass::R2,
+                lifecycle_session,
+                serde_json::json!({
+                    "kind": "system_clipboard",
+                    "operation": operation,
+                    "content_kind": content_kind,
+                }),
+                &format!("{summary} using {tool_name}"),
+                Duration::from_secs(30 * 60),
+                Duration::from_secs(8 * 60 * 60),
+            )
+            .await
+            .map(|_| ())
+    }
+
     async fn authorize_file_transfer(
         &self,
         tool_name: &str,
@@ -1683,6 +1749,25 @@ impl ToolRegistry {
                         "canonical_destination_root": destination,
                     }),
                     "Allow Cua to download one file from this browser tab to the exact destination directory".to_owned(),
+                )
+            }
+            "clipboard_write" => {
+                let (argument, content_kind) =
+                    if args.get("image_path").and_then(Value::as_str).is_some() {
+                        ("image_path", "image")
+                    } else {
+                        ("file_path", "file_url")
+                    };
+                let source = canonical_existing_file(required_path_arg(args, argument)?)?;
+                args[argument] = Value::String(source.clone());
+                (
+                    serde_json::json!({
+                        "kind": "clipboard_local_file",
+                        "content_kind": content_kind,
+                        "direction": "local_to_clipboard",
+                        "canonical_source_path": source,
+                    }),
+                    format!("Allow Cua to read this exact local {content_kind} into the clipboard"),
                 )
             }
             "get_desktop_state" | "get_window_state" => {
@@ -2032,6 +2117,25 @@ fn canonical_upload_files(args: &Value) -> Result<Vec<String>, ToolResult> {
                 .map_err(|_| protected_scope_refusal("an upload path could not be canonicalized"))
         })
         .collect()
+}
+
+fn canonical_existing_file(raw: &str) -> Result<String, ToolResult> {
+    let path = Path::new(raw);
+    if !path.is_absolute() {
+        return Err(protected_scope_refusal(
+            "clipboard file paths must be absolute",
+        ));
+    }
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|_| protected_scope_refusal("the exact clipboard path does not exist"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(protected_scope_refusal(
+            "clipboard paths must name regular files directly, not links or directories",
+        ));
+    }
+    std::fs::canonicalize(path)
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|_| protected_scope_refusal("the clipboard path could not be canonicalized"))
 }
 
 /// Resolve a not-yet-created output without creating it before approval.
@@ -3694,6 +3798,13 @@ fn recording_args_for(tool_name: &str, args: &Value) -> Value {
                     );
                 }
             }
+            "clipboard_write" => {
+                for field in ["text", "image_path", "file_path"] {
+                    if arguments.contains_key(field) {
+                        arguments.insert(field.to_owned(), Value::String("[redacted]".to_owned()));
+                    }
+                }
+            }
             "browser_set_input_files" => {
                 if let Some(count) = arguments
                     .get("files")
@@ -3841,6 +3952,31 @@ mod capability_tests {
                 !serialized.contains(forbidden),
                 "recording leaked {forbidden}"
             );
+        }
+    }
+
+    #[test]
+    fn clipboard_write_recording_args_are_content_free() {
+        let recorded = recording_args_for(
+            "clipboard_write",
+            &serde_json::json!({
+                "text": "private text",
+                "image_path": "/private/image.png",
+                "file_path": "/private/document.pdf",
+                "session": "public-session",
+            }),
+        );
+        assert_eq!(recorded["text"], "[redacted]");
+        assert_eq!(recorded["image_path"], "[redacted]");
+        assert_eq!(recorded["file_path"], "[redacted]");
+        assert_eq!(recorded["session"], "public-session");
+        let serialized = recorded.to_string();
+        for forbidden in [
+            "private text",
+            "/private/image.png",
+            "/private/document.pdf",
+        ] {
+            assert!(!serialized.contains(forbidden));
         }
     }
 

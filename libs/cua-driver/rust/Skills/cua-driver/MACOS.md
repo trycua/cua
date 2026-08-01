@@ -389,8 +389,10 @@ UIKit renderer the real keyboard focus the AX layer can't, then types
 into the now-focused field. Read `x,y` straight off the screenshot in
 the `get_window_state` response (same convention as `click`). This is
 the one-call replacement for the old two-step "pixel-click then
-`type_text`" — and you do **not** reach for a clipboard + `Cmd+V`
-dance.
+`type_text`". Prefer this direct route. If an application only accepts paste,
+call `clipboard_write`, then `clipboard_read` and verify the returned types
+(and text when applicable) **before** selecting or replacing existing editor
+content. Send Cmd+V only after that read-back succeeds.
 
 0. **If the control is CLOSED, open it first.** A px focus-click won't
    reliably _open and focus_ a closed control (a search button, a

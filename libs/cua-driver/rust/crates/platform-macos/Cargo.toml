@@ -24,6 +24,7 @@ cursor-overlay = { path = "../cursor-overlay" }
 pip-preview = { path = "../pip-preview" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+clipboard-rs = "0.3.5"
 # macOS system bindings
 core-foundation = "0.10"
 core-graphics = { version = "0.24", features = ["highsierra", "elcapitan"] }

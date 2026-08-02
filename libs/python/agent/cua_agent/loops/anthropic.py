@@ -1947,7 +1947,7 @@ Task: Click {instruction}. Output ONLY a click action on the target element.""",
             ):
 
                 action = item["action"]
-                if action.get("x") and action.get("y"):
+                if action.get("x") is not None and action.get("y") is not None:
                     x = action.get("x")
                     y = action.get("y")
                     return (int(x), int(y))

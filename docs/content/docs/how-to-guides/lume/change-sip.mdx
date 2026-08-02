@@ -1,0 +1,111 @@
+---
+title: Change SIP on a macOS VM
+description: Disable or enable System Integrity Protection from paired macOS Recovery and verify the result.
+---
+
+Use `lume sip` to change System Integrity Protection (SIP) on a stopped macOS
+VM. Lume runs `csrutil` in the VM's paired Recovery environment and verifies
+the result after a normal boot.
+
+For the policy model behind this workflow, read [How SIP works in Lume
+VMs](/concepts/how-sip-works-in-lume-vms).
+
+## Before you start
+
+The VM must:
+
+- run macOS;
+- be stopped;
+- have a working administrator account; and
+- have Remote Login enabled.
+
+VMs created with Lume's unattended setup meet these requirements. Their
+initial username and password are both `lume`.
+
+Install the optional Recovery VNC driver:
+
+```bash
+python3 -m pip install --user vncdotool
+```
+
+Recovery input currently supports administrator passwords made from lowercase
+ASCII letters, digits, and hyphens. The Recovery password prompt must name the
+account passed with `--admin-user`.
+
+## Disable SIP
+
+With the default `lume` account, run:
+
+```bash
+lume sip off macos-tahoe
+```
+
+Confirm the change when prompted. Lume validates the account, changes the
+policy in Recovery, boots normally to run `csrutil status`, and leaves the VM
+stopped. A successful run ends with:
+
+```text
+System Integrity Protection status: disabled.
+SIP is disabled.
+```
+
+For another administrator account, enter its password without exposing it in
+the process arguments:
+
+```bash
+lume sip off macos-tahoe \
+  --admin-user admin \
+  --admin-password-stdin
+```
+
+For non-interactive use, provide confirmation with `--yes` so the password is
+the only line read from standard input:
+
+```bash
+printf '%s\n' "$LUME_ADMIN_PASSWORD" | \
+  lume sip off macos-tahoe \
+    --admin-user admin \
+    --admin-password-stdin \
+    --yes
+```
+
+## Enable SIP
+
+Run the same command with `on`:
+
+```bash
+lume sip on macos-tahoe \
+  --admin-user admin \
+  --admin-password-stdin
+```
+
+A successful run ends with the canonical enabled status and leaves the VM
+stopped.
+
+## Prepare a reusable SIP-disabled VM
+
+Change SIP on a stopped seed, then clone it:
+
+```bash
+lume sip off macos-tahoe-seed --yes
+lume clone macos-tahoe-seed macos-tahoe-worker-001
+```
+
+Lume copies `disk.img` and `nvram.bin` together. Do not replace either file
+independently because the signed policy, personalized boot files, and
+anti-replay state belong to one paired VM state.
+
+Boot a worker and inspect its policy when you need an extra check:
+
+```bash
+lume run --no-display macos-tahoe-worker-001
+lume ssh macos-tahoe-worker-001 'csrutil status'
+lume stop macos-tahoe-worker-001
+```
+
+## Related pages
+
+- [How SIP works in Lume VMs](/concepts/how-sip-works-in-lume-vms)
+- [Manage local Lume VMs](/how-to-guides/lume/manage-vms)
+- [Lume limits](/reference/lume/limits#sip-automation)
+- [Lume CLI reference](/reference/lume/cli-reference#lume-sip)

@@ -6,6 +6,13 @@ Sandboxed VM environments with a unified Python API. Cloud by default.
 pip install cua-sandbox
 ```
 
+Fleet support is provided by the published `cua-fleet` wheel. It bundles the platform-specific `fleet_sdk` native binding.
+Install from the Cua wheel index when resolving dependencies with pip:
+
+```bash
+pip install --extra-index-url https://wheels.cua.ai/simple cua-sandbox
+```
+
 ## Ephemeral sandbox
 
 Created on enter, destroyed on exit.
@@ -76,4 +83,61 @@ from cua_sandbox import Localhost
 async with Localhost.connect() as host:
     await host.shell.run("echo hello")
     await host.screenshot()
+```
+
+
+## Cloud sandbox
+
+Fleet is the OAuth cloud backend. Configure OAuth credentials once; Fleet uses `https://run.cua.ai` by default and can be overridden with `configure(fleet_base_url=...)` or `CUA_FLEET_BASE_URL`. The legacy API-key VM API continues to use `https://api.cua.ai`. Cloud images must use a registry reference; `expose()` declares additional Fleet services.
+
+Fleet does not support snapshots or custom disks, and currently supports only `us-east-1`. `await sb.tunnel.forward(3000)` returns the authenticated Fleet service URL for an exposed port; it does not open a local SSH tunnel.
+
+## Fleet pools
+
+Use a pool to keep reusable registry-image sandboxes warm. Reconciliation is idempotent: it creates a missing pool or updates the existing pool with the same name. Each claim is released when the context exits, including when the block raises.
+
+```python
+from cua_sandbox import Image, Pool
+
+pool = await Pool.reconcile({
+    "name": "foo",
+    "image": Image.from_registry("registry.example/workspace:latest"),
+})
+
+async with pool.claim() as sb:
+    result = await sb.shell.run("echo hello")
+
+    # Requests use the same authenticated Fleet claim.
+    response = await sb.services.request(
+        "mcp", method="POST", path="/mcp", json={"jsonrpc": "2.0", "method": "tools/list", "id": 1}
+    )
+    response.raise_for_status()
+```
+
+For scripts that use the synchronous facade:
+
+```python
+from cua_sandbox import Image
+from cua_sandbox.sync import Pool
+
+pool = Pool.reconcile({"name": "foo", "image": Image.from_registry("example:latest")})
+with pool.claim() as sb:
+    result = sb.shell.run("echo hello")
+```
+
+```python
+import os
+
+import cua_sandbox as cua
+from cua_sandbox import Image, Sandbox
+
+cua.configure(
+    client_id=os.environ["CUA_CLIENT_ID"],
+    client_secret=os.environ["CUA_CLIENT_SECRET"],
+)
+
+async with Sandbox.ephemeral(
+    Image.from_registry("registry.example/desktop-workspace@sha256:...").expose(3000)
+) as sb:
+    await sb.shell.run("uname -a")
 ```

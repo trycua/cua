@@ -1,10 +1,10 @@
-name: "CD: Bump Version"
+name: "Legacy packages: Bump Version"
 
 on:
   workflow_dispatch:
     inputs:
       service:
-        description: "Service/Package to bump"
+        description: "Legacy package (Cua Driver and Lume use Release Please)"
         required: true
         type: choice
         options:
@@ -16,21 +16,22 @@ on:
           - pypi/cli
           - pypi/computer
           - pypi/computer-server
+          - pypi/cloud
           - pypi/core
           - pypi/mcp-server
           - pypi/sandbox
           - pypi/sandbox-apps
           - pypi/som
+          - pypi/train
           - npm/cli
           - npm/computer
           - npm/core
+          - npm/fleet
           - npm/playground
           - npm/cuabot
-          - lume
-          - cua-driver
-          - cua-driver-rs
           - docker/cuabot
           - docker/kasm
+          - docker/xfce-cua
           - docker/xfce
           - docker/lumier
           - docker/qemu-android
@@ -50,12 +51,33 @@ on:
         type: string
         default: "main"
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
-  bump-version:
+  authorize:
+    name: Authorize version bump
     runs-on: ubuntu-latest
+    steps:
+      - name: Allow only the release owner or trusted automation
+        env:
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          case "$ACTOR:$TRIGGERING_ACTOR" in
+            "f-trycua:f-trycua"|"r33drichards:r33drichards"|"cua-release-bot[bot]:cua-release-bot[bot]")
+              echo "Version bump authorized for $ACTOR."
+              ;;
+            *)
+              echo "::error::Only f-trycua may manually bump package versions."
+              exit 1
+              ;;
+          esac
+
+  bump-version:
+    needs: authorize
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Set package directory and type
         id: package
@@ -89,6 +111,10 @@ jobs:
               echo "directory=libs/python/computer" >> $GITHUB_OUTPUT
               echo "type=python" >> $GITHUB_OUTPUT
               ;;
+            "pypi/cloud")
+              echo "directory=libs/python/cua-cloud" >> $GITHUB_OUTPUT
+              echo "type=python" >> $GITHUB_OUTPUT
+              ;;
             "pypi/computer-server")
               echo "directory=libs/python/computer-server" >> $GITHUB_OUTPUT
               echo "type=python" >> $GITHUB_OUTPUT
@@ -113,6 +139,10 @@ jobs:
               echo "directory=libs/python/som" >> $GITHUB_OUTPUT
               echo "type=python" >> $GITHUB_OUTPUT
               ;;
+            "pypi/train")
+              echo "directory=libs/python/cua-train" >> $GITHUB_OUTPUT
+              echo "type=python" >> $GITHUB_OUTPUT
+              ;;
             "npm/cli")
               echo "directory=libs/typescript/cua-cli" >> $GITHUB_OUTPUT
               echo "type=npm" >> $GITHUB_OUTPUT
@@ -125,6 +155,10 @@ jobs:
               echo "directory=libs/typescript/core" >> $GITHUB_OUTPUT
               echo "type=npm" >> $GITHUB_OUTPUT
               ;;
+            "npm/fleet")
+              echo "directory=libs/typescript/fleet" >> $GITHUB_OUTPUT
+              echo "type=npm" >> $GITHUB_OUTPUT
+              ;;
             "npm/playground")
               echo "directory=libs/typescript/playground" >> $GITHUB_OUTPUT
               echo "type=npm" >> $GITHUB_OUTPUT
@@ -133,18 +167,6 @@ jobs:
               echo "directory=libs/cuabot" >> $GITHUB_OUTPUT
               echo "type=npm" >> $GITHUB_OUTPUT
               ;;
-            "lume")
-              echo "directory=libs/lume" >> $GITHUB_OUTPUT
-              echo "type=lume" >> $GITHUB_OUTPUT
-              ;;
-            "cua-driver")
-              echo "directory=libs/cua-driver" >> $GITHUB_OUTPUT
-              echo "type=cua-driver" >> $GITHUB_OUTPUT
-              ;;
-            "cua-driver-rs")
-              echo "directory=libs/cua-driver/rust" >> $GITHUB_OUTPUT
-              echo "type=cua-driver-rs" >> $GITHUB_OUTPUT
-              ;;
             "docker/cuabot")
               echo "directory=libs/cuabot" >> $GITHUB_OUTPUT
               echo "type=docker" >> $GITHUB_OUTPUT
@@ -152,6 +174,10 @@ jobs:
               ;;
             "docker/kasm")
               echo "directory=libs/kasm" >> $GITHUB_OUTPUT
+              echo "type=docker" >> $GITHUB_OUTPUT
+              ;;
+            "docker/xfce-cua")
+              echo "directory=libs/xfce-cua" >> $GITHUB_OUTPUT
               echo "type=docker" >> $GITHUB_OUTPUT
               ;;
             "docker/xfce")
@@ -200,27 +226,24 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Clean existing tags if present
+      - name: Reject an existing release tag
         run: |
-          # Function to clean a tag for a given package directory
-          clean_tag() {
+          reject_existing_tag() {
             local dir=$1
             local config_file=${2:-.bumpversion.cfg}
             cd "$dir"
             NEW_VERSION=$(bump2version --config-file "$config_file" --dry-run --list ${{ inputs.bump_type }} 2>/dev/null | grep -m1 '^new_version=' | sed 's/new_version=//')
             TAG_NAME=$(grep -m1 '^tag_name' "$config_file" | sed 's/tag_name *= *//' | sed "s|{new_version}|$NEW_VERSION|")
-            echo "Checking for existing tag: $TAG_NAME"
-            git tag -d "$TAG_NAME" 2>/dev/null || true
-            git push origin ":refs/tags/$TAG_NAME" 2>/dev/null || true
+            if git show-ref --verify --quiet "refs/tags/$TAG_NAME" || \
+              git ls-remote --exit-code --tags origin "refs/tags/$TAG_NAME" >/dev/null 2>&1; then
+              echo "::error::release tag $TAG_NAME already exists; release tags are immutable"
+              exit 1
+            fi
             cd - > /dev/null
           }
 
-          # Clean tag for the primary package
           BUMPVERSION_CONFIG="${{ steps.package.outputs.bumpversion_config }}"
-          clean_tag "${{ steps.package.outputs.directory }}" "${BUMPVERSION_CONFIG:-.bumpversion.cfg}"
-
-          # No cascade tag cleaning — each package is bumped independently.
-          # Dependent packages use version ranges and resolve deps at publish time.
+          reject_existing_tag "${{ steps.package.outputs.directory }}" "${BUMPVERSION_CONFIG:-.bumpversion.cfg}"
 
       - name: Run bump2version
         run: |
@@ -302,6 +325,15 @@ jobs:
           echo "Computer version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: Capture bumped cloud version
+        if: ${{ inputs.service == 'pypi/cloud' }}
+        id: cloud_version
+        run: |
+          cd libs/python/cua-cloud
+          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
+          echo "Cloud version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Capture bumped computer-server version
         if: ${{ inputs.service == 'pypi/computer-server' }}
         id: computer_server_version
@@ -356,6 +388,15 @@ jobs:
           echo "SOM version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: Capture bumped train version
+        if: ${{ inputs.service == 'pypi/train' }}
+        id: train_version
+        run: |
+          cd libs/python/cua-train
+          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
+          echo "Train version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Capture bumped npm/cli version
         if: ${{ inputs.service == 'npm/cli' }}
         id: npm_cli_version
@@ -386,30 +427,6 @@ jobs:
         run: |
           VERSION=$(grep -oP '"version": "\K[^"]+' libs/typescript/playground/package.json)
           echo "npm/playground version: $VERSION"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Capture bumped lume version
-        if: ${{ inputs.service == 'lume' }}
-        id: lume_version
-        run: |
-          VERSION=$(grep -oP 'static let current: String = "\K[^"]+' libs/lume/src/Main.swift)
-          echo "lume version: $VERSION"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Capture bumped cua-driver version
-        if: ${{ inputs.service == 'cua-driver' }}
-        id: cua_driver_version
-        run: |
-          VERSION=$(grep -oP 'public static let version = "\K[^"]+' libs/cua-driver/Sources/CuaDriverCore/CuaDriverCore.swift)
-          echo "cua-driver version: $VERSION"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Capture bumped cua-driver-rs version
-        if: ${{ inputs.service == 'cua-driver-rs' }}
-        id: cua_driver_rs_version
-        run: |
-          VERSION=$(grep -m1 -oP '^version = "\K[^"]+' libs/cua-driver/rust/Cargo.toml)
-          echo "cua-driver-rs version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Capture bumped cuabot version
@@ -496,7 +513,6 @@ jobs:
               echo "Creating tag via API..."
               for tag in $ALL_TAGS; do
                 echo "Creating tag: $tag"
-                gh api -X DELETE /repos/${{ github.repository }}/git/refs/tags/${tag} 2>/dev/null || true
                 gh api /repos/${{ github.repository }}/git/refs \
                   -f ref="refs/tags/${tag}" \
                   -f sha="${COMMIT_SHA}"

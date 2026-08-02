@@ -18,10 +18,11 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import contextmanager
-from typing import Any, Iterator, Optional
+from typing import Any, Iterator, Mapping, Optional
 
 from cua_sandbox.image import Image
 from cua_sandbox.localhost import Localhost as _AsyncLocalhost
+from cua_sandbox.pool import Pool as _AsyncPool
 from cua_sandbox.sandbox import Sandbox as _AsyncSandbox
 
 
@@ -70,6 +71,40 @@ class _SyncProxy:
 
     def __repr__(self) -> str:
         return f"Sync({self._async_obj!r})"
+
+
+class Pool:
+    """Blocking facade for :class:`cua_sandbox.Pool`.
+
+    ``Pool.reconcile`` and ``pool.claim`` use the same Fleet lifecycle as the
+    async API, but yield synchronous sandbox interface methods for scripts and
+    notebooks.
+    """
+
+    def __init__(self, async_pool: _AsyncPool) -> None:
+        self._async_pool = async_pool
+
+    @property
+    def name(self) -> str:
+        return self._async_pool.name
+
+    @classmethod
+    def reconcile(cls, config: Mapping[str, Any]) -> "Pool":
+        """Synchronously create or update a Fleet pool."""
+        return cls(_run(_AsyncPool.reconcile(config)))
+
+    @contextmanager
+    def claim(self) -> Iterator[_SyncProxy]:
+        """Synchronously lease a sandbox and release the claim on exit."""
+        context = self._async_pool.claim()
+        sandbox = _run(context.__aenter__())
+        try:
+            yield _SyncProxy(sandbox)
+        except BaseException as error:
+            _run(context.__aexit__(type(error), error, error.__traceback__))
+            raise
+        else:
+            _run(context.__aexit__(None, None, None))
 
 
 @contextmanager

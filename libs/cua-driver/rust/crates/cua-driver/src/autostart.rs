@@ -30,8 +30,17 @@
 
 use anyhow::{anyhow, Result};
 
-/// Canonical task / unit name. Used by every platform.
-pub const TASK_NAME: &str = "cua-driver-serve";
+/// Canonical task name for this installed product.
+pub fn task_name() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        crate::bundle::autostart_task_name()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        "cua-driver-serve"
+    }
+}
 
 /// Reported by `status`.
 ///
@@ -60,6 +69,41 @@ impl Status {
             Status::RegisteredIdle => "registered (not running)",
             Status::RegisteredRunning => "registered (running)",
         }
+    }
+}
+
+/// Outcome of asking `schtasks /HRESULT` whether the autostart task exists.
+///
+/// Keep query failures separate from `Status::NotRegistered`: a caller that
+/// cannot inspect Task Scheduler must not report that the task is absent.
+#[cfg(any(target_os = "windows", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TaskQueryOutcome {
+    Registered,
+    NotRegistered,
+    PermissionDenied,
+    Unknown,
+}
+
+#[cfg(any(target_os = "windows", test))]
+const HRESULT_FILE_NOT_FOUND: u32 = 0x8007_0002;
+
+#[cfg(any(target_os = "windows", test))]
+const HRESULT_ACCESS_DENIED: u32 = 0x8007_0005;
+
+#[cfg(any(target_os = "windows", test))]
+fn classify_task_query(success: bool, exit_code: Option<i32>) -> TaskQueryOutcome {
+    if success {
+        return TaskQueryOutcome::Registered;
+    }
+
+    // `/HRESULT` makes the process exit code carry the original Windows error
+    // instead of collapsing every failure to exit 1. Interpret the i32 as its
+    // raw u32 bit pattern because Windows HRESULTs have the high bit set.
+    match exit_code.map(|code| code as u32) {
+        Some(HRESULT_FILE_NOT_FOUND) => TaskQueryOutcome::NotRegistered,
+        Some(HRESULT_ACCESS_DENIED) => TaskQueryOutcome::PermissionDenied,
+        _ => TaskQueryOutcome::Unknown,
     }
 }
 
@@ -178,16 +222,13 @@ $action = New-ScheduledTaskAction `
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Hours 0)
-Unregister-ScheduledTask -TaskName 'cua-driver-serve' -Confirm:$false -ErrorAction SilentlyContinue
-Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'cua-driver-rs: serve daemon, auto-start at interactive logon, RunLevel=Highest for UWP/AppContainer support' | Out-Null
+Unregister-ScheduledTask -TaskName $env:CUA_DRIVER_AS_TASK -Confirm:$false -ErrorAction SilentlyContinue
+Register-ScheduledTask -TaskName $env:CUA_DRIVER_AS_TASK -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description "${env:CUA_DRIVER_AS_CLI}: serve daemon, auto-start at interactive logon, RunLevel=Highest for UWP/AppContainer support" | Out-Null
 
-# Note: the uiAccess'd worker (`cua-driver-uia.exe`) does NOT get its own
-# scheduled task. uiAccess PEs can only be launched via ShellExecute, and
-# Task Scheduler's PowerShell-wrapper Action path returns ERROR_NOT_LOGGED_ON
-# (0x800710E0). Instead, `cua-driver serve` itself spawns the sibling worker
-# via ShellExecuteEx at startup (see serve.rs `maybe_spawn_uia_worker`),
-# which works because the spawn originates from a Session-2 process with an
-# interactive desktop. See #1602.
+# The uiAccess worker (`cua-driver-uia.exe`) has no public client route and is
+# not started by this task. The High-IL daemon is the supported path for
+# elevated/AppContainer pixel input. A future worker path must be forwarded by
+# the authorized parent daemon rather than exposed to public clients. See #1602.
 "#;
 
     pub fn enable(exe: &str) -> Result<()> {
@@ -199,6 +240,8 @@ Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $tr
         let out = Command::new("powershell")
             .args(["-NoProfile", "-NonInteractive", "-Command", REGISTER_PS])
             .env("CUA_DRIVER_AS_EXE", exe)
+            .env("CUA_DRIVER_AS_TASK", task_name())
+            .env("CUA_DRIVER_AS_CLI", crate::bundle::cli_name())
             .output()
             .map_err(|e| anyhow!("failed to invoke powershell: {e}"))?;
         if out.status.success() {
@@ -240,10 +283,7 @@ Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $tr
             // happens INSIDE the elevated process (where it'll succeed on
             // the first attempt and not re-enter this branch). -Wait so we
             // can capture the child's exit code.
-            let inner = format!(
-                "& \"{}\" autostart enable",
-                exe.replace('"', "`\"")
-            );
+            let inner = format!("& \"{}\" autostart enable", exe.replace('"', "`\""));
             let outer = format!(
                 "$p = Start-Process -FilePath '{}' -ArgumentList @('-NoProfile','-NonInteractive','-Command',{}) -Verb RunAs -Wait -PassThru; exit $p.ExitCode",
                 "powershell.exe",
@@ -272,14 +312,15 @@ Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $tr
     }
 
     pub fn disable() -> Result<()> {
-        // Tear down any legacy `cua-driver-uia` task from earlier autostart
-        // versions that registered a separate scheduled task for the uia
-        // worker. Current versions don't register one (serve.rs spawns the
-        // worker as a child), but `disable` should still clean up old
-        // installs. Best-effort — "task not found" is ignored.
-        let _ = Command::new("schtasks")
-            .args(["/Delete", "/TN", "cua-driver-uia", "/F"])
-            .output();
+        // Tear down the legacy release `cua-driver-uia` task only when
+        // managing the release product. Older versions registered a separate
+        // task for the worker; current versions retain no worker autostart.
+        // Local management must never alter that release task.
+        if !crate::bundle::is_local_installation() {
+            let _ = Command::new("schtasks")
+                .args(["/Delete", "/TN", "cua-driver-uia", "/F"])
+                .output();
+        }
 
         // schtasks /Delete returns 0 on success, 1 on "task not found"
         // (which we treat as success: the goal is "no task registered"
@@ -287,7 +328,7 @@ Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $tr
         // code because schtasks doesn't distinguish "doesn't exist" from
         // "permission denied" via exit code.
         let out = Command::new("schtasks")
-            .args(["/Delete", "/TN", TASK_NAME, "/F"])
+            .args(["/Delete", "/TN", task_name(), "/F"])
             .output()
             .map_err(|e| anyhow!("failed to invoke schtasks: {e}"))?;
         if out.status.success() {
@@ -310,15 +351,45 @@ Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $tr
     }
 
     pub fn status() -> Result<Status> {
-        // schtasks /Query exits 0 with task details on stdout, or 1 with
-        // "ERROR: The system cannot find the file specified." on stderr.
+        // Without /HRESULT, schtasks collapses "task not found", permission
+        // failures, and other Task Scheduler errors to exit 1. /HRESULT keeps
+        // those cases distinct and is locale-independent: ERROR_FILE_NOT_FOUND
+        // means the named task is absent, while ERROR_PATH_NOT_FOUND means the
+        // scheduler namespace could not be inspected and therefore stays
+        // unknown.
         let out = Command::new("schtasks")
-            .args(["/Query", "/TN", TASK_NAME])
+            .args(["/Query", "/TN", task_name(), "/HRESULT"])
             .output()
-            .map_err(|e| anyhow!("failed to invoke schtasks: {e}"))?;
-        if !out.status.success() {
-            return Ok(Status::NotRegistered);
+            .map_err(|e| anyhow!("unknown: failed to invoke schtasks: {e}"))?;
+
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        match classify_task_query(out.status.success(), out.status.code()) {
+            TaskQueryOutcome::Registered => {}
+            TaskQueryOutcome::NotRegistered => return Ok(Status::NotRegistered),
+            outcome @ (TaskQueryOutcome::PermissionDenied | TaskQueryOutcome::Unknown) => {
+                let tag = match outcome {
+                    TaskQueryOutcome::PermissionDenied => "permission-denied",
+                    TaskQueryOutcome::Unknown => "unknown",
+                    _ => unreachable!(),
+                };
+                let diagnostic = match (stdout.trim(), stderr.trim()) {
+                    ("", "") => "no diagnostic output".to_owned(),
+                    (stdout, "") => stdout.to_owned(),
+                    ("", stderr) => stderr.to_owned(),
+                    (stdout, stderr) => format!("{stdout}\n{stderr}"),
+                };
+                let hresult = out
+                    .status
+                    .code()
+                    .map(|code| format!("0x{:08X}", code as u32))
+                    .unwrap_or_else(|| "unavailable".to_owned());
+                return Err(anyhow!(
+                    "{tag}: schtasks /Query /HRESULT failed (HRESULT {hresult}): {diagnostic}"
+                ));
+            }
         }
+
         // Registered — now check whether `cua-driver serve` is running.
         // Avoid invoking `tasklist` (slow ~200ms on first run); use the
         // same registry the daemon's own status command uses via a
@@ -332,7 +403,7 @@ Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $tr
 
     pub fn kick() -> Result<()> {
         let out = Command::new("schtasks")
-            .args(["/Run", "/TN", TASK_NAME])
+            .args(["/Run", "/TN", task_name()])
             .output()
             .map_err(|e| anyhow!("failed to invoke schtasks: {e}"))?;
         if !out.status.success() {
@@ -353,9 +424,8 @@ Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $tr
 mod platform {
     use super::*;
 
-    const NOT_YET: &str =
-        "cua-driver autostart is currently Windows-only. macOS users: see \
-         libs/cua-driver/rust/scripts/install-local.sh --autostart for the \
+    const NOT_YET: &str = "cua-driver autostart is currently Windows-only. macOS users: see \
+         libs/cua-driver/scripts/install-local.sh --autostart for the \
          LaunchAgent recipe. Linux users: same script registers a systemd \
          --user unit. A cross-platform impl is tracked as a follow-up.";
 
@@ -380,13 +450,22 @@ mod platform {
 /// (main) doesn't need to plumb back an exit code for every subcommand.
 pub fn run_autostart_cmd(subcommand: &str) {
     let (verb_result, success_text): (Result<()>, String) = match subcommand {
-        "enable" => (enable(), format!(
-            "Registered autostart entry '{TASK_NAME}'.\n  \
-             cua-driver serve will start at every interactive logon."
-        )),
-        "disable" => (disable(), format!(
-            "Removed autostart entry '{TASK_NAME}' (no-op if it was already absent)."
-        )),
+        "enable" => (
+            enable(),
+            format!(
+                "Registered autostart entry '{}'.\n  \
+             {} serve will start at every interactive logon.",
+                task_name(),
+                crate::bundle::cli_name()
+            ),
+        ),
+        "disable" => (
+            disable(),
+            format!(
+                "Removed autostart entry '{}' (no-op if it was already absent).",
+                task_name()
+            ),
+        ),
         "status" => match status() {
             Ok(s) => {
                 println!("{}", s.tag());
@@ -397,9 +476,13 @@ pub fn run_autostart_cmd(subcommand: &str) {
                 std::process::exit(1);
             }
         },
-        "kick" => (kick(), format!(
-            "Started autostart entry '{TASK_NAME}' for the current session."
-        )),
+        "kick" => (
+            kick(),
+            format!(
+                "Started autostart entry '{}' for the current session.",
+                task_name()
+            ),
+        ),
         other => {
             eprintln!("Unknown autostart subcommand: {other:?}");
             eprintln!("Usage: cua-driver autostart {{enable|disable|status|kick}}");
@@ -415,5 +498,58 @@ pub fn run_autostart_cmd(subcommand: &str) {
             eprintln!("cua-driver autostart {subcommand}: {e}");
             std::process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn successful_task_query_is_registered() {
+        assert_eq!(
+            classify_task_query(true, Some(0)),
+            TaskQueryOutcome::Registered
+        );
+        assert_eq!(
+            classify_task_query(true, Some(HRESULT_ACCESS_DENIED as i32)),
+            TaskQueryOutcome::Registered
+        );
+    }
+
+    #[test]
+    fn file_not_found_is_not_registered() {
+        assert_eq!(
+            classify_task_query(false, Some(HRESULT_FILE_NOT_FOUND as i32)),
+            TaskQueryOutcome::NotRegistered
+        );
+    }
+
+    #[test]
+    fn access_failure_is_permission_denied() {
+        assert_eq!(
+            classify_task_query(false, Some(HRESULT_ACCESS_DENIED as i32)),
+            TaskQueryOutcome::PermissionDenied
+        );
+    }
+
+    #[test]
+    fn unrecognized_failure_is_unknown() {
+        const HRESULT_PATH_NOT_FOUND: u32 = 0x8007_0003;
+        const HRESULT_RPC_SERVER_UNAVAILABLE: u32 = 0x8007_06BA;
+
+        assert_eq!(
+            classify_task_query(false, Some(HRESULT_PATH_NOT_FOUND as i32)),
+            TaskQueryOutcome::Unknown
+        );
+        assert_eq!(
+            classify_task_query(false, Some(HRESULT_RPC_SERVER_UNAVAILABLE as i32)),
+            TaskQueryOutcome::Unknown
+        );
+        assert_eq!(
+            classify_task_query(false, Some(1)),
+            TaskQueryOutcome::Unknown
+        );
+        assert_eq!(classify_task_query(false, None), TaskQueryOutcome::Unknown);
     }
 }

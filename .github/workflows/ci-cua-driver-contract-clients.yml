@@ -1,0 +1,306 @@
+name: "CI: cua-driver contract clients"
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-driver/contract/**"
+      - "libs/cua-driver/compat-fixtures/**"
+      - "libs/cua-driver/examples/agent-sdks/**"
+      - "libs/cua-driver/typescript/**"
+      - "libs/cua-driver/python/**"
+      - "libs/cua-driver/rust/Cargo.toml"
+      - "libs/cua-driver/rust/Cargo.lock"
+      - "libs/cua-driver/rust/include/**"
+      - "libs/cua-driver/rust/tests/**"
+      - "libs/cua-driver/rust/crates/cua-driver/**"
+      - "libs/cua-driver/rust/crates/cua-driver-contract/**"
+      - "libs/cua-driver/rust/crates/cua-driver-bindgen/**"
+      - "libs/cua-driver/rust/crates/cua-driver-core/**"
+      - "libs/cua-driver/rust/crates/cua-driver-sdk/**"
+      - "libs/cua-driver/rust/crates/cua-driver-testkit/**"
+      - "libs/cua-driver/rust/crates/platform-linux/**"
+      - "libs/cua-driver/rust/crates/platform-macos/**"
+      - "libs/cua-driver/rust/crates/platform-windows/**"
+      - "libs/cua-driver/scripts/generate-uniffi-bindings.mjs"
+      - "libs/cua-driver/scripts/stage-uniffi-library.mjs"
+      - "libs/cua-driver/scripts/build-npm-packages.mjs"
+      - ".github/workflows/cd-py-cua-driver.yml"
+      - ".github/workflows/ci-cua-driver-contract-clients.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua-driver/contract/**"
+      - "libs/cua-driver/compat-fixtures/**"
+      - "libs/cua-driver/examples/agent-sdks/**"
+      - "libs/cua-driver/typescript/**"
+      - "libs/cua-driver/python/**"
+      - "libs/cua-driver/rust/Cargo.toml"
+      - "libs/cua-driver/rust/Cargo.lock"
+      - "libs/cua-driver/rust/include/**"
+      - "libs/cua-driver/rust/tests/**"
+      - "libs/cua-driver/rust/crates/cua-driver/**"
+      - "libs/cua-driver/rust/crates/cua-driver-contract/**"
+      - "libs/cua-driver/rust/crates/cua-driver-bindgen/**"
+      - "libs/cua-driver/rust/crates/cua-driver-core/**"
+      - "libs/cua-driver/rust/crates/cua-driver-sdk/**"
+      - "libs/cua-driver/rust/crates/cua-driver-testkit/**"
+      - "libs/cua-driver/rust/crates/platform-linux/**"
+      - "libs/cua-driver/rust/crates/platform-macos/**"
+      - "libs/cua-driver/rust/crates/platform-windows/**"
+      - "libs/cua-driver/scripts/generate-uniffi-bindings.mjs"
+      - "libs/cua-driver/scripts/stage-uniffi-library.mjs"
+      - "libs/cua-driver/scripts/build-npm-packages.mjs"
+      - ".github/workflows/cd-py-cua-driver.yml"
+      - ".github/workflows/ci-cua-driver-contract-clients.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cua-driver-contract-clients-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runtime-parity:
+    name: Portable contract parity (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+      - name: Record Windows runner session
+        if: runner.os == 'Windows'
+        id: windows-session
+        shell: pwsh
+        run: |
+          $sessionId = (Get-Process -Id $PID).SessionId
+          "session_id=$sessionId" >> $env:GITHUB_OUTPUT
+          "Windows runner process session id: $sessionId"
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
+            libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
+      - name: Prove portable contracts match the live registry
+        if: runner.os != 'Windows' || steps.windows-session.outputs.session_id != '0'
+        working-directory: libs/cua-driver/rust
+        run: cargo test --locked -p cua-driver --test schema_consistency_test portable_desktop_contracts_are_accepted_by_active_backend
+
+      - name: Verify released CLI and MCP compatibility
+        if: runner.os != 'Windows' || steps.windows-session.outputs.session_id != '0'
+        working-directory: libs/cua-driver/rust
+        run: cargo test --locked -p cua-driver --test compatibility_contract_test
+
+      - name: Compile the UniFFI SDK library
+        working-directory: libs/cua-driver/rust
+        run: cargo check --locked -p cua-driver-sdk
+
+      - name: Compile the frozen previous-release Rust application
+        run: cargo check --manifest-path libs/cua-driver/compat-fixtures/apps/rust/Cargo.toml
+
+      - name: Run the frozen previous-release Rust application
+        if: runner.os == 'Linux'
+        run: cargo run --manifest-path libs/cua-driver/compat-fixtures/apps/rust/Cargo.toml
+
+      - name: Prove the embedded host serves SDK and MCP clients
+        if: runner.os != 'Windows' || steps.windows-session.outputs.session_id != '0'
+        working-directory: libs/cua-driver/rust
+        run: cargo test --locked -p cua-driver --test embedded_host_sdk_mcp_test
+
+      - name: Prove Windows Session 0 refusal and desktop-free metadata
+        if: runner.os == 'Windows' && steps.windows-session.outputs.session_id == '0'
+        working-directory: libs/cua-driver/rust
+        shell: pwsh
+        run: |
+          cargo test --locked -p platform-windows diagnostics::tests:: --lib
+          if ($LASTEXITCODE -ne 0) { throw "Windows diagnostics tests failed with exit $LASTEXITCODE" }
+          cargo test --locked -p cua-driver-sdk session_zero_refuses_runtime_creation_before_platform_dispatch --lib
+          if ($LASTEXITCODE -ne 0) { throw "Session 0 refusal test failed with exit $LASTEXITCODE" }
+          cargo run --locked -p cua-driver -- list-tools | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Session 0 list-tools failed with exit $LASTEXITCODE" }
+          cargo run --locked -p cua-driver -- describe click | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Session 0 describe failed with exit $LASTEXITCODE" }
+          cargo run --locked -p cua-driver -- dump-docs --type cli | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Session 0 dump-docs failed with exit $LASTEXITCODE" }
+
+  verify:
+    name: Generated contract and SDK bindings
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
+            libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            libs/cua-driver/typescript/package-lock.json
+            libs/cua-driver/examples/agent-sdks/package-lock.json
+
+      - name: Install TypeScript SDK dependencies
+        working-directory: libs/cua-driver/typescript
+        run: npm ci
+
+      - name: Verify generated files
+        working-directory: libs/cua-driver/rust
+        run: cargo run --locked -p cua-driver-contract --bin cua-contract-gen -- all --check
+
+      - name: Verify generated UniFFI bindings
+        working-directory: libs/cua-driver
+        run: node scripts/generate-uniffi-bindings.mjs --check
+
+      - name: Verify generated public C ABI header
+        working-directory: libs/cua-driver/rust
+        run: cargo run --locked -p cua-driver-bindgen --bin cua-driver-abi-header -- --check
+
+      - name: Test contract crate
+        working-directory: libs/cua-driver/rust
+        run: cargo test --locked -p cua-driver-contract
+
+      - name: Test UniFFI Rust implementation
+        working-directory: libs/cua-driver/rust
+        run: cargo test --locked -p cua-driver-sdk
+
+      - name: Test live contract parity
+        working-directory: libs/cua-driver/rust
+        run: cargo test --locked -p cua-driver-core --test contract_parity
+
+      - name: Test Python release packaging helpers
+        working-directory: libs/cua-driver/python
+        run: |
+          python -m pip install pytest
+          python -m pytest \
+            tests/test_build_wheel.py \
+            tests/test_compatibility_contract.py \
+            -q
+
+      - name: Build and stage host-native UniFFI library
+        working-directory: libs/cua-driver
+        run: |
+          npm --prefix typescript run build
+          node scripts/stage-uniffi-library.mjs
+
+      - name: Verify stable C ABI symbols and external client
+        working-directory: libs/cua-driver/rust
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror \
+            -I include tests/c_abi_smoke.c \
+            -L target/release -lcua_driver_sdk \
+            -Wl,-rpath,'$ORIGIN/release' \
+            -o target/cua-driver-abi-smoke
+          LD_LIBRARY_PATH=target/release target/cua-driver-abi-smoke
+          nm -D --defined-only target/release/libcua_driver_sdk.so > /tmp/cua-driver-abi-symbols.txt
+          for symbol in \
+            cua_driver_abi_version_v1 \
+            cua_driver_abi_is_compatible_v1 \
+            cua_driver_buffer_free_v1 \
+            cua_driver_create_v1 \
+            cua_driver_destroy_v1 \
+            cua_driver_invoke_v1 \
+            cua_driver_session_create_v1 \
+            cua_driver_session_destroy_v1 \
+            cua_driver_session_invoke_v1 \
+            cua_driver_shutdown_v1 \
+            cua_driver_operation_cancel_v1 \
+            cua_driver_operation_release_v1; do
+            grep -Eq "[[:space:]]${symbol}$" /tmp/cua-driver-abi-symbols.txt
+          done
+
+      - name: Test Python UniFFI loader
+        working-directory: libs/cua-driver/python
+        run: |
+          CUA_DRIVER_REQUIRE_UNIFFI=1 PYTHONPATH=src \
+            python -m unittest tests/test_uniffi_loader.py -v
+          CUA_DRIVER_REQUIRE_UNIFFI=1 PYTHONPATH=src python -c \
+            "import cua_driver; missing = [name for name in cua_driver.__all__ if not hasattr(cua_driver, name)]; assert not missing, f'unresolved package exports: {missing}'"
+
+      - name: Test TypeScript SDK
+        working-directory: libs/cua-driver/typescript
+        run: npm run typecheck && CUA_DRIVER_REQUIRE_UNIFFI=1 npm test && npm audit --audit-level=high
+
+      - name: Verify Python native package contents
+        working-directory: libs/cua-driver
+        run: |
+          python -m pip install build hatchling
+          CUA_DRIVER_WHEEL_TAG=py3-none-manylinux_2_31_x86_64 \
+            python -m build --wheel --outdir /tmp/cua-driver-wheels python
+          unzip -l /tmp/cua-driver-wheels/*.whl | grep -F 'cua_driver/libcua_driver_sdk.so'
+          python -m pip install --target /tmp/cua-driver-wheel-smoke /tmp/cua-driver-wheels/*.whl
+          PYTHONPATH=/tmp/cua-driver-wheel-smoke python \
+            compat-fixtures/apps/python/app.py
+          PYTHONPATH=/tmp/cua-driver-wheel-smoke python -c \
+            "from cua_driver import EmbeddedCuaDriverHost; print(EmbeddedCuaDriverHost)"
+
+      - name: Verify Node native package contents
+        working-directory: libs/cua-driver/typescript
+        run: |
+          mkdir -p /tmp/cua-driver-native/linux-x64-gnu /tmp/cua-driver-npm/smoke
+          cp ../rust/target/release/libcua_driver_sdk.so \
+            /tmp/cua-driver-native/linux-x64-gnu/libcua_driver_sdk.so
+          cp node_modules/@trycua/cua-driver-linux-x64-gnu/cua_driver_node_runtime.node \
+            /tmp/cua-driver-native/linux-x64-gnu/cua_driver_node_runtime.node
+          VERSION=$(node -p "require('./package.json').version")
+          node ../scripts/build-npm-packages.mjs \
+            --version "$VERSION" \
+            --native-dir /tmp/cua-driver-native \
+            --output-dir /tmp/cua-driver-npm \
+            --allow-partial
+          tar -tzf "/tmp/cua-driver-npm/trycua-cua-driver-$VERSION.tgz" > /tmp/cua-driver-npm/contents.txt
+          grep -F 'package/dist/embedded.js' /tmp/cua-driver-npm/contents.txt
+          grep -F 'package/dist/electron.js' /tmp/cua-driver-npm/contents.txt
+          tar -tzf "/tmp/cua-driver-npm/trycua-cua-driver-linux-x64-gnu-$VERSION.tgz" | \
+            grep -F 'package/libcua_driver_sdk.so'
+          tar -tzf "/tmp/cua-driver-npm/trycua-cua-driver-linux-x64-gnu-$VERSION.tgz" | \
+            grep -F 'package/cua_driver_node_runtime.node'
+          npm install --prefix /tmp/cua-driver-npm/smoke \
+            "/tmp/cua-driver-npm/trycua-cua-driver-$VERSION.tgz" \
+            "/tmp/cua-driver-npm/trycua-cua-driver-linux-x64-gnu-$VERSION.tgz"
+          cd /tmp/cua-driver-npm/smoke
+          cp "$GITHUB_WORKSPACE/libs/cua-driver/compat-fixtures/apps/typescript/app.mjs" .
+          node app.mjs
+          node --input-type=module -e \
+            "const sdk = await import('@trycua/cua-driver'); const embedded = await import('@trycua/cua-driver/embedded'); if (embedded.EmbeddedCuaDriverHost !== sdk.EmbeddedCuaDriverHost) process.exit(1)"
+
+      - name: Install Python agent SDK example dependencies
+        working-directory: libs/cua-driver/examples/agent-sdks
+        run: python -m pip install -r requirements.txt
+
+      - name: Check Python agent SDK examples and fixture
+        working-directory: libs/cua-driver/examples/agent-sdks
+        run: |
+          python -m py_compile \
+            claude_agent.py codex_agent.py fixture_server.py \
+            native_driver.py native_tools.py test_fixture_server.py
+          python -m unittest test_fixture_server.py -v
+          python -c "import claude_agent_sdk, openai_codex, cua_driver"
+
+      - name: Install agent SDK example dependencies
+        working-directory: libs/cua-driver/examples/agent-sdks
+        run: npm ci
+
+      - name: Check TypeScript agent SDK example
+        working-directory: libs/cua-driver/examples/agent-sdks
+        run: npm run typecheck

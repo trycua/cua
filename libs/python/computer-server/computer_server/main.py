@@ -8,7 +8,7 @@ import os
 import platform
 import time
 import traceback
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import asynccontextmanager, redirect_stderr, redirect_stdout
 from io import StringIO
 from typing import Any, Dict, List, Literal, Optional, Union, cast
 
@@ -96,13 +96,28 @@ if HAS_MCP:
     except Exception as e:
         logger.warning(f"Failed to create MCP server: {e}")
 
+
+@asynccontextmanager
+async def _application_lifespan(application: FastAPI):
+    """Run FastMCP's lifespan and release the shared driver runtime on exit."""
+
+    try:
+        if _mcp_http_app:
+            async with _mcp_http_app.lifespan(application):
+                yield
+        else:
+            yield
+    finally:
+        await HandlerFactory.close_handlers()
+
+
 # Configure application with WebSocket settings and MCP lifespan
 app = FastAPI(
     title="Computer API",
     description="API for the Computer project",
     version="0.1.0",
     websocket_max_size=WEBSOCKET_MAX_SIZE,
-    lifespan=_mcp_http_app.lifespan if _mcp_http_app else None,
+    lifespan=_application_lifespan,
     redirect_slashes=False,
 )
 
@@ -188,9 +203,76 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount MCP server at /mcp - FastMCP's internal path is "/" so endpoint is /mcp
+
+class McpBarePathRewrite:
+    """Serve the MCP app at both /mcp and /mcp/.
+
+    Starlette's Mount only matches "/mcp/..." — a bare "/mcp" resolves
+    to inner path "" and 404s, and redirect_slashes=False on the outer
+    app disables the 307 rescue. Most MCP clients (claude.ai included)
+    POST to the bare path, so rewrite it before routing. A rewrite
+    (not a redirect) keeps POST bodies and SSE streaming intact; pure
+    ASGI (not BaseHTTPMiddleware) so responses aren't buffered.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["path"] == "/mcp":
+            scope = dict(scope, path="/mcp/")
+        await self.app(scope, receive, send)
+
+
+class McpAcceptHeaderShim:
+    """Make the MCP streamable-HTTP endpoint tolerant of the Accept header.
+
+    The MCP Python SDK's StreamableHTTP transport rejects requests with
+    JSON-RPC -32600 ("Not Acceptable: Client must accept ...") unless the
+    request's Accept header advertises BOTH ``application/json`` and
+    ``text/event-stream`` (POST path), or ``text/event-stream`` (GET SSE
+    path). claude.ai's MCP connector does not always send both, so its
+    handshake POST to /mcp is rejected before it ever reaches a tool.
+
+    This pure-ASGI shim normalizes the inbound Accept header for /mcp
+    requests so it always contains both media types, which lets the SDK's
+    Accept check pass for every client regardless of what it sent. It only
+    rewrites the REQUEST header — it does not touch ``json_response`` or any
+    response semantics, so the server still negotiates JSON vs. SSE exactly
+    as it would otherwise. This keeps existing MCP clients (Claude Code,
+    SDK) unaffected while admitting stricter/looser connectors.
+
+    Scoped to the /mcp prefix only; all other routes are passed through
+    untouched. Pure ASGI (not BaseHTTPMiddleware) so streaming responses
+    are not buffered.
+    """
+
+    _COMBINED = b"application/json, text/event-stream"
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        path = scope.get("path", "")
+        # Match the bare /mcp endpoint and anything under /mcp/, but NOT
+        # unrelated routes that merely share the prefix (e.g. /mcpx).
+        if scope["type"] == "http" and (path == "/mcp" or path.startswith("/mcp/")):
+            headers = [(k, v) for (k, v) in scope.get("headers", []) if k != b"accept"]
+            headers.append((b"accept", self._COMBINED))
+            scope = dict(scope, headers=headers)
+        await self.app(scope, receive, send)
+
+
+# Mount MCP server at /mcp - FastMCP's internal path is "/" so endpoint is /mcp.
+#
+# Middleware ordering note: Starlette's app.add_middleware() prepends, so the
+# LAST one added runs FIRST (outermost). We want, outermost -> innermost:
+#   McpBarePathRewrite (fix the path) -> McpAcceptHeaderShim (fix Accept) -> app
+# so add McpAcceptHeaderShim first, then McpBarePathRewrite.
 if _mcp_http_app:
     app.mount("/mcp", _mcp_http_app)
+    app.add_middleware(McpAcceptHeaderShim)
+    app.add_middleware(McpBarePathRewrite)
 
 protocol_version = 1
 try:
@@ -213,7 +295,7 @@ except Exception:
     file_handler,
     desktop_handler,
     window_handler,
-) = HandlerFactory.create_handlers()
+) = HandlerFactory.get_handlers()
 
 
 # Helper function for direction-based scrolling
@@ -325,6 +407,15 @@ handlers = {
 # so non-Android server instances don't fail at startup with AttributeError.
 if hasattr(automation_handler, "multitouch_gesture"):
     handlers["multitouch_gesture"] = automation_handler.multitouch_gesture
+
+# Whole-desktop state belongs to the Cua Driver backend. Keep the legacy
+# command map stable for native/VNC handlers that do not implement it.
+if hasattr(automation_handler, "get_desktop_state"):
+    handlers["get_desktop_state"] = automation_handler.get_desktop_state
+if hasattr(automation_handler, "get_capture_scope_state"):
+    handlers["get_capture_scope_state"] = automation_handler.get_capture_scope_state
+if hasattr(automation_handler, "escalate_capture_scope"):
+    handlers["escalate_capture_scope"] = automation_handler.escalate_capture_scope
 
 
 class AuthenticationManager:
@@ -1154,7 +1245,28 @@ async def agent_response_endpoint(
             parts = [normalize_key(p) for p in parts]
 
             if len(parts) == 1:
-                await self._auto.press_key(parts[0])
+                key = parts[0]
+                # Route single printable characters through type_text so the
+                # insertion is layout-independent. press_key uses a physical-key
+                # path (pynput keyboard.press/release) that follows the active
+                # input source — under a Russian or CJK layout it inserts the
+                # layout-mapped character instead of the intended ASCII one.
+                # type_text uses pynput keyboard.type() which bypasses the
+                # layout and inserts the literal Unicode codepoint.
+                #
+                # A key is "printable" when it is exactly one character long
+                # and unicodedata.category is not a control category (Cc/Cs).
+                # Special keys (return, tab, escape, arrows, f1-f12, …) are
+                # multi-character strings or map to a Key enum — those still
+                # go through press_key unchanged.
+                #
+                # See: https://github.com/trycua/cua/issues/1605
+                import unicodedata
+
+                if len(key) == 1 and unicodedata.category(key) not in ("Cc", "Cs", "Cn"):
+                    await self._auto.type_text(key)
+                else:
+                    await self._auto.press_key(key)
             else:
                 await self._auto.hotkey(parts)
 

@@ -1,0 +1,124 @@
+---
+title: Connect your agent to Cua docs
+description: Point your coding agent at the hosted Docs & Code MCP Server so it can search Cua's docs and source.
+---
+
+The Docs & Code MCP Server lets coding agents **ground answers and generated code** in Cua's real docs and source *instead of guessing*. Point your agent at the endpoint and it can query the actual APIs across released versions.
+
+The Docs & Code MCP Server speaks streamable-HTTP at `https://vk-mcp.cua.ai/mcp`.
+
+## Cursor
+
+Open settings with `Shift+Command+J` on Mac, or `Shift+Ctrl+J` on Windows and Linux.
+
+Find `MCP Tools` in the sidebar.
+
+Click `Add Custom MCP` to open `mcp.json`.
+
+Add this server entry:
+
+```json
+{
+  "mcpServers": {
+    "Cua Docs & Code": {
+      "url": "https://vk-mcp.cua.ai/mcp"
+    }
+  }
+}
+```
+
+## Claude Code
+
+Add the Docs & Code MCP Server over the CLI:
+
+```bash
+claude mcp add --transport http cua-docs https://vk-mcp.cua.ai/mcp
+```
+
+Verify the connection:
+
+```bash
+claude mcp list
+```
+
+Expect a `Connected` line for `cua-docs`.
+
+Inspect the server configuration when needed:
+
+```bash
+claude mcp get cua-docs
+```
+
+Remove the local server entry when needed:
+
+```bash
+claude mcp remove cua-docs -s local
+```
+
+## Windsurf
+
+Open Windsurf Settings.
+
+Go to `Cascade > Model Context Protocol`.
+
+Click `Add Server > Add custom server`.
+
+Select `Streamable HTTP` transport.
+
+Enter this URL:
+
+```text
+https://vk-mcp.cua.ai/mcp
+```
+
+Edit the config file directly when needed. On macOS and Linux, use `~/.codeium/windsurf/mcp_config.json`. On Windows, use `%USERPROFILE%\.codeium\windsurf\mcp_config.json`.
+
+## Cline (VS Code)
+
+Open the Cline panel.
+
+Click the menu in the top right.
+
+Select `MCP Servers`.
+
+Open the `Remote Servers` tab.
+
+Enter `Cua Docs & Code` as the server name.
+
+Enter this URL:
+
+```text
+https://vk-mcp.cua.ai/mcp
+```
+
+Click `Add Server`.
+
+## GitHub Copilot
+
+Enable MCP in VS Code. Open Settings, search for `MCP`, and enable `chat.mcp.enabled`.
+
+Create `.vscode/mcp.json` in the project with this server entry:
+
+```json
+{
+  "servers": {
+    "Cua Docs & Code": {
+      "url": "https://vk-mcp.cua.ai/mcp"
+    }
+  }
+}
+```
+
+Open Copilot Chat.
+
+Switch to Agent mode.
+
+Use the Docs & Code MCP Server tools from the agent.
+
+## Verify it works
+
+Once connected, the agent exposes four read-only tools: `query_docs_db`, `query_docs_vectors`, `query_code_db`, and `query_code_vectors`.
+
+Ask the agent something that forces a lookup, such as a Cua API signature in a specific release. Confirm that it calls one of the Docs & Code MCP Server tools before it answers.
+
+See the [Docs & Code MCP reference](/reference/docs-code-mcp) for tool details.

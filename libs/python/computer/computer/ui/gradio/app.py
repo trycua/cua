@@ -182,7 +182,7 @@ last_screenshot_before = None  # Store the most [-2]th recent screenshot
 screenshot_images = []  # Array to store all screenshot images
 
 # Define a constant for the output directory
-OUTPUT_DIR = "examples/output"
+OUTPUT_DIR = "output"
 SESSION_DIR = os.path.join(OUTPUT_DIR, "sessions")
 
 

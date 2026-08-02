@@ -1,18 +1,26 @@
 //! Cross-platform CDP (Chrome DevTools Protocol) helper.
 //!
-//! A self-contained `Runtime.evaluate` client that speaks raw TCP — no
-//! external HTTP/WS crates. Used by the cross-platform `page` tool's
-//! `execute_javascript` action on Windows/Linux (and by the macOS Electron
-//! backend, which retains its own copy under `platform-macos/src/browser/`
-//! that predates this helper).
+//! Legacy-compatible `Runtime.evaluate` support for the cross-platform
+//! `page` tool. HTTP target discovery and first-page/URL-hint selection retain
+//! the published legacy behavior, while WebSocket calls use the same pooled,
+//! event-aware [`crate::browser::cdp_ws::CdpConnection`] transport as the
+//! first-class browser tools.
 //!
 //! Flow:
 //!  1. HTTP GET http://127.0.0.1:{cdp_port}/json  → discover page WS URLs.
-//!  2. WebSocket connect to the first page URL.
+//!  2. Reuse or connect the selected page WebSocket through `CdpPool`.
 //!  3. Send Runtime.evaluate with userGesture=true.
-//!  4. Read frames until we receive the response with id=1.
+//!  4. Let the shared demultiplexer match the response without losing events.
 
 use serde_json::Value;
+use std::sync::OnceLock;
+
+use crate::browser::cdp_ws::CdpPool;
+
+fn legacy_pool() -> &'static CdpPool {
+    static POOL: OnceLock<CdpPool> = OnceLock::new();
+    POOL.get_or_init(CdpPool::new)
+}
 
 /// Evaluate `expression` in the first page tab exposed by a Chromium-family
 /// browser listening on `port` (the value passed to `--remote-debugging-port`).
@@ -20,12 +28,20 @@ use serde_json::Value;
 /// Returns the formatted result (or `exception: ...` if the evaluated code
 /// raised). Caller is responsible for prefixing the human-readable label
 /// (e.g. `"cdp.runtime.evaluate.user_gesture: ..."`).
-pub async fn evaluate(
+pub async fn evaluate(port: u16, expression: &str, await_promise: bool) -> anyhow::Result<String> {
+    evaluate_targeted(port, expression, await_promise, None).await
+}
+
+/// Evaluate `expression` in the unique page whose URL contains
+/// `target_url_contains`. When no hint is supplied, preserves the legacy
+/// first-page behavior.
+pub async fn evaluate_targeted(
     port: u16,
     expression: &str,
     await_promise: bool,
+    target_url_contains: Option<&str>,
 ) -> anyhow::Result<String> {
-    let response = cdp_evaluate(port, expression, await_promise).await?;
+    let response = cdp_evaluate(port, expression, await_promise, target_url_contains).await?;
     Ok(format_cdp_result(&response))
 }
 
@@ -35,43 +51,61 @@ async fn cdp_evaluate(
     port: u16,
     expression: &str,
     await_promise: bool,
+    target_url_contains: Option<&str>,
 ) -> anyhow::Result<Value> {
-    // Wrap the /json discovery in its own timeout — `cdp_list_pages` does an
-    // unbounded `read_to_end`, and a half-open localhost socket (browser
-    // mid-shutdown, firewall mismatch, port stolen by another process) would
-    // otherwise hang us forever. 10 s is generous for a localhost HTTP roundtrip.
-    let pages = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        cdp_list_pages(port),
-    )
-    .await
-    .map_err(|_| anyhow::anyhow!("CDP /json discovery on port {port} timed out after 10 s"))??;
-    if pages.is_empty() {
-        anyhow::bail!("No CDP page tabs found on port {port}");
-    }
+    // A listener can be reachable before Chromium publishes its first page
+    // target. Bound both that readiness interval and the HTTP roundtrip.
+    let pages = tokio::time::timeout(std::time::Duration::from_secs(10), cdp_wait_for_page(port))
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!("CDP /json discovery on port {port} timed out after 10 s")
+        })??;
 
-    let ws_url = pages[0]
+    let page = pick_page(&pages, target_url_contains).ok_or_else(|| match target_url_contains {
+        Some(hint) => anyhow::anyhow!("No unique CDP page URL contains {hint:?} on port {port}"),
+        None => anyhow::anyhow!("No CDP page tabs found on port {port}"),
+    })?;
+    let ws_url = page
         .get("webSocketDebuggerUrl")
         .and_then(|u| u.as_str())
         .ok_or_else(|| anyhow::anyhow!("Page has no webSocketDebuggerUrl"))?
         .to_string();
 
-    let cmd = serde_json::json!({
-        "id": 1,
-        "method": "Runtime.evaluate",
-        "params": {
-            "expression": expression,
-            "userGesture": true,
-            "awaitPromise": await_promise
-        }
-    });
-
-    tokio::time::timeout(
+    let connection = legacy_pool().get(&ws_url).await?;
+    let result = tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        cdp_ws_call(port, &ws_url, &cmd.to_string()),
+        connection.call(
+            None,
+            "Runtime.evaluate",
+            serde_json::json!({
+                "expression": expression,
+                "userGesture": true,
+                "awaitPromise": await_promise
+            }),
+        ),
     )
     .await
-    .map_err(|_| anyhow::anyhow!("CDP evaluate timed out after 30 s"))?
+    .map_err(|_| anyhow::anyhow!("CDP evaluate timed out after 30 s"))??;
+    Ok(serde_json::json!({ "result": result }))
+}
+
+fn pick_page<'a>(pages: &'a [Value], hint: Option<&str>) -> Option<&'a Value> {
+    match hint {
+        None => pages.first(),
+        Some(hint) => {
+            let hint_lower = hint.to_ascii_lowercase();
+            let mut matches = pages.iter().filter(|page| {
+                page.get("url")
+                    .and_then(Value::as_str)
+                    .is_some_and(|url| url.to_ascii_lowercase().contains(&hint_lower))
+            });
+            let page = matches.next()?;
+            if matches.next().is_some() {
+                return None;
+            }
+            Some(page)
+        }
+    }
 }
 
 fn format_cdp_result(response: &Value) -> String {
@@ -102,6 +136,16 @@ fn format_cdp_result(response: &Value) -> String {
 
 // ── HTTP page discovery ───────────────────────────────────────────────────
 
+async fn cdp_wait_for_page(port: u16) -> anyhow::Result<Vec<Value>> {
+    loop {
+        let pages = cdp_list_pages(port).await?;
+        if !pages.is_empty() {
+            return Ok(pages);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
 async fn cdp_list_pages(port: u16) -> anyhow::Result<Vec<Value>> {
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
@@ -114,9 +158,7 @@ async fn cdp_list_pages(port: u16) -> anyhow::Result<Vec<Value>> {
     // forever. Parse Content-Length / Transfer-Encoding: chunked from the
     // response headers and read exactly that many body bytes, leaving the
     // socket open (it's torn down when we drop the stream).
-    let req = format!(
-        "GET /json HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
-    );
+    let req = format!("GET /json HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
     stream.write_all(req.as_bytes()).await?;
 
     let mut reader = BufReader::new(stream);
@@ -126,8 +168,12 @@ async fn cdp_list_pages(port: u16) -> anyhow::Result<Vec<Value>> {
     loop {
         header_line.clear();
         let n = reader.read_line(&mut header_line).await?;
-        if n == 0 { anyhow::bail!("CDP /json: EOF in headers"); }
-        if header_line == "\r\n" { break; }
+        if n == 0 {
+            anyhow::bail!("CDP /json: EOF in headers");
+        }
+        if header_line == "\r\n" {
+            break;
+        }
         let lower = header_line.to_ascii_lowercase();
         if let Some(v) = lower.strip_prefix("content-length:") {
             content_length = v.trim().parse::<usize>().ok();
@@ -148,7 +194,9 @@ async fn cdp_list_pages(port: u16) -> anyhow::Result<Vec<Value>> {
             reader.read_line(&mut size_line).await?;
             let size = usize::from_str_radix(size_line.trim_end(), 16)
                 .map_err(|_| anyhow::anyhow!("CDP /json: bad chunk size {size_line:?}"))?;
-            if size == 0 { break; }
+            if size == 0 {
+                break;
+            }
             let mut chunk = vec![0u8; size];
             reader.read_exact(&mut chunk).await?;
             out.extend_from_slice(&chunk);
@@ -168,8 +216,8 @@ async fn cdp_list_pages(port: u16) -> anyhow::Result<Vec<Value>> {
     let body = std::str::from_utf8(&body_bytes)
         .map_err(|_| anyhow::anyhow!("CDP /json response is not valid UTF-8"))?;
 
-    let all: Value = serde_json::from_str(body)
-        .map_err(|e| anyhow::anyhow!("CDP /json parse error: {e}"))?;
+    let all: Value =
+        serde_json::from_str(body).map_err(|e| anyhow::anyhow!("CDP /json parse error: {e}"))?;
 
     let pages = all
         .as_array()
@@ -187,188 +235,114 @@ async fn cdp_list_pages(port: u16) -> anyhow::Result<Vec<Value>> {
     Ok(pages)
 }
 
-// ── WebSocket CDP call ────────────────────────────────────────────────────
-
-async fn cdp_ws_call(port: u16, ws_url: &str, message: &str) -> anyhow::Result<Value> {
+#[cfg(test)]
+mod tests {
+    use super::{evaluate, format_cdp_result, pick_page};
+    use futures_util::{SinkExt, StreamExt};
+    use serde_json::json;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio_tungstenite::{accept_async, tungstenite::Message};
 
-    let path: String = if let Some(rest) = ws_url.strip_prefix("ws://") {
-        rest.splitn(2, '/')
-            .nth(1)
-            .map(|p| format!("/{p}"))
-            .unwrap_or_else(|| "/".into())
-    } else {
-        ws_url.to_string()
-    };
-
-    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
-        .await
-        .map_err(|e| anyhow::anyhow!("Cannot connect to CDP WebSocket on port {port}: {e}"))?;
-
-    let handshake = format!(
-        "GET {path} HTTP/1.1\r\n\
-         Host: 127.0.0.1:{port}\r\n\
-         Upgrade: websocket\r\n\
-         Connection: Upgrade\r\n\
-         Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
-         Sec-WebSocket-Version: 13\r\n\
-         \r\n"
-    );
-    stream.write_all(handshake.as_bytes()).await?;
-
-    let mut hdr = Vec::with_capacity(512);
-    loop {
-        let mut b = [0u8; 1];
-        stream.read_exact(&mut b).await?;
-        hdr.push(b[0]);
-        if hdr.ends_with(b"\r\n\r\n") {
-            break;
-        }
-        if hdr.len() > 8192 {
-            anyhow::bail!("WebSocket upgrade response headers too large");
-        }
+    fn pages() -> Vec<serde_json::Value> {
+        vec![
+            json!({ "url": "app://fixture/#window-a", "webSocketDebuggerUrl": "ws://a" }),
+            json!({ "url": "app://fixture/#window-b", "webSocketDebuggerUrl": "ws://b" }),
+        ]
     }
-    if !String::from_utf8_lossy(&hdr).contains("101") {
-        anyhow::bail!(
-            "WebSocket upgrade failed: {}",
-            String::from_utf8_lossy(&hdr[..hdr.len().min(200)])
+
+    #[test]
+    fn targeted_page_selection_is_unique_and_case_insensitive() {
+        let pages = pages();
+        assert_eq!(
+            pick_page(&pages, Some("#WINDOW-B"))
+                .and_then(|page| page["webSocketDebuggerUrl"].as_str()),
+            Some("ws://b")
+        );
+        assert!(pick_page(&pages, Some("#missing")).is_none());
+        assert!(pick_page(&pages, Some("app://fixture/")).is_none());
+    }
+
+    #[test]
+    fn omitted_page_hint_preserves_first_page_behavior() {
+        let pages = pages();
+        assert_eq!(
+            pick_page(&pages, None).and_then(|page| page["webSocketDebuggerUrl"].as_str()),
+            Some("ws://a")
         );
     }
 
-    ws_write_text(&mut stream, message.as_bytes()).await?;
-
-    loop {
-        match ws_read_frame(&mut stream).await? {
-            WsFrame::Text(text) => {
-                if let Ok(val) = serde_json::from_str::<Value>(&text) {
-                    if val.get("id").and_then(|id| id.as_u64()) == Some(1) {
-                        return Ok(val);
+    #[test]
+    fn legacy_result_format_is_unchanged() {
+        assert_eq!(
+            format_cdp_result(&json!({ "result": { "result": { "value": "text" } } })),
+            "\"text\""
+        );
+        assert_eq!(
+            format_cdp_result(&json!({
+                "result": {
+                    "exceptionDetails": {
+                        "exception": { "description": "ReferenceError: missing" }
                     }
-                } else {
-                    anyhow::bail!(
-                        "CDP returned non-JSON frame: {}",
-                        &text[..text.len().min(120)]
-                    );
                 }
-            }
-            WsFrame::Ping(data) => {
-                ws_write_pong(&mut stream, &data).await?;
-            }
-            WsFrame::Close => {
-                anyhow::bail!("CDP WebSocket closed by server before response");
-            }
-            WsFrame::Other => { /* binary / continuation / pong — skip */ }
-        }
-    }
-}
-
-// ── WebSocket frame I/O ───────────────────────────────────────────────────
-
-enum WsFrame {
-    Text(String),
-    Ping(Vec<u8>),
-    Close,
-    Other,
-}
-
-async fn ws_read_frame(stream: &mut tokio::net::TcpStream) -> anyhow::Result<WsFrame> {
-    use tokio::io::AsyncReadExt;
-
-    let mut hdr = [0u8; 2];
-    stream.read_exact(&mut hdr).await?;
-
-    let opcode = hdr[0] & 0x0F;
-    let masked = (hdr[1] & 0x80) != 0;
-    let len_byte = (hdr[1] & 0x7F) as usize;
-
-    let payload_len: usize = match len_byte {
-        0..=125 => len_byte,
-        126 => {
-            let mut b = [0u8; 2];
-            stream.read_exact(&mut b).await?;
-            u16::from_be_bytes(b) as usize
-        }
-        _ => {
-            let mut b = [0u8; 8];
-            stream.read_exact(&mut b).await?;
-            let n = u64::from_be_bytes(b) as usize;
-            if n > 16 * 1024 * 1024 {
-                anyhow::bail!("CDP WebSocket frame too large ({n} bytes)");
-            }
-            n
-        }
-    };
-
-    let mask_key: Option<[u8; 4]> = if masked {
-        let mut m = [0u8; 4];
-        stream.read_exact(&mut m).await?;
-        Some(m)
-    } else {
-        None
-    };
-
-    let mut payload = vec![0u8; payload_len];
-    stream.read_exact(&mut payload).await?;
-    if let Some(mk) = mask_key {
-        for (i, b) in payload.iter_mut().enumerate() {
-            *b ^= mk[i % 4];
-        }
+            })),
+            "exception: ReferenceError: missing"
+        );
     }
 
-    match opcode {
-        1 => Ok(WsFrame::Text(String::from_utf8(payload).map_err(|_| {
-            anyhow::anyhow!("CDP returned non-UTF-8 text frame")
-        })?)),
-        2 => Ok(WsFrame::Other),
-        8 => Ok(WsFrame::Close),
-        9 => Ok(WsFrame::Ping(payload)),
-        _ => Ok(WsFrame::Other),
-    }
-}
+    #[tokio::test]
+    async fn evaluate_uses_event_aware_transport_without_changing_output() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut http, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 1024];
+            let _ = http.read(&mut request).await.unwrap();
+            let body = json!([{
+                "type": "page",
+                "url": "app://fixture/",
+                "webSocketDebuggerUrl": format!("ws://127.0.0.1:{port}/devtools/page/compat")
+            }])
+            .to_string();
+            http.write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
 
-async fn ws_write_text(stream: &mut tokio::net::TcpStream, payload: &[u8]) -> anyhow::Result<()> {
-    use tokio::io::AsyncWriteExt;
-    const MASK: [u8; 4] = [0xDE, 0xAD, 0xBE, 0xEF];
-    let len = payload.len();
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut websocket = accept_async(socket).await.unwrap();
+            let Message::Text(text) = websocket.next().await.unwrap().unwrap() else {
+                panic!("expected Runtime.evaluate request")
+            };
+            let call: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(call["method"], "Runtime.evaluate");
+            let id = call["id"].as_u64().unwrap();
+            websocket
+                .send(Message::Text(
+                    json!({ "method": "Runtime.consoleAPICalled", "params": {} }).to_string(),
+                ))
+                .await
+                .unwrap();
+            websocket
+                .send(Message::Text(
+                    json!({
+                        "id": id,
+                        "result": { "result": { "value": "compat" } }
+                    })
+                    .to_string(),
+                ))
+                .await
+                .unwrap();
+        });
 
-    let mut frame = Vec::with_capacity(len + 10);
-    frame.push(0x81u8);
-    encode_len_masked(&mut frame, len);
-    frame.extend_from_slice(&MASK);
-    for (i, &b) in payload.iter().enumerate() {
-        frame.push(b ^ MASK[i % 4]);
-    }
-    stream.write_all(&frame).await?;
-    Ok(())
-}
-
-async fn ws_write_pong(stream: &mut tokio::net::TcpStream, payload: &[u8]) -> anyhow::Result<()> {
-    use tokio::io::AsyncWriteExt;
-    const MASK: [u8; 4] = [0xCA, 0xFE, 0xBA, 0xBE];
-    let len = payload.len().min(125);
-
-    let mut frame = Vec::with_capacity(len + 6);
-    frame.push(0x8Au8);
-    frame.push(0x80 | len as u8);
-    frame.extend_from_slice(&MASK);
-    for (i, &b) in payload[..len].iter().enumerate() {
-        frame.push(b ^ MASK[i % 4]);
-    }
-    stream.write_all(&frame).await?;
-    Ok(())
-}
-
-fn encode_len_masked(buf: &mut Vec<u8>, len: usize) {
-    if len < 126 {
-        buf.push(0x80 | len as u8);
-    } else if len <= 65535 {
-        buf.push(0x80 | 126);
-        buf.push((len >> 8) as u8);
-        buf.push(len as u8);
-    } else {
-        buf.push(0x80 | 127);
-        for i in (0..8).rev() {
-            buf.push((len >> (i * 8)) as u8);
-        }
+        assert_eq!(evaluate(port, "1 + 1", true).await.unwrap(), "\"compat\"");
+        server.await.unwrap();
     }
 }

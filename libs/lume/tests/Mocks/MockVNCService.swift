@@ -8,17 +8,19 @@ final class MockVNCService: VNCService {
     private(set) var url: String?
     private(set) var isRunning = false
     private(set) var clientOpenCount = 0
-    private var _attachedVM: Any?
+    private(set) var startCallCount = 0
+    private(set) var stopCallCount = 0
+    private var _attachedVM: VZVirtualMachine?
     private let vmDirectory: VMDirectory
 
     init(vmDirectory: VMDirectory) {
         self.vmDirectory = vmDirectory
     }
 
-    nonisolated var attachedVM: String? {
+    nonisolated var hasAttachedVM: Bool {
         get async {
             await Task { @MainActor in
-                _attachedVM as? String
+                _attachedVM != nil
             }.value
         }
     }
@@ -29,13 +31,15 @@ final class MockVNCService: VNCService {
         return nil
     }
 
-    func start(port: Int, password: String? = nil, virtualMachine: Any?) async throws {
+    func start(port: Int, password: String? = nil, virtualMachine: VZVirtualMachine?) async throws {
+        startCallCount += 1
         isRunning = true
         url = "vnc://localhost:\(port)"
         _attachedVM = virtualMachine
     }
 
     func stop() {
+        stopCallCount += 1
         isRunning = false
         url = nil
         _attachedVM = nil

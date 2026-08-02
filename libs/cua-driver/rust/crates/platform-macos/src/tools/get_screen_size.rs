@@ -1,5 +1,10 @@
 use async_trait::async_trait;
-use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_contract::GetScreenSizeInput;
+use cua_driver_core::{
+    protocol::ToolResult,
+    tool::{Tool, ToolDef},
+    tool_args::parse_typed_input,
+};
 use serde_json::Value;
 
 pub struct GetScreenSizeTool;
@@ -12,8 +17,11 @@ fn def() -> &'static ToolDef {
         name: "get_screen_size".into(),
         description: "Return the logical size of the main display in points plus its backing \
             scale factor. Agents click in points; Retina displays have scale_factor 2.0. \
-            Requires no TCC permissions.".into(),
-        input_schema: serde_json::json!({"type":"object","properties":{},"additionalProperties":false}),
+            Requires no TCC permissions."
+            .into(),
+        input_schema: serde_json::json!({"type":"object","properties":{
+            "session": cua_driver_core::tool_schema::session_schema()
+        },"additionalProperties":false}),
         read_only: true,
         destructive: false,
         idempotent: true,
@@ -23,9 +31,14 @@ fn def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for GetScreenSizeTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
-    async fn invoke(&self, _args: Value) -> ToolResult {
+    async fn invoke(&self, args: Value) -> ToolResult {
+        if let Err(result) = parse_typed_input::<GetScreenSizeInput>("get_screen_size", args) {
+            return result;
+        }
         match main_screen_size() {
             Some((w, h, scale)) => {
                 // Matches Swift text format 1:1.
@@ -45,8 +58,8 @@ impl Tool for GetScreenSizeTool {
 /// The previous NSScreen-based implementation required `MainThreadMarker::new()`
 /// which always returns `None` on async tokio threads, causing the tool to
 /// return an error even when a display is attached.
-fn main_screen_size() -> Option<(i64, i64, f64)> {
-    use core_graphics::display::{CGMainDisplayID, CGDisplayBounds};
+pub(crate) fn main_screen_size() -> Option<(i64, i64, f64)> {
+    use core_graphics::display::{CGDisplayBounds, CGMainDisplayID};
 
     // SAFETY: CGMainDisplayID / CGDisplayBounds are thread-safe CG APIs.
     let display_id = unsafe { CGMainDisplayID() };
@@ -66,7 +79,7 @@ fn main_screen_size() -> Option<(i64, i64, f64)> {
 
 /// Estimate backing scale by comparing the display's pixel mode width to its
 /// logical (CoreGraphics) bounds width.
-fn get_backing_scale(display_id: u32, logical_w: i64) -> f64 {
+pub(crate) fn get_backing_scale(display_id: u32, logical_w: i64) -> f64 {
     use core_graphics::display::CGDisplayPixelsWide;
     let pixel_w = unsafe { CGDisplayPixelsWide(display_id) } as i64;
     if pixel_w > 0 && logical_w > 0 {

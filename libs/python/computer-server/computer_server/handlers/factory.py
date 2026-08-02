@@ -1,6 +1,7 @@
+import inspect
 import logging
 import os
-from typing import Tuple
+from typing import Optional, Tuple
 
 from computer_server.diorama.base import BaseDioramaHandler
 
@@ -36,19 +37,23 @@ elif OS_TYPE == "windows":
 
 from .generic import GenericDesktopHandler, GenericFileHandler, GenericWindowHandler
 
+HandlerTuple = Tuple[
+    BaseAccessibilityHandler,
+    BaseAutomationHandler,
+    BaseDioramaHandler,
+    BaseFileHandler,
+    BaseDesktopHandler,
+    BaseWindowHandler,
+]
+
 
 class HandlerFactory:
     """Factory for creating OS-specific handlers."""
 
+    _shared_handlers: Optional[HandlerTuple] = None
+
     @staticmethod
-    def create_handlers() -> Tuple[
-        BaseAccessibilityHandler,
-        BaseAutomationHandler,
-        BaseDioramaHandler,
-        BaseFileHandler,
-        BaseDesktopHandler,
-        BaseWindowHandler,
-    ]:
+    def create_handlers() -> HandlerTuple:
         """Create and return appropriate handlers for the current OS.
 
         Returns:
@@ -59,7 +64,7 @@ class HandlerFactory:
             NotImplementedError: If the current OS is not supported
             RuntimeError: If unable to determine the current OS
         """
-        backend = os.environ.get("CUA_BACKEND", "native")
+        backend = os.environ.get("CUA_BACKEND", "native").strip().lower()
         vnc_host = os.environ.get("CUA_VNC_HOST")
         if backend == "vnc" or vnc_host:
             if not vnc_host:
@@ -80,8 +85,11 @@ class HandlerFactory:
                 GenericDesktopHandler(),
                 GenericWindowHandler(),
             )
-        elif OS_TYPE == "android":
-            return (
+        if backend not in {"native", "cua-driver"}:
+            raise RuntimeError("CUA_BACKEND must be native, vnc, or cua-driver")
+
+        if OS_TYPE == "android":
+            handlers: HandlerTuple = (
                 AndroidAccessibilityHandler(),
                 AndroidAutomationHandler(),
                 BaseDioramaHandler(),
@@ -90,7 +98,7 @@ class HandlerFactory:
                 AndroidWindowHandler(),
             )
         elif OS_TYPE == "darwin":
-            return (
+            handlers = (
                 MacOSAccessibilityHandler(),
                 MacOSAutomationHandler(),
                 MacOSDioramaHandler(),
@@ -99,7 +107,7 @@ class HandlerFactory:
                 GenericWindowHandler(),
             )
         elif OS_TYPE == "linux":
-            return (
+            handlers = (
                 LinuxAccessibilityHandler(),
                 LinuxAutomationHandler(),
                 BaseDioramaHandler(),
@@ -108,7 +116,7 @@ class HandlerFactory:
                 GenericWindowHandler(),
             )
         elif OS_TYPE == "windows":
-            return (
+            handlers = (
                 WindowsAccessibilityHandler(),
                 WindowsAutomationHandler(),
                 BaseDioramaHandler(),
@@ -118,3 +126,43 @@ class HandlerFactory:
             )
         else:
             raise NotImplementedError(f"OS '{OS_TYPE}' is not supported")
+
+        if backend == "cua-driver":
+            if OS_TYPE == "android":
+                raise RuntimeError("CUA_BACKEND=cua-driver is not supported on Android")
+            from .cua_driver import CuaDriverAutomationHandler
+
+            handlers = (
+                handlers[0],
+                CuaDriverAutomationHandler(handlers[1]),
+                handlers[2],
+                handlers[3],
+                handlers[4],
+                handlers[5],
+            )
+            logger.info("Using Cua Driver automation backend (%s mode)", handlers[1].mode)
+
+        return handlers
+
+    @classmethod
+    def get_handlers(cls) -> HandlerTuple:
+        """Return the process-wide handler set shared by HTTP and MCP surfaces."""
+
+        if cls._shared_handlers is None:
+            cls._shared_handlers = cls.create_handlers()
+        return cls._shared_handlers
+
+    @classmethod
+    async def close_handlers(cls) -> None:
+        """Close the shared automation runtime exactly once."""
+
+        handlers = cls._shared_handlers
+        cls._shared_handlers = None
+        if handlers is None:
+            return
+        close = getattr(handlers[1], "close", None)
+        if close is None:
+            return
+        result = close()
+        if inspect.isawaitable(result):
+            await result

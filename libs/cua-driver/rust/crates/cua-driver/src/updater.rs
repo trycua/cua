@@ -1,8 +1,8 @@
 //! `cua-driver update --apply` implementation.
 //!
 //! Delegates the actual install work to the canonical installer scripts:
-//! - Unix:    `libs/cua-driver/scripts/install.sh` (delegates to
-//!            `_install-rust.sh` when `--backend=rust`)
+//! - Unix: `libs/cua-driver/scripts/install.sh` (delegates to
+//!   `_install-rust.sh` by default)
 //! - Windows: `libs/cua-driver/scripts/install.ps1`
 //!
 //! Why not reimplement the download / atomic-swap / GC in Rust? Those scripts
@@ -27,16 +27,16 @@ use std::process::{Command, ExitStatus};
 /// command land at the exact same script. Per-OS gating keeps the unused
 /// constant from triggering `dead_code` on the platform that doesn't use it.
 #[cfg(not(windows))]
-const CANONICAL_INSTALL_SH: &str =
-    "https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh";
+const CANONICAL_INSTALL_SH: &str = "https://cua.ai/driver/install.sh";
 #[cfg(windows)]
-const CANONICAL_INSTALL_PS1: &str =
-    "https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1";
+const CANONICAL_INSTALL_PS1: &str = "https://cua.ai/driver/install.ps1";
 
 /// The env var both scripts honour to pin the target release tag. Set to a
 /// bare version like `"0.2.18"` (no `cua-driver-rs-v` prefix). See
 /// `libs/cua-driver/scripts/_install-rust.sh` + `install.ps1`.
 const VERSION_PIN_ENV: &str = "CUA_DRIVER_RS_VERSION";
+const INSTALL_CHANNEL_ENV: &str = "CUA_DRIVER_INSTALL_CHANNEL";
+const RELEASE_VERSION_ENV: &str = "CUA_DRIVER_RELEASE_VERSION";
 
 /// Invoke the canonical installer pinned to `version`. Returns the
 /// installer's exit status so the caller can produce the right
@@ -52,6 +52,8 @@ pub fn run_install_script(version: &str) -> std::io::Result<ExitStatus> {
         let pwsh_cmd = format!("iwr -useb {CANONICAL_INSTALL_PS1} | iex");
         Command::new("powershell.exe")
             .env(VERSION_PIN_ENV, version)
+            .env(INSTALL_CHANNEL_ENV, "update_apply")
+            .env(RELEASE_VERSION_ENV, version)
             .args([
                 "-NoProfile",
                 "-ExecutionPolicy",
@@ -64,14 +66,13 @@ pub fn run_install_script(version: &str) -> std::io::Result<ExitStatus> {
 
     #[cfg(not(windows))]
     {
-        // Match the canonical curl-piped-to-bash invocation. `--backend=rust`
-        // is the explicit selector — without it the canonical install.sh
-        // auto-detects on macOS and would install the Swift driver instead.
-        let bash_cmd = format!(
-            "curl -fsSL {CANONICAL_INSTALL_SH} | bash -s -- install --backend=rust"
-        );
+        // Match the canonical curl-piped-to-bash invocation. install.sh
+        // delegates to the Rust implementation by default.
+        let bash_cmd = format!("curl -fsSL {CANONICAL_INSTALL_SH} | bash");
         Command::new("bash")
             .env(VERSION_PIN_ENV, version)
+            .env(INSTALL_CHANNEL_ENV, "update_apply")
+            .env(RELEASE_VERSION_ENV, version)
             .args(["-c", &bash_cmd])
             .status()
     }
@@ -94,6 +95,6 @@ pub fn manual_install_one_liner() -> String {
     }
     #[cfg(not(windows))]
     {
-        format!("curl -fsSL {CANONICAL_INSTALL_SH} | bash -s -- install --backend=rust")
+        format!("curl -fsSL {CANONICAL_INSTALL_SH} | bash")
     }
 }

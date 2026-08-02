@@ -66,6 +66,17 @@ class Transport(ABC):
     async def get_environment(self) -> str:
         """Return 'windows', 'mac', 'linux', or 'browser'."""
 
+    async def request_service(
+        self,
+        name: str,
+        *,
+        method: str,
+        path: str,
+        json_body: Any = None,
+    ) -> Any:
+        """Request an auxiliary named service exposed by this sandbox."""
+        raise NotImplementedError(f"{type(self).__name__} does not support named service requests.")
+
     async def forward_tunnel(self, sandbox_port: int | str) -> "TunnelInfo":
         """Forward *sandbox_port* to an available host port and return info.
 

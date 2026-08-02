@@ -224,10 +224,17 @@ class BoundApp:
         Allows accessing custom getters like:
             await session.apps.chrome.get_current_url()
         """
-        # Check if the app has this attribute
-        attr = getattr(self._app, name, None)
+        # Look up the attribute on the App *class* first so we get the
+        # unbound function rather than a method already bound to the App
+        # instance.  Custom getters are defined with ``self: "BoundApp"`` and
+        # expect the BoundApp as their first positional argument.
+        attr = getattr(type(self._app), name, None)
         if attr is None:
-            raise AttributeError(f"App '{self._app.name}' has no attribute '{name}'")
+            # Fall back to instance attribute (e.g. a plain value)
+            attr = getattr(self._app, name, None)
+            if attr is None:
+                raise AttributeError(f"App '{self._app.name}' has no attribute '{name}'")
+            return attr
 
         # If it's a callable (custom method), wrap it to pass self (BoundApp)
         if callable(attr):

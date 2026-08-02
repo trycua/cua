@@ -25,6 +25,12 @@ export const docs = defineDocs({
 export default defineConfig({
   lastModifiedTime: 'git',
   mdxOptions: {
-    // MDX options
+    rehypeCodeOptions: {
+      fallbackLanguage: 'text',
+      themes: {
+        light: 'github-light',
+        dark: 'github-dark',
+      },
+    },
   },
 });

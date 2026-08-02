@@ -68,7 +68,7 @@ const SDK_CONFIGS: SDKConfig[] = [
     name: 'lume',
     displayName: 'Lume',
     tagPrefix: 'lume-v',
-    outputPath: 'lume/reference/changelog.mdx',
+    outputPath: 'reference/lume/changelog.mdx',
   },
   {
     name: 'cuabot',

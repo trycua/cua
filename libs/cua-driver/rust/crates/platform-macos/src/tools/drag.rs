@@ -8,22 +8,29 @@
 //! recent zoom crop context, same as click/double_click.
 
 use async_trait::async_trait;
-use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_contract::{ClickButton, DragInput};
+use cua_driver_core::{
+    protocol::ToolResult,
+    tool::{Tool, ToolDef},
+    tool_args::parse_typed_projection,
+};
 use serde_json::Value;
 use std::sync::Arc;
 
+use super::ToolState;
 use crate::apps;
 use crate::focus_guard;
 use crate::input::mouse::DragButton;
 use crate::window_change_detector::WindowChangeDetector;
-use super::ToolState;
 
 pub struct DragTool {
     pub state: Arc<ToolState>,
 }
 
 impl DragTool {
-    pub fn new(state: Arc<ToolState>) -> Self { Self { state } }
+    pub fn new(state: Arc<ToolState>) -> Self {
+        Self { state }
+    }
 }
 
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -47,12 +54,13 @@ fn def() -> &'static ToolDef {
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
-            "required": ["pid", "from_x", "from_y", "to_x", "to_y"],
+            "required": ["from_x", "from_y", "to_x", "to_y"],
             "properties": {
+                "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
                 "pid": { "type": "integer", "description": "Target process ID." },
                 "window_id": {
                     "type": "integer",
-                    "description": "CGWindowID for the window the pixel coordinates were measured against. Optional — when omitted the driver picks the frontmost window of pid."
+                    "description": "CGWindowID for the window the pixel coordinates were measured against. Optional only when pid owns exactly one eligible top-level window; otherwise the action refuses with ambiguous_window_target."
                 },
                 "from_x": { "type": "number", "description": "Drag-start X in window-local screenshot pixels. Top-left origin." },
                 "from_y": { "type": "number", "description": "Drag-start Y in window-local screenshot pixels. Top-left origin." },
@@ -83,7 +91,9 @@ fn def() -> &'static ToolDef {
                 "from_zoom": {
                     "type": "boolean",
                     "description": "When true, coordinates are in the last zoom image for this pid; driver maps back to window coordinates."
-                }
+                },
+                "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "Use desktop with no pid/window_id for native get_desktop_state screenshot coordinates." },
+                "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
             },
             "additionalProperties": false
         }),
@@ -96,15 +106,99 @@ fn def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for DragTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
-
+        let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
+        if args.opt_str("scope").as_deref() == Some("desktop")
+            && args.get("pid").is_none()
+            && args.get("window_id").is_none()
+        {
+            let input = match parse_typed_projection::<DragInput>("drag", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
+            };
+            let (from_x, from_y, to_x, to_y) = (input.from_x, input.from_y, input.to_x, input.to_y);
+            let (from_x, from_y) = super::desktop_screenshot_point(from_x, from_y).await;
+            let (to_x, to_y) = super::desktop_screenshot_point(to_x, to_y).await;
+            let duration_ms = input.duration_ms.unwrap_or(500).min(10_000);
+            let steps = input.steps.unwrap_or(20).clamp(1, 200) as usize;
+            let modifiers = input.modifier.unwrap_or_default();
+            let button = match input.button.unwrap_or(ClickButton::Left) {
+                ClickButton::Left => DragButton::Left,
+                ClickButton::Right => DragButton::Right,
+                ClickButton::Middle => DragButton::Middle,
+            };
+            let cursor_for_drag = cursor_key.clone();
+            crate::cursor::overlay::send_command(
+                cursor_key.clone(),
+                cursor_overlay::OverlayCommand::SetPressed(true),
+            );
+            let result = tokio::task::spawn_blocking(move || {
+                let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                crate::input::mouse::drag_at_xy_foreground_observed(
+                    from_x,
+                    from_y,
+                    to_x,
+                    to_y,
+                    duration_ms,
+                    steps,
+                    &modifier_refs,
+                    button,
+                    move |x, y| {
+                        crate::cursor::overlay::send_command(
+                            cursor_for_drag.clone(),
+                            cursor_overlay::track_pointer_command(x, y),
+                        );
+                    },
+                )
+            })
+            .await;
+            crate::cursor::overlay::send_command(
+                cursor_key.clone(),
+                cursor_overlay::OverlayCommand::SetPressed(false),
+            );
+            if matches!(&result, Ok(Ok(()))) {
+                self.state
+                    .cursor_registry
+                    .update_position(&cursor_key, to_x, to_y);
+            }
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "Dragged desktop from ({from_x:.1}, {from_y:.1}) to ({to_x:.1}, {to_y:.1})."
+                ))
+                .with_structured(serde_json::json!({
+                    "scope": "desktop",
+                    "path": "hid",
+                    "effect": "unverifiable"
+                })),
+                Ok(Err(error)) => ToolResult::error(format!("desktop drag failed: {error}")),
+                Err(error) => ToolResult::error(format!("desktop drag task failed: {error}")),
+            };
+        }
+        let pid = match args.require_i32("pid") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        // delivery_mode: foreground briefly fronts the window before the
+        // press-drag-release gesture (the explicit last resort for surfaces
+        // that drop background CGEvents), via the same skylight assist click
+        // uses. Requires a window_id to have a window to front.
+        let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
+        if !delivery_mode.is_foreground() {
+            return ToolResult::error(
+                "Background drag is unavailable on macOS; use delivery_mode:\"foreground\"."
+                    .to_owned(),
+            )
+            .with_structured(serde_json::json!({ "code": "background_unavailable" }));
+        }
         // Coerce integer or float from JSON for coordinate fields.
         let coerce = |key: &str| -> Option<f64> {
-            args.opt_f64(key).or_else(|| args.opt_i64(key).map(|i| i as f64))
+            args.opt_f64(key)
+                .or_else(|| args.opt_i64(key).map(|i| i as f64))
         };
 
         let mut from_x = match coerce("from_x") {
@@ -124,20 +218,22 @@ impl Tool for DragTool {
             None => return ToolResult::error("Missing required parameter: to_y"),
         };
 
-        let window_id   = args.opt_u64("window_id").map(|v| v as u32);
+        let window_id = args.opt_u64("window_id").map(|v| v as u32);
         let duration_ms = args.u64_or("duration_ms", 500);
-        let steps       = args.u64_or("steps", 20) as usize;
-        let from_zoom   = args.bool_or("from_zoom", false);
-        let button_str  = args.str_or("button", "left");
+        let steps = args.u64_or("steps", 20) as usize;
+        let from_zoom = args.bool_or("from_zoom", false);
+        let button_str = args.str_or("button", "left");
         let modifiers: Vec<String> = args.str_array("modifier");
 
         let button = match button_str.to_lowercase().as_str() {
-            "left"   => DragButton::Left,
-            "right"  => DragButton::Right,
+            "left" => DragButton::Left,
+            "right" => DragButton::Right,
             "middle" => DragButton::Middle,
-            other    => return ToolResult::error(format!(
-                "Unknown button \"{other}\" — expected left, right, or middle."
-            )),
+            other => {
+                return ToolResult::error(format!(
+                    "Unknown button \"{other}\" — expected left, right, or middle."
+                ))
+            }
         };
 
         // from_zoom: translate from last zoom crop context.
@@ -146,55 +242,50 @@ impl Tool for DragTool {
                 Some(ctx) => {
                     let (wx, wy) = ctx.zoom_to_window(from_x, from_y);
                     let (wx2, wy2) = ctx.zoom_to_window(to_x, to_y);
-                    from_x = wx; from_y = wy;
-                    to_x   = wx2; to_y   = wy2;
+                    from_x = wx;
+                    from_y = wy;
+                    to_x = wx2;
+                    to_y = wy2;
                 }
-                None => return ToolResult::error(format!(
-                    "from_zoom=true but no zoom context for pid {pid}. Call zoom first."
-                )),
+                None => {
+                    return ToolResult::error(format!(
+                        "from_zoom=true but no zoom context for pid {pid}. Call zoom first."
+                    ))
+                }
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
-            from_x *= ratio; from_y *= ratio;
-            to_x   *= ratio; to_y   *= ratio;
+        } else if let Some(ratio) = self.state.resize_registry.ratio(pid, window_id) {
+            from_x *= ratio;
+            from_y *= ratio;
+            to_x *= ratio;
+            to_y *= ratio;
         }
 
-        // Translate window-local screenshot pixels → screen coordinates.
-        // Also compute window-local logical coords for CGEventSetWindowLocation.
-        let (from_sx, from_sy, from_lx, from_ly,
-             to_sx,   to_sy,   to_lx,   to_ly) = if let Some(wid) = window_id {
-            let result = tokio::task::spawn_blocking(move || {
-                let bounds = crate::windows::window_bounds_by_id(wid);
-                let scale: f64 = if let Some(ref b) = bounds {
-                    if let Ok(png) = crate::capture::screenshot_window_bytes(wid) {
-                        if png.len() >= 24 {
-                            let pw = u32::from_be_bytes([png[16], png[17], png[18], png[19]]) as f64;
-                            let lw = b.width;
-                            if lw > 0.0 && pw > lw { pw / lw } else { 1.0 }
-                        } else { 1.0 }
-                    } else { 1.0 }
-                } else { 1.0 };
-                (bounds, scale)
-            }).await.unwrap_or((None, 1.0));
-
-            if let (Some(b), scale) = result {
-                let flx = from_x / scale; let fly = from_y / scale;
-                let tlx = to_x   / scale; let tly = to_y   / scale;
-                (b.x + flx, b.y + fly, flx, fly,
-                 b.x + tlx, b.y + tly, tlx, tly)
+        // Translate window-local screenshot pixels → screen coordinates, and
+        // window-local logical coords for CGEventSetWindowLocation. Both ends of
+        // the drag resolve against ONE frame, so a window that closed mid-call
+        // refuses rather than dragging across the desktop behind it.
+        let (from_sx, from_sy, from_lx, from_ly, to_sx, to_sy, to_lx, to_ly) =
+            if let Some(wid) = window_id {
+                match super::px_frame::resolve_or_refuse(wid).await {
+                    Ok(frame) => {
+                        let (fsx, fsy, flx, fly) = frame.to_screen(from_x, from_y);
+                        let (tsx, tsy, tlx, tly) = frame.to_screen(to_x, to_y);
+                        (fsx, fsy, flx, fly, tsx, tsy, tlx, tly)
+                    }
+                    Err(refusal) => return refusal,
+                }
             } else {
                 (from_x, from_y, from_x, from_y, to_x, to_y, to_x, to_y)
-            }
-        } else {
-            (from_x, from_y, from_x, from_y, to_x, to_y, to_x, to_y)
-        };
+            };
 
         // Animate agent cursor along drag path (start → end).
         if let Some(wid) = window_id {
             crate::cursor::overlay::send_command(
-                cursor_overlay::OverlayCommand::PinAbove(wid as u64)
+                cursor_key.clone(),
+                cursor_overlay::OverlayCommand::PinAbove(wid as u64),
             );
         }
-        crate::cursor::overlay::animate_cursor_to(from_sx, from_sy).await;
+        crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), from_sx, from_sy).await;
 
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // Drags can trigger drag-and-drop side-effects that spawn helper
@@ -206,38 +297,110 @@ impl Tool for DragTool {
 
         // Dispatch blocking drag synthesis.
         let mods_owned = modifiers.clone();
-        let result = focus_guard::with_focus_suppressed(
-            Some(pid),
+        let fg = delivery_mode.is_foreground() && window_id.is_some();
+        let cursor_for_drag = cursor_key.clone();
+        crate::cursor::overlay::send_command(
+            cursor_key.clone(),
+            cursor_overlay::OverlayCommand::SetPressed(true),
+        );
+        let drag_input = focus_guard::with_focus_suppressed(
+            // Foreground drag deliberately activates the target so the global
+            // HID stream carries the pressed-button state. A suppression lease
+            // here would race that activation and restore the prior app before
+            // Chromium receives the gesture.
+            if fg { None } else { Some(pid) },
             prior_front,
             "drag.CGEvent",
             || async move {
-                tokio::task::spawn_blocking(move || {
-                    let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
-                    crate::input::mouse::drag_at_xy(
-                        pid,
-                        from_sx, from_sy,
-                        to_sx,   to_sy,
-                        Some((from_lx, from_ly)),
-                        Some((to_lx,   to_ly)),
-                        window_id,
-                        duration_ms,
-                        steps,
-                        &m,
-                        button,
-                    )
+                tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                    let do_it = move || -> anyhow::Result<()> {
+                        let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
+                        if fg {
+                            // HID delivery is global, so foreground mode must
+                            // establish a real active application before the
+                            // gesture begins. The SkyLight flash can be
+                            // unavailable for Electron child windows; the
+                            // documented Cocoa activation is the fallback.
+                            apps::activate_pid(pid);
+                            std::thread::sleep(std::time::Duration::from_millis(40));
+                            let observed_cursor = cursor_for_drag.clone();
+                            return crate::input::mouse::drag_at_xy_foreground_observed(
+                                from_sx,
+                                from_sy,
+                                to_sx,
+                                to_sy,
+                                duration_ms,
+                                steps,
+                                &m,
+                                button,
+                                move |x, y| {
+                                    crate::cursor::overlay::send_command(
+                                        observed_cursor.clone(),
+                                        cursor_overlay::track_pointer_command(x, y),
+                                    );
+                                },
+                            );
+                        }
+                        crate::input::mouse::drag_at_xy_observed(
+                            pid,
+                            from_sx,
+                            from_sy,
+                            to_sx,
+                            to_sy,
+                            Some((from_lx, from_ly)),
+                            Some((to_lx, to_ly)),
+                            window_id,
+                            duration_ms,
+                            steps,
+                            &m,
+                            button,
+                            fg,
+                            move |x, y| {
+                                crate::cursor::overlay::send_command(
+                                    cursor_for_drag.clone(),
+                                    cursor_overlay::track_pointer_command(x, y),
+                                );
+                            },
+                        )
+                    };
+                    // Foreground rung: activate for the complete HID gesture,
+                    // then restore the prior app after pointer capture settles.
+                    match (fg, window_id) {
+                        (true, Some(_wid)) => {
+                            let result = do_it();
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                            if let Some(previous_pid) = prior_front {
+                                if previous_pid != pid {
+                                    apps::activate_pid(previous_pid);
+                                }
+                            }
+                            result?;
+                            Ok(())
+                        }
+                        _ => do_it(),
+                    }
                 })
                 .await
             },
         )
         .await;
+        let result = drag_input;
+        crate::cursor::overlay::send_command(
+            cursor_key.clone(),
+            cursor_overlay::OverlayCommand::SetPressed(false),
+        );
+        if matches!(&result, Ok(Ok(()))) {
+            self.state
+                .cursor_registry
+                .update_position(&cursor_key, to_sx, to_sy);
+        }
 
-        let changes = snapshot.detect_async().await;
+        let changes = super::finish_window_observation(snapshot, &args).await;
 
-        // Animate cursor to end position.
-        crate::cursor::overlay::animate_cursor_to(to_sx, to_sy).await;
         if let Some(wid) = window_id {
             crate::cursor::overlay::send_command(
-                cursor_overlay::OverlayCommand::PinAbove(wid as u64)
+                cursor_key.clone(),
+                cursor_overlay::OverlayCommand::PinAbove(wid as u64),
             );
         }
 
@@ -246,22 +409,33 @@ impl Tool for DragTool {
         } else {
             format!(" with {}", modifiers.join("+"))
         };
-        let btn_suffix = if button_str == "left" { String::new() } else {
+        let btn_suffix = if button_str == "left" {
+            String::new()
+        } else {
             format!(" ({button_str} button)")
         };
 
+        let mode_label = if fg {
+            " (delivery_mode:foreground)"
+        } else {
+            ""
+        };
         match result {
             Ok(Ok(())) => ToolResult::text(format!(
                 "✅ Posted drag{btn_suffix}{mod_suffix} to pid {pid} \
                  from window-pixel ({}, {}) → ({}, {}), \
                  screen ({}, {}) → ({}, {}) \
-                 in {duration_ms}ms / {steps} steps.{}",
+                 in {duration_ms}ms / {steps} steps{mode_label} \
+                 (background CGEvent; not driver-verified — confirm via screenshot).{}",
                 from_x as i64, from_y as i64,
                 to_x   as i64, to_y   as i64,
                 from_sx as i64, from_sy as i64,
                 to_sx   as i64, to_sy   as i64,
                 changes.result_suffix(),
-            )),
+            ))
+            .with_structured(serde_json::json!({
+                "path": if fg { "cgevent_fg" } else { "cgevent" }, "verified": false, "effect": "unverifiable"
+            })),
             Ok(Err(e)) => ToolResult::error(format!("drag failed: {e}")),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }

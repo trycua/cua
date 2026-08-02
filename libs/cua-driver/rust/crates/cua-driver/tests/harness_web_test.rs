@@ -1,168 +1,390 @@
 //! Integration tests against the CuaTestHarness.WebView (WPF + WebView2)
 //! and CuaTestHarness.Electron hosts. Both load the same
-//! `test-harness/shared/web/index.html`, so the same `page` tool flows
+//! `tests/fixtures/shared/web/index.html`, so the same `page` tool flows
 //! are exercised against two Chromium-based hosts.
 //!
 //! Run via:
 //!   cargo test --test harness_web_test -- --ignored --nocapture
 //!
-//! ## Known cua-driver gaps these tests document
-//!
-//! - **CDP `/json` HTTP read uses `read_to_end`** — `mcp-server/src/cdp.rs`
-//!   sends `Connection: close` and then calls `stream.read_to_end()`, but
-//!   Chromium's CDP HTTP server ignores `Connection: close` and keeps the
-//!   socket alive, so `read_to_end` hangs until the 10 s discovery timeout.
-//!   Confirmed against Electron 31 on port 9223 (verified manually via
-//!   curl: instant 200, JSON body present). Fix: parse `Content-Length`
-//!   and `read_exact` that many bytes, or honour `Transfer-Encoding:
-//!   chunked`. Tracked in this test as a structural assertion (window
-//!   discoverable) rather than a behavioural one (page tool round-trip).
-//!
-//! - **WebView2 `--remote-debugging-port` ignored** — passing
-//!   `AdditionalBrowserArguments = "--remote-debugging-port=9222"` via
-//!   `CoreWebView2EnvironmentOptions` does not open a CDP listener on the
-//!   WebView2 helper processes. WebView2 may be filtering the flag.
-//!   Tracked here as a TODO for the harness rather than a cua-driver
-//!   issue (since this is a WebView2 configuration concern).
+//! The page-tool tests cover CDP discovery and a DOM round-trip together.
+//! WebView2 can expose its listener before its first page target is ready, so
+//! the driver must tolerate a briefly empty `/json` response.
 
 #![cfg(target_os = "windows")]
 
-use std::io::{BufRead, BufReader, Write};
+use std::cell::Cell;
+use std::io::Read;
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::time::Duration;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
+use cua_driver_testkit::e2e::{
+    execute_case, native_background_case, recording_evidence, DriverRoute, Observation, Targeting,
+};
+use cua_driver_testkit::observer::TargetWindow;
+use cua_driver_testkit::sentinel::run_with_background_oracles;
+use cua_driver_testkit::{
+    harness_app, spawn_in_job, Driver, FixtureJournal, McpDriver, ToolResponse,
+};
 
 // ── workspace paths ──────────────────────────────────────────────────────────
-
-fn workspace_root() -> PathBuf {
-    let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
-    PathBuf::from(manifest).parent().unwrap().parent().unwrap().to_owned()
-}
-fn driver_binary() -> PathBuf { workspace_root().join("target/debug/cua-driver.exe") }
 
 fn webview_exe() -> PathBuf {
     if let Ok(p) = std::env::var("HARNESS_WEBVIEW_EXE") {
         let pb = PathBuf::from(p);
-        if pb.exists() { return pb; }
+        if pb.exists() {
+            return pb;
+        }
     }
-    workspace_root().join("test-apps/harness-webview/CuaTestHarness.WebView.exe")
+    harness_app("harness-webview", "CuaTestHarness.WebView.exe")
 }
 fn electron_exe() -> PathBuf {
     if let Ok(p) = std::env::var("HARNESS_ELECTRON_EXE") {
         let pb = PathBuf::from(p);
-        if pb.exists() { return pb; }
-    }
-    workspace_root().join("test-apps/harness-electron/CuaTestHarness.Electron.exe")
-}
-
-// ── JSON-RPC plumbing ────────────────────────────────────────────────────────
-
-fn send(stdin: &mut ChildStdin, req: serde_json::Value) {
-    writeln!(stdin, "{}", serde_json::to_string(&req).unwrap()).unwrap();
-}
-fn recv(stdout: &mut BufReader<&mut ChildStdout>) -> serde_json::Value {
-    let mut line = String::new();
-    stdout.read_line(&mut line).expect("read");
-    serde_json::from_str(line.trim()).expect("json")
-}
-fn init(stdin: &mut ChildStdin, stdout: &mut BufReader<&mut ChildStdout>) {
-    send(stdin, serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
-    let _ = recv(stdout);
-}
-fn tools_call(stdin: &mut ChildStdin, stdout: &mut BufReader<&mut ChildStdout>,
-              id: u32, name: &str, args: serde_json::Value) -> serde_json::Value {
-    send(stdin, serde_json::json!({
-        "jsonrpc":"2.0","id":id,"method":"tools/call",
-        "params":{"name":name,"arguments":args}
-    }));
-    recv(stdout)
-}
-
-fn find_window_by_title(stdin: &mut ChildStdin, stdout: &mut BufReader<&mut ChildStdout>,
-                        pid: u32, title_substr: &str) -> Option<u64> {
-    let deadline = std::time::Instant::now() + Duration::from_secs(20);
-    let mut id = 10u32;
-    loop {
-        let resp = tools_call(stdin, stdout, id, "list_windows", serde_json::json!({"pid": pid as i64}));
-        id = id.wrapping_add(1);
-        if let Some(wins) = resp["result"]["structuredContent"]["windows"].as_array() {
-            for w in wins {
-                if w["pid"].as_u64() != Some(pid as u64) { continue; }
-                if w["title"].as_str().unwrap_or("").contains(title_substr) {
-                    if let Some(wid) = w["window_id"].as_u64() { return Some(wid); }
-                }
-            }
+        if pb.exists() {
+            return pb;
         }
-        if std::time::Instant::now() >= deadline { return None; }
-        std::thread::sleep(Duration::from_millis(200));
     }
+    harness_app("harness-electron", "CuaTestHarness.Electron.exe")
 }
 
 // ── shared session helper ────────────────────────────────────────────────────
 
+fn allocate_loopback_port() -> u16 {
+    let listener =
+        std::net::TcpListener::bind(("127.0.0.1", 0)).expect("allocate an ephemeral CDP port");
+    listener.local_addr().expect("read CDP port").port()
+}
+
+fn wait_for_page_text(
+    driver: &mut McpDriver,
+    pid: i64,
+    wid: u64,
+    javascript: &str,
+    expected: &str,
+) -> String {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let response = driver.call(
+            "page",
+            serde_json::json!({
+                "pid": pid,
+                "window_id": wid,
+                "action": "execute_javascript",
+                "javascript": javascript,
+            }),
+        );
+        let text = response.text().to_owned();
+        if text.contains(expected) {
+            return text;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "page state did not reach {expected:?}: {text:?}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 /// Launch the harness exe + a cua-driver child with `CUA_DRIVER_CDP_PORT`
 /// pointing at the harness's CDP endpoint. Polls list_windows until the
 /// host's window appears.
-struct WebSession {
-    _app: Child,
-    driver: Child,
+fn run_web_case<F>(toolkit: &str, action: &str, host_exe: PathBuf, title_substr: &str, f: F)
+where
+    F: FnOnce(i64, u64, &mut McpDriver),
+{
+    let case = native_background_case(toolkit, action, Targeting::Page, DriverRoute::Cdp);
+    run_web_case_with_preparation(
+        case,
+        toolkit,
+        host_exe,
+        title_substr,
+        |_, _, _, _| {},
+        |pid, wid, driver, _| f(pid, wid, driver),
+    );
 }
 
-impl Drop for WebSession {
-    fn drop(&mut self) {
-        let _ = self.driver.kill();
-        let _ = self.driver.wait();
-        let _ = self._app.kill();
-        let _ = self._app.wait();
-        // settle so the next test's launch doesn't see leftover windows
-        std::thread::sleep(Duration::from_millis(500));
+fn run_web_case_with_preparation<P, F>(
+    case: cua_driver_testkit::e2e::CaseSpec,
+    toolkit: &str,
+    host_exe: PathBuf,
+    title_substr: &str,
+    prepare: P,
+    f: F,
+) where
+    P: FnOnce(i64, u64, &mut McpDriver, &FixtureJournal),
+    F: FnOnce(i64, u64, &mut McpDriver, &FixtureJournal),
+{
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        assert!(
+            host_exe.exists(),
+            "required {toolkit} host is missing at {host_exe:?}"
+        );
+        let cdp_port = allocate_loopback_port();
+        let cdp_port_string = cdp_port.to_string();
+        let journal = FixtureJournal::start();
+        let mut driver = McpDriver::spawn_named_with_env(
+            &cell_id,
+            &[
+                ("CUA_DRIVER_CDP_PORT", cdp_port_string.as_str()),
+                ("CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS", "1"),
+            ],
+        )
+        .expect("required source-built Windows driver did not start");
+        *evidence = recording_evidence(driver.recording_dir());
+
+        let env_var = if toolkit == "webview2" {
+            "CUA_WEBVIEW_CDP_PORT"
+        } else {
+            "CUA_ELECTRON_CDP_PORT"
+        };
+        let mut cmd = Command::new(&host_exe);
+        cmd.env(env_var, &cdp_port_string)
+            .env("CUA_E2E_FIXTURE_JOURNAL_URL", journal.url())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+        let mut app = spawn_in_job(&mut cmd).expect("spawn web harness");
+        let pid = app.id() as i64;
+        // WebView2's first CoreWebView2Environment creation can exceed 12s on a
+        // cold hosted runner. Keep polling the externally visible ready title;
+        // process exit and the final deadline still fail closed.
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let mut observed_titles = Vec::new();
+        let (wid, _) = 'ready: loop {
+            if let Some(status) = app.try_wait().expect("poll web harness process") {
+                let mut stderr = String::new();
+                if let Some(mut pipe) = app.stderr.take() {
+                    let _ = pipe.read_to_string(&mut stderr);
+                }
+                panic!(
+                    "{toolkit} fixture exited before readiness with {status}: {}",
+                    stderr.trim()
+                );
+            }
+            let response = driver.call("list_windows", serde_json::json!({ "pid": pid }));
+            observed_titles.clear();
+            if let Some(windows) = response.structured()["windows"].as_array() {
+                for window in windows {
+                    let title = window["title"].as_str().unwrap_or("");
+                    observed_titles.push(title.to_owned());
+                    if title.contains(title_substr) {
+                        if let Some(wid) = window["window_id"].as_u64() {
+                            break 'ready (wid, title.to_owned());
+                        }
+                    }
+                }
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = app.kill();
+                let _ = app.wait();
+                let mut stderr = String::new();
+                if let Some(mut pipe) = app.stderr.take() {
+                    let _ = pipe.read_to_string(&mut stderr);
+                }
+                panic!(
+                    "{toolkit} window with title containing {title_substr:?} did not become ready; \
+                     observed titles={observed_titles:?}; stderr={:?}",
+                    stderr.trim()
+                );
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        driver.reaper().push(app);
+        let journal_deadline = Instant::now() + Duration::from_secs(5);
+        while !journal.contains("WEB_HARNESS_MARKER_v1") {
+            assert!(
+                Instant::now() < journal_deadline,
+                "{toolkit} fixture journal did not become ready: {}",
+                journal.snapshot()
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        prepare(pid, wid, &mut driver, &journal);
+        let (_, passed) = run_with_background_oracles(
+            &mut driver,
+            TargetWindow {
+                pid: pid as u32,
+                native_id: wid,
+            },
+            |driver| f(pid, wid, driver, &journal),
+        )
+        .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
+        Observation::delivered_with_fixture_state(passed)
+    });
+}
+
+fn snapshot(driver: &mut McpDriver, pid: i64, wid: u64) -> ToolResponse {
+    driver.call(
+        "get_window_state",
+        serde_json::json!({
+            "pid": pid,
+            "window_id": wid,
+            "capture_mode": "ax"
+        }),
+    )
+}
+
+fn window_bounds(driver: &mut McpDriver, pid: i64, wid: u64) -> (f64, f64, f64, f64) {
+    let response = driver.call("list_windows", serde_json::json!({ "pid": pid }));
+    let window = response.structured()["windows"]
+        .as_array()
+        .and_then(|windows| {
+            windows
+                .iter()
+                .find(|window| window["window_id"].as_u64() == Some(wid))
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "WebView2 window {wid} is missing from list_windows: {}",
+                response.text()
+            )
+        });
+    let bounds = &window["bounds"];
+    (
+        bounds["x"].as_f64().expect("WebView2 bounds need x"),
+        bounds["y"].as_f64().expect("WebView2 bounds need y"),
+        bounds["width"]
+            .as_f64()
+            .expect("WebView2 bounds need width"),
+        bounds["height"]
+            .as_f64()
+            .expect("WebView2 bounds need height"),
+    )
+}
+
+fn pixel_from_screen(
+    state: &ToolResponse,
+    screen_x: f64,
+    screen_y: f64,
+    window: (f64, f64, f64, f64),
+) -> (f64, f64) {
+    let (window_x, window_y, window_w, window_h) = window;
+    assert!(
+        window_w > 0.0 && window_h > 0.0,
+        "WebView2 window needs positive geometry: {window:?}"
+    );
+    let screenshot_w = state.structured()["screenshot_width"]
+        .as_f64()
+        .expect("PX targeting requires screenshot_width");
+    let screenshot_h = state.structured()["screenshot_height"]
+        .as_f64()
+        .expect("PX targeting requires screenshot_height");
+    let scale_x = screenshot_w / window_w;
+    let scale_y = screenshot_h / window_h;
+    let x = (screen_x - window_x) * scale_x;
+    let y = (screen_y - window_y) * scale_y;
+    assert!(
+        x >= 0.0 && x < screenshot_w && y >= 0.0 && y < screenshot_h,
+        "WebView2 PX target center ({x:.1}, {y:.1}) is outside the capture ({screenshot_w:.1}x{screenshot_h:.1})"
+    );
+    (x, y)
+}
+
+fn wait_for_journal_text(journal: &FixtureJournal, id: &str, expected: &str) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        if journal.text(id).as_deref() == Some(expected) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "WebView2 fixture journal {id:?} did not reach {expected:?}: {}",
+            journal.snapshot()
+        );
+        std::thread::sleep(Duration::from_millis(50));
     }
 }
 
-fn run_with_session<F>(label: &str, host_exe: PathBuf, title_substr: &str, cdp_port: u16, f: F)
-where F: FnOnce(u32, u64, &mut ChildStdin, &mut BufReader<&mut ChildStdout>) {
-    if !driver_binary().exists() {
-        eprintln!("cua-driver.exe not built — run `cargo build` first"); return;
-    }
-    if !host_exe.exists() {
-        eprintln!("{label} host exe not found at {host_exe:?} — run test-harness/build/windows.ps1"); return;
-    }
-    // Set the CDP port the host should use so the daemon can find it.
-    let env_var = if label == "webview" { "CUA_WEBVIEW_CDP_PORT" } else { "CUA_ELECTRON_CDP_PORT" };
-    let app = Command::new(&host_exe)
-        .env(env_var, cdp_port.to_string())
-        .stdout(Stdio::null()).stderr(Stdio::null())
-        .spawn().expect("spawn host");
-    let pid = app.id();
-    println!("{label} pid={pid} cdp_port={cdp_port}");
-    std::thread::sleep(Duration::from_secs(2));   // small cold-start for runtime spin-up
-
-    let mut driver = Command::new(driver_binary())
-        .env("CUA_DRIVER_CDP_PORT", cdp_port.to_string())
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
-        .spawn().expect("spawn cua-driver");
-    let mut stdin = driver.stdin.take().unwrap();
-    let mut raw_stdout = driver.stdout.take().unwrap();
-    let mut stdout = BufReader::new(&mut raw_stdout);
-    init(&mut stdin, &mut stdout);
-
-    let wid = find_window_by_title(&mut stdin, &mut stdout, pid, title_substr)
-        .unwrap_or_else(|| panic!("{label} window with title containing {title_substr:?} not found"));
-
-    let session = WebSession { _app: app, driver };
-    f(pid, wid, &mut stdin, &mut stdout);
-    drop(session);
-}
-
-// ── WebView2 structural + page tool ─────────────────────────────────────────
+// ── WebView2 page tool ──────────────────────────────────────────────────────
 
 #[test]
 #[ignore]
-fn harness_webview_window_discoverable() {
-    run_with_session("webview", webview_exe(), "CuaTestHarness WebView", 9222,
-        |pid, wid, _stdin, _stdout| {
-        println!("✅ harness_webview_window_discoverable: pid={pid} wid={wid}");
-    });
+fn harness_webview_left_click_px_background() {
+    let case = native_background_case(
+        "webview2",
+        "left_click",
+        Targeting::Px,
+        DriverRoute::UiaInvoke,
+    );
+    let point = Cell::new(None);
+    run_web_case_with_preparation(
+        case,
+        "webview2",
+        webview_exe(),
+        "CuaTestHarness WebView [ready",
+        |pid, wid, driver, journal| {
+            wait_for_journal_text(journal, "lbl-counter", "counter=0");
+            let bounds = window_bounds(driver, pid, wid);
+            let ready_state = snapshot(driver, pid, wid);
+            let dom_probe = driver.call(
+                "page",
+                serde_json::json!({
+                    "pid": pid,
+                    "window_id": wid,
+                    "action": "click_element",
+                    "selector": "#btn-increment"
+                }),
+            );
+            assert!(
+                !dom_probe.is_error(),
+                "WebView2 DOM geometry probe failed: {}",
+                dom_probe.text()
+            );
+            let screen_x = dom_probe.structured()["screen_x"]
+                .as_f64()
+                .expect("WebView2 DOM probe needs screen_x");
+            let screen_y = dom_probe.structured()["screen_y"]
+                .as_f64()
+                .expect("WebView2 DOM probe needs screen_y");
+            wait_for_journal_text(journal, "lbl-counter", "counter=1");
+            let (x, y) = pixel_from_screen(&ready_state, screen_x, screen_y, bounds);
+            let geometry_probe = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid,
+                    "window_id": wid,
+                    "x": x,
+                    "y": y,
+                    "delivery_mode": "foreground"
+                }),
+            );
+            assert!(
+                !geometry_probe.is_error(),
+                "WebView2 foreground PX geometry probe failed: {}",
+                geometry_probe.text()
+            );
+            wait_for_journal_text(journal, "lbl-counter", "counter=2");
+            point.set(Some((x, y)));
+        },
+        |pid, wid, driver, journal| {
+            let (x, y) = point
+                .get()
+                .expect("foreground geometry probe did not set a PX target");
+            let click = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid,
+                    "window_id": wid,
+                    "x": x,
+                    "y": y,
+                    "delivery_mode": "background"
+                }),
+            );
+            assert!(
+                !click.is_error(),
+                "WebView2 PX background click failed: {}",
+                click.text()
+            );
+            assert_eq!(
+                click.action_route(),
+                Some("accessibility"),
+                "WebView2 PX background click used an unexpected driver route: {}",
+                click.text()
+            );
+            wait_for_journal_text(journal, "lbl-counter", "counter=3");
+        },
+    );
 }
 
 #[test]
@@ -172,57 +394,42 @@ fn harness_webview_page_tool() {
     // CoreWebView2EnvironmentOptions.AdditionalBrowserArguments.
     // Combined with the `/json` Content-Length fix in mcp-server/src/cdp.rs,
     // the page tool now reaches WebView2's DOM via CDP just like Electron.
-    run_with_session("webview", webview_exe(), "CuaTestHarness WebView", 9222,
-        |pid, wid, stdin, stdout| {
-
-        let marker_resp = tools_call(stdin, stdout, 30, "page", serde_json::json!({
-            "pid": pid as i64, "window_id": wid, "action": "execute_javascript",
+    run_web_case(
+        "webview2",
+        "page_roundtrip",
+        webview_exe(),
+        "CuaTestHarness WebView [ready",
+        |pid, wid, driver| {
+            let marker = driver.call("page", serde_json::json!({
+            "pid": pid, "window_id": wid, "action": "execute_javascript",
             "javascript": "document.querySelector('[data-cua-id=\"page-marker\"]').textContent"
-        }));
-        let marker = marker_resp.get("result")
-            .and_then(|r| r.get("content"))
-            .and_then(|c| c.as_array())
-            .and_then(|arr| arr.get(0))
-            .and_then(|item| item.get("text"))
-            .and_then(|t| t.as_str())
-            .unwrap_or("");
-        assert!(marker.contains("WEB_HARNESS_MARKER_v1"),
-            "WebView2 CDP execute_javascript marker fetch: {marker:?}");
+        })).text().to_string();
+            assert!(
+                marker.contains("WEB_HARNESS_MARKER_v1"),
+                "WebView2 CDP execute_javascript marker fetch: {marker:?}"
+            );
 
-        // click_element via DOM selector + counter readback.
-        let _ = tools_call(stdin, stdout, 31, "page", serde_json::json!({
-            "pid": pid as i64, "window_id": wid, "action": "click_element",
-            "selector": "#btn-increment"
-        }));
-        std::thread::sleep(Duration::from_millis(500));
-
-        let counter_resp = tools_call(stdin, stdout, 32, "page", serde_json::json!({
-            "pid": pid as i64, "window_id": wid, "action": "execute_javascript",
-            "javascript": "document.getElementById('lbl-counter').textContent"
-        }));
-        let post = counter_resp.get("result")
-            .and_then(|r| r.get("content"))
-            .and_then(|c| c.as_array())
-            .and_then(|arr| arr.get(0))
-            .and_then(|item| item.get("text"))
-            .and_then(|t| t.as_str())
-            .unwrap_or("");
-        assert!(post.contains("counter=1"),
-            "WebView2 counter didn't advance via page.click_element: {post:?}");
-        println!("✅ harness_webview_page_tool: CDP+execute_javascript+click_element green");
-    });
+            // click_element via DOM selector + counter readback.
+            let _ = driver.call(
+                "page",
+                serde_json::json!({
+                    "pid": pid, "window_id": wid, "action": "click_element",
+                    "selector": "#btn-increment"
+                }),
+            );
+            wait_for_page_text(
+                driver,
+                pid,
+                wid,
+                "document.getElementById('lbl-counter').textContent",
+                "counter=1",
+            );
+            println!("✅ harness_webview_page_tool: CDP+execute_javascript+click_element green");
+        },
+    );
 }
 
-// ── Electron structural + page tool ──────────────────────────────────────────
-
-#[test]
-#[ignore]
-fn harness_electron_window_discoverable() {
-    run_with_session("electron", electron_exe(), "CuaTestHarness Electron", 9223,
-        |pid, wid, _stdin, _stdout| {
-        println!("✅ harness_electron_window_discoverable: pid={pid} wid={wid}");
-    });
-}
+// ── Electron page tool ───────────────────────────────────────────────────────
 
 #[test]
 #[ignore]
@@ -230,36 +437,47 @@ fn harness_electron_page_tool() {
     // Regression guard for the CDP /json discovery fix (parse
     // Content-Length / Transfer-Encoding instead of read_to_end).
     // cua-driver's page tool now reaches Electron's CDP successfully.
-    run_with_session("electron", electron_exe(), "CuaTestHarness Electron", 9223,
-        |pid, wid, stdin, stdout| {
-
-        // 1. execute_javascript via CDP.
-        let marker_resp = tools_call(stdin, stdout, 30, "page", serde_json::json!({
-            "pid": pid as i64, "window_id": wid, "action": "execute_javascript",
+    run_web_case(
+        "electron",
+        "page_execute",
+        electron_exe(),
+        "CuaTestHarness Electron",
+        |pid, wid, driver| {
+            // 1. execute_javascript via CDP.
+            let marker = driver.call("page", serde_json::json!({
+            "pid": pid, "window_id": wid, "action": "execute_javascript",
             "javascript": "document.querySelector('[data-cua-id=\"page-marker\"]').textContent"
-        }));
-        let marker = marker_resp["result"]["content"][0]["text"].as_str().unwrap_or("");
-        assert!(marker.contains("WEB_HARNESS_MARKER_v1"),
-            "Electron CDP execute_javascript marker fetch: {marker:?}");
+        })).text().to_string();
+            assert!(
+                marker.contains("WEB_HARNESS_MARKER_v1"),
+                "Electron CDP execute_javascript marker fetch: {marker:?}"
+            );
 
-        // 2. Increment counter via direct execute_javascript (the
-        //    click_element path has a separate probe-JSON-parsing gap
-        //    documented below — track separately).
-        let _ = tools_call(stdin, stdout, 31, "page", serde_json::json!({
-            "pid": pid as i64, "window_id": wid, "action": "execute_javascript",
-            "javascript": "document.getElementById('btn-increment').click()"
-        }));
-        std::thread::sleep(Duration::from_millis(300));
-
-        let counter_resp = tools_call(stdin, stdout, 32, "page", serde_json::json!({
-            "pid": pid as i64, "window_id": wid, "action": "execute_javascript",
-            "javascript": "document.getElementById('lbl-counter').textContent"
-        }));
-        let post = counter_resp["result"]["content"][0]["text"].as_str().unwrap_or("");
-        assert!(post.contains("counter=1"),
-            "Electron counter did not advance via execute_javascript: {post:?}");
-        println!("✅ harness_electron_page_tool: CDP+execute_javascript green");
-    });
+            // 2. Increment counter via direct execute_javascript (the
+            //    click_element path has a separate probe-JSON-parsing gap
+            //    documented below — track separately).
+            let click = driver.call(
+                "page",
+                serde_json::json!({
+                    "pid": pid, "window_id": wid, "action": "execute_javascript",
+                    "javascript": "document.getElementById('btn-increment').click()"
+                }),
+            );
+            assert!(
+                !click.is_error(),
+                "Electron execute_javascript click failed: {}",
+                click.text()
+            );
+            wait_for_page_text(
+                driver,
+                pid,
+                wid,
+                "document.getElementById('lbl-counter').textContent",
+                "counter=1",
+            );
+            println!("✅ harness_electron_page_tool: CDP+execute_javascript green");
+        },
+    );
 }
 
 /// Regression guard for the page.click_element double-encode fix.
@@ -274,38 +492,41 @@ fn harness_electron_page_tool() {
 #[test]
 #[ignore]
 fn harness_electron_click_element() {
-    run_with_session("electron", electron_exe(), "CuaTestHarness Electron", 9223,
-        |pid, wid, stdin, stdout| {
-        let resp = tools_call(stdin, stdout, 30, "page", serde_json::json!({
-            "pid": pid as i64, "window_id": wid, "action": "click_element",
-            "selector": "#btn-increment"
-        }));
-        let text = resp.get("result")
-            .and_then(|r| r.get("content"))
-            .and_then(|c| c.as_array())
-            .and_then(|arr| arr.get(0))
-            .and_then(|item| item.get("text"))
-            .and_then(|t| t.as_str())
-            .or_else(|| resp.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()))
-            .unwrap_or("");
-        assert!(!text.contains("probe JSON missing") && !text.contains("required field"),
-            "click_element probe parse regressed: {text:?}");
-        std::thread::sleep(Duration::from_millis(400));
-
-        // Verify the click actually fired in the DOM.
-        let counter_resp = tools_call(stdin, stdout, 31, "page", serde_json::json!({
-            "pid": pid as i64, "window_id": wid, "action": "execute_javascript",
-            "javascript": "document.getElementById('lbl-counter').textContent"
-        }));
-        let post = counter_resp.get("result")
-            .and_then(|r| r.get("content"))
-            .and_then(|c| c.as_array())
-            .and_then(|arr| arr.get(0))
-            .and_then(|item| item.get("text"))
-            .and_then(|t| t.as_str())
-            .unwrap_or("");
-        assert!(post.contains("counter=1"),
-            "Counter didn't advance after page.click_element: {post:?}");
-        println!("✅ harness_electron_click_element: probe parsed, click fired, counter=1");
-    });
+    run_web_case(
+        "electron",
+        "click_element_probe",
+        electron_exe(),
+        "CuaTestHarness Electron",
+        |pid, wid, driver| {
+            let resp = driver.call(
+                "page",
+                serde_json::json!({
+                    "pid": pid, "window_id": wid, "action": "click_element",
+                    "selector": "#btn-increment"
+                }),
+            );
+            // Prefer the tool text; fall back to a JSON-RPC error message.
+            let text = if resp.text().is_empty() {
+                resp.raw["error"]["message"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string()
+            } else {
+                resp.text().to_string()
+            };
+            assert!(
+                !text.contains("probe JSON missing") && !text.contains("required field"),
+                "click_element probe parse regressed: {text:?}"
+            );
+            // Verify the click actually fired in the DOM.
+            wait_for_page_text(
+                driver,
+                pid,
+                wid,
+                "document.getElementById('lbl-counter').textContent",
+                "counter=1",
+            );
+            println!("✅ harness_electron_click_element: probe parsed, click fired, counter=1");
+        },
+    );
 }

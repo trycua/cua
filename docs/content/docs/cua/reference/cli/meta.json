@@ -1,6 +1,0 @@
-{
-  "title": "CLI",
-  "description": "Command-line interface for Cua",
-  "icon": "Terminal",
-  "pages": ["commands", "changelog"]
-}

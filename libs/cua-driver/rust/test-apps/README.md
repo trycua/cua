@@ -1,15 +1,30 @@
 # test-apps
 
-Pre-built test application binaries used by `ux_guard_test`.
+Local staging directory for cua-driver test fixture applications.
 
-## Contents
+Build scripts under `../tests/fixtures/build/` write `harness-<name>/`
+directories here. The staged outputs are intentionally git-ignored; rebuild
+them from source instead of committing binaries.
 
-- `desktop-test-app-electron.0.1.0.exe` — Electron test app from
-  [trycua/desktop-test-app-electron v0.1.0](https://github.com/trycua/desktop-test-app-electron/releases/tag/v0.1.0).
-  **Not committed to git** (76 MB). Downloaded automatically by
-  `sandbox\run-tests-in-sandbox.ps1` on first run.
+Common outputs:
 
-## Updating
+- `harness-wpf/`
+- `harness-winui3/`
+- `harness-webview/`
+- `harness-electron/`
+- `harness-tauri/`
+- `harness-appkit/`
+- `harness-swiftui/`
+- `harness-wkwebview/`
+- `harness-gtk3/`
 
-To update to a new version, edit the download URL in
-`sandbox\run-tests-in-sandbox.ps1` and delete the old binary.
+Run the host build script for your platform:
+
+```bash
+../../tests/fixtures/build/macos.sh
+../../tests/fixtures/build/linux.sh
+```
+
+```powershell
+..\..\tests\fixtures\build\windows.ps1
+```

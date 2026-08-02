@@ -1,0 +1,173 @@
+---
+title: Sandbox SDK reference
+description: "API reference for the Cua Sandbox Python package: Sandbox, Image, Localhost, and top-level functions."
+---
+
+## Package
+
+`cua-sandbox` is a Python package imported as `cua`.
+
+| Field | Value |
+|-------|-------|
+| Package | `cua-sandbox` |
+| Import name | `cua` |
+| Python version | 3.12+ |
+| Install | `pip install cua` |
+
+## Top-level exports
+
+| Export | Description |
+|--------|-------------|
+| `Sandbox` | VM or container control class |
+| `Image` | Image builder class |
+| `Localhost` | Direct host control class |
+| `SandboxInfo` | Sandbox metadata structure |
+| `configure()` | Global SDK configuration function |
+| `login()` | Browser login function |
+| `whoami()` | Authenticated user lookup function |
+
+## Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `CUA_API_KEY` | Cua API key for cloud sandboxes |
+
+## Sandbox class
+
+`Sandbox` controls a VM or container through `.mouse`, `.keyboard`, `.screen`, `.clipboard`, `.shell`, `.window`, `.terminal`, `.mobile`, and `.tunnel`.
+
+### Sandbox.ephemeral
+
+Async context manager. The sandbox is destroyed automatically on exit.
+
+```python
+async def ephemeral(cls, image: Image, name=None, api_key=None, local=False, runtime=None, cpu=None, memory_mb=None, disk_gb=None, region='us-east-1') -> AsyncIterator[Sandbox]
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `image` | `Image` | required | Image to run |
+| `name` | `str or None` | `None` | Optional name |
+| `api_key` | `str or None` | `None` | Cua API key; reads `CUA_API_KEY` if `None` |
+| `local` | `bool` | `False` | Use local runtime (Docker/Lume/QEMU) |
+| `runtime` | `Runtime or None` | `None` | Explicit runtime backend |
+| `cpu` | `int or None` | `None` | CPU count (cloud) |
+| `memory_mb` | `int or None` | `None` | Memory in MB (cloud) |
+| `disk_gb` | `int or None` | `None` | Disk size in GB (cloud) |
+| `region` | `str` | `'us-east-1'` | Cloud region |
+
+### Sandbox.create
+
+Provisions a persistent sandbox. The sandbox keeps running after the script exits.
+
+```python
+async def create(cls, image: Image, name=None, api_key=None, local=False, runtime=None, cpu=None, memory_mb=None, disk_gb=None, region='us-east-1') -> Sandbox
+```
+
+Same parameters as `ephemeral`.
+
+### Sandbox.connect
+
+Connects to an existing sandbox by name. Supports both `await` and `async with`. When used as a context manager, `disconnect()` is called on exit. The sandbox keeps running.
+
+```python
+def connect(cls, name: str, api_key=None, local=False, ws_url=None, http_url=None, container_name=None, cpu=None, memory_mb=None, disk_gb=None, region='us-east-1') -> _ConnectResult
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `name` | `str` | required | Sandbox name |
+| `api_key` | `str or None` | `None` | Cua API key; reads `CUA_API_KEY` if `None` |
+| `local` | `bool` | `False` | Use local runtime (Docker/Lume/QEMU) |
+| `ws_url` | `str or None` | `None` | WebSocket URL |
+| `http_url` | `str or None` | `None` | HTTP URL |
+| `container_name` | `str or None` | `None` | Container name |
+| `cpu` | `int or None` | `None` | CPU count (cloud) |
+| `memory_mb` | `int or None` | `None` | Memory in MB (cloud) |
+| `disk_gb` | `int or None` | `None` | Disk size in GB (cloud) |
+| `region` | `str` | `'us-east-1'` | Cloud region |
+
+### Sandbox instance methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `disconnect` | `async disconnect() -> None` | Drop transport connection. Sandbox keeps running. |
+| `destroy` | `async destroy() -> None` | Disconnect and permanently delete the sandbox. |
+| `screenshot` | `async screenshot(text=None, format='png', quality=95) -> bytes` | Capture screenshot. `format`: `'png'` or `'jpeg'`. `quality`: 1-95 (JPEG only). |
+| `screenshot_base64` | `async screenshot_base64(text=None, format='png', quality=95) -> str` | Screenshot as base64 string. |
+| `get_environment` | `async get_environment() -> str` | Returns `'linux'`, `'mac'`, `'windows'`, or `'browser'`. |
+| `get_display_url` | `async get_display_url(share=False) -> str` | URL to view the sandbox display. `share=True` returns a public link (cloud only). |
+| `get_dimensions` | `async get_dimensions() -> tuple[int, int]` | Screen width and height in pixels. |
+
+### Sandbox class methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `list` | `async list(local=False, api_key=None) -> list[SandboxInfo]` | List running and suspended sandboxes. |
+| `get_info` | `async get_info(name, local=False, api_key=None) -> SandboxInfo` | Metadata for a specific sandbox. |
+| `suspend` | `async suspend(name, local=False, api_key=None) -> None` | Suspend a sandbox (save state). Local QEMU: QMP snapshot. Local Docker: pause. Local Lume: stop. Cloud: `POST /v1/vms/{name}/stop`. |
+| `resume` | `async resume(name, local=False, api_key=None) -> Sandbox` | Resume a suspended sandbox. Returns connected `Sandbox`. |
+| `restart` | `async restart(name, local=False, api_key=None) -> Sandbox` | Restart (suspend then resume). Returns connected `Sandbox`. |
+| `delete` | `async delete(name, local=False, api_key=None) -> None` | Permanently delete. Local: stops and removes state file. Cloud: `DELETE /v1/vms/{name}`. |
+
+### Sandbox attributes
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `name` | `str or None` | Sandbox name |
+| `shell` | `Shell` | Run shell commands |
+| `mouse` | `Mouse` | Mouse control |
+| `keyboard` | `Keyboard` | Keyboard control |
+| `screen` | `Screen` | Screenshots and screen info |
+| `clipboard` | `Clipboard` | Clipboard read/write |
+| `tunnel` | `Tunnel` | Port forwarding |
+| `terminal` | `Terminal` | PTY sessions |
+| `window` | `Window` | Window management |
+| `mobile` | `Mobile` | Mobile (Android) touch and hardware keys |
+
+## SandboxInfo
+
+Returned by `Sandbox.list()` and `Sandbox.get_info()`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `str` | Sandbox name |
+| `status` | `str` | Current status |
+| `source` | `str` | Runtime source |
+| `os_type` | `str or None` | OS type |
+| `host` | `str or None` | Host address |
+| `vnc_url` | `str or None` | VNC URL |
+| `api_url` | `str or None` | API URL |
+| `created_at` | `str or None` | ISO timestamp |
+
+## configure, login, whoami
+
+```python
+def configure(api_key=None, base_url=None) -> None
+# Set global SDK config. Equivalent to setting CUA_API_KEY.
+
+def login(base_url=None) -> None
+# Open Cua login page in browser; store credentials in ~/.cua/credentials (Clerk flow).
+
+def whoami(api_key=None) -> Dict[str, Any]
+# Return dict with user info (id, email, etc.) from Cua API.
+```
+
+## Localhost
+
+Direct host control via `cua_auto`. No sandbox. Attributes: `screen`, `mouse`, `keyboard`, `clipboard`, `shell`, `window`, `terminal`.
+
+```python
+# plain await
+host = await Localhost.connect()
+await host.shell.run('echo hello')
+await host.disconnect()
+
+# context manager
+async with Localhost.connect() as host:
+    await host.shell.run('echo hello')
+```
+
+Methods: same signatures as `Sandbox` (`screenshot`, `screenshot_base64`, `get_environment`, `get_dimensions`, `disconnect`).
+
+See [Sandbox interfaces reference](/reference/sandbox-sdk/interfaces) for the full API of sb.shell, sb.mouse, sb.keyboard, sb.screen, sb.clipboard, sb.tunnel, sb.terminal, sb.window, and sb.mobile. See [Image reference](/reference/sandbox-sdk/image) for the full Image builder API.

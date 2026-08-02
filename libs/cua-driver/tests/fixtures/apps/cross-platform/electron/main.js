@@ -1,0 +1,203 @@
+// CuaTestHarness.Electron — minimal Electron host loading the shared
+// index.html that CuaTestHarness.WebView also loads. cua-driver's `page`
+// tool routes through CDP when --remote-debugging-port is set, so we
+// expose one here on a configurable port.
+
+const { app, BrowserWindow, ipcMain } = require('electron');
+const fs = require('fs');
+const http = require('http');
+const path = require('path');
+const sentinelMode = process.env.CUA_E2E_SENTINEL === '1';
+const nativeWayland = process.platform === 'linux' && Boolean(process.env.WAYLAND_DISPLAY);
+const customCuaCompositor = process.env.CUA_E2E_WAYLAND_SESSION === 'cua-compositor';
+const fixtureJournalUrl = process.env.CUA_E2E_FIXTURE_JOURNAL_URL || '';
+const sentinelJournalPath = process.env.CUA_E2E_SENTINEL_JOURNAL || '';
+if (process.env.CUA_E2E_USER_DATA_DIR) {
+  app.setPath('userData', process.env.CUA_E2E_USER_DATA_DIR);
+}
+if (process.platform === 'linux' && process.env.WAYLAND_DISPLAY) {
+  app.commandLine.appendSwitch('ozone-platform', 'wayland');
+  app.commandLine.appendSwitch('enable-features', 'UseOzonePlatform');
+}
+
+// Validate CUA_ELECTRON_CDP_PORT before forwarding to Chromium —
+// remote-debugging-port=0 means "pick an ephemeral port" which would
+// break our fixed-port expectation in the harness tests, and a
+// non-numeric value silently disables CDP.
+const rawCdpPort = process.env.CUA_ELECTRON_CDP_PORT ?? '9223';
+const cdpPortNum = Number(rawCdpPort);
+if (!Number.isInteger(cdpPortNum) || cdpPortNum < 1 || cdpPortNum > 65535) {
+  throw new Error(
+    `Invalid CUA_ELECTRON_CDP_PORT: "${rawCdpPort}". Expected an integer in 1-65535.`
+  );
+}
+const CDP_PORT = String(cdpPortNum);
+app.commandLine.appendSwitch('remote-debugging-port', CDP_PORT);
+
+ipcMain.on('cua-e2e-config', event => {
+  event.returnValue = { journalUrl: fixtureJournalUrl, sentinelMode };
+});
+
+ipcMain.on('cua-e2e-fixture-state', (_event, state) => {
+  if (!fixtureJournalUrl) return;
+  const body = JSON.stringify(state);
+  const request = http.request(fixtureJournalUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'text/plain',
+      'Content-Length': Buffer.byteLength(body),
+    },
+  });
+  request.on('error', () => {});
+  request.end(body);
+});
+
+ipcMain.on('cua-e2e-sentinel-event', (_event, entry) => {
+  if (!sentinelMode || !sentinelJournalPath) return;
+  fs.appendFileSync(sentinelJournalPath, `${JSON.stringify(entry)}\n`, 'utf8');
+});
+
+let mainWindow;
+let sentinelHeartbeatTimer;
+
+function createWindow() {
+  const fixedTitle = sentinelMode
+    ? `CuaTestHarness Sentinel [cdp=${CDP_PORT}]`
+    : `CuaTestHarness Electron [cdp=${CDP_PORT}]`;
+  // GitHub's interactive Windows desktop can be 1024x768. Keep the normal
+  // fixture wholly inside its work area so a maximized sentinel can prove
+  // geometric full occlusion instead of accepting an off-screen target.
+  const compactWindowsFixture = !sentinelMode && process.platform === 'win32';
+  mainWindow = new BrowserWindow({
+    width: sentinelMode ? 1280 : compactWindowsFixture ? 900 : 940,
+    height: sentinelMode ? 900 : compactWindowsFixture ? 640 : 780,
+    // Keep the normal fixture inside virtual desktops whose window manager
+    // has no persisted placement policy (notably Openbox under Xvfb).
+    x: sentinelMode ? 0 : compactWindowsFixture ? 40 : 120,
+    y: sentinelMode ? 0 : compactWindowsFixture ? 40 : 120,
+    title: fixedTitle,
+    // Map the normal harness immediately. Xvfb/Openbox can enumerate a
+    // deferred BrowserWindow while never painting it into the root desktop.
+    // The sentinel normally stays hidden until it has maximized and claimed
+    // focus. cua-compositor has no window-policy transition to perform, so map
+    // it at construction time; a synchronous show() after DOMContentLoaded can
+    // otherwise stall Chromium before the renderer paints or schedules timers.
+    show: !sentinelMode || customCuaCompositor,
+    // A floating-level macOS window is omitted by cua-driver's deliberate
+    // layer-0 top-level window contract. Foreground + maximized is sufficient
+    // for occlusion there and lets an unexpected target raise remain visible.
+    alwaysOnTop: sentinelMode && process.platform !== 'darwin' && !nativeWayland,
+    autoHideMenuBar: true,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: !sentinelMode,
+      // The sentinel's heartbeat is an E2E oracle. It must keep ticking while
+      // the focus-loss canary deliberately places the window in the background.
+      backgroundThrottling: !sentinelMode,
+      preload: path.join(__dirname, 'preload.js'),
+    },
+  });
+
+  // Override the page's <title> with our deterministic harness title so
+  // cua-driver tests can find the window by substring match. Without this,
+  // Electron syncs window.title to document.title which would be
+  // 'cua-driver Web Harness' (the page's title).
+  mainWindow.on('page-title-updated', e => e.preventDefault());
+  mainWindow.setTitle(fixedTitle);
+  mainWindow.webContents.setWindowOpenHandler(() => ({
+    action: 'allow',
+    overrideBrowserWindowOptions: {
+      width: 320,
+      height: 220,
+      show: false,
+      autoHideMenuBar: true,
+      title: 'CuaTestHarness Child Window',
+    },
+  }));
+  mainWindow.webContents.on('did-create-window', child => {
+    child.once('ready-to-show', () => {
+      // Mutter may activate a newly mapped native-Wayland child even when
+      // Electron requests showInactive(), which makes a background AX action
+      // appear to steal focus. The scenario's behavioral oracle is child
+      // creation, so keep the child hidden on native Wayland and preserve the
+      // visible non-activating window contract on the other backends.
+      if (!nativeWayland || customCuaCompositor) {
+        child.showInactive();
+      }
+    });
+  });
+
+  mainWindow
+    .loadFile(path.join(__dirname, 'web', 'index.html'))
+    .then(() => {
+      // Re-set after page-load — Electron syncs window.title to
+      // document.title once the load finishes, which would override
+      // our fixedTitle and break the harness-window-discovery test.
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.setTitle(fixedTitle);
+        if (sentinelMode) {
+          // Drive the clock from the main process but require the renderer to
+          // handle each probe before it can journal a heartbeat. Native
+          // Wayland fullscreen surfaces can suspend renderer-owned interval
+          // timers even while renderer IPC remains healthy.
+          if (!sentinelHeartbeatTimer) {
+            sentinelHeartbeatTimer = setInterval(() => {
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('cua-e2e-sentinel-heartbeat-probe');
+              }
+            }, 100);
+            sentinelHeartbeatTimer.unref();
+          }
+          if (process.platform !== 'darwin' && !nativeWayland) {
+            mainWindow.setAlwaysOnTop(true);
+          }
+          if (nativeWayland && !customCuaCompositor) {
+            mainWindow.setFullScreen(true);
+          } else if (!customCuaCompositor) {
+            mainWindow.maximize();
+          }
+          // The minimal nested cua-compositor intentionally has no fullscreen
+          // policy implementation. Requesting fullscreen leaves Chromium
+          // waiting on a configure transition and stops the heartbeat oracle.
+          // Its 1280x900 sentinel already covers the smaller fixture at origin.
+          // cua-compositor mapped and focused this toplevel at construction
+          // time. Avoid a second synchronous show/configure/focus transition
+          // after the renderer has emitted its ready event.
+          if (!customCuaCompositor) {
+            mainWindow.show();
+            mainWindow.focus();
+          }
+        } else {
+          // Xvfb/Openbox can keep a showInactive window inspectable through
+          // AT-SPI while never mapping it onto the captured root desktop.
+          // Show it normally; background cells subsequently foreground the
+          // occlusion sentinel before taking their desktop snapshot.
+          mainWindow.show();
+          mainWindow.focus();
+        }
+      }
+    })
+    .catch(err => {
+      // Fail deterministically rather than leaving the harness window
+      // up with no content — the integration tests would then time out
+      // waiting for the DOM markers to render.
+      console.error('Failed to load harness web/index.html:', err);
+      app.exit(1);
+    });
+}
+
+app.whenReady().then(() => {
+  createWindow();
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+});
+
+app.on('window-all-closed', () => {
+  if (sentinelHeartbeatTimer) {
+    clearInterval(sentinelHeartbeatTimer);
+    sentinelHeartbeatTimer = undefined;
+  }
+  if (process.platform !== 'darwin') app.quit();
+});

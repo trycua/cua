@@ -1,0 +1,2 @@
+{"reason":"compiler-message","package_id":"exact 0.1.0","message":{"rendered":"only a diagnostic"}}
+{"reason":"compiler-artifact","package_id":"wrong 0.1.0","target":{"name":"cyclops_sdk","crate_types":["cdylib"]},"filenames":["/tmp/wrong/libcyclops_sdk.so"]}

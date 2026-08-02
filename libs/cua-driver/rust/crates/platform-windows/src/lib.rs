@@ -7,18 +7,52 @@
 //! - Win32 EnumWindows / CreateToolhelp32Snapshot for enumeration
 //! - PrintWindow / GDI BitBlt for screenshots
 //!
-//! Reference: /tmp/trope-cua/src/CuaDriver.Win/
+//! ## Provenance
+//!
+//! The Windows accessibility-tree walk, app/window enumeration, UIA
+//! InvokePattern click, and ValuePattern set-value all derive from prior art in
+//! Interface-Agent (github.com/francedot/Interface-Agent, packages/windows, 2024).
+//! trope-cua (MIT, github.com/voctory/trope-cua) was a useful cross-reference for
+//! some of the details during this Rust implementation — thanks to Victor Vannara
+//! for that work.
 
 use cua_driver_core::tool::ToolRegistry;
 
-pub mod tools;
-pub mod overlay;
 pub mod diagnostics;
-pub mod recording_hooks;
+pub mod health_report;
+pub mod overlay;
 pub mod pip;
+pub mod recording_hooks;
+pub mod terminal;
+pub mod tools;
+
+// Cross-platform: pure math for MOUSEEVENTF_VIRTUALDESK absolute-coord
+// normalization. Lives outside the Windows-only `input` module so its
+// unit tests run on any host (no Win32 runtime needed) — see issue #1979,
+// where the multi-monitor normalization bug was diagnosable by pure math.
+pub mod virtualdesk;
+
+#[cfg(any(target_os = "windows", test))]
+mod keycodes;
+
+// Cross-platform: pure math for packing `(x, y)` into the `LPARAM` payload
+// every `WM_MOUSE*` / `WM_*BUTTON*` message carries. Lives outside the
+// Windows-only `input` module for the same reason as `virtualdesk` — the
+// receiver-side `GET_X_LPARAM` sign-extension contract is a pure-math
+// property we want to pin with cross-platform unit tests (the #1979 audit
+// pass that lives in this commit).
+pub mod lparam;
 
 #[cfg(target_os = "windows")]
 pub mod win32;
+
+#[cfg(target_os = "windows")]
+pub mod browser_platform;
+
+#[cfg(target_os = "windows")]
+mod browser_consent_ui;
+#[cfg(target_os = "windows")]
+mod browser_setup_ui;
 
 #[cfg(target_os = "windows")]
 pub mod uia;
@@ -31,6 +65,8 @@ pub mod input;
 
 #[cfg(target_os = "windows")]
 pub mod capture;
+#[cfg(target_os = "windows")]
+mod clipboard;
 
 #[cfg(target_os = "windows")]
 pub mod wgc;
@@ -47,9 +83,17 @@ pub fn register_tools() -> ToolRegistry {
 /// (pid + window_id required, JPEG @ 85%, text note pointing at pixel
 /// tools). See `tools::impl_::ScreenshotCompatTool`.
 pub fn register_tools_with_cursor(cfg: cursor_overlay::CursorConfig, compat: bool) -> ToolRegistry {
+    register_tools_with_cursor_and_provider(None, cfg, compat)
+}
+
+pub fn register_tools_with_cursor_and_provider(
+    provider: Option<std::sync::Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
+    cfg: cursor_overlay::CursorConfig,
+    compat: bool,
+) -> ToolRegistry {
     if cfg.enabled {
         overlay::init(cfg.clone());
         overlay::run_on_thread();
     }
-    tools::build_registry(compat)
+    tools::build_registry_with_provider(compat, provider)
 }

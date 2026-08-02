@@ -22,6 +22,7 @@ from cua_sandbox._auth import login, whoami
 from cua_sandbox._config import configure
 from cua_sandbox.image import Image
 from cua_sandbox.localhost import Localhost, localhost
+from cua_sandbox.pool import Pool
 from cua_sandbox.runtime.compat import (
     RuntimeSupport,
     check_local_support,
@@ -35,6 +36,7 @@ __all__ = [
     "login",
     "whoami",
     "Image",
+    "Pool",
     "Sandbox",
     "SandboxInfo",
     "sandbox",

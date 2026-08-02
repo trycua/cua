@@ -1,5 +1,5 @@
 {
-  "originHash" : "e211eb961ff71ceccb522c1477d4f18226110d69b566538f7da616eec2b3774b",
+  "originHash" : "e3f9e294b188848fdad4c8e5a1ad832f117209f02ad8d9fe5e452ead5b6f017f",
   "pins" : [
     {
       "identity" : "dynamic",
@@ -78,8 +78,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-format.git",
       "state" : {
-        "branch" : "release/5.10",
-        "revision" : "3191b8f3109730af449c6332d0b1ca6653b857a0"
+        "branch" : "release/6.0",
+        "revision" : "55024a4da4b8fb0444c5b1342bcb18bcb618105e"
       }
     },
     {
@@ -130,10 +130,10 @@
     {
       "identity" : "swift-syntax",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-syntax.git",
+      "location" : "https://github.com/swiftlang/swift-syntax.git",
       "state" : {
-        "branch" : "release/5.10",
-        "revision" : "cdd571f366a4298bb863a9dcfe1295bb595041d5"
+        "branch" : "release/6.0",
+        "revision" : "0687f71944021d616d34d922343dcef086855920"
       }
     },
     {
@@ -143,6 +143,15 @@
       "state" : {
         "revision" : "7c6ad0fc39d0763e0b699210e4124afd5041c5df",
         "version" : "1.6.4"
+      }
+    },
+    {
+      "identity" : "swift-testing",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-testing.git",
+      "state" : {
+        "revision" : "399f76dcd91e4c688ca2301fa24a8cc6d9927211",
+        "version" : "0.99.0"
       }
     },
     {

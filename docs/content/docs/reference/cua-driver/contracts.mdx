@@ -1,0 +1,145 @@
+---
+title: Interface Contracts
+description: "The contracts behind the CLI and MCP surfaces: transport state, config persistence, capture scope, and action routing."
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The CLI (`cua-driver call …`) and MCP (`cua-driver mcp`) run the same
+runtime contract, but they differ in **what state survives between calls**,
+**where configuration lands**, and **which parameters a call must carry**.
+MCP may own that runtime directly or select `cua-driver serve` explicitly.
+
+---
+
+## CLI versus MCP at a glance
+
+| Dimension | CLI (`call`) | MCP (`mcp`) |
+|---|---|---|
+| Lifetime | one client process per action; the selected service owns durable state | one process, many actions |
+| `element_index` cache | owned by the selected service; survives until invalidation or service restart | owned by the MCP runtime; lives across calls |
+| Identity | anonymous unless the call declares a public `session` | a minted transport session per connection, plus an optional public `session` |
+| Where `set_config` lands | the persisted global default on disk | an in-memory, session-scoped override |
+| Agent cursor | none | shown when a `session` is declared |
+
+<Callout type="warn">
+`cua-driver call` requires a service at the resolved default endpoint or at the
+explicit `--socket` endpoint. A freshly built binary's behavior appears through
+the CLI only after that service restarts, because the action runs in the service
+process. Integration tests avoid this ambiguity by starting an isolated runtime.
+</Callout>
+
+Bare MCP owns its runtime on Windows/Linux and uses the signed app service on
+macOS. `mcp --socket <endpoint>` explicitly selects a service on every
+platform; `mcp --direct` explicitly selects process ownership and is mutually
+exclusive with `--socket`.
+
+---
+
+## Where settings live
+
+`set_config` resolves *where* a setting is written from whether a public
+`session` is declared. Runtime and transport adapters derive their reserved
+internal session fields; caller-supplied reserved values do not grant authority.
+
+| Caller | Public `session` | Effect |
+|---|---|---|
+| `cua-driver config set …`, anonymous one-shot `cua-driver call` | absent | writes the global `DriverConfig` and persists to `~/.cua-driver/config.json` |
+| MCP or CLI call with a `session` | present | in-memory override for that session only; no disk write, no clobber of the default |
+
+Every tool then reads the **effective** value with this precedence:
+
+```
+effective = call-argument  >  session override  >  global default (disk)
+```
+
+Keys that flow through this: `capture_scope`, `max_image_dimension`. `capture_mode` is deprecated and ignored. It is still accepted for back-compat but has no effect; `get_window_state` always returns both the tree and a screenshot. See the [`set_config` reference](/reference/cua-driver/mcp-tools) for the per-session isolation details.
+
+---
+
+## The capture-scope contract
+
+`capture_scope` decides **which parameters a call must carry** and **what coordinate space it speaks**.
+
+```
+ capture_scope = "window"  (default)          capture_scope = "desktop"
+ ───────────────────────────────────          ──────────────────────────────────
+ per window, background-capable                whole screen, foreground, vision
+
+ observe: get_window_state(pid, window_id)     observe: get_desktop_state()
+ act:     click(pid, …)                        act:     click(x, y)
+          element_index + window_id  (AX)                true screen pixels
+          or x, y + pid  (window-local px)              no pid, no window_id
+ needs:   pid (+ window_id for elements)        skips:   window_id, list_windows
+```
+
+| | `window` (default) | `desktop` |
+|---|---|---|
+| Coordinate space | window-local (the PNG `get_window_state` returns) | true screen pixels |
+| Required params | `pid` (+ `window_id` for `element_index`) | only `x`, `y` |
+| Capture surface | `get_window_state` (tree + screenshot) | `get_desktop_state` (screenshot) |
+| Delivery | background (default) or foreground | foreground only |
+| Action rung | element ax action (`element_index`) or element px action (`x,y`) | element px action (`x,y`) only |
+
+Desktop scope is the screen-absolute "Computer-Use 1.0" loop: read the whole screen, click an absolute coordinate, the way a screenshot-only model expects. Window scope is the default because it is what makes background, concurrent automation possible.
+
+---
+
+## How an action is routed
+
+Every input tool (`click`, `scroll`, and the keyboard family: `type_text`, `press_key`, `hotkey`) picks its path from the arguments present:
+
+| Arguments | Path | Behavior |
+|---|---|---|
+| `element_index` + `window_id` | accessibility action | UIA Invoke / `AXPerformAction` / AT-SPI. Background, no cursor move, no focus steal. |
+| `x`, `y` + `pid` | window-local pixel | coordinates are relative to that window's screenshot. For the **keyboard family** this px form pixel-clicks `(x, y)` to establish real renderer focus, then delivers the keystroke(s) to the now-focused element. Use it for Chromium/Electron inputs the AX layer cannot focus. |
+| `x`, `y`, **no** `pid`/`window_id`, scope `desktop` | screen-absolute | true screen pixels, lands on whatever is frontmost there |
+| `x`, `y`, **no** `pid`/`window_id`, scope `window` | rejected | structured `desktop_scope_disabled` error |
+
+The keyboard family's `x, y` (px) form is mutually exclusive with `element_index` (ax). Pass one or the other.
+
+A window-less action is **never silently reinterpreted**. Under window scope it is rejected with a structured `desktop_scope_disabled` error that points the caller at `set_config capture_scope=desktop`, rather than treating screen pixels as window-local pixels.
+
+---
+
+## Valid combinations
+
+`get_window_state` always returns both the accessibility tree and a screenshot by default, so perception is not a matrix axis. The enforced combinations are `capture_scope`, action rung, and delivery mode:
+
+| `capture_scope` | Action rung | `delivery_mode` | Valid? | Why |
+|---|---|---|---|---|
+| `window` | `ax` (`element_index`) | `background` | ✅ | The default. Semantic actions on a background-capable window. |
+| `window` | `ax` (`element_index`) | `foreground` | ✅ | Activate, then act by element. |
+| `window` | `px` (`x`, `y`) | `background` | ✅ | Click a coordinate off the window screenshot without raising the target when the platform/app supports routed delivery. |
+| `window` | `px` (`x`, `y`) | `foreground` | ✅ | Activate, then click by coordinate. |
+| `desktop` | `px` (`x`, `y`) | `foreground` | ✅ | The screen-absolute loop: read the whole desktop, click absolute coordinates on the active desktop. |
+| `desktop` | `ax` (`element_index`) | any | ❌ | A desktop-absolute action has no `window_id`, so there is no element tree to resolve an `element_index` against. |
+| `desktop` | any | `background` | ❌ | Screen-absolute input hits whatever owns those pixels on the active desktop; there is no per-process background route. |
+| `window` | window-less | any | ❌ | A window-less action while scope is `window` returns `desktop_scope_disabled`. |
+
+The rejected combinations are enforced. Desktop scope is foreground and pixel-only by design.
+
+---
+
+## Platform support
+
+| Capability | Windows | macOS | Linux |
+|---|---|---|---|
+| `get_window_state` returns both tree + screenshot (element ax / px actions) | ✅ | ✅ | ✅ |
+| `delivery_mode: "background"` (best-effort background) | ✅ | ✅ | ✅ for semantic AT-SPI actions on X11 and Wayland; native-Wayland raw keyboard input remains limited |
+| `delivery_mode: "foreground"` (action-scoped activation and restore) | ✅ | ✅ | ✅ X11; Wayland activation is compositor-constrained |
+| `bring_to_front` (persistent activation for focus-proxy surfaces) | ✅ | ✅, chiefly for RDP | ✅ X11 EWMH activation (`_NET_ACTIVE_WINDOW` + input focus); Wayland raise is compositor-constrained |
+| `get_desktop_state` (desktop capture) | ✅ | ✅ | ✅ |
+| Window-less desktop click (`click{x,y}`, no `pid`) | ✅ | rolling out | rolling out |
+
+---
+
+## Mental model
+
+```
+WINDOW scope  = "talk to a window"   → needs pid (+window_id for elements); background by default
+DESKTOP scope = "talk to the screen" → needs only x,y; screen-absolute; foreground; vision
+
+CLI  = stateless; writes config to DISK (or proxies to a running daemon)
+MCP  = stateful session; config override in MEMORY; owns the agent cursor
+```

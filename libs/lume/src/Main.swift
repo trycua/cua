@@ -1,4 +1,6 @@
+import AppKit
 import ArgumentParser
+import Dispatch
 import Foundation
 
 @main
@@ -17,7 +19,7 @@ struct Lume: AsyncParsableCommand {
 // MARK: - Version Management
 extension Lume {
     enum Version {
-        static let current: String = "0.3.9"
+        static let current: String = "0.5.1" // x-release-please-version
     }
 }
 
@@ -56,9 +58,41 @@ extension Lume {
 
 // MARK: - Command Execution
 extension Lume {
-    public static func main() async {
-        // Record installation event on first run (sent regardless of telemetry opt-out)
-        TelemetryClient.shared.recordInstallation()
+    public static func main() {
+        if let runContext = directRunContext() {
+            ProcessInfo.processInfo.processName = "Lume — \(runContext.vmName)"
+            do {
+                try NativeApplicationLoop.run(
+                    showsStartupWindow: runContext.showsNativeDisplayAtLaunch
+                ) {
+                    await executeInvocation()
+                }
+            } catch {
+                exit(withError: error)
+            }
+            return
+        }
+
+        Task {
+            await executeInvocation()
+            Foundation.exit(EXIT_SUCCESS)
+        }
+        dispatchMain()
+    }
+
+    private static func executeInvocation() async {
+        // Telemetry management must be able to be the first invocation without
+        // creating an ID or making a request. Every other entry point performs
+        // consent-aware registration and per-version release recording before
+        // routine command telemetry can fire.
+        if !isTelemetryManagementInvocation() {
+            let rawChannel = ProcessInfo.processInfo.environment["LUME_INSTALL_CHANNEL"]
+            let channel = TelemetryClient.normalizedInstallChannel(rawChannel)
+            if channel == "first_run" && TelemetryClient.shared.shouldShowFirstRunNotice() {
+                writeTelemetryNoticeToStandardError()
+            }
+            await TelemetryClient.shared.recordInstallation(channel: channel)
+        }
 
         // Print banner when showing help
         if shouldShowBanner() {
@@ -67,18 +101,87 @@ extension Lume {
 
         do {
             try await executeCommand()
+            await TelemetryClient.shared.flush()
         } catch {
+            await TelemetryClient.shared.flush()
             exit(withError: error)
         }
     }
 
-    private static func executeCommand() async throws {
-        var command = try parseAsRoot()
+    private static func directRunContext() -> (
+        vmName: String,
+        showsNativeDisplayAtLaunch: Bool
+    )? {
+        let args = Array(CommandLine.arguments.dropFirst())
+        guard args.first == "run", !args.contains("--detach") else { return nil }
 
-        if var asyncCommand = command as? AsyncParsableCommand {
-            try await asyncCommand.run()
-        } else {
-            try command.run()
+        let noDisplay = args.contains("--no-display") || args.contains("-d")
+        let inlineDisplay = args.first(where: { $0.hasPrefix("--display=") })
+            .map { String($0.dropFirst("--display=".count)) }
+        let separatedDisplay = args.indices.first(where: { index in
+            args[index] == "--display" && args.index(after: index) < args.endIndex
+        }).map { args[args.index(after: $0)] }
+        let requestedDisplay = inlineDisplay ?? separatedDisplay
+        let usesNativeDisplay = !noDisplay
+            && (requestedDisplay == nil || requestedDisplay == DisplayMode.native.rawValue)
+
+        // The conventional form is `lume run VM_NAME [options]`. ArgumentParser
+        // still produces a useful validation error if the positional name is absent.
+        let vmName = args.count > 1 && !args[1].hasPrefix("-") ? args[1] : "VM"
+        return (vmName, usesNativeDisplay)
+    }
+
+    private static func isTelemetryManagementInvocation() -> Bool {
+        let args = Array(CommandLine.arguments.dropFirst())
+        return args.count >= 2 && args[0] == "config" && args[1] == "telemetry"
+    }
+
+    private static func writeTelemetryNoticeToStandardError() {
+        let notice = """
+            Telemetry: enabled by default; Lume collects pseudonymous install and bounded usage metadata only.
+              No prompts, VM/image names, file paths, or VM contents are collected.
+              Disable persistently at any time: lume config telemetry disable
+
+            """
+        if let data = notice.data(using: .utf8) {
+            FileHandle.standardError.write(data)
+        }
+    }
+
+    private static func executeCommand() async throws {
+        let arguments = Array(CommandLine.arguments.dropFirst())
+        let shouldRecordCompletion = !isTelemetryManagementInvocation()
+        let operation = TelemetryClient.commandOperation(arguments: arguments)
+        let startedAt = Date()
+
+        do {
+            var command = try parseAsRoot()
+
+            if var asyncCommand = command as? AsyncParsableCommand {
+                try await asyncCommand.run()
+            } else {
+                try command.run()
+            }
+            if shouldRecordCompletion {
+                TelemetryClient.shared.recordOperationCompleted(
+                    operation: operation,
+                    transport: .cli,
+                    success: true,
+                    errorClass: .none,
+                    elapsed: Date().timeIntervalSince(startedAt)
+                )
+            }
+        } catch {
+            if shouldRecordCompletion {
+                TelemetryClient.shared.recordOperationCompleted(
+                    operation: operation,
+                    transport: .cli,
+                    success: false,
+                    errorClass: error is ValidationError ? .invalidParams : .operationError,
+                    elapsed: Date().timeIntervalSince(startedAt)
+                )
+            }
+            throw error
         }
     }
 }

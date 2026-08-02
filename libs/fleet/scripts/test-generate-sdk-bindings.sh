@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-workspace_dir="$repo_root/cyclops-cs"
+workspace_dir="$repo_root/fleet"
 generator="$workspace_dir/scripts/generate-sdk-bindings.sh"
 bindings_dir="$workspace_dir/sdk-bindings"
 temporary_directory="$(mktemp -d "${TMPDIR:-/tmp}/cyclops-sdk-bindings-test.XXXXXX")"

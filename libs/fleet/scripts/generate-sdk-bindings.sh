@@ -22,7 +22,7 @@ if [ "$#" -gt 1 ]; then
 fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-workspace_dir="$repo_root/cyclops-cs"
+workspace_dir="$repo_root/fleet"
 workspace="$workspace_dir/Cargo.toml"
 bindings_dir="$workspace_dir/sdk-bindings"
 languages="python kotlin swift ruby"
@@ -798,8 +798,8 @@ def replace_buffer(match):
         f"{indent})"
     )
 text, buffer_replacements = re.subn(buffer_pattern, replace_buffer, text)
-if buffer_replacements != 11:
-    raise SystemExit(f"expected 11 Ruby Rust-buffer future wrappers, found {buffer_replacements}")
+if buffer_replacements != 12:
+    raise SystemExit(f"expected 12 Ruby Rust-buffer future wrappers, found {buffer_replacements}")
 
 void_pattern = r"(?m)^(\s*)FleetSdk\.rust_call_with_error\(([^,]+),:([a-z0-9_]+),(.*)\)$"
 def replace_void(match):

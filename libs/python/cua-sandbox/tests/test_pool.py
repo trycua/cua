@@ -6,7 +6,7 @@ import pytest
 from cua_sandbox import Image, Pool
 from cua_sandbox.sync import Pool as SyncPool
 from cua_sandbox.transport.fleet_cloud import _FleetClient
-from cyclops_sdk import Sandbox as FleetSandbox
+from fleet_sdk import Sandbox as FleetSandbox
 
 
 def fleet_pool(name: str = "foo") -> SimpleNamespace:

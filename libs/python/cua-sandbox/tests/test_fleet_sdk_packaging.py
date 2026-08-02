@@ -12,13 +12,13 @@ FLEET_IMPORTS = (
 )
 
 
-class CyclopsSdkPackagingTests(unittest.TestCase):
+class FleetSdkPackagingTests(unittest.TestCase):
     def test_declares_published_fleet_without_a_direct_train_dependency(self):
         with PYPROJECT_PATH.open("rb") as pyproject_file:
             project = tomllib.load(pyproject_file)
 
         dependencies = project["project"]["dependencies"]
-        self.assertIn("cua-fleet==0.0.4", dependencies)
+        self.assertIn("cua-fleet==0.0.7", dependencies)
         self.assertFalse(any(dependency.startswith("cua-train") for dependency in dependencies))
         self.assertNotIn("cua-fleet", project["tool"]["uv"]["sources"])
         self.assertNotIn("cua-train", project["tool"]["uv"]["sources"])
@@ -30,7 +30,7 @@ class CyclopsSdkPackagingTests(unittest.TestCase):
             },
         )
 
-    def test_lock_keeps_train_only_as_a_fleet_transitive_dependency(self):
+    def test_lock_uses_the_published_fleet_bundle(self):
         with LOCK_PATH.open("rb") as lock_file:
             lock = tomllib.load(lock_file)
 
@@ -49,15 +49,10 @@ class CyclopsSdkPackagingTests(unittest.TestCase):
         self.assertNotIn("cua-train", sandbox_dependencies)
         self.assertIn("cua-fleet", sandbox_requires_dist)
         self.assertNotIn("cua-train", sandbox_requires_dist)
-        self.assertEqual(packages["cua-fleet"]["version"], "0.0.4")
+        self.assertEqual(packages["cua-fleet"]["version"], "0.0.7")
         self.assertEqual(packages["cua-fleet"]["source"], {"registry": "https://pypi.org/simple"})
-        self.assertIn("cua-train", fleet_dependencies)
-        self.assertEqual(fleet_dependencies, {"cua-train"})
-        self.assertEqual(packages["cua-train"]["version"], "0.1.1")
-        self.assertEqual(
-            packages["cua-train"]["source"],
-            {"registry": "https://wheels.cua.ai/simple"},
-        )
+        self.assertNotIn("cua-train", fleet_dependencies)
+        self.assertNotIn("cua-train", packages)
 
     def test_package_does_not_copy_the_binding_from_the_checkout(self):
         self.assertFalse((PROJECT_ROOT / "hatch_build.py").exists())
@@ -65,10 +60,10 @@ class CyclopsSdkPackagingTests(unittest.TestCase):
             project = tomllib.load(pyproject_file)
         self.assertNotIn("hooks", project.get("tool", {}).get("hatch", {}).get("build", {}))
 
-    def test_fleet_runtime_keeps_binding_imports_direct(self):
+    def test_fleet_runtime_imports_published_binding_directly(self):
         for source_path in FLEET_IMPORTS:
             source = source_path.read_text()
-            self.assertIn("from cyclops_sdk import", source)
+            self.assertIn("from fleet_sdk import", source)
             self.assertNotIn("from cua_train", source)
             self.assertNotIn("sys.path", source)
             self.assertNotIn("site.addsitedir", source)

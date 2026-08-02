@@ -377,6 +377,11 @@ fn harness_appkit_invoke_menu_live_path() {
                 .tree_text()
                 .contains("menu_action=none"));
 
+            // A second native process deliberately steals AppKit activation
+            // and key-window status. The target menu item validates against
+            // both, so an AXFocused-only implementation cannot pass this cell.
+            let _distractor = Harness::launch();
+
             let invoked = driver.call(
                 "invoke_menu",
                 serde_json::json!({

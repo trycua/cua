@@ -51,7 +51,7 @@ let kMenuItemTitle = "Harness Test Item"
 
 // MARK: - Controller
 
-final class HarnessWindowController: NSObject, NSTextFieldDelegate {
+final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSMenuItemValidation {
     let window: NSWindow
     let counterLabel = NSTextField(labelWithString: "counter=0")
     var counterValue = 0
@@ -365,6 +365,17 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate {
 
     @objc func onArrangeLeft(_ sender: NSMenuItem) {
         menuActionLabel.stringValue = "menu_action=window_arrange_left"
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(onArrangeLeft(_:)) {
+            // Real macOS Window-menu commands are contextual: the application
+            // being active is insufficient when the requested window is not
+            // key. Keep this fixture honest so invoke_menu must establish the
+            // exact window context before resolving the final item.
+            return NSApp.isActive && window.isKeyWindow
+        }
+        return true
     }
 
     func controlTextDidChange(_ obj: Notification) {

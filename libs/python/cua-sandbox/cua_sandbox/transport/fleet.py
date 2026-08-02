@@ -45,7 +45,26 @@ class FleetTransport(Transport):
     async def disconnect(self) -> None:
         self._connected = False
 
-    async def _request(self, method: str, path: str, *, json_body: Any = None) -> httpx.Response:
+    async def request_service(
+        self,
+        name: str,
+        *,
+        method: str,
+        path: str,
+        json_body: Any = None,
+    ) -> httpx.Response:
+        if name not in self._bound.services:
+            raise ValueError(f"Fleet sandbox does not expose service {name!r}")
+        return await self._request(method, path, json_body=json_body, service_name=name)
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_body: Any = None,
+        service_name: str | None = None,
+    ) -> httpx.Response:
         assert self._connected, "Transport not connected"
         body = None if json_body is None else json.dumps(json_body).encode()
         headers = (
@@ -53,7 +72,7 @@ class FleetTransport(Transport):
         )
         result = await self._sdk.service_request(
             self._bound,
-            self._service_name,
+            service_name or self._service_name,
             path,
             HttpRequest(
                 method=method, url=f"https://service.invalid{path}", headers=headers, body=body

@@ -238,25 +238,43 @@ fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
         CFRelease(target as CFTypeRef);
     }
 
-    let deadline = std::time::Instant::now() + Duration::from_millis(600);
+    // AXFocusedWindow can lead AppKit's native `isKeyWindow` state while the
+    // WindowServer activation is still settling. Menu validation observes the
+    // latter. Require the exact app/window pair to remain stable briefly so a
+    // loaded desktop cannot expose a transiently disabled contextual item.
+    let deadline = std::time::Instant::now() + Duration::from_millis(800);
+    let mut stable_since = None;
     loop {
-        if exact_window_is_focused(
+        let now = std::time::Instant::now();
+        if exact_window_is_ready(
+            crate::apps::frontmost_pid(),
+            pid,
             crate::ax::bindings::focused_window_id_of_pid(pid),
             window_id,
         ) {
-            return Ok(());
+            let since = stable_since.get_or_insert(now);
+            if now.duration_since(*since) >= Duration::from_millis(120) {
+                return Ok(());
+            }
+        } else {
+            stable_since = None;
         }
-        if std::time::Instant::now() >= deadline {
+        if now >= deadline {
             return Err(format!(
-                "invoke_menu: target window {window_id} did not become the focused window"
+                "invoke_menu: target window {window_id} did not become stably key and frontmost"
             ));
         }
         std::thread::sleep(Duration::from_millis(20));
     }
 }
 
-fn exact_window_is_focused(focused_window_id: Option<u32>, target_window_id: u32) -> bool {
-    focused_window_id == Some(target_window_id)
+fn exact_window_is_ready(
+    frontmost_pid: Option<i32>,
+    target_pid: i32,
+    focused_window_id: Option<u32>,
+    target_window_id: u32,
+) -> bool {
+    frontmost_pid == Some(target_pid) && focused_window_id == Some(target_window_id)
 }
 
 fn refusal(message: String) -> ToolResult {
@@ -371,9 +389,10 @@ mod tests {
     }
 
     #[test]
-    fn menu_focus_requires_the_exact_requested_window() {
-        assert!(exact_window_is_focused(Some(42), 42));
-        assert!(!exact_window_is_focused(Some(41), 42));
-        assert!(!exact_window_is_focused(None, 42));
+    fn menu_focus_requires_the_exact_frontmost_app_and_window() {
+        assert!(exact_window_is_ready(Some(7), 7, Some(42), 42));
+        assert!(!exact_window_is_ready(Some(8), 7, Some(42), 42));
+        assert!(!exact_window_is_ready(Some(7), 7, Some(41), 42));
+        assert!(!exact_window_is_ready(Some(7), 7, None, 42));
     }
 }

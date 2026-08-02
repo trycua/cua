@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
@@ -267,10 +268,11 @@ public partial class MainWindow : Window
     private void OnListChanged(object sender, SelectionChangedEventArgs e)
     {
         if (LblListValue is null) return;
-        if (LstItems?.SelectedItem is ListBoxItem item)
-        {
-            LblListValue.Text = $"selected={item.Content}";
-        }
+        var selected = LstItems?.SelectedItems
+            .OfType<ListBoxItem>()
+            .Select(item => item.Content?.ToString() ?? "")
+            .Where(value => value.Length > 0);
+        LblListValue.Text = $"selected={string.Join(",", selected ?? Enumerable.Empty<string>())}";
     }
 
     private void OnMenuFileNew(object sender, RoutedEventArgs e)  => LblMenuAction.Text = "menu_action=file_new";

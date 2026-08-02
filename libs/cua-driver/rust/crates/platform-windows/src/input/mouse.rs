@@ -597,14 +597,18 @@ fn send_click_synthesized_mods_impl(
         // poll GetKeyState (WPF, Chromium) observe the held state, then released
         // after the click loop below.
         let (mod_downs, mod_ups) = crate::input::keyboard::modifier_hold_inputs(modifiers);
+        let mut sent_ok = true;
         if !mod_downs.is_empty() {
-            SendInput(&mod_downs, std::mem::size_of::<INPUT>() as i32);
+            let sent = SendInput(&mod_downs, std::mem::size_of::<INPUT>() as i32);
+            sent_ok = sent as usize == mod_downs.len();
             sleep(Duration::from_millis(5));
         }
 
         let count = count.max(1);
-        let mut sent_ok = true;
         for i in 0..count {
+            if !sent_ok {
+                break;
+            }
             // Only the move record carries absolute coordinates. Button-only
             // records act at the current pointer position; adding ABSOLUTE to
             // them can prevent retained-mode controls from seeing the press.
@@ -621,7 +625,13 @@ fn send_click_synthesized_mods_impl(
 
         // Release any held modifiers (reverse order) before restoring z-order.
         if !mod_ups.is_empty() {
-            SendInput(&mod_ups, std::mem::size_of::<INPUT>() as i32);
+            let released = SendInput(&mod_ups, std::mem::size_of::<INPUT>() as i32);
+            if released as usize != mod_ups.len() {
+                // A second release attempt is safe and reduces the chance of a
+                // partially inserted chord leaving system modifier state held.
+                let _ = SendInput(&mod_ups, std::mem::size_of::<INPUT>() as i32);
+                sent_ok = false;
+            }
         }
 
         // Let the target process mouse-up before any background-route restore.
@@ -656,7 +666,10 @@ fn send_click_synthesized_mods_impl(
         }
         drop(noactivate);
         if !sent_ok {
-            bail!("SendInput inserted fewer mouse events than expected for the foreground click.");
+            bail!(
+                "SendInput inserted fewer modifier or mouse events than expected for the \
+                 foreground click."
+            );
         }
         if activate {
             let foreground_root = GetAncestor(GetForegroundWindow(), GA_ROOT);

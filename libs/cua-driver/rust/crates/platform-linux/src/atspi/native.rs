@@ -131,6 +131,7 @@ struct Visited<'a> {
     checked: Option<bool>,
     enabled: Option<bool>,
     selected: Option<bool>,
+    selectable: bool,
     actions: Vec<String>,
     has_editable: bool,
     has_value: bool,
@@ -503,6 +504,10 @@ async fn collect_visited_bounded<'a>(
             .as_ref()
             .and_then(|state| state.as_ref().ok())
             .map(|state| state.contains(State::Enabled) && state.contains(State::Sensitive));
+        let selectable = state_r
+            .as_ref()
+            .and_then(|state| state.as_ref().ok())
+            .is_some_and(|state| state.contains(State::Selectable));
         let selected = if role_lower.contains("check") {
             checked
         } else if role_lower.contains("radio")
@@ -603,6 +608,7 @@ async fn collect_visited_bounded<'a>(
             checked,
             enabled,
             selected,
+            selectable,
             actions,
             has_editable,
             has_value,
@@ -708,11 +714,11 @@ fn format_value(v: f64) -> String {
 /// Whether a walked node is exposed as an indexed, usable element.
 ///
 /// Historically this was "the node advertises AT-SPI Actions" (buttons, menu
-/// items, links). That silently dropped every **Value**-only widget — GTK
-/// `GtkScale` sliders, scroll bars, spin buttons, progress bars expose the
-/// `Value` interface but NO `Action`, while some text fields expose
-/// `EditableText` without either. Omitting those interfaces makes controls the
-/// driver can operate impossible to address by `element_index`.
+/// items, links). That silently dropped Value-only widgets, editable text, and
+/// selectable list rows. GTK list rows expose Component + Selectable state but
+/// no Action even though a coordinate click on their bounds is operable. Keep
+/// every such control in the shared index space so physical-input fallbacks can
+/// address it without inventing pixels in the caller.
 ///
 /// This predicate is the single source of truth for the element-index space and
 /// MUST be applied identically in `render` and in every `action_nodes` filter
@@ -723,6 +729,7 @@ fn is_indexable(v: &Visited) -> bool {
         !v.actions.is_empty(),
         v.has_editable,
         v.has_value,
+        v.selectable,
         v.enabled,
     )
 }
@@ -731,9 +738,10 @@ fn is_indexable_capabilities(
     has_action: bool,
     has_editable: bool,
     has_value: bool,
+    has_selectable_state: bool,
     enabled: Option<bool>,
 ) -> bool {
-    (has_action || has_editable || has_value) && enabled != Some(false)
+    (has_action || has_editable || has_value || has_selectable_state) && enabled != Some(false)
 }
 
 // ── Public (sync) entry points ───────────────────────────────────────────────
@@ -2486,12 +2494,43 @@ mod coord_tests {
     };
 
     #[test]
-    fn editable_only_nodes_are_addressable() {
-        assert!(is_indexable_capabilities(false, true, false, Some(true)));
-        assert!(is_indexable_capabilities(true, false, false, None));
-        assert!(is_indexable_capabilities(false, false, true, Some(true)));
-        assert!(!is_indexable_capabilities(false, false, false, Some(true)));
-        assert!(!is_indexable_capabilities(true, false, false, Some(false)));
+    fn operable_nodes_are_addressable() {
+        assert!(is_indexable_capabilities(
+            false,
+            true,
+            false,
+            false,
+            Some(true)
+        ));
+        assert!(is_indexable_capabilities(true, false, false, false, None));
+        assert!(is_indexable_capabilities(
+            false,
+            false,
+            true,
+            false,
+            Some(true)
+        ));
+        assert!(is_indexable_capabilities(
+            false,
+            false,
+            false,
+            true,
+            Some(true)
+        ));
+        assert!(!is_indexable_capabilities(
+            false,
+            false,
+            false,
+            false,
+            Some(true)
+        ));
+        assert!(!is_indexable_capabilities(
+            true,
+            false,
+            false,
+            false,
+            Some(false)
+        ));
     }
 
     #[test]

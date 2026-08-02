@@ -1595,6 +1595,92 @@ fn harness_wpf_listbox_select() {
 
 #[test]
 #[ignore]
+fn harness_wpf_modified_click_preserves_selection() {
+    run_foreground_case(
+        "modified_click_selection",
+        Targeting::Ax,
+        DriverRoute::WindowsSendInput,
+        Vec::new(),
+        |pid, wid, driver| {
+            focus_harness(driver, pid, wid);
+            let first = snapshot(driver, pid, wid);
+            let apple =
+                ax::element_index_by_id(first.text(), "lst-apple").expect("lst-apple missing");
+            let select_apple = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": wid, "element_index": apple,
+                    "snapshot_id": first.snapshot_id(), "delivery_mode": "foreground"
+                }),
+            );
+            assert!(
+                !select_apple.is_error(),
+                "select apple failed: {}",
+                select_apple.text()
+            );
+            std::thread::sleep(Duration::from_millis(250));
+
+            let second = snapshot(driver, pid, wid);
+            let banana =
+                ax::element_index_by_id(second.text(), "lst-banana").expect("lst-banana missing");
+            let refused_background = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": wid, "element_index": banana,
+                    "snapshot_id": second.snapshot_id(), "modifier": ["ctrl"]
+                }),
+            );
+            assert!(
+                refused_background.is_error(),
+                "background modified click was not refused: {}",
+                refused_background.text()
+            );
+            assert_eq!(
+                refused_background.structured()["code"],
+                "background_unavailable",
+                "background modified click returned the wrong refusal: {}",
+                refused_background.structured()
+            );
+            std::thread::sleep(Duration::from_millis(250));
+            let after_refusal = snapshot(driver, pid, wid);
+            assert!(
+                after_refusal.text().contains("selected=apple"),
+                "refused modified click changed the prior selection: {}",
+                after_refusal.text()
+            );
+            let banana = ax::element_index_by_id(after_refusal.text(), "lst-banana")
+                .expect("lst-banana missing after refusal");
+            let add_banana = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": wid, "element_index": banana,
+                    "snapshot_id": after_refusal.snapshot_id(), "delivery_mode": "foreground",
+                    "modifier": ["ctrl"]
+                }),
+            );
+            assert!(
+                !add_banana.is_error(),
+                "modified click failed: {}",
+                add_banana.text()
+            );
+            std::thread::sleep(Duration::from_millis(300));
+            let post = snapshot(driver, pid, wid);
+            assert!(
+                post.text().contains("selected=apple,banana"),
+                "modified click replaced or lost the prior selection: {}",
+                post.text()
+                    .lines()
+                    .filter(|line| line.contains("selected="))
+                    .collect::<Vec<_>>()
+                    .join(" / ")
+            );
+            Vec::new()
+        },
+    );
+}
+
+#[test]
+#[ignore]
 fn harness_wpf_invoke_menu_live_path() {
     run_foreground_case(
         "invoke_menu",

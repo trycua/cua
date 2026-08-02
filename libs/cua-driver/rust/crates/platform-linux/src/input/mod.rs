@@ -1605,8 +1605,23 @@ pub fn send_focus_out(xid: u64) -> Result<()> {
 
 /// Send a button click (down + up) to a window at window-local coordinates.
 pub fn send_click(xid: u64, x: i32, y: i32, count: usize, button: u8) -> Result<()> {
+    send_click_with_modifiers(xid, x, y, count, button, &[])
+}
+
+/// Send a target-addressed X11 click whose event-state mask carries the named
+/// modifiers. Unlike a plain AT-SPI action, this preserves multi-selection
+/// semantics without changing the X input focus.
+pub fn send_click_with_modifiers(
+    xid: u64,
+    x: i32,
+    y: i32,
+    count: usize,
+    button: u8,
+    modifiers: &[&str],
+) -> Result<()> {
     let (conn, _) = connect_x11_for_input()?;
     let root = conn.setup().roots[0].root;
+    let modifier_state = modifiers_to_state(modifiers);
 
     for _ in 0..count {
         let target = resolve_event_target(&conn, xid, x, y)?;
@@ -1622,7 +1637,7 @@ pub fn send_click(xid: u64, x: i32, y: i32, count: usize, button: u8) -> Result<
             root_y: target.root_y,
             event_x: target.local_x,
             event_y: target.local_y,
-            state: KeyButMask::from(0u16),
+            state: modifier_state,
             same_screen: true,
         };
 
@@ -1638,7 +1653,9 @@ pub fn send_click(xid: u64, x: i32, y: i32, count: usize, button: u8) -> Result<
             root_y: target.root_y,
             event_x: target.local_x,
             event_y: target.local_y,
-            state: button_state_mask(button),
+            state: KeyButMask::from(
+                u16::from(modifier_state) | u16::from(button_state_mask(button)),
+            ),
             same_screen: true,
         };
 
@@ -2056,22 +2073,67 @@ pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
 /// by vision on the whole screen and issues a real screen-absolute pointer
 /// click. `button` is an X button number (1=left, 2=middle, 3=right).
 pub fn send_click_xtest_desktop(x: i32, y: i32, button: u8, count: usize) -> Result<()> {
+    send_click_xtest_desktop_with_modifiers(x, y, button, count, &[])
+}
+
+/// Real XTest click with physical modifier down/up transitions around the
+/// pointer gesture. Used only after the caller selected foreground delivery.
+pub fn send_click_xtest_desktop_with_modifiers(
+    x: i32,
+    y: i32,
+    button: u8,
+    count: usize,
+    modifiers: &[&str],
+) -> Result<()> {
     use x11rb::protocol::xtest::ConnectionExt as _;
     let (conn, screen_num) = connect_x11_for_input()?;
     let root = conn.setup().roots[screen_num].root;
-    // Absolute pointer warp (MotionNotify, detail=0 => absolute) so the button
-    // events that follow are delivered at (x, y).
-    conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x as i16, y as i16, 0)?;
-    let count = count.max(1);
-    for click_index in 0..count {
-        conn.xtest_fake_input(BUTTON_PRESS_EVENT, button, 0, root, x as i16, y as i16, 0)?;
-        conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?;
-        if click_index + 1 < count {
-            // Chromium needs the first pair to reach the server before the
-            // second pair. A zero-gap batch produces two click events but no
-            // DOM dblclick event under Xvfb/Openbox.
-            conn.flush()?;
-            sleep(Duration::from_millis(DOUBLE_CLICK_DELAY_MS));
+    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let mut guards = Vec::new();
+    let mut modifier_keycodes = Vec::new();
+    for modifier in modifiers {
+        let keysym = key_name_to_keysym(modifier)?;
+        let (keycode, guard) = keycode_for_keysym(&conn, &mapping, keysym, modifier)?;
+        if let Some(guard) = guard {
+            guards.push(guard);
+        }
+        modifier_keycodes.push(keycode);
+    }
+    let mut pressed = Vec::new();
+    let gesture_result = (|| -> Result<()> {
+        for &keycode in &modifier_keycodes {
+            conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
+            pressed.push(keycode);
+        }
+        // Absolute pointer warp (MotionNotify, detail=0 => absolute) so the
+        // button events that follow are delivered at (x, y).
+        conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x as i16, y as i16, 0)?;
+        let count = count.max(1);
+        for click_index in 0..count {
+            conn.xtest_fake_input(BUTTON_PRESS_EVENT, button, 0, root, x as i16, y as i16, 0)?;
+            conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?;
+            if click_index + 1 < count {
+                // Chromium needs the first pair to reach the server before the
+                // second pair. A zero-gap batch produces two click events but
+                // no DOM dblclick event under Xvfb/Openbox.
+                conn.flush()?;
+                sleep(Duration::from_millis(DOUBLE_CLICK_DELAY_MS));
+            }
+        }
+        Ok(())
+    })();
+
+    // Always attempt to release every modifier that was successfully queued,
+    // including when a later pointer request fails. A failed gesture must not
+    // leave the desktop with a logically stuck Ctrl/Shift/Alt/Super key.
+    let mut release_result: Result<()> = Ok(());
+    for &keycode in pressed.iter().rev() {
+        if let Err(error) =
+            conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)
+        {
+            if release_result.is_ok() {
+                release_result = Err(error.into());
+            }
         }
     }
     conn.flush()?;
@@ -2080,6 +2142,9 @@ pub fn send_click_xtest_desktop(x: i32, y: i32, button: u8, count: usize) -> Res
     // under Xtigervnc where keyboard events did not (see send_key_xtest), but make
     // it explicit so the desktop click is reliable across X servers too.
     let _ = conn.get_input_focus()?.reply();
+    drop(guards);
+    gesture_result?;
+    release_result?;
     Ok(())
 }
 
@@ -2595,8 +2660,24 @@ exit 0"#,
 #[cfg(test)]
 mod path_tests {
     use super::{
-        path_cumulative, point_on_path, real_pointer_capabilities_available, sample_function,
+        modifiers_to_state, path_cumulative, point_on_path, real_pointer_capabilities_available,
+        sample_function,
     };
+    use x11rb::protocol::xproto::KeyButMask;
+
+    #[test]
+    fn click_modifier_state_combines_canonical_names_and_aliases() {
+        let state = modifiers_to_state(&["ctrl", "shift", "meta"]);
+        assert!(state.contains(KeyButMask::CONTROL));
+        assert!(state.contains(KeyButMask::SHIFT));
+        assert!(state.contains(KeyButMask::MOD4));
+        assert!(!state.contains(KeyButMask::MOD1));
+
+        assert_eq!(
+            modifiers_to_state(&["control", "alt"]),
+            KeyButMask::from(u16::from(KeyButMask::CONTROL) | u16::from(KeyButMask::MOD1))
+        );
+    }
 
     #[test]
     fn real_pointer_capabilities_require_uinput_access() {

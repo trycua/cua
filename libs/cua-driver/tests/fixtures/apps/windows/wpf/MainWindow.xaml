@@ -207,6 +207,7 @@
                     <StackPanel>
                         <ListBox x:Name="LstItems"
                                  AutomationProperties.AutomationId="lst-items"
+                                 SelectionMode="Extended"
                                  Width="220" Height="80" HorizontalAlignment="Left"
                                  SelectionChanged="OnListChanged">
                             <ListBoxItem Content="apple"  AutomationProperties.AutomationId="lst-apple"/>

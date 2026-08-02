@@ -2801,6 +2801,20 @@ impl Tool for ClickTool {
         // a modifier passed to a background click is necessarily ignored there.
         let modifiers: Vec<String> = args.str_array("modifier");
         let delivery = DeliveryMode::from_args(&args);
+        if !modifiers.is_empty() && delivery != DeliveryMode::Foreground {
+            return ToolResult::error(
+                "click modifiers require delivery_mode:\"foreground\" on Windows; UIA and \
+                 PostMessage cannot carry live modifier-key state",
+            )
+            .with_structured(json!({
+                "code": "background_unavailable",
+                "effect": "refused",
+                "escalation": {
+                    "recommended": "foreground",
+                    "reason": "Windows modifier clicks require SendInput so the target observes live modifier state"
+                }
+            }));
+        }
         // For every non-foreground click, mark the target window
         // non-activatable (WS_EX_NOACTIVATE) for the duration so a target that
         // self-activates in its UIA-Invoke / click handler (WPF
@@ -2922,8 +2936,19 @@ impl Tool for ClickTool {
                 let prev_fg_addr = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
+                let mods_owned = modifiers.clone();
+                let activate = delivery == DeliveryMode::Foreground;
                 let send_result = tokio::task::spawn_blocking(move || {
-                    crate::input::send_click_synthesized(hwnd, tx, ty, count, &btn_fg)
+                    let mod_refs: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
+                    if activate && !mod_refs.is_empty() {
+                        crate::input::send_click_synthesized_active_mods(
+                            hwnd, tx, ty, count, &btn_fg, &mod_refs,
+                        )
+                    } else {
+                        crate::input::send_click_synthesized_mods(
+                            hwnd, tx, ty, count, &btn_fg, &mod_refs,
+                        )
+                    }
                 })
                 .await;
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
@@ -3028,6 +3053,27 @@ impl Tool for ClickTool {
                 // Foreground delivery is a real SendInput tap at (cx,cy); if the
                 // element is off-screen, scroll it into view and re-resolve so the
                 // tap doesn't land on the taskbar, else keep the clean failure.
+                // Modified selection needs one stronger preflight: some WPF
+                // ScrollViewers report a clipped item as on-screen because its
+                // stale rectangle is still inside the outer HWND. Ask the item
+                // to scroll itself into view before trusting that rectangle.
+                let (cx, cy) = if !modifiers.is_empty() {
+                    self.state
+                        .element_cache
+                        .get_element_retained(pid, hwnd, idx)
+                        .and_then(|retained| {
+                            retained.is_uia().then(|| unsafe {
+                                crate::uia::scroll::scroll_into_view_and_recenter(
+                                    hwnd,
+                                    retained.as_ptr(),
+                                )
+                            })
+                        })
+                        .flatten()
+                        .unwrap_or((cx, cy))
+                } else {
+                    (cx, cy)
+                };
                 let (cx, cy) = match resolve_onscreen_point_with_scroll(
                     &self.state.element_cache,
                     pid,
@@ -3041,11 +3087,19 @@ impl Tool for ClickTool {
                     Err(msg) => return ToolResult::error(msg),
                 };
                 let btn_fg = btn.clone();
+                let mods_owned = modifiers.clone();
                 let prev_fg_addr = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
                 let send_result = tokio::task::spawn_blocking(move || {
-                    crate::input::send_click_synthesized(hwnd, cx, cy, count, &btn_fg)
+                    let mod_refs: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
+                    if mod_refs.is_empty() {
+                        crate::input::send_click_synthesized(hwnd, cx, cy, count, &btn_fg)
+                    } else {
+                        crate::input::send_click_synthesized_active_mods(
+                            hwnd, cx, cy, count, &btn_fg, &mod_refs,
+                        )
+                    }
                 })
                 .await;
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
@@ -3350,9 +3404,15 @@ impl Tool for ClickTool {
                 let mods_owned = modifiers.clone();
                 let send_result = tokio::task::spawn_blocking(move || {
                     let mod_refs: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
-                    crate::input::send_click_synthesized_active_mods(
-                        hwnd, sx as i32, sy as i32, count, &btn, &mod_refs,
-                    )
+                    if mod_refs.is_empty() {
+                        crate::input::send_click_synthesized(
+                            hwnd, sx as i32, sy as i32, count, &btn,
+                        )
+                    } else {
+                        crate::input::send_click_synthesized_active_mods(
+                            hwnd, sx as i32, sy as i32, count, &btn, &mod_refs,
+                        )
+                    }
                 })
                 .await;
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));

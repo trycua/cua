@@ -35,9 +35,10 @@ fn def() -> &'static ToolDef {
             • `background` (default): post to the pid WITHOUT fronting/raising — the \
               auth-message path (Chromium-safe). With element_index it focuses that AX \
               element first. `window_id` only targets; it does not raise.\n\
-            • `foreground`: guard and briefly front the exact window, send a genuine HID \
-              key transition so Chromium content and native menu equivalents both receive \
-              it, then restore prior frontmost. Requires window_id (and no element_index).\n\n\
+            • `foreground`: guard and briefly front the exact window, focus an addressed AX \
+              element when supplied, send a genuine HID key transition so Chromium content, \
+              inline editors, and native menu equivalents receive it, then restore prior \
+              frontmost. Requires window_id.\n\n\
             A key press is never driver-verifiable → effect:\"unverifiable\"; confirm via \
             screenshot. Key names: return, tab, escape, up/down/left/right, space, delete, \
             home, end, pageup, pagedown, f1-f12, plus any letter or digit. \
@@ -241,16 +242,26 @@ impl Tool for PressKeyTool {
                     // is accepted by both. Skipped when px-focus already handled the
                     // target-specific foreground transition.
                     if fg && !px_focus {
-                        if let Some(wid) = window_id {
-                            if element_index.is_none() {
-                                crate::input::skylight::with_foreground_hid_activation(
-                                    pid as libc::pid_t,
-                                    wid,
-                                    || crate::input::keyboard::press_key_bare_global(&key, &m),
-                                )?;
-                                return Ok(());
-                            }
-                        }
+                        let wid = window_id.ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "delivery_mode=foreground requires window_id for press_key"
+                            )
+                        })?;
+                        crate::input::skylight::with_foreground_hid_activation(
+                            pid as libc::pid_t,
+                            wid,
+                            || {
+                                // Activation can change the first responder, so
+                                // repeat the best-effort AX focus write inside
+                                // the guarded foreground interval immediately
+                                // before the physical key transition.
+                                if let Some(element_ptr) = pre_focus_ptr {
+                                    let _ = crate::input::ax_actions::focus_element(element_ptr);
+                                }
+                                crate::input::keyboard::press_key_bare_global(&key, &m)
+                            },
+                        )?;
+                        return Ok(());
                     }
                     // background (default): auth-envelope post, no raise.
                     crate::input::keyboard::press_key(pid, &key, &m)

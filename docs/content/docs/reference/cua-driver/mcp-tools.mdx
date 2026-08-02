@@ -364,9 +364,9 @@ WEB CONTENT (Chromium/WebKit/Electron — browser tabs, Slack, VS Code, X's comp
 
 ### `press_key`
 
-Press and release a single key, delivered to the target pid via CGEventPostToPid. Follows the same `delivery_mode` ladder as click/type_text — it does NOT raise the window by default:
+Press and release a single key. Follows the same `delivery_mode` ladder as click/type_text — it does NOT raise the window by default:
 • `background` (default): post to the pid WITHOUT fronting/raising — the auth-message path (Chromium-safe). With element_index it focuses that AX element first. `window_id` only targets; it does not raise.
-• `foreground`: briefly front the window (NSMenu path, &lt; 1 ms) so native menu key-equivalents dispatch, then restore prior frontmost — the explicit escalation for menu shortcuts an app drops in the background. Requires window_id (and no element_index).
+• `foreground`: guard and briefly front the exact window, send a genuine HID key transition so Chromium content and native menu equivalents both receive it, then restore prior frontmost. Requires window_id (and no element_index).
 
 A key press is never driver-verifiable → effect:"unverifiable"; confirm via screenshot. Key names: return, tab, escape, up/down/left/right, space, delete, home, end, pageup, pagedown, f1-f12, plus any letter or digit. Modifiers array: cmd, shift, option/alt, ctrl, fn.
 

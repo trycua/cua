@@ -175,6 +175,33 @@ def test_release_notes_dedupe_contributors_across_roles_and_login_case():
     assert "@GoldenFish123321" not in body
 
 
+def test_cua_driver_release_footer_explains_github_prerelease_label():
+    footer = (REPO_ROOT / ".github/release-notes/cua-driver-rs.md").read_text()
+    manifest = {
+        "displayName": "Cua Driver",
+        "version": "0.17.0",
+        "repository": "trycua/cua",
+        "tag": "cua-driver-rs-v0.17.0",
+        "compareUrl": (
+            "https://github.com/trycua/cua/compare/"
+            "cua-driver-rs-v0.16.0...cua-driver-rs-v0.17.0"
+        ),
+        "visualRequested": False,
+        "changes": [],
+        "contributors": [],
+        "assets": [],
+    }
+
+    body = render_body(manifest, footer)
+    normalized = " ".join(body.split())
+
+    assert "Why GitHub says “Pre-release”" in body
+    assert "repository-wide “Latest” pointer" in normalized
+    assert "plain Cua Driver SemVer" in normalized
+    assert "npm and PyPI" in normalized
+    assert "`cua-driver-rs-v*` releases directly" in normalized
+
+
 def test_cross_repository_references_are_not_resolved_in_cua():
     body = (
         "Closes https://github.com/other/project/issues/7 and closes #8. "

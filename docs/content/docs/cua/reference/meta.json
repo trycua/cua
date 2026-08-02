@@ -1,6 +1,0 @@
-{
-  "title": "Reference",
-  "description": "SDK and CLI API reference",
-  "icon": "FileText",
-  "pages": ["desktop-sandbox", "sandbox-sdk", "agent-sdk", "cli"]
-}

@@ -1,0 +1,167 @@
+---
+title: Sandbox interfaces reference
+description: API reference for sb.shell, sb.mouse, sb.keyboard, sb.screen, sb.clipboard, sb.tunnel, sb.terminal, sb.window, and sb.mobile.
+---
+
+| Attribute | Class | Purpose |
+|-----------|-------|---------|
+| sb.shell | Shell | Run shell commands |
+| sb.mouse | Mouse | Mouse control |
+| sb.keyboard | Keyboard | Keyboard control |
+| sb.screen | Screen | Screenshots and screen info |
+| sb.clipboard | Clipboard | Clipboard read/write |
+| sb.tunnel | Tunnel | Port forwarding |
+| sb.terminal | Terminal | PTY terminal sessions |
+| sb.window | Window | Window management |
+| sb.mobile | Mobile | Mobile (Android) touch and hardware-key control |
+
+## Shell
+
+```python
+async def run(command: str, timeout: int = 30) -> CommandResult
+```
+
+### CommandResult
+
+| Field | Type | Description |
+|-------|------|-------------|
+| stdout | str | Standard output |
+| stderr | str | Standard error |
+| returncode | int | Exit code |
+| success | bool (property) | True if returncode == 0 |
+
+## Mouse
+
+```python
+async def click(x: int, y: int, button: str = 'left') -> None
+async def right_click(x: int, y: int) -> None
+async def double_click(x: int, y: int) -> None
+async def move(x: int, y: int) -> None
+async def scroll(x: int, y: int, scroll_x: int = 0, scroll_y: int = 3) -> None
+async def mouse_down(x: int, y: int, button: str = 'left') -> None
+async def mouse_up(x: int, y: int, button: str = 'left') -> None
+async def drag(start_x: int, start_y: int, end_x: int, end_y: int, button: str = 'left') -> None
+```
+
+## Keyboard
+
+```python
+async def type(text: str) -> None
+# Type a string of text.
+
+async def keypress(keys: Union[List[str], str]) -> None
+# Press a key combination, e.g. ['ctrl', 'c'] or 'enter'.
+
+async def key_down(key: str) -> None
+async def key_up(key: str) -> None
+```
+
+## Screen
+
+```python
+async def screenshot(format: str = 'png', quality: int = 95) -> bytes
+# format: 'png' (lossless) or 'jpeg' (lossy, ~5-10x smaller). quality: 1-95, ignored for PNG.
+
+async def screenshot_base64(format: str = 'png', quality: int = 95) -> str
+# Screenshot as base64-encoded string.
+
+async def size() -> Tuple[int, int]
+# Returns (width, height) in pixels.
+```
+
+## Clipboard
+
+```python
+async def get() -> str
+# Returns current clipboard text.
+
+async def set(text: str) -> None
+# Sets clipboard text.
+```
+
+## Tunnel
+
+```python
+def forward(*ports) -> _TunnelContext
+```
+
+Forwards one or more sandbox ports (or Android abstract sockets) to the host.
+
+*ports* may be int (TCP port) or str (Android abstract socket name, e.g. 'chrome_devtools_remote').
+
+Returns:
+- single TunnelInfo when one target is given
+- dict[sandbox_port, TunnelInfo] when multiple targets are given
+
+### TunnelInfo
+
+| Field | Type | Description |
+|-------|------|-------------|
+| host | str | Always 'localhost' |
+| port | int | Host-side port assigned |
+| sandbox_port | int or str | Original port/socket inside the sandbox |
+| url | str (property) | `http://{host}:{port}` |
+
+```python
+async def close() -> None
+# Close this tunnel. No-op if already closed or inside a context manager.
+```
+
+## Terminal
+
+```python
+async def create(command: Optional[str] = None, cols: int = 80, rows: int = 24) -> dict
+# Create a PTY session (default command is the login shell). Returns {'pid': int, 'cols': int, 'rows': int}.
+
+async def send_input(pid: int, data: str) -> None
+# Send input to a PTY session.
+
+async def info(pid: int) -> Optional[dict]
+# Return PTY session info, or None if the session is gone.
+
+async def close(pid: int) -> bool
+# Kill a PTY session. Returns True on success.
+```
+
+## Window
+
+```python
+async def get_active_title() -> str
+# Returns the title of the currently focused window.
+```
+
+## Mobile
+
+Mobile (Android) touch and hardware-key control. Coordinates are in screen pixels. Single-touch methods use input tap/swipe via adb shell. Multi-touch gestures use adb root + MT Protocol B sendevent.
+
+```python
+async def tap(x: int, y: int) -> None
+async def long_press(x: int, y: int, duration_ms: int = 1000) -> None
+async def double_tap(x: int, y: int, delay: float = 0.1) -> None
+async def type_text(text: str) -> None
+async def swipe(x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300) -> None
+async def scroll_up(x: int, y: int, distance: int = 600, duration_ms: int = 400) -> None
+async def scroll_down(x: int, y: int, distance: int = 600, duration_ms: int = 400) -> None
+async def scroll_left(x: int, y: int, distance: int = 400, duration_ms: int = 300) -> None
+async def scroll_right(x: int, y: int, distance: int = 400, duration_ms: int = 300) -> None
+async def fling(x1: int, y1: int, x2: int, y2: int) -> None
+async def gesture(duration_ms: int = 400, steps: int = 0, *finger_paths) -> None
+# N-finger gesture via MT Protocol B sendevent. Each positional arg is (x,y) waypoints for one finger.
+# steps=0 = auto (duration_ms // 20, min 5).
+async def pinch_in(cx: int, cy: int, spread: int = 300, duration_ms: int = 400) -> None
+# Pinch-in (zoom out), two simultaneous fingers.
+async def pinch_out(cx: int, cy: int, spread: int = 300, duration_ms: int = 400) -> None
+# Pinch-out (zoom in), two simultaneous fingers.
+async def key(keycode: int) -> None
+async def home() -> None
+async def back() -> None
+async def recents() -> None
+async def power() -> None
+async def volume_up() -> None
+async def volume_down() -> None
+async def enter() -> None
+async def backspace() -> None
+async def wake() -> None
+async def notifications() -> None
+async def close_notifications() -> None
+```

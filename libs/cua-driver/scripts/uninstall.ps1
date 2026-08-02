@@ -1,4 +1,4 @@
-﻿# cua-driver-rs uninstaller (Windows) — removes everything install.ps1
+﻿# cua-driver-rs uninstaller (Windows) — removes the runtime installed by install.ps1
 # laid down: the Scheduled Task autostart entry, running daemon
 # processes, the directory junctions wiring the visible bin dir back to
 # a per-version release dir, the entire package home tree, and any skill
@@ -6,11 +6,18 @@
 # config directories.
 #
 # Usage (one-liner — recommended):
-#   irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.ps1 | iex
+#   irm https://cua.ai/driver/uninstall.ps1 | iex
 #
-# Force (no prompts):
-#   $forceArgs = @('-Force')
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.ps1))) @forceArgs
+# Force (skip all prompts):
+#   $env:CUA_DRIVER_RS_UNINSTALL_FORCE = '1'
+#   irm https://cua.ai/driver/uninstall.ps1 | iex
+#
+# Why an env var and not a `-Force` parameter: `iex` (Invoke-Expression)
+# refuses to parse a script that opens with `[CmdletBinding()] param(...)`
+# — the natural one-liner above otherwise fails with
+# "Unexpected attribute 'CmdletBinding'" at parse time. Reading the flag
+# from $env: keeps the body iex-safe, and the env var inherits across
+# the self-elevation re-exec for free (no -ArgumentList forwarding).
 #
 # What gets removed:
 #   - Scheduled Task 'cua-driver-serve' (autostart entry registered by
@@ -19,11 +26,9 @@
 #     the binary directory open during the delete pass)
 #   - <visibleBinDir>     = %LOCALAPPDATA%\Programs\Cua\cua-driver\bin  (directory junction)
 #   - <currentDir>        = %USERPROFILE%\.cua-driver\packages\current  (directory junction)
-#   - <packageHome>       = %USERPROFILE%\.cua-driver\                  (entire tree:
-#                                                                              releases, lockfile,
-#                                                                              telemetry id,
-#                                                                              install marker,
-#                                                                              version_check.json)
+#   - <packageHome>\packages and runtime artifacts. The pseudonymous telemetry
+#     id, preference, and registration markers are preserved unless purge is
+#     explicitly requested.
 #   - Skill junctions under:
 #       %USERPROFILE%\.claude\skills\cua-driver-rs
 #       %USERPROFILE%\.agents\skills\cua-driver-rs
@@ -46,11 +51,17 @@
 #                                     v0.2.13 and earlier used .cua-driver-rs —
 #                                     that legacy path is always cleaned up too)
 #
-# Params:
-#   -Force      non-interactive: skip the "remove? [y/N]" prompt before
+# Env (force mode):
+#   $env:CUA_DRIVER_RS_UNINSTALL_FORCE
+#               non-interactive: skip the "remove? [y/N]" prompt before
 #               each major delete. The one-liner is interactive by
 #               default so a stray paste doesn't accidentally wipe a
-#               working install.
+#               working install. Inherited automatically by the elevated
+#               re-exec child (see Elevation below).
+#
+# Env (purge identity + preference):
+#   $env:CUA_DRIVER_RS_UNINSTALL_PURGE = '1'
+#               also delete the package home after removing the runtime.
 #
 # Elevation:
 #   `install.ps1 -AutoStart` (and `cua-driver autostart enable`) register
@@ -64,14 +75,19 @@
 #   we self-elevate via UAC; otherwise we run in-place. Mirrors the
 #   install side's elevation pattern in autostart.rs:215-223.
 
-[CmdletBinding()]
-param(
-    [switch]$Force
-)
-
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+
+# $Force is read from the environment so the script body stays iex-safe.
+# `[CmdletBinding()]` / `param()` declarations are only legal at the start
+# of a script-file, function, or scriptblock — NOT inside an
+# Invoke-Expression'd string — so `irm <url> | iex` parses with
+# "Unexpected attribute 'CmdletBinding'" if we keep a formal param block.
+# Env var also inherits across the self-elevation re-exec automatically,
+# so we don't need to plumb -Force through -ArgumentList.
+$Force = [bool]$env:CUA_DRIVER_RS_UNINSTALL_FORCE
+$Purge = $env:CUA_DRIVER_RS_UNINSTALL_PURGE -match '^(1|true|yes|on)$'
 
 # ---------- Elevation pre-check -------------------------------------------
 
@@ -109,8 +125,10 @@ if (-not (Test-IsElevated) -and (Test-NeedsElevation)) {
     # from a file on disk; empty when piped through `irm ... | iex` (the
     # canonical one-liner). For the iex case we materialize the script body
     # to a tempfile and re-exec from there — RunAs needs a file path.
-    $forwarded = @()
-    if ($Force) { $forwarded += '-Force' }
+    #
+    # No -Force forwarding needed: $env:CUA_DRIVER_RS_UNINSTALL_FORCE
+    # already lives in this process's env if the user opted in, and
+    # Start-Process inherits the current env into the elevated child.
 
     $scriptPath = $MyInvocation.MyCommand.Path
     if (-not $scriptPath) {
@@ -120,7 +138,7 @@ if (-not (Test-IsElevated) -and (Test-NeedsElevation)) {
         $scriptPath = $tmp
     }
 
-    $argList = @('-ExecutionPolicy', 'Bypass', '-NoProfile', '-File', $scriptPath) + $forwarded
+    $argList = @('-ExecutionPolicy', 'Bypass', '-NoProfile', '-File', $scriptPath)
     try {
         $proc = Start-Process -FilePath powershell.exe -ArgumentList $argList -Verb RunAs -PassThru -Wait -ErrorAction Stop
         exit $proc.ExitCode
@@ -170,10 +188,14 @@ $SkillJunctions = @(
     (Join-Path $env:USERPROFILE ".agents\skills\cua-driver"),
     (Join-Path $env:USERPROFILE ".openclaw\skills\cua-driver"),
     (Join-Path $env:APPDATA      "opencode\skills\cua-driver"),
+    (Join-Path $env:USERPROFILE ".gemini\skills\cua-driver"),
+    (Join-Path $env:USERPROFILE ".hermes\skills\cua-driver"),
     (Join-Path $env:USERPROFILE ".claude\skills\cua-driver-rs"),
     (Join-Path $env:USERPROFILE ".agents\skills\cua-driver-rs"),
     (Join-Path $env:USERPROFILE ".openclaw\skills\cua-driver-rs"),
-    (Join-Path $env:APPDATA      "opencode\skills\cua-driver-rs")
+    (Join-Path $env:APPDATA      "opencode\skills\cua-driver-rs"),
+    (Join-Path $env:USERPROFILE ".gemini\skills\cua-driver-rs"),
+    (Join-Path $env:USERPROFILE ".hermes\skills\cua-driver-rs")
 )
 
 # ---------- Log helpers ----------------------------------------------------
@@ -326,24 +348,41 @@ if (Test-Path -LiteralPath $CurrentDir) {
     }
 }
 
-# 5. Entire package home ($HomeDir). Contains releases\, lockfile,
-#    telemetry id, install marker, version_check.json, and the now-
-#    removed current\ junction.
+# 5. Package home. A normal uninstall removes runtime-owned payloads while
+#    preserving the pseudonymous installation id, persisted preference, and
+#    install/release markers. Purge is the explicit identity reset.
 if (Test-Path -LiteralPath $HomeDir) {
-    if (Confirm-Remove "package home tree $HomeDir (releases, lockfile, telemetry id, install marker)") {
-        # -Recurse -Force walks into every subdir and clears read-only
-        # bits. ErrorAction SilentlyContinue tolerates leftover handles
-        # (rare after step 2's process kill); we log a follow-up if
-        # anything survived.
-        Remove-Item -LiteralPath $HomeDir -Force -Recurse -ErrorAction SilentlyContinue
-        if (Test-Path -LiteralPath $HomeDir) {
-            Write-WarningStep "$HomeDir was not fully removed — some files may still be locked."
-            Write-WarningStep "  Close any open cua-driver processes / shells with cwd inside the tree and re-run."
+    $removalLabel = if ($Purge) {
+        "package home tree $HomeDir (including telemetry identity and preference)"
+    } else {
+        "runtime packages under $HomeDir (preserve telemetry identity and preference)"
+    }
+    if (Confirm-Remove $removalLabel) {
+        if ($Purge) {
+            Remove-Item -LiteralPath $HomeDir -Force -Recurse -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $HomeDir) {
+                Write-WarningStep "$HomeDir was not fully removed — some files may still be locked."
+                Write-WarningStep "  Close any open cua-driver processes / shells with cwd inside the tree and re-run."
+            } else {
+                Write-Step "purged $HomeDir (including telemetry identity and preference)"
+            }
         } else {
-            Write-Step "removed $HomeDir"
+            foreach ($runtimePath in @(
+                $PackagesDir,
+                (Join-Path $HomeDir "skills"),
+                (Join-Path $HomeDir ".tcc-signing-identity"),
+                (Join-Path $HomeDir "serve.out.log"),
+                (Join-Path $HomeDir "serve.err.log")
+            )) {
+                if (Test-Path -LiteralPath $runtimePath) {
+                    Remove-Item -LiteralPath $runtimePath -Force -Recurse -ErrorAction SilentlyContinue
+                }
+            }
+            Write-Step "removed runtime payloads from $HomeDir"
+            Write-Step "preserved telemetry identity, preference, and registration markers"
         }
     } else {
-        Write-Step "skipped $HomeDir (user declined)"
+        Write-Step "skipped package-home cleanup (user declined)"
     }
 } else {
     Write-Step "no package home at $HomeDir (skipping)"
@@ -374,13 +413,29 @@ if ((Test-Path -LiteralPath $LegacyVendorDir) -and -not (Get-ChildItem -LiteralP
     Remove-Item -LiteralPath $LegacyVendorDir -Force -ErrorAction SilentlyContinue
     Write-Step "removed empty legacy vendor dir $LegacyVendorDir"
 }
-# Legacy package home
+# Legacy package home. Preserve telemetry state on a normal uninstall so a
+# future runtime can migrate the same pseudonymous identity to ~/.cua-driver.
 if (Test-Path -LiteralPath $LegacyHomeDir) {
-    Remove-Item -LiteralPath $LegacyHomeDir -Force -Recurse -ErrorAction SilentlyContinue
-    if (Test-Path -LiteralPath $LegacyHomeDir) {
-        Write-WarningStep "$LegacyHomeDir was not fully removed — some files may still be locked."
+    if ($Purge) {
+        Remove-Item -LiteralPath $LegacyHomeDir -Force -Recurse -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $LegacyHomeDir) {
+            Write-WarningStep "$LegacyHomeDir was not fully removed — some files may still be locked."
+        } else {
+            Write-Step "purged legacy package home $LegacyHomeDir"
+        }
     } else {
-        Write-Step "removed legacy package home $LegacyHomeDir"
+        foreach ($legacyRuntimePath in @(
+            (Join-Path $LegacyHomeDir "packages"),
+            (Join-Path $LegacyHomeDir "skills"),
+            (Join-Path $LegacyHomeDir ".tcc-signing-identity"),
+            (Join-Path $LegacyHomeDir "serve.out.log"),
+            (Join-Path $LegacyHomeDir "serve.err.log")
+        )) {
+            if (Test-Path -LiteralPath $legacyRuntimePath) {
+                Remove-Item -LiteralPath $legacyRuntimePath -Force -Recurse -ErrorAction SilentlyContinue
+            }
+        }
+        Write-Step "removed legacy runtime payloads and preserved legacy telemetry state"
     }
 }
 
@@ -405,6 +460,14 @@ foreach ($skillLink in $SkillJunctions) {
 Write-Host ""
 Write-Host "cua-driver-rs uninstalled." -ForegroundColor Green
 Write-Host ""
+if (-not $Purge) {
+    Write-Host "Telemetry identity and preference were preserved for a future reinstall." -ForegroundColor Cyan
+    Write-Host "To delete them too, re-run with:"
+    Write-Host ""
+    Write-Host "  `$env:CUA_DRIVER_RS_UNINSTALL_PURGE = '1'"
+    Write-Host "  irm https://cua.ai/driver/uninstall.ps1 | iex"
+    Write-Host ""
+}
 Write-Host "Claude Code MCP registrations:" -ForegroundColor Yellow
 Write-Host "  We don't auto-edit ~/.claude.json on Windows. If you registered cua-driver-rs"
 Write-Host "  with Claude Code, remove it manually:"

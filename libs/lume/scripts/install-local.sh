@@ -48,6 +48,12 @@ LUME_PORT=7777
 # Track whether we're using the .app bundle format
 USE_APP_BUNDLE=false
 
+# Ad-hoc signatures can become invalid when stale provenance metadata is
+# carried across rebuilds. Clear extended attributes before signing.
+clear_signature_metadata() {
+  xattr -c "$1" 2>/dev/null || true
+}
+
 # Parse command line arguments
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -150,6 +156,7 @@ build_lume() {
     if [ -d "$BUILD_PATH/lume_lume.bundle" ]; then
       cp -rf "$BUILD_PATH/lume_lume.bundle" "$APP_BUNDLE/Contents/Resources/"
     fi
+    cp -f "$LUME_DIR/resources/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 
     # Stamp Info.plist with version
     CURRENT_VERSION=$("$BUILD_PATH/lume" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "0.0.0")
@@ -164,6 +171,7 @@ build_lume() {
     fi
 
     # Sign the bundle
+    clear_signature_metadata "$APP_BUNDLE/Contents/MacOS/lume"
     codesign --force --entitlements "$ENTITLEMENTS_FILE" --sign - "$APP_BUNDLE/Contents/MacOS/lume"
     codesign --force --sign - "$APP_BUNDLE"
 
@@ -173,16 +181,19 @@ build_lume() {
     else
       echo "${YELLOW}Warning: binary did not launch from .app bundle with bridged entitlement; falling back to standalone binary.${NORMAL}"
       ENTITLEMENTS_FILE="$LUME_DIR/resources/lume.local.entitlements"
+      clear_signature_metadata "$BUILD_PATH/lume"
       codesign --force --entitlements "$ENTITLEMENTS_FILE" --sign - "$BUILD_PATH/lume"
       USE_APP_BUNDLE=false
     fi
   else
     # Standard standalone binary (no .app bundle needed)
+    clear_signature_metadata "$BUILD_PATH/lume"
     codesign --force --entitlements "$ENTITLEMENTS_FILE" --sign - "$BUILD_PATH/lume"
 
     # Verify the signed binary can launch
     if ! "$BUILD_PATH/lume" --version >/dev/null 2>&1; then
-      echo "${YELLOW}Warning: binary did not launch; this may indicate a signing issue.${NORMAL}"
+      echo "${RED}Error: signed binary could not launch; refusing to install it.${NORMAL}"
+      exit 1
     fi
 
     USE_APP_BUNDLE=false
@@ -222,6 +233,8 @@ WRAPPER_EOF
     echo "CLI available at ${BOLD}$INSTALL_DIR/lume${NORMAL}"
   else
     # Install as standalone binary
+    # Replace the inode so taskgated does not reuse a stale signature cache.
+    rm -f "$INSTALL_DIR/lume"
     cp -f "$BUILD_PATH/lume" "$INSTALL_DIR/lume"
     chmod +x "$INSTALL_DIR/lume"
 

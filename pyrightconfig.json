@@ -10,8 +10,6 @@
     "**/build/**",
     ".pdm-build/**",
     "**/.git/**",
-    "examples/**",
-    "notebooks/**",
     "logs/**",
     "screenshots/**"
   ],

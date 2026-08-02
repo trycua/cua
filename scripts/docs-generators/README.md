@@ -8,6 +8,7 @@ This directory contains auto-documentation generators for the Cua libraries. The
 scripts/docs-generators/
 ├── config.json         # Central configuration for all generators
 ├── runner.ts           # Main orchestrator that runs generators
+├── cua-driver.ts       # cua-driver (Rust) generator
 ├── lume.ts             # Lume (Swift) generator
 ├── cua-cli.ts          # Cua CLI (TypeScript) generator (planned)
 ├── mcp-server.ts       # MCP Server (Python) generator (planned)
@@ -86,6 +87,7 @@ Different libraries use different extraction methods:
 
 | Language   | Method                   | Description                        |
 | ---------- | ------------------------ | ---------------------------------- |
+| Rust       | `dump-docs`              | Built-in command that outputs JSON |
 | Swift      | `dump-docs`              | Built-in command that outputs JSON |
 | TypeScript | `yargs-parse`            | Parse yargs CLI definitions        |
 | Python     | `argparse-introspection` | Introspect argparse commands       |
@@ -105,6 +107,7 @@ The `.github/workflows/docs-sync-check.yml` workflow:
 
 | Generator               | Status         | Notes                     |
 | ----------------------- | -------------- | ------------------------- |
+| cua-driver              | ✅ Implemented | CLI + MCP tools           |
 | lume                    | ✅ Implemented | CLI + HTTP API            |
 | cua-cli                 | ⏸️ Planned     | Needs yargs introspection |
 | mcp-server              | ⏸️ Planned     | Needs MCP tool extraction |

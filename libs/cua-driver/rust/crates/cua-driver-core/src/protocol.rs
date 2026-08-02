@@ -22,7 +22,10 @@ impl Request {
     }
 
     pub fn tool_call(&self) -> anyhow::Result<ToolCall> {
-        let params = self.params.as_ref().ok_or_else(|| anyhow::anyhow!("missing params"))?;
+        let params = self
+            .params
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("missing params"))?;
         let name = params
             .get("name")
             .and_then(|v| v.as_str())
@@ -34,6 +37,144 @@ impl Request {
             .unwrap_or(Value::Object(Default::default()));
         Ok(ToolCall { name, args })
     }
+
+    /// Extract the small, declared subset of MCP initialize metadata that a
+    /// transport observer may use. The complete initialize payload is never
+    /// retained or forwarded: arbitrary `_meta`, capability payloads, and
+    /// client-defined extension values are deliberately ignored.
+    pub fn initialize_metadata(&self) -> Option<InitializeMetadata> {
+        if self.method != "initialize" {
+            return None;
+        }
+
+        let params = self.params.as_ref();
+        let protocol_version = params
+            .and_then(|p| p.get("protocolVersion"))
+            .and_then(Value::as_str)
+            .and_then(bounded_metadata_value);
+        let client_info = params.and_then(|p| p.get("clientInfo"));
+        let client_name = client_info
+            .and_then(|v| v.get("name"))
+            .and_then(Value::as_str)
+            .and_then(bounded_metadata_value);
+        let client_version = client_info
+            .and_then(|v| v.get("version"))
+            .and_then(Value::as_str)
+            .and_then(bounded_metadata_value);
+
+        let capabilities = params.and_then(|p| p.get("capabilities"));
+        let capability_flags = ClientCapabilityFlags {
+            tools: capability_declared(capabilities, "tools"),
+            roots: capability_declared(capabilities, "roots"),
+            sampling: capability_declared(capabilities, "sampling"),
+            experimental: capability_declared(capabilities, "experimental"),
+            elicitation_form: nested_capability_declared(capabilities, "elicitation", "form"),
+            elicitation_url: nested_capability_declared(capabilities, "elicitation", "url"),
+        };
+
+        let reported_agent_context = params
+            .and_then(|p| p.get("_meta"))
+            .and_then(|m| m.get("ai.cua/agent-context"))
+            .filter(|v| v.is_object())
+            .map(|ctx| ReportedAgentContext {
+                provider: ctx
+                    .get("provider")
+                    .and_then(Value::as_str)
+                    .and_then(bounded_metadata_value),
+                model: ctx
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .and_then(bounded_metadata_value),
+                agent_name: ctx
+                    .get("agent_name")
+                    .and_then(Value::as_str)
+                    .and_then(bounded_metadata_value),
+                agent_version: ctx
+                    .get("agent_version")
+                    .and_then(Value::as_str)
+                    .and_then(bounded_metadata_value),
+            })
+            .filter(ReportedAgentContext::has_any_value);
+
+        Some(InitializeMetadata {
+            protocol_version,
+            client_name,
+            client_version,
+            capability_flags,
+            reported_agent_context,
+        })
+    }
+}
+
+/// Declared and bounded metadata from one MCP initialize request.
+///
+/// Values remain self-reported. A product telemetry layer must normalize them
+/// through its own allowlists before emission.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct InitializeMetadata {
+    pub protocol_version: Option<String>,
+    pub client_name: Option<String>,
+    pub client_version: Option<String>,
+    pub capability_flags: ClientCapabilityFlags,
+    pub reported_agent_context: Option<ReportedAgentContext>,
+}
+
+/// Presence-only capability flags. Capability values themselves are ignored.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ClientCapabilityFlags {
+    pub tools: bool,
+    pub roots: bool,
+    pub sampling: bool,
+    pub experimental: bool,
+    pub elicitation_form: bool,
+    pub elicitation_url: bool,
+}
+
+/// Values explicitly reported under
+/// `initialize.params._meta["ai.cua/agent-context"]`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReportedAgentContext {
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub agent_name: Option<String>,
+    pub agent_version: Option<String>,
+}
+
+impl ReportedAgentContext {
+    fn has_any_value(&self) -> bool {
+        self.provider.is_some()
+            || self.model.is_some()
+            || self.agent_name.is_some()
+            || self.agent_version.is_some()
+    }
+}
+
+const MAX_METADATA_CHARS: usize = 128;
+
+fn bounded_metadata_value(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let value: String = trimmed
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(MAX_METADATA_CHARS)
+        .collect();
+    (!value.is_empty()).then_some(value)
+}
+
+fn capability_declared(capabilities: Option<&Value>, name: &str) -> bool {
+    capabilities
+        .and_then(|v| v.as_object())
+        .is_some_and(|caps| caps.contains_key(name))
+}
+
+fn nested_capability_declared(capabilities: Option<&Value>, parent: &str, child: &str) -> bool {
+    capabilities
+        .and_then(|v| v.get(parent))
+        .and_then(Value::as_object)
+        .is_some_and(|value| value.contains_key(child))
 }
 
 pub struct ToolCall {
@@ -66,14 +207,23 @@ pub struct RpcError {
 
 impl Response {
     pub fn ok(id: Value, result: Value) -> Self {
-        Self { jsonrpc: "2.0", id, body: ResponseBody::Result { result } }
+        Self {
+            jsonrpc: "2.0",
+            id,
+            body: ResponseBody::Result { result },
+        }
     }
 
     pub fn error(id: Value, code: i64, message: impl Into<String>) -> Self {
         Self {
             jsonrpc: "2.0",
             id,
-            body: ResponseBody::Error { error: RpcError { code, message: message.into() } },
+            body: ResponseBody::Error {
+                error: RpcError {
+                    code,
+                    message: message.into(),
+                },
+            },
         }
     }
 
@@ -98,7 +248,7 @@ pub enum Content {
         annotations: Option<Value>,
     },
     Image {
-        data: String,     // base64-encoded PNG
+        data: String, // base64-encoded PNG
         #[serde(rename = "mimeType")]
         mime_type: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -108,15 +258,26 @@ pub enum Content {
 
 impl Content {
     pub fn text(text: impl Into<String>) -> Self {
-        Content::Text { text: text.into(), annotations: None }
+        Content::Text {
+            text: text.into(),
+            annotations: None,
+        }
     }
 
     pub fn image_png(data_base64: String) -> Self {
-        Content::Image { data: data_base64, mime_type: "image/png".into(), annotations: None }
+        Content::Image {
+            data: data_base64,
+            mime_type: "image/png".into(),
+            annotations: None,
+        }
     }
 
     pub fn image_jpeg(data_base64: String) -> Self {
-        Content::Image { data: data_base64, mime_type: "image/jpeg".into(), annotations: None }
+        Content::Image {
+            data: data_base64,
+            mime_type: "image/jpeg".into(),
+            annotations: None,
+        }
     }
 }
 
@@ -128,19 +289,39 @@ pub struct ToolResult {
     pub is_error: Option<bool>,
     #[serde(rename = "structuredContent", skip_serializing_if = "Option::is_none")]
     pub structured_content: Option<Value>,
+    /// Rich actuator facts retained inside the daemon. This is deliberately
+    /// skipped by serde so the nonbreaking truth-layer migration cannot alter
+    /// the MCP result envelope or its legacy structured payload.
+    #[serde(skip)]
+    pub action_record: Option<crate::action_record::ActionExecutionRecord>,
 }
 
 impl ToolResult {
     pub fn text(msg: impl Into<String>) -> Self {
-        Self { content: vec![Content::text(msg)], ..Default::default() }
+        Self {
+            content: vec![Content::text(msg)],
+            ..Default::default()
+        }
     }
 
     pub fn error(msg: impl Into<String>) -> Self {
-        Self { content: vec![Content::text(msg)], is_error: Some(true), ..Default::default() }
+        Self {
+            content: vec![Content::text(msg)],
+            is_error: Some(true),
+            ..Default::default()
+        }
     }
 
     pub fn with_structured(mut self, v: Value) -> Self {
         self.structured_content = Some(v);
+        self
+    }
+
+    pub fn with_action_record(
+        mut self,
+        record: crate::action_record::ActionExecutionRecord,
+    ) -> Self {
+        self.action_record = Some(record);
         self
     }
 }
@@ -188,17 +369,227 @@ fn agent_instructions() -> String {
     format!(
         r#"cua-driver: cross-platform background computer-use automation.
 
-Tools let you interact with any app without stealing keyboard focus or moving the visible cursor. Prefer element_index ({tree_kind}) paths over pixel coordinates — they work on backgrounded/hidden windows.
+Before starting UI work, classify the desired postcondition. For a non-GUI outcome, prefer a client-provided app API/SDK, headless/background interface, CLI, or filesystem operation and read the result back in that semantic domain. This server has no shell.
+
+For an app or window outcome, use the narrowest semantic Cua route first: `set_window_frame` plus `list_windows` readback for geometry, typed browser tools for supported page content, and clipboard tools for clipboard state. Then climb through background `element_index` ({tree_kind}), background pixels, foreground delivery, and desktop fallback. Never advance on transport success alone.
 
 Workflow per turn:
-1. launch_app  → idempotent, returns pid + windows array in one call
-2. (skip list_windows when launch_app already returned a single window)
-3. get_window_state(pid, window_id) → refresh the {tree_kind} snapshot, get element indices
-4. click/type_text/press_key using element_index from step 3
-5. get_window_state(pid, window_id) again → verify the action landed
+0. `start_session(session)` once; reuse that id and end it when done.
+1. `launch_app`, then `get_window_state(pid, window_id)` to refresh element indices.
+2. Act with the fresh index.
+3. `verify_state(pid, window_id, expect)` checks bounded postconditions. `unknown` is not success; `include_screenshot:true` lets the multimodal agent judge visual evidence.
 
-Agent cursor: set_agent_cursor_* tools visualise where the agent is acting without affecting the real mouse pointer.
-
-If a `cua-driver` skill is loaded in your harness (Claude Code / Codex / OpenClaw / OpenCode dirs), prefer its detailed workflow — SKILL.md plus {platform_skill_pointer}. Install with `cua-driver skills install` if not yet present."#
+If the `cua-driver` skill is loaded, follow SKILL.md plus {platform_skill_pointer}."#
     )
+}
+
+#[cfg(test)]
+mod image_mime_type_tests {
+    use super::Content;
+
+    /// Surface 7 contract: image parts serialize an explicit `mimeType` field
+    /// (not `mime_type`, not `format`) so MCP consumers don't have to sniff
+    /// magic bytes off the base64 PNG/JPEG to know what they're holding.
+    /// This locks in the JSON shape — any rename or drop breaks here first.
+    #[test]
+    fn image_png_serializes_with_explicit_mime_type() {
+        let c = Content::image_png("ZmFrZQ==".into());
+        let v = serde_json::to_value(&c).expect("serialize");
+        assert_eq!(v.get("type").and_then(|t| t.as_str()), Some("image"));
+        assert_eq!(
+            v.get("mimeType").and_then(|t| t.as_str()),
+            Some("image/png")
+        );
+        assert_eq!(v.get("data").and_then(|t| t.as_str()), Some("ZmFrZQ=="));
+    }
+
+    #[test]
+    fn image_jpeg_serializes_with_explicit_mime_type() {
+        let c = Content::image_jpeg("ZmFrZQ==".into());
+        let v = serde_json::to_value(&c).expect("serialize");
+        assert_eq!(v.get("type").and_then(|t| t.as_str()), Some("image"));
+        assert_eq!(
+            v.get("mimeType").and_then(|t| t.as_str()),
+            Some("image/jpeg")
+        );
+    }
+
+    /// Text parts must not grow a mimeType field — the field belongs to
+    /// image parts only. Guards against an accidental serde_json renamer
+    /// that emits a shared shape across the enum.
+    #[test]
+    fn text_does_not_carry_mime_type() {
+        let c = Content::text("hi");
+        let v = serde_json::to_value(&c).expect("serialize");
+        assert_eq!(v.get("type").and_then(|t| t.as_str()), Some("text"));
+        assert!(
+            v.get("mimeType").is_none(),
+            "text content must not carry mimeType"
+        );
+    }
+}
+
+#[cfg(test)]
+mod action_record_wire_tests {
+    use super::ToolResult;
+    use crate::action_record::{
+        ActionEffect, ActionExecutionRecord, ActionTransport, ActualDelivery, RequestedDelivery,
+    };
+
+    #[test]
+    fn internal_action_record_never_changes_mcp_serialization() {
+        let legacy = serde_json::json!({
+            "path": "cgevent",
+            "verified": false,
+            "effect": "unverifiable",
+        });
+        let plain = ToolResult::text("clicked").with_structured(legacy.clone());
+        let with_truth = ToolResult::text("clicked")
+            .with_structured(legacy)
+            .with_action_record(
+                ActionExecutionRecord::builder(
+                    ActionEffect::Unverifiable,
+                    ActionTransport::MacosCgEventPid,
+                    RequestedDelivery::Background,
+                )
+                .actual_delivery(ActualDelivery::Background)
+                .build()
+                .expect("valid action record"),
+            );
+        assert_eq!(
+            serde_json::to_value(plain).expect("serialize plain result"),
+            serde_json::to_value(with_truth).expect("serialize result with internal truth"),
+        );
+    }
+}
+
+#[cfg(test)]
+mod agent_instruction_tests {
+    use super::agent_instructions;
+
+    #[test]
+    fn instructions_route_structured_and_visual_verification_to_the_right_owner() {
+        let instructions = agent_instructions();
+        assert!(instructions.contains("verify_state"));
+        assert!(instructions.contains("`unknown` is not success"));
+        assert!(instructions.contains("multimodal agent"));
+        assert!(instructions.contains("client-provided app API/SDK"));
+        assert!(instructions.contains("headless/background interface"));
+        assert!(instructions.contains("read the result back in that semantic domain"));
+        assert!(instructions.contains("narrowest semantic Cua route first"));
+        assert!(instructions.contains("`set_window_frame` plus `list_windows` readback"));
+        assert!(instructions.contains("typed browser tools for supported page content"));
+        assert!(instructions.contains("has no shell"));
+        assert!(
+            instructions.find("client-provided app API/SDK")
+                < instructions.find("background `element_index`"),
+            "semantic/headless operations must precede native UI dispatch"
+        );
+        assert!(
+            instructions.split_whitespace().count() <= 200,
+            "initialize instructions should stay within the documented context budget"
+        );
+    }
+}
+
+#[cfg(test)]
+mod initialize_metadata_tests {
+    use super::*;
+
+    fn request(params: Value) -> Request {
+        serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": params,
+        }))
+        .expect("initialize request")
+    }
+
+    #[test]
+    fn extracts_only_declared_initialize_fields() {
+        let req = request(serde_json::json!({
+            "protocolVersion": "2025-06-18",
+            "clientInfo": { "name": "Claude Code", "version": "1.2.3", "secret": "ignore" },
+            "capabilities": {
+                "roots": { "listChanged": true, "arbitrary": "ignored" },
+                "sampling": {},
+                "elicitation": { "form": {}, "url": { "payload": "ignored" } },
+                "experimental": { "anything": "ignored" }
+            },
+            "_meta": {
+                "ai.cua/agent-context": {
+                    "provider": "anthropic",
+                    "model": "claude-sonnet-4-5",
+                    "agent_name": "claude-code",
+                    "agent_version": "1.x",
+                    "prompt": "must not be extracted"
+                },
+                "unrelated": { "task": "must not be extracted" }
+            },
+            "task": "must not be extracted"
+        }));
+
+        let metadata = req.initialize_metadata().expect("initialize metadata");
+        assert_eq!(metadata.protocol_version.as_deref(), Some("2025-06-18"));
+        assert_eq!(metadata.client_name.as_deref(), Some("Claude Code"));
+        assert_eq!(metadata.client_version.as_deref(), Some("1.2.3"));
+        assert!(metadata.capability_flags.roots);
+        assert!(metadata.capability_flags.sampling);
+        assert!(metadata.capability_flags.experimental);
+        assert!(metadata.capability_flags.elicitation_form);
+        assert!(metadata.capability_flags.elicitation_url);
+        assert!(!metadata.capability_flags.tools);
+
+        let agent = metadata
+            .reported_agent_context
+            .as_ref()
+            .expect("reported agent context");
+        assert_eq!(agent.provider.as_deref(), Some("anthropic"));
+        assert_eq!(agent.model.as_deref(), Some("claude-sonnet-4-5"));
+        assert_eq!(agent.agent_name.as_deref(), Some("claude-code"));
+        assert_eq!(agent.agent_version.as_deref(), Some("1.x"));
+
+        let debug = format!("{metadata:?}");
+        for forbidden in ["secret", "prompt", "task", "arbitrary", "payload"] {
+            assert!(
+                !debug.contains(forbidden),
+                "metadata leaked {forbidden}: {debug}"
+            );
+        }
+    }
+
+    #[test]
+    fn bounds_reported_strings_and_drops_empty_values() {
+        let long_model = "m".repeat(MAX_METADATA_CHARS + 50);
+        let req = request(serde_json::json!({
+            "clientInfo": { "name": "  client\nname  ", "version": "   " },
+            "_meta": { "ai.cua/agent-context": { "model": long_model } }
+        }));
+        let metadata = req.initialize_metadata().unwrap();
+        assert_eq!(metadata.client_name.as_deref(), Some("clientname"));
+        assert!(metadata.client_version.is_none());
+        assert_eq!(
+            metadata
+                .reported_agent_context
+                .unwrap()
+                .model
+                .unwrap()
+                .chars()
+                .count(),
+            MAX_METADATA_CHARS
+        );
+    }
+
+    #[test]
+    fn non_initialize_requests_have_no_initialize_metadata() {
+        let req: Request = serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/list",
+            "params": { "clientInfo": { "name": "not-an-initialize" } }
+        }))
+        .unwrap();
+        assert!(req.initialize_metadata().is_none());
+    }
 }

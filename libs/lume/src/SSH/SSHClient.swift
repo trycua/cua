@@ -21,18 +21,21 @@ public actor SSHClient {
     private let port: Int
     private let user: String
     private let password: String
+    private let connectTimeout: TimeInterval
     private let eventLoopGroup: MultiThreadedEventLoopGroup
 
     public init(
         host: String,
         port: UInt16 = 22,
         user: String = "lume",
-        password: String = "lume"
+        password: String = "lume",
+        connectTimeout: TimeInterval = 30
     ) {
         self.host = host
         self.port = Int(port)
         self.user = user
         self.password = password
+        self.connectTimeout = connectTimeout
         self.eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     }
 
@@ -46,75 +49,100 @@ public actor SSHClient {
 
         // Create a promise for the result
         let resultPromise = channel.eventLoop.makePromise(of: SSHResult.self)
+        let resultState = CommandResultState(promise: resultPromise)
 
-        // Create the SSH child channel for command execution.
-        // We keep handler access + createChannel on the event loop to avoid
-        // crossing a Sendable boundary with NIOSSHHandler.
-        let childChannelPromise = channel.eventLoop.makePromise(of: Channel.self)
-        let childChannelFuture = channel.pipeline.handler(type: NIOSSHHandler.self).flatMap { sshHandler -> EventLoopFuture<Channel> in
-            sshHandler.createChannel(childChannelPromise) { childChannel, channelType in
-                guard channelType == .session else {
-                    return channel.eventLoop.makeFailedFuture(SSHError.connectionFailed("Invalid channel type"))
-                }
+        // Create the child promise only after locating NIOSSHHandler. If the
+        // connection closes first, flatMap is skipped; a promise created outside
+        // this closure would then be released unfulfilled and SwiftNIO traps in
+        // EventLoopFuture.deinit.
+        let childChannel: Channel
+        do {
+            childChannel = try await Self.makeChildChannelFuture(
+                handlerFuture: channel.pipeline.handler(type: NIOSSHHandler.self),
+                eventLoop: channel.eventLoop
+            ) { sshHandler, childChannelPromise in
+                sshHandler.createChannel(childChannelPromise) { childChannel, channelType in
+                    guard channelType == .session else {
+                        return channel.eventLoop.makeFailedFuture(
+                            SSHError.connectionFailed("Invalid channel type")
+                        )
+                    }
 
-                return childChannel.eventLoop.makeCompletedFuture {
-                    let execHandler = CommandExecHandler(command: command, resultPromise: resultPromise)
-                    try childChannel.pipeline.syncOperations.addHandler(execHandler)
+                    return childChannel.eventLoop.makeCompletedFuture {
+                        let execHandler = CommandExecHandler(
+                            command: command,
+                            resultState: resultState
+                        )
+                        try childChannel.pipeline.syncOperations.addHandler(execHandler)
+                    }
                 }
-            }
-            return childChannelPromise.futureResult
+            }.get()
+        } catch {
+            // The command handler never took ownership of resultState, so resolve
+            // its promise before unwinding this operation.
+            resultState.fail(error)
+            try? await channel.close().get()
+            throw error
         }
-
-        let childChannel = try await childChannelFuture.get()
 
         // Set up timeout if specified
         if timeout > 0 {
             let timeoutTask = channel.eventLoop.scheduleTask(in: .seconds(Int64(timeout))) {
-                resultPromise.fail(SSHError.timeout)
+                resultState.fail(SSHError.timeout)
                 childChannel.close(promise: nil)
             }
 
             // Cancel timeout when result is received
-            resultPromise.futureResult.whenComplete { _ in
+            resultState.futureResult.whenComplete { _ in
                 timeoutTask.cancel()
             }
         }
 
-        // Wait for command completion
-        let result = try await resultPromise.futureResult.get()
-
-        // Clean up
-        try? await childChannel.closeFuture.get()
-        try? await channel.close().get()
-
-        return result
+        do {
+            let result = try await resultState.futureResult.get()
+            try? await childChannel.closeFuture.get()
+            try? await channel.close().get()
+            return result
+        } catch {
+            try? await childChannel.close().get()
+            try? await channel.close().get()
+            throw error
+        }
     }
 
     /// Start an interactive SSH session
     public func interactive() async throws {
         let channel = try await connect()
 
-        // Create the SSH child channel for interactive session.
-        // We keep handler access + createChannel on the event loop to avoid
-        // crossing a Sendable boundary with NIOSSHHandler.
-        let childChannelPromise = channel.eventLoop.makePromise(of: Channel.self)
+        // As in execute(), do not allocate the child promise until handler
+        // lookup succeeds or a disconnect race can leak an unfulfilled promise.
         let sessionCompletePromise = channel.eventLoop.makePromise(of: Void.self)
+        let childChannel: Channel
+        do {
+            childChannel = try await Self.makeChildChannelFuture(
+                handlerFuture: channel.pipeline.handler(type: NIOSSHHandler.self),
+                eventLoop: channel.eventLoop
+            ) { sshHandler, childChannelPromise in
+                sshHandler.createChannel(childChannelPromise) { childChannel, channelType in
+                    guard channelType == .session else {
+                        return channel.eventLoop.makeFailedFuture(
+                            SSHError.connectionFailed("Invalid channel type")
+                        )
+                    }
 
-        let childChannelFuture = channel.pipeline.handler(type: NIOSSHHandler.self).flatMap { sshHandler -> EventLoopFuture<Channel> in
-            sshHandler.createChannel(childChannelPromise) { childChannel, channelType in
-                guard channelType == .session else {
-                    return channel.eventLoop.makeFailedFuture(SSHError.connectionFailed("Invalid channel type"))
+                    return childChannel.eventLoop.makeCompletedFuture {
+                        let interactiveHandler = InteractiveSessionHandler(
+                            completePromise: sessionCompletePromise
+                        )
+                        try childChannel.pipeline.syncOperations.addHandler(interactiveHandler)
+                    }
                 }
-
-                return childChannel.eventLoop.makeCompletedFuture {
-                    let interactiveHandler = InteractiveSessionHandler(completePromise: sessionCompletePromise)
-                    try childChannel.pipeline.syncOperations.addHandler(interactiveHandler)
-                }
-            }
-            return childChannelPromise.futureResult
+            }.get()
+        } catch {
+            sessionCompletePromise.fail(error)
+            try? await channel.close().get()
+            throw error
         }
-
-        let childChannel = try await childChannelFuture.get()
 
         // Wait for the session to complete
         try await sessionCompletePromise.futureResult.get()
@@ -122,6 +150,21 @@ public actor SSHClient {
         // Clean up
         try? await childChannel.closeFuture.get()
         try? await channel.close().get()
+    }
+
+    /// Creates the child promise only after handler lookup succeeds. SwiftNIO
+    /// deliberately traps when an unfulfilled promise is deallocated, so callers
+    /// must not allocate this promise before the prerequisite future completes.
+    static func makeChildChannelFuture(
+        handlerFuture: EventLoopFuture<NIOSSHHandler>,
+        eventLoop: EventLoop,
+        initialize: @escaping @Sendable (NIOSSHHandler, EventLoopPromise<Channel>) -> Void
+    ) -> EventLoopFuture<Channel> {
+        handlerFuture.flatMap { sshHandler in
+            let childChannelPromise = eventLoop.makePromise(of: Channel.self)
+            initialize(sshHandler, childChannelPromise)
+            return childChannelPromise.futureResult
+        }
     }
 
     /// Connect to the SSH server and return the channel
@@ -148,7 +191,7 @@ public actor SSHClient {
             }
             .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
             .channelOption(ChannelOptions.socket(SocketOptionLevel(IPPROTO_TCP), TCP_NODELAY), value: 1)
-            .connectTimeout(.seconds(30))
+            .connectTimeout(.seconds(max(1, Int64(connectTimeout.rounded(.up)))))
 
         do {
             return try await bootstrap.connect(host: host, port: port).get()
@@ -222,6 +265,35 @@ private final class PasswordAuthDelegate: NIOSSHClientUserAuthenticationDelegate
 
 // MARK: - Command Execution Handler
 
+private final class CommandResultState: @unchecked Sendable {
+    private let promise: EventLoopPromise<SSHResult>
+    private let completed = NIOLockedValueBox(false)
+
+    init(promise: EventLoopPromise<SSHResult>) {
+        self.promise = promise
+    }
+
+    var futureResult: EventLoopFuture<SSHResult> { promise.futureResult }
+
+    func succeed(_ result: SSHResult) {
+        guard claimCompletion() else { return }
+        promise.succeed(result)
+    }
+
+    func fail(_ error: Error) {
+        guard claimCompletion() else { return }
+        promise.fail(error)
+    }
+
+    private func claimCompletion() -> Bool {
+        completed.withLockedValue { completed in
+            guard !completed else { return false }
+            completed = true
+            return true
+        }
+    }
+}
+
 /// Handles command execution on an SSH channel
 /// Note: @unchecked Sendable is safe because this handler is only used on a single event loop
 private final class CommandExecHandler: ChannelDuplexHandler, @unchecked Sendable {
@@ -231,14 +303,14 @@ private final class CommandExecHandler: ChannelDuplexHandler, @unchecked Sendabl
     typealias OutboundOut = SSHChannelData
 
     private let command: String
-    private var resultPromise: EventLoopPromise<SSHResult>?
+    private let resultState: CommandResultState
     private var outputBuffer: ByteBuffer
     private var exitStatus: Int32?
     private var channelClosed = false
 
-    init(command: String, resultPromise: EventLoopPromise<SSHResult>) {
+    init(command: String, resultState: CommandResultState) {
         self.command = command
-        self.resultPromise = resultPromise
+        self.resultState = resultState
         self.outputBuffer = ByteBuffer()
     }
 
@@ -291,7 +363,11 @@ private final class CommandExecHandler: ChannelDuplexHandler, @unchecked Sendabl
 
     func channelInactive(context: ChannelHandlerContext) {
         channelClosed = true
-        checkCompletion(context: context)
+        if exitStatus == nil {
+            failForMissingExitStatus()
+        } else {
+            checkCompletion(context: context)
+        }
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
@@ -299,35 +375,34 @@ private final class CommandExecHandler: ChannelDuplexHandler, @unchecked Sendabl
     }
 
     func handlerRemoved(context: ChannelHandlerContext) {
-        // If we haven't completed yet, complete with what we have
-        checkCompletion(context: context)
-    }
-
-    private func checkCompletion(context: ChannelHandlerContext) {
-        // Only complete if we have both exit status and channel is closed (or we have exit status)
-        guard let promise = resultPromise else { return }
-
-        // Complete when we have exit status (some servers close channel before sending exit status)
-        if let status = exitStatus {
-            resultPromise = nil
-            let output = outputBuffer.readString(length: outputBuffer.readableBytes) ?? ""
-            promise.succeed(SSHResult(exitCode: status, output: output))
-        } else if channelClosed {
-            // Channel closed without exit status - assume success with exit code 0
-            resultPromise = nil
-            let output = outputBuffer.readString(length: outputBuffer.readableBytes) ?? ""
-            promise.succeed(SSHResult(exitCode: 0, output: output))
+        if exitStatus == nil {
+            failForMissingExitStatus()
+        } else {
+            checkCompletion(context: context)
         }
     }
 
+    private func checkCompletion(context: ChannelHandlerContext) {
+        if let status = exitStatus, channelClosed {
+            let output = outputBuffer.readString(length: outputBuffer.readableBytes) ?? ""
+            resultState.succeed(SSHResult(exitCode: status, output: output))
+        }
+    }
+
+    private func failForMissingExitStatus() {
+        resultState.fail(
+            SSHError.commandFailed(
+                exitCode: -1,
+                message: "SSH channel closed without an exit status"
+            )
+        )
+    }
+
     private func failWithError(_ error: Error, context: ChannelHandlerContext) {
-        if let promise = resultPromise {
-            resultPromise = nil
-            if let sshError = error as? SSHError {
-                promise.fail(sshError)
-            } else {
-                promise.fail(SSHError.commandFailed(exitCode: -1, message: error.localizedDescription))
-            }
+        if let sshError = error as? SSHError {
+            resultState.fail(sshError)
+        } else {
+            resultState.fail(SSHError.commandFailed(exitCode: -1, message: String(describing: error)))
         }
         context.close(promise: nil)
     }

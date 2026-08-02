@@ -1,0 +1,8 @@
+# Rust
+/target/
+# .NET
+**/bin/
+**/obj/
+# Electron / Node
+electron/node_modules/
+electron/package-lock.json

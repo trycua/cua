@@ -175,8 +175,8 @@ unsafe extern "C" fn push_frame_cb(ctx: *mut c_void) {
 }
 
 unsafe extern "C" fn shutdown_cb(_ctx: *mut c_void) {
-    use objc2::runtime::AnyObject;
     use objc2::msg_send;
+    use objc2::runtime::AnyObject;
 
     let handles = HANDLES.lock().unwrap().take();
     if let Some(h) = handles {

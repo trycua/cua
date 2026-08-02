@@ -11,6 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from ..platforms import (
+    CONTAINER_PLATFORMS,
+    PLATFORMS,
+    resolve_container_image,
+)
 from ..sessions.providers.local_environment import check_image_exists, pull_image
 from .docker_utils import (
     ContainerInfo,
@@ -27,46 +32,6 @@ from .docker_utils import (
     stop_container,
     wait_for_container,
 )
-
-# =============================================================================
-# Configuration
-# =============================================================================
-
-# Environment type configurations
-ENV_CONFIGS = {
-    "linux-docker": {
-        "image": "trycua/cua-xfce:latest",
-        "internal_vnc_port": 6901,
-        "internal_api_port": 8000,
-        "requires_kvm": False,
-        "os_type": "linux",
-        "use_overlays": False,  # Stateless container, no disk to protect
-    },
-    "linux-qemu": {
-        "image": "trycua/cua-qemu-linux:latest",
-        "internal_vnc_port": 8006,
-        "internal_api_port": 5000,
-        "requires_kvm": True,
-        "os_type": "linux",
-        "use_overlays": True,  # Protect golden QCOW2 disk
-    },
-    "windows-qemu": {
-        "image": "trycua/cua-qemu-windows:latest",
-        "internal_vnc_port": 8006,
-        "internal_api_port": 5000,
-        "requires_kvm": True,
-        "os_type": "windows",
-        "use_overlays": True,  # Protect golden QCOW2 disk
-    },
-    "android-qemu": {
-        "image": "trycua/cua-qemu-android:latest",
-        "internal_vnc_port": 8006,
-        "internal_api_port": 5000,
-        "requires_kvm": True,
-        "os_type": "android",
-        "use_overlays": True,  # Protect golden QCOW2 disk
-    },
-}
 
 # Default agent image
 DEFAULT_AGENT_IMAGE = "cua-bench:latest"
@@ -250,16 +215,35 @@ class TaskRunner:
         if cleanup_before:
             await full_cleanup()
 
-        # Determine if this is a simulated provider
+        # Determine if this is a simulated or daytona provider
         is_simulated = provider_type in ("simulated", "webtop")
+        is_daytona = provider_type == "daytona"
 
-        # Validate env_type (skip validation for simulated since we don't use it)
-        if not is_simulated and env_type not in ENV_CONFIGS:
-            raise ValueError(
-                f"Unknown env_type: {env_type}. Valid types: {list(ENV_CONFIGS.keys())}"
+        # Route to Daytona harness (fully remote, no local Docker)
+        if is_daytona:
+            return await self._run_task_daytona(
+                env_path=env_path,
+                task_index=task_index,
+                env_type=env_type,
+                golden_name=golden_name,
+                agent=agent,
+                agent_image=agent_image,
+                agent_command=agent_command,
+                agent_import_path=agent_import_path,
+                model=model,
+                max_steps=max_steps,
+                oracle=oracle,
+                output_dir=output_dir,
+                timeout=timeout,
             )
 
-        config = ENV_CONFIGS.get(env_type, {}) if not is_simulated else {}
+        # Validate env_type (skip validation for simulated since we don't use it)
+        if not is_simulated and env_type not in CONTAINER_PLATFORMS:
+            raise ValueError(
+                f"Unknown env_type: {env_type}. Valid types: {list(CONTAINER_PLATFORMS)}"
+            )
+
+        config = PLATFORMS.get(env_type, {}) if not is_simulated else {}
         golden_name = golden_name or env_type if not is_simulated else "simulated"
 
         # Generate unique task ID
@@ -278,7 +262,11 @@ class TaskRunner:
             "network": network_name,
             "env_container": env_container_name if not is_simulated else None,
             "agent_container": agent_container_name,
-            "env_image": config.get("image") if not is_simulated else None,
+            "env_image": (
+                resolve_container_image(env_type, golden_name)
+                if not is_simulated
+                else None
+            ),
             "agent_image": self.agent_image,
             "remove_images": remove_images_after,
             "overlay_path": overlay_path,
@@ -467,12 +455,12 @@ class TaskRunner:
             await full_cleanup()
 
         # Validate env_type
-        if env_type not in ENV_CONFIGS:
+        if env_type not in CONTAINER_PLATFORMS:
             raise ValueError(
-                f"Unknown env_type: {env_type}. Valid types: {list(ENV_CONFIGS.keys())}"
+                f"Unknown env_type: {env_type}. Valid types: {list(CONTAINER_PLATFORMS)}"
             )
 
-        config = ENV_CONFIGS[env_type]
+        config = PLATFORMS[env_type]
         golden_name = golden_name or env_type
 
         # Auto-allocate ports if requested and not specified
@@ -499,7 +487,7 @@ class TaskRunner:
             "network": network_name,
             "env_container": env_container_name,
             "agent_container": None,  # No agent in interactive mode
-            "env_image": config["image"],
+            "env_image": resolve_container_image(env_type, golden_name),
             "agent_image": None,
             "remove_images": False,
             "overlay_path": overlay_path,
@@ -660,7 +648,7 @@ class TaskRunner:
 
         # Start container
         return await start_container(
-            image=config["image"],
+            image=resolve_container_image(env_type, golden_name),
             name=container_name,
             network=network_name,
             hostname=self.env_hostname,
@@ -954,6 +942,150 @@ class TaskRunner:
             detach=True,  # Detach so we can use docker wait
             remove_on_exit=False,  # Don't auto-remove, we need logs
         )
+
+    async def _run_task_daytona(
+        self,
+        env_path: Path,
+        task_index: int,
+        env_type: str,
+        golden_name: Optional[str],
+        agent: Optional[str],
+        agent_image: Optional[str],
+        agent_command: Optional[List[str]],
+        agent_import_path: Optional[str],
+        model: Optional[str],
+        max_steps: int,
+        oracle: bool,
+        output_dir: Optional[str],
+        timeout: Optional[int],
+    ) -> "TaskResult":
+        """Run a task inside a single Daytona sandbox.
+
+        Both the env desktop (supervisord/VNC/cua-computer-server) and the
+        solver run inside the same sandbox.  Computer-use traffic stays on
+        localhost:8000, so no base64-exec calls are needed during the agent loop.
+        """
+        import signal
+
+        from .daytona_harness import DaytonaHarness
+
+        harness = DaytonaHarness()
+
+        # Resolve env-type name → actual Docker image
+        env_image = resolve_container_image(env_type, golden_name)
+
+        # API keys and env vars to bake into the sandbox at creation time
+        # (avoids passing secrets via process.exec env which triggers abuse detection)
+        creation_env: Dict[str, str] = {}
+        for key in (
+            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
+            "GOOGLE_API_KEY",
+            "CUA_API_KEY",
+        ):
+            val = os.environ.get(key)
+            if val:
+                creation_env[key] = val
+
+        # Build solver command (runs inside the sandbox, so use sandbox python)
+        if agent_command:
+            command = agent_command
+        else:
+            command = ["/opt/venv/bin/python3", "-m", "cua_bench.batch.solver", "/tmp/task_env"]
+            command.extend(["--task-index", str(task_index)])
+            if not oracle:
+                command.append("--eval")
+                if agent:
+                    command.extend(["--agent", agent])
+                if agent_import_path:
+                    command.extend(["--agent-import-path", agent_import_path])
+                if model:
+                    command.extend(["--model", model])
+                if max_steps:
+                    command.extend(["--max-steps", str(max_steps)])
+
+        # Register SIGTERM handler so cleanup runs even when the process is killed
+        def _sigterm_handler(signum, frame):
+            import asyncio as _asyncio
+            import threading
+
+            def _cleanup():
+                loop = _asyncio.new_event_loop()
+                loop.run_until_complete(harness.cleanup())
+                loop.close()
+
+            t = threading.Thread(target=_cleanup, daemon=True)
+            t.start()
+            t.join(timeout=15)
+            raise SystemExit(0)
+
+        old_handler = signal.signal(signal.SIGTERM, _sigterm_handler)
+
+        try:
+            # 1. Start sandbox (bootstraps supervisord, waits for computer-server ready)
+            await harness.start_env_sandbox(image=env_image, env_vars=creation_env)
+
+            # 2. Upload local cua_bench source so the solver runs the local version
+            cua_bench_root = Path(__file__).parent.parent.absolute()
+            if cua_bench_root.exists() and (cua_bench_root / "batch").exists():
+                harness.upload_solver_code(cua_bench_root)
+
+            # 3. Upload task files to /tmp/task_env inside sandbox
+            harness.upload_task_files(env_path)
+
+            # 4. Build solver env vars (secrets already baked in at creation)
+            solver_env: Dict[str, str] = {
+                "CUA_ENV_API_URL": "http://localhost:8000",
+                "CUA_ENV_VNC_URL": "",
+                "CUA_ENV_TYPE": "linux",
+                "CUA_PROVIDER": "daytona",
+                "BATCH_TASK_INDEX": str(task_index),
+                "BATCH_TASK_COUNT": "1",
+                "CUA_TELEMETRY_DISABLED": "1",
+            }
+            if output_dir:
+                # Write trajectories to /tmp/td_output inside sandbox; we'll
+                # fetch them back below if needed.
+                solver_env["CUA_OUTPUT_DIR"] = "/tmp/td_output"
+
+            # 5. Run solver inside sandbox (blocks until solver exits)
+            loop = asyncio.get_event_loop()
+            exit_code, agent_logs = await loop.run_in_executor(
+                None,
+                lambda: harness.run_solver_in_sandbox(
+                    command=command,
+                    env_vars=solver_env,
+                    timeout=timeout or 0,
+                ),
+            )
+
+            # 6. Write logs to local output_dir if requested
+            if output_dir and agent_logs:
+                log_file = Path(output_dir) / "run.log"
+                log_file.parent.mkdir(parents=True, exist_ok=True)
+                log_file.write_text(agent_logs, encoding="utf-8", errors="replace")
+
+            return TaskResult(
+                success=exit_code == 0,
+                exit_code=exit_code,
+                agent_logs=agent_logs,
+                env_logs="",
+                output_dir=output_dir,
+            )
+
+        except Exception as e:
+            return TaskResult(
+                success=False,
+                exit_code=-1,
+                agent_logs="",
+                env_logs="",
+                output_dir=output_dir,
+                error=str(e),
+            )
+
+        finally:
+            signal.signal(signal.SIGTERM, old_handler)
+            await harness.cleanup()
 
     async def _cleanup_task(self, task_id: str) -> None:
         """Clean up task resources (containers, network, overlay, optionally images).

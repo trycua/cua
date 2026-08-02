@@ -1,0 +1,12 @@
+{
+  "title": "Reference",
+  "icon": "BookText",
+  "pages": [
+    "index",
+    "cua-driver",
+    "lume",
+    "sandbox-sdk",
+    "cua-bench",
+    "docs-code-mcp"
+  ]
+}

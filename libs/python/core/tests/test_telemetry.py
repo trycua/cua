@@ -5,6 +5,7 @@ All external dependencies (PostHog, file system) are mocked.
 """
 
 import os
+import warnings
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, mock_open, patch
 
@@ -51,6 +52,26 @@ class TestTelemetryEnabled:
         from cua_core.telemetry import is_telemetry_enabled
 
         assert is_telemetry_enabled() is True
+
+
+class TestOtelEnabled:
+    """Test OpenTelemetry enable/disable logic."""
+
+    def test_deprecated_flag_warns_once(self, monkeypatch):
+        """Test repeated checks emit one warning for the deprecated flag."""
+        monkeypatch.setenv("CUA_TELEMETRY_DISABLED", "true")
+
+        from cua_core.telemetry import otel
+
+        monkeypatch.setattr(otel, "_deprecation_warning_emitted", False)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            results = [otel.is_otel_enabled() for _ in range(3)]
+
+        assert results == [False, False, False]
+        assert len(caught) == 1
+        assert caught[0].category is DeprecationWarning
 
 
 class TestPostHogTelemetryClient:

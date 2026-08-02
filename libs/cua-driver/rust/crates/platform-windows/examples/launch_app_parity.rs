@@ -22,7 +22,8 @@ use std::time::{Duration, Instant};
 #[cfg(target_os = "windows")]
 fn main() {
     let mut pipe = std::fs::OpenOptions::new()
-        .read(true).write(true)
+        .read(true)
+        .write(true)
         .open(r"\\.\pipe\cua-driver")
         .expect("open pipe — start daemon first");
 
@@ -33,19 +34,30 @@ fn main() {
         let mut buf = [0u8; 65536];
         let deadline = Instant::now() + Duration::from_secs(4);
         loop {
-            if Instant::now() > deadline { panic!("response timeout"); }
+            if Instant::now() > deadline {
+                panic!("response timeout");
+            }
             let n = p.read(&mut buf).unwrap_or(0);
-            if n == 0 { break; }
+            if n == 0 {
+                break;
+            }
             out.extend_from_slice(&buf[..n]);
-            if out.contains(&b'\n') { break; }
+            if out.contains(&b'\n') {
+                break;
+            }
         }
         String::from_utf8_lossy(&out).into_owned()
     }
 
     // 1. Missing target error
-    let r0 = req(&mut pipe, r#"{"method":"call","name":"launch_app","args":{}}"#);
+    let r0 = req(
+        &mut pipe,
+        r#"{"method":"call","name":"launch_app","args":{}}"#,
+    );
     let v0: serde_json::Value = serde_json::from_str(r0.trim()).expect("parse");
-    let err0 = v0.pointer("/result/content/0/text").and_then(|t| t.as_str())
+    let err0 = v0
+        .pointer("/result/content/0/text")
+        .and_then(|t| t.as_str())
         .or_else(|| v0.pointer("/error").and_then(|e| e.as_str()))
         .unwrap_or("");
     assert!(
@@ -55,35 +67,65 @@ fn main() {
     println!("Missing-target err OK: {err0:?}");
 
     // 2. Launch Notepad
-    let resp = req(&mut pipe, r#"{"method":"call","name":"launch_app","args":{"name":"notepad.exe"}}"#);
+    let resp = req(
+        &mut pipe,
+        r#"{"method":"call","name":"launch_app","args":{"name":"notepad.exe"}}"#,
+    );
     let v: serde_json::Value = serde_json::from_str(resp.trim()).expect("parse");
-    let text = v.pointer("/result/content/0/text").and_then(|t| t.as_str()).expect("missing text");
+    let text = v
+        .pointer("/result/content/0/text")
+        .and_then(|t| t.as_str())
+        .expect("missing text");
     println!("Launch resp text:\n{text}");
 
     let header = text.lines().next().unwrap_or("");
     assert!(
-        header.starts_with("✅ Launched ") && header.contains(" (pid ") && header.ends_with("in background."),
+        header.starts_with("✅ Launched ")
+            && header.contains(" (pid ")
+            && header.ends_with("in background."),
         "Header {header:?} doesn't match Swift format `✅ Launched <name> (pid X) in background.`"
     );
 
-    let pid = v.pointer("/result/structuredContent/pid").and_then(|n| n.as_u64()).expect("pid");
-    let name = v.pointer("/result/structuredContent/name").and_then(|s| s.as_str()).expect("name");
-    let running = v.pointer("/result/structuredContent/running").and_then(|b| b.as_bool()).expect("running");
-    let active  = v.pointer("/result/structuredContent/active").and_then(|b| b.as_bool()).expect("active");
-    let windows = v.pointer("/result/structuredContent/windows").and_then(|w| w.as_array()).expect("windows");
-    let bundle_id = v.pointer("/result/structuredContent/bundle_id").expect("bundle_id key");
+    let pid = v
+        .pointer("/result/structuredContent/pid")
+        .and_then(|n| n.as_u64())
+        .expect("pid");
+    let name = v
+        .pointer("/result/structuredContent/name")
+        .and_then(|s| s.as_str())
+        .expect("name");
+    let running = v
+        .pointer("/result/structuredContent/running")
+        .and_then(|b| b.as_bool())
+        .expect("running");
+    let active = v
+        .pointer("/result/structuredContent/active")
+        .and_then(|b| b.as_bool())
+        .expect("active");
+    let windows = v
+        .pointer("/result/structuredContent/windows")
+        .and_then(|w| w.as_array())
+        .expect("windows");
+    let bundle_id = v
+        .pointer("/result/structuredContent/bundle_id")
+        .expect("bundle_id key");
 
     println!("Structured: pid={pid} name={name:?} running={running} active={active} windows={} bundle_id={bundle_id}", windows.len());
 
-    assert!(pid > 0, "pid must be captured (ShellExecuteEx pid or packaged-app pid)");
+    assert!(
+        pid > 0,
+        "pid must be captured (ShellExecuteEx pid or packaged-app pid)"
+    );
     assert!(running, "running must be true");
-    assert!(!active, "active must be false (background launch — Swift's invariant)");
+    assert!(
+        !active,
+        "active must be false (background launch — Swift's invariant)"
+    );
     // bundle_id is either null (plain Win32 launch — Win10 / unpackaged
     // Notepad) or an AUMID string (Win11 — `notepad` resolved through
     // shell:AppsFolder to the packaged Notepad). Both are correct.
     assert!(
-        bundle_id.is_null()
-            || bundle_id.as_str().map(|s| s.contains('!')).unwrap_or(false),
+        bundle_id.is_null() || bundle_id.as_str().map(|s| s.contains('!')).unwrap_or(false),
         "bundle_id must be null OR an AUMID (`pkg!app`); got {bundle_id}"
     );
 
@@ -92,7 +134,8 @@ fn main() {
         .args(["/PID", &pid.to_string(), "/F"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .status().ok();
+        .status()
+        .ok();
 
     // 3. AUMID path (Win11 only — skipped silently on Win10 since the
     //    AUMID won't be installed there).
@@ -115,7 +158,8 @@ fn main() {
             .args(["/PID", &p.to_string(), "/F"])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
-            .status().ok();
+            .status()
+            .ok();
     }
 
     match bundle_id_aumid {
@@ -142,7 +186,11 @@ fn main() {
             let err_text = v_aumid
                 .pointer("/error")
                 .and_then(|e| e.as_str())
-                .or_else(|| v_aumid.pointer("/result/content/0/text").and_then(|t| t.as_str()))
+                .or_else(|| {
+                    v_aumid
+                        .pointer("/result/content/0/text")
+                        .and_then(|t| t.as_str())
+                })
                 .unwrap_or("");
             let err_lower = err_text.to_lowercase();
             // Windows surfaces "AUMID not registered for current user"
@@ -160,8 +208,8 @@ fn main() {
             // sessions (services / SSH) fails fast with a descriptive
             // error rather than hanging. This is correct behavior, not a
             // regression — accept it the same way we accept "not installed".
-            let looks_like_session_0 = err_lower.contains("interactive session")
-                || err_lower.contains("session 0");
+            let looks_like_session_0 =
+                err_lower.contains("interactive session") || err_lower.contains("session 0");
             assert!(
                 looks_like_not_installed || looks_like_session_0,
                 "AUMID launch of {aumid:?} failed with an unexpected error \

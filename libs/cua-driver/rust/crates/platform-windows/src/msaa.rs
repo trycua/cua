@@ -96,15 +96,28 @@ unsafe fn walk_unsafe(hwnd: u64) -> UiaTreeResult {
     let mut counter = 0usize;
     let mut total = 0usize;
 
-    walk(&root, 0, &mut nodes, &mut lines, &mut counter, &mut total);
+    walk(
+        &root,
+        0,
+        None,
+        &mut nodes,
+        &mut lines,
+        &mut counter,
+        &mut total,
+    );
 
     let tree_markdown = render_lines(&lines);
-    UiaTreeResult { tree_markdown, nodes }
+    UiaTreeResult {
+        tree_markdown,
+        nodes,
+    }
 }
 
+#[allow(clippy::too_many_arguments)]
 unsafe fn walk(
     acc: &IAccessible,
     depth: usize,
+    parent_index: Option<usize>,
     nodes: &mut Vec<UiaNode>,
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
@@ -179,11 +192,16 @@ unsafe fn walk(
                 automation_id: None,
                 help_text: None,
                 actions: actions.clone(),
+                enabled: None,
+                selected: None,
                 element_ptr: ptr,
                 center_x,
                 center_y,
                 rect,
                 msaa_role: role_int,
+                depth,
+                parent_element_index: parent_index,
+                in_web_content: false,
             }
         } else {
             UiaNode {
@@ -194,25 +212,63 @@ unsafe fn walk(
                 automation_id: None,
                 help_text: None,
                 actions: Vec::new(),
+                enabled: None,
+                selected: None,
                 element_ptr: ptr,
                 center_x: 0,
                 center_y: 0,
                 rect,
                 msaa_role: role_int,
+                depth,
+                parent_element_index: parent_index,
+                in_web_content: false,
             }
         };
+        // Track this node as the parent_index for its descendants only when
+        // it received an element_index (mirrors what the markdown shows:
+        // only indexed rows are addressable).
+        let next_parent = node.element_index.or(parent_index);
         lines.push((depth, crate::uia::format_node_line(&node)));
         nodes.push(node);
+
+        // Recurse via accChildCount + get_accChild.
+        let child_count: i32 = acc.accChildCount().unwrap_or(0);
+        for i in 1..=child_count {
+            let child_var = VARIANT::from(i);
+            // accChild returns IDispatch — query for IAccessible.
+            if let Ok(child_disp) = acc.get_accChild(&child_var) {
+                if let Ok(child_acc) = child_disp.cast::<IAccessible>() {
+                    walk(
+                        &child_acc,
+                        depth + 1,
+                        next_parent,
+                        nodes,
+                        lines,
+                        counter,
+                        total,
+                    );
+                }
+            }
+        }
+        return;
     }
 
-    // Recurse via accChildCount + get_accChild.
+    // Non-emitting path (filtered out by !is_actionable && !has_content):
+    // still recurse, propagating the same parent_index.
     let child_count: i32 = acc.accChildCount().unwrap_or(0);
     for i in 1..=child_count {
         let child_var = VARIANT::from(i);
-        // accChild returns IDispatch — query for IAccessible.
         if let Ok(child_disp) = acc.get_accChild(&child_var) {
             if let Ok(child_acc) = child_disp.cast::<IAccessible>() {
-                walk(&child_acc, depth + 1, nodes, lines, counter, total);
+                walk(
+                    &child_acc,
+                    depth + 1,
+                    parent_index,
+                    nodes,
+                    lines,
+                    counter,
+                    total,
+                );
             }
         }
     }

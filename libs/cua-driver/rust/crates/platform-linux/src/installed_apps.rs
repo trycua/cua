@@ -38,13 +38,21 @@ pub fn list_installed_apps() -> Vec<InstalledApp> {
     let mut seen: std::collections::HashMap<String, InstalledApp> =
         std::collections::HashMap::new();
     for root in xdg_application_dirs() {
-        let Ok(entries) = fs::read_dir(&root) else { continue };
+        let Ok(entries) = fs::read_dir(&root) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("desktop") { continue }
+            if path.extension().and_then(|e| e.to_str()) != Some("desktop") {
+                continue;
+            }
             let id = desktop_file_id(&root, &path);
-            if id.is_empty() { continue }
-            let Some(app) = parse_desktop_file(&path, &id) else { continue };
+            if id.is_empty() {
+                continue;
+            }
+            let Some(app) = parse_desktop_file(&path, &id) else {
+                continue;
+            };
             // Per the spec, user-scope files (XDG_DATA_HOME) override
             // system-scope ones with the same desktop file id.
             // xdg_application_dirs already yields user-scope first, so
@@ -62,13 +70,17 @@ fn xdg_application_dirs() -> Vec<PathBuf> {
     let mut out = Vec::new();
     let home = std::env::var("HOME").unwrap_or_default();
     let xdg_data_home = std::env::var("XDG_DATA_HOME").unwrap_or_else(|_| {
-        if home.is_empty() { String::new() } else { format!("{home}/.local/share") }
+        if home.is_empty() {
+            String::new()
+        } else {
+            format!("{home}/.local/share")
+        }
     });
     if !xdg_data_home.is_empty() {
         out.push(PathBuf::from(format!("{xdg_data_home}/applications")));
     }
-    let xdg_data_dirs = std::env::var("XDG_DATA_DIRS")
-        .unwrap_or_else(|_| "/usr/local/share:/usr/share".to_owned());
+    let xdg_data_dirs =
+        std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".to_owned());
     for d in xdg_data_dirs.split(':').filter(|s| !s.is_empty()) {
         out.push(PathBuf::from(format!("{d}/applications")));
     }
@@ -99,7 +111,8 @@ fn desktop_file_id(root: &Path, path: &Path) -> String {
     };
     // Use forward slash as the canonical separator (Linux only — `Path`
     // separators are always `/` here, but normalize defensively).
-    stem.replace(std::path::MAIN_SEPARATOR, "-").replace('/', "-")
+    stem.replace(std::path::MAIN_SEPARATOR, "-")
+        .replace('/', "-")
 }
 
 /// Parse a `.desktop` file. Returns `None` for entries the caller should skip
@@ -161,7 +174,11 @@ fn extract_desktop_entry_section(text: &str) -> Option<String> {
             out.push('\n');
         }
     }
-    if out.is_empty() { None } else { Some(out) }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 fn string_key(section: &str, key: &str) -> Option<String> {
@@ -174,11 +191,7 @@ fn string_key(section: &str, key: &str) -> Option<String> {
         .next()
         .unwrap_or("")
         .to_owned();
-    let lang_short: String = lang_root
-        .split('_')
-        .next()
-        .unwrap_or("")
-        .to_owned();
+    let lang_short: String = lang_root.split('_').next().unwrap_or("").to_owned();
 
     let candidates = [
         format!("{key}[{lang_root}]="),
@@ -186,7 +199,9 @@ fn string_key(section: &str, key: &str) -> Option<String> {
         format!("{key}="),
     ];
     for cand in &candidates {
-        if cand.starts_with(&format!("{key}[]=")) { continue }
+        if cand.starts_with(&format!("{key}[]=")) {
+            continue;
+        }
         for line in section.lines() {
             if let Some(rest) = line.strip_prefix(cand.as_str()) {
                 let value = rest.trim_end_matches('\r').to_owned();
@@ -243,7 +258,10 @@ fn unix_secs_to_rfc3339(secs: i64) -> String {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
 
-    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, m, d, hour, minute, second)
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        y, m, d, hour, minute, second
+    )
 }
 
 #[cfg(test)]
@@ -253,7 +271,10 @@ mod tests {
     #[test]
     fn strips_field_codes() {
         assert_eq!(strip_exec_field_codes("firefox %U"), "firefox");
-        assert_eq!(strip_exec_field_codes("/usr/bin/gedit %f"), "/usr/bin/gedit");
+        assert_eq!(
+            strip_exec_field_codes("/usr/bin/gedit %f"),
+            "/usr/bin/gedit"
+        );
         assert_eq!(strip_exec_field_codes("xterm -e %F"), "xterm -e");
     }
 

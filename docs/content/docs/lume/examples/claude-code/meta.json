@@ -1,6 +1,0 @@
-{
-  "title": "Claude Code",
-  "description": "Run Claude Code CLI in isolated macOS VM sandboxes",
-  "icon": "Terminal",
-  "pages": ["sandbox", "homebrew-testing"]
-}

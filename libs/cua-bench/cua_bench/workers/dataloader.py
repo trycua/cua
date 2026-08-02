@@ -60,8 +60,6 @@ import random
 
 import numpy as np
 import torch
-import verl.utils.torch_functional as verl_F
-from verl.utils.model import compute_position_id_with_mask
 
 
 def print_debug(msg):
@@ -96,6 +94,53 @@ def collate_fn(data_list: list[dict]) -> dict:
     output.update(tensors)
     output.update(non_tensors)
     return output
+
+
+def tokenize_and_postprocess_data(
+    *,
+    prompt: str,
+    tokenizer,
+    max_length: int,
+    pad_token_id: int,
+    left_pad: bool,
+    truncation: str,
+):
+    """Tokenize one prompt and return padded tensors.
+
+    This mirrors the small subset of verl's tokenizer helper used by the
+    dataloader, avoiding a vulnerable optional training dependency in the lock.
+    """
+    input_ids = tokenizer.encode(prompt, add_special_tokens=True)
+
+    if len(input_ids) > max_length:
+        if truncation == "left":
+            input_ids = input_ids[-max_length:]
+        elif truncation == "right":
+            input_ids = input_ids[:max_length]
+        else:
+            raise ValueError(f"Unsupported truncation mode: {truncation}")
+
+    attention_mask = [1] * len(input_ids)
+    pad_length = max_length - len(input_ids)
+    if pad_length > 0:
+        padding = [pad_token_id] * pad_length
+        padding_mask = [0] * pad_length
+        if left_pad:
+            input_ids = padding + input_ids
+            attention_mask = padding_mask + attention_mask
+        else:
+            input_ids = input_ids + padding
+            attention_mask = attention_mask + padding_mask
+
+    return (
+        torch.tensor([input_ids], dtype=torch.long),
+        torch.tensor([attention_mask], dtype=torch.long),
+    )
+
+
+def compute_position_id_with_mask(attention_mask: torch.Tensor) -> torch.Tensor:
+    """Compute position ids from an attention mask."""
+    return (torch.cumsum(attention_mask, dim=-1) - 1).clamp(min=0) * attention_mask
 
 
 def process_image(image: str):
@@ -464,7 +509,7 @@ class MultiTurnDataloader:
             else:
                 raw_prompt = prompt
 
-            input_ids, attention_mask = verl_F.tokenize_and_postprocess_data(
+            input_ids, attention_mask = tokenize_and_postprocess_data(
                 prompt=prompt,
                 tokenizer=self._tokenizer,
                 max_length=self._max_prompt_length,
@@ -474,7 +519,7 @@ class MultiTurnDataloader:
             )
 
             if include_response:
-                response_ids, response_attention_mask = verl_F.tokenize_and_postprocess_data(
+                response_ids, response_attention_mask = tokenize_and_postprocess_data(
                     prompt=state["action"],
                     tokenizer=self._tokenizer,
                     max_length=self._max_response_length,
@@ -488,7 +533,13 @@ class MultiTurnDataloader:
                 row_dict["reward"] = torch.tensor(state["reward"]).float()
 
             if self._is_multi_modal:
-                from verl.models.transformers.qwen2_vl import get_rope_index
+                try:
+                    from verl.models.transformers.qwen2_vl import get_rope_index
+                except ImportError as exc:
+                    raise ImportError(
+                        "Multi-modal RL preprocessing requires the optional 'verl' package. "
+                        "Install a compatible non-vulnerable verl release separately."
+                    ) from exc
 
                 position_ids = get_rope_index(
                     self._processor,

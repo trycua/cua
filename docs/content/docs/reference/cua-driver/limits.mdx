@@ -1,0 +1,212 @@
+---
+title: Known Limits
+description: Documented behavioral limits of Cua Driver and available alternatives
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Cua Driver attempts background delivery only when the operating system and
+target expose a route that can be addressed safely. Unsupported shapes return a
+structured refusal instead of reporting a silent success. This page lists
+target-specific constraints and available alternatives; see
+[Platform Support](/reference/cua-driver/platform-support) for the broader
+operating-system matrix.
+
+---
+
+## Browser tools target exactly bound Chromium pages
+
+The typed browser mutation tools currently target Chromium-family browsers and
+Electron through an owned Chrome DevTools Protocol endpoint. Safari and Firefox
+may still be inspected through existing accessibility or legacy page routes,
+but they do not receive typed browser mutation capabilities.
+
+| Surface | Typed browser identity | Typed mutation | Available fallback |
+| --- | --- | --- | --- |
+| Chrome, Edge, Chromium, Electron | Chromium | Exact CDP binding or structured refusal | Native `get_window_state` and AX/PX actions |
+| Firefox | Gecko | `browser_route_unavailable` in the current release | Native accessibility and legacy `page` routes where supported |
+| Safari | WebKit | `browser_route_unavailable` in the current release | Native accessibility and explicit legacy Apple Events routes |
+| Tauri, WKWebView, and WebKitGTK hosts | WebKit where the host can be identified | Structured refusal until an exact engine/native-window binding exists | Native accessibility and pixel actions |
+| WebView2 hosts | Chromium renderer in a separate process | Structured refusal for the common split-process shape | Native UIA and pixel actions |
+
+Firefox is classified consistently as a browser on macOS, Windows, and Linux,
+but Cua Driver does not currently advertise a WebDriver BiDi route. Safari
+Apple Events JavaScript is not equivalent to trusted browser input, and mutable
+tab ordinals cannot satisfy exact window targeting. These surfaces therefore
+remain capability-visible but mutation-unavailable instead of being guessed.
+
+The typed browser surface is preview-grade before 1.0. Product support means
+that the exact binding, supported mutations, declared background posture, and
+structured refusals have release evidence. Recognition alone is not a support
+claim.
+
+| Platform and surface | Current typed-browser status |
+| --- | --- |
+| Windows Chrome and Edge | Validated. Trusted background pointer and synthetic DOM routes are covered. An interactive desktop is required. |
+| macOS Chrome and Edge | Existing-profile attachment is validated. Synthetic DOM actions can remain fully background; trusted standalone pointer routes refuse when Chromium would activate. |
+| Linux X11 Chrome and Edge | Validated for exact binding and synthetic DOM background routes. Trusted standalone pointer routes refuse when activation is unavoidable. |
+| Linux Sway with Chrome | Validated only when compositor identity, process, window, and geometry are exact. |
+| Generic GNOME or KDE Wayland | Read-only discovery or structured refusal; mutation is not claimed. |
+| Electron | Validated only for the bounded one-native-window to one-CDP-page shape. |
+| Brave, Vivaldi, Opera, Arc, and other detected Chromium derivatives | Detected but not release-accepted; use at your own risk. |
+| Safari, Firefox, WebView2, Tauri, WKWebView, and WebKitGTK | Typed mutation unsupported. Use documented native AX/PX fallbacks where available. |
+
+Page refs traverse open shadow roots and same-process frames and are capped to
+the first 300 interactive elements. Out-of-process frames are included only
+when the runtime exposes a capability-tested CDP session for that frame;
+otherwise the omitted frame is reported as a limitation instead of being
+flattened into the main document. A newer snapshot or navigation invalidates
+previous refs.
+
+`browser_prepare` can either create a separate driver-owned isolated profile or
+attach to an approved existing Chrome, Edge, or Chromium profile on a proven
+platform. Existing-profile setup may enable that browser instance's own
+remote-debugging switch through one exact accessibility action. When current
+macOS Chrome withholds the internal page's web accessibility tree, Cua Driver
+instead creates and navigates a temporary tab, proves the committed fixed
+address and expected selected-tab title with no active omnibox edit, and
+requires one unique checkbox-shaped control in a bounded setup-page region. It
+revalidates the unchanged target window, PID-routes the click, and verifies the
+visual state transition. Unsupported appearance, scale, or zoom geometry is
+refused without a click. Unsupported window sizes or toolbar layouts, including
+a bookmarks bar that moves the control outside the bounded region, are refused
+the same way. It never copies profile data, edits profile files, restarts, or
+terminates the selected process.
+Endpoint ownership must resolve to the approved browser PID; wrapper processes,
+ambiguous process trees, unsupported products, unrecognized UI locales, and
+generic Wayland identities are refused.
+
+On generic GNOME or KDE Wayland sessions, browser state may be discoverable
+without enough compositor evidence to correlate native and DevTools geometry
+exactly. That route stays read-only. X11 and the validated Sway configuration
+can authorize mutation when their ownership and geometry proofs agree. This
+does not imply arbitrary raw background PX delivery on Wayland.
+
+---
+
+## Chromium coerces synthetic right-clicks on web content
+
+**Symptom:** `right_click({pid, x, y})` on a Chrome, Edge, Brave, or Arc tab's web content fires a left-click instead of opening the context menu.
+
+**Cause:** Chromium's renderer-IPC filter drops the right-click subtype bit on events that don't come through the HID tap. Every synthesized-event path on macOS hits this wall.
+
+**Workarounds, in order of preference:**
+
+1. Use `right_click({pid, element_index})` on AX-addressable targets (links, buttons, toolbar items). AX delivery sidesteps the renderer filter entirely.
+2. For context menus on pure web content (nothing in the AX tree), activate Chrome briefly and fall back to a HID-tap right-click. This interrupts best-effort background behavior for that one click.
+
+<Callout type="info">
+  Element-indexed right-click (`right_click` with `element_index`) works fine. The limit is
+  specifically pixel right-click on non-AX Chromium web content.
+</Callout>
+
+---
+
+## Canvas apps need brief frontmost activation
+
+**Affected:** Blender (GHOST event source), Unity editor / Unity games, most native games, some WebGL-heavy Electron apps.
+
+**Symptom:** `click({pid, x, y})` on a Blender viewport silently no-ops. The window is visible and `launch_app` works, but clicks vanish.
+
+**Cause:** These apps only accept events from `cghidEventTap` with a leading `mouseMoved`. They explicitly filter out per-pid-routed events, which is the path Cua Driver uses for background delivery. There is no per-pid recipe that reaches them.
+
+**Workaround:** Bring the app to the foreground before clicking, then use pixel `click({pid, x, y})`. Where the target exposes AX-addressable controls, prefer `right_click` or element actions, which sidestep the renderer filter without foregrounding.
+
+<Callout type="warn">
+  When automating Blender or a native game, best-effort background delivery does not apply: these apps must be foregrounded to receive clicks, so do this only when the user is not actively working on the machine.
+</Callout>
+
+---
+
+## Off-Space SwiftUI windows strip their AX tree
+
+**Symptom:** `get_window_state({pid, window_id})` on a window on a different Space (e.g. System Settings parked on Space 2 while on Space 1) returns a minimal tree that contains only the menu bar, or just the `AXApplication` root.
+
+**Cause:** macOS 14+ strips AX detail from non-current-Space SwiftUI windows as a privacy/performance tradeoff. AppKit apps are not affected. There is no workaround that keeps the window off-Space.
+
+**Response shape:** Every `get_window_state` response on an off-current-Space window carries `off_space: true`, so callers can decide to switch Space, pick a different window, or skip the turn.
+
+**Workarounds:**
+
+1. Switch the user to the target's Space first. This breaks the no-Space-bounce promise.
+2. Target an AppKit equivalent of the app if one exists.
+3. Limit off-Space automation to AppKit apps where the tree stays populated.
+
+---
+
+## Minimized windows silently drop keyboard commits
+
+**Symptom:** `press_key({pid, element_index, key: "return"})` on a text field in a minimized window returns success, but the field doesn't commit. The macOS system-alert beep fires, or nothing happens.
+
+**Cause:** AX reads and AX clicks propagate through to minimized windows normally, but keyboard-commit events (Return, Space, Tab) require renderer focus, which AX focus does not confer on a minimized window. This is a macOS-wide behavior.
+
+**Workarounds:**
+
+1. Use `set_value({pid, element_index, value: "..."})` to write the field's value directly. No keyboard event involved; no focus handoff required.
+2. AX-click a commit-equivalent button (Go, Submit, Send, OK) rather than relying on Return.
+3. Restore the window through the Dock or an application-specific Window menu command. This interrupts best-effort background behavior for that window. (`Cmd+M` minimizes a window; it does not restore one.)
+
+<Callout type="info">
+  `set_value` is the correct approach 90% of the time. It sidesteps both the minimized-focus issue and the general "which event commits this field" ambiguity.
+</Callout>
+
+---
+
+## Native Wayland background keyboard input is focus-bound
+
+**Affected:** Unfocused GTK/Qt apps running as native clients on standard
+Wayland compositors, including Sway/wlroots, GNOME/Mutter, and KDE/KWin (no X11
+surface).
+
+**Symptom:** A background `press_key`, `hotkey`, or `type_text` request for a
+field that is not AT-SPI-editable returns structured
+`background_unavailable`. Foreground delivery may also refuse when the desktop
+has no target-addressable activation or raw-input backend.
+
+**Cause:** Wayland blocks one ordinary client from targeting another client's
+surface with synthetic input. Portal/libei input on GNOME and KDE follows the
+compositor's active seat and requires a RemoteDesktop grant. The virtual
+keyboard used on wlroots compositors is also focus-bound, even though it does
+not require the same portal route.
+
+**Workarounds:**
+
+1. Type into accessible text fields with `type_text`. AT-SPI `insertText` writes the field directly, with no synthetic key event involved.
+2. Drive controls by `element_index` (`click`, `set_value`) instead of keyboard shortcuts where an equivalent control exists.
+3. Retry with `delivery_mode:"foreground"` when the desktop exposes a verified
+   activation and input adapter.
+4. Run the app under XWayland (`GDK_BACKEND=x11` / `QT_QPA_PLATFORM=xcb`). It
+   then exposes an X11 surface and the X11 keyboard paths apply.
+
+<Callout type="info">
+  Background element actions can land through AT-SPI. A coordinate left click
+  can also land when its point resolves to an actionable AT-SPI element. This
+  does not establish arbitrary raw background PX delivery.
+</Callout>
+
+The opt-in nested `cua-compositor` is a separate, compositor-owned environment.
+Its private per-surface injection protocol is not constrained like an ordinary
+client on Sway, GNOME, or KDE, and its capabilities are documented separately.
+
+---
+
+## GTK4 reports (0,0) screen coordinates over AT-SPI (handled)
+
+**Symptom:** none in normal use. Element `frame`s, the agent cursor, and vision clicks are correct on GTK4. Documented here because the underlying toolkit bug is real and visible in raw AT-SPI.
+
+**Cause:** GTK4's AT-SPI bridge returns `Component.GetExtents(SCREEN)` as `(0,0)` for every widget (GNOME/gtk issues #1564 / #1739). A naive consumer would collapse every element to the window's top-left corner.
+
+**How Cua Driver handles it:** it queries `CoordType::Window` (which GTK4 *does* report correctly per-widget) and adds the window's screen origin from `_GTK_FRAME_EXTENTS` on X11 or the `org.cua.WinRects` shell helper on Wayland. That reconstructs true screen coordinates, so no caller action is required.
+
+---
+
+## Permission boundaries
+
+Cua Driver is constrained by the macOS permission model. Two relevant grants:
+
+| Grant | Required for |
+| ----- | ------------ |
+| **Accessibility** (System Settings → Privacy & Security → Accessibility) | Every AX read, every element-indexed click, every keyboard/text primitive. Without it, `check_permissions` returns `accessibility: false` and every tool returns a structured error. |
+| **Screen Recording** | Screenshots. `get_window_state` returns both the accessibility tree and a screenshot by default; without this grant it returns the tree only (no PNG). The tree path still works. |
+
+Grants are tied to the `CuaDriver.app` bundle identity (`com.trycua.driver`). The Rust build and installer preserve this identity, so TCC grants persist across rebuilds and updates.

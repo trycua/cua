@@ -4,35 +4,38 @@
   "generators": {
     "cua-driver": {
       "name": "Cua Driver",
-      "language": "swift",
-      "sourcePath": "libs/cua-driver/Sources",
-      "docsOutputPath": "docs/content/docs/cua-driver/reference",
+      "language": "rust",
+      "sourcePath": "libs/cua-driver/rust/crates",
+      "docsOutputPath": "docs/content/docs/reference/cua-driver",
       "generatorScript": "scripts/docs-generators/cua-driver.ts",
       "watchPaths": [
-        "libs/cua-driver/Sources/**/*.swift"
+        "libs/cua-driver/rust/crates/**/*.rs",
+        "libs/cua-driver/rust/Cargo.toml",
+        "libs/cua-driver/rust/Cargo.lock"
       ],
-      "buildCommand": "swift build --configuration release",
-      "buildDirectory": "libs/cua-driver",
+      "buildCommand": "cargo build -p cua-driver --release",
+      "buildDirectory": "libs/cua-driver/rust",
       "extractionMethod": "dump-docs",
       "outputs": [
         {
           "type": "mcp",
           "outputFile": "mcp-tools.mdx",
-          "extractCommand": ".build/release/cua-driver dump-docs --type mcp"
+          "extractCommand": "target/release/cua-driver dump-docs --type mcp"
         },
         {
           "type": "cli",
           "outputFile": "cli-reference.mdx",
-          "extractCommand": ".build/release/cua-driver dump-docs --type cli"
+          "extractCommand": "target/release/cua-driver dump-docs --type cli"
         }
       ],
-      "enabled": true
+      "enabled": true,
+      "notes": "Generates cli-reference.mdx + mcp-tools.mdx from the Rust binary's `dump-docs`. MCP tool docs come straight from the live tool registry; CLI docs come from a hand-maintained `cli_docs_json()` literal in crates/cua-driver/src/cli.rs (the CLI is hand-parsed, not clap, so there is nothing to introspect yet — introspecting it is a tracked follow-up). Curated cross-cutting content lives in the sibling non-generated files mcp-tool-notes.mdx and macos-permissions.mdx."
     },
     "lume": {
       "name": "Lume VM Manager",
       "language": "swift",
       "sourcePath": "libs/lume/src",
-      "docsOutputPath": "docs/content/docs/lume/reference",
+      "docsOutputPath": "docs/content/docs/reference/lume",
       "generatorScript": "scripts/docs-generators/lume.ts",
       "watchPaths": [
         "libs/lume/src/Commands/**/*.swift",
@@ -55,7 +58,8 @@
           "extractCommand": ".build/release/lume dump-docs --type api"
         }
       ],
-      "enabled": true
+      "enabled": true,
+      "notes": "Generates cli-reference.mdx + http-api.mdx from the Swift binary's `dump-docs` output. These files live under the Diátaxis Reference tree; task-oriented Lume docs belong under how-to-guides/lume."
     },
     "cua-cli": {
       "name": "Cua CLI",
@@ -119,7 +123,8 @@
           "extractCommand": "python3 scripts/docs-generators/extract_python_docs.py"
         }
       ],
-      "enabled": true
+      "enabled": false,
+      "notes": "Disabled while these SDK docs are not part of the public docs nav; prevents docs:generate from resurrecting the old docs/content/docs/cua/reference tree."
     },
     "computer-sdk-typescript": {
       "name": "Computer SDK (TypeScript)",
@@ -174,7 +179,8 @@
           "extractCommand": null
         }
       ],
-      "enabled": true
+      "enabled": false,
+      "notes": "Disabled while cuabot docs are not part of the public docs nav; prevents docs:generate from resurrecting docs/content/docs/cuabot/reference."
     }
   }
 }

@@ -208,14 +208,12 @@ if __name__ == "__main__":
             # Left column for settings
             with gr.Column(scale=1):
                 # Logo
-                gr.HTML(
-                    """
+                gr.HTML("""
                     <div style="display: flex; justify-content: center; margin-bottom: 0.5em">
                         <img alt="Cua Logo" style="width: 80px;"
                              src="https://github.com/trycua/cua/blob/main/img/logo_white.png?raw=true" />
                     </div>
-                    """
-                )
+                    """)
 
                 # Python code accordion
                 with gr.Accordion("Python Code", open=False):

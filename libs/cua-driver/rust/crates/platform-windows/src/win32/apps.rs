@@ -5,8 +5,7 @@
 
 use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
-    TH32CS_SNAPPROCESS,
+    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
 
 #[derive(Debug, Clone)]
@@ -65,10 +64,14 @@ fn decode_wstr(buf: &[u16]) -> String {
 /// no longer alive, callers handle the empty-windows case the same way).
 pub fn list_descendants(root_pid: u32) -> Vec<u32> {
     let all = list_processes();
+    descendants_from_processes(root_pid, &all)
+}
+
+fn descendants_from_processes(root_pid: u32, all: &[ProcessInfo]) -> Vec<u32> {
     let mut result = vec![root_pid];
     let mut frontier = vec![root_pid];
     while let Some(parent) = frontier.pop() {
-        for p in &all {
+        for p in all {
             if p.parent_pid == parent && !result.contains(&p.pid) {
                 result.push(p.pid);
                 frontier.push(p.pid);
@@ -124,10 +127,47 @@ fn strip_version_suffix(basename: &str) -> String {
     let mut cut = bytes.len();
     while cut > 0 {
         let c = bytes[cut - 1] as char;
-        if c.is_ascii_digit() || c == '.' || c == '-' { cut -= 1; } else { break; }
+        if c.is_ascii_digit() || c == '.' || c == '-' {
+            cut -= 1;
+        } else {
+            break;
+        }
     }
     // Avoid stripping an entire name (e.g. "7z" → "" would lose information).
     // If everything past cut is purely digits/dots/dashes AND cut > 0, accept.
-    if cut == 0 { return s; }
+    if cut == 0 {
+        return s;
+    }
     s[..cut].to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn process(pid: u32, parent_pid: u32) -> ProcessInfo {
+        ProcessInfo {
+            pid,
+            parent_pid,
+            name: format!("process-{pid}.exe"),
+        }
+    }
+
+    #[test]
+    fn descendants_include_root_and_only_its_transitive_process_tree() {
+        let processes = vec![
+            process(42, 1),
+            process(43, 42),
+            process(44, 43),
+            process(45, 42),
+            process(99, 1),
+            process(100, 99),
+        ];
+
+        let descendants = descendants_from_processes(42, &processes);
+
+        assert_eq!(descendants, vec![42, 43, 45, 44]);
+        assert!(!descendants.contains(&99));
+        assert!(!descendants.contains(&100));
+    }
 }

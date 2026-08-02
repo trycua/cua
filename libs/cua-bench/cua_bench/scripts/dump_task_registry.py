@@ -12,20 +12,20 @@ except Exception:  # pragma: no cover
     import tomli as tomllib  # type: ignore
 
 
-# Root registry path (~ expands to user home)
-# task_registry = Path("~/cua-bench-registry").expanduser()
-task_registry = Path(r"F:\Projects\cua\cua-bench-registry")
-task_registry_url = "https://github.com/trycua/cua-bench-registry/tree/main/datasets/"
+import os
 
-# Expected structure:
-#   meta.json
-#   datasets/
-#     <dataset_id>/
-#       <environment_id>/
-#         pyproject.toml
-#         main.py (optional)
+# Registry now lives in the cua monorepo (the standalone `cua-bench-registry`
+# repo is DEPRECATED — `cb run dataset` resolves datasets from
+# `<cua-repo>/libs/cua-bench/datasets/` via cli/commands/registry.py).
+# Honor CUA_REGISTRY_HOME (the same env var the cb resolver uses); otherwise
+# default to this package's own libs/cua-bench directory.
+#   <registry>/datasets/<dataset_id>/<environment_id>/{pyproject.toml, main.py}
+#   <registry>/datasets/meta.json   (OPTIONAL — dataset-level descriptions)
+task_registry = Path(os.environ.get("CUA_REGISTRY_HOME") or Path(__file__).resolve().parents[2])
+task_registry_url = "https://github.com/trycua/cua/tree/main/libs/cua-bench/datasets/"
+
 task_datasets = task_registry / "datasets"
-task_metadata = task_registry / "meta.json"
+task_metadata = task_datasets / "meta.json"
 output_metadata = Path(__file__).parent / Path("./task_registry.json")
 
 
@@ -218,13 +218,20 @@ def main():
     )
     args = parser.parse_args()
 
-    if not task_metadata.exists():
-        print(f"meta.json not found at {task_metadata}")
-        return 1
     if not task_datasets.exists():
         print(f"datasets directory not found at {task_datasets}")
         return 1
-    meta_entries = read_meta(task_metadata)
+    if task_metadata.exists():
+        meta_entries = read_meta(task_metadata)
+    else:
+        # No meta.json (monorepo default): derive the dataset list from the
+        # datasets/ subdirectories. Dataset-level descriptions stay null.
+        print(f"No meta.json at {task_metadata}; deriving datasets from subdirectories.")
+        meta_entries = [
+            {"id": p.name, "description": None}
+            for p in sorted(task_datasets.iterdir())
+            if p.is_dir()
+        ]
     reg = build_registry(task_datasets, meta_entries, parallelism=args.parallelism)
     output_metadata.write_text(json.dumps(reg, indent=2), encoding="utf-8")
     print(str(output_metadata))

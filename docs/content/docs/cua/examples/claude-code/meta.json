@@ -1,6 +1,0 @@
-{
-  "title": "Claude Code",
-  "description": "Claude Code integration examples",
-  "icon": "Terminal",
-  "pages": ["cloud-sandbox", "human-demonstrations"]
-}

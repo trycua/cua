@@ -787,21 +787,26 @@ typed browser tools yet.
   - **`hotkey` / `press_key`** (keystroke + key-combo): `delivery_mode:"background"`
     surfaces a `background_unavailable` error for VCL.
   - **`type_text`** does a **UIA read-back** and returns the shared
-    `ActionResult`: `effect:"confirmed"` with `evidence:[{"kind":
-    "value_readback"}]` when the value reflects the text, and
-    `effect:"unverifiable"` when the value is unchanged or unreadable. Use the
-    optional `escalation` to choose the next rung. **Pass an
-    `element_index`** for reliable verification: the read-back then reads
-    _that specific element_ by handle (ValuePattern → TextPattern), which is
-    **focus-independent** — it can confirm or disprove a change whether or not
-    the target is foreground. (Verified live against the WPF harness: typed
-    via element_index, read back confirmed, value independently present in
-    the next snapshot — app never fronted.) **Without** an element_index it
-    falls back to system-wide `GetFocusedElement`, which on Windows only
-    resolves when the target is the **foreground** app (no per-app
-    `AXFocusedUIElement` like macOS); a backgrounded target then reads
-    an unverifiable result even when the text actually landed — so it is NOT a
-    failure signal; call `verify_state` or inspect a fresh screenshot.
+    `ActionResult`. With an `element_index`, the ValuePattern path returns
+    `effect:"confirmed"` with `evidence:[{"kind":"value_readback"}]` only
+    when the complete expected value is synchronously visible and differs from
+    the prior value. If SetValue succeeded but the provider still exposes the
+    old or no value, the result is `effect:"unverifiable"` with no escalation.
+    This is common for deferred providers such as AccessKit: take a fresh
+    snapshot before retrying because the value may publish only after
+    `type_text` returns and an immediate retry can duplicate text. A pixel
+    escalation is reserved for an Electron/web accessibility echo that does
+    not prove the renderer observed the write. The PostMessage fallback keeps
+    its separate delivery/read-back behavior. Even when the value changes and
+    contains the requested text, the result stays `effect:"unverifiable"` because
+    WM_CHAR does not expose the insertion point. Take a fresh snapshot before
+    retrying. It may recommend foreground when a background insert appears
+    dropped. Passing an `element_index` makes the
+    read-back target that exact element by handle (ValuePattern → TextPattern),
+    independent of foreground focus. Without one, PostMessage verification
+    falls back to system-wide `GetFocusedElement`, which normally resolves only
+    for the foreground app; an unreadable result is therefore not proof of
+    failure.
     Escalate to `delivery_mode:"foreground"` for both (SendInput Unicode /
     accelerator). **But** foreground needs the swap to actually land — if the
     daemon lacks UIAccess and `bring_to_front` returns `landed_on_target:false`

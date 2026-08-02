@@ -3919,7 +3919,7 @@ impl Tool for TypeTextTool {
                     "pid":{"type":"integer","description":"Target process ID."},
                     "text":{"type":"string","description":"Text to insert at the focused element's cursor."},
                     "window_id":{"type":"integer","description":"HWND of the target window. Required when element_index is used. Optional when element_token is supplied (the token carries it)."},
-                    "element_index":{"type":"integer","description":"Element index from the last get_window_state for the same (pid, window_id). When supplied, type_text (1) writes via UIA ValuePattern.SetValue on that element (works for WPF/WinForms/UWP/XAML without focus steal) and (2) confirms by reading that element's value back by handle — focus-independent. A matching read-back produces effect:\"confirmed\" with value_readback evidence; an unchanged or unreadable value remains effect:\"unverifiable\". Strongly preferred over typing into 'whatever is focused' (no element_index), which falls back to PostMessage WM_CHAR plus a foreground-only focused-element read-back. Requires window_id."},
+                    "element_index":{"type":"integer","description":"Element index from the last get_window_state for the same (pid, window_id). When supplied, type_text writes through UIA ValuePattern and reads that exact element back by handle. The shared ActionResult is confirmed only when the complete expected value is synchronously visible. If SetValue succeeds but read-back is stale or unavailable, the result is unverifiable with no escalation; take a fresh snapshot before retrying because deferred providers may publish only after this call returns. Requires window_id."},
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                     "x":{"type":"number","description":"Window-local screenshot-pixel X of the field to type into — the element px action form. Pass x,y (no element_index) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the UIA/WM_CHAR path can't reach. Read straight off the get_window_state PNG, same convention as click."},
@@ -4250,15 +4250,12 @@ impl Tool for TypeTextTool {
             let idx = idx as usize;
             let state = self.state.clone();
             let text_for_uia = text.clone();
-            let set_ok = tokio::task::spawn_blocking(move || -> bool {
+            let set_result = tokio::task::spawn_blocking(move || {
                 // Retain the element under the cache lock so a concurrent
                 // get_window_state snapshot-replace on the same (pid, hwnd)
                 // can't Release it to zero while this SetValue is in flight.
                 // The guard is held for the whole closure.
-                let Some(element_guard) = state.element_cache.get_element_retained(pid, hwnd, idx)
-                else {
-                    return false;
-                };
+                let element_guard = state.element_cache.get_element_retained(pid, hwnd, idx)?;
                 let ptr = element_guard.as_ptr();
                 use windows::core::{Interface, BSTR};
                 use windows::Win32::UI::Accessibility::{
@@ -4266,7 +4263,7 @@ impl Tool for TypeTextTool {
                 };
                 let elem: IUIAutomationElement =
                     unsafe { IUIAutomationElement::from_raw(ptr as *mut _) };
-                let ok = (|| -> anyhow::Result<()> {
+                let result = (|| -> anyhow::Result<(String, String)> {
                     let pattern = unsafe { elem.GetCurrentPattern(UIA_ValuePatternId) }?;
                     let vp: IUIAutomationValuePattern = pattern.cast()?;
                     // Shield the SetValue against host self-foreground. A
@@ -4285,32 +4282,28 @@ impl Tool for TypeTextTool {
                             .map(|value| value.to_string())
                             .unwrap_or_default();
                         let inserted = format!("{current}{text_for_uia}");
-                        vp.SetValue(&BSTR::from(inserted.as_str()))
-                    })?;
-                    Ok(())
+                        vp.SetValue(&BSTR::from(inserted.as_str()))?;
+                        Ok((current, inserted))
+                    })
                 })()
-                .is_ok();
+                .ok();
                 std::mem::forget(elem);
-                ok
+                result
             })
             .await
-            .unwrap_or(false);
-            if set_ok {
+            .unwrap_or(None);
+            if let Some((before, expected)) = set_result {
                 // Read the value back by element handle — focus-independent
                 // (works regardless of which window is foreground), proving the
                 // a11y write actually took rather than trusting SetValue's
                 // return alone.
                 let state_rb = self.state.clone();
-                let text_rb = text.clone();
                 let verify = tokio::task::spawn_blocking(move || {
-                    match read_cached_element_value(&state_rb, pid, hwnd, idx) {
-                        Some(v) if v.contains(text_rb.as_str()) => "confirmed",
-                        Some(_) => "unchanged",
-                        None => "unreadable",
-                    }
+                    let value = read_cached_element_value(&state_rb, pid, hwnd, idx);
+                    classify_value_write_readback(value.as_deref(), &before, &expected)
                 })
                 .await
-                .unwrap_or("unreadable");
+                .unwrap_or("pending");
                 // SURFACE-AWARE VERIFICATION (mirrors macOS type_text). On
                 // Electron/Chromium web inputs the UIA layer accepts a
                 // `ValuePattern.SetValue` and echoes it straight back through
@@ -4340,8 +4333,9 @@ impl Tool for TypeTextTool {
                     )
                 } else {
                     (
-                        "📨 Sent (unverified)",
-                        " — driver could not confirm; verify via screenshot.".to_string(),
+                        "📨 Accepted (verification pending)",
+                        " — the provider may publish its new value only after this call returns. Take a fresh snapshot before retrying."
+                            .to_string(),
                     )
                 };
                 return ToolResult::text(format!(
@@ -4350,8 +4344,9 @@ impl Tool for TypeTextTool {
                 ))
                 .with_structured({
                     // `effect` mirrors the UIA read-back: a TRUSTED positive
-                    // read-back is "confirmed"; an unchanged/unreadable value, or an
-                    // Electron UIA echo we refuse to trust, is "unverifiable".
+                    // read-back is "confirmed"; a deferred provider or an Electron UIA echo
+                    // that we refuse to trust is "unverifiable". Only the echo
+                    // recommends pixel escalation.
                     let mut s = serde_json::json!({
                         "path": "ax",
                         "characters": text_len,
@@ -4370,15 +4365,6 @@ impl Tool for TypeTextTool {
                                        Confirm via the screenshot; if it didn't land, \
                                        re-type with the element px action (pass x,y to \
                                        pixel-focus the field, then type)."
-                        });
-                    } else if !verified {
-                        // The field IS in the UIA tree (it's a focus/accept problem,
-                        // not a missing element), so escalation points at foreground.
-                        s["escalation"] = serde_json::json!({
-                            "recommended": "foreground",
-                            "reason": "background insert could not be confirmed — re-call \
-                                       with delivery_mode:\"foreground\" if a screenshot \
-                                       shows the text didn't land."
                         });
                     }
                     s
@@ -4427,13 +4413,13 @@ impl Tool for TypeTextTool {
             let post_res = crate::input::post_type_text(hwnd, &text_for_post);
             std::thread::sleep(std::time::Duration::from_millis(40));
             let after = read(verify_idx);
-            let confirmed =
-                post_message_readback_confirms(before.as_deref(), after.as_deref(), &text_for_post);
-            (post_res, before, after, confirmed)
+            let observed =
+                post_message_readback_observed(before.as_deref(), after.as_deref(), &text_for_post);
+            (post_res, before, after, observed)
         })
         .await;
         match result {
-            Ok((Ok(()), before, after, confirmed)) => {
+            Ok((Ok(()), before, after, observed)) => {
                 // Three-way verdict. Crucially, "couldn't read the field" is NOT
                 // the same as "the text didn't land": on Windows, UIA's
                 // GetFocusedElement is system-wide (unlike macOS's per-app
@@ -4441,18 +4427,21 @@ impl Tool for TypeTextTool {
                 // app we cannot read it back even though a PostMessage WM_CHAR
                 // may have landed fine. Treating unreadable as failure would
                 // spuriously push agents to foreground and break the
-                // background-first contract. Confirm only when the value
-                // changed and the resulting value contains the requested
-                // text; every other readable result remains unverified.
+                // background-first contract. A changed value containing the
+                // requested text is useful evidence, but the insertion point is
+                // unknowable on WM_CHAR. Keep the action unverifiable so callers
+                // prove final state from a fresh snapshot before any retry.
                 match (&before, &after) {
-                    (Some(_), Some(_)) if confirmed => ToolResult::text(format!(
-                        "✅ Typed {text_len} char(s) on pid {raw_pid} via PostMessage \
-                         ({_delay_ms}ms delay; verified via UIA read-back)."
+                    (Some(_), Some(_)) if observed => ToolResult::text(format!(
+                        "📨 Sent {text_len} char(s) to pid {raw_pid} via PostMessage \
+                         ({_delay_ms}ms delay; the field changed and now contains the \
+                         requested text, but the insertion point is not known). Take a \
+                         fresh snapshot to verify the intended final value before retrying."
                     ))
                     .with_structured(serde_json::json!({
                         "path": "key_events", "characters": text_len,
-                        "verified": true, "verify": "confirmed",
-                        "effect": "confirmed",
+                        "verified": false, "verify": "changed_contains",
+                        "effect": "unverifiable",
                     })),
                     (Some(_), Some(_)) => ToolResult::text(format!(
                         "📨 Sent {text_len} char(s) to pid {raw_pid} via PostMessage, but \
@@ -4498,7 +4487,7 @@ impl Tool for TypeTextTool {
     }
 }
 
-fn post_message_readback_confirms(
+fn post_message_readback_observed(
     before: Option<&str>,
     after: Option<&str>,
     requested_text: &str,
@@ -4512,31 +4501,45 @@ fn post_message_readback_confirms(
 
 #[cfg(test)]
 mod post_message_readback_tests {
-    use super::post_message_readback_confirms;
+    use super::post_message_readback_observed;
 
     #[test]
-    fn confirms_only_a_changed_value_containing_the_requested_text() {
-        assert!(post_message_readback_confirms(
+    fn observes_only_a_changed_value_containing_the_requested_text() {
+        assert!(post_message_readback_observed(
             Some("prefix"),
             Some("prefixhello"),
             "hello"
         ));
-        assert!(!post_message_readback_confirms(None, None, "hello"));
-        assert!(!post_message_readback_confirms(
+        assert!(!post_message_readback_observed(None, None, "hello"));
+        assert!(!post_message_readback_observed(
             Some("hello"),
             Some("hello"),
             "hello"
         ));
-        assert!(!post_message_readback_confirms(
+        assert!(!post_message_readback_observed(
             Some(""),
             Some("h"),
             "hello"
         ));
-        assert!(!post_message_readback_confirms(
+        assert!(!post_message_readback_observed(
             Some("before"),
             Some("different"),
             "hello"
         ));
+    }
+}
+
+fn classify_value_write_readback(
+    value: Option<&str>,
+    before: &str,
+    expected: &str,
+) -> &'static str {
+    match value {
+        Some(value) if value == expected && value != before => "confirmed",
+        // SetValue returned success. Some providers publish their new Value only
+        // after this tool call unwinds, so an old or unreadable synchronous value
+        // is pending verification, not evidence that the write failed.
+        _ => "pending",
     }
 }
 
@@ -9957,5 +9960,46 @@ mod pid_window_target_tests {
             PidWindowTargetResolution::Ambiguous(windows)
                 if windows.iter().map(|window| window.window_id).collect::<Vec<_>>() == [7, 8]
         ));
+    }
+}
+
+#[cfg(test)]
+mod value_write_readback_tests {
+    use super::classify_value_write_readback;
+
+    #[test]
+    fn confirms_when_the_expected_value_replaces_the_prior_value() {
+        assert_eq!(
+            classify_value_write_readback(Some("beforeinserted"), "before", "beforeinserted"),
+            "confirmed"
+        );
+    }
+
+    #[test]
+    fn treats_stale_or_unreadable_value_as_pending() {
+        assert_eq!(
+            classify_value_write_readback(Some("old value"), "old value", "old valueinserted"),
+            "pending"
+        );
+        assert_eq!(
+            classify_value_write_readback(None, "old value", "old valueinserted"),
+            "pending"
+        );
+    }
+
+    #[test]
+    fn does_not_confirm_when_stale_value_contains_the_typed_text() {
+        assert_eq!(
+            classify_value_write_readback(Some("10.00"), "10.00", "10.000"),
+            "pending"
+        );
+    }
+
+    #[test]
+    fn does_not_confirm_an_empty_write() {
+        assert_eq!(
+            classify_value_write_readback(Some("unchanged"), "unchanged", "unchanged"),
+            "pending"
+        );
     }
 }

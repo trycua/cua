@@ -16,64 +16,12 @@ use cua_driver_core::{
 };
 use serde_json::Value;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use super::ToolState;
 use crate::apps;
 use crate::focus_guard;
 use crate::input::mouse::DragButton;
 use crate::window_change_detector::WindowChangeDetector;
-
-const FOREGROUND_ACTIVATION_TIMEOUT: Duration = Duration::from_secs(1);
-const FOREGROUND_RENDERER_SETTLE: Duration = Duration::from_millis(100);
-const FOREGROUND_ACTIVATION_POLL: Duration = Duration::from_millis(10);
-
-fn exact_foreground_drag_target_is_ready(
-    frontmost_pid: Option<i32>,
-    focused_window_id: Option<u32>,
-    target_pid: i32,
-    target_window_id: u32,
-) -> bool {
-    frontmost_pid == Some(target_pid) && focused_window_id == Some(target_window_id)
-}
-
-fn prepare_foreground_drag_target(pid: i32, window_id: u32) -> anyhow::Result<()> {
-    if exact_foreground_drag_target_is_ready(
-        apps::frontmost_pid(),
-        crate::ax::bindings::focused_window_id_of_pid(pid),
-        pid,
-        window_id,
-    ) {
-        // Re-activating an already key WebKit/Chromium window can clear its
-        // renderer pointer target. Preserve the proven exact target instead.
-        return Ok(());
-    }
-
-    if !apps::activate_pid(pid) {
-        anyhow::bail!("could not activate target process for foreground drag");
-    }
-
-    let deadline = Instant::now() + FOREGROUND_ACTIVATION_TIMEOUT;
-    loop {
-        let frontmost_pid = apps::frontmost_pid();
-        let focused_window_id = crate::ax::bindings::focused_window_id_of_pid(pid);
-        if exact_foreground_drag_target_is_ready(frontmost_pid, focused_window_id, pid, window_id) {
-            // App activation is asynchronous. Even after WindowServer and AX
-            // agree, focus-proxy renderers need a short bounded settle before
-            // accepting the initial mouse-down of a drag gesture.
-            std::thread::sleep(FOREGROUND_RENDERER_SETTLE);
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            anyhow::bail!(
-                "foreground drag target did not become the exact key window: \
-                 target_pid={pid}, target_window_id={window_id}, \
-                 frontmost_pid={frontmost_pid:?}, focused_window_id={focused_window_id:?}"
-            );
-        }
-        std::thread::sleep(FOREGROUND_ACTIVATION_POLL);
-    }
-}
 
 pub struct DragTool {
     pub state: Arc<ToolState>,
@@ -369,14 +317,12 @@ impl Tool for DragTool {
                         let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
                         if fg {
                             // HID delivery is global, so foreground mode must
-                            // prove the exact target window is key before the
-                            // gesture begins. Avoid re-activating a target that
-                            // is already exact: WebKit focus proxies can lose
-                            // their renderer pointer target on reactivation.
-                            prepare_foreground_drag_target(
-                                pid,
-                                window_id.expect("foreground drag requires a window"),
-                            )?;
+                            // establish a real active application before the
+                            // gesture begins. The SkyLight flash can be
+                            // unavailable for Electron child windows; the
+                            // documented Cocoa activation is the fallback.
+                            apps::activate_pid(pid);
+                            std::thread::sleep(std::time::Duration::from_millis(40));
                             let observed_cursor = cursor_for_drag.clone();
                             return crate::input::mouse::drag_at_xy_foreground_observed(
                                 from_sx,
@@ -493,38 +439,5 @@ impl Tool for DragTool {
             Ok(Err(e)) => ToolResult::error(format!("drag failed: {e}")),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::exact_foreground_drag_target_is_ready;
-
-    #[test]
-    fn foreground_drag_requires_exact_process_and_window_focus() {
-        assert!(exact_foreground_drag_target_is_ready(
-            Some(42),
-            Some(7),
-            42,
-            7
-        ));
-        assert!(!exact_foreground_drag_target_is_ready(
-            Some(41),
-            Some(7),
-            42,
-            7
-        ));
-        assert!(!exact_foreground_drag_target_is_ready(
-            Some(42),
-            Some(8),
-            42,
-            7
-        ));
-        assert!(!exact_foreground_drag_target_is_ready(
-            Some(42),
-            None,
-            42,
-            7
-        ));
     }
 }

@@ -1429,10 +1429,11 @@ impl ToolRegistry {
         // stream stays the actual user-action sequence (not the meta
         // start/stop frames).
         if let Some(pending_turn) = pending_turn {
-            self.recording.finish_turn_with_action(
+            self.recording.finish_turn_with_outcome(
                 pending_turn,
                 recording_result_text.as_deref().unwrap_or(""),
                 result.action_record.as_ref(),
+                result.is_error == Some(true),
             );
         }
 

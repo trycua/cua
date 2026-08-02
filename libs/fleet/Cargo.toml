@@ -1,0 +1,25 @@
+[workspace]
+members = ["sdk-schema", "sdk", "bindgen-cli"]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+rust-version = "1.97.0"
+
+[workspace.dependencies]
+anyhow = "1.0"
+base64 = "0.22"
+async-trait = "0.1"
+futures-timer = "3.0.4"
+k8s-openapi = { version = "0.28.0", features = ["v1_32"] }
+kube = { version = "4.0.0", default-features = false, features = ["derive"] }
+schemars = "1.2.1"
+serde = { version = "1.0", features = ["derive", "rc"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+thiserror = "2.0"
+tokio = { version = "1.0", features = ["macros", "rt", "sync"] }
+uniffi = { version = "=0.31.0", features = ["tokio", "wasm-unstable-single-threaded"] }
+url = "2.5"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots"] }

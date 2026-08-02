@@ -1,0 +1,70 @@
+---
+title: Export contacts overnight
+description: Extract LinkedIn or X contacts overnight from a logged-in browser session into a clean CSV.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+After a networking event, use Cua Driver on the machine where you already have a logged-in browser. The agent inherits that **real authenticated session** from the browser profile, so there are no credentials in the script and no anti-bot fight. Let it run overnight, then wake up to a CSV.
+
+<Callout type="info">
+  Before you start: [install Cua Driver](/how-to-guides/driver/install), grant host permissions, [connect your agent](/how-to-guides/driver/connect-your-agent), and configure [Keep Cua Driver running](/how-to-guides/driver/keep-running).
+</Callout>
+
+<Steps>
+
+<Step>
+
+### Log in once
+
+On your own machine, open the browser profile that Cua Driver will drive and log into LinkedIn, X, or both. Do the normal login yourself, including any two-factor prompts. The *session persistence* is the whole trick: the overnight job starts from a browser that is already authenticated.
+
+<Callout type="warn">
+  Keep the machine awake for the whole run. Disable sleep, leave the browser profile available, and keep the network connection up so the overnight run does not pause.
+</Callout>
+
+</Step>
+
+<Step>
+
+### Give the overnight task
+
+Ask the agent for the exact extraction you want. For LinkedIn, start from the connections page and cap the run with a clear `N` while you test:
+
+```text
+Using cua-driver, open the browser to https://www.linkedin.com/mynetwork/invite-connect/connections/ .
+
+For each of the first 50 connections:
+1. Open the profile.
+2. Read first name, last name, role, company, and profile URL.
+3. Append one row to ~/contacts.csv.
+4. Set met_at to "Google Devfest Toronto" for every row.
+
+Use this CSV header:
+first,last,role,company,met_at,linkedin
+
+If a value is missing, leave that field empty and keep going.
+```
+
+The agent will use `page` for browser navigation, then `click`, `type_text`, and `get_window_state` to inspect and drive the browser. It may call `list_windows` first if more than one browser window is open.
+
+Cua Driver **does not expose a filesystem write tool**. The agent writes `~/contacts.csv` by driving an app that can write files, for example a terminal running shell commands or a text editor with the CSV open.
+
+</Step>
+
+<Step>
+
+### Let it run
+
+Kick off the task before you leave. In the morning, open `~/contacts.csv` and spot-check the rows before importing them into a CRM or email tool.
+
+</Step>
+
+</Steps>
+
+## Scale this out
+
+One logged-in browser profile handles one account at a time. To process several accounts, events, or platforms in parallel overnight, use one local Cua Sandbox per authenticated session and cap concurrency to the resources available on the host.
+
+Use [Run sandboxes in parallel](/how-to-guides/sandbox/scale-out) to run several local desktops, [Images](/how-to-guides/sandbox/images) to prepare their starting state, and [Your first local sandbox](/tutorials/your-first-local-sandbox) for the basic SDK lifecycle.

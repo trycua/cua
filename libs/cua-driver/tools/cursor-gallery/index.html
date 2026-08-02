@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cua cursor gallery</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">CUA.DEFAULT · EXACT RENDERER PREVIEW</p>
+          <h1>Session-colored semantic motion</h1>
+          <p class="lede">
+            Exact frames from the Cua Driver native renderer. Every state keeps the shared floating
+            motion, with its semantic animation layered on top.
+          </p>
+        </div>
+        <div class="controls" aria-label="Animation controls">
+          <button id="play-toggle" type="button">Pause</button>
+          <button id="replay" type="button">Replay</button>
+          <label>
+            <span>Speed</span>
+            <select id="speed" aria-label="Animation speed">
+              <option value="0.5">0.5×</option>
+              <option value="1" selected>1×</option>
+              <option value="1.5">1.5×</option>
+              <option value="2">2×</option>
+            </select>
+          </label>
+          <button id="background-toggle" type="button">Mixed</button>
+        </div>
+      </header>
+
+      <section class="gallery-section" aria-labelledby="actions-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-count">12 states</p>
+            <h2 id="actions-title">Action animations</h2>
+          </div>
+          <p>Hover or focus a card to bring its motion forward.</p>
+        </div>
+        <div id="actions-grid" class="state-grid"></div>
+      </section>
+
+      <section class="gallery-section" aria-labelledby="modifiers-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-count">6 context chips</p>
+            <h2 id="modifiers-title">Delivery and target context</h2>
+          </div>
+          <p>Host-rendered context chips can appear together with any action.</p>
+        </div>
+        <div id="modifiers-grid" class="state-grid"></div>
+
+        <article class="combined-card">
+          <div>
+            <p class="section-count">Combined state</p>
+            <h3>Foreground click at an exact pixel</h3>
+            <p>The filled delivery chip comes first, followed by the outlined target chip.</p>
+          </div>
+          <div class="demo">
+            <video
+              class="cursor-video"
+              src="./generated/combined/foreground-pixel-click.webm"
+              data-group="combined"
+              data-state="foreground-pixel-click"
+              autoplay
+              loop
+              muted
+              playsinline
+            ></video>
+          </div>
+          <div class="legend">
+            <span>○ Foreground delivery</span>
+            <span>□ Pixel target</span>
+          </div>
+        </article>
+
+        <article class="combined-card">
+          <div>
+            <p class="section-count">Session identity</p>
+            <h3>Compact label on cursor reveal</h3>
+            <p>
+              The session-tinted badge holds for two seconds, then fades while the cursor remains.
+            </p>
+          </div>
+          <div class="demo">
+            <video
+              class="cursor-video"
+              src="./generated/session/badge.webm"
+              data-group="session"
+              data-state="badge"
+              autoplay
+              loop
+              muted
+              playsinline
+            ></video>
+          </div>
+          <div class="legend">
+            <span>● Circular session marker</span>
+            <span>◒ Session-accent gradient</span>
+          </div>
+        </article>
+      </section>
+
+      <footer>
+        <span>Preview scale is enlarged for review.</span>
+        <span>Production cursor size is 42 points.</span>
+      </footer>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>

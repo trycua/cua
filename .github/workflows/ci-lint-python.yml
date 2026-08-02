@@ -28,8 +28,8 @@ jobs:
 
       - name: Python lint & typecheck
         run: |
-          uv run isort --check-only .
-          uv run black --check .
-          uv run ruff check .
+          uv run isort --check-only libs/python tests
+          uv run black --check libs/python tests
+          uv run ruff check libs/python tests
           # Temporarily disabled due to untyped codebase
           # uv run mypy .

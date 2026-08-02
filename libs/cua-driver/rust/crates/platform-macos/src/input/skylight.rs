@@ -16,10 +16,10 @@
 //! If anything fails to resolve the functions return `false` and callers
 //! fall back to the public `CGEvent::post_to_pid`.
 
-use std::ffi::{CStr, c_void};
-use std::os::raw::{c_int, c_uint, c_char};
-use std::sync::OnceLock;
 use libc::pid_t;
+use std::ffi::{c_void, CStr};
+use std::os::raw::{c_char, c_int, c_uint};
+use std::sync::OnceLock;
 
 // ── Function-pointer typedefs ──────────────────────────────────────────────
 
@@ -87,7 +87,10 @@ fn ensure_skylight_loaded() {
     LOADED.get_or_init(|| {
         let path = b"/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight\0";
         unsafe {
-            libc::dlopen(path.as_ptr() as *const c_char, libc::RTLD_LAZY | libc::RTLD_GLOBAL);
+            libc::dlopen(
+                path.as_ptr() as *const c_char,
+                libc::RTLD_LAZY | libc::RTLD_GLOBAL,
+            );
         }
     });
 }
@@ -96,10 +99,12 @@ fn ensure_skylight_loaded() {
 /// Returns `None` when the symbol doesn't resolve.
 fn find_sym(name: &[u8]) -> Option<*mut c_void> {
     ensure_skylight_loaded();
-    let ptr = unsafe {
-        libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr() as *const c_char)
-    };
-    if ptr.is_null() { None } else { Some(ptr) }
+    let ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr() as *const c_char) };
+    if ptr.is_null() {
+        None
+    } else {
+        Some(ptr)
+    }
 }
 
 /// Reinterpret a raw symbol pointer as a function pointer of type `T`.
@@ -175,11 +180,14 @@ pub fn is_available() -> bool {
     post_to_pid_fn().is_some()
 }
 
-/// `true` when all three focus-without-raise SPIs resolved.
+/// `true` when the focus-without-raise SPIs resolved, including either the
+/// modern window-owner PSN lookup or the deprecated pid fallback.
 pub fn is_focus_without_raise_available() -> bool {
-    get_front_process_fn().is_some()
-        && get_process_for_pid_fn().is_some()
-        && post_event_record_to_fn().is_some()
+    let has_psn_lookup = (connection_id_fn().is_some()
+        && get_window_owner_fn().is_some()
+        && get_connection_psn_fn().is_some())
+        || get_process_for_pid_fn().is_some();
+    get_front_process_fn().is_some() && has_psn_lookup && post_event_record_to_fn().is_some()
 }
 
 // ── ObjC runtime helpers ───────────────────────────────────────────────────
@@ -206,6 +214,28 @@ fn sel_register(name: &CStr) -> *mut c_void {
     }
 }
 
+/// Whether `cls` actually implements `sel`, via `class_respondsToSelector`.
+///
+/// macOS 14 (Sonoma) compatibility guard: `SLSEventAuthenticationMessage`
+/// exists on macOS 14, but `messageWithEventRecord:pid:version:` was only
+/// added in macOS 15 (Sequoia). `sel_registerName` always succeeds (it just
+/// interns the string), so a `!sel.is_null()` check is not enough — we must
+/// confirm the class responds before calling `objc_msgSend`, or the runtime
+/// raises `NSInvalidArgumentException: unrecognized selector`. See #1503.
+fn class_responds_to_selector(cls: *mut c_void, sel: *mut c_void) -> bool {
+    if cls.is_null() || sel.is_null() {
+        return false;
+    }
+    type RespondsToFn = unsafe extern "C" fn(*mut c_void, *mut c_void) -> bool;
+    static SYM: OnceLock<Option<RespondsToFn>> = OnceLock::new();
+    let f =
+        *SYM.get_or_init(|| find_sym(b"class_respondsToSelector\0").map(|p| unsafe { as_fn(p) }));
+    match f {
+        Some(f) => unsafe { f(cls, sel) },
+        None => false,
+    }
+}
+
 // ── SLSEventRecord extraction ──────────────────────────────────────────────
 
 /// Extract the embedded `SLSEventRecord *` from a `CGEvent`.
@@ -216,9 +246,7 @@ fn sel_register(name: &CStr) -> *mut c_void {
 /// We probe offsets 24, 32, 16 for resilience across OS versions (same as Swift).
 unsafe fn extract_event_record(event_ptr: *mut c_void) -> *mut c_void {
     for &offset in &[24usize, 32, 16] {
-        let slot = (event_ptr as *const u8)
-            .add(offset)
-            .cast::<*mut c_void>();
+        let slot = (event_ptr as *const u8).add(offset).cast::<*mut c_void>();
         let p = std::ptr::read_unaligned(slot);
         if !p.is_null() {
             return p;
@@ -236,7 +264,7 @@ unsafe fn extract_event_record(event_ptr: *mut c_void) -> *mut c_void {
 ///
 /// Returns `true` when `SLEventPostToPid` resolved and the post was attempted.
 /// Returns `false` when the SPI is absent — caller falls back to `CGEvent::post_to_pid`.
-pub fn post_to_pid(pid: pid_t, event_ptr: *mut c_void, attach_auth_message: bool) -> bool {
+pub(super) fn post_to_pid(pid: pid_t, event_ptr: *mut c_void, attach_auth_message: bool) -> bool {
     let post_fn = match post_to_pid_fn() {
         Some(f) => f,
         None => return false,
@@ -244,11 +272,19 @@ pub fn post_to_pid(pid: pid_t, event_ptr: *mut c_void, attach_auth_message: bool
 
     if attach_auth_message {
         // Build and attach SLSEventAuthenticationMessage.
+        //
+        // macOS 14 (Sonoma) compatibility: the class exists on macOS 14 but
+        // `messageWithEventRecord:pid:version:` was added in macOS 15. Guard
+        // with `class_respondsToSelector` (a `!sel.is_null()` check is not
+        // enough — `sel_registerName` interns any name); when the selector is
+        // absent we skip the auth envelope and fall through to the plain
+        // `SLEventPostToPid` below. Chromium-class targets may not receive the
+        // event on macOS 14, but the daemon no longer crashes. See #1503.
         let cls = objc_class(c"SLSEventAuthenticationMessage");
         let sel = sel_register(c"messageWithEventRecord:pid:version:");
         let factory = factory_msg_send_fn();
 
-        if !cls.is_null() && !sel.is_null() {
+        if class_responds_to_selector(cls, sel) {
             if let Some(factory_fn) = factory {
                 let record = unsafe { extract_event_record(event_ptr) };
                 if !record.is_null() {
@@ -269,18 +305,24 @@ pub fn post_to_pid(pid: pid_t, event_ptr: *mut c_void, attach_auth_message: bool
 
 /// Stamp a window-local `(x, y)` point onto `event_ptr` via the private
 /// `CGEventSetWindowLocation` SPI. Returns `true` when the SPI resolved.
-pub fn set_window_location(event_ptr: *mut c_void, x: f64, y: f64) -> bool {
+pub(super) fn set_window_location(event_ptr: *mut c_void, x: f64, y: f64) -> bool {
     match set_window_loc_fn() {
-        Some(f) => { unsafe { f(event_ptr, x, y) }; true }
+        Some(f) => {
+            unsafe { f(event_ptr, x, y) };
+            true
+        }
         None => false,
     }
 }
 
 /// Stamp `value` onto `event_ptr` at raw SkyLight field index `field` via
 /// `SLEventSetIntegerValueField`. Returns `false` when SPI absent.
-pub fn set_integer_field(event_ptr: *mut c_void, field: u32, value: i64) -> bool {
+pub(super) fn set_integer_field(event_ptr: *mut c_void, field: u32, value: i64) -> bool {
     match set_int_field_fn() {
-        Some(f) => { unsafe { f(event_ptr, field, value) }; true }
+        Some(f) => {
+            unsafe { f(event_ptr, field, value) };
+            true
+        }
         None => false,
     }
 }
@@ -298,7 +340,8 @@ pub fn main_connection_id() -> Option<u32> {
 ///
 /// Recipe:
 /// 1. `_SLPSGetFrontProcess` → capture current front PSN.
-/// 2. `GetProcessForPID(target_pid)` → target PSN.
+/// 2. `SLSGetWindowOwner + SLSGetConnectionPSN` → target PSN, with
+///    `GetProcessForPID(target_pid)` as an older-system fallback.
 /// 3. Post 248-byte defocus record to front PSN (`bytes[0x8a] = 0x02`).
 /// 4. Post 248-byte focus record to target PSN (`bytes[0x8a] = 0x01`,
 ///    `bytes[0x3c..0x3f]` = `target_wid` little-endian).
@@ -317,20 +360,18 @@ pub fn activate_without_raise(target_pid: pid_t, target_wid: u32) -> bool {
         Some(f) => f,
         None => return false,
     };
-    let get_pid_psn = match get_process_for_pid_fn() {
-        Some(f) => f,
-        None => return false,
-    };
-
     // 8-byte PSN buffers (two UInt32s).
     let mut prev_psn = [0u8; 8];
     let mut target_psn = [0u8; 8];
 
     let ok_prev = unsafe { get_front(prev_psn.as_mut_ptr() as *mut c_void) } == 0;
-    if !ok_prev { return false; }
+    if !ok_prev {
+        return false;
+    }
 
-    let ok_target = unsafe { get_pid_psn(target_pid, target_psn.as_mut_ptr() as *mut c_void) } == 0;
-    if !ok_target { return false; }
+    if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
+        return false;
+    }
 
     // Build the 248-byte event buffer.
     let mut buf = [0u8; 0xF8];
@@ -344,15 +385,11 @@ pub fn activate_without_raise(target_pid: pid_t, target_wid: u32) -> bool {
 
     // Step 3: defocus previous front.
     buf[0x8A] = 0x02;
-    let defocus_ok = unsafe {
-        post_fn(prev_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0
-    };
+    let defocus_ok = unsafe { post_fn(prev_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0 };
 
     // Step 4: focus target.
     buf[0x8A] = 0x01;
-    let focus_ok = unsafe {
-        post_fn(target_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0
-    };
+    let focus_ok = unsafe { post_fn(target_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0 };
 
     defocus_ok && focus_ok
 }
@@ -364,15 +401,19 @@ pub fn activate_without_raise(target_pid: pid_t, target_wid: u32) -> bool {
 /// Falls back to `GetProcessForPID(pid)` when the SkyLight path fails.
 pub fn get_process_psn_for_window(window_id: u32, pid: libc::pid_t, out_psn: &mut [u8; 8]) -> bool {
     // Try modern path: CGSMainConnectionID → SLSGetWindowOwner → SLSGetConnectionPSN
-    if let (Some(get_owner), Some(get_psn), Some(conn_id_fn)) =
-        (get_window_owner_fn(), get_connection_psn_fn(), connection_id_fn())
-    {
+    if let (Some(get_owner), Some(get_psn), Some(conn_id_fn)) = (
+        get_window_owner_fn(),
+        get_connection_psn_fn(),
+        connection_id_fn(),
+    ) {
         let main_cid = unsafe { conn_id_fn() };
         let mut owner_cid: u32 = 0;
         let ok = unsafe { get_owner(main_cid, window_id, &mut owner_cid) } == 0;
         if ok && owner_cid != 0 {
             let psn_ok = unsafe { get_psn(owner_cid, out_psn.as_mut_ptr() as *mut c_void) } == 0;
-            if psn_ok { return true; }
+            if psn_ok {
+                return true;
+            }
         }
     }
     // Fallback: GetProcessForPID
@@ -380,6 +421,89 @@ pub fn get_process_psn_for_window(window_id: u32, pid: libc::pid_t, out_psn: &mu
         return unsafe { get_pid_psn(pid, out_psn.as_mut_ptr() as *mut c_void) } == 0;
     }
     false
+}
+
+/// Make `target_pid` and `target_wid` WindowServer-frontmost and leave them
+/// there. Unlike [`with_foreground_assist`], this deliberately does not save or
+/// restore the previous process. It is the persistent counterpart required by
+/// focus-proxy surfaces whose input channel is armed only while genuinely
+/// frontmost.
+///
+/// Returns `true` only when the target PSN resolved and WindowServer accepted
+/// `SLPSSetFrontProcessWithOptions`.
+pub fn set_front_process_persistently(target_pid: libc::pid_t, target_wid: u32) -> bool {
+    let Some(set_front) = set_front_process_fn() else {
+        return false;
+    };
+    let mut target_psn = [0u8; 8];
+    if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
+        return false;
+    }
+
+    // kCPSNoWindows = 0x400. Supplying the exact target window still makes
+    // that window's process frontmost while avoiding a broad all-window raise.
+    unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) == 0 }
+}
+
+/// Tool-agnostic foreground-assist: briefly front `window_id`, run `body` (which
+/// posts the synthetic input), then restore the prior frontmost process.
+///
+/// This is the `delivery_mode:"foreground"` rung of the best-effort-background
+/// ladder, shared by `type_text` and `click`. It is the same brief front →
+/// act → restore primitive `press_key`/`hotkey` use for NSMenu key dispatch —
+/// see [`with_menu_shortcut_activation`], which this delegates to. Reached only
+/// when the agent has seen the background rungs fail (clicks) or the field is
+/// unverifiable + focus-sensitive (Catalyst typing).
+///
+/// Returns `Ok(true)` when the brief activation happened, `Ok(false)` when the
+/// fronting SPIs are unavailable (the body still ran, just without a front).
+pub fn with_foreground_assist(
+    target_pid: libc::pid_t,
+    target_wid: u32,
+    body: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<bool> {
+    with_menu_shortcut_activation(target_pid, target_wid, body)
+}
+
+/// Activate an exact target window for a global HID keyboard action.
+///
+/// Unlike [`with_menu_shortcut_activation`], this helper must not run `action`
+/// when the private foreground SPI is unavailable: a global HID event has no
+/// pid addressing and would otherwise land in whichever application is
+/// currently frontmost. The short settles keep the target frontmost until
+/// WindowServer has routed both sides of the key chord, then restore the prior
+/// process even when the action fails.
+pub fn with_foreground_hid_activation(
+    target_pid: libc::pid_t,
+    target_wid: u32,
+    action: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let set_front = set_front_process_fn()
+        .ok_or_else(|| anyhow::anyhow!("foreground HID delivery is unavailable"))?;
+
+    let mut prev_psn = [0u8; 8];
+    let prev_ok = get_front_process_fn()
+        .map(|f| unsafe { f(prev_psn.as_mut_ptr() as *mut c_void) } == 0)
+        .unwrap_or(false);
+
+    let mut target_psn = [0u8; 8];
+    if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
+        anyhow::bail!("could not resolve target window for foreground HID delivery");
+    }
+    let activated = unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) };
+    if activated != 0 {
+        anyhow::bail!("WindowServer rejected foreground HID activation");
+    }
+
+    std::thread::sleep(std::time::Duration::from_millis(40));
+    let result = action();
+    std::thread::sleep(std::time::Duration::from_millis(40));
+
+    if prev_ok {
+        unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
+    }
+
+    result
 }
 
 /// Activate `target_pid`'s window `target_wid` for NSMenu key dispatch, run `action`,

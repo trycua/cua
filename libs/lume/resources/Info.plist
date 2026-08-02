@@ -9,6 +9,10 @@
 	<string>lume</string>
 	<key>CFBundleName</key>
 	<string>Lume</string>
+	<key>CFBundleDisplayName</key>
+	<string>Lume</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleVersion</key>
 	<string>__VERSION__</string>
 	<key>CFBundleShortVersionString</key>
@@ -19,6 +23,8 @@
 	<string>6.0</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
 	<key>LSUIElement</key>
 	<true/>
 </dict>

@@ -1,6 +1,6 @@
 [project]
 name = "cua-cli"
-version = "0.1.11"
+version = "0.1.12"
 description = "Unified CLI for CUA - Computer-Use Agents"
 readme = "README.md"
 license = "MIT"
@@ -34,6 +34,8 @@ dependencies = [
     "cua-auto[all]>=0.1.0",
     # HTTP client
     "aiohttp>=3.9.0",
+    # OS-backed credential storage for OAuth tokens
+    "keyring>=25.0",
     # CLI output
     "rich>=13.0.0",
     # Image processing for skills
@@ -49,7 +51,7 @@ mcp = [
 ]
 # Skills recording with LLM captioning
 skills = [
-    "litellm==1.80.0",
+    "litellm==1.86.2",
 ]
 # Full installation
 all = [

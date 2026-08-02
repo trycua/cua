@@ -30,7 +30,9 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         help="Auto-detect and log the actual screen resolution at startup",
     )
     parser.add_argument(
-        "--host", default="0.0.0.0", help="Host to bind the server to (default: 0.0.0.0)"
+        "--host",
+        default="127.0.0.1",
+        help="Host to bind the server to (default: 127.0.0.1; use 0.0.0.0 for external access)",
     )
     parser.add_argument(
         "--port", type=int, default=8000, help="Port to bind the server to (default: 8000)"
@@ -54,9 +56,27 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     # Backend selection
     parser.add_argument(
         "--backend",
-        choices=["native", "vnc"],
-        default="native",
-        help="Handler backend: 'native' uses OS-specific handlers, 'vnc' uses VNC (default: native)",
+        choices=["native", "vnc", "cua-driver"],
+        default=os.environ.get("CUA_BACKEND", "native"),
+        help=(
+            "Automation backend: native OS handlers, VNC, or the generated "
+            "Cua Driver SDK (default: CUA_BACKEND or native)"
+        ),
+    )
+
+    parser.add_argument(
+        "--driver-mode",
+        choices=["embedded", "daemon"],
+        help="Cua Driver SDK execution mode (default: embedded)",
+    )
+    parser.add_argument(
+        "--driver-socket",
+        help="Optional Cua Driver daemon socket/pipe override",
+    )
+    parser.add_argument(
+        "--capture-scope",
+        choices=["auto", "window", "desktop"],
+        help="Session capture scope for the Cua Driver backend (default: desktop)",
     )
 
     # VNC backend options
@@ -108,6 +128,19 @@ def main() -> None:
             os.environ["CUA_VNC_PASSWORD"] = args.vnc_password
         vnc_host = args.vnc_host or os.environ.get("CUA_VNC_HOST")
         logger.info(f"VNC backend enabled → {vnc_host}:{args.vnc_port}")
+    elif args.backend == "cua-driver":
+        os.environ["CUA_BACKEND"] = "cua-driver"
+        if args.driver_mode:
+            os.environ["CUA_DRIVER_MODE"] = args.driver_mode
+        if args.driver_socket:
+            os.environ["CUA_DRIVER_SOCKET"] = args.driver_socket
+        if args.capture_scope:
+            os.environ["CUA_DRIVER_CAPTURE_SCOPE"] = args.capture_scope
+        logger.info(
+            "Cua Driver backend enabled (%s mode, %s capture scope)",
+            os.environ.get("CUA_DRIVER_MODE", "embedded"),
+            os.environ.get("CUA_DRIVER_CAPTURE_SCOPE", "desktop"),
+        )
 
     # Create and start the server
     logger.info(f"Starting Cua Computer API server on {args.host}:{args.port}...")

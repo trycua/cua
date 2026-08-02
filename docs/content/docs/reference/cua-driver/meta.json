@@ -1,0 +1,23 @@
+{
+  "title": "Cua Driver",
+  "pages": [
+    "cli-reference",
+    "sdk-reference",
+    "telemetry",
+    "macos-permissions",
+    "embedding",
+    "mcp-tools",
+    "mcp-tool-notes",
+    "browser-profile-attachment",
+    "browser-semantic-snapshots",
+    "action-selection-policy",
+    "permission-modes",
+    "permission-policies",
+    "contracts",
+    "platform-support",
+    "platform-roadmap",
+    "process-model",
+    "limits",
+    "development"
+  ]
+}

@@ -115,7 +115,9 @@ describe('MacOSComputerInterface', () => {
             case 'read_bytes':
               ws.send(
                 JSON.stringify({
-                  content_b64: Buffer.from('binary content').toString('base64'),
+                  content_b64: Buffer.from(
+                    message.params?.path === '/path/to/file.txt' ? 'file content' : 'binary content'
+                  ).toString('base64'),
                   success: true,
                 })
               );
@@ -674,9 +676,10 @@ describe('MacOSComputerInterface', () => {
 
       const lastMessage = receivedMessages[receivedMessages.length - 1];
       expect(lastMessage).toEqual({
-        command: 'read_text',
+        command: 'read_bytes',
         params: {
           path: '/path/to/file.txt',
+          offset: 0,
         },
       });
     });
@@ -686,10 +689,11 @@ describe('MacOSComputerInterface', () => {
 
       const lastMessage = receivedMessages[receivedMessages.length - 1];
       expect(lastMessage).toEqual({
-        command: 'write_text',
+        command: 'write_bytes',
         params: {
           path: '/path/to/file.txt',
-          content: 'new content',
+          content_b64: Buffer.from('new content').toString('base64'),
+          append: false,
         },
       });
     });
@@ -705,6 +709,7 @@ describe('MacOSComputerInterface', () => {
         command: 'read_bytes',
         params: {
           path: '/path/to/file.bin',
+          offset: 0,
         },
       });
     });
@@ -719,6 +724,7 @@ describe('MacOSComputerInterface', () => {
         params: {
           path: '/path/to/file.bin',
           content_b64: buffer.toString('base64'),
+          append: false,
         },
       });
     });

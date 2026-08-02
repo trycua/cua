@@ -341,7 +341,6 @@ while (true) {
 }
 ```
 
-You can find the full example on [GitHub](https://github.com/trycua/cua/tree/main/examples/computer-example-ts).
 
 ## What's Next?
 

@@ -1,0 +1,49 @@
+[project]
+name = "cua-cloud"
+version = "0.1.1"
+description = "Placeholder package for future Cua Cloud Python SDK."
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "TryCua", email = "hello@trycua.com" }
+]
+keywords = [
+    "cua",
+    "cloud",
+    "computer-use",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+]
+requires-python = ">=3.11,<3.14"
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/trycua/cua"
+Documentation = "https://docs.trycua.com"
+Repository = "https://github.com/trycua/cua"
+Issues = "https://github.com/trycua/cua/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = [
+    "cua_cloud/**",
+    "README.md",
+]
+exclude = [
+    "cua_cloud/**/__pycache__",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["cua_cloud"]

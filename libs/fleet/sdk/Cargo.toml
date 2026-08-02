@@ -1,0 +1,37 @@
+[package]
+name = "cyclops-sdk"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["lib", "cdylib"]
+
+[dependencies]
+async-trait.workspace = true
+base64.workspace = true
+cyclops-sdk-schema = { path = "../sdk-schema" }
+futures-timer.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+uniffi.workspace = true
+url.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+reqwest.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+gloo-timers = { version = "0.3", features = ["futures"] }
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Headers", "Request", "RequestInit", "Response", "Window"] }
+
+[dev-dependencies]
+camino = "1.0"
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+uniffi = { workspace = true, features = ["bindgen"] }

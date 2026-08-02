@@ -1,21 +1,20 @@
 //! AT-SPI accessibility tree walking for Linux.
 //!
-//! AT-SPI2 is accessible via D-Bus. Rather than linking the full D-Bus library,
-//! we query AT-SPI via the `gdbus` or `dbus-send` CLI tool as a subprocess,
-//! or we use the `atspi` Rust crate if available.
+//! AT-SPI2 is exposed over D-Bus. We talk to it natively in Rust via the
+//! `atspi` crate (zbus) — no Python, `pyatspi`, or GObject-introspection
+//! typelibs are required at runtime. The async zbus calls run on a shared
+//! background Tokio runtime; the public functions stay synchronous because
+//! callers invoke them inside `tokio::task::spawn_blocking`.
 //!
-//! For a pure-Rust implementation without D-Bus library deps, we shell out to:
-//!   python3 -c "import pyatspi; ..." (if available)
-//!   OR
-//!   Use x11rb to read basic XA_WM_* properties as a fallback tree.
-//!
-//! The fallback produces a simplified tree with window title and role.
+//! When the AT-SPI bus is unavailable (or the app exposes no a11y tree) we
+//! fall back to a minimal X11 property tree (window title + role) via x11rb.
 
 use anyhow::Result;
-use std::process::Command;
 
 pub mod cache;
+pub mod native;
 pub use cache::ElementCache;
+pub use native::ensure_listener_active;
 
 #[derive(Clone, Debug)]
 pub struct AtspiNode {
@@ -23,25 +22,113 @@ pub struct AtspiNode {
     pub role: String,
     pub name: Option<String>,
     pub value: Option<String>,
+    /// Checked state when the accessibility backend exposes one for a toggle.
+    pub checked: Option<bool>,
+    /// Enabled state when the accessibility backend returned a state set.
+    pub enabled: Option<bool>,
+    /// Toggle/selection state for selectable controls.
+    pub selected: Option<bool>,
     pub description: Option<String>,
     pub actions: Vec<String>,
-    /// For pyatspi path: element_key = element_index as u64.
+    /// For AT-SPI: element_key = element_index as u64.
     /// For X11 fallback: element_key = xid.
     pub element_key: u64,
+    /// Depth in the markdown tree (0 = top-level window child).
+    /// Defaults to 0 when not tracked (e.g. X11 fallback path).
+    pub depth: usize,
+    /// `element_index` of the nearest actionable ancestor, if any.
+    /// Mirrors what the markdown indent shows.
+    pub parent_element_index: Option<usize>,
+    /// True when the native AT-SPI walker observed this node below renderer
+    /// web content. Browser-owned consent UI must never match such nodes.
+    pub in_web_content: bool,
 }
 
 pub struct AtspiTreeResult {
     pub tree_markdown: String,
     pub nodes: Vec<AtspiNode>,
+    pub bounds: Vec<(usize, i32, i32, u32, u32)>,
+    /// True only for a native AT-SPI walk. The X11 property fallback is a
+    /// partial discovery aid and must not prove verification predicates.
+    pub trusted: bool,
 }
 
 /// Walk the AT-SPI tree for a window identified by (pid, xid).
 /// Falls back to a minimal X11 property tree if AT-SPI is unavailable.
 pub fn walk_tree(pid: u32, xid: u64, query: Option<&str>) -> AtspiTreeResult {
-    // Try pyatspi bridge first (most complete).
-    if let Ok((raw_md, nodes)) = walk_via_pyatspi(pid) {
-        let md = if let Some(q) = query { filter_tree(&raw_md, q) } else { raw_md };
-        return AtspiTreeResult { tree_markdown: md, nodes };
+    walk_tree_bounded(pid, xid, query, None, None)
+}
+
+/// Best-effort accessibility snapshot for synchronous trajectory evidence.
+///
+/// Recording brackets an action with before/after captures, so it must use a
+/// smaller budget than the transport's tool-call deadline. Unlike the
+/// interactive tree walker, evidence capture makes one attempt and accepts an
+/// unavailable tree when the target renderer is blocked.
+pub(crate) fn walk_tree_for_recording(
+    pid: u32,
+    xid: u64,
+    timeout: std::time::Duration,
+) -> AtspiTreeResult {
+    if let Ok(Some((tree_markdown, nodes, bounds))) =
+        native::walk_tree_bounded_with_timeout(pid, xid, None, None, timeout)
+    {
+        if !tree_markdown.is_empty() {
+            return AtspiTreeResult {
+                tree_markdown,
+                nodes,
+                bounds,
+                trusted: true,
+            };
+        }
+    }
+    walk_via_x11_properties(xid, None)
+}
+
+/// Walk the AT-SPI tree with caller-supplied caps. `None` for either cap
+/// means "use the walker's built-in default" (5 000 nodes; unlimited depth).
+/// Issue #22865: caps protect against Electron / large web apps that
+/// produce 10k+ element trees and blow context windows.
+pub fn walk_tree_bounded(
+    pid: u32,
+    xid: u64,
+    query: Option<&str>,
+    max_elements: Option<usize>,
+    max_depth: Option<usize>,
+) -> AtspiTreeResult {
+    // Native AT-SPI (most complete). On a COLD launch the Qt6 (and some GTK)
+    // AT-SPI bridge registers lazily — the first walk against a freshly
+    // launched app can come back with just the root window (element_count=1,
+    // no children) because `org.a11y.atspi.Registry` hasn't finished
+    // enumerating the app's tree yet. Retry a few times with a short backoff
+    // while the tree is suspiciously root-only, so the first get_window_state
+    // after launch returns the real tree instead of an empty one. See #1927.
+    const MAX_ATTEMPTS: usize = 4;
+    for attempt in 0..MAX_ATTEMPTS {
+        if let Ok(Some((raw_md, nodes, bounds))) =
+            native::walk_tree_bounded(pid, xid, max_elements, max_depth)
+        {
+            // `nodes.len() <= 1` == only the root window resolved: the
+            // cold-registry symptom. Accept any real tree immediately; only
+            // keep waiting on the degenerate case, and accept it anyway on the
+            // final attempt rather than discarding a (minimal) valid result.
+            if !raw_md.is_empty() && (nodes.len() > 1 || attempt == MAX_ATTEMPTS - 1) {
+                let md = if let Some(q) = query {
+                    filter_tree(&raw_md, q)
+                } else {
+                    raw_md
+                };
+                return AtspiTreeResult {
+                    tree_markdown: md,
+                    nodes,
+                    bounds,
+                    trusted: true,
+                };
+            }
+        }
+        if attempt < MAX_ATTEMPTS - 1 {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+        }
     }
 
     // Fallback: X11 window properties as minimal tree.
@@ -49,311 +136,113 @@ pub fn walk_tree(pid: u32, xid: u64, query: Option<&str>) -> AtspiTreeResult {
 }
 
 /// Perform the first advertised action on element `idx` within pid's app tree.
-/// Returns Ok(action_name) on success.
-pub fn perform_action(pid: u32, idx: usize) -> Result<String> {
-    let script = format!(r#"
-import pyatspi, sys
+/// Returns `Ok((action_name, suspected_noop))` on success — `suspected_noop`
+/// is true when the actuated node looked like a silent no-op (a passive
+/// display role, or no advertised action), so the caller can surface
+/// `effect: "suspected_noop"`.
+pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
+    native::perform_action(pid, idx)
+}
 
-elements = []
-def collect(acc):
-    try:
-        ai = acc.queryAction()
-        if ai.nActions > 0:
-            elements.append((acc, [ai.getName(i) for i in range(ai.nActions)]))
-    except: pass
-    for child in acc:
-        collect(child)
+/// Give an indexed AT-SPI element keyboard focus without activating its window.
+pub fn focus_element(pid: u32, idx: usize) -> Result<bool> {
+    native::focus_element(pid, idx)
+}
 
-desktop = pyatspi.Registry.getDesktop(0)
-for app in desktop:
-    if app.get_process_id() == {pid}:
-        for win in app:
-            collect(win)
-        break
+pub fn scroll_element(pid: u32, idx: usize, direction: &str, amount: usize) -> Result<()> {
+    native::scroll_element(pid, idx, direction, amount)
+}
 
-if {idx} < len(elements):
-    elem, actions = elements[{idx}]
-    elem.queryAction().doAction(0)
-    print(actions[0])
-else:
-    print("ERROR: element {idx} not found (total: " + str(len(elements)) + ")", file=sys.stderr)
-    sys.exit(1)
-"#, pid = pid, idx = idx);
+/// Enumerate top-level windows from the AT-SPI registry. The window-listing
+/// fallback for Wayland compositors without `zwlr_foreign_toplevel_management`
+/// (GNOME Mutter / KDE KWin), where native apps have no X11 XID. Returns one
+/// entry per application top-level frame with a synthetic, stable `xid` that
+/// round-trips into the by-pid AT-SPI element flow. See [`native::list_windows`].
+pub fn list_windows(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo> {
+    native::list_windows(filter_pid)
+}
 
-    let out = Command::new("python3").arg("-c").arg(&script).output()?;
-    if !out.status.success() {
-        anyhow::bail!("{}", String::from_utf8_lossy(&out.stderr).trim().to_owned());
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
+/// Resolve a window-local pixel to the actionable AT-SPI element at that point
+/// and perform its primary action — the no-focus-steal way to land a *pixel*
+/// click on toolkits (GTK) that drop synthetic X11 pointer events. Returns
+/// `Ok(Some(action))` when an element was actuated, `Ok(None)` when no
+/// actionable element covers the point (caller falls back to the X11 path).
+pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Option<String>> {
+    native::perform_action_at_point(pid, win_x, win_y)
+}
+
+/// Resolve a *screen* pixel to the indexable element whose reconstructed screen
+/// frame covers it and fire its primary action by `element_index` — the
+/// vision/pixel click that lands on Wayland (no pointer injection) and on GTK4
+/// generally (no `CoordType::Screen`, which reports (0,0)). See
+/// [`native::perform_action_at_screen_point`].
+pub fn perform_action_at_screen_point(
+    pid: u32,
+    xid: u64,
+    screen_x: i32,
+    screen_y: i32,
+) -> Result<Option<String>> {
+    native::perform_action_at_screen_point(pid, xid, screen_x, screen_y)
+}
+
+/// Try to type text into any editable field in the window via AT-SPI EditableText.
+/// This works for unfocused windows if the toolkit exposes EditableText (Qt6, some GTK).
+/// For Qt5, which doesn't expose widgets when unfocused, this will return Err.
+/// Returns Ok if an editable was found and text was set, Err otherwise.
+pub fn type_into_editable(pid: u32, text: &str) -> Result<()> {
+    native::type_into_editable(pid, text)
+}
+
+/// Type into the exact indexed editable from the caller's accessibility snapshot.
+pub fn type_into_editable_at(pid: u32, idx: usize, text: &str) -> Result<()> {
+    native::type_into_editable_at(pid, idx, text)
 }
 
 /// Set the text value of element `idx` within pid's app tree via AT-SPI.
-/// Tries `queryEditableText().setTextContents(value)` first,
-/// then `queryValue().setCurrentValue(float)`.
+/// Tries `EditableText.set_text_contents(value)` first, then
+/// `Value.set_current_value(float)`.
 pub fn set_value(pid: u32, idx: usize, value: &str) -> Result<()> {
-    // Escape value for Python string literal: replace \ and ' to be safe.
-    let safe_value = value.replace('\\', "\\\\").replace('\'', "\\'");
-    let script = format!(r#"
-import pyatspi, sys
-
-elements = []
-def collect(acc):
-    try:
-        ai = acc.queryAction()
-        if ai.nActions > 0:
-            elements.append(acc)
-    except: pass
-    for child in acc:
-        collect(child)
-
-desktop = pyatspi.Registry.getDesktop(0)
-for app in desktop:
-    if app.get_process_id() == {pid}:
-        for win in app:
-            collect(win)
-        break
-
-if {idx} >= len(elements):
-    print(f"ERROR: element {idx} not found (total: {{len(elements)}})", file=sys.stderr)
-    sys.exit(1)
-
-elem = elements[{idx}]
-try:
-    et = elem.queryEditableText()
-    et.setTextContents('{safe_value}')
-    print("ok:text")
-except:
-    try:
-        v = elem.queryValue()
-        v.setCurrentValue(float('{safe_value}'))
-        print("ok:value")
-    except Exception as e:
-        print(f"ERROR: {{e}}", file=sys.stderr)
-        sys.exit(1)
-"#, pid = pid, idx = idx, safe_value = safe_value);
-
-    let out = Command::new("python3").arg("-c").arg(&script).output()?;
-    if !out.status.success() {
-        anyhow::bail!("{}", String::from_utf8_lossy(&out.stderr).trim().to_owned());
-    }
-    Ok(())
+    native::set_value(pid, idx, value)
 }
 
-/// Get the screen-coordinate bounding box (x, y, width, height) of element `idx`.
+/// Insert `text` into a GUI app's editable field via AT-SPI EditableText —
+/// focus-free and toolkit-agnostic, unlike X11 key injection which only reaches
+/// the *focused* toplevel's focused widget. Targets the focused editable element
+/// if the toolkit exposes one, else the first editable element in the tree.
+/// Returns Ok(true) if text was inserted, Ok(false) if the app exposes no
+/// editable element (so the caller can fall back), Err on an AT-SPI failure.
+pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
+    native::insert_text(pid, text)
+}
+
+/// Classify what holds keyboard focus so `type_text` can target the focused
+/// widget (the thing just clicked) instead of the first editable anywhere:
+/// `Some(true)` = focused editable, `Some(false)` = focused non-editable input
+/// (spreadsheet cell, terminal, canvas), `None` = nothing focused / unreachable.
+pub fn focused_is_editable(pid: u32) -> Result<Option<bool>> {
+    native::focused_is_editable(pid)
+}
+
 pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> {
-    let script = format!(r#"
-import pyatspi, sys
-
-elements = []
-def collect(acc):
-    try:
-        ai = acc.queryAction()
-        if ai.nActions > 0:
-            elements.append(acc)
-    except: pass
-    for child in acc:
-        collect(child)
-
-desktop = pyatspi.Registry.getDesktop(0)
-for app in desktop:
-    if app.get_process_id() == {pid}:
-        for win in app:
-            collect(win)
-        break
-
-if {idx} >= len(elements):
-    print(f"ERROR: element {idx} not found", file=sys.stderr)
-    sys.exit(1)
-
-elem = elements[{idx}]
-try:
-    comp = elem.queryComponent()
-    ext = comp.getExtents(pyatspi.DESKTOP_COORDS)
-    print(f"{{ext.x}},{{ext.y}},{{ext.width}},{{ext.height}}")
-except Exception as e:
-    print(f"ERROR: {{e}}", file=sys.stderr)
-    sys.exit(1)
-"#, pid = pid, idx = idx);
-
-    let out = Command::new("python3").arg("-c").arg(&script).output()?;
-    if !out.status.success() {
-        anyhow::bail!("{}", String::from_utf8_lossy(&out.stderr).trim().to_owned());
-    }
-    let line = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-    let parts: Vec<i64> = line.split(',')
-        .filter_map(|s| s.parse().ok())
-        .collect();
-    if parts.len() < 4 { anyhow::bail!("unexpected bounds output: {line}"); }
-    Ok((parts[0] as i32, parts[1] as i32, parts[2] as u32, parts[3] as u32))
+    native::get_element_bounds(pid, idx)
 }
 
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
-/// Walk via pyatspi subprocess. Returns (markdown, nodes) on success.
-fn walk_via_pyatspi(pid: u32) -> Result<(String, Vec<AtspiNode>)> {
-    let script = format!(r#"
-import pyatspi, sys
-
-def walk(acc, depth=0, idx=[0]):
-    role = acc.getRoleName()
-    name = acc.name or ""
-    n_actions = 0
-    actions = []
-    try:
-        ai = acc.queryAction()
-        n_actions = ai.nActions
-        actions = [ai.getName(i) for i in range(n_actions)]
-    except:
-        pass
-
-    try:
-        vobj = acc.queryValue()
-        value_str = str(vobj.currentValue)
-    except:
-        value_str = ""
-
-    indent = "  " * depth
-    if n_actions > 0:
-        act_str = ','.join(actions)
-        val_part = f' value="{{value_str}}"' if value_str else ''
-        print(f"{{indent}}- [{{idx[0]}}] {{role}} \"{{name}}\"{{val_part}} [actions=[{{act_str}}]]")
-        idx[0] += 1
-    elif name:
-        print(f"{{indent}}- {{role}} = \"{{name}}\"")
-
-    for child in acc:
-        walk(child, depth+1, idx)
-
-desktop = pyatspi.Registry.getDesktop(0)
-for app in desktop:
-    if app.get_process_id() == {pid}:
-        for win in app:
-            walk(win)
-        break
-"#, pid = pid);
-
-    let out = Command::new("python3")
-        .arg("-c")
-        .arg(&script)
-        .output()?;
-
-    if !out.status.success() || out.stdout.is_empty() {
-        anyhow::bail!("pyatspi not available or returned empty");
-    }
-
-    let raw_md = String::from_utf8_lossy(&out.stdout).into_owned();
-    let nodes = parse_pyatspi_nodes(&raw_md);
-    Ok((raw_md, nodes))
-}
-
-/// Parse pyatspi markdown output into AtspiNode list.
-///
-/// Recognizes lines like:
-///   `  - [3] button "OK" value="1.0" [actions=[click,press,release]]`
-fn parse_pyatspi_nodes(md: &str) -> Vec<AtspiNode> {
-    let mut nodes = Vec::new();
-    // We need indexed_nodes in order so element_index == position in vec.
-    let mut indexed: Vec<(usize, AtspiNode)> = Vec::new();
-
-    for line in md.lines() {
-        let trimmed = line.trim();
-        if !trimmed.starts_with('-') { continue; }
-        let rest = trimmed.trim_start_matches('-').trim();
-
-        // Check for indexed element: `[N] role "name" ...`
-        if rest.starts_with('[') {
-            if let Some(close) = rest.find(']') {
-                let idx_str = &rest[1..close];
-                if let Ok(idx) = idx_str.parse::<usize>() {
-                    let after_idx = rest[close+1..].trim();
-
-                    // Parse role (first word) and name (quoted string).
-                    let (role, after_role) = split_first_word(after_idx);
-                    let (name, after_name) = parse_quoted_string(after_role.trim());
-
-                    // Parse optional value="..." field.
-                    let value = parse_field(after_name, "value=");
-
-                    // Parse [actions=[...]] field.
-                    let actions = parse_actions(after_name);
-
-                    let node = AtspiNode {
-                        element_index: Some(idx),
-                        role: role.to_owned(),
-                        name: if name.is_empty() { None } else { Some(name.to_owned()) },
-                        value: if value.is_empty() { None } else { Some(value.to_owned()) },
-                        description: None,
-                        actions,
-                        element_key: idx as u64,
-                    };
-                    indexed.push((idx, node));
-                }
-            }
-        }
-    }
-
-    // Sort by index and flatten.
-    indexed.sort_by_key(|(i, _)| *i);
-    nodes.extend(indexed.into_iter().map(|(_, n)| n));
-    nodes
-}
-
-fn split_first_word(s: &str) -> (&str, &str) {
-    let s = s.trim();
-    if let Some(pos) = s.find(|c: char| c.is_whitespace()) {
-        (&s[..pos], &s[pos..])
-    } else {
-        (s, "")
-    }
-}
-
-/// Parse a `"quoted string"` from the start of `s`. Returns (content, rest).
-fn parse_quoted_string(s: &str) -> (&str, &str) {
-    let s = s.trim();
-    if !s.starts_with('"') { return ("", s); }
-    let inner = &s[1..];
-    if let Some(end) = inner.find('"') {
-        (&inner[..end], &inner[end+1..])
-    } else {
-        ("", s)
-    }
-}
-
-/// Parse a field like `value="something"` from a string.
-fn parse_field<'a>(s: &'a str, prefix: &str) -> &'a str {
-    if let Some(pos) = s.find(prefix) {
-        let after = &s[pos + prefix.len()..];
-        let (content, _) = parse_quoted_string(after);
-        content
-    } else {
-        ""
-    }
-}
-
-/// Parse `[actions=[click,press,release]]` from a string.
-fn parse_actions(s: &str) -> Vec<String> {
-    // Find [actions=[...]]
-    if let Some(start) = s.find("[actions=[") {
-        let inner = &s[start + "[actions=[".len()..];
-        if let Some(end) = inner.find("]]") {
-            return inner[..end].split(',')
-                .map(|a| a.trim().to_owned())
-                .filter(|a| !a.is_empty())
-                .collect();
-        }
-    }
-    vec![]
-}
-
 /// Minimal X11 property-based tree (fallback when AT-SPI is unavailable).
 fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
-    use x11rb::connection::Connection;
-    use x11rb::protocol::xproto::*;
     use x11rb::rust_connection::RustConnection;
 
     let (conn, _) = match RustConnection::connect(None) {
         Ok(r) => r,
-        Err(_) => return AtspiTreeResult { tree_markdown: String::new(), nodes: vec![] },
+        Err(_) => {
+            return AtspiTreeResult {
+                tree_markdown: String::new(),
+                nodes: vec![],
+                bounds: vec![],
+                trusted: false,
+            }
+        }
     };
 
     let window = xid as u32;
@@ -370,13 +259,30 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
     let root_node = AtspiNode {
         element_index: Some(0),
         role: "window".into(),
-        name: if title.is_empty() { None } else { Some(title.clone()) },
+        name: if title.is_empty() {
+            None
+        } else {
+            Some(title.clone())
+        },
         value: None,
-        description: if wm_class.is_empty() { None } else { Some(wm_class.clone()) },
+        checked: None,
+        enabled: None,
+        selected: None,
+        description: if wm_class.is_empty() {
+            None
+        } else {
+            Some(wm_class.clone())
+        },
         actions: vec!["activate".into()],
         element_key: xid,
+        depth: 0,
+        parent_element_index: None,
+        in_web_content: false,
     };
-    md.push_str(&format!("- [0] window \"{}\" [actions=[activate]]\n", title));
+    md.push_str(&format!(
+        "- [0] window \"{}\" [actions=[activate]]\n",
+        title
+    ));
     nodes.push(root_node);
 
     let raw_md = md;
@@ -386,26 +292,53 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
         raw_md
     };
 
-    AtspiTreeResult { tree_markdown, nodes }
+    AtspiTreeResult {
+        tree_markdown,
+        nodes,
+        bounds: vec![],
+        trusted: false,
+    }
 }
 
 fn get_x11_title(conn: &x11rb::rust_connection::RustConnection, window: u32) -> Option<String> {
     use x11rb::protocol::xproto::*;
     // Try _NET_WM_NAME first.
-    let net_wm_name = conn.intern_atom(false, b"_NET_WM_NAME").ok()?.reply().ok()?.atom;
-    let utf8_string = conn.intern_atom(false, b"UTF8_STRING").ok()?.reply().ok()?.atom;
-    if let Ok(reply) = conn.get_property(false, window, net_wm_name, utf8_string, 0, 1024).ok()?.reply() {
+    let net_wm_name = conn
+        .intern_atom(false, b"_NET_WM_NAME")
+        .ok()?
+        .reply()
+        .ok()?
+        .atom;
+    let utf8_string = conn
+        .intern_atom(false, b"UTF8_STRING")
+        .ok()?
+        .reply()
+        .ok()?
+        .atom;
+    if let Ok(reply) = conn
+        .get_property(false, window, net_wm_name, utf8_string, 0, 1024)
+        .ok()?
+        .reply()
+    {
         if !reply.value.is_empty() {
             return Some(String::from_utf8_lossy(&reply.value).into_owned());
         }
     }
-    let reply = conn.get_property(false, window, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 1024).ok()?.reply().ok()?;
+    let reply = conn
+        .get_property(false, window, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 1024)
+        .ok()?
+        .reply()
+        .ok()?;
     Some(String::from_utf8_lossy(&reply.value).into_owned())
 }
 
 fn get_x11_wm_class(conn: &x11rb::rust_connection::RustConnection, window: u32) -> Option<String> {
     use x11rb::protocol::xproto::*;
-    let reply = conn.get_property(false, window, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 512).ok()?.reply().ok()?;
+    let reply = conn
+        .get_property(false, window, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 512)
+        .ok()?
+        .reply()
+        .ok()?;
     let s = String::from_utf8_lossy(&reply.value);
     // WM_CLASS is two NUL-separated strings: instance_name\0class_name\0
     Some(s.trim_end_matches('\0').replace('\0', "."))
@@ -420,13 +353,22 @@ fn filter_tree(markdown: &str, query: &str) -> String {
 
     for line in &lines {
         let depth = line.chars().take_while(|c| *c == ' ').count() / 2;
-        while ancestors.len() <= depth { ancestors.push(""); last_emitted.push(None); }
-        for d in (depth+1)..ancestors.len() { last_emitted[d] = None; }
+        while ancestors.len() <= depth {
+            ancestors.push("");
+            last_emitted.push(None);
+        }
+        for d in (depth + 1)..ancestors.len() {
+            last_emitted[d] = None;
+        }
         ancestors[depth] = line;
         if line.to_lowercase().contains(&needle) {
             for d in 0..depth {
-                if ancestors[d].is_empty() { continue; }
-                if last_emitted[d] == Some(ancestors[d]) { continue; }
+                if ancestors[d].is_empty() {
+                    continue;
+                }
+                if last_emitted[d] == Some(ancestors[d]) {
+                    continue;
+                }
                 last_emitted[d] = Some(ancestors[d]);
                 output.push(ancestors[d]);
             }
@@ -434,6 +376,10 @@ fn filter_tree(markdown: &str, query: &str) -> String {
             output.push(line);
         }
     }
-    if output.is_empty() { return String::new(); }
-    let mut r = output.join("\n"); r.push('\n'); r
+    if output.is_empty() {
+        return String::new();
+    }
+    let mut r = output.join("\n");
+    r.push('\n');
+    r
 }

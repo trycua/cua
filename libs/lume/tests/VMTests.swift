@@ -99,7 +99,7 @@ func testVMRunAndStop() async throws {
     // Test running VM
     let runTask = Task {
         try await vm.run(
-            noDisplay: false, sharedDirectories: [], mount: nil as Path?, vncPort: 0,
+            displayMode: .vnc, sharedDirectories: [], mount: nil as Path?, vncPort: 0,
             recoveryMode: false)
     }
 
@@ -145,6 +145,51 @@ func testVMConfigurationUpdates() async throws {
     // Test MAC address update
     try vm.setMacAddress("00:11:22:33:44:66")
     #expect(vm.vmDirContext.config.macAddress == "00:11:22:33:44:66")
+}
+
+@MainActor
+@Test("VM virtualization context forwards additional disks")
+func testVMVirtualizationContextForwardsAdditionalDisks() throws {
+    let tempDir = try createTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let vmDir = try setupVMDirectory(tempDir)
+    let additionalDiskURLs = [
+        tempDir.appendingPathComponent("scratch.img"),
+        tempDir.appendingPathComponent("cache.img"),
+    ]
+    for url in additionalDiskURLs {
+        try Data(repeating: 0, count: 1024).write(to: url)
+    }
+
+    var config = try VMConfig(
+        os: "mock-os",
+        cpuCount: 1,
+        memorySize: 1024,
+        diskSize: 1024,
+        display: "1024x768"
+    )
+    config.setMacAddress("00:11:22:33:44:55")
+    let context = VMDirContext(
+        dir: vmDir,
+        config: config,
+        home: Home(fileManager: FileManager.default),
+        storage: nil
+    )
+    let vm = MockVM(
+        vmDirContext: context,
+        virtualizationServiceFactory: { _ in MockVMVirtualizationService() },
+        vncServiceFactory: { MockVNCService(vmDirectory: $0) }
+    )
+    let additionalDisks = additionalDiskURLs.map(Path.init)
+
+    let serviceContext = try vm.createVMVirtualizationServiceContext(
+        cpuCount: 1,
+        memorySize: 1024,
+        display: "1024x768",
+        additionalDiskPaths: additionalDisks
+    )
+
+    #expect(serviceContext.additionalDiskPaths?.map(\.path) == additionalDisks.map(\.path))
 }
 
 @MainActor

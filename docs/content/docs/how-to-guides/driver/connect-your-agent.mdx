@@ -1,0 +1,148 @@
+---
+title: Connect your agent to Cua Driver
+description: Register Cua Driver as an MCP server so an agent can drive the host desktop.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`cua-driver mcp` runs Cua Driver as a stdio MCP server. Register it when you want an MCP-capable [computer-use agent](/concepts/what-is-computer-use) to drive the **host desktop**: installed apps, signed-in browser sessions, local files opened in apps, and the current OS user session.
+
+<Callout type="info">
+  This connects an agent to Cua Driver on the current machine. To create a disposable local desktop, use [Cua Sandbox](/tutorials/your-first-local-sandbox) instead.
+</Callout>
+
+## Before you start
+
+Install Cua Driver and verify it can see the host desktop:
+
+```bash
+cua-driver --version
+cua-driver call list_apps
+```
+
+On macOS, grant Accessibility and Screen Recording before connecting an agent:
+
+```bash
+cua-driver permissions status
+```
+
+See [Install Cua Driver](/how-to-guides/driver/install) and [macOS permissions](/reference/cua-driver/macos-permissions) for setup details.
+
+## Generate the client config
+
+Use `mcp-config` to print the registration command or JSON for a supported client:
+
+```bash
+cua-driver mcp-config --client <client>
+```
+
+The generated reference is the source of truth for the complete roster and exact command shapes: [`cua-driver mcp-config`](/reference/cua-driver/cli-reference#cua-driver-mcp-config).
+
+## Claude Code
+
+Register the plain stdio server:
+
+```bash
+claude mcp add --transport stdio cua-driver -- cua-driver mcp
+claude mcp list
+```
+
+Claude Code can also use Cua Driver's computer-use compatibility profile. Generate the current command:
+
+```bash
+cua-driver mcp-config --client claude
+```
+
+That profile exposes the same driver tools under the compatibility server name. It still runs Cua Driver over MCP; Anthropic's native computer-use API is separate.
+
+## Codex
+
+Print the Codex command:
+
+```bash
+cua-driver mcp-config --client codex
+```
+
+It emits a registration using the absolute installed binary path, which avoids `PATH` issues in app-launched Codex sessions:
+
+```bash
+codex mcp add cua-driver -- /Users/you/.local/bin/cua-driver mcp
+codex mcp list
+```
+
+Restart Codex or open a fresh session after adding the server. For richer agent guidance, install the Cua Driver skill:
+
+```bash
+cua-driver skills install
+cua-driver skills status
+```
+
+See [Install the Cua Driver agent skill](/how-to-guides/driver/install-agent-skill) for the ClawHub and direct-install paths.
+
+## Cursor
+
+Generate the Cursor snippet:
+
+```bash
+cua-driver mcp-config --client cursor
+```
+
+Paste the JSON into `~/.cursor/mcp.json`, or `.cursor/mcp.json` for project scope:
+
+```json
+{
+  "mcpServers": {
+    "cua-driver": {
+      "command": "cua-driver",
+      "args": ["mcp"],
+      "type": "stdio"
+    }
+  }
+}
+```
+
+Restart Cursor and confirm `cua-driver` appears in the MCP server list.
+
+## Other supported clients
+
+`mcp-config` also prints the right shape for clients that use a config file or a different add command.
+
+| Client | Generate with | Notes |
+|---|---|---|
+| Antigravity | `cua-driver mcp-config --client antigravity` | Paste into `~/.gemini/config/mcp_config.json`; `--client gemini` is a legacy alias. |
+| OpenClaw | `cua-driver mcp-config --client openclaw` | Normal gateway-spawned MCP does not inherit OpenClaw.app's macOS permission grants; embedded hosts should use [Embedding](/reference/cua-driver/embedding). |
+| OpenCode | `cua-driver mcp-config --client opencode` | Configure a real MCP server so screenshots are preserved in image blocks. |
+| Hermes | `cua-driver mcp-config --client hermes` | Paste under `mcp_servers` and reload MCP servers in Hermes. |
+| Pi | `cua-driver mcp-config --client pi` | Pi does not support MCP natively; use one-shot `cua-driver call …` commands from its shell. |
+| Qwen Code | `cua-driver mcp-config --client qwen` | Supports both a CLI add command and `~/.qwen/settings.json`. |
+| Factory Droid | `cua-driver mcp-config --client droid` | Supports CLI and JSON config forms. |
+| ZCode | `cua-driver mcp-config --client zcode` | Configure MCP in the GUI, or use `zai mcp add` for Z.ai's separate CLI. |
+
+## Generic MCP JSON
+
+For any client that accepts the standard `mcpServers` shape, print the generic config:
+
+```bash
+cua-driver mcp-config
+```
+
+It returns:
+
+```json
+{
+  "mcpServers": {
+    "cua-driver": {
+      "command": "cua-driver",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+After saving the config, restart the client and confirm the `cua-driver` server is connected.
+
+## Next steps
+
+- [Keep Cua Driver running](/how-to-guides/driver/keep-running): keep the daemon alive across reboots and sessions.
+- [Agent action policy](/reference/cua-driver/action-selection-policy): behavior agent wrappers should follow for `element_index`, `x,y`, and foreground escalation.
+- [MCP tools](/reference/cua-driver/mcp-tools): inspect every exposed tool and parameter.

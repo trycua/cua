@@ -1,0 +1,461 @@
+---
+title: 'Drive a Web Page'
+description: 'Bind an exact browser window, inspect its active tab, and navigate, click, or type without foregrounding it.'
+---
+
+Use the browser tools when an agent must act inside Chromium or an Electron
+page without raising the native window. The tools bind the `(pid, window_id)`
+you selected to a DevTools target, then issue page input through that exact
+binding.
+
+<VideoDemo
+  className="my-8"
+  src="https://trycua.github.io/assets/videos/cua-driver/macos-background-chrome.mp4"
+  poster="https://trycua.github.io/assets/posters/cua-driver/macos-background-chrome.jpg"
+  title="Chrome remains behind the agent terminal"
+  sourceUrl="https://x.com/trycua/status/2047383209244287350"
+>
+  Claude Code starts a YouTube video in Chrome without raising the browser window.
+</VideoDemo>
+
+## Inspect the selected browser first
+
+<Callout type="warn">
+  Prefer a driver-owned isolated profile. Existing-profile attachment gives
+  CDP broad access to that profile's live pages, cookies, and storage. Use it
+  only when the task needs an existing authenticated session and the machine
+  and its local processes are trusted.
+</Callout>
+
+First use `list_apps` and `list_windows` as usual, then call
+`get_browser_state` with the selected native `(pid, window_id)`. If that browser
+already exposes an owned loopback DevTools endpoint, the driver binds it without
+changing the browser.
+
+Do not pass remote-debugging flags or a user-data directory through
+`launch_app`. Cua Driver rejects those flags because they could expose a
+person's normal profile to DevTools.
+
+## Prepare an isolated browser when required
+
+If inspection returns `browser_requires_setup`, call `browser_prepare` as a
+separate approved operation. It starts another Chromium process with a
+driver-owned profile; it never copies, modifies, restarts, or terminates the
+selected user profile.
+
+In an MCP client, approve the destructive tool call through the client's normal
+approval UI:
+
+```jsonc
+browser_prepare({
+  "pid": 844,
+  "session": "research-1",
+  "allow_launch": true,
+  "profile": {"mode": "isolated_new"}
+})
+```
+
+The response includes `prepared_pid`. Call `list_windows` for that new process,
+then bind its window with `get_browser_state`. An `isolated_new` profile is
+removed when its owning session ends. Use
+`profile: {"mode":"isolated_named","name":"research"}` only when the
+automation profile must survive across sessions.
+
+For direct CLI or raw-socket use, mint a five-minute, single-use token from an
+interactive terminal first:
+
+```bash
+cua-driver browser-approve --pid 844 --profile-mode isolated_new
+```
+
+Pass the returned token as `approval_token` in the otherwise identical
+`browser_prepare` call. `get_browser_state` never performs this setup itself.
+
+## Attach to an existing Chrome or Edge profile
+
+Use this route only when the agent must work in a supported Chromium profile
+that is already running and authenticated. Cua Driver does not restart the
+browser, copy the profile, or modify profile files. The route supports Chrome
+and Edge on macOS and Windows, plus Chrome in the validated Linux X11 and Sway
+configurations. Chromium and Edge have descriptor-backed Linux routes but are
+not yet product-validated there. Start a named driver session and choose the
+permission mode before launching the daemon.
+
+Prefer `bounded` for repeatable browser automation: approve one short-lived
+manifest that names the browser profile kind, application identity, allowed
+origins, and typed browser tools. This avoids prompts without granting every
+Cua capability. For example:
+
+```yaml
+version: 2
+mode: bounded
+expires_after: 2h
+idle_timeout: 20m
+
+resources:
+  apps:
+    - bundle_id: com.google.Chrome
+      launch: false
+      windows: all
+      terminate: never
+  browser:
+    profiles:
+      - kind: existing_profile
+    origins:
+      - https://app.example.com
+
+allow:
+  tools:
+    - start_session
+    - end_session
+    - get_browser_state
+    - browser_prepare
+    - browser_navigate
+    - browser_click
+    - browser_type
+```
+
+On Windows and Linux, use Chrome's canonical absolute executable path instead
+of `bundle_id`. The runtime still re-proves the live process fingerprint and
+exact native window before attaching.
+
+Launch Cua Driver with that reviewed scope:
+
+```bash
+cua-driver serve \
+  --permission-mode bounded \
+  --session-policy ./browser-session.yaml \
+  --approve-session-policy
+```
+
+Bounded attachment does not display a Cua modal or banner. The manifest is the
+trusted launcher's authorization boundary, and calls outside it fail closed.
+
+For a disposable VM where you intentionally accept all Cua actions, launch
+unrestricted mode explicitly instead:
+
+```bash
+cua-driver serve \
+  --permission-mode unrestricted \
+  --dangerously-bypass-approvals
+```
+
+Then request the exact process and native window:
+
+```jsonc
+browser_prepare({
+  "pid": 844,
+  "window_id": 10725,
+  "session": "research-1",
+  "strategy": {"kind": "existing_profile"}
+})
+```
+
+> **Warning:** Unrestricted mode has no runtime Cua approval prompts and makes
+> no prompt-injection safety claim. Prefer `isolated_new`, or a bounded
+> existing-profile manifest when authentication is required. Use unrestricted
+> existing-profile attachment only in an environment whose account and data
+> exposure you accept.
+
+A trusted embedding host can install the authorization callback described
+in [Permission modes and bounded autonomy](/reference/cua-driver/permission-modes).
+In `standard`, the host may authorize the exact browser resource once. A
+standalone CLI or MCP launch can instead use `--grant existing-profile`.
+`bounded` uses the approved session manifest.
+
+The browser may display its own remote-debugging consent prompt. Cua Driver will
+press only the exact browser-owned semantic allow action for this approved
+process and window. An absent, ambiguous, dismissed, or unrecognized prompt is
+refused; it is never treated as generic permission to click security dialogs.
+
+If the approved process has no DevTools endpoint, Cua Driver opens a temporary
+tab in the approved window and navigates to the product's fixed remote-debugging
+page (`chrome://inspect/#remote-debugging` or
+`edge://inspect/#remote-debugging`). It matches exactly one **Allow remote
+debugging for this browser instance** checkbox, verifies that it is off, and
+presses it once. It then proves that the new listener is loopback-only and
+owned by the approved process before closing the temporary tab. The result's
+`side_effects` reports whether the page was opened and closed, whether the
+address field was focused, whether the setting was enabled, and whether Chrome
+displayed a connection-consent prompt. If setup fails after a visible action,
+the structured refusal reports `detail.setup_side_effects`; a checkbox changed
+by that failed attempt is restored when its exact state can still be proven.
+Any ambiguous control or changed process/window identity is refused.
+
+On macOS, semantic AX matching remains the first route. If Chrome withholds the
+internal page's web AX subtree, Cua Driver opens and navigates its own temporary
+tab, waits for the fixed address to be committed with the expected selected-tab
+title and no omnibox edit in progress, then requires one unique
+checkbox-shaped control in a bounded setup-page region. It revalidates the
+unchanged target window, routes the click only to that browser PID, and verifies
+the resulting state on the same control. Because macOS delivers this bounded
+pixel action through global input, Cua Driver may briefly foreground the exact
+approved window, restore the previous frontmost app, and report those effects in
+`side_effects`. Unsupported appearance, scale, zoom, window-size, or toolbar
+geometry is refused without a click. This fallback never applies to ordinary
+web pages or generic security dialogs.
+
+On Linux, launch the browser with `--force-renderer-accessibility` unless a
+screen reader already enables its complete AT-SPI tree. Native Wayland also
+requires a validated compositor route that can prove the exact process,
+window, geometry, and temporary focus restoration. A missing prerequisite is
+reported as a refusal; Cua Driver does not fall back to an unscoped desktop
+click.
+
+After `attached_existing_profile`, list windows again if needed and call
+`get_browser_state({pid, window_id, session})`. Attachment invalidates older
+browser capabilities, so do not reuse a previous `target_id`, `tab_id`, or
+page ref.
+
+The grant lives only in runtime memory. It expires after inactivity, has an
+absolute lifetime, and is revoked when its owning session ends or the runtime
+shuts down. A dropped browser socket may reconnect up to three times under the
+same live grant; a successful reconnect invalidates capabilities again and
+requires another bind. Browser restart requires a new authorization.
+
+Existing-profile activity events record content-free action metadata and
+results. They omit screenshots, accessibility snapshots, URLs, and resource
+identities, so authenticated page content is not persisted as authorization
+evidence.
+
+## Bind the native window
+
+Browser capabilities are scoped to a driver session. Start one and pass the
+same session value to every browser call:
+
+```jsonc
+start_session({"session": "research-1"})
+
+get_browser_state({
+  "pid": 844,
+  "window_id": 10725,
+  "session": "research-1"
+})
+```
+
+Keep the returned opaque `target_id`. Use the `tab_id` whose `active` field is
+`true` only when selection is uniquely proven. `active: false` is proven
+unselected; `active: null` means the native window cannot distinguish tabs,
+such as two tabs with the same title. In that case, select an explicit tab by
+its returned metadata and never infer selection from list order. Mutation is
+available only when `binding_quality` is `exact`. A heuristic or ambiguous
+window match is refused.
+
+## Snapshot the tab
+
+Snapshot the selected tab before using an element ref:
+
+```jsonc
+get_browser_state({
+  "target_id": "<target_id>",
+  "tab_id": "<tab_id>",
+  "session": "research-1",
+  "snapshot_format": "semantic_v2"
+})
+```
+
+Read `outline` for visible page content. Select actions only from `refs`, and
+check that the chosen entry declares `click` or `type` in `actions`.
+`content_refs` are read capabilities for `scope_ref`; they cannot be passed to
+an unsupported mutation.
+
+If `snapshot.continuation` is non-null, request the next ranked segment without
+changing the page:
+
+```jsonc
+get_browser_state({
+  "target_id": "<target_id>",
+  "tab_id": "<tab_id>",
+  "session": "research-1",
+  "snapshot_format": "semantic_v2",
+  "continuation": "<opaque_continuation>"
+})
+```
+
+Use `query` to find matching roles, accessible names, or visible text. Use a
+current `scope_ref` to inspect one semantic subtree when names repeat in
+different regions. A continuation is single-use; a newer snapshot invalidates
+it.
+
+Refs are valid only for that session, target, tab, document, frame, and latest
+snapshot. Take a fresh snapshot after navigation or whenever a call returns
+`browser_ref_stale`. `dom_refs_v1` remains available for compatibility when
+`snapshot_format` is omitted, but new workflows should request `semantic_v2`.
+
+## Click and type
+
+The default click route requests Chromium's trusted input domain:
+
+```jsonc
+browser_click({
+  "target_id": "<target_id>",
+  "tab_id": "<tab_id>",
+  "ref": "p1:7",
+  "session": "research-1"
+})
+```
+
+Use viewport `x` and `y` instead of `ref` when the page snapshot cannot name
+the rendered target. Standalone Chrome and Edge on Windows have passing
+full-background evidence for this route. Standalone Chromium on macOS and Linux
+returns `browser_input_trust_unavailable` because dispatching the trusted
+pointer event activates the native browser window.
+
+To request a synthetic full-background DOM click deliberately, pass
+`input_route: "dom_event"` with a ref:
+
+```jsonc
+browser_click({
+  "target_id": "<target_id>",
+  "tab_id": "<tab_id>",
+  "ref": "p1:7",
+  "input_route": "dom_event",
+  "session": "research-1"
+})
+```
+
+Use this only when the page's DOM click semantics are acceptable. The driver
+never silently falls back from trusted input to a DOM event.
+
+Snapshot again, then type into the fresh input ref:
+
+```jsonc
+browser_type({
+  "target_id": "<target_id>",
+  "tab_id": "<tab_id>",
+  "ref": "p2:3",
+  "text": "status: ready",
+  "session": "research-1"
+})
+```
+
+The default `insert_text` mode is efficient for ordinary text. Use
+`mode: "keystrokes"` when the page depends on per-character keyboard events.
+Both modes insert at the current selection. To replace a pre-filled value,
+pass `replace: true`. An empty `text` with `replace: true` clears the field
+through normal input events:
+
+```jsonc
+browser_type({
+  "target_id": "<target_id>",
+  "tab_id": "<tab_id>",
+  "ref": "p2:4",
+  "text": "new value",
+  "replace": true,
+  "session": "research-1"
+})
+```
+
+## Use extended pointer actions
+
+`browser_pointer` supports `hover`, `right_click`, `double_click`, `scroll`,
+and `drag`. Use the trusted route when genuine browser input semantics are
+required and the platform reports that it can preserve posture. Use the
+explicit synthetic route with current refs when DOM event semantics are
+acceptable:
+
+```jsonc
+browser_pointer({
+  "target_id": "<target_id>",
+  "tab_id": "<tab_id>",
+  "ref": "p3:4",
+  "action": "scroll",
+  "input_route": "dom_event",
+  "delta_y": 240,
+  "session": "research-1"
+})
+```
+
+Hover, right-click, double-click, and drag require a ref whose `actions`
+contains `pointer`. Scroll accepts either `scroll` or `pointer`, so a plain
+overflow container can be scrollable without gaining broader pointer
+authority.
+
+For drag, pass `destination_ref` from the same exact frame. The driver refuses
+mixed-frame or stale destinations instead of translating them approximately.
+
+## Handle a page-owned dialog
+
+Prime and inspect the exact tab with `browser_dialog({action:"inspect"})`.
+When `present` is true, pass the returned `dialog_id` to `accept` or `dismiss`.
+Only an accepted prompt may include `prompt_text`. This tool does not handle
+browser permission prompts, extension UI, native sheets, or file pickers.
+Creating a Chromium native modal can activate its browser window; once you
+restore the intended occlusion, inspecting and resolving that exact dialog do
+not activate it again on Windows and macOS. Resolution defaults to
+`delivery_mode:"background"`. Linux Chromium cannot resolve the native modal
+while preserving background posture, so the driver returns
+`browser_input_trust_unavailable` before dispatch. Retry with
+`delivery_mode:"foreground"` only when foreground activation is acceptable.
+
+## Assign files without a picker
+
+Take a semantic snapshot and choose a file-input ref whose `actions` contains
+`upload`. Call `browser_set_input_files` with absolute paths to direct regular
+files. Symlinks, directories, missing paths, and more than 32 files are
+refused. Verify the page's uploaded-file state afterward; the tool response
+contains only a count and never echoes the local paths.
+
+## Download into an approved directory
+
+Choose a current ref that activates the download and call `browser_download`.
+An MCP host may still apply its own destructive-tool approval rules. Pass an
+existing canonical absolute `destination_root`. Cua's policy stack and bounded
+manifest, when active, must admit that directory. The tool temporarily scopes
+Chromium's browser-wide download behavior, correlates the exact frame and
+opaque download id, restores the default on every outcome, and returns only
+the final byte count and opaque id. It does not return a filename, URL, or
+local path.
+
+## Navigate
+
+```jsonc
+browser_navigate({
+  "target_id": "<target_id>",
+  "tab_id": "<tab_id>",
+  "url": "https://example.com",
+  "session": "research-1"
+})
+```
+
+Navigation invalidates every prior ref for the tab. Wait for the destination,
+then call `get_browser_state` in snapshot mode again.
+
+## End the session
+
+```jsonc
+end_session({"session": "research-1"})
+```
+
+Ending the session revokes its target, tab, and element capabilities.
+
+## Embedded webviews
+
+Electron has an exact route only while one proven native window maps to one CDP
+page. Adding another page or window invalidates that route. Tauri, WKWebView,
+WebKitGTK, and the split-process WebView2 shape currently return
+`browser_route_unavailable` unless the driver can independently prove the
+native-host-to-engine relationship. Continue with native `get_window_state`
+and AX/PX actions for those surfaces.
+
+## Legacy page actions
+
+The older `page` tool remains available for compatibility. Its read-only
+`get_text` and `query_dom` actions are available by default. Legacy mutation
+actions are disabled unless the daemon operator explicitly starts Cua Driver
+with `CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1`. The flag is read when the
+daemon starts, so restart Cua Driver after changing it.
+
+That flag is a temporary compatibility escape hatch, not an equivalent browser
+grant: legacy CDP ports and URL hints do not receive the typed surface's exact
+native-window correlation, endpoint lifetime, or existing-profile consent
+checks. Do not enable it for untrusted agents or shared hosts. Migrate mutation
+workflows to `get_browser_state` and the typed `browser_*` tools.
+
+## Related
+
+- [Browser targeting and background delivery](/concepts/browser-targeting-and-background-delivery)
+- [Browser tool reference](/reference/cua-driver/mcp-tools#get_browser_state)
+- [Existing-profile attachment reference](/reference/cua-driver/browser-profile-attachment)
+- [Known limits](/reference/cua-driver/limits)
+- [Capture and delivery modalities](/concepts/capture-and-delivery-modalities)

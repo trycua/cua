@@ -18,6 +18,67 @@ use cua_driver_core::element_cache::ElementCacheCore;
 use windows::core::Interface;
 use windows::Win32::UI::Accessibility::{IAccessible, IUIAutomationElement};
 
+/// A cached element pointer borrowed out of the cache with an extra COM
+/// `AddRef`, so it stays alive for the duration of a UIA/MSAA action even if a
+/// concurrent `get_window_state` (→ [`ElementCache::update`]) replaces and
+/// drops the snapshot it came from. Without this, the snapshot's `Drop` could
+/// `Release` the element to zero while an in-flight click / SetValue was still
+/// dereferencing the raw COM vtable pointer — a use-after-free. This is the
+/// Windows analogue of the macOS AX-element crash fixed in #1796
+/// (`EXC_BREAKPOINT` in `AXUIElementCopyActionNames`); here the same shape
+/// would fault inside `IUIAutomation*::Invoke` / `ValuePattern::SetValue`.
+///
+/// The `AddRef` is taken **under the cache lock** (see
+/// [`ElementCache::get_element_retained`]); the matching `Release` fires on
+/// drop, via the `kind`-appropriate interface — mirroring `CachedSnapshot::drop`.
+pub struct RetainedElement {
+    ptr: usize,
+    kind: SnapshotKind,
+}
+
+impl RetainedElement {
+    /// The raw COM vtable pointer, valid for as long as this guard is held.
+    pub fn as_ptr(&self) -> usize {
+        self.ptr
+    }
+
+    /// True when the retained pointer is an `IUIAutomationElement` (the UIA
+    /// path), not an MSAA `IAccessible`. `ScrollItemPattern::ScrollIntoView`
+    /// only applies to UIA elements, so the scroll-into-view recovery gates on
+    /// this before casting the pointer as a UIA interface.
+    pub fn is_uia(&self) -> bool {
+        matches!(self.kind, SnapshotKind::Uia)
+    }
+}
+
+// `ptr` is a `usize` and `kind` is a plain `Copy` enum, so this is already
+// `Send`; it's moved into / created inside `spawn_blocking` closures exactly
+// like the bare `usize` it replaces. COM refcounting (`AddRef`/`Release`) is
+// `InterlockedIncrement`-based and thread-safe, so the guard is safe to carry.
+
+impl Drop for RetainedElement {
+    fn drop(&mut self) {
+        if self.ptr == 0 {
+            return;
+        }
+        // Balance the AddRef taken in `get_element_retained`, releasing via the
+        // same kind-appropriate vtable that `CachedSnapshot::drop` uses.
+        unsafe {
+            match self.kind {
+                SnapshotKind::Uia => {
+                    let iface: IUIAutomationElement =
+                        IUIAutomationElement::from_raw(self.ptr as *mut _);
+                    drop(iface);
+                }
+                SnapshotKind::Msaa => {
+                    let iface: IAccessible = IAccessible::from_raw(self.ptr as *mut _);
+                    drop(iface);
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CacheKey {
     pub pid: u32,
@@ -101,35 +162,138 @@ impl ElementCache {
     }
 
     fn update_with_kind(&self, pid: u32, hwnd: u64, nodes: &[UiaNode], kind: SnapshotKind) {
-        let actionable: Vec<&UiaNode> = nodes.iter().filter(|n| n.element_index.is_some()).collect();
+        let actionable: Vec<&UiaNode> =
+            nodes.iter().filter(|n| n.element_index.is_some()).collect();
         let elements: Vec<usize> = actionable.iter().map(|n| n.element_ptr).collect();
-        let centers: Vec<(i32, i32)> = actionable.iter().map(|n| (n.center_x, n.center_y)).collect();
+        let centers: Vec<(i32, i32)> = actionable
+            .iter()
+            .map(|n| (n.center_x, n.center_y))
+            .collect();
         let rects: Vec<Option<(i32, i32, i32, i32)>> = actionable.iter().map(|n| n.rect).collect();
         let msaa_roles: Vec<Option<i32>> = actionable.iter().map(|n| n.msaa_role).collect();
         self.core.insert(
             CacheKey { pid, hwnd },
-            CachedSnapshot { kind, elements, centers, rects, msaa_roles },
+            CachedSnapshot {
+                kind,
+                elements,
+                centers,
+                rects,
+                msaa_roles,
+            },
         );
     }
 
-    pub fn get_element_ptr(&self, pid: u32, hwnd: u64, element_index: usize) -> Option<usize> {
+    /// Look up + COM-`AddRef` the element for `element_index` in (pid, hwnd),
+    /// returning a guard that `Release`s on drop. The `AddRef` happens **under
+    /// the cache lock**, so a concurrent [`update`](Self::update) (which
+    /// replaces the snapshot and `Release`s its pointers in
+    /// `CachedSnapshot::drop`) cannot free the element between the lookup and
+    /// the `AddRef`. Hold the returned guard for the entire UIA/MSAA action —
+    /// this is what makes element actions safe when two sessions drive the same
+    /// `(pid, hwnd)`. Returns `None` if the index isn't cached.
+    pub fn get_element_retained(
+        &self,
+        pid: u32,
+        hwnd: u64,
+        element_index: usize,
+    ) -> Option<RetainedElement> {
         self.core
-            .with_snapshot(&CacheKey { pid, hwnd }, |s| s.elements.get(element_index).copied())
+            .with_snapshot(&CacheKey { pid, hwnd }, |s| {
+                let ptr = s.elements.get(element_index).copied()?;
+                if ptr != 0 {
+                    // Safety: still inside `with_snapshot`'s lock — the same
+                    // `Mutex` that `insert` (the snapshot replace) takes — so
+                    // the snapshot and thus this COM object is alive right now.
+                    // Bump the refcount with the kind-appropriate vtable, using
+                    // the walker's clone()+forget() idiom: `dup` is the extra
+                    // ref the guard owns; the borrowed `iface` is forgotten so
+                    // it doesn't Release the cache's own ref.
+                    unsafe {
+                        match s.kind {
+                            SnapshotKind::Uia => {
+                                let iface: IUIAutomationElement =
+                                    IUIAutomationElement::from_raw(ptr as *mut _);
+                                let dup = iface.clone(); // AddRef → +1
+                                std::mem::forget(iface); // don't Release cache's ref
+                                std::mem::forget(dup); // guard owns the +1
+                            }
+                            SnapshotKind::Msaa => {
+                                let iface: IAccessible = IAccessible::from_raw(ptr as *mut _);
+                                let dup = iface.clone();
+                                std::mem::forget(iface);
+                                std::mem::forget(dup);
+                            }
+                        }
+                    }
+                }
+                Some(RetainedElement { ptr, kind: s.kind })
+            })
             .flatten()
     }
 
-    pub fn get_element_center(&self, pid: u32, hwnd: u64, element_index: usize) -> Option<(i32, i32)> {
+    pub fn get_element_center(
+        &self,
+        pid: u32,
+        hwnd: u64,
+        element_index: usize,
+    ) -> Option<(i32, i32)> {
         self.core
-            .with_snapshot(&CacheKey { pid, hwnd }, |s| s.centers.get(element_index).copied())
+            .with_snapshot(&CacheKey { pid, hwnd }, |s| {
+                s.centers.get(element_index).copied()
+            })
             .flatten()
+    }
+
+    /// Focus a cached UIA element without activating its top-level window.
+    /// The caller owns the no-activation guard for background delivery.
+    pub fn focus_element(&self, pid: u32, hwnd: u64, element_index: usize) -> anyhow::Result<()> {
+        let retained = self
+            .get_element_retained(pid, hwnd, element_index)
+            .ok_or_else(|| anyhow::anyhow!("element [{element_index}] is not in the UIA cache"))?;
+        if !retained.is_uia() {
+            anyhow::bail!("element [{element_index}] is an MSAA element, not a UIA element");
+        }
+        let ptr = retained.as_ptr();
+        let element: IUIAutomationElement =
+            unsafe { IUIAutomationElement::from_raw(ptr as *mut _) };
+        let result = unsafe { element.SetFocus() };
+        // `retained` owns the AddRef; `from_raw` borrows that same pointer.
+        std::mem::forget(element);
+        result.map_err(|e| anyhow::anyhow!("UIA SetFocus failed: {e}"))
+    }
+
+    pub fn element_has_keyboard_focus(
+        &self,
+        pid: u32,
+        hwnd: u64,
+        element_index: usize,
+    ) -> Option<bool> {
+        let retained = self.get_element_retained(pid, hwnd, element_index)?;
+        if !retained.is_uia() {
+            return None;
+        }
+        let element: IUIAutomationElement =
+            unsafe { IUIAutomationElement::from_raw(retained.as_ptr() as *mut _) };
+        let focused = unsafe { element.CurrentHasKeyboardFocus() }
+            .ok()
+            .map(|value| value.as_bool());
+        std::mem::forget(element);
+        focused
     }
 
     /// Cached screen rect for the element. Used by the click tool to
     /// compute the right-edge dispatch point for `action:"expand"` on
     /// MSAA BUTTONDROPDOWN.
-    pub fn get_element_rect(&self, pid: u32, hwnd: u64, element_index: usize) -> Option<(i32, i32, i32, i32)> {
+    pub fn get_element_rect(
+        &self,
+        pid: u32,
+        hwnd: u64,
+        element_index: usize,
+    ) -> Option<(i32, i32, i32, i32)> {
         self.core
-            .with_snapshot(&CacheKey { pid, hwnd }, |s| s.rects.get(element_index).copied().flatten())
+            .with_snapshot(&CacheKey { pid, hwnd }, |s| {
+                s.rects.get(element_index).copied().flatten()
+            })
             .flatten()
     }
 
@@ -162,3 +326,7 @@ impl Default for ElementCache {
         Self::new()
     }
 }
+
+#[cfg(test)]
+#[path = "cache_uaf_repro.rs"]
+mod cache_uaf_repro;

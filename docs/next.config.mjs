@@ -1,64 +1,65 @@
 import { createMDX } from 'fumadocs-mdx/next';
+import { networkInterfaces } from 'node:os';
 
 const withMDX = createMDX();
+
+const localDevOrigins = [
+  'localhost',
+  '127.0.0.1',
+  ...Object.values(networkInterfaces())
+    .flat()
+    .filter((address) => address && !address.internal)
+    .map((address) => address.address),
+];
 
 /** @type {import('next').NextConfig} */
 const config = {
   reactStrictMode: true,
-  serverExternalPackages: ['pino', 'pino-pretty', 'thread-stream'],
   trailingSlash: false,
   basePath: '/docs',
   assetPrefix: '/docs',
-  async rewrites() {
-    return [
-      {
-        source: '/:path*.mdx',
-        destination: '/llms.mdx/:path*',
-      },
-    ];
-  },
+  allowedDevOrigins: [...new Set(localDevOrigins)],
   async redirects() {
     return [
       {
         source: '/',
         destination: '/docs',
-        basePath: false, // Important: this bypasses the basePath
+        basePath: false,
         permanent: false,
       },
-      // Redirect old docs.cua.ai URLs to cua.ai/docs with 301 for SEO
-      // This handles URLs that Google has indexed from the old domain
       {
-        source: '/:path*',
-        has: [
-          {
-            type: 'host',
-            value: 'docs.cua.ai',
-          },
-        ],
-        destination: 'https://cua.ai/docs/:path*',
-        permanent: true, // 301 redirect to preserve SEO authority
-        basePath: false,
-      },
-      // Redirects for old URLs
-      {
-        source: '/quickstart-devs',
-        destination: '/get-started/quickstart',
+        source: '/cuabench',
+        destination: '/concepts/what-is-cua-bench',
         permanent: true,
       },
       {
-        source: '/quickstart-cli',
-        destination: '/get-started/quickstart',
-        permanent: true,
-      },
-      // Redirect old /api URLs to SDK landing pages
-      {
-        source: '/cua/reference/computer-sdk/api',
-        destination: '/cua/reference/computer-sdk',
+        source: '/tutorials/your-first-cua-driver-python-app',
+        destination: '/how-to-guides/driver/use-sdk-in-process',
         permanent: true,
       },
       {
-        source: '/cua/reference/agent-sdk/api',
-        destination: '/cua/reference/agent-sdk',
+        source: '/tutorials/your-first-cua-driver-typescript-app',
+        destination: '/how-to-guides/driver/use-sdk-in-process',
+        permanent: true,
+      },
+      {
+        source: '/tutorials/verify-a-desktop-action-with-cua-driver',
+        destination: '/how-to-guides/driver/verify-a-desktop-action',
+        permanent: true,
+      },
+      {
+        source: '/tutorials/your-first-cloud-sandbox',
+        destination: '/tutorials/your-first-local-sandbox',
+        permanent: true,
+      },
+      {
+        source: '/how-to-guides/sandbox/snapshots',
+        destination: '/how-to-guides/sandbox/images',
+        permanent: true,
+      },
+      {
+        source: '/how-to-guides/skills/record-a-demonstration',
+        destination: '/how-to-guides',
         permanent: true,
       },
     ];
@@ -69,10 +70,6 @@ const config = {
       {
         protocol: 'https',
         hostname: 'img.shields.io',
-      },
-      {
-        protocol: 'https',
-        hostname: 'starchart.cc',
       },
       {
         protocol: 'https',

@@ -1,0 +1,15 @@
+[project]
+name = "cua-bench-kicad-4c913e30-env"
+version = "0.1.0"
+license = "MIT"
+authors = [
+    { name = "Snorkel AI" },
+    { name = "Cua" }
+]
+requires-python = ">=3.11"
+
+[tool.cua-bench]
+description = "Design a third-order Butterworth low-pass filter with a cutoff frequency of approximately 45 Hz. Implement it using an LM358 operational amplifier powered by ±12 V supplies. Use 10 kΩ resistors and 0.352 µF capacitors for the filter sections, and 1 kΩ resistors for the feedback network. Include a 2-pin input connector, a 2-pin output connector, and a 3-pin power connector for +12 V, GND, and −12 V. Generate the KiCad schematic and the KiCad netlist for the design."
+difficulty = "medium"
+category = "eda"
+tags = ["kicad", "schematic", "eda"]

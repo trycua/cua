@@ -36,6 +36,25 @@ behavior or document a concrete operating-system or compositor limitation.
 When a platform cannot support the same contract, return or publish that
 limitation explicitly instead of substituting misleading behavior.
 
+## Expensive end-to-end test timing
+
+During implementation, use focused unit, contract, and platform smoke tests
+plus the repository's ordinary pull request CI. Do not repeatedly run the full
+representative desktop matrix against intermediate commits when the affected
+code or test plan is still changing.
+
+Run the complete cross-platform desktop E2E matrix once the implementation is
+stable, on the exact candidate SHA immediately before the pull request is made
+ready or merged. If that candidate changes afterward, rerun only the evidence
+affected by the change; a product, harness, generated-contract, or environment
+change normally requires recertification, while an instructions-only or other
+demonstrably non-executable change does not require repeating unrelated desktop
+rows. Record the tested SHA and account for any final diff explicitly.
+
+After merge, run a short main-branch smoke and release-path verification. Repeat
+the full matrix after merge only when the merge result materially differs from
+the certified candidate or the smoke test exposes a regression.
+
 ## Pull request titles and component releases
 
 Pull requests are squash-merged, so the pull request title becomes the commit

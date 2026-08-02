@@ -270,6 +270,35 @@ When a pixel action is unavoidable, match the scope to the space:
 On macOS, `get_window_state` also reports `window_bounds`, which may be used in
 place of `list_windows` there. Windows and Linux report `screenshot_width` and
 `screenshot_height` only.
+---
+
+## Cinnamon leaves accessibility advertisement disabled
+
+On Linux, Cua Driver normally advertises accessibility support to the desktop
+session so Chromium, Electron, GTK, and Qt applications expose AT-SPI trees.
+Cinnamon treats the two session-wide accessibility flags as coupled settings:
+advertising a screen reader launches Orca, while advertising only generic
+accessibility can make the Cinnamon and GNOME settings schemas repeatedly
+overwrite each other.
+
+When `XDG_CURRENT_DESKTOP` identifies `Cinnamon` or `X-Cinnamon`, Cua Driver
+therefore leaves both accessibility flags unchanged. Screenshots and available
+CDP browser routes continue to work, but applications that have not enabled
+their own accessibility bridge may return a degraded or empty AT-SPI tree.
+
+The startup behavior can be overridden with
+`CUA_DRIVER_RS_A11Y_ADVERTISE_MODE`:
+
+| Value | Session status written | Cinnamon guidance |
+| --- | --- | --- |
+| `none` | Nothing | Safe; this is the Cinnamon default. |
+| `is_enabled_only` | `IsEnabled=true` | Unsafe on Cinnamon because it can trigger the settings write loop. |
+| `all` | `IsEnabled=true` and `ScreenReaderEnabled=true` | Unsafe on Cinnamon because it launches Orca. |
+
+The legacy `CUA_DRIVER_RS_DISABLE_A11Y_ADVERTISE=1` setting is equivalent to
+`none` and takes precedence over the mode variable. Explicit overrides are
+intended for controlled diagnostics; they should not be used to force either
+advertisement mode in a normal Cinnamon session.
 
 ---
 

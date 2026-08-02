@@ -229,14 +229,15 @@ fn harness_appkit_smoke() {
             // and other AXStaticText leaves do NOT propagate
             // setAccessibilityIdentifier into the AX tree's identifier slot, so
             // we don't assert on ids for labels. We assert on text-presence for
-            // those, and on AX ids only for actionable controls (Buttons,
-            // TextFields).
+            // those, and on AX ids only for actionable controls whose AppKit
+            // identifiers are actually propagated (Buttons and TextFields).
+            // NSMenuItem behaves like the static leaves here: its title is
+            // exposed, but setAccessibilityIdentifier is not.
             for aid in [
                 "wnd-main", // NSWindow
                 "btn-increment",
-                "btn-reset",      // NSButton
-                "txt-input",      // editable NSTextField
-                "menu-test-item", // NSMenuItem (Mac-specific)
+                "btn-reset", // NSButton
+                "txt-input", // editable NSTextField
                 "btn-exit",
             ] {
                 assert!(
@@ -254,6 +255,10 @@ fn harness_appkit_smoke() {
             // AXStaticText nodes — assert on their starting text instead of ids.
             assert!(text.contains("counter=0"), "counter label missing");
             assert!(text.contains("clicks=0"), "click_count label missing");
+            assert!(
+                text.contains("Harness Test Item"),
+                "AppKit menu item title missing"
+            );
             assert!(
                 text.contains("last_action=none"),
                 "last_action label missing"

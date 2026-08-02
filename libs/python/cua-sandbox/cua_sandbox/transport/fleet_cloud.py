@@ -17,7 +17,7 @@ from cua_sandbox._config import (
 from cua_sandbox.image import Image
 from cua_sandbox.transport.cyclops_http_client import CyclopsHttpClient
 from cua_sandbox.transport.fleet import FleetTransport
-from cyclops_sdk import (
+from fleet_sdk import (
     CreateClaimRequest,
     CreatePoolRequest,
     CyclopsClient,

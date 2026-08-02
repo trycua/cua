@@ -2,7 +2,7 @@ import pytest
 from cua_sandbox import Image
 from cua_sandbox.transport import fleet_cloud
 from cua_sandbox.transport.fleet_cloud import FleetCloudTransport
-from cyclops_sdk import Sandbox
+from fleet_sdk import Sandbox
 
 
 def test_registry_image_becomes_typed_pool_request():

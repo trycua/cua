@@ -539,7 +539,7 @@ dev = [{ name = "pytest", specifier = ">=8.3.5" }]
 
 [[package]]
 name = "cua-fleet"
-version = "0.0.6"
+version = "0.0.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "attrs" },
@@ -547,15 +547,15 @@ dependencies = [
     { name = "python-dateutil" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/33/12/e0e08eb6b56e421c92815654f162ee1bcd9e5abb7dbc1e26e12f316dff46/cua_fleet-0.0.6-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:4a292b0519eaa172c4d4d081e771e0a66e6cb964a2bb01fc2cbd68020c302c8a", size = 2123635, upload-time = "2026-08-01T02:21:37.116Z" },
-    { url = "https://files.pythonhosted.org/packages/f7/53/398c64149eaf467e9d97fb0958ec97f5fab22a4c08a0a8c47cb72412532a/cua_fleet-0.0.6-py3-none-macosx_11_0_arm64.whl", hash = "sha256:ed310ad529c6655a9fde8455fc764c2b7e53f5ca2581e39aec9e878296a0de6e", size = 2037302, upload-time = "2026-08-01T02:21:38.393Z" },
-    { url = "https://files.pythonhosted.org/packages/c8/c2/ac127bde7f2ffe1b2affe49e11b48d4053728c15d700b2b96190768d2296/cua_fleet-0.0.6-py3-none-manylinux_2_34_aarch64.whl", hash = "sha256:612c3d2cfe4b4a1356503a0ddee6518f9cc1d8e5c410124b68627a8650977237", size = 2300923, upload-time = "2026-08-01T02:21:39.561Z" },
-    { url = "https://files.pythonhosted.org/packages/33/e1/67de4257140bc9d22f14cb9ee4d627d5e25cf0544aa323d4d6ff33a25c8e/cua_fleet-0.0.6-py3-none-manylinux_2_34_x86_64.whl", hash = "sha256:4d5119b7ff46bd2af9af1a2310c16b6993787bafa94f308512463929eddcc45a", size = 2355463, upload-time = "2026-08-01T02:21:40.87Z" },
+    { url = "https://files.pythonhosted.org/packages/ef/ad/a8519f33efcc467a6f1e15ded9881e8c8c793614dcc62cd40eac7833066c/cua_fleet-0.0.7-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:3f76c64cd6d8abd42ca322bac1b184c202ed1fc7bfa47ef7d503949d304013b8", size = 2123635, upload-time = "2026-08-02T01:59:23.577Z" },
+    { url = "https://files.pythonhosted.org/packages/b2/83/7e2dfe9d95925851298da4c1fca4b6b3c9cdf69278aaf0394669fe9bc9d1/cua_fleet-0.0.7-py3-none-macosx_11_0_arm64.whl", hash = "sha256:64972b5750fe512f7f60fac6cd98f7472a68d209d117615136402055d890c3df", size = 2037284, upload-time = "2026-08-02T01:59:25.091Z" },
+    { url = "https://files.pythonhosted.org/packages/39/06/4b2b819236aa3a1f381e3e749805bdc063d2f8b84f43c545a6bae76d75d6/cua_fleet-0.0.7-py3-none-manylinux_2_34_aarch64.whl", hash = "sha256:372f46232c819751c8ad0469a1ea86a53da02203bfb251d15826178c81984097", size = 2300936, upload-time = "2026-08-02T01:59:26.369Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/40/d6777691c2ede5f657469ed1a66af127948bc8d00ee841aa9f3afb822982/cua_fleet-0.0.7-py3-none-manylinux_2_34_x86_64.whl", hash = "sha256:0eb19f50b3fe745b3e8177a20905a536b91121e4b85ddb5ca8b30bc2682119fd", size = 2355501, upload-time = "2026-08-02T01:59:27.814Z" },
 ]
 
 [[package]]
 name = "cua-sandbox"
-version = "0.1.18"
+version = "0.1.19"
 source = { editable = "." }
 dependencies = [
     { name = "cua-auto" },
@@ -592,7 +592,7 @@ dev = [
 requires-dist = [
     { name = "cua-auto", specifier = ">=0.1.2" },
     { name = "cua-core", specifier = ">=0.3.0,<0.4.0" },
-    { name = "cua-fleet", specifier = "==0.0.6" },
+    { name = "cua-fleet", specifier = "==0.0.7" },
     { name = "grpcio", specifier = "==1.78.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "oras", specifier = ">=0.2.40" },

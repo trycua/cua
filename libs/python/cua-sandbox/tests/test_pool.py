@@ -21,33 +21,23 @@ class FakeFleetClient:
         self,
         *,
         existing: object | None = None,
-        create_error: Exception | None = None,
+        reconcile_error: Exception | None = None,
         release_error: Exception | None = None,
     ):
         self.existing = existing
-        self.create_error = create_error
+        self.reconcile_error = reconcile_error
         self.release_error = release_error
-        self.created: list[object] = []
-        self.updated: list[object] = []
+        self.reconciled: list[object] = []
         self.claims: list[object] = []
         self.released: list[object] = []
         self.service_requests: list[object] = []
         self.closed = False
 
-    async def get_pool(self, name: str) -> object:
-        if self.existing is None:
-            raise LookupError(name)
-        return self.existing
-
-    async def create_pool(self, request: object) -> object:
-        self.created.append(request)
-        if self.create_error:
-            raise self.create_error
-        return fleet_pool(request.namespace)
-
-    async def update_pool(self, pool: object) -> object:
-        self.updated.append(pool)
-        return pool
+    async def reconcile_pool(self, request: object) -> object:
+        self.reconciled.append(request)
+        if self.reconcile_error:
+            raise self.reconcile_error
+        return self.existing or fleet_pool(request.namespace)
 
     async def create_claim(self, request: object) -> object:
         self.claims.append(request)
@@ -96,6 +86,21 @@ async def test_fleet_client_get_pool_uses_name_lookup_without_listing() -> None:
 
 
 @pytest.mark.asyncio
+async def test_fleet_client_reconcile_pool_delegates_to_generated_client() -> None:
+    expected = fleet_pool()
+
+    class GeneratedClient:
+        async def reconcile_pool(self, request: object) -> object:
+            assert request == "desired"
+            return expected
+
+    client = object.__new__(_FleetClient)
+    client._client = GeneratedClient()
+
+    assert await client.reconcile_pool("desired") is expected
+
+
+@pytest.mark.asyncio
 async def test_reconcile_creates_pool_from_registry_image(monkeypatch):
     client = FakeFleetClient()
     monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
@@ -110,8 +115,8 @@ async def test_reconcile_creates_pool_from_registry_image(monkeypatch):
     assert pool.name == "foo"
     assert pool.resource.metadata.name == "foo"
     assert client.closed is True
-    assert len(client.created) == 1
-    request = client.created[0]
+    assert len(client.reconciled) == 1
+    request = client.reconciled[0]
     assert request.namespace == "foo"
     assert request.spec.template.container_disk_image == "registry.example/workspace:latest"
     assert [(service.name, service.target_port) for service in request.spec.services] == [
@@ -121,11 +126,11 @@ async def test_reconcile_creates_pool_from_registry_image(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_reconcile_closes_temporary_client_when_creation_fails(monkeypatch):
-    client = FakeFleetClient(create_error=RuntimeError("create failed"))
+async def test_reconcile_closes_temporary_client_when_reconciliation_fails(monkeypatch):
+    client = FakeFleetClient(reconcile_error=RuntimeError("reconcile failed"))
     monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
 
-    with pytest.raises(RuntimeError, match="create failed"):
+    with pytest.raises(RuntimeError, match="reconcile failed"):
         await Pool.reconcile({"name": "foo", "image": Image.from_registry("example:latest")})
 
     assert client.closed is True
@@ -140,9 +145,8 @@ async def test_reconcile_updates_existing_pool_idempotently(monkeypatch):
     pool = await Pool.reconcile({"name": "foo", "image": Image.from_registry("example:latest")})
 
     assert pool.resource is existing
-    assert client.created == []
-    assert client.updated == [existing]
-    assert existing.spec.template.container_disk_image == "example:latest"
+    assert len(client.reconciled) == 1
+    assert client.reconciled[0].spec.template.container_disk_image == "example:latest"
     assert client.closed is True
 
 
@@ -239,7 +243,7 @@ async def test_reconcile_preserves_replicas_and_named_services(monkeypatch):
         }
     )
 
-    request = client.created[0]
+    request = client.reconciled[0]
     assert request.spec.replicas == 2
     assert [(service.name, service.target_port) for service in request.spec.services] == [
         ("server", 8000),

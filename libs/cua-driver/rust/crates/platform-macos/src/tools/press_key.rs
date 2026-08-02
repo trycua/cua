@@ -235,7 +235,7 @@ impl Tool for PressKeyTool {
                 tokio::task::spawn_blocking(move || {
                     let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                     // Foreground rung: keep the exact target frontmost through a genuine
-                    // HID key down/up pair, then restore. PID-routed events without the
+                    // physical HID key down/up pair, then restore. PID-routed events without the
                     // authentication envelope reach NSMenu, but Chromium/Electron may
                     // silently discard them even while frontmost; the guarded HID route
                     // is accepted by both. Skipped when px-focus already handled the
@@ -246,7 +246,7 @@ impl Tool for PressKeyTool {
                                 crate::input::skylight::with_foreground_hid_activation(
                                     pid as libc::pid_t,
                                     wid,
-                                    || crate::input::keyboard::press_key_global(&key, &m),
+                                    || crate::input::keyboard::press_key_bare_global(&key, &m),
                                 )?;
                                 return Ok(());
                             }

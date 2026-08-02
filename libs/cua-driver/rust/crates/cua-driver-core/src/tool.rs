@@ -3647,8 +3647,15 @@ resources:
         );
         let structured = DISPATCH_RUNTIME_SCOPE
             .scope("runtime-b".to_owned(), async {
-                crate::element_token::resolve_element_args(pid, None, Some(&token), None, "click")
-                    .unwrap_err()
+                crate::element_token::resolve_element_args(
+                    pid,
+                    None,
+                    Some(&token),
+                    None,
+                    None,
+                    "click",
+                )
+                .unwrap_err()
             })
             .await
             .structured_content

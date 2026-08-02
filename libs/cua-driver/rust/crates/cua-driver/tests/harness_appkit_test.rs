@@ -103,6 +103,21 @@ fn snapshot_elements(driver: &mut McpDriver, pid: u32, window_id: u64) -> ToolRe
     )
 }
 
+fn element_token_by_id(snapshot: &ToolResponse, identifier: &str) -> String {
+    let index = element_index_by_id(snapshot.tree_text(), identifier)
+        .unwrap_or_else(|| panic!("{identifier} element_index not found"));
+    snapshot.structured()["elements"]
+        .as_array()
+        .and_then(|elements| {
+            elements
+                .iter()
+                .find(|element| element["element_index"].as_u64() == Some(index))
+        })
+        .and_then(|element| element["element_token"].as_str())
+        .unwrap_or_else(|| panic!("{identifier} element_token not found"))
+        .to_owned()
+}
+
 fn element_pixel_frame(snapshot: &ToolResponse, identifier: &str) -> (f64, f64, f64, f64) {
     let index = element_index_by_id(snapshot.tree_text(), identifier)
         .unwrap_or_else(|| panic!("{identifier} element_index not found"));
@@ -248,6 +263,141 @@ fn harness_appkit_smoke() {
     );
 }
 
+#[test]
+#[ignore]
+fn harness_appkit_query_projects_structured_elements() {
+    run_case(
+        native_readonly_case(
+            "appkit",
+            "query_projection",
+            Targeting::Ax,
+            DriverRoute::AxRead,
+            vec![OracleKind::AxState],
+        ),
+        |pid, wid, driver| {
+            let response = driver.call(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "query": "btn-increment",
+                    "include_screenshot": false
+                }),
+            );
+            assert!(
+                !response.is_error(),
+                "query snapshot failed: {}",
+                response.text()
+            );
+            let total = response.structured()["total_element_count"]
+                .as_u64()
+                .expect("total_element_count");
+            let returned = response.structured()["returned_element_count"]
+                .as_u64()
+                .expect("returned_element_count");
+            let elements = response.structured()["elements"]
+                .as_array()
+                .expect("projected elements");
+            assert_eq!(returned as usize, elements.len());
+            assert!(
+                returned < total,
+                "query did not compact {returned}/{total} elements"
+            );
+            assert!(has_id(response.tree_text(), "btn-increment"));
+            let _ = element_token_by_id(&response, "btn-increment");
+            Observation::delivered(vec![OracleKind::AxState], Evidence::default())
+        },
+    );
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_stale_element_token_fails_closed() {
+    run_case(
+        native_readonly_case(
+            "appkit",
+            "stale_element_token",
+            Targeting::Ax,
+            DriverRoute::AxRead,
+            vec![OracleKind::AxState],
+        ),
+        |pid, wid, driver| {
+            let first = snapshot_elements(driver, pid, wid);
+            let token = element_token_by_id(&first, "btn-increment");
+            let _newer = snapshot_elements(driver, pid, wid);
+            let refused = driver.call(
+                "click",
+                serde_json::json!({"pid": pid as i64, "element_token": token}),
+            );
+            assert!(
+                refused.is_error(),
+                "stale token was accepted: {}",
+                refused.text()
+            );
+            assert_eq!(
+                refused.structured()["refusal"]["code"].as_str(),
+                Some("stale_element_token")
+            );
+            let post = snapshot_elements(driver, pid, wid);
+            assert!(
+                post.tree_text().contains("counter=0"),
+                "stale click mutated counter"
+            );
+            Observation::delivered(vec![OracleKind::AxState], Evidence::default())
+        },
+    );
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_invoke_menu_live_path() {
+    run_case(
+        native_foreground_case(
+            "appkit",
+            "invoke_menu",
+            Targeting::Ax,
+            DriverRoute::MacosAxAction,
+        ),
+        |pid, wid, driver| {
+            let refused = driver.call(
+                "invoke_menu",
+                serde_json::json!({
+                    "pid": pid,
+                    "window_id": wid,
+                    "path": ["Window", "Arrange", "Missing"]
+                }),
+            );
+            assert!(refused.is_error(), "missing menu path was accepted");
+            assert!(snapshot_elements(driver, pid, wid)
+                .tree_text()
+                .contains("menu_action=none"));
+
+            let invoked = driver.call(
+                "invoke_menu",
+                serde_json::json!({
+                    "pid": pid,
+                    "window_id": wid,
+                    "path": ["Window", "Arrange", "Left"]
+                }),
+            );
+            assert!(
+                !invoked.is_error(),
+                "invoke_menu failed: {}",
+                invoked.text()
+            );
+            assert_eq!(invoked.action_effect(), Some("unverifiable"));
+            std::thread::sleep(Duration::from_millis(300));
+            let post = snapshot_elements(driver, pid, wid);
+            assert!(
+                post.tree_text().contains("menu_action=window_arrange_left"),
+                "menu action did not reach fixture: {}",
+                post.tree_text()
+            );
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        },
+    );
+}
+
 /// text_input: type_text into the NSTextField, verify the mirror label
 /// shows the typed string. Exercises the AX type_text path
 /// (AXSetAttribute on AXValue, or CGEvent fallback).
@@ -274,6 +424,7 @@ fn harness_appkit_text_input() {
                     "pid": pid as i64,
                     "window_id": wid,
                     "element_index": idx,
+                    "snapshot_id": snap_pre.snapshot_id(),
                     "value": "hello-cua"
                 }),
             );
@@ -316,6 +467,7 @@ fn harness_appkit_type_text_background() {
                 "type_text",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "snapshot_id": snap_pre.snapshot_id(),
                     "text": "kbd-cua", "delivery_mode": "background"
                 }),
             );
@@ -357,6 +509,7 @@ fn harness_appkit_scroll_foreground() {
                     "pid": pid as i64,
                     "window_id": wid,
                     "element_index": index,
+                    "snapshot_id": pre.snapshot_id(),
                     "direction": "down",
                     "amount": 5,
                     "delivery_mode": "foreground"
@@ -396,6 +549,7 @@ fn harness_appkit_scroll_background() {
                 "pid": pid as i64,
                 "window_id": wid,
                 "element_index": index,
+                "snapshot_id": pre.snapshot_id(),
                 "direction": "down",
                 "amount": 5,
                 "delivery_mode": "background"
@@ -446,6 +600,7 @@ fn harness_appkit_counter() {
                     "pid": pid as i64,
                     "window_id": wid,
                     "element_index": idx,
+                    "snapshot_id": snap_pre.snapshot_id(),
                     "action": "press",
                     "delivery_mode": "background"
                 }),

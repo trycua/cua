@@ -508,7 +508,11 @@ impl Tool for GetWindowStateTool {
             (None, Some(r)) if scope_matched => build_elements_array(&r.nodes),
             _ => Vec::new(),
         };
-        let elements_json = project_elements_for_query(elements_json, query.as_deref(), &tree_md);
+        let elements_json = cua_driver_core::element_query::project_elements_for_query(
+            elements_json,
+            query.as_deref(),
+            &tree_md,
+        );
         let filtered_element_count = elements_json.len();
         // The structured array intentionally contains only actionable nodes,
         // and AX child reads can fail independently of the element/depth caps.
@@ -520,6 +524,8 @@ impl Tool for GetWindowStateTool {
             "window_id": window_id,
             "pid": pid,
             "element_count": element_count,
+            "total_element_count": element_count,
+            "returned_element_count": filtered_element_count,
             "elements_complete": elements_complete,
             "tree_markdown": tree_md,
             "elements": elements_json,
@@ -861,32 +867,6 @@ pub(crate) fn build_elements_array(nodes: &[crate::ax::tree::AXNode]) -> Vec<ser
 /// the exact matching rows and ancestor chain, so use its indices as the
 /// projection source of truth instead of duplicating query matching over the
 /// structured fields.
-fn project_elements_for_query(
-    mut elements: Vec<serde_json::Value>,
-    query: Option<&str>,
-    filtered_markdown: &str,
-) -> Vec<serde_json::Value> {
-    if query.is_none() {
-        return elements;
-    }
-
-    let visible_indices: std::collections::HashSet<u64> = filtered_markdown
-        .lines()
-        .filter_map(|line| {
-            let rendered = line.trim_start().strip_prefix("- [")?;
-            let (index, _) = rendered.split_once(']')?;
-            index.parse().ok()
-        })
-        .collect();
-    elements.retain(|entry| {
-        entry
-            .get("element_index")
-            .and_then(serde_json::Value::as_u64)
-            .is_some_and(|index| visible_indices.contains(&index))
-    });
-    elements
-}
-
 #[cfg(test)]
 mod window_scope_contract_tests {
     use super::*;
@@ -1008,6 +988,7 @@ mod window_scope_contract_tests {
 mod tests {
     use super::*;
     use crate::ax::tree::AXNode;
+    use cua_driver_core::element_query::project_elements_for_query;
 
     fn node(
         idx: Option<usize>,
@@ -1321,9 +1302,8 @@ mod tests {
         assert_eq!(elements[2]["label"], "from-id");
     }
 
-    /// Surface 6: every element entry must carry a non-empty
-    /// `element_token` alongside its integer `element_index`. The
-    /// integer field stays unchanged — the token is purely additive.
+    /// Every element entry carries a non-empty snapshot-bound
+    /// `element_token` alongside its numeric `element_index`.
     #[test]
     fn build_elements_array_with_token_emits_element_token_per_row() {
         let reg = cua_driver_core::element_token::global();

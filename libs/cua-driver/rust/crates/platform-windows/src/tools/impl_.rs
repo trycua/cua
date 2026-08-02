@@ -238,8 +238,8 @@ async fn track_overlay_drag(
 }
 use cua_driver_contract::{
     ClickButton, ClickInput, DragInput, GetCursorPositionInput, GetDesktopStateInput,
-    GetScreenSizeInput, HotkeyInput, MoveCursorInput, PressKeyInput, ScrollDirection, ScrollInput,
-    TypeTextInput,
+    GetScreenSizeInput, HotkeyInput, InvokeMenuInput, MoveCursorInput, PressKeyInput,
+    ScrollDirection, ScrollInput, TypeTextInput,
 };
 use cua_driver_core::{
     protocol::ToolResult,
@@ -906,9 +906,10 @@ impl Tool for GetWindowStateTool {
                 picks a window implicitly.\n\n\
                 `window_id` MUST belong to `pid`; the call returns `isError: true` otherwise. \
                 The driver does not auto-fall-back to a different window.\n\n\
-                Set `query` to a case-insensitive substring to filter `tree_markdown` down to \
-                matching lines plus their ancestor chain. element_index values and \
-                `element_count` are unchanged — the filter only trims the rendered Markdown.\n\n\
+                Set `query` to a case-insensitive substring to project BOTH `tree_markdown` \
+                and `structuredContent.elements` to matching rows plus their ancestor chain. \
+                Original element indices are preserved. `total_element_count` reports the \
+                complete snapshot; `returned_element_count` reports the projection.\n\n\
                 Always returns BOTH the element tree AND a screenshot — ground on both \
                 and cross-check (the tree lies on some surfaces). Choose the modality at \
                 ACTION time: an element ax action (element_index/element_token → \
@@ -938,7 +939,7 @@ impl Tool for GetWindowStateTool {
                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
                 "include_screenshot":{"type":"boolean","description":"Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action)."},
                 "screenshot_out_file":{"type":"string","description":"When set, write the PNG to this file path instead of embedding base64 in the response. The structured output will contain `screenshot_file_path` instead."},
-                "query":{"type":"string","description":"Optional case-insensitive substring. When set, `tree_markdown` only contains lines that match plus their ancestor chain; element indices and `element_count` are unchanged."},
+                "query":{"type":"string","description":"Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count."},
                 "max_elements":{"type":"integer","minimum":1,"description":"Cap on the total number of UIA nodes walked. Truncates depth-first; markdown and structured elements truncate together. Omit for the default (5 000). Lower for Electron / large web apps that produce 10k+ element trees."},
                 "max_depth":{"type":"integer","minimum":1,"description":"Cap on the UIA-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower for deep menu / Electron trees."}
             },"additionalProperties":false}),
@@ -1209,6 +1210,13 @@ impl Tool for GetWindowStateTool {
                             Some(entry)
                         })
                         .collect();
+                    let elements = cua_driver_core::element_query::project_elements_for_query(
+                        elements,
+                        query.as_deref(),
+                        &tr.tree_markdown,
+                    );
+                    structured["total_element_count"] = json!(count);
+                    structured["returned_element_count"] = json!(elements.len());
                     structured["elements"] = json!(elements);
                     // Surface 6: snapshot id mirror for debug correlation.
                     if let Some(snapshot_id) = snapshot_id {
@@ -2621,6 +2629,7 @@ impl Tool for ClickTool {
                     "window_id":{"type":"integer","description":"HWND for the window whose get_window_state produced the element_index. Required when element_index is used. Optional when element_token is supplied (the token carries it)."},
                     "element_index": cua_driver_core::tool_schema::element_index_schema(),
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                    "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                     "x":{"type":"number","description":"X in window-local screenshot pixels — same space as the PNG get_window_state returns. Must be provided together with y."},
                     "y":{"type":"number","description":"Y in window-local screenshot pixels. Must be provided together with x."},
                     "button": cua_driver_core::tool_schema::button_schema(),
@@ -2749,6 +2758,7 @@ impl Tool for ClickTool {
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
             args.opt_u64("window_id").map(|v| v as u32),
             "click",
         ) {
@@ -3609,6 +3619,7 @@ impl Tool for TypeTextTool {
                     "window_id":{"type":"integer","description":"HWND of the target window. Required when element_index is used. Optional when element_token is supplied (the token carries it)."},
                     "element_index":{"type":"integer","description":"Element index from the last get_window_state for the same (pid, window_id). When supplied, type_text (1) writes via UIA ValuePattern.SetValue on that element (works for WPF/WinForms/UWP/XAML without focus steal) and (2) confirms by reading that element's value back by handle — focus-independent. A matching read-back produces effect:\"confirmed\" with value_readback evidence; an unchanged or unreadable value remains effect:\"unverifiable\". Strongly preferred over typing into 'whatever is focused' (no element_index), which falls back to PostMessage WM_CHAR plus a foreground-only focused-element read-back. Requires window_id."},
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                    "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                     "x":{"type":"number","description":"Window-local screenshot-pixel X of the field to type into — the element px action form. Pass x,y (no element_index) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the UIA/WM_CHAR path can't reach. Read straight off the get_window_state PNG, same convention as click."},
                     "y":{"type":"number","description":"Window-local screenshot-pixel Y of the field (see x)."},
                     "delay_ms":{"type":"integer","minimum":0,"maximum":200,"description":"Milliseconds between characters. Default 30."},
@@ -3676,6 +3687,7 @@ impl Tool for TypeTextTool {
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
             args.opt_u64("window_id").map(|v| v as u32),
             "type_text",
         ) {
@@ -4339,7 +4351,8 @@ impl Tool for PressKeyTool {
                     "key":{"type":"string","description":"Key name (return, tab, escape, up, down, left, right, space, delete, home, end, pageup, pagedown, f1-f12, letter, digit)."},
                     "modifiers":{"type":"array","items":{"type":"string"},"description":"Optional modifier names held while the key is pressed (ctrl/shift/alt/win)."},
                     "element_index":{"type":"integer","description":"Optional element_index from the last get_window_state; focuses that UIA element before the key is delivered."},
-                    "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
+                    "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                    "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                     "x":{"type":"number","description":"Window-local screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the UIA path can't focus. Pass with y, no element_index."},
                     "y":{"type":"number","description":"Window-local screenshot-pixel Y (see x)."},
                     "window_id":{"type":"integer","description":"HWND for the target window. Required when element_index is used; otherwise auto-resolves the pid's first visible window."},
@@ -4400,6 +4413,7 @@ impl Tool for PressKeyTool {
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
             args.opt_u64("window_id").map(|v| v as u32),
             "press_key",
         ) {
@@ -5016,6 +5030,7 @@ impl Tool for SetValueTool {
                     "window_id":{"type":"integer","description":"HWND of the window. Required when element_index is used; optional when element_token is supplied (the token carries it)."},
                     "element_index": cua_driver_core::tool_schema::element_index_schema(),
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                    "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                     "value":{"type":"string","description":"New value. UIA will coerce to the element's native type."}
                 },"additionalProperties":false
             }),
@@ -5043,6 +5058,7 @@ impl Tool for SetValueTool {
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
             args.opt_u64("window_id").map(|v| v as u32),
             "set_value",
         ) {
@@ -5214,6 +5230,7 @@ impl Tool for ScrollTool {
                     "window_id":{"type":"integer","description":"HWND of the target window. Required when element_index is used; otherwise auto-resolves the pid's first visible window."},
                     "element_index":{"type":"integer","description":"Optional element_index. Accepted for parity; currently no-op on Windows."},
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                    "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                     "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
@@ -5297,6 +5314,7 @@ impl Tool for ScrollTool {
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
             args.opt_u64("window_id").map(|v| v as u32),
             "scroll",
         ) {
@@ -5779,6 +5797,7 @@ impl Tool for DoubleClickTool {
                 "window_id":{"type":"integer","description":"HWND for the target window. Required when element_index is used. Optional when element_token is supplied (the token carries it)."},
                 "element_index": cua_driver_core::tool_schema::element_index_schema(),
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                 "x":{"type":"number","description":"X in window-local screenshot pixels. Must be provided together with y."},
                 "y":{"type":"number","description":"Y in window-local screenshot pixels. Must be provided together with x."},
                 "modifier": cua_driver_core::tool_schema::modifier_schema(),
@@ -5802,6 +5821,7 @@ impl Tool for DoubleClickTool {
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
             args.opt_u64("window_id").map(|v| v as u32),
             "double_click",
         ) {
@@ -6117,6 +6137,7 @@ impl Tool for RightClickTool {
                 "window_id":{"type":"integer","description":"HWND for the target window. Required when element_index is used. Optional when element_token is supplied (the token carries it)."},
                 "element_index": cua_driver_core::tool_schema::element_index_schema(),
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                 "x":{"type":"number","description":"X in window-local screenshot pixels. Must be provided together with y."},
                 "y":{"type":"number","description":"Y in window-local screenshot pixels. Must be provided together with x."},
                 "modifier": cua_driver_core::tool_schema::modifier_schema(),
@@ -6140,6 +6161,7 @@ impl Tool for RightClickTool {
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
             args.opt_u64("window_id").map(|v| v as u32),
             "right_click",
         ) {
@@ -8002,6 +8024,124 @@ impl Tool for TypeTextCharsTool {
 // keyed on pid. Marked `destructive: true` so MCP clients with permission
 // gating prompt before invoking.
 
+// ── invoke_menu ───────────────────────────────────────────────────────────
+
+pub struct InvokeMenuTool;
+static INVOKE_MENU_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+fn normalized_menu_path(path: Vec<String>) -> Result<Vec<String>, String> {
+    if path.is_empty() || path.len() > 16 {
+        return Err("invoke_menu: path must contain between 1 and 16 segments".into());
+    }
+    path.into_iter()
+        .enumerate()
+        .map(|(index, segment)| {
+            let segment = segment.trim();
+            if segment.is_empty() {
+                Err(format!("invoke_menu: path segment {index} is empty"))
+            } else {
+                Ok(segment.to_owned())
+            }
+        })
+        .collect()
+}
+
+fn menu_refusal(message: String) -> ToolResult {
+    ToolResult::error(message.clone()).with_structured(json!({
+        "status": "refused",
+        "refusal": { "code": "menu_path_unavailable", "message": message }
+    }))
+}
+
+#[async_trait]
+impl Tool for InvokeMenuTool {
+    fn def(&self) -> &ToolDef {
+        INVOKE_MENU_DEF.get_or_init(|| {
+            let contract =
+                cua_driver_contract::tool_contract("invoke_menu").expect("invoke_menu contract");
+            ToolDef {
+                name: contract.name,
+                description: contract.description,
+                input_schema: contract.input_schema,
+                read_only: contract.annotations.read_only,
+                destructive: contract.annotations.destructive,
+                idempotent: contract.annotations.idempotent,
+                open_world: contract.annotations.open_world,
+            }
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        use cua_driver_core::action_record::{
+            ActionEffect, ActionEvidence, ActionExecutionRecord, ActionTransport, ActualDelivery,
+            EvidenceKind, RequestedDelivery,
+        };
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetForegroundWindow, GetWindowThreadProcessId, IsWindow,
+        };
+
+        let input: InvokeMenuInput = match parse_typed_input("invoke_menu", args) {
+            Ok(input) => input,
+            Err(result) => return result,
+        };
+        let path = match normalized_menu_path(input.path) {
+            Ok(path) => path,
+            Err(error) => return menu_refusal(error),
+        };
+        let hwnd_value = input.window_id;
+        let hwnd = HWND(hwnd_value as usize as *mut _);
+        if !unsafe { IsWindow(hwnd) }.as_bool() {
+            return menu_refusal("invoke_menu: window_id is closed, stale, or invalid".into());
+        }
+        let mut owner_pid = 0_u32;
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut owner_pid)) };
+        if owner_pid != input.pid {
+            return menu_refusal("invoke_menu: window_id does not belong to pid".into());
+        }
+
+        let outcome = tokio::task::spawn_blocking(move || {
+            let prior = unsafe { GetForegroundWindow() };
+            let needs_activation = prior != hwnd;
+            if needs_activation && !unsafe { crate::input::force_foreground_attached(hwnd) } {
+                return Err("invoke_menu: target window could not be activated".to_owned());
+            }
+            if needs_activation {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            let result = crate::uia::invoke_menu_path(hwnd_value, &path);
+            if needs_activation && !prior.0.is_null() {
+                let _ = unsafe { crate::input::force_foreground_attached(prior) };
+            }
+            result
+        })
+        .await;
+
+        match outcome {
+            Ok(Ok(())) => ToolResult::text(
+                "Resolved the live native menu path and dispatched its final accessibility action; verify the command's semantic effect from fresh state.",
+            )
+            .with_action_record(
+                ActionExecutionRecord::builder(
+                    ActionEffect::Unverifiable,
+                    ActionTransport::WindowsUiaInvoke,
+                    RequestedDelivery::Foreground,
+                )
+                .actual_delivery(ActualDelivery::Foreground)
+                .evidence(ActionEvidence {
+                    kind: EvidenceKind::NativeApiResult,
+                    detail: "Every menu hop resolved uniquely and UI Automation accepted the final action"
+                        .into(),
+                })
+                .build()
+                .expect("invoke_menu record is valid"),
+            ),
+            Ok(Err(error)) => menu_refusal(error),
+            Err(error) => menu_refusal(format!("invoke_menu: blocking task failed: {error}")),
+        }
+    }
+}
+
 // ── set_window_frame ──────────────────────────────────────────────────────
 
 pub struct SetWindowFrameTool;
@@ -8886,6 +9026,7 @@ pub fn build_registry_with_provider(
     let pid_window_candidates: WindowTargetCandidates = Arc::new(pid_window_target_candidates);
     r.register(pid_window_guarded(BringToFrontTool, &pid_window_candidates));
     r.register(Box::new(SetWindowFrameTool));
+    r.register(Box::new(InvokeMenuTool));
     r.register(Box::new(DebugWindowInfoTool));
     r.register(pid_window_guarded(
         ClickTool {

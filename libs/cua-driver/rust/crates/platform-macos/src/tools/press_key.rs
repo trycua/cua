@@ -57,8 +57,9 @@ fn def() -> &'static ToolDef {
                     "description": "Modifier keys: cmd, shift, option/alt, ctrl, fn."
                 },
                 "window_id": { "type": "integer", "description": "Target window. Required for delivery_mode:\"foreground\". Does NOT itself raise the window — raising is gated on delivery_mode." },
-                "element_index": { "type": "integer" },
-                "element_token": { "type": "string", "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded." },
+                "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                 "x": { "type": "number", "description": "Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_index." },
                 "y": { "type": "number", "description": "Screenshot-pixel Y (see x)." },
                 "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "Use desktop with no pid/window_id to send the key to the frontmost application." },
@@ -125,6 +126,7 @@ impl Tool for PressKeyTool {
             pid,
             element_index_arg,
             element_token_arg.as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
             window_id_arg,
             "press_key",
         ) {

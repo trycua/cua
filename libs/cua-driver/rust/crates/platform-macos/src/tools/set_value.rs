@@ -70,8 +70,9 @@ fn def() -> &'static ToolDef {
                     "type": "integer",
                     "description": "CGWindowID for the window whose get_window_state produced the element_index. Required when element_index is used; optional when element_token is supplied (the token carries it)."
                 },
-                "element_index": { "type": "integer", "description": "Element index from last get_window_state. Must be supplied unless element_token is provided. REQUIRES `pid` and `window_id` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op." },
-                "element_token": { "type": "string",  "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded." },
+                "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                 "value": {
                     "type": "string",
                     "description": "New value. AX will coerce to the element's native type."
@@ -113,6 +114,7 @@ impl Tool for SetValueTool {
             pid,
             element_index_arg,
             element_token_arg.as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
             window_id_arg,
             "set_value",
         ) {

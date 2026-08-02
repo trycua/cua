@@ -3097,6 +3097,59 @@ class _UniffiFfiConverterTypeHotkeyInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.session, buf)
 
 @dataclass
+class InvokeMenuInput:
+    """
+    Exact, immediate-child application menu path to resolve and invoke through
+    the operating system's accessibility API. Path labels are matched after
+    trimming surrounding whitespace and otherwise remain case-sensitive.
+"""
+    def __init__(self, *, pid:int, window_id:int, path:typing.List[str], session:typing.Optional[str]):
+        self.pid = pid
+        self.window_id = window_id
+        self.path = path
+        self.session = session
+
+
+
+
+    def __str__(self):
+        return "InvokeMenuInput(pid={}, window_id={}, path={}, session={})".format(self.pid, self.window_id, self.path, self.session)
+    def __eq__(self, other):
+        if self.pid != other.pid:
+            return False
+        if self.window_id != other.window_id:
+            return False
+        if self.path != other.path:
+            return False
+        if self.session != other.session:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeInvokeMenuInput(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return InvokeMenuInput(
+            pid=_UniffiFfiConverterUInt32.read(buf),
+            window_id=_UniffiFfiConverterUInt64.read(buf),
+            path=_UniffiFfiConverterSequenceString.read(buf),
+            session=_UniffiFfiConverterOptionalString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterUInt32.check_lower(value.pid)
+        _UniffiFfiConverterUInt64.check_lower(value.window_id)
+        _UniffiFfiConverterSequenceString.check_lower(value.path)
+        _UniffiFfiConverterOptionalString.check_lower(value.session)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterUInt32.write(value.pid, buf)
+        _UniffiFfiConverterUInt64.write(value.window_id, buf)
+        _UniffiFfiConverterSequenceString.write(value.path, buf)
+        _UniffiFfiConverterOptionalString.write(value.session, buf)
+
+@dataclass
 class MoveCursorInput:
     def __init__(self, *, x:float, y:float, scope:DesktopScope, session:typing.Optional[str]):
         self.x = x
@@ -4706,6 +4759,7 @@ __all__ = [
     "GetScreenSizeInput",
     "GetSessionStateInput",
     "HotkeyInput",
+    "InvokeMenuInput",
     "MoveCursorInput",
     "PredicateOutcome",
     "PressKeyInput",

@@ -85,6 +85,20 @@ fn element_index(state: &ToolResponse, name: &str) -> u64 {
     })
 }
 
+fn element_token(state: &ToolResponse, name: &str) -> String {
+    let index = element_index(state, name);
+    state.structured()["elements"]
+        .as_array()
+        .and_then(|elements| {
+            elements
+                .iter()
+                .find(|element| element["element_index"].as_u64() == Some(index))
+        })
+        .and_then(|element| element["element_token"].as_str())
+        .unwrap_or_else(|| panic!("{name:?} element_token not found"))
+        .to_owned()
+}
+
 fn element_rect(
     driver: &mut McpDriver,
     pid: u32,
@@ -224,6 +238,132 @@ fn run_case(case: CaseSpec, test: impl FnOnce(u32, u64, &mut McpDriver) -> Obser
     });
 }
 
+#[test]
+#[ignore]
+fn harness_gtk3_query_projects_structured_elements() {
+    run_case(
+        native_readonly_case(
+            "gtk3",
+            "query_projection",
+            Targeting::Ax,
+            DriverRoute::AxRead,
+            vec![OracleKind::AxState],
+        ),
+        |pid, window_id, driver| {
+            let response = driver.call(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": pid,
+                    "window_id": window_id,
+                    "query": "btn-increment",
+                    "include_screenshot": false
+                }),
+            );
+            assert!(
+                !response.is_error(),
+                "query snapshot failed: {}",
+                response.text()
+            );
+            let total = response.structured()["total_element_count"]
+                .as_u64()
+                .expect("total_element_count");
+            let returned = response.structured()["returned_element_count"]
+                .as_u64()
+                .expect("returned_element_count");
+            let elements = response.structured()["elements"]
+                .as_array()
+                .expect("projected elements");
+            assert_eq!(returned as usize, elements.len());
+            assert!(
+                returned < total,
+                "query did not compact {returned}/{total} elements"
+            );
+            let _ = element_token(&response, "btn-increment");
+            Observation::delivered(vec![OracleKind::AxState], Evidence::default())
+        },
+    );
+}
+
+#[test]
+#[ignore]
+fn harness_gtk3_stale_element_token_fails_closed() {
+    run_case(
+        native_readonly_case(
+            "gtk3",
+            "stale_element_token",
+            Targeting::Ax,
+            DriverRoute::AxRead,
+            vec![OracleKind::AxState],
+        ),
+        |pid, window_id, driver| {
+            let first = snapshot(driver, pid, window_id);
+            let token = element_token(&first, "btn-increment");
+            let _newer = snapshot(driver, pid, window_id);
+            let refused = driver.call(
+                "click",
+                serde_json::json!({"pid": pid, "element_token": token}),
+            );
+            assert!(
+                refused.is_error(),
+                "stale token was accepted: {}",
+                refused.text()
+            );
+            assert_eq!(
+                refused.structured()["refusal"]["code"].as_str(),
+                Some("stale_element_token")
+            );
+            assert!(snapshot(driver, pid, window_id)
+                .tree_text()
+                .contains("counter=0"));
+            Observation::delivered(vec![OracleKind::AxState], Evidence::default())
+        },
+    );
+}
+
+#[test]
+#[ignore]
+fn harness_gtk3_invoke_menu_live_path() {
+    run_case(
+        native_foreground_case(
+            "gtk3",
+            "invoke_menu",
+            Targeting::Ax,
+            DriverRoute::LinuxAtSpiAction,
+        ),
+        |pid, window_id, driver| {
+            let refused = driver.call(
+                "invoke_menu",
+                serde_json::json!({
+                    "pid": pid,
+                    "window_id": window_id,
+                    "path": ["Window", "Arrange", "Missing"]
+                }),
+            );
+            assert!(refused.is_error(), "missing menu path was accepted");
+            assert!(snapshot(driver, pid, window_id)
+                .tree_text()
+                .contains("menu_action=none"));
+
+            let invoked = driver.call(
+                "invoke_menu",
+                serde_json::json!({
+                    "pid": pid,
+                    "window_id": window_id,
+                    "path": ["Window", "Arrange", "Left"]
+                }),
+            );
+            assert!(
+                !invoked.is_error(),
+                "invoke_menu failed: {}",
+                invoked.text()
+            );
+            assert_eq!(invoked.action_effect(), Some("unverifiable"));
+            wait_for_state(driver, pid, window_id, "menu_action=window_arrange_left");
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        },
+    );
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Operation {
     AxClick {
@@ -333,7 +473,8 @@ fn invoke_operation(
                     "click",
                     serde_json::json!({
                         "pid": pid as i64, "window_id": window_id,
-                        "element_index": index, "delivery_mode": mode
+                        "element_index": index, "snapshot_id": pre.snapshot_id(),
+                        "delivery_mode": mode
                     }),
                 ),
                 expected,
@@ -350,7 +491,8 @@ fn invoke_operation(
                     "type_text",
                     serde_json::json!({
                         "pid": pid as i64, "window_id": window_id,
-                        "element_index": index, "text": text, "delivery_mode": mode
+                        "element_index": index, "snapshot_id": pre.snapshot_id(),
+                        "text": text, "delivery_mode": mode
                     }),
                 ),
                 expected,
@@ -367,7 +509,8 @@ fn invoke_operation(
                     "set_value",
                     serde_json::json!({
                         "pid": pid as i64, "window_id": window_id,
-                        "element_index": index, "value": value
+                        "element_index": index, "snapshot_id": pre.snapshot_id(),
+                        "value": value
                     }),
                 ),
                 expected,
@@ -451,6 +594,7 @@ fn invoke_operation(
                 args["y"] = serde_json::json!(y + height / 2.0);
             } else {
                 args["element_index"] = serde_json::json!(element_index(&pre, target));
+                args["snapshot_id"] = serde_json::json!(pre.snapshot_id());
             }
             let response = driver.call("scroll", args);
             if expect_refusal {
@@ -495,7 +639,8 @@ fn invoke_operation(
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": window_id,
-                    "element_index": index, "delivery_mode": mode
+                    "element_index": index, "snapshot_id": pre.snapshot_id(),
+                    "delivery_mode": mode
                 }),
             );
             assert!(

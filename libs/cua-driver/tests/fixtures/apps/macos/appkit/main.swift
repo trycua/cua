@@ -363,6 +363,10 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate {
         menuActionLabel.stringValue = "menu_action=\(sender.title)"
     }
 
+    @objc func onArrangeLeft(_ sender: NSMenuItem) {
+        menuActionLabel.stringValue = "menu_action=window_arrange_left"
+    }
+
     func controlTextDidChange(_ obj: Notification) {
         guard let field = obj.object as? NSTextField else { return }
         if field === textInput {
@@ -405,7 +409,7 @@ final class ClickTargetButton: NSButton {
 
 // MARK: - Menu bar (Mac-specific scenario: ns_menubar)
 
-func installMenuBar() {
+func installMenuBar(target: HarnessWindowController) {
     let main = NSMenu()
     let appItem = NSMenuItem()
     main.addItem(appItem)
@@ -418,7 +422,25 @@ func installMenuBar() {
                                action: #selector(NSApplication.terminate(_:)),
                                keyEquivalent: "q"))
     appItem.submenu = appMenu
+
+    let windowItem = NSMenuItem(title: "Window", action: nil, keyEquivalent: "")
+    let windowMenu = NSMenu(title: "Window")
+    let arrangeItem = NSMenuItem(title: "Arrange", action: nil, keyEquivalent: "")
+    let arrangeMenu = NSMenu(title: "Arrange")
+    let leftItem = NSMenuItem(
+        title: "Left",
+        action: #selector(HarnessWindowController.onArrangeLeft(_:)),
+        keyEquivalent: ""
+    )
+    leftItem.target = target
+    leftItem.setAccessibilityIdentifier("menu-window-arrange-left")
+    arrangeMenu.addItem(leftItem)
+    arrangeItem.submenu = arrangeMenu
+    windowMenu.addItem(arrangeItem)
+    windowItem.submenu = windowMenu
+    main.addItem(windowItem)
     NSApp.mainMenu = main
+    NSApp.windowsMenu = windowMenu
 }
 
 // MARK: - Entry
@@ -428,8 +450,8 @@ struct CuaAppKitHarness {
     static func main() {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
-        installMenuBar()
         let controller = HarnessWindowController()
+        installMenuBar(target: controller)
         controller.show()
         app.activate(ignoringOtherApps: true)
         app.run()

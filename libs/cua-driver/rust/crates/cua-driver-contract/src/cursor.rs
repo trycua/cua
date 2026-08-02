@@ -234,8 +234,8 @@ pub fn classify_cursor_semantics(name: &str, args: &Value) -> Option<CursorSeman
             CursorAction::Navigate
         }
 
-        "launch_app" | "activate_app" | "bring_to_front" | "set_window_frame" | "list_apps"
-        | "list_windows" | "kill_app" => CursorAction::App,
+        "launch_app" | "activate_app" | "bring_to_front" | "set_window_frame" | "invoke_menu"
+        | "list_apps" | "list_windows" | "kill_app" => CursorAction::App,
 
         "upload_file" | "download_file" | "copy_file" | "move_file" => CursorAction::Transfer,
 
@@ -257,7 +257,7 @@ pub fn classify_cursor_semantics(name: &str, args: &Value) -> Option<CursorSeman
 
     let target = if name.starts_with("browser_") {
         Some(CursorTarget::Browser)
-    } else if name == "set_window_frame" {
+    } else if matches!(name, "set_window_frame" | "invoke_menu") {
         Some(CursorTarget::Desktop)
     } else if args
         .get("element_index")

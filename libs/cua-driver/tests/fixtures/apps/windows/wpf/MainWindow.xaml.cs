@@ -276,6 +276,7 @@ public partial class MainWindow : Window
     private void OnMenuFileNew(object sender, RoutedEventArgs e)  => LblMenuAction.Text = "menu_action=file_new";
     private void OnMenuFileOpen(object sender, RoutedEventArgs e) => LblMenuAction.Text = "menu_action=file_open";
     private void OnMenuEditCopy(object sender, RoutedEventArgs e) => LblMenuAction.Text = "menu_action=edit_copy";
+    private void OnMenuWindowArrangeLeft(object sender, RoutedEventArgs e) => LblMenuAction.Text = "menu_action=window_arrange_left";
 
     private void OnCtxAction(object sender, RoutedEventArgs e)
     {

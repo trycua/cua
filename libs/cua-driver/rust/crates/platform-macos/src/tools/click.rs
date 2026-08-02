@@ -118,16 +118,16 @@ fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "click".into(),
         description:
-            "Click against a target pid. **Prefer `element_index` over pixel \
-             coordinates** — element_index works on backgrounded / minimized / hidden / \
-             off-Space windows, surfaces a stable handle that survives rebuilds, and tells \
+            "Click against a target pid. **Prefer `element_token` over pixel \
+             coordinates** — the token works on backgrounded / minimized / hidden / \
+             off-Space windows, identifies one exact snapshot element, and tells \
              you what you're clicking via the cached element's role + label. Reach for \
              `x, y` only when the target is a canvas / video / WebGL / custom-drawn surface \
              that doesn't appear in the AX tree.\n\n\
              Two addressing modes:\n\n\
-             - element_index + window_id (from last get_window_state): AX action path. \
+             - element_token, or element_index + snapshot_id (from get_window_state): AX action path. \
                Works on backgrounded/hidden windows. No cursor move, no focus steal. \
-               element_index cache is scoped per (pid, window_id) and is replaced by the \
+               The snapshot cache is scoped per (pid, window_id) and is replaced by the \
                next snapshot of the same window — re-snapshot every turn before clicking.\n\n\
              - x, y (window-local screenshot pixels, top-left origin of the PNG returned \
                by get_window_state): CGEvent path. Synthesizes mouse events and posts to \
@@ -155,8 +155,9 @@ fn def() -> &'static ToolDef {
                 "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
                 "pid":           { "type": "integer", "description": "Target process ID." },
                 "window_id":     { "type": "integer", "description": "Target window ID. Required for element_index. Optional when element_token is supplied (the token carries it)." },
-                "element_index": { "type": "integer", "description": "Element index from last get_window_state. REQUIRES `pid` and `window_id` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op." },
-                "element_token": { "type": "string",  "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token` of the last get_window_state. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded — re-snapshot in that case." },
+                "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                 "x":             { "type": "number",  "description": "X in screenshot pixels, read straight off the image you were handed — no scaling math needed. With pid+window_id (capture_scope=window): window-local pixels from the get_window_state PNG (top-left origin). Windowless (no pid/window_id, capture_scope=desktop): pixels from the get_desktop_state PNG (the native full-display image). Either way, the pixel you read IS the pixel that gets clicked; the driver undoes the Retina backing scale + any downscale internally." },
                 "y":             { "type": "number",  "description": "Y in screenshot pixels (see x). Window-local from get_window_state, or full-display from get_desktop_state under capture_scope=desktop." },
                 "action":        { "type": "string",  "description": "AX action: press, show_menu, pick, confirm, cancel, open." },
@@ -337,6 +338,7 @@ impl Tool for ClickTool {
             pid,
             element_index_arg,
             element_token_arg.as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
             window_id_arg,
             "click",
         ) {

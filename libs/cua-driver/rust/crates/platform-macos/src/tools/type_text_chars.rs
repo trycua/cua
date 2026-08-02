@@ -34,8 +34,9 @@ fn def() -> &'static ToolDef {
                 "text":          { "type": "string",  "description": "Text to type." },
                 "delay_ms":      { "type": "integer", "description": "Milliseconds between characters (default 30)." },
                 "window_id":     { "type": "integer", "description": "Window ID for element focus. Optional when element_token is supplied." },
-                "element_index": { "type": "integer", "description": "Element to focus before typing." },
-                "element_token": { "type": "string",  "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded." },
+                "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                 "type_chars_only": { "type": "boolean", "description": "Skip AX focus, type directly. Default false." }
             },
             "additionalProperties": false
@@ -76,6 +77,7 @@ impl Tool for TypeTextCharsTool {
             pid,
             element_index_arg,
             element_token_arg.as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
             window_id_arg,
             "type_text_chars",
         ) {

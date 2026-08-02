@@ -29,6 +29,7 @@ It also covers the portable whole-desktop loop:
 - `get_cursor_position`
 - `move_cursor` with the required `scope="desktop"`
 - `set_window_frame` for exact, read-back-verified top-level window geometry
+- `invoke_menu` for an exact native application-menu path resolved live at each hop
 - `click` with the required `scope="desktop"`
 - `drag` and `scroll` in native desktop coordinates
 - `type_text`, `press_key`, and `hotkey` against the foreground application
@@ -88,7 +89,7 @@ Compatibility is tracked separately at each boundary:
 
 | Field | Current | Meaning |
 | --- | --- | --- |
-| `contract_version` | `0.5.0` | Generated manifest and typed SDK shape |
+| `contract_version` | `0.6.0` | Generated manifest and typed SDK shape |
 | `tools_list_schema_version` | `1` | cua-driver `tools/list` extension shape |
 | `capability_version` | `1` | Additive capability-token vocabulary |
 | `mcp_protocol_version` | `2025-06-18` | MCP initialization protocol served to agent runtimes |

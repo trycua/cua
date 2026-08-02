@@ -1875,6 +1875,65 @@ const FfiConverterTypeHotkeyInput = (() => {
     return new FFIConverter();
 })();
 
+/**
+ * Exact, immediate-child application menu path to resolve and invoke through
+ * the operating system's accessibility API. Path labels are matched after
+ * trimming surrounding whitespace and otherwise remain case-sensitive.
+ */
+export type InvokeMenuInput = {
+    pid: number,
+    windowId: bigint,
+    path: Array<string>,
+    /**
+     * Optional session id.
+     */
+    session?: string
+}
+
+/**
+ * Generated factory for {@link InvokeMenuInput} record objects.
+ */
+export const InvokeMenuInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<InvokeMenuInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<InvokeMenuInput>,
+    });
+})();
+
+const FfiConverterTypeInvokeMenuInput = (() => {
+    type TypeName = InvokeMenuInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                pid: FfiConverterUInt32.read(from),
+                windowId: FfiConverterUInt64.read(from),
+                path: FfiConverterSequenceString.read(from),
+                session: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterUInt32.write(value.pid, into);
+            FfiConverterUInt64.write(value.windowId, into);
+            FfiConverterSequenceString.write(value.path, into);
+            FfiConverterOptionalString.write(value.session, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterUInt32.allocationSize(value.pid) +
+             FfiConverterUInt64.allocationSize(value.windowId) +
+             FfiConverterSequenceString.allocationSize(value.path) +
+             FfiConverterOptionalString.allocationSize(value.session);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type MoveCursorInput = {
     x: number,
     y: number,
@@ -3276,6 +3335,7 @@ export default Object.freeze({
     FfiConverterTypeGetScreenSizeInput,
     FfiConverterTypeGetSessionStateInput,
     FfiConverterTypeHotkeyInput,
+    FfiConverterTypeInvokeMenuInput,
     FfiConverterTypeMoveCursorInput,
     FfiConverterTypePlatform,
     FfiConverterTypePredicateOutcome,

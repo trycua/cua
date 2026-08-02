@@ -62,14 +62,7 @@ class Pool:
         )._pool_request()
         client = _FleetClient()
         try:
-            try:
-                resource = await client.get_pool(name)
-            except LookupError:
-                resource = await client.create_pool(desired)
-            else:
-                resource.spec = desired.spec
-                resource = await client.update_pool(resource)
-            return cls(resource)
+            return cls(await client.reconcile_pool(desired))
         finally:
             await client.close()
 

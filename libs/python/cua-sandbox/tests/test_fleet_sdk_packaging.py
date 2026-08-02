@@ -19,7 +19,7 @@ class FleetSdkPackagingTests(unittest.TestCase):
 
         self.assertEqual(project["project"]["version"], "0.1.20")
         dependencies = project["project"]["dependencies"]
-        self.assertIn("cua-fleet==0.0.7", dependencies)
+        self.assertIn("cua-fleet==0.0.8", dependencies)
         self.assertFalse(any(dependency.startswith("cua-train") for dependency in dependencies))
         self.assertNotIn("cua-fleet", project["tool"]["uv"]["sources"])
         self.assertNotIn("cua-train", project["tool"]["uv"]["sources"])
@@ -50,7 +50,7 @@ class FleetSdkPackagingTests(unittest.TestCase):
         self.assertNotIn("cua-train", sandbox_dependencies)
         self.assertIn("cua-fleet", sandbox_requires_dist)
         self.assertNotIn("cua-train", sandbox_requires_dist)
-        self.assertEqual(packages["cua-fleet"]["version"], "0.0.7")
+        self.assertEqual(packages["cua-fleet"]["version"], "0.0.8")
         self.assertEqual(packages["cua-fleet"]["source"], {"registry": "https://pypi.org/simple"})
         self.assertNotIn("cua-train", fleet_dependencies)
         self.assertNotIn("cua-train", packages)

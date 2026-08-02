@@ -452,6 +452,186 @@ fn harness_appkit_text_input() {
     );
 }
 
+#[test]
+#[ignore]
+fn harness_appkit_element_foreground_press_key_commits_edit() {
+    run_case(
+        native_foreground_case(
+            "appkit",
+            "press_key_commit",
+            Targeting::Ax,
+            DriverRoute::MacosCgEventHid,
+        ),
+        |pid, wid, driver| {
+            let first = snapshot_elements(driver, pid, wid);
+            let field = element_token_by_id(&first, "txt-input");
+            let set = driver.call(
+                "set_value",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_token": field,
+                    "value": "inline-cua"
+                }),
+            );
+            assert!(!set.is_error(), "set_value failed: {}", set.text());
+
+            let second = snapshot_elements(driver, pid, wid);
+            assert!(
+                second.tree_text().contains("inline-cua"),
+                "transient edit value was not readable:\n{}",
+                second.tree_text()
+            );
+            assert!(
+                second.tree_text().contains("committed=none"),
+                "fixture reported a commit before Return:\n{}",
+                second.tree_text()
+            );
+            let field = element_token_by_id(&second, "txt-input");
+            let commit = driver.call(
+                "press_key",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_token": field,
+                    "key": "return",
+                    "delivery_mode": "foreground"
+                }),
+            );
+            assert!(
+                !commit.is_error(),
+                "foreground element press_key failed: {}",
+                commit.text()
+            );
+            assert_eq!(
+                commit.action_route(),
+                Some("global_input"),
+                "foreground press_key used the wrong public route: {}",
+                commit.raw
+            );
+            assert_eq!(
+                commit.action_delivery_mode(),
+                Some("foreground"),
+                "foreground press_key reported the wrong delivery: {}",
+                commit.raw
+            );
+            assert_eq!(
+                commit.action_effect(),
+                Some("unverifiable"),
+                "press_key claimed more truth than the tool itself observed: {}",
+                commit.raw
+            );
+
+            std::thread::sleep(Duration::from_millis(250));
+            let post = snapshot_elements(driver, pid, wid);
+            assert!(
+                post.tree_text().contains("committed=inline-cua"),
+                "Return did not commit the addressed edit:\n{}",
+                post.tree_text()
+            );
+            Observation::delivered_with_fixture_state(Vec::new())
+        },
+    );
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_modified_click_preserves_selection() {
+    run_case(
+        native_foreground_case(
+            "appkit",
+            "modified_click_selection",
+            Targeting::Ax,
+            DriverRoute::MacosCgEventHid,
+        ),
+        |pid, wid, driver| {
+            let first = snapshot_elements(driver, pid, wid);
+            let alpha = element_token_by_id(&first, "selection-alpha");
+            let select_alpha = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_token": alpha
+                }),
+            );
+            assert!(
+                !select_alpha.is_error(),
+                "select alpha failed: {}",
+                select_alpha.text()
+            );
+            std::thread::sleep(Duration::from_millis(200));
+
+            let second = snapshot_elements(driver, pid, wid);
+            assert!(
+                second.tree_text().contains("selection=alpha"),
+                "alpha was not selected:\n{}",
+                second.tree_text()
+            );
+            let beta = element_token_by_id(&second, "selection-beta");
+            let refused_background = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_token": beta,
+                    "modifier": ["cmd"]
+                }),
+            );
+            assert!(
+                refused_background.is_error(),
+                "background modified click was not refused: {}",
+                refused_background.text()
+            );
+            assert_eq!(
+                refused_background.structured()["code"],
+                "background_unavailable",
+                "background modified click returned the wrong refusal: {}",
+                refused_background.structured()
+            );
+            std::thread::sleep(Duration::from_millis(300));
+            let after_refusal = snapshot_elements(driver, pid, wid);
+            assert!(
+                after_refusal.tree_text().contains("selection=alpha"),
+                "refused modified click changed the prior selection:\n{}",
+                after_refusal.tree_text()
+            );
+
+            let beta = element_token_by_id(&after_refusal, "selection-beta");
+            let add_beta = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_token": beta,
+                    "modifier": ["cmd"],
+                    "delivery_mode": "foreground"
+                }),
+            );
+            assert!(
+                !add_beta.is_error(),
+                "foreground modified click failed: {}",
+                add_beta.text()
+            );
+            assert_eq!(
+                add_beta.structured()["effect"],
+                "confirmed",
+                "modified click lacked settled selection proof: {}",
+                add_beta.structured()
+            );
+
+            std::thread::sleep(Duration::from_millis(250));
+            let post = snapshot_elements(driver, pid, wid);
+            assert!(
+                post.tree_text().contains("selection=alpha,beta"),
+                "modified click replaced or lost the prior selection:\n{}",
+                post.tree_text()
+            );
+            Observation::delivered_with_fixture_state(Vec::new())
+        },
+    );
+}
+
 /// type_text: synthesize a keystroke into the NSTextField (CGEvent
 /// path, distinct from set_value's AX path). Verifies the keyboard
 /// dispatch chain reaches a backgrounded Cocoa text input.

@@ -127,6 +127,22 @@ class HarnessWindow(Gtk.Window):
         self.chk_status = Gtk.Label(label="agreed=False", xalign=0)
         root.pack_start(self.chk_status, False, False, 0)
 
+        # ── multi-selection ───────────────────────────────────────────────
+        section(root, "multi selection")
+        self.selection = Gtk.ListBox()
+        self.selection.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
+        for value in ("alpha", "beta", "gamma"):
+            row = aid(Gtk.ListBoxRow(), f"selection-{value}")
+            row.set_activatable(True)
+            row.set_selectable(True)
+            row.set_can_focus(True)
+            row.add(Gtk.Label(label=value, xalign=0))
+            self.selection.add(row)
+        self.selection.connect("selected-rows-changed", self.on_selection_changed)
+        root.pack_start(self.selection, False, False, 0)
+        self.selection_status = Gtk.Label(label="selection=none", xalign=0)
+        root.pack_start(self.selection_status, False, False, 0)
+
         # ── context_menu ──────────────────────────────────────────────────
         section(root, "context menu")
         self.ctx = aid(Gtk.Button(label="Right-click for context menu"), "btn-context")
@@ -217,6 +233,14 @@ class HarnessWindow(Gtk.Window):
 
     def on_chk(self, c):
         self.chk_status.set_text(f"agreed={c.get_active()}")
+
+    def on_selection_changed(self, list_box):
+        values = sorted(
+            row.get_child().get_text() for row in list_box.get_selected_rows()
+        )
+        self.selection_status.set_text(
+            "selection=" + (",".join(values) if values else "none")
+        )
 
     def on_ctx_press(self, _w, ev):
         if ev.button == 3:

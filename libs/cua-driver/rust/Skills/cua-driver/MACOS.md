@@ -298,8 +298,16 @@ breadth Windows and Linux already exposed (`type_text` / `press_key` /
 no raise, no focus steal. `"foreground"` briefly fronts the owning app,
 acts, then restores the prior frontmost — the explicit last resort for a
 surface that only accepts events while frontmost (the canvas/viewport/game
-case below). Element-indexed (AX) actions are inherently background and
-hold the no-foreground contract without the flag.
+case below). Unmodified element-indexed (AX) actions remain background-capable
+and hold the no-foreground contract without the flag.
+
+Modified clicks are the deliberate exception: pass
+`delivery_mode:"foreground"` and a concrete `window_id`. macOS applications
+can discard PID-routed modifier state after initially publishing a transient
+selection, so Cua Driver refuses that background combination. The foreground
+rung holds physical HID modifier keys around the click, restores the hardware
+cursor and prior foreground app, and confirms list-like selection changes with
+a stable AX readback.
 
 macOS-specific residuals worth knowing (the rest of the capture/dispatch/
 addressing params are a shared cross-platform contract — see `SKILL.md` →

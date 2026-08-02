@@ -1559,6 +1559,17 @@ fn x11_pixel_click_no_focus_steal(
     crate::input::send_click(xid, lx, ly, count, button)
 }
 
+fn x11_pixel_click_no_focus_steal_modifiers(
+    xid: u64,
+    lx: i32,
+    ly: i32,
+    button: u8,
+    count: usize,
+    modifiers: &[&str],
+) -> anyhow::Result<()> {
+    crate::input::send_click_with_modifiers(xid, lx, ly, count, button, modifiers)
+}
+
 fn mouse_button_name(button: u8) -> &'static str {
     match button {
         3 => "right",
@@ -1854,7 +1865,9 @@ impl Tool for ClickTool {
                 field is fully back-compat. X11: routes through XSendEvent ButtonPress/Release \
                 with the matching button code. Native Wayland: only left-button is supported \
                 via the virtual-pointer protocol — right/middle return an error rather than \
-                silently degrading to left.".into(),
+                silently degrading to left. `modifier` holds ctrl/shift/alt/super for the \
+                click on X11. Native Wayland refuses modified pointer clicks until its input \
+                protocol can carry keyboard modifier state.".into(),
             input_schema: json!({
                 // `pid` is conditionally required (validated in code: needed for
                 // window/element clicks, omitted for windowless scope="desktop"),
@@ -1875,6 +1888,7 @@ impl Tool for ClickTool {
                     // back-compat prose the click button-schema test asserts on.
                     "button":{"type":"string","enum":["left","right","middle"],"description":"Mouse button. Default: \"left\" (legacy back-compat). X11: routed via ButtonPress/Release with the matching evdev code. Native Wayland: only left-button is supported via the virtual-pointer protocol; right/middle return an error."},
                     "count":{"type":"integer"},
+                    "modifier": cua_driver_core::tool_schema::modifier_schema(),
                     "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."},
                     "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
@@ -1886,6 +1900,7 @@ impl Tool for ClickTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         let cursor_id = resolve_cursor_key(&args);
+        let modifiers: Vec<String> = args.str_array("modifier");
 
         // ── Window-less screen-absolute branch (capture_scope="desktop") ──────
         // x,y with NO pid and NO window_id → TRUE SCREEN pixels. Foreground,
@@ -1927,9 +1942,22 @@ impl Tool for ClickTool {
             overlay_glide_to_for(&cursor_id, sx as f64, sy as f64).await;
             let r = tokio::task::spawn_blocking(move || {
                 if crate::wayland::wayland_input_enabled() {
+                    if !modifiers.is_empty() {
+                        anyhow::bail!(
+                            "modified desktop clicks are unavailable on native Wayland: \
+                             the virtual-pointer route cannot carry keyboard modifier state"
+                        );
+                    }
                     crate::wayland::click_desktop(sx, sy, n as u32, button)
                 } else {
-                    crate::input::send_click_xtest_desktop(sx, sy, button, n)
+                    let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                    crate::input::send_click_xtest_desktop_with_modifiers(
+                        sx,
+                        sy,
+                        button,
+                        n,
+                        &modifier_refs,
+                    )
                 }
             })
             .await;
@@ -2033,19 +2061,22 @@ impl Tool for ClickTool {
 
             // Chromium can execute a genuine AT-SPI action without focus. Try
             // that route before applying its background synthetic-input gate.
-            let ax_result =
-                tokio::task::spawn_blocking(move || crate::atspi::perform_action(pid, idx)).await;
-            if let Ok(Ok((_action, suspected_noop))) = ax_result {
-                let mut structured = json!({
-                    "path": "ax",
-                    "verified": false,
-                    "effect": if suspected_noop { "suspected_noop" } else { "unverifiable" },
-                });
-                if suspected_noop {
-                    structured["escalation"] = non_ax_escalation();
+            if modifiers.is_empty() {
+                let ax_result =
+                    tokio::task::spawn_blocking(move || crate::atspi::perform_action(pid, idx))
+                        .await;
+                if let Ok(Ok((_action, suspected_noop))) = ax_result {
+                    let mut structured = json!({
+                        "path": "ax",
+                        "verified": false,
+                        "effect": if suspected_noop { "suspected_noop" } else { "unverifiable" },
+                    });
+                    if suspected_noop {
+                        structured["escalation"] = non_ax_escalation();
+                    }
+                    return ToolResult::text(format!("Clicked element [{idx}] (pid {pid})."))
+                        .with_structured(structured);
                 }
-                return ToolResult::text(format!("Clicked element [{idx}] (pid {pid})."))
-                    .with_structured(structured);
             }
             if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
                 return refusal;
@@ -2055,7 +2086,38 @@ impl Tool for ClickTool {
             // X11 event for toolkits that accept it.
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
                 let (xid2, lx, ly) = resolve_element_local_coords(pid, idx, xid_hint)?;
-                crate::input::send_click(xid2, lx as i32, ly as i32, count, button)
+                let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                if crate::wayland::wayland_input_enabled() && !modifier_refs.is_empty() {
+                    anyhow::bail!(
+                        "modified element clicks are unavailable on native Wayland: \
+                         the pointer route cannot carry keyboard modifier state"
+                    );
+                }
+                // An explicit X11 foreground request needs the real XTest path
+                // even for a plain click. Some native widgets (notably GTK
+                // selectable rows) expose bounds but no AT-SPI Action and
+                // ignore a targeted XSendEvent; limiting XTest to modified
+                // clicks made those rows addressable but not selectable.
+                if delivery.is_foreground() && !crate::wayland::wayland_input_enabled() {
+                    crate::input::with_x11_foreground(xid2, 80, || {
+                        crate::input::send_click_xtest_desktop_with_modifiers(
+                            sx.round() as i32,
+                            sy.round() as i32,
+                            button,
+                            count,
+                            &modifier_refs,
+                        )
+                    })
+                } else {
+                    crate::input::send_click_with_modifiers(
+                        xid2,
+                        lx as i32,
+                        ly as i32,
+                        count,
+                        button,
+                        &modifier_refs,
+                    )
+                }
             })
             .await;
             return match result {
@@ -2143,11 +2205,18 @@ impl Tool for ClickTool {
         let (xi, yi) = (x as i32, y as i32);
         let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
         let cursor_id_for_task = cursor_id.clone();
+        let modifiers_for_task = modifiers.clone();
         // delivery_mode: background (default) = no-focus-steal injection;
         // foreground = activate the target window (EWMH) first, then inject,
         // then restore prior active. Mirrors macOS/Windows.
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<&'static str> {
             if crate::wayland::wayland_input_enabled() {
+                if !modifiers_for_task.is_empty() {
+                    anyhow::bail!(
+                        "modified coordinate clicks are unavailable on native Wayland: \
+                         the pointer route cannot carry keyboard modifier state"
+                    );
+                }
                 // Vision/pixel click on native Wayland. Mutter drops synthetic
                 // virtual-pointer events (the `wayland::click` warp doesn't land),
                 // so for a plain left single click resolve the screen pixel to the
@@ -2183,7 +2252,7 @@ impl Tool for ClickTool {
             // Foreground skips the AT-SPI shortcut and does a real activated pixel
             // click (the agent's escalation when background didn't land).
             let inject = |fg: bool| -> anyhow::Result<&'static str> {
-                if !fg && button == 1 && count == 1 {
+                if !fg && button == 1 && count == 1 && modifiers_for_task.is_empty() {
                     if let Ok(Some(_)) = crate::atspi::perform_action_at_point(pid, xi, yi) {
                         return Ok("x11_atspi");
                     }
@@ -2197,16 +2266,39 @@ impl Tool for ClickTool {
                     // widget. XTest is accepted as real input and gives the
                     // widget keyboard focus, so a following type lands.
                     if let Ok((sx, sy)) = window_local_to_screen(xid, xi as f64, yi as f64) {
-                        crate::input::send_click_xtest_desktop(
+                        let modifier_refs: Vec<&str> =
+                            modifiers_for_task.iter().map(String::as_str).collect();
+                        crate::input::send_click_xtest_desktop_with_modifiers(
                             sx.round() as i32,
                             sy.round() as i32,
                             button,
                             count,
+                            &modifier_refs,
                         )?;
                         return Ok("x11_xtest_fg");
                     }
                 }
-                x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, button, count)?;
+                if modifiers_for_task.is_empty() {
+                    x11_pixel_click_no_focus_steal(
+                        &cursor_id_for_task,
+                        xid,
+                        xi,
+                        yi,
+                        button,
+                        count,
+                    )?;
+                } else {
+                    let modifier_refs: Vec<&str> =
+                        modifiers_for_task.iter().map(String::as_str).collect();
+                    x11_pixel_click_no_focus_steal_modifiers(
+                        xid,
+                        xi,
+                        yi,
+                        button,
+                        count,
+                        &modifier_refs,
+                    )?;
+                }
                 Ok(if fg { "x11_pixel_fg" } else { "x11_pixel" })
             };
             if delivery.is_foreground() {

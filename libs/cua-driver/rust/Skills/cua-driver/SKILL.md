@@ -94,6 +94,35 @@ that boundary, do not replace Cua's targeted and verified actions with shell
 scripts that mutate the app UI. A shell is a capability of the calling agent,
 not of the Cua Driver MCP server; an MCP-only client must not assume one exists.
 
+### Filesystem outcomes and GUI fallbacks
+
+When the requested outcome is a filesystem change and the caller has a
+headless filesystem or command capability, keep it on rung 0. Enumerate the
+exact source set, decide the destination-conflict policy before changing
+anything, perform one batch-safe operation, then independently read back both
+source and destination manifests. Do not open a file manager merely to mimic a
+move, copy, or rename that the caller can execute and verify directly.
+
+If the caller has no such capability, use the file manager as a GUI fallback
+and keep each claim narrow:
+
+1. After entering an inline rename and setting its value, commit it with the
+   platform's confirmation key, then take a fresh snapshot. Value readback from
+   the inline editor proves only that the editor changed; it does not prove the
+   filesystem rename committed.
+2. For a multi-selection, use the platform modifier (`cmd` on macOS, `ctrl` on
+   Windows/Linux). On macOS and Windows, issue that modified click with
+   `delivery_mode:"foreground"` so the target observes physical modifier state;
+   a refused background attempt is an escalation signal, not a failed action to
+   trust or repeat. Re-snapshot before the next operation. Continue only when
+   every intended item is selected and the prior selection was preserved.
+3. After a cross-window drag or paste, verify the destination contains the
+   complete expected set and the source reflects copy-versus-move semantics.
+   A delivered drag, keypress, or menu action is not file-operation proof.
+4. If a destination conflict presents an unrecognized policy or ambiguous
+   partial result, stop that GUI path and surface the unresolved state instead
+   of retrying blindly.
+
 ## The no-foreground principle (window phase)
 
 In a strict `window` session, and during the initial window phase of an

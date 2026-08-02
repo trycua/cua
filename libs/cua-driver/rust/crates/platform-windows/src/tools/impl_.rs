@@ -8053,6 +8053,35 @@ fn menu_refusal(message: String) -> ToolResult {
     }))
 }
 
+/// Activate a window for a visible native-menu operation. Windows may reject
+/// the first foreground request after the test/user session has been idle even
+/// when we attach to the current foreground thread. A reserved no-name key has
+/// no application meaning but makes this process the owner of the most recent
+/// input, allowing a bounded retry without sending a real shortcut or text to
+/// whichever application currently has focus.
+fn activate_window_for_menu(hwnd: windows::Win32::Foundation::HWND) -> Result<bool, String> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+    };
+
+    if unsafe { crate::input::force_foreground_attached(hwnd) } {
+        return Ok(false);
+    }
+
+    const VK_NONAME: u8 = 0xFC;
+    unsafe {
+        keybd_event(VK_NONAME, 0, KEYBD_EVENT_FLAGS(0), 0);
+        keybd_event(VK_NONAME, 0, KEYEVENTF_KEYUP, 0);
+    }
+    for _ in 0..3 {
+        if unsafe { crate::input::force_foreground_attached(hwnd) } {
+            return Ok(true);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    Err("invoke_menu: target window could not be activated".to_owned())
+}
+
 #[async_trait]
 impl Tool for InvokeMenuTool {
     fn def(&self) -> &ToolDef {
@@ -8107,9 +8136,11 @@ impl Tool for InvokeMenuTool {
             let hwnd = HWND(hwnd_value as usize as *mut _);
             let prior = unsafe { GetForegroundWindow() };
             let needs_activation = prior != hwnd;
-            if needs_activation && !unsafe { crate::input::force_foreground_attached(hwnd) } {
-                return Err("invoke_menu: target window could not be activated".to_owned());
-            }
+            let used_activation_retry = if needs_activation {
+                activate_window_for_menu(hwnd)?
+            } else {
+                false
+            };
             if needs_activation {
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
@@ -8117,12 +8148,12 @@ impl Tool for InvokeMenuTool {
             if needs_activation && !prior.0.is_null() {
                 let _ = unsafe { crate::input::force_foreground_attached(prior) };
             }
-            result
+            result.map(|()| used_activation_retry)
         })
         .await;
 
         match outcome {
-            Ok(Ok(())) => ToolResult::text(
+            Ok(Ok(used_activation_retry)) => ToolResult::text(
                 "Resolved the live native menu path and dispatched its final accessibility action; verify the command's semantic effect from fresh state.",
             )
             .with_action_record(
@@ -8136,6 +8167,11 @@ impl Tool for InvokeMenuTool {
                     kind: EvidenceKind::NativeApiResult,
                     detail: "Every menu hop resolved uniquely and UI Automation accepted the final action"
                         .into(),
+                })
+                .detail(if used_activation_retry {
+                    "target activation required a bounded reserved-key foreground-lock retry"
+                } else {
+                    "target was already foreground or activated without a foreground-lock retry"
                 })
                 .build()
                 .expect("invoke_menu record is valid"),

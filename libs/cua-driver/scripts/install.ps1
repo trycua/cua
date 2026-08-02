@@ -113,7 +113,7 @@ $ThemeBinaryName = "cua-cursor-theme.exe"
 # where the baked line hasn't been updated yet.
 #
 # ~~~ BAKED_VERSION: auto-updated after release publication — do not edit ~~~
-$Script:CuaDriverRsBakedVersion = "0.14.2" # published-installer-version
+$Script:CuaDriverRsBakedVersion = "0.16.0" # published-installer-version
 # ~~~ END_BAKED_VERSION ~~~
 $CursorThemeRequiredFrom = [version]"0.12.7"
 

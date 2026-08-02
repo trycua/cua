@@ -466,6 +466,26 @@ pub unsafe fn focused_element_of_pid(pid: i32) -> Option<AXUIElementRef> {
     Some(value as AXUIElementRef)
 }
 
+/// Return the CGWindowID of the application's focused AX window.
+///
+/// This is a narrow read-only proof used before global keyboard delivery: an
+/// already focused exact window must not be re-activated, because doing so can
+/// make a focus-proxy renderer drop its current key target.
+pub fn focused_window_id_of_pid(pid: i32) -> Option<u32> {
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return None;
+        }
+        let window = copy_element_attr(app, "AXFocusedWindow");
+        CFRelease(app as CFTypeRef);
+        let window = window?;
+        let window_id = ax_get_window_id(window);
+        CFRelease(window as CFTypeRef);
+        window_id
+    }
+}
+
 /// Get the children of an AX element.
 ///
 /// # Safety

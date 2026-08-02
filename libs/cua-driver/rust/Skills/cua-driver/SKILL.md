@@ -123,6 +123,23 @@ and keep each claim narrow:
    partial result, stop that GUI path and surface the unresolved state instead
    of retrying blindly.
 
+### Clipboard outcomes and GUI fallbacks
+
+When the requested postcondition is an exact value on the system clipboard,
+rather than the literal gesture of selecting and copying it, keep the operation
+semantic. Read the value from the narrowest typed source, call
+`clipboard_write`, then prove the real clipboard state with `clipboard_read`.
+For browser content, this means reading the page with `get_browser_state` and
+writing the exact observed text; a passive page-text ref does not need to be
+clicked first.
+
+Use visual selection followed by the platform copy hotkey only when the user
+explicitly asks for that gesture, the source cannot expose the value
+semantically, or direct clipboard tools are unavailable. Treat that as a GUI
+fallback: re-snapshot before acting, verify the selected range when the
+application exposes it, and escalate only the delivery step that cannot land
+in the background.
+
 ## The no-foreground principle (window phase)
 
 In a strict `window` session, and during the initial window phase of an

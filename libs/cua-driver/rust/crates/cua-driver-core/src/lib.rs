@@ -57,6 +57,7 @@ pub mod cursor_events;
 pub mod cursor_sampler;
 pub mod daemon;
 pub mod element_cache;
+pub mod element_query;
 pub mod element_token;
 pub mod expectation;
 pub mod ffmpeg_install;

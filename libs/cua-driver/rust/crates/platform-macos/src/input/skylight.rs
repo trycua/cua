@@ -445,6 +445,51 @@ pub fn set_front_process_persistently(target_pid: libc::pid_t, target_wid: u32) 
     unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) == 0 }
 }
 
+fn make_key_window_record(window_id: u32, event_kind: u8) -> [u8; 0xF8] {
+    let mut record = [0u8; 0xF8];
+    record[0x04] = 0xF8;
+    record[0x08] = event_kind;
+    record[0x3A] = 0x10;
+    record[0x3C..0x40].copy_from_slice(&window_id.to_le_bytes());
+    record[0x20..0x30].fill(0xFF);
+    record
+}
+
+/// Make one exact application window native-key and frontmost.
+///
+/// Accessibility's `AXFocusedWindow` can change without AppKit making the
+/// corresponding `NSWindow` key. Native menu validation observes the latter,
+/// so focus-sensitive commands remain disabled in that split state. This is
+/// the bounded exact-window sequence used by established macOS window tools:
+/// mark the front-process request as user generated, synthesize the paired
+/// make-key records for the requested WindowServer id, then let the caller
+/// raise the matching AX window. No other application window is addressed.
+pub fn make_exact_window_key(target_pid: libc::pid_t, target_wid: u32) -> bool {
+    let Some(set_front) = set_front_process_fn() else {
+        return false;
+    };
+    let Some(post) = post_event_record_to_fn() else {
+        return false;
+    };
+    let mut target_psn = [0u8; 8];
+    if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
+        return false;
+    }
+
+    // kCPSUserGenerated = 0x200. Unlike kCPSNoWindows, this permits AppKit to
+    // establish the requested native key window before it validates NSMenu.
+    if unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x200) } != 0 {
+        return false;
+    }
+    for event_kind in [0x01, 0x02] {
+        let record = make_key_window_record(target_wid, event_kind);
+        if unsafe { post(target_psn.as_ptr() as *const c_void, record.as_ptr()) } != 0 {
+            return false;
+        }
+    }
+    true
+}
+
 /// Tool-agnostic foreground-assist: briefly front `window_id`, run `body` (which
 /// posts the synthetic input), then restore the prior frontmost process.
 ///
@@ -490,6 +535,17 @@ pub fn with_foreground_hid_activation(
     if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
         anyhow::bail!("could not resolve target window for foreground HID delivery");
     }
+
+    let focused_window_id = crate::ax::bindings::focused_window_id_of_pid(target_pid);
+    if preserves_exact_existing_focus(prev_ok, prev_psn, target_psn, focused_window_id, target_wid)
+    {
+        // Re-activating an already key exact window can clear Chromium's
+        // renderer focus even though WindowServer keeps the app frontmost.
+        // The AX window proof lets us deliver directly without weakening the
+        // exact-window guard or disturbing the current key target.
+        return action();
+    }
+
     let activated = unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) };
     if activated != 0 {
         anyhow::bail!("WindowServer rejected foreground HID activation");
@@ -504,6 +560,18 @@ pub fn with_foreground_hid_activation(
     }
 
     result
+}
+
+fn preserves_exact_existing_focus(
+    previous_process_known: bool,
+    previous_psn: [u8; 8],
+    target_psn: [u8; 8],
+    focused_window_id: Option<u32>,
+    target_window_id: u32,
+) -> bool {
+    previous_process_known
+        && previous_psn == target_psn
+        && focused_window_id == Some(target_window_id)
 }
 
 /// Activate `target_pid`'s window `target_wid` for NSMenu key dispatch, run `action`,
@@ -555,4 +623,58 @@ pub fn with_menu_shortcut_activation(
 
     result?;
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{make_key_window_record, preserves_exact_existing_focus};
+
+    #[test]
+    fn make_key_records_address_only_the_exact_window() {
+        let press = make_key_window_record(0x7856_3412, 0x01);
+        let release = make_key_window_record(0x7856_3412, 0x02);
+        assert_eq!(press.len(), 0xF8);
+        assert_eq!(press[0x04], 0xF8);
+        assert_eq!(press[0x08], 0x01);
+        assert_eq!(release[0x08], 0x02);
+        assert_eq!(&press[0x3C..0x40], &[0x12, 0x34, 0x56, 0x78]);
+        assert_eq!(press[0x3A], 0x10);
+        assert!(press[0x20..0x30].iter().all(|byte| *byte == 0xFF));
+    }
+
+    #[test]
+    fn exact_existing_focus_avoids_reactivation() {
+        let psn = [1, 2, 3, 4, 5, 6, 7, 8];
+        assert!(preserves_exact_existing_focus(true, psn, psn, Some(42), 42));
+    }
+
+    #[test]
+    fn process_or_window_uncertainty_requires_guarded_activation() {
+        let target = [1, 2, 3, 4, 5, 6, 7, 8];
+        let other = [8, 7, 6, 5, 4, 3, 2, 1];
+        assert!(!preserves_exact_existing_focus(
+            false,
+            target,
+            target,
+            Some(42),
+            42
+        ));
+        assert!(!preserves_exact_existing_focus(
+            true,
+            other,
+            target,
+            Some(42),
+            42
+        ));
+        assert!(!preserves_exact_existing_focus(
+            true,
+            target,
+            target,
+            Some(41),
+            42
+        ));
+        assert!(!preserves_exact_existing_focus(
+            true, target, target, None, 42
+        ));
+    }
 }

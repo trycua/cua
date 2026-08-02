@@ -223,6 +223,7 @@ contract_stub_tool!(
     SetAgentCursorThemeTool,
     "set_agent_cursor_theme"
 );
+contract_stub_tool!(invoke_menu_m, InvokeMenuTool, "invoke_menu");
 
 stub_tool!(
     check_perms_m,
@@ -324,6 +325,7 @@ pub fn build_registry() -> cua_driver_core::tool::ToolRegistry {
     r.register(Box::new(PressKeyTool));
     r.register(Box::new(HotkeyTool));
     r.register(Box::new(SetValueTool));
+    r.register(Box::new(InvokeMenuTool));
     r.register(Box::new(ScrollTool));
     r.register(Box::new(ScreenshotTool));
     r.register(Box::new(GetScreenSizeTool));

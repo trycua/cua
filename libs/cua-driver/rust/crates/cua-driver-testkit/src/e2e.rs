@@ -1574,6 +1574,22 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
             Some("click" | "double_click" | "right_click")
         )
     }) {
+        let refused_before_target_resolution = action.as_ref().is_some_and(|value| {
+            value["result_error"].as_bool() == Some(true) && value.get("click_point").is_none()
+        });
+        if refused_before_target_resolution {
+            let click = manifest.as_ref().map(|value| &value["click"]);
+            if !click.is_some_and(|value| {
+                value["status"].as_str() == Some("not_applicable")
+                    && value["classification"].as_str()
+                        == Some("action_refused_before_target_resolution")
+            }) {
+                errors.push(format!(
+                    "invalid refused-click evidence for {cell_id}/{turn_name}: expected not_applicable/action_refused_before_target_resolution"
+                ));
+            }
+            return;
+        }
         validate_capture_status(
             manifest.as_ref(),
             &["click"],
@@ -2047,6 +2063,55 @@ mod tests {
         assert!(errors
             .iter()
             .any(|error| error.contains("turn-00001/click.png")));
+    }
+
+    #[test]
+    fn validator_accepts_click_refused_before_target_resolution_without_marker() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(
+            turn.join("action.json"),
+            br#"{
+                "tool":"click",
+                "arguments":{"pid":1,"element_token":"stale-token"},
+                "result_error":true
+            }"#,
+        )
+        .expect("write refused action");
+        std::fs::write(
+            turn.join("evidence.json"),
+            br#"{
+                "schema":"cua-turn-evidence/v1",
+                "before":{"state":{"status":"captured"},"screenshot":{"status":"captured"}},
+                "after":{"state":{"status":"captured"},"screenshot":{"status":"captured"}},
+                "click":{"status":"not_applicable","classification":"action_refused_before_target_resolution"}
+            }"#,
+        )
+        .expect("write refused evidence");
+        std::fs::remove_file(turn.join("click.png")).expect("remove inapplicable click marker");
+
+        validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect("a pre-target refusal must not invent click evidence");
+    }
+
+    #[test]
+    fn validator_rejects_successful_click_marked_not_applicable() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(
+            turn.join("evidence.json"),
+            br#"{
+                "schema":"cua-turn-evidence/v1",
+                "before":{"state":{"status":"captured"},"screenshot":{"status":"captured"}},
+                "after":{"state":{"status":"captured"},"screenshot":{"status":"captured"}},
+                "click":{"status":"not_applicable","classification":"action_refused_before_target_resolution"}
+            }"#,
+        )
+        .expect("write invalid evidence");
+
+        let errors = validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect_err("successful clicks still require click evidence");
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("turn-00001/click")));
     }
 
     #[test]

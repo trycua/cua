@@ -32,6 +32,7 @@ let kTextBodyAID = "txt-body"
 let kTextBodyMarker = "HARNESS_TEXT_MARKER_v1"
 let kTextInputAID = "txt-input"
 let kTextInputMirrorAID = "lbl-input-mirror"
+let kTextInputCommitAID = "lbl-input-commit"
 let kClickTargetAID = "btn-clicktarget"
 let kLastActionAID = "lbl-last-action"
 let kClickCountAID = "lbl-click-count"
@@ -39,6 +40,7 @@ let kSliderAID = "sld-value"
 let kSliderValueAID = "lbl-slider-value"
 let kCheckboxAID = "chk-agree"
 let kCheckStateAID = "lbl-chk-state"
+let kSelectionStateAID = "lbl-selection-state"
 let kContextButtonAID = "btn-context"
 let kMenuActionAID = "lbl-menu-action"
 let kScrollerAID = "scroll-tall"
@@ -51,17 +53,21 @@ let kMenuItemTitle = "Harness Test Item"
 
 // MARK: - Controller
 
-final class HarnessWindowController: NSObject, NSTextFieldDelegate {
+final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate, NSMenuItemValidation {
     let window: NSWindow
     let counterLabel = NSTextField(labelWithString: "counter=0")
     var counterValue = 0
     let textInput = NSTextField(string: "")
     let textInputMirror = NSTextField(labelWithString: "")
+    let textInputCommit = NSTextField(labelWithString: "committed=none")
     let lastActionLabel = NSTextField(labelWithString: "last_action=none")
     let clickCountLabel = NSTextField(labelWithString: "clicks=0")
     var clicks = 0
     let sliderValueLabel = NSTextField(labelWithString: "slider_value=0")
     let checkStateLabel = NSTextField(labelWithString: "agreed=false")
+    let selectionItems = ["alpha", "beta", "gamma"]
+    let selectionTable = NSTableView()
+    let selectionStateLabel = NSTextField(labelWithString: "selection=none")
     let menuActionLabel = NSTextField(labelWithString: "menu_action=none")
     let scrollOffsetLabel = NSTextField(labelWithString: "scroll_offset=0")
     let accelCountLabel = NSTextField(labelWithString: "accel_fired=0")
@@ -146,11 +152,14 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate {
         textInput.translatesAutoresizingMaskIntoConstraints = false
         textInputMirror.setAccessibilityIdentifier(kTextInputMirrorAID)
         textInputMirror.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        textInputCommit.setAccessibilityIdentifier(kTextInputCommitAID)
+        textInputCommit.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
         let inputRow = NSStackView()
         inputRow.orientation = .horizontal
         inputRow.spacing = 12
         inputRow.addArrangedSubview(textInput)
         inputRow.addArrangedSubview(textInputMirror)
+        inputRow.addArrangedSubview(textInputCommit)
         NSLayoutConstraint.activate([
             textInput.widthAnchor.constraint(equalToConstant: 240),
         ])
@@ -210,6 +219,26 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate {
         checkRow.spacing = 12
         checkRow.addArrangedSubview(checkbox)
         checkRow.addArrangedSubview(checkStateLabel)
+        selectionTable.headerView = nil
+        selectionTable.allowsMultipleSelection = true
+        selectionTable.dataSource = self
+        selectionTable.delegate = self
+        let selectionColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("selection-column"))
+        selectionColumn.width = 140
+        selectionTable.addTableColumn(selectionColumn)
+        let selectionScroll = NSScrollView()
+        selectionScroll.documentView = selectionTable
+        selectionScroll.hasVerticalScroller = true
+        selectionScroll.borderType = .lineBorder
+        selectionScroll.translatesAutoresizingMaskIntoConstraints = false
+        selectionStateLabel.setAccessibilityIdentifier(kSelectionStateAID)
+        selectionStateLabel.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        checkRow.addArrangedSubview(selectionScroll)
+        checkRow.addArrangedSubview(selectionStateLabel)
+        NSLayoutConstraint.activate([
+            selectionScroll.widthAnchor.constraint(equalToConstant: 150),
+            selectionScroll.heightAnchor.constraint(equalToConstant: 68),
+        ])
         content.addArrangedSubview(checkRow)
 
         // context_menu — NSButton with an attached NSMenu. Right-click opens the
@@ -359,14 +388,56 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate {
         checkStateLabel.stringValue = "agreed=\(sender.state == .on)"
     }
 
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        selectionItems.count
+    }
+
+    func tableView(_ tableView: NSTableView,
+                   viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let value = selectionItems[row]
+        let field = NSTextField(labelWithString: value)
+        field.isSelectable = true
+        field.setAccessibilityIdentifier("selection-\(value)")
+        return field
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        let values = selectionTable.selectedRowIndexes.map { selectionItems[$0] }
+        selectionStateLabel.stringValue = values.isEmpty
+            ? "selection=none"
+            : "selection=\(values.joined(separator: ","))"
+    }
+
     @objc private func onContextItem(_ sender: NSMenuItem) {
         menuActionLabel.stringValue = "menu_action=\(sender.title)"
+    }
+
+    @objc func onArrangeLeft(_ sender: NSMenuItem) {
+        menuActionLabel.stringValue = "menu_action=window_arrange_left"
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(onArrangeLeft(_:)) {
+            // Real macOS Window-menu commands are contextual: the application
+            // being active is insufficient when the requested window is not
+            // key. Keep this fixture honest so invoke_menu must establish the
+            // exact window context before resolving the final item.
+            return NSApp.isActive && window.isKeyWindow
+        }
+        return true
     }
 
     func controlTextDidChange(_ obj: Notification) {
         guard let field = obj.object as? NSTextField else { return }
         if field === textInput {
             textInputMirror.stringValue = field.stringValue
+        }
+    }
+
+    func controlTextDidEndEditing(_ obj: Notification) {
+        guard let field = obj.object as? NSTextField else { return }
+        if field === textInput {
+            textInputCommit.stringValue = "committed=\(field.stringValue)"
         }
     }
 
@@ -405,7 +476,7 @@ final class ClickTargetButton: NSButton {
 
 // MARK: - Menu bar (Mac-specific scenario: ns_menubar)
 
-func installMenuBar() {
+func installMenuBar(target: HarnessWindowController) {
     let main = NSMenu()
     let appItem = NSMenuItem()
     main.addItem(appItem)
@@ -418,7 +489,25 @@ func installMenuBar() {
                                action: #selector(NSApplication.terminate(_:)),
                                keyEquivalent: "q"))
     appItem.submenu = appMenu
+
+    let windowItem = NSMenuItem(title: "Window", action: nil, keyEquivalent: "")
+    let windowMenu = NSMenu(title: "Window")
+    let arrangeItem = NSMenuItem(title: "Arrange", action: nil, keyEquivalent: "")
+    let arrangeMenu = NSMenu(title: "Arrange")
+    let leftItem = NSMenuItem(
+        title: "Left",
+        action: #selector(HarnessWindowController.onArrangeLeft(_:)),
+        keyEquivalent: ""
+    )
+    leftItem.target = target
+    leftItem.setAccessibilityIdentifier("menu-window-arrange-left")
+    arrangeMenu.addItem(leftItem)
+    arrangeItem.submenu = arrangeMenu
+    windowMenu.addItem(arrangeItem)
+    windowItem.submenu = windowMenu
+    main.addItem(windowItem)
     NSApp.mainMenu = main
+    NSApp.windowsMenu = windowMenu
 }
 
 // MARK: - Entry
@@ -428,8 +517,8 @@ struct CuaAppKitHarness {
     static func main() {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
-        installMenuBar()
         let controller = HarnessWindowController()
+        installMenuBar(target: controller)
         controller.show()
         app.activate(ignoringOtherApps: true)
         app.run()

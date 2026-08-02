@@ -14,7 +14,7 @@ import sys
 import zipfile
 
 SOURCE_NAME = "cua-train"
-SOURCE_VERSION = "0.1.3"
+SOURCE_VERSION = "0.1.4"
 DESTINATION_NAME = "cua-fleet"
 WHEEL_FILENAME = re.compile(
     r"^(?P<distribution>[A-Za-z0-9_]+)-(?P<version>[^-]+)-py3-none-(?P<platform>[^-]+)\.whl$"
@@ -126,7 +126,7 @@ def repack(
 
     metadata = parse_metadata(entries[metadata_name])
     if metadata.get("Name") != SOURCE_NAME or metadata.get("Version") != SOURCE_VERSION:
-        raise WheelError("source METADATA does not identify cua-train==0.1.3")
+        raise WheelError("source METADATA does not identify cua-train==0.1.4")
     wheel_metadata = entries[wheel_name].decode()
     if (
         "Root-Is-Purelib: false" not in wheel_metadata
@@ -186,7 +186,7 @@ def verify(path: Path, source: Path | None = None) -> None:
     if metadata.get("Name") != DESTINATION_NAME or metadata.get("Version") != version:
         raise WheelError("destination METADATA does not match the wheel filename")
     if f"Requires-Dist: {SOURCE_NAME} == {SOURCE_VERSION}" not in metadata_text.splitlines():
-        raise WheelError("destination METADATA must pin cua-train==0.1.3")
+        raise WheelError("destination METADATA must pin cua-train==0.1.4")
     wheel_metadata = entries[wheel_name].decode()
     if (
         "Root-Is-Purelib: false" not in wheel_metadata

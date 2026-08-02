@@ -790,6 +790,8 @@ public protocol CyclopsClientProtocol: AnyObject, Sendable {
 
     func listPools(namespace: String) async throws  -> [Pool]
 
+    func reconcilePool(request: CreatePoolRequest) async throws  -> Pool
+
     func updatePool(pool: Pool) async throws  -> Pool
 
     func serviceRequest(sandbox: Sandbox, service: String, path: String, request: HttpRequest) async throws  -> HttpResponse
@@ -1061,6 +1063,23 @@ open func listPools(namespace: String)async throws  -> [Pool]  {
             completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypePool.lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+open func reconcilePool(request: CreatePoolRequest)async throws  -> Pool  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_pool(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeCreatePoolRequest_lower(request)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypePool_lift,
             errorHandler: FfiConverterTypeSdkError_lift
         )
 }
@@ -2897,6 +2916,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools() != 27984) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool() != 53919) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool() != 17695) {

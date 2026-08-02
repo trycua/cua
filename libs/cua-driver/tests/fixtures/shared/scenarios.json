@@ -338,7 +338,8 @@
     "description": "Editable NSTextField with a mirror label. Tests type_text and set_value via AXValue on AppKit.",
     "controls": {
      "textbox_aid": "txt-input",
-     "mirror_label_aid": "lbl-input-mirror"
+     "mirror_label_aid": "lbl-input-mirror",
+     "commit_label_aid": "lbl-input-commit"
     }
    },
    {

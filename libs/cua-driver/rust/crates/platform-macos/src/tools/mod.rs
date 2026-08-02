@@ -7,6 +7,7 @@ mod double_click;
 mod drag;
 mod get_window_state;
 mod hotkey;
+mod invoke_menu;
 mod kill_app;
 mod launch_app;
 mod list_apps;
@@ -730,6 +731,7 @@ pub fn register_all(
         &pid_window_candidates,
     ));
     registry.register(Box::new(set_window_frame::SetWindowFrameTool));
+    registry.register(Box::new(invoke_menu::InvokeMenuTool));
     registry.register(pid_window_guarded(
         click::ClickTool::new(state.clone()),
         &pid_window_candidates,

@@ -6,8 +6,8 @@
 //! legacy `app_state.json` and `screenshot.png` names remain post-action aliases.
 //!
 //! Schema mirrors the Swift/Windows reference `action.json`:
-//!   { tool, arguments, result_summary, timestamp, t_ms_from_session_start,
-//!     t_start_ms_from_session_start }
+//!   { tool, arguments, result_summary, result_error, timestamp,
+//!     t_ms_from_session_start, t_start_ms_from_session_start }
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -607,6 +607,21 @@ impl RecordingSession {
         result_text: &str,
         action_record: Option<&crate::action_record::ActionExecutionRecord>,
     ) {
+        self.finish_turn_with_outcome(pending, result_text, action_record, false);
+    }
+
+    /// Finalize a turn while also recording whether dispatch returned an
+    /// error. A click-family call rejected before its target can be resolved
+    /// has no click point to annotate; retaining this bit lets the evidence
+    /// manifest distinguish that honest non-action from a missing marker on a
+    /// dispatched click.
+    pub fn finish_turn_with_outcome(
+        &self,
+        pending: PendingTurn,
+        result_text: &str,
+        action_record: Option<&crate::action_record::ActionExecutionRecord>,
+        result_is_error: bool,
+    ) {
         let mut inner = self.inner.lock().unwrap();
         if !inner.enabled || inner.generation != pending.generation {
             tracing::warn!(
@@ -615,7 +630,7 @@ impl RecordingSession {
             );
             return;
         }
-        if let Err(error) = write_turn(pending, result_text, action_record) {
+        if let Err(error) = write_turn(pending, result_text, action_record, result_is_error) {
             inner.last_error = Some(error.to_string());
         }
     }
@@ -727,6 +742,7 @@ fn write_evidence_manifest(
     state_expected: bool,
     click_expected: bool,
     click_captured: bool,
+    click_not_applicable_classification: &'static str,
 ) -> anyhow::Result<()> {
     let manifest = serde_json::json!({
         "schema": "cua-turn-evidence/v1",
@@ -746,7 +762,14 @@ fn write_evidence_manifest(
                 after.screenshot_classification,
             ),
         },
-        "click": capture_status(click_captured, click_expected, None),
+        "click": if click_expected {
+            capture_status(click_captured, true, None)
+        } else {
+            serde_json::json!({
+                "status": "not_applicable",
+                "classification": click_not_applicable_classification,
+            })
+        },
     });
     write_json_atomic(&turn_dir.join("evidence.json"), &manifest)
 }
@@ -773,6 +796,7 @@ fn write_turn(
     pending: PendingTurn,
     result_text: &str,
     action_record: Option<&crate::action_record::ActionExecutionRecord>,
+    result_is_error: bool,
 ) -> anyhow::Result<()> {
     let PendingTurn {
         generation: _,
@@ -799,7 +823,7 @@ fn write_turn(
             bitmap_origin: None,
         }
     };
-    let click_expected = matches!(tool_name.as_str(), "click" | "double_click" | "right_click");
+    let click_family = matches!(tool_name.as_str(), "click" | "double_click" | "right_click");
     use crate::tool_args::ArgsExt;
     let has_explicit_click_point = args.opt_f64("x").zip(args.opt_f64("y")).is_some();
     // Explicit pixel clicks already use screenshot-local coordinates. For an
@@ -807,16 +831,19 @@ fn write_turn(
     // the result summary over the pre-dispatch cache estimate, then convert it
     // into the reserved screenshot's local coordinate space. The cached point
     // remains the fallback when the action result has no parseable coordinates.
-    let click_point = if click_expected && !has_explicit_click_point {
+    let click_point = if click_family && !has_explicit_click_point {
         click_point_from_result_summary(result_text, before.bitmap_origin).or(click_point)
     } else {
         click_point
     };
+    let refused_before_target_resolution = click_family && result_is_error && click_point.is_none();
+    let click_expected = click_family && !refused_before_target_resolution;
 
     let mut payload = serde_json::json!({
         "tool": tool_name,
         "arguments": args,
         "result_summary": result_text,
+        "result_error": result_is_error,
         "timestamp": iso_now(),
         "t_ms_from_session_start": now.saturating_sub(session_start_ms),
         "t_start_ms_from_session_start": start_ms.saturating_sub(session_start_ms),
@@ -859,6 +886,11 @@ fn write_turn(
         pid.is_some() && capture_visual_state,
         click_expected,
         click_captured,
+        if refused_before_target_resolution {
+            "action_refused_before_target_resolution"
+        } else {
+            "not_a_click_action"
+        },
     )?;
 
     Ok(())
@@ -1104,6 +1136,35 @@ mod tests {
         assert_eq!(summary_action["click_point"]["y"], 78.0);
         assert!(summary_turn.join("click.png").exists());
 
+        let stale_snapshot = crate::element_token::global().register_snapshot(1, 88, 1);
+        let stale_token = crate::element_token::token_for(stale_snapshot, 0);
+        let _newer_snapshot = crate::element_token::global().register_snapshot(1, 88, 1);
+        let pending = session
+            .begin_turn(
+                "click",
+                &serde_json::json!({"pid": 1, "element_token": stale_token}),
+                now_ms(),
+            )
+            .expect("stale-token refusal should reserve an evidence turn");
+        session.finish_turn_with_outcome(pending, "stale token", None, true);
+        let refused_turn = output_dir.join("turn-00004");
+        let refused_action: Value = serde_json::from_slice(
+            &std::fs::read(refused_turn.join("action.json")).expect("read refused action"),
+        )
+        .expect("parse refused action");
+        assert_eq!(refused_action["result_error"], true);
+        assert!(refused_action.get("click_point").is_none());
+        assert!(!refused_turn.join("click.png").exists());
+        let refused_manifest: Value = serde_json::from_slice(
+            &std::fs::read(refused_turn.join("evidence.json")).expect("read refused evidence"),
+        )
+        .expect("parse refused evidence");
+        assert_eq!(refused_manifest["click"]["status"], "not_applicable");
+        assert_eq!(
+            refused_manifest["click"]["classification"],
+            "action_refused_before_target_resolution"
+        );
+
         let files = [
             "action.json",
             "app_state.json",
@@ -1121,6 +1182,11 @@ mod tests {
             }
             std::fs::remove_dir(directory).expect("remove turn fixture directory");
         }
+        for file in files.into_iter().filter(|file| *file != "click.png") {
+            std::fs::remove_file(refused_turn.join(file))
+                .expect("remove refused turn fixture file");
+        }
+        std::fs::remove_dir(refused_turn).expect("remove refused turn fixture directory");
         std::fs::remove_dir(&output_dir).expect("remove recording fixture directory");
     }
 

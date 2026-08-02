@@ -131,6 +131,7 @@ struct Visited<'a> {
     checked: Option<bool>,
     enabled: Option<bool>,
     selected: Option<bool>,
+    selectable: bool,
     actions: Vec<String>,
     has_editable: bool,
     has_value: bool,
@@ -503,6 +504,10 @@ async fn collect_visited_bounded<'a>(
             .as_ref()
             .and_then(|state| state.as_ref().ok())
             .map(|state| state.contains(State::Enabled) && state.contains(State::Sensitive));
+        let selectable = state_r
+            .as_ref()
+            .and_then(|state| state.as_ref().ok())
+            .is_some_and(|state| state.contains(State::Selectable));
         let selected = if role_lower.contains("check") {
             checked
         } else if role_lower.contains("radio")
@@ -603,6 +608,7 @@ async fn collect_visited_bounded<'a>(
             checked,
             enabled,
             selected,
+            selectable,
             actions,
             has_editable,
             has_value,
@@ -708,22 +714,34 @@ fn format_value(v: f64) -> String {
 /// Whether a walked node is exposed as an indexed, usable element.
 ///
 /// Historically this was "the node advertises AT-SPI Actions" (buttons, menu
-/// items, links). That silently dropped every **Value**-only widget — GTK
-/// `GtkScale` sliders, scroll bars, spin buttons, progress bars expose the
-/// `Value` interface but NO `Action`, while some text fields expose
-/// `EditableText` without either. Omitting those interfaces makes controls the
-/// driver can operate impossible to address by `element_index`.
+/// items, links). That silently dropped Value-only widgets, editable text, and
+/// selectable list rows. GTK list rows expose Component + Selectable state but
+/// no Action even though a coordinate click on their bounds is operable. Keep
+/// every such control in the shared index space so physical-input fallbacks can
+/// address it without inventing pixels in the caller.
 ///
 /// This predicate is the single source of truth for the element-index space and
 /// MUST be applied identically in `render` and in every `action_nodes` filter
 /// (`perform_action`, `set_value`, `get_element_bounds`, snapshot bounds);
 /// any divergence would desync indices between the snapshot and the operations.
 fn is_indexable(v: &Visited) -> bool {
-    is_indexable_capabilities(!v.actions.is_empty(), v.has_editable, v.has_value)
+    is_indexable_capabilities(
+        !v.actions.is_empty(),
+        v.has_editable,
+        v.has_value,
+        v.selectable,
+        v.enabled,
+    )
 }
 
-fn is_indexable_capabilities(has_action: bool, has_editable: bool, has_value: bool) -> bool {
-    has_action || has_editable || has_value
+fn is_indexable_capabilities(
+    has_action: bool,
+    has_editable: bool,
+    has_value: bool,
+    has_selectable_state: bool,
+    enabled: Option<bool>,
+) -> bool {
+    (has_action || has_editable || has_value || has_selectable_state) && enabled != Some(false)
 }
 
 // ── Public (sync) entry points ───────────────────────────────────────────────
@@ -1316,6 +1334,109 @@ fn activation_index(role: &str, actions: &[String]) -> Option<usize> {
             || (is_checkbox_role(role)
                 && CHECKBOX_ACTIVATION_VERBS.contains(&normalized_action_verb(action).as_str()))
     })
+}
+
+fn is_menu_role(role: &str) -> bool {
+    role.trim().to_ascii_lowercase().contains("menu")
+}
+
+/// Find one exact visible menu lineage in a flattened pre-order AT-SPI walk.
+/// Unlabelled menu containers are transparent; all labelled menu ancestors
+/// must match the requested prefix, so duplicate labels elsewhere fail closed.
+fn exact_menu_path_matches(visited: &[Visited<'_>], path: &[String]) -> Vec<usize> {
+    let mut parent_at_depth: Vec<Option<usize>> = Vec::new();
+    let mut parents = vec![None; visited.len()];
+    for (index, node) in visited.iter().enumerate() {
+        parents[index] = if node.depth == 0 {
+            None
+        } else {
+            (0..node.depth)
+                .rev()
+                .find_map(|depth| parent_at_depth.get(depth).copied().flatten())
+        };
+        while parent_at_depth.len() <= node.depth {
+            parent_at_depth.push(None);
+        }
+        parent_at_depth[node.depth] = Some(index);
+        for deeper in (node.depth + 1)..parent_at_depth.len() {
+            parent_at_depth[deeper] = None;
+        }
+    }
+
+    visited
+        .iter()
+        .enumerate()
+        .filter_map(|(index, node)| {
+            if !is_menu_role(&node.role)
+                || node.enabled == Some(false)
+                || node.name.trim() != path.last().map(String::as_str).unwrap_or("")
+            {
+                return None;
+            }
+            let mut lineage = Vec::new();
+            let mut cursor = Some(index);
+            while let Some(current) = cursor {
+                let ancestor = &visited[current];
+                if is_menu_role(&ancestor.role) && !ancestor.name.trim().is_empty() {
+                    lineage.push(ancestor.name.trim());
+                }
+                cursor = parents[current];
+            }
+            lineage.reverse();
+            lineage.dedup();
+            (lineage == path.iter().map(String::as_str).collect::<Vec<_>>()).then_some(index)
+        })
+        .collect()
+}
+
+/// Resolve and invoke an application menu one live hierarchy level at a time.
+/// Every hop re-walks AT-SPI after the preceding menu has materialized; no
+/// snapshot index is retained across mutations.
+pub fn invoke_menu_path(pid: u32, path: &[String]) -> Result<()> {
+    bounded(
+        async {
+            let conn = shared_connection().await?;
+            for depth in 0..path.len() {
+                let visited = collect_visited(conn, pid)
+                    .await?
+                    .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
+                let matches = exact_menu_path_matches(&visited, &path[..=depth]);
+                let target_index = match matches.as_slice() {
+                    [index] => *index,
+                    [] => anyhow::bail!("menu path segment {depth} was not found"),
+                    _ => anyhow::bail!("menu path segment {depth} is ambiguous"),
+                };
+                let target = &visited[target_index];
+                if target.enabled == Some(false) {
+                    anyhow::bail!("menu path segment {depth} is disabled");
+                }
+                let chosen = activation_index(&target.role, &target.actions).ok_or_else(|| {
+                    anyhow!("menu path segment {depth} has no safe activation action")
+                })?;
+                let proxies = target
+                    .acc
+                    .proxies()
+                    .await
+                    .map_err(|error| anyhow!("interface proxies unavailable: {error}"))?;
+                let action = proxies
+                    .action()
+                    .await
+                    .map_err(|error| anyhow!("Action unavailable: {error}"))?;
+                let accepted = action
+                    .do_action(chosen as i32)
+                    .await
+                    .map_err(|error| anyhow!("doAction failed: {error}"))?;
+                if !accepted {
+                    anyhow::bail!("menu path segment {depth} rejected its native action");
+                }
+                if depth + 1 != path.len() {
+                    tokio::time::sleep(Duration::from_millis(80)).await;
+                }
+            }
+            Ok(())
+        },
+        || Err(anyhow!("invoke_menu timed out for pid {pid}")),
+    )
 }
 
 pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
@@ -2373,11 +2494,43 @@ mod coord_tests {
     };
 
     #[test]
-    fn editable_only_nodes_are_addressable() {
-        assert!(is_indexable_capabilities(false, true, false));
-        assert!(is_indexable_capabilities(true, false, false));
-        assert!(is_indexable_capabilities(false, false, true));
-        assert!(!is_indexable_capabilities(false, false, false));
+    fn operable_nodes_are_addressable() {
+        assert!(is_indexable_capabilities(
+            false,
+            true,
+            false,
+            false,
+            Some(true)
+        ));
+        assert!(is_indexable_capabilities(true, false, false, false, None));
+        assert!(is_indexable_capabilities(
+            false,
+            false,
+            true,
+            false,
+            Some(true)
+        ));
+        assert!(is_indexable_capabilities(
+            false,
+            false,
+            false,
+            true,
+            Some(true)
+        ));
+        assert!(!is_indexable_capabilities(
+            false,
+            false,
+            false,
+            false,
+            Some(true)
+        ));
+        assert!(!is_indexable_capabilities(
+            true,
+            false,
+            false,
+            false,
+            Some(false)
+        ));
     }
 
     #[test]

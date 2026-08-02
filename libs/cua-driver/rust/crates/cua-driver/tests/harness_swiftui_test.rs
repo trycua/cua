@@ -267,6 +267,7 @@ fn harness_swiftui_counter_background() {
                     "pid": pid as i64,
                     "window_id": wid,
                     "element_index": index,
+                    "snapshot_id": pre.snapshot_id(),
                     "action": "press",
                     "delivery_mode": "background"
                 }),
@@ -303,6 +304,7 @@ fn harness_swiftui_set_value_background() {
                     "pid": pid as i64,
                     "window_id": wid,
                     "element_index": index,
+                    "snapshot_id": pre.snapshot_id(),
                     "value": "swiftui-cua"
                 }),
             );
@@ -353,6 +355,7 @@ fn harness_swiftui_popover_foreground() {
                 "pid": pid as i64,
                 "window_id": wid,
                 "element_index": trigger_idx,
+                "snapshot_id": snap_pre.snapshot_id(),
                 "action": "press",
                 "delivery_mode": "foreground"
             }),

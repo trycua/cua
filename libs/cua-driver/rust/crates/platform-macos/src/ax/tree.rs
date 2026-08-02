@@ -146,8 +146,8 @@ fn role_supports_value_addressing(role: &str) -> bool {
     )
 }
 
-fn is_addressable(actions_present: bool, value_settable: bool) -> bool {
-    actions_present || value_settable
+fn is_addressable(actions_present: bool, value_settable: bool, enabled: Option<bool>) -> bool {
+    (actions_present || value_settable) && enabled != Some(false)
 }
 
 pub struct TreeWalkResult {
@@ -458,7 +458,16 @@ unsafe fn walk_element(
     let value_settable = actions.is_empty()
         && role_supports_value_addressing(&role)
         && is_attribute_settable(element, "AXValue");
-    let is_actionable = is_addressable(!actions.is_empty(), value_settable);
+    // A closed submenu can keep its descendants in AXChildren while reporting
+    // those controls disabled. Never assign such a row a live element index:
+    // the same native state also causes dispatch to refuse it, and exposing an
+    // index for it invites agents to retain an unusable menu target.
+    let enabled = if !actions.is_empty() || value_settable {
+        copy_bool_attr(element, "AXEnabled")
+    } else {
+        None
+    };
+    let is_actionable = is_addressable(!actions.is_empty(), value_settable, enabled);
 
     if !is_actionable && !has_content && role != "AXWindow" && role != "AXSheet" {
         let children = copy_children(element);
@@ -497,7 +506,7 @@ unsafe fn walk_element(
             .filter(|v| !v.is_empty()),
         min_value: copy_number_attr(element, "AXMinValue"),
         max_value: copy_number_attr(element, "AXMaxValue"),
-        enabled: copy_bool_attr(element, "AXEnabled"),
+        enabled,
         selected: copy_bool_attr(element, "AXSelected"),
     });
     let node = if is_actionable {
@@ -756,9 +765,10 @@ mod tests {
 
     #[test]
     fn writable_value_controls_are_addressable_without_actions() {
-        assert!(is_addressable(false, true));
-        assert!(is_addressable(true, false));
-        assert!(!is_addressable(false, false));
+        assert!(is_addressable(false, true, Some(true)));
+        assert!(is_addressable(true, false, None));
+        assert!(!is_addressable(false, false, Some(true)));
+        assert!(!is_addressable(true, false, Some(false)));
 
         for role in [
             "AXTextField",

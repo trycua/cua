@@ -67,6 +67,9 @@ class _FleetClient:
     async def create_pool(self, request: CreatePoolRequest) -> Any:
         return await self._client.create_pool(request)
 
+    async def reconcile_pool(self, request: CreatePoolRequest) -> Any:
+        return await self._client.reconcile_pool(request)
+
     async def create_claim(self, request: CreateClaimRequest) -> Any:
         return await self._client.create_claim(request)
 

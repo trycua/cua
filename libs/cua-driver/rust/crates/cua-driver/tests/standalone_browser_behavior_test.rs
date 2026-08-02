@@ -1814,6 +1814,7 @@ fn run_native_omnibox_select_all(spec: &BrowserSpec) {
                 "pid": fixture.pid as i64,
                 "window_id": fixture.window_id,
                 "element_index": index,
+                "snapshot_id": snapshot.snapshot_id(),
                 "value": initial,
             }),
         );

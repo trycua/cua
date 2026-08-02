@@ -53,6 +53,8 @@ fn generated_bindings_hide_raw_credentials_and_claim_update() {
     assert!(!kotlin.contains("PoolFailed"));
     assert!(python.contains("def connect_with_native_http_client"));
     assert!(python.contains("def connect_with_access_token_and_native_http_client"));
+    assert!(python.contains("async def reconcile_pool"));
+    assert!(kotlin.contains("suspend fun `reconcilePool`"));
 
     fs::remove_dir_all(output).unwrap();
 }

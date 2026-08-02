@@ -207,8 +207,13 @@ driver selects a backend from compositor capabilities:
   wlr-screencopy, virtual pointer, and virtual keyboard protocols.
 - GNOME/Mutter uses the bundled WinRects Shell helper for target geometry and
   activation, plus portal/libei for foreground raw input.
-- KDE/KWin uses AT-SPI and portal facilities where available. Target-specific
-  foreground activation remains experimental, so unsafe raw input refuses.
+- KDE Plasma 6/KWin uses the bundled protocol-v1 `cua-kwin@cua` script for
+  compositor-owned UUID/PID/geometry snapshots and exact activation, plus
+  portal/libei for foreground raw input. Install or update it for the current
+  user with
+  `~/.cua-driver/packages/current/wayland-helper/kwin/install.sh`; KWin
+  reconfigures without a logout. Missing, outdated, or untrusted adapter state
+  refuses before input.
 - The optional `cua-compositor` is a separate nested session enabled
   explicitly for controlled automation. GNOME and KDE never switch into it.
 
@@ -229,6 +234,14 @@ the selected target through a verified compositor adapter before dispatch. If
 the compositor has no target-addressable activation or input backend, the call
 refuses before sending input. Reconstructing coordinates alone does not make
 raw background PX possible on a standard compositor.
+
+On KDE, the bounded foreground transaction keeps KWin's complete internal
+UUID: snapshot and remember the exact active window, resolve the requested
+numeric ID back to its UUID and PID, activate it, verify a fresh KWin snapshot,
+run one operation, then restore and verify the prior UUID. Run the packaged
+`wayland-helper/kwin/diagnose.sh` for package/load diagnostics and
+`cua-driver doctor` for the trusted owner, protocol, activation, and portal
+checks. Remove it with the packaged `wayland-helper/kwin/uninstall.sh`.
 
 ## Quick triage
 
@@ -269,7 +282,7 @@ ask the user.
 | X11/Openbox | AT-SPI trees and actions, foreground pointer and keyboard input, window and desktop capture, and video | Raw background delivery remains toolkit-specific; unsupported shapes refuse |
 | Sway/wlroots | AT-SPI, native discovery, full-display and cropped-window screencopy, foreground input, semantic background actions, and video | Raw background pointer and keyboard input remains focus-bound |
 | GNOME/Mutter | AT-SPI, WinRects geometry and activation, capture, and portal/libei foreground input | Requires the helper and portal grant; portal video parity remains open |
-| KDE/KWin | AT-SPI and generic discovery where exposed | Target-specific activation and behavioral coverage remain experimental |
+| KDE Plasma 6/KWin | AT-SPI, adapter-backed exact UUID/PID/geometry discovery and verified bounded foreground portal/libei input | Requires protocol-v1 `cua-kwin@cua` and a portal grant; the complete renderer/recording matrix remains experimental |
 | Nested `cua-compositor` | Versioned direct per-surface input, native GTK 31/31, capture/scope 5/5, and partial Electron coverage | The complete shared matrix remains experimental; do not infer standard-Wayland support |
 
 See `SKILL.md` for the cross-platform loop (snapshot-before-AND-after,

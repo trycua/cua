@@ -176,8 +176,15 @@ GNOME Shell sessions, Cua Driver briefly focuses the exact
 compositor-attested window for fixed internal-page navigation and restores the
 previous window before continuing. GNOME requires the maintained WinRects
 helper API v4 and an immutable D-Bus owner that resolves to the current user's
-system-installed GNOME Shell process. Cua Driver refuses generic Wayland
-sessions that cannot prove exact process, window, and geometry identity.
+system-installed GNOME Shell process. KDE Plasma 6 requires the current-user
+protocol-v1 `cua-kwin@cua` package and a verified genuine `kwin_wayland` owner.
+The KDE route retains KWin's complete internal UUID, correlates it with the
+browser PID and AT-SPI geometry, verifies activation in a fresh snapshot, and
+restores and verifies the previous active UUID around the bounded setup or
+consent operation. This supplies the exact native prerequisite; products still
+need the platform-specific acceptance evidence listed above. Cua Driver refuses
+generic Wayland sessions that cannot prove exact process, window, and geometry
+identity.
 
 The setup adapters currently recognize the products' English accessibility
 labels. Other UI locales fail closed without toggling an unrecognized control.

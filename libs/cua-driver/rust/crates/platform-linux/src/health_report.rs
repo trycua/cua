@@ -20,6 +20,16 @@ use cua_driver_core::health_report::{
 /// virtual-pointer / wl_shm). Linux-specific; skipped when not on Wayland.
 pub const NAME_WAYLAND_BACKEND: &str = "wayland_backend";
 
+/// KDE Plasma/KWin-specific trusted target adapter status. Kept separate from
+/// the generic Wayland manager probe so a reachable portal can never obscure
+/// an absent, outdated, or untrusted compositor activation path.
+pub const NAME_KWIN_TARGET_ADAPTER: &str = "kwin_target_adapter";
+
+/// KDE portal/libei readiness after the trusted target adapter gate is
+/// applied. RemoteDesktop proxy reachability alone is not sufficient because
+/// portal input follows the compositor's active seat.
+pub const NAME_KWIN_PORTAL_INPUT: &str = "kwin_portal_libei_input";
+
 /// Linux canonical check names — same Swift-PR contract, with TCC /
 /// bundle entries surfaced as `skip("not applicable on Linux")`. The
 /// full set of entries always appears so cross-platform consumers see
@@ -34,6 +44,8 @@ pub const LINUX_CHECK_NAMES: &[&str] = &[
     NAME_AX_CAPABILITY,
     NAME_SCREEN_CAPTURE_CAPABILITY,
     NAME_WAYLAND_BACKEND,
+    NAME_KWIN_TARGET_ADAPTER,
+    NAME_KWIN_PORTAL_INPUT,
 ];
 
 pub struct LinuxHealthProvider;
@@ -59,6 +71,8 @@ impl HealthCheckProvider for LinuxHealthProvider {
             NAME_AX_CAPABILITY => check_ax_capability().await,
             NAME_SCREEN_CAPTURE_CAPABILITY => check_screen_capture_capability().await,
             NAME_WAYLAND_BACKEND => check_wayland_backend().await,
+            NAME_KWIN_TARGET_ADAPTER => check_kwin_target_adapter().await,
+            NAME_KWIN_PORTAL_INPUT => check_kwin_portal_input().await,
             other => CheckEntry::skip(
                 other.to_owned(),
                 "Unknown check name (not implemented on this platform).",
@@ -311,11 +325,209 @@ async fn check_wayland_backend() -> CheckEntry {
     } else {
         false
     };
+    // `target_activation_available` may run the blocking KWin diagnosis on KDE,
+    // which drives zbus's global Tokio runtime; keep it on a blocking-pool
+    // thread so it cannot panic the async health-check worker.
+    let target_activation = tokio::task::spawn_blocking(target_activation_available)
+        .await
+        .unwrap_or(false);
     classify_wayland_backend(
         &snap,
         portal_input_enabled(),
         remote_desktop_portal_reachable,
-        target_activation_available(),
+        target_activation,
+    )
+}
+
+#[derive(Debug, Clone, Copy)]
+struct KwinAdapterHealth<'a> {
+    installed: bool,
+    protocol_supported: bool,
+    owner_trusted: bool,
+    enumeration_available: bool,
+    activation_verified: bool,
+    fully_available: bool,
+    message: &'a str,
+}
+
+/// Run the KWin adapter diagnosis off the async runtime.
+///
+/// zbus's blocking API drives a global Tokio runtime through
+/// `Runtime::block_on`, which panics if it is invoked on a thread that is
+/// already inside the driver's async runtime (every health check is). Moving it
+/// onto a `spawn_blocking` thread makes the nested `block_on` legal — the same
+/// pattern the portal probes above already use.
+#[cfg(target_os = "linux")]
+async fn kwin_diagnosis() -> crate::wayland::kwin_adapter::AdapterDiagnostic {
+    tokio::task::spawn_blocking(crate::wayland::kwin_adapter::diagnose)
+        .await
+        .unwrap_or_else(|_| crate::wayland::kwin_adapter::AdapterDiagnostic {
+            message: "kwin_adapter_unavailable: KWin diagnosis task failed to complete".to_owned(),
+            ..Default::default()
+        })
+}
+
+#[cfg(target_os = "linux")]
+async fn check_kwin_target_adapter() -> CheckEntry {
+    if !crate::wayland::kwin_adapter::is_kde_wayland_session() {
+        return CheckEntry::skip(
+            NAME_KWIN_TARGET_ADAPTER,
+            "Not a KDE Plasma/KWin Wayland session.",
+        );
+    }
+
+    let diagnosis = kwin_diagnosis().await;
+    classify_kwin_target_adapter(KwinAdapterHealth {
+        installed: diagnosis.installed,
+        protocol_supported: diagnosis.protocol_supported,
+        owner_trusted: diagnosis.owner_trusted,
+        enumeration_available: diagnosis.enumeration_available,
+        activation_verified: diagnosis.activation_verified,
+        fully_available: diagnosis.fully_available(),
+        message: &diagnosis.message,
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn check_kwin_target_adapter() -> CheckEntry {
+    CheckEntry::skip(
+        NAME_KWIN_TARGET_ADAPTER,
+        "KDE Plasma/KWin integration is only available on Linux.",
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn kwin_install_command() -> &'static str {
+    crate::wayland::kwin_adapter::INSTALL_COMMAND
+}
+
+#[cfg(not(target_os = "linux"))]
+fn kwin_install_command() -> &'static str {
+    "KWin adapter installation is only available on Linux"
+}
+
+fn classify_kwin_target_adapter(facts: KwinAdapterHealth<'_>) -> CheckEntry {
+    let summary = format!(
+        "installed={installed}, protocol-supported={protocol}, \
+         owner-process-trusted={trusted}, enumeration={enumeration}, \
+         activation-verified={activation}: {message}",
+        installed = facts.installed,
+        protocol = facts.protocol_supported,
+        trusted = facts.owner_trusted,
+        enumeration = facts.enumeration_available,
+        activation = facts.activation_verified,
+        message = facts.message,
+    );
+    let every_required_fact = facts.installed
+        && facts.protocol_supported
+        && facts.owner_trusted
+        && facts.enumeration_available
+        && facts.activation_verified;
+    if facts.fully_available && every_required_fact {
+        CheckEntry::pass(
+            NAME_KWIN_TARGET_ADAPTER,
+            format!("Trusted KDE Plasma/KWin target adapter is fully available ({summary})."),
+        )
+    } else {
+        CheckEntry::fail(
+            NAME_KWIN_TARGET_ADAPTER,
+            format!(
+                "KDE Plasma/KWin foreground input remains fail-closed because the trusted \
+                 target adapter is not fully available ({summary})."
+            ),
+            format!(
+                "Install or update the current-user KWin adapter, then reload KWin: {}",
+                kwin_install_command()
+            ),
+        )
+    }
+}
+
+#[cfg(target_os = "linux")]
+async fn check_kwin_portal_input() -> CheckEntry {
+    if !crate::wayland::kwin_adapter::is_kde_wayland_session() {
+        return CheckEntry::skip(
+            NAME_KWIN_PORTAL_INPUT,
+            "Not a KDE Plasma/KWin Wayland session.",
+        );
+    }
+
+    if !portal_input_enabled() {
+        return classify_kwin_portal_input(false, false, false, None);
+    }
+
+    let portal_probe = tokio::task::spawn_blocking(probe_portal_remote_desktop).await;
+    let (portal_reachable, probe_error) = match portal_probe {
+        Ok(Ok(reachable)) => (reachable, None),
+        Ok(Err(error)) => (false, Some(error.to_string())),
+        Err(error) => (false, Some(format!("portal probe task failed: {error}"))),
+    };
+    let diagnosis = kwin_diagnosis().await;
+    let adapter_available = diagnosis.fully_available()
+        && diagnosis.installed
+        && diagnosis.protocol_supported
+        && diagnosis.owner_trusted
+        && diagnosis.enumeration_available
+        && diagnosis.activation_verified;
+    classify_kwin_portal_input(
+        true,
+        portal_reachable,
+        adapter_available,
+        probe_error.as_deref(),
+    )
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn check_kwin_portal_input() -> CheckEntry {
+    CheckEntry::skip(
+        NAME_KWIN_PORTAL_INPUT,
+        "KDE portal/libei integration is only available on Linux.",
+    )
+}
+
+fn classify_kwin_portal_input(
+    compiled: bool,
+    portal_reachable: bool,
+    adapter_available: bool,
+    probe_error: Option<&str>,
+) -> CheckEntry {
+    if !compiled {
+        return CheckEntry::fail(
+            NAME_KWIN_PORTAL_INPUT,
+            "This build does not include the portal/libei input backend required by KDE Plasma/KWin.",
+            "Install a release build or rebuild cua-driver with --features portal-input.",
+        );
+    }
+    if !portal_reachable {
+        let detail = probe_error
+            .map(|error| format!(" ({error})"))
+            .unwrap_or_default();
+        return CheckEntry::fail(
+            NAME_KWIN_PORTAL_INPUT,
+            format!(
+                "The xdg-desktop-portal RemoteDesktop interface is not reachable{detail}; \
+                 portal/libei input is unavailable."
+            ),
+            "Start xdg-desktop-portal and xdg-desktop-portal-kde in this user session.",
+        );
+    }
+    if !adapter_available {
+        return CheckEntry::fail(
+            NAME_KWIN_PORTAL_INPUT,
+            "The RemoteDesktop portal is reachable, but portal/libei input remains blocked \
+             because exact KWin activation and restoration are not fully verified.",
+            format!(
+                "Install or update the current-user KWin adapter, then reload KWin: {}",
+                kwin_install_command()
+            ),
+        );
+    }
+
+    CheckEntry::pass(
+        NAME_KWIN_PORTAL_INPUT,
+        "The RemoteDesktop portal is reachable and portal/libei input is gated by the fully \
+         trusted KWin activation-and-restoration path. The doctor probe does not open a \
+         RemoteDesktop session or trigger a consent prompt.",
     )
 }
 
@@ -367,10 +579,13 @@ fn classify_wayland_backend(
                      focused, potentially the wrong application, so cua-driver \
                      refuses foreground dispatch."
                 ),
-                "On GNOME, install and enable the bundled WinRects Shell helper, then \
-                 log out and back in. KDE foreground input remains unavailable until \
-                 a target-addressable KWin activation adapter is installed; AX actions \
-                 and exact background refusals remain usable.",
+                format!(
+                    "On GNOME, install and enable the bundled WinRects Shell helper, then \
+                     log out and back in. On KDE Plasma/KWin, install or update the trusted \
+                     current-user target adapter and reload KWin with: {}. AX actions and \
+                     exact background refusals remain usable until the full path verifies.",
+                    kwin_install_command()
+                ),
             );
         }
         if portal_libei_enabled {
@@ -521,7 +736,17 @@ fn portal_input_enabled() -> bool {
 
 #[cfg(target_os = "linux")]
 fn target_activation_available() -> bool {
-    crate::wayland::shell_helper::list_windows(None).is_some()
+    if crate::wayland::kwin_adapter::is_kde_wayland_session() {
+        let diagnosis = crate::wayland::kwin_adapter::diagnose();
+        diagnosis.fully_available()
+            && diagnosis.installed
+            && diagnosis.protocol_supported
+            && diagnosis.owner_trusted
+            && diagnosis.enumeration_available
+            && diagnosis.activation_verified
+    } else {
+        crate::wayland::shell_helper::list_windows(None).is_some()
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -556,7 +781,7 @@ fn probe_portal_screenshot() -> anyhow::Result<bool> {
 }
 
 #[cfg(target_os = "linux")]
-fn probe_portal_remote_desktop() -> anyhow::Result<bool> {
+pub fn probe_portal_remote_desktop() -> anyhow::Result<bool> {
     #[cfg(feature = "portal-input")]
     {
         use ashpd::desktop::remote_desktop::RemoteDesktop;
@@ -601,7 +826,7 @@ fn probe_portal_remote_desktop() -> anyhow::Result<bool> {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn probe_portal_remote_desktop() -> anyhow::Result<bool> {
+pub fn probe_portal_remote_desktop() -> anyhow::Result<bool> {
     Ok(false)
 }
 
@@ -675,6 +900,111 @@ mod tests {
         }
     }
 
+    fn kwin_health(
+        installed: bool,
+        protocol_supported: bool,
+        owner_trusted: bool,
+        enumeration_available: bool,
+        activation_verified: bool,
+    ) -> KwinAdapterHealth<'static> {
+        KwinAdapterHealth {
+            installed,
+            protocol_supported,
+            owner_trusted,
+            enumeration_available,
+            activation_verified,
+            fully_available: installed
+                && protocol_supported
+                && owner_trusted
+                && enumeration_available
+                && activation_verified,
+            message: "fixture diagnosis",
+        }
+    }
+
+    #[test]
+    fn kwin_adapter_health_pass_requires_every_security_gate() {
+        let entry = classify_kwin_target_adapter(kwin_health(true, true, true, true, true));
+
+        assert_eq!(entry.status, CheckStatus::Pass);
+        assert!(
+            entry.message.contains("fully available"),
+            "{}",
+            entry.message
+        );
+        for fact in [
+            "installed=true",
+            "protocol-supported=true",
+            "owner-process-trusted=true",
+            "enumeration=true",
+            "activation-verified=true",
+        ] {
+            assert!(entry.message.contains(fact), "{}", entry.message);
+        }
+    }
+
+    #[test]
+    fn kwin_adapter_health_fails_closed_for_missing_outdated_or_untrusted_adapter() {
+        for facts in [
+            kwin_health(false, false, false, false, false),
+            kwin_health(true, false, true, true, true),
+            kwin_health(true, true, false, true, true),
+            kwin_health(true, true, true, false, true),
+            kwin_health(true, true, true, true, false),
+        ] {
+            let entry = classify_kwin_target_adapter(facts);
+            assert_eq!(entry.status, CheckStatus::Fail, "{}", entry.message);
+            assert!(entry.message.contains("fail-closed"), "{}", entry.message);
+            assert!(
+                entry
+                    .hint
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains(kwin_install_command()),
+                "{:?}",
+                entry.hint
+            );
+        }
+    }
+
+    #[test]
+    fn kwin_adapter_health_does_not_trust_an_inconsistent_ready_claim() {
+        let mut facts = kwin_health(true, true, true, true, false);
+        facts.fully_available = true;
+
+        let entry = classify_kwin_target_adapter(facts);
+
+        assert_eq!(entry.status, CheckStatus::Fail);
+    }
+
+    #[test]
+    fn kwin_portal_health_requires_build_proxy_and_trusted_activation() {
+        let no_feature = classify_kwin_portal_input(false, false, false, None);
+        assert_eq!(no_feature.status, CheckStatus::Fail);
+        assert!(no_feature.message.contains("does not include"));
+
+        let no_proxy =
+            classify_kwin_portal_input(true, false, true, Some("fixture portal unavailable"));
+        assert_eq!(no_proxy.status, CheckStatus::Fail);
+        assert!(no_proxy.message.contains("fixture portal unavailable"));
+
+        let no_adapter = classify_kwin_portal_input(true, true, false, None);
+        assert_eq!(no_adapter.status, CheckStatus::Fail);
+        assert!(no_adapter.message.contains("remains blocked"));
+        assert!(no_adapter
+            .hint
+            .as_deref()
+            .unwrap_or_default()
+            .contains(kwin_install_command()));
+
+        let ready = classify_kwin_portal_input(true, true, true, None);
+        assert_eq!(ready.status, CheckStatus::Pass);
+        assert!(ready.message.contains("fully trusted"));
+        assert!(ready
+            .message
+            .contains("does not open a RemoteDesktop session"));
+    }
+
     #[test]
     fn wayland_backend_passes_on_non_wlroots_when_portal_libei_backend_is_reachable() {
         let snap = WaylandManagers {
@@ -738,6 +1068,15 @@ mod tests {
             entry.message.contains("wrong application"),
             "{}",
             entry.message
+        );
+        assert!(
+            entry
+                .hint
+                .as_deref()
+                .unwrap_or_default()
+                .contains(kwin_install_command()),
+            "{:?}",
+            entry.hint
         );
     }
 

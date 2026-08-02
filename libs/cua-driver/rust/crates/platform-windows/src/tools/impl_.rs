@@ -8101,6 +8101,10 @@ impl Tool for InvokeMenuTool {
         }
 
         let outcome = tokio::task::spawn_blocking(move || {
+            // `HWND` wraps a raw pointer and is intentionally not `Send`.
+            // Move the integer handle into the blocking worker and rebuild the
+            // process-local wrapper there instead of carrying it across threads.
+            let hwnd = HWND(hwnd_value as usize as *mut _);
             let prior = unsafe { GetForegroundWindow() };
             let needs_activation = prior != hwnd;
             if needs_activation && !unsafe { crate::input::force_foreground_attached(hwnd) } {

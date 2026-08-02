@@ -17,6 +17,7 @@ class FleetSdkPackagingTests(unittest.TestCase):
         with PYPROJECT_PATH.open("rb") as pyproject_file:
             project = tomllib.load(pyproject_file)
 
+        self.assertEqual(project["project"]["version"], "0.1.20")
         dependencies = project["project"]["dependencies"]
         self.assertIn("cua-fleet==0.0.7", dependencies)
         self.assertFalse(any(dependency.startswith("cua-train") for dependency in dependencies))

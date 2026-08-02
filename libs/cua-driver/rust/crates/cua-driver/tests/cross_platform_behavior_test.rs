@@ -646,6 +646,10 @@ fn action_target_args(
     let object = args.as_object_mut().expect("action arguments object");
     if addressing == "ax" {
         object.insert("element_index".to_owned(), serde_json::json!(index));
+        object.insert(
+            "snapshot_id".to_owned(),
+            serde_json::json!(state.snapshot_id()),
+        );
     } else {
         let origin = window_origin(fixture, state);
         let scale = screenshot_scale(state);

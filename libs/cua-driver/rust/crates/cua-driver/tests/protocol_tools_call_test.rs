@@ -943,6 +943,10 @@ fn set_value_via_element_index() {
     let element_count = resp["result"]["structuredContent"]["element_count"]
         .as_u64()
         .unwrap_or(0);
+    let snapshot_id = resp["result"]["structuredContent"]["snapshot_id"]
+        .as_str()
+        .expect("get_window_state snapshot_id")
+        .to_owned();
     if element_count == 0 {
         eprintln!("No AX elements — skipping set_value test");
         return;
@@ -951,7 +955,7 @@ fn set_value_via_element_index() {
     // set_value on element 0 — this is the document / text area in a new TextEdit document.
     d.send(&serde_json::json!({
         "jsonrpc":"2.0","id":6,"method":"tools/call",
-        "params":{"name":"set_value","arguments":{"pid": pid, "window_id": wid, "element_index": 0, "value": "cua-test-value"}}
+        "params":{"name":"set_value","arguments":{"pid": pid, "window_id": wid, "element_index": 0, "snapshot_id": snapshot_id, "value": "cua-test-value"}}
     }));
     let resp = d.recv();
     // set_value may fail if element 0 is not settable; accept tool-level errors but not protocol errors.

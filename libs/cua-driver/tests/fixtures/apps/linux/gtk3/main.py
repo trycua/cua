@@ -55,6 +55,22 @@ class HarnessWindow(Gtk.Window):
         root.set_border_width(12)
         scroller.add(root)
 
+        # Native application menu used by invoke_menu E2E. The three-level
+        # hierarchy exercises live path re-resolution after each submenu opens.
+        menubar = Gtk.MenuBar()
+        window_item = Gtk.MenuItem(label="Window")
+        window_menu = Gtk.Menu()
+        arrange_item = Gtk.MenuItem(label="Arrange")
+        arrange_menu = Gtk.Menu()
+        left_item = Gtk.MenuItem(label="Left")
+        left_item.connect("activate", self.on_native_menu_left)
+        arrange_menu.append(left_item)
+        arrange_item.set_submenu(arrange_menu)
+        window_menu.append(arrange_item)
+        window_item.set_submenu(window_menu)
+        menubar.append(window_item)
+        root.pack_start(menubar, False, False, 0)
+
         # ── counter ───────────────────────────────────────────────────────
         self.counter_label = Gtk.Label(label="counter=0", xalign=0)
         root.pack_start(self.counter_label, False, False, 0)
@@ -209,6 +225,10 @@ class HarnessWindow(Gtk.Window):
     def on_ctx_item(self, _w, lbl):
         self._menu_action = lbl
         self.ctx_status.set_text(f"menu_action={lbl}")
+
+    def on_native_menu_left(self, _w):
+        self._menu_action = "window_arrange_left"
+        self.ctx_status.set_text("menu_action=window_arrange_left")
 
     def on_key_press(self, _w, ev):
         key = (Gdk.keyval_name(ev.keyval) or "unknown").lower()

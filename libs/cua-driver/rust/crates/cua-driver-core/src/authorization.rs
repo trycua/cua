@@ -845,6 +845,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "press_key"
         | "hotkey"
         | "set_value"
+        | "invoke_menu"
         | "launch_app"
         | "bring_to_front"
         | "set_window_frame"
@@ -1499,6 +1500,14 @@ mod tests {
     fn health_report_is_r0_read_only_diagnostics() {
         let risk = advertised_risk_for("health_report");
         assert_eq!(risk.class, RiskClass::R0);
+        assert_eq!(risk.enforcement, RiskEnforcement::MetadataOnly);
+        assert!(!risk.operation_sensitive);
+    }
+
+    #[test]
+    fn native_menu_invocation_matches_local_gui_action_risk() {
+        let risk = advertised_risk_for("invoke_menu");
+        assert_eq!(risk.class, RiskClass::R1);
         assert_eq!(risk.enforcement, RiskEnforcement::MetadataOnly);
         assert!(!risk.operation_sensitive);
     }

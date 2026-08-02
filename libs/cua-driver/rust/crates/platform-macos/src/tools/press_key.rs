@@ -30,16 +30,14 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "press_key".into(),
-        description: "Press and release a single key, delivered to the target pid via \
-            CGEventPostToPid. Follows the same `delivery_mode` ladder as click/type_text \
+        description: "Press and release a single key. Follows the same `delivery_mode` ladder as click/type_text \
             — it does NOT raise the window by default:\n\
             • `background` (default): post to the pid WITHOUT fronting/raising — the \
               auth-message path (Chromium-safe). With element_index it focuses that AX \
               element first. `window_id` only targets; it does not raise.\n\
-            • `foreground`: briefly front the window (NSMenu path, < 1 ms) so native \
-              menu key-equivalents dispatch, then restore prior frontmost — the explicit \
-              escalation for menu shortcuts an app drops in the background. Requires \
-              window_id (and no element_index).\n\n\
+            • `foreground`: guard and briefly front the exact window, send a genuine HID \
+              key transition so Chromium content and native menu equivalents both receive \
+              it, then restore prior frontmost. Requires window_id (and no element_index).\n\n\
             A key press is never driver-verifiable → effect:\"unverifiable\"; confirm via \
             screenshot. Key names: return, tab, escape, up/down/left/right, space, delete, \
             home, end, pageup, pagedown, f1-f12, plus any letter or digit. \
@@ -57,8 +55,9 @@ fn def() -> &'static ToolDef {
                     "description": "Modifier keys: cmd, shift, option/alt, ctrl, fn."
                 },
                 "window_id": { "type": "integer", "description": "Target window. Required for delivery_mode:\"foreground\". Does NOT itself raise the window — raising is gated on delivery_mode." },
-                "element_index": { "type": "integer" },
-                "element_token": { "type": "string", "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded." },
+                "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                 "x": { "type": "number", "description": "Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_index." },
                 "y": { "type": "number", "description": "Screenshot-pixel Y (see x)." },
                 "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "Use desktop with no pid/window_id to send the key to the frontmost application." },
@@ -125,6 +124,7 @@ impl Tool for PressKeyTool {
             pid,
             element_index_arg,
             element_token_arg.as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
             window_id_arg,
             "press_key",
         ) {
@@ -234,16 +234,19 @@ impl Tool for PressKeyTool {
 
                 tokio::task::spawn_blocking(move || {
                     let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                    // foreground rung: NSMenu activation (raise+restore), only when
-                    // explicitly requested and addressing a window without an element.
-                    // Skipped when px-focus already fronted/clicked the target.
+                    // Foreground rung: keep the exact target frontmost through a genuine
+                    // physical HID key down/up pair, then restore. PID-routed events without the
+                    // authentication envelope reach NSMenu, but Chromium/Electron may
+                    // silently discard them even while frontmost; the guarded HID route
+                    // is accepted by both. Skipped when px-focus already handled the
+                    // target-specific foreground transition.
                     if fg && !px_focus {
                         if let Some(wid) = window_id {
                             if element_index.is_none() {
-                                crate::input::skylight::with_menu_shortcut_activation(
+                                crate::input::skylight::with_foreground_hid_activation(
                                     pid as libc::pid_t,
                                     wid,
-                                    || crate::input::keyboard::press_key_no_auth(pid, &key, &m),
+                                    || crate::input::keyboard::press_key_bare_global(&key, &m),
                                 )?;
                                 return Ok(());
                             }

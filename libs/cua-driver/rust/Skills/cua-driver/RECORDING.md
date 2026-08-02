@@ -78,15 +78,18 @@ Each action writes to `turn-NNNNN/` (five-digit zero-padded counter):
 - `app_state.json` and `screenshot.png` — compatibility aliases for
   `after_state.json` and `after.png`.
 - `action.json` — the tool name, full input arguments, result
-  summary, pid, click point (when applicable), ISO-8601 timestamp.
+  summary, result-error flag, pid, click point (when applicable), ISO-8601
+  timestamp.
 - `click.png` — for click-family actions (`click`, `double_click`,
   `right_click`): a copy of `before.png` with a red marker drawn at
   the click point. **Both addressing modes are covered:** explicit
   `x, y` clicks use the supplied coordinates directly, and
   `element_index`-addressed clicks resolve to the element's center
   via the live AX/UIA cache, then convert to window-local screenshot
-  pixels. Absent for non-click tools and classified as unavailable when
-  a click point was expected but could not be resolved or rendered.
+  pixels. Absent for non-click tools. It is also absent, and explicitly
+  classified as not applicable, when the driver refuses a click before target
+  resolution; no input was aimed in that case. A dispatched click whose marker
+  cannot be resolved or rendered remains an evidence failure.
 
 ## When to use it
 

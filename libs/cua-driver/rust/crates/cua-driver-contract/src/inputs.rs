@@ -62,6 +62,15 @@ fn string_list_schema(generator: &mut SchemaGenerator) -> Schema {
     Vec::<String>::json_schema(generator)
 }
 
+fn menu_path_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 16,
+        "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+    })
+}
+
 fn number_schema(_: &mut SchemaGenerator) -> Schema {
     json_schema!({ "type": "number" })
 }
@@ -438,6 +447,28 @@ pub struct SetWindowFrameInput {
 
 impl ToolInput for SetWindowFrameInput {
     const TOOL_NAME: &'static str = "set_window_frame";
+}
+
+/// Exact, immediate-child application menu path to resolve and invoke through
+/// the operating system's accessibility API. Path labels are matched after
+/// trimming surrounding whitespace and otherwise remain case-sensitive.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct InvokeMenuInput {
+    #[schemars(schema_with = "positive_integer_schema")]
+    pub pid: u32,
+    #[schemars(schema_with = "positive_integer_schema")]
+    pub window_id: u64,
+    #[schemars(schema_with = "menu_path_schema")]
+    pub path: Vec<String>,
+    /// Optional session id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "string_schema")]
+    pub session: Option<String>,
+}
+
+impl ToolInput for InvokeMenuInput {
+    const TOOL_NAME: &'static str = "invoke_menu";
 }
 
 impl ToolInput for MoveCursorInput {

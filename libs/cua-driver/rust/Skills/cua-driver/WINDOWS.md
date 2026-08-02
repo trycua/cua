@@ -534,10 +534,11 @@ Canonical multi-step workflow:
 
 # Snapshot the UIA tree.
 '{"pid":6004,"window_id":459672}' | & cua-driver call get_window_state
-# Returns: tree_markdown with [N] element indices, screenshot, dimensions.
+# Returns: tree_markdown with [N] indices plus structured element_token values,
+# snapshot_id, screenshot, and dimensions.
 
-# Click element [22] (the "Equals" button per the tree).
-'{"pid":6004,"window_id":459672,"element_index":22}' | & cua-driver call click
+# Click the "Equals" row with its opaque token from that response.
+'{"pid":6004,"element_token":"s0000002a:22"}' | & cua-driver call click
 # → "✅ Performed UIA Invoke on [22] ..."
 
 # Re-snapshot to verify the action landed.
@@ -548,13 +549,14 @@ Canonical multi-step workflow:
 
 **Every action MUST be bracketed by `get_window_state(pid, window_id)`**:
 
-- **Before** — the pre-action snapshot resolves the `element_index`
-  you're about to use. Indices from previous turns are stale; the
+- **Before** — the pre-action snapshot resolves the `element_token`
+  you're about to use. A bare integer is rejected in 0.17; clients that keep
+  integers must send the same response's `snapshot_id`. Targets from previous turns are stale; the
   server replaces the element index map on every snapshot, keyed
   on `(pid, window_id)`. Indices from turn N don't resolve in turn
-  N+1, and indices from window A don't resolve against window B of
+  N+1, and targets from window A don't resolve against window B of
   the same app. Skip this and element-indexed actions fail with
-  `Invalid element_index`.
+  `stale_element_token` or `snapshot_id_required`.
 - **After** — the post-action snapshot verifies the action actually
   landed. Without it you can't tell a silent no-op from a real
   effect. The UIA tree change (new value, new window, disappeared
@@ -569,13 +571,13 @@ Canonical multi-step workflow:
 
 Two click addressing modes, both gated by `pid`:
 
-### `element_index` mode (preferred)
+### Snapshot-bound element mode (preferred)
 
 ```json
-{ "pid": 6004, "window_id": 459672, "element_index": 22 }
+{ "pid": 6004, "element_token": "s0000002a:22" }
 ```
 
-Looks up the cached UIA element from the last `get_window_state`,
+Looks up the exact cached UIA element from the named snapshot,
 fires `IUIAutomationInvokePattern::Invoke()` on it directly.
 
 Properties:
@@ -599,8 +601,17 @@ Properties:
   `accessibility` means UIA/MSAA and `synthetic_events` means the
   targeted event fallback. Do not parse the human-readable text.
 
-This is the right path for **any** "click button N" / "click menu
-item X" / "click checkbox Y" intent.
+This is the right path for **any** "click button N" or "click checkbox Y"
+intent. For a known application-menu hierarchy, prefer `invoke_menu`:
+
+```json
+{ "pid": 6004, "window_id": 459672, "path": ["Window", "Arrange", "Left"] }
+```
+
+It uses `ExpandCollapsePattern` at intermediate hops and `InvokePattern` or
+`SelectionItemPattern` at the leaf, resolving the live UIA hierarchy again
+after every expansion. It refuses ambiguous, missing, or disabled segments and
+never falls back to pixels. Verify the command's semantic effect afterward.
 
 ### `(x, y)` mode (element px action / pixel)
 

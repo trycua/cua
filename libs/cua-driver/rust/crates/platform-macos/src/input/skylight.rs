@@ -490,6 +490,17 @@ pub fn with_foreground_hid_activation(
     if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
         anyhow::bail!("could not resolve target window for foreground HID delivery");
     }
+
+    let focused_window_id = crate::ax::bindings::focused_window_id_of_pid(target_pid);
+    if preserves_exact_existing_focus(prev_ok, prev_psn, target_psn, focused_window_id, target_wid)
+    {
+        // Re-activating an already key exact window can clear Chromium's
+        // renderer focus even though WindowServer keeps the app frontmost.
+        // The AX window proof lets us deliver directly without weakening the
+        // exact-window guard or disturbing the current key target.
+        return action();
+    }
+
     let activated = unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) };
     if activated != 0 {
         anyhow::bail!("WindowServer rejected foreground HID activation");
@@ -504,6 +515,18 @@ pub fn with_foreground_hid_activation(
     }
 
     result
+}
+
+fn preserves_exact_existing_focus(
+    previous_process_known: bool,
+    previous_psn: [u8; 8],
+    target_psn: [u8; 8],
+    focused_window_id: Option<u32>,
+    target_window_id: u32,
+) -> bool {
+    previous_process_known
+        && previous_psn == target_psn
+        && focused_window_id == Some(target_window_id)
 }
 
 /// Activate `target_pid`'s window `target_wid` for NSMenu key dispatch, run `action`,
@@ -555,4 +578,45 @@ pub fn with_menu_shortcut_activation(
 
     result?;
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::preserves_exact_existing_focus;
+
+    #[test]
+    fn exact_existing_focus_avoids_reactivation() {
+        let psn = [1, 2, 3, 4, 5, 6, 7, 8];
+        assert!(preserves_exact_existing_focus(true, psn, psn, Some(42), 42));
+    }
+
+    #[test]
+    fn process_or_window_uncertainty_requires_guarded_activation() {
+        let target = [1, 2, 3, 4, 5, 6, 7, 8];
+        let other = [8, 7, 6, 5, 4, 3, 2, 1];
+        assert!(!preserves_exact_existing_focus(
+            false,
+            target,
+            target,
+            Some(42),
+            42
+        ));
+        assert!(!preserves_exact_existing_focus(
+            true,
+            other,
+            target,
+            Some(42),
+            42
+        ));
+        assert!(!preserves_exact_existing_focus(
+            true,
+            target,
+            target,
+            Some(41),
+            42
+        ));
+        assert!(!preserves_exact_existing_focus(
+            true, target, target, None, 42
+        ));
+    }
 }

@@ -15,6 +15,7 @@ use windows::Win32::System::Com::{
 };
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationCacheRequest, IUIAutomationElement,
+    IUIAutomationExpandCollapsePattern, IUIAutomationInvokePattern,
     IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern, ToggleState_Off, ToggleState_On,
     TreeScope_Children, TreeScope_Subtree, UIA_AutomationIdPropertyId,
     UIA_BoundingRectanglePropertyId, UIA_ControlTypePropertyId, UIA_ExpandCollapsePatternId,
@@ -100,6 +101,132 @@ pub struct UiaTreeResult {
 /// Walk the UIA tree for the window with the given HWND.
 pub fn walk_tree(hwnd: u64, query: Option<&str>) -> UiaTreeResult {
     walk_tree_bounded(hwnd, query, DEFAULT_MAX_TOTAL_ELEMENTS, DEFAULT_MAX_DEPTH)
+}
+
+fn is_menu_control(control_type: &str) -> bool {
+    matches!(control_type, "Menu" | "MenuBar" | "MenuItem")
+}
+
+fn exact_menu_path_matches(nodes: &[UiaNode], path: &[String]) -> Vec<usize> {
+    let by_element_index: std::collections::HashMap<usize, usize> = nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(node_index, node)| node.element_index.map(|index| (index, node_index)))
+        .collect();
+
+    nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(node_index, node)| {
+            if !is_menu_control(&node.control_type)
+                || node.enabled == Some(false)
+                || node.name.as_deref().map(str::trim) != path.last().map(String::as_str)
+            {
+                return None;
+            }
+            let mut lineage = Vec::new();
+            let mut cursor = Some(node_index);
+            while let Some(current) = cursor {
+                let ancestor = &nodes[current];
+                if is_menu_control(&ancestor.control_type) {
+                    if let Some(name) = ancestor.name.as_deref().map(str::trim) {
+                        if !name.is_empty() {
+                            lineage.push(name);
+                        }
+                    }
+                }
+                cursor = ancestor
+                    .parent_element_index
+                    .and_then(|index| by_element_index.get(&index).copied());
+            }
+            lineage.reverse();
+            lineage.dedup();
+            (lineage == path.iter().map(String::as_str).collect::<Vec<_>>()).then_some(node_index)
+        })
+        .collect()
+}
+
+unsafe fn release_walk_nodes(nodes: Vec<UiaNode>) {
+    use windows::Win32::UI::Accessibility::IAccessible;
+    for node in nodes {
+        if node.element_ptr == 0 {
+            continue;
+        }
+        if node.msaa_role.is_some() {
+            drop(IAccessible::from_raw(node.element_ptr as *mut _));
+        } else {
+            drop(IUIAutomationElement::from_raw(node.element_ptr as *mut _));
+        }
+    }
+}
+
+unsafe fn invoke_menu_element(element_ptr: usize, final_segment: bool) -> Result<(), String> {
+    let element =
+        std::mem::ManuallyDrop::new(IUIAutomationElement::from_raw(element_ptr as *mut _));
+    if !final_segment {
+        if let Ok(pattern) = element.GetCurrentPattern(UIA_ExpandCollapsePatternId) {
+            if let Ok(expand) = pattern.cast::<IUIAutomationExpandCollapsePattern>() {
+                return expand
+                    .Expand()
+                    .map_err(|error| format!("ExpandCollapse.Expand failed: {error}"));
+            }
+        }
+    }
+    if let Ok(pattern) = element.GetCurrentPattern(UIA_InvokePatternId) {
+        if let Ok(invoke) = pattern.cast::<IUIAutomationInvokePattern>() {
+            return invoke
+                .Invoke()
+                .map_err(|error| format!("InvokePattern.Invoke failed: {error}"));
+        }
+    }
+    if final_segment {
+        if let Ok(pattern) = element.GetCurrentPattern(UIA_SelectionItemPatternId) {
+            if let Ok(selection) = pattern.cast::<IUIAutomationSelectionItemPattern>() {
+                return selection
+                    .Select()
+                    .map_err(|error| format!("SelectionItem.Select failed: {error}"));
+            }
+        }
+    }
+    Err("element exposes no usable native menu pattern".into())
+}
+
+/// Resolve and invoke an exact application menu path from fresh UIA state at
+/// every hop. No cached element index survives a menu mutation.
+pub fn invoke_menu_path(hwnd: u64, path: &[String]) -> Result<(), String> {
+    for depth in 0..path.len() {
+        let result = walk_tree(hwnd, None);
+        let matches = exact_menu_path_matches(&result.nodes, &path[..=depth]);
+        let target_index = match matches.as_slice() {
+            [index] => *index,
+            [] => {
+                unsafe { release_walk_nodes(result.nodes) };
+                return Err(format!("menu path segment {depth} was not found"));
+            }
+            _ => {
+                unsafe { release_walk_nodes(result.nodes) };
+                return Err(format!("menu path segment {depth} is ambiguous"));
+            }
+        };
+        let target = &result.nodes[target_index];
+        let error = if target.enabled == Some(false) {
+            Some(format!("menu path segment {depth} is disabled"))
+        } else if target.msaa_role.is_some() {
+            Some(format!(
+                "menu path segment {depth} is exposed only through MSAA, not UI Automation"
+            ))
+        } else {
+            unsafe { invoke_menu_element(target.element_ptr, depth + 1 == path.len()) }.err()
+        };
+        unsafe { release_walk_nodes(result.nodes) };
+        if let Some(error) = error {
+            return Err(format!("menu path segment {depth}: {error}"));
+        }
+        if depth + 1 != path.len() {
+            std::thread::sleep(std::time::Duration::from_millis(80));
+        }
+    }
+    Ok(())
 }
 
 /// Walk the UIA tree with caller-supplied caps. `max_elements`/`max_depth`

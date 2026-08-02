@@ -13,9 +13,9 @@ use serde_json::Value;
 use std::time::Duration;
 
 use crate::ax::bindings::{
-    copy_action_names, copy_bool_attr, copy_children, copy_element_attr, copy_string_attr,
-    kAXErrorSuccess, perform_action, AXUIElementCreateApplication, AXUIElementRef,
-    AXUIElementSetMessagingTimeout,
+    ax_get_window_id, copy_action_names, copy_ax_windows, copy_bool_attr, copy_children,
+    copy_element_attr, copy_string_attr, kAXErrorSuccess, perform_action, set_bool_attr_true,
+    AXUIElementCreateApplication, AXUIElementRef, AXUIElementSetMessagingTimeout,
 };
 
 pub struct InvokeMenuTool;
@@ -184,6 +184,81 @@ unsafe fn invoke_path(pid: i32, path: &[String]) -> Result<(), String> {
     result
 }
 
+/// Make one exact application window key before resolving focus-sensitive
+/// native menu state.
+///
+/// `SLPSSetFrontProcessWithOptions(..., kCPSNoWindows)` makes the application
+/// active without broadly raising its windows. That is the right default for
+/// input delivery, but it can leave the requested window non-key. macOS then
+/// exposes contextual Window-menu commands (including Move & Resize) as
+/// disabled even though the application itself is frontmost. Raise and mark
+/// only the requested AX window, then require an exact focused-window readback
+/// before menu resolution proceeds.
+fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
+    let native_key_requested = crate::input::skylight::make_exact_window_key(pid, window_id);
+    if !native_key_requested
+        && crate::apps::frontmost_pid() != Some(pid)
+        && !crate::apps::activate_pid(pid)
+    {
+        return Err("invoke_menu: target application could not be activated".into());
+    }
+    if !native_key_requested {
+        std::thread::sleep(Duration::from_millis(120));
+    }
+
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return Err("invoke_menu: target application is unavailable".into());
+        }
+        set_messaging_timeout(app);
+
+        let mut target = None;
+        for window in copy_ax_windows(app) {
+            if target.is_none() && ax_get_window_id(window) == Some(window_id) {
+                target = Some(window);
+            } else {
+                CFRelease(window as CFTypeRef);
+            }
+        }
+        CFRelease(app as CFTypeRef);
+
+        let Some(target) = target else {
+            return Err("invoke_menu: target accessibility window is unavailable".into());
+        };
+        set_messaging_timeout(target);
+
+        // SkyLight has requested native key status for this exact window. AX
+        // raise/main/focus completes the corresponding visible and semantic
+        // state; these writes remain best-effort for applications that expose
+        // only a subset of the attributes.
+        let _ = perform_action(target, "AXRaise");
+        let _ = set_bool_attr_true(target, "AXMain");
+        let _ = set_bool_attr_true(target, "AXFocused");
+        CFRelease(target as CFTypeRef);
+    }
+
+    let deadline = std::time::Instant::now() + Duration::from_millis(600);
+    loop {
+        if exact_window_is_focused(
+            crate::ax::bindings::focused_window_id_of_pid(pid),
+            window_id,
+        ) {
+            return Ok(());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(format!(
+                "invoke_menu: target window {window_id} did not become the focused window"
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn exact_window_is_focused(focused_window_id: Option<u32>, target_window_id: u32) -> bool {
+    focused_window_id == Some(target_window_id)
+}
+
 fn refusal(message: String) -> ToolResult {
     ToolResult::error(message.clone()).with_structured(serde_json::json!({
         "status": "refused",
@@ -224,20 +299,26 @@ impl Tool for InvokeMenuTool {
 
         let outcome = tokio::task::spawn_blocking(move || {
             let prior_frontmost = crate::apps::frontmost_pid();
+            let prior_frontmost_window =
+                prior_frontmost.and_then(crate::ax::bindings::focused_window_id_of_pid);
             let needs_activation = prior_frontmost != Some(pid);
-            if needs_activation
-                && !crate::input::skylight::set_front_process_persistently(pid, window_id)
-                && !crate::apps::activate_pid(pid)
-            {
-                return Err("invoke_menu: target application could not be activated".into());
-            }
-            if needs_activation {
-                std::thread::sleep(Duration::from_millis(120));
-            }
-            let result = unsafe { invoke_path(pid, &path) };
-            if needs_activation {
-                if let Some(prior_pid) = prior_frontmost {
-                    let _ = crate::apps::activate_pid(prior_pid);
+
+            let result = focus_exact_window(pid, window_id)
+                .and_then(|()| unsafe { invoke_path(pid, &path) });
+
+            // Restore the exact prior key window when one was observable,
+            // including across applications. Falling back to app activation
+            // preserves the previous behavior for apps without an AX window.
+            if let Some(prior_pid) = prior_frontmost {
+                let already_restored =
+                    prior_pid == pid && prior_frontmost_window == Some(window_id);
+                if !already_restored {
+                    let restored_exact = prior_frontmost_window.is_some_and(|prior_window_id| {
+                        focus_exact_window(prior_pid, prior_window_id).is_ok()
+                    });
+                    if needs_activation && !restored_exact {
+                        let _ = crate::apps::activate_pid(prior_pid);
+                    }
                 }
             }
             result
@@ -287,5 +368,12 @@ mod tests {
         assert_eq!(choose_action(&actions, false), Some("AXPress"));
         assert_eq!(choose_action(&actions, true), Some("AXPress"));
         assert_eq!(choose_action(&["AXShowMenu".into()], true), None);
+    }
+
+    #[test]
+    fn menu_focus_requires_the_exact_requested_window() {
+        assert!(exact_window_is_focused(Some(42), 42));
+        assert!(!exact_window_is_focused(Some(41), 42));
+        assert!(!exact_window_is_focused(None, 42));
     }
 }

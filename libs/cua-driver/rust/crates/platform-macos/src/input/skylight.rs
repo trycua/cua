@@ -445,6 +445,51 @@ pub fn set_front_process_persistently(target_pid: libc::pid_t, target_wid: u32) 
     unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) == 0 }
 }
 
+fn make_key_window_record(window_id: u32, event_kind: u8) -> [u8; 0xF8] {
+    let mut record = [0u8; 0xF8];
+    record[0x04] = 0xF8;
+    record[0x08] = event_kind;
+    record[0x3A] = 0x10;
+    record[0x3C..0x40].copy_from_slice(&window_id.to_le_bytes());
+    record[0x20..0x30].fill(0xFF);
+    record
+}
+
+/// Make one exact application window native-key and frontmost.
+///
+/// Accessibility's `AXFocusedWindow` can change without AppKit making the
+/// corresponding `NSWindow` key. Native menu validation observes the latter,
+/// so focus-sensitive commands remain disabled in that split state. This is
+/// the bounded exact-window sequence used by established macOS window tools:
+/// mark the front-process request as user generated, synthesize the paired
+/// make-key records for the requested WindowServer id, then let the caller
+/// raise the matching AX window. No other application window is addressed.
+pub fn make_exact_window_key(target_pid: libc::pid_t, target_wid: u32) -> bool {
+    let Some(set_front) = set_front_process_fn() else {
+        return false;
+    };
+    let Some(post) = post_event_record_to_fn() else {
+        return false;
+    };
+    let mut target_psn = [0u8; 8];
+    if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
+        return false;
+    }
+
+    // kCPSUserGenerated = 0x200. Unlike kCPSNoWindows, this permits AppKit to
+    // establish the requested native key window before it validates NSMenu.
+    if unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x200) } != 0 {
+        return false;
+    }
+    for event_kind in [0x01, 0x02] {
+        let record = make_key_window_record(target_wid, event_kind);
+        if unsafe { post(target_psn.as_ptr() as *const c_void, record.as_ptr()) } != 0 {
+            return false;
+        }
+    }
+    true
+}
+
 /// Tool-agnostic foreground-assist: briefly front `window_id`, run `body` (which
 /// posts the synthetic input), then restore the prior frontmost process.
 ///
@@ -582,7 +627,20 @@ pub fn with_menu_shortcut_activation(
 
 #[cfg(test)]
 mod tests {
-    use super::preserves_exact_existing_focus;
+    use super::{make_key_window_record, preserves_exact_existing_focus};
+
+    #[test]
+    fn make_key_records_address_only_the_exact_window() {
+        let press = make_key_window_record(0x7856_3412, 0x01);
+        let release = make_key_window_record(0x7856_3412, 0x02);
+        assert_eq!(press.len(), 0xF8);
+        assert_eq!(press[0x04], 0xF8);
+        assert_eq!(press[0x08], 0x01);
+        assert_eq!(release[0x08], 0x02);
+        assert_eq!(&press[0x3C..0x40], &[0x12, 0x34, 0x56, 0x78]);
+        assert_eq!(press[0x3A], 0x10);
+        assert!(press[0x20..0x30].iter().all(|byte| *byte == 0xFF));
+    }
 
     #[test]
     fn exact_existing_focus_avoids_reactivation() {

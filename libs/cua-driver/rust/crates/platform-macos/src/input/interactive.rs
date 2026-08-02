@@ -370,6 +370,7 @@ struct NativeInputState {
     scroll_residual_y: f64,
     bounds: crate::windows::WindowBounds,
     last_bounds_refresh: Instant,
+    bounds_refresh_rx: Option<Receiver<Result<crate::windows::WindowBounds>>>,
 }
 
 impl NativeInputState {
@@ -389,6 +390,7 @@ impl NativeInputState {
             scroll_residual_y: 0.0,
             bounds,
             last_bounds_refresh: Instant::now(),
+            bounds_refresh_rx: None,
         }
     }
 
@@ -436,10 +438,12 @@ impl NativeInputState {
     }
 
     fn dispatch_batch(&mut self, batch: &InteractiveInputBatch) -> Result<()> {
-        if self.config.delivery_mode == InteractiveDeliveryMode::PersistentForeground {
+        if self.config.delivery_mode == InteractiveDeliveryMode::PersistentForeground
+            && batch_requires_foreground_hid(&batch.events)
+        {
             self.prepare_target()?;
         }
-        self.refresh_bounds_if_due()?;
+        self.refresh_bounds_nonblocking();
         for event in &batch.events {
             self.dispatch_event(event)?;
         }
@@ -626,15 +630,45 @@ impl NativeInputState {
         ))
     }
 
-    fn refresh_bounds_if_due(&mut self) -> Result<()> {
-        // Window enumeration is substantially more expensive than event
-        // creation. A short cache preserves resize responsiveness without
-        // putting a WindowServer round trip on every pointer sample.
-        if self.last_bounds_refresh.elapsed() >= Duration::from_millis(100) {
-            self.bounds = target_window_bounds(&self.config)?;
-            self.last_bounds_refresh = Instant::now();
+    fn refresh_bounds_nonblocking(&mut self) {
+        if let Some(receiver) = &self.bounds_refresh_rx {
+            match receiver.try_recv() {
+                Ok(Ok(bounds)) => {
+                    self.bounds = bounds;
+                    self.bounds_refresh_rx = None;
+                    self.last_bounds_refresh = Instant::now();
+                }
+                Ok(Err(_)) | Err(mpsc::TryRecvError::Disconnected) => {
+                    // Capture/session lifetime remains the source of truth for
+                    // target closure. Keep the last valid geometry if a
+                    // transient WindowServer lookup fails.
+                    self.bounds_refresh_rx = None;
+                    self.last_bounds_refresh = Instant::now();
+                }
+                Err(mpsc::TryRecvError::Empty) => return,
+            }
         }
-        Ok(())
+
+        // Window enumeration can block behind WindowServer for more than a
+        // second after login/display changes. Refresh it off the native input
+        // worker so pointer and scroll dispatch never inherit that latency.
+        if self.bounds_refresh_rx.is_none()
+            && self.last_bounds_refresh.elapsed() >= Duration::from_millis(100)
+        {
+            let config = self.config.clone();
+            let (reply, receiver) = mpsc::channel();
+            match thread::Builder::new()
+                .name(format!(
+                    "cua-input-bounds-{}-{}",
+                    config.pid, config.window_id
+                ))
+                .spawn(move || {
+                    let _ = reply.send(target_window_bounds(&config));
+                }) {
+                Ok(_) => self.bounds_refresh_rx = Some(receiver),
+                Err(_) => self.last_bounds_refresh = Instant::now(),
+            }
+        }
     }
 
     fn post_keyboard(&self, event: &CGEvent) {
@@ -652,20 +686,22 @@ impl NativeInputState {
         button: PointerButton,
         click: bool,
     ) {
-        if self.foreground_hid_active {
-            event.post(CGEventTapLocation::HID);
-        } else {
-            super::mouse::post_mouse_event(
-                self.config.pid,
-                event,
-                Some(window_local),
-                Some(self.config.window_id),
-                Some(self.click_group_id),
-                i64::from(click),
-                pointer_button_number(button),
-                if click { 3 } else { 0 },
-            );
-        }
+        // Pointer delivery remains explicitly PID/window-routed even while the
+        // target owns the foreground. macOS can accept a global HID post while
+        // Electron/Chromium silently ignores it after login or display-session
+        // changes. The stamped SkyLight + public routes are the same proven
+        // path used by the one-shot click tool and preserve exact-window hit
+        // testing without moving the host's visible hardware cursor.
+        super::mouse::post_mouse_event(
+            self.config.pid,
+            event,
+            Some(window_local),
+            Some(self.config.window_id),
+            Some(self.click_group_id),
+            i64::from(click),
+            pointer_button_number(button),
+            if click { 3 } else { 0 },
+        );
     }
 }
 
@@ -676,6 +712,15 @@ fn foreground_hid_route(
 ) -> bool {
     delivery_mode == InteractiveDeliveryMode::PersistentForeground
         && frontmost_pid == Some(target_pid)
+}
+
+fn batch_requires_foreground_hid(events: &[InteractiveInputEvent]) -> bool {
+    events.iter().any(|event| {
+        matches!(
+            event,
+            InteractiveInputEvent::TextCommit { .. } | InteractiveInputEvent::Key { .. }
+        )
+    })
 }
 
 fn modifier_flags(modifiers: &[Modifier]) -> CGEventFlags {
@@ -870,5 +915,39 @@ mod tests {
             42,
             Some(42)
         ));
+    }
+
+    #[test]
+    fn only_keyboard_input_requires_foreground_verification() {
+        let pointer = InteractiveInputEvent::Pointer {
+            phase: PointerPhase::Move,
+            button: None,
+            x_normalized: 0.5,
+            y_normalized: 0.5,
+            modifiers: Vec::new(),
+        };
+        let scroll = InteractiveInputEvent::Scroll {
+            x_normalized: 0.5,
+            y_normalized: 0.5,
+            delta_x: 0.0,
+            delta_y: 1.0,
+            phase: GesturePhase::Changed,
+            momentum_phase: GesturePhase::None,
+            precise: true,
+        };
+        let key = InteractiveInputEvent::Key {
+            key: "a".to_owned(),
+            state: KeyState::Down,
+            modifiers: Vec::new(),
+            repeat: false,
+        };
+
+        assert!(!batch_requires_foreground_hid(&[pointer, scroll]));
+        assert!(batch_requires_foreground_hid(&[key]));
+        assert!(batch_requires_foreground_hid(&[
+            InteractiveInputEvent::TextCommit {
+                text: "hello".to_owned()
+            }
+        ]));
     }
 }

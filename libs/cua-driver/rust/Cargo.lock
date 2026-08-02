@@ -2977,6 +2977,7 @@ dependencies = [
  "image",
  "libc",
  "libspa",
+ "memmap2",
  "meval",
  "pip-preview",
  "pipewire",

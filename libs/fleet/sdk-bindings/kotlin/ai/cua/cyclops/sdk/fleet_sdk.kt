@@ -717,6 +717,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools(
     ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool(
+    ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request(
@@ -763,171 +765,173 @@ internal object UniffiLib {
 
     }
     external fun uniffi_cyclops_sdk_fn_clone_cyclopsclient(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Long
-    external fun uniffi_cyclops_sdk_fn_free_cyclopsclient(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Unit
-    external fun uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect(`configuration`: RustBuffer.ByValue,`httpClient`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Long
-    external fun uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_browser_with_access_token(`configuration`: RustBuffer.ByValue,`accessToken`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
-    ): Long
-    external fun uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token(`configuration`: RustBuffer.ByValue,`accessToken`: RustBuffer.ByValue,`httpClient`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Long
-    external fun uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_and_native_http_client(`configuration`: RustBuffer.ByValue,`accessToken`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
-    ): Long
-    external fun uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider(`configuration`: RustBuffer.ByValue,`tokenProvider`: Long,`httpClient`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Long
-    external fun uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client(`configuration`: RustBuffer.ByValue,`tokenProvider`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Long
-    external fun uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_native_http_client(`configuration`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
-    ): Long
-    external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_create_claim(`ptr`: Long,`request`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_claim(`ptr`: Long,`claim`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_get_claim(`ptr`: Long,`claim`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_list_claims(`ptr`: Long,`namespace`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim(`ptr`: Long,`claim`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_create_pool(`ptr`: Long,`request`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_pool(`ptr`: Long,`pool`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_get_pool(`ptr`: Long,`name`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_list_pools(`ptr`: Long,`namespace`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_update_pool(`ptr`: Long,`pool`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request(`ptr`: Long,`sandbox`: RustBuffer.ByValue,`service`: RustBuffer.ByValue,`path`: RustBuffer.ByValue,`request`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_cyclops_sdk_fn_clone_accesstokenprovider(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Long
-    external fun uniffi_cyclops_sdk_fn_free_accesstokenprovider(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Unit
-    external fun uniffi_cyclops_sdk_fn_init_callback_vtable_accesstokenprovider(`vtable`: UniffiVTableCallbackInterfaceAccessTokenProvider,
-    ): Unit
-    external fun uniffi_cyclops_sdk_fn_method_accesstokenprovider_get_access_token(`ptr`: Long,`forceRefresh`: Byte,
-    ): Long
-    external fun uniffi_cyclops_sdk_fn_clone_httpclient(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Long
-    external fun uniffi_cyclops_sdk_fn_free_httpclient(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Unit
-    external fun uniffi_cyclops_sdk_fn_init_callback_vtable_httpclient(`vtable`: UniffiVTableCallbackInterfaceHttpClient,
-    ): Unit
-    external fun uniffi_cyclops_sdk_fn_method_httpclient_execute(`ptr`: Long,`request`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_cyclops_sdk_fn_clone_cyclopscredentials(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Long
-    external fun uniffi_cyclops_sdk_fn_free_cyclopscredentials(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Unit
-    external fun uniffi_cyclops_sdk_fn_constructor_cyclopscredentials_new(`clientId`: RustBuffer.ByValue,`clientSecret`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
-    ): Long
-    external fun ffi_cyclops_sdk_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-    external fun ffi_cyclops_sdk_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-    external fun ffi_cyclops_sdk_rustbuffer_free(`buf`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
-    ): Unit
-    external fun ffi_cyclops_sdk_rustbuffer_reserve(`buf`: RustBuffer.ByValue,`additional`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-    external fun ffi_cyclops_sdk_rust_future_poll_u8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_cancel_u8(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_free_u8(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_complete_u8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Byte
-    external fun ffi_cyclops_sdk_rust_future_poll_i8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_cancel_i8(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_free_i8(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_complete_i8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Byte
-    external fun ffi_cyclops_sdk_rust_future_poll_u16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_cancel_u16(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_free_u16(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_complete_u16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Short
-    external fun ffi_cyclops_sdk_rust_future_poll_i16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_cancel_i16(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_free_i16(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_complete_i16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Short
-    external fun ffi_cyclops_sdk_rust_future_poll_u32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_cancel_u32(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_free_u32(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_complete_u32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Int
-    external fun ffi_cyclops_sdk_rust_future_poll_i32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_cancel_i32(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_free_i32(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_complete_i32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Int
-    external fun ffi_cyclops_sdk_rust_future_poll_u64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_cancel_u64(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_free_u64(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_complete_u64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Long
-    external fun ffi_cyclops_sdk_rust_future_poll_i64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_cancel_i64(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_free_i64(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_complete_i64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Long
-    external fun ffi_cyclops_sdk_rust_future_poll_f32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_cancel_f32(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_free_f32(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_complete_f32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Float
-    external fun ffi_cyclops_sdk_rust_future_poll_f64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_cancel_f64(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_free_f64(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_complete_f64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Double
-    external fun ffi_cyclops_sdk_rust_future_poll_rust_buffer(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_cancel_rust_buffer(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_free_rust_buffer(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_complete_rust_buffer(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-    external fun ffi_cyclops_sdk_rust_future_poll_void(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_cancel_void(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_free_void(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_rust_future_complete_void(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Unit
+): Long
+external fun uniffi_cyclops_sdk_fn_free_cyclopsclient(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Unit
+external fun uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect(`configuration`: RustBuffer.ByValue,`httpClient`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_browser_with_access_token(`configuration`: RustBuffer.ByValue,`accessToken`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token(`configuration`: RustBuffer.ByValue,`accessToken`: RustBuffer.ByValue,`httpClient`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_and_native_http_client(`configuration`: RustBuffer.ByValue,`accessToken`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider(`configuration`: RustBuffer.ByValue,`tokenProvider`: Long,`httpClient`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client(`configuration`: RustBuffer.ByValue,`tokenProvider`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_native_http_client(`configuration`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_create_claim(`ptr`: Long,`request`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_claim(`ptr`: Long,`claim`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_get_claim(`ptr`: Long,`claim`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_list_claims(`ptr`: Long,`namespace`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim(`ptr`: Long,`claim`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_create_pool(`ptr`: Long,`request`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_pool(`ptr`: Long,`pool`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_get_pool(`ptr`: Long,`name`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_list_pools(`ptr`: Long,`namespace`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_pool(`ptr`: Long,`request`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_update_pool(`ptr`: Long,`pool`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request(`ptr`: Long,`sandbox`: RustBuffer.ByValue,`service`: RustBuffer.ByValue,`path`: RustBuffer.ByValue,`request`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_clone_accesstokenprovider(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_fn_free_accesstokenprovider(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Unit
+external fun uniffi_cyclops_sdk_fn_init_callback_vtable_accesstokenprovider(`vtable`: UniffiVTableCallbackInterfaceAccessTokenProvider,
+): Unit
+external fun uniffi_cyclops_sdk_fn_method_accesstokenprovider_get_access_token(`ptr`: Long,`forceRefresh`: Byte,
+): Long
+external fun uniffi_cyclops_sdk_fn_clone_httpclient(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_fn_free_httpclient(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Unit
+external fun uniffi_cyclops_sdk_fn_init_callback_vtable_httpclient(`vtable`: UniffiVTableCallbackInterfaceHttpClient,
+): Unit
+external fun uniffi_cyclops_sdk_fn_method_httpclient_execute(`ptr`: Long,`request`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_clone_cyclopscredentials(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_fn_free_cyclopscredentials(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Unit
+external fun uniffi_cyclops_sdk_fn_constructor_cyclopscredentials_new(`clientId`: RustBuffer.ByValue,`clientSecret`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun ffi_cyclops_sdk_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun ffi_cyclops_sdk_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun ffi_cyclops_sdk_rustbuffer_free(`buf`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Unit
+external fun ffi_cyclops_sdk_rustbuffer_reserve(`buf`: RustBuffer.ByValue,`additional`: Long,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun ffi_cyclops_sdk_rust_future_poll_u8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_cancel_u8(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_free_u8(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_complete_u8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Byte
+external fun ffi_cyclops_sdk_rust_future_poll_i8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_cancel_i8(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_free_i8(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_complete_i8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Byte
+external fun ffi_cyclops_sdk_rust_future_poll_u16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_cancel_u16(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_free_u16(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_complete_u16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Short
+external fun ffi_cyclops_sdk_rust_future_poll_i16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_cancel_i16(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_free_i16(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_complete_i16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Short
+external fun ffi_cyclops_sdk_rust_future_poll_u32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_cancel_u32(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_free_u32(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_complete_u32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Int
+external fun ffi_cyclops_sdk_rust_future_poll_i32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_cancel_i32(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_free_i32(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_complete_i32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Int
+external fun ffi_cyclops_sdk_rust_future_poll_u64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_cancel_u64(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_free_u64(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_complete_u64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun ffi_cyclops_sdk_rust_future_poll_i64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_cancel_i64(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_free_i64(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_complete_i64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun ffi_cyclops_sdk_rust_future_poll_f32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_cancel_f32(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_free_f32(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_complete_f32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Float
+external fun ffi_cyclops_sdk_rust_future_poll_f64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_cancel_f64(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_free_f64(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_complete_f64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Double
+external fun ffi_cyclops_sdk_rust_future_poll_rust_buffer(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_cancel_rust_buffer(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_free_rust_buffer(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_complete_rust_buffer(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun ffi_cyclops_sdk_rust_future_poll_void(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_cancel_void(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_free_void(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_rust_future_complete_void(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Unit
 
 
 }
@@ -968,6 +972,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools() != 27984.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool() != 53919.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool() != 17695.toShort()) {
@@ -1943,6 +1950,8 @@ public interface CyclopsClientInterface {
 
     suspend fun `listPools`(`namespace`: kotlin.String): List<Pool>
 
+    suspend fun `reconcilePool`(`request`: CreatePoolRequest): Pool
+
     suspend fun `updatePool`(`pool`: Pool): Pool
 
     suspend fun `serviceRequest`(`sandbox`: Sandbox, `service`: kotlin.String, `path`: kotlin.String, `request`: HttpRequest): HttpResponse
@@ -2232,6 +2241,27 @@ open class CyclopsClient: Disposable, AutoCloseable, CyclopsClientInterface
         { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterSequenceTypePool.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `reconcilePool`(`request`: CreatePoolRequest) : Pool {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_pool(
+                uniffiHandle,
+                FfiConverterTypeCreatePoolRequest.lower(`request`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypePool.lift(it) },
         // Error FFI converter
         SdkException.ErrorHandler,
     )

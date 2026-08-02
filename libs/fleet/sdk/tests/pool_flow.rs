@@ -403,6 +403,169 @@ async fn gets_named_pool_and_updates_typed_pools() {
 }
 
 #[tokio::test]
+async fn reconcile_updates_an_existing_named_pool() {
+    let current = pool();
+    let updated = Pool {
+        spec: serde_json::from_value(serde_json::json!({
+            "replicas": 2,
+            "template": { "containerDiskImage": "registry.example/updated:latest" },
+        }))
+        .unwrap(),
+        ..pool()
+    };
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(json_response(200, &current)),
+        Ok(json_response(200, &updated)),
+    ]));
+    let client = client(Arc::clone(&http));
+
+    assert_eq!(
+        client
+            .reconcile_pool(CreatePoolRequest {
+                namespace: NAMESPACE.into(),
+                spec: updated.spec.clone(),
+            })
+            .await
+            .unwrap(),
+        updated.clone()
+    );
+
+    let requests = resource_requests(&http).await;
+    assert_request(&requests[0], "GET", ITEM, None);
+    assert_merge_patch_request(&requests[1], ITEM, Some(&json_bytes(&updated)));
+}
+
+#[tokio::test]
+async fn reconcile_creates_after_named_pool_is_not_found() {
+    let created = pool();
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(response(404, b"not found")),
+        Ok(response(409, b"namespace already exists")),
+        Ok(json_response(201, &created)),
+    ]));
+    let client = client(Arc::clone(&http));
+
+    assert_eq!(
+        client
+            .reconcile_pool(CreatePoolRequest {
+                namespace: NAMESPACE.into(),
+                spec: pool_spec(),
+            })
+            .await
+            .unwrap(),
+        created
+    );
+
+    let requests = resource_requests(&http).await;
+    assert_request(&requests[0], "GET", ITEM, None);
+    assert_request(
+        &requests[1],
+        "POST",
+        NAMESPACE_COLLECTION,
+        Some(br#"{"name":"example-pool"}"#),
+    );
+    assert_request(&requests[2], "POST", COLLECTION, Some(&json_bytes(&pool())));
+}
+
+#[tokio::test]
+async fn reconcile_attempts_create_after_named_pool_is_forbidden() {
+    let created = pool();
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(response(403, b"get forbidden")),
+        Ok(response(409, b"namespace already exists")),
+        Ok(json_response(201, &created)),
+    ]));
+    let client = client(Arc::clone(&http));
+
+    assert_eq!(
+        client
+            .reconcile_pool(CreatePoolRequest {
+                namespace: NAMESPACE.into(),
+                spec: pool_spec(),
+            })
+            .await
+            .unwrap(),
+        created
+    );
+
+    let requests = resource_requests(&http).await;
+    assert_request(&requests[0], "GET", ITEM, None);
+    assert_request(
+        &requests[1],
+        "POST",
+        NAMESPACE_COLLECTION,
+        Some(br#"{"name":"example-pool"}"#),
+    );
+    assert_request(&requests[2], "POST", COLLECTION, Some(&json_bytes(&pool())));
+}
+
+#[tokio::test]
+async fn reconcile_returns_create_error_after_named_pool_is_forbidden() {
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(response(403, b"get forbidden")),
+        Ok(response(409, b"namespace already exists")),
+        Ok(response(422, b"create rejected")),
+    ]));
+    let client = client(Arc::clone(&http));
+
+    assert!(matches!(
+        client
+            .reconcile_pool(CreatePoolRequest {
+                namespace: NAMESPACE.into(),
+                spec: pool_spec(),
+            })
+            .await,
+        Err(SdkError::Status {
+            ref operation,
+            status: 422,
+            ref body,
+        }) if operation == "create pool" && body == "create rejected"
+    ));
+
+    let requests = resource_requests(&http).await;
+    assert_eq!(requests.len(), 3);
+    assert_request(&requests[0], "GET", ITEM, None);
+    assert_request(
+        &requests[1],
+        "POST",
+        NAMESPACE_COLLECTION,
+        Some(br#"{"name":"example-pool"}"#),
+    );
+    assert_request(&requests[2], "POST", COLLECTION, Some(&json_bytes(&pool())));
+}
+
+#[tokio::test]
+async fn reconcile_returns_unrelated_named_pool_read_error_without_creating() {
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(response(500, b"read failed")),
+    ]));
+    let client = client(Arc::clone(&http));
+
+    assert!(matches!(
+        client
+            .reconcile_pool(CreatePoolRequest {
+                namespace: NAMESPACE.into(),
+                spec: pool_spec(),
+            })
+            .await,
+        Err(SdkError::Status {
+            ref operation,
+            status: 500,
+            ref body,
+        }) if operation == "get pool" && body == "read failed"
+    ));
+
+    let requests = resource_requests(&http).await;
+    assert_eq!(requests.len(), 1);
+    assert_request(&requests[0], "GET", ITEM, None);
+}
+
+#[tokio::test]
 async fn deletes_pool_before_namespace_and_accepts_empty_delete_bodies() {
     let http = Arc::new(ScriptedHttpClient::new([
         Ok(token()),

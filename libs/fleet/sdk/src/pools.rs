@@ -90,6 +90,22 @@ impl CyclopsClient {
             .await
     }
 
+    pub async fn reconcile_pool(
+        self: Arc<Self>,
+        request: CreatePoolRequest,
+    ) -> Result<Pool, SdkError> {
+        match self.clone().get_pool(request.namespace.clone()).await {
+            Ok(mut pool) => {
+                pool.spec = request.spec;
+                self.update_pool(pool).await
+            }
+            Err(SdkError::Status {
+                status: 403 | 404, ..
+            }) => self.create_pool(request).await,
+            Err(error) => Err(error),
+        }
+    }
+
     pub async fn update_pool(self: Arc<Self>, pool: Pool) -> Result<Pool, SdkError> {
         let item_url = self.pool_item_url(&pool)?;
         let body = to_json(&pool)?;

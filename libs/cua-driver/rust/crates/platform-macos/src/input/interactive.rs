@@ -397,8 +397,7 @@ impl NativeInputState {
     fn prepare_target(&mut self) -> Result<()> {
         self.foreground_hid_active = false;
         if self.config.delivery_mode == InteractiveDeliveryMode::PersistentForeground {
-            let frontmost_pid = crate::apps::frontmost_pid();
-            if foreground_hid_route(self.config.delivery_mode, self.config.pid, frontmost_pid) {
+            if self.target_is_frontmost() {
                 self.foreground_hid_active = true;
                 return Ok(());
             }
@@ -413,7 +412,7 @@ impl NativeInputState {
                     self.config.pid as libc::pid_t,
                     self.config.window_id,
                 );
-                if !skylight_accepted || crate::apps::frontmost_pid() != Some(self.config.pid) {
+                if !skylight_accepted || !self.target_is_frontmost() {
                     crate::apps::activate_pid_all_windows(self.config.pid);
                 }
                 // Foreground ownership changes asynchronously. Wait only as
@@ -422,19 +421,25 @@ impl NativeInputState {
                 // attempts are throttled so this wait never enters the input
                 // hot path on every batch.
                 for _ in 0..4 {
-                    if crate::apps::frontmost_pid() == Some(self.config.pid) {
+                    if self.target_is_frontmost() {
                         break;
                     }
                     thread::sleep(Duration::from_millis(10));
                 }
             }
-            self.foreground_hid_active = foreground_hid_route(
-                self.config.delivery_mode,
-                self.config.pid,
-                crate::apps::frontmost_pid(),
-            );
+            self.foreground_hid_active = self.target_is_frontmost();
         }
         Ok(())
+    }
+
+    fn target_is_frontmost(&self) -> bool {
+        let frontmost_pid =
+            match crate::input::skylight::is_process_frontmost(self.config.pid as libc::pid_t) {
+                Some(true) => Some(self.config.pid),
+                Some(false) => None,
+                None => crate::apps::frontmost_pid(),
+            };
+        foreground_hid_route(self.config.delivery_mode, self.config.pid, frontmost_pid)
     }
 
     fn dispatch_batch(&mut self, batch: &InteractiveInputBatch) -> Result<()> {

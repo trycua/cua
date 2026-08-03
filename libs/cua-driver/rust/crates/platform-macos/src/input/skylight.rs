@@ -329,6 +329,28 @@ pub fn main_connection_id() -> Option<u32> {
     connection_id_fn().map(|f| unsafe { f() })
 }
 
+/// Check whether `target_pid` owns WindowServer's front process without
+/// crossing through AppKit. `NSWorkspace.frontmostApplication` can block for
+/// more than a second while the display session is settling after wake; these
+/// SkyLight process-serial-number lookups stay on the WindowServer input path.
+///
+/// Returns `None` when either private symbol is unavailable or a lookup fails,
+/// allowing callers to fall back to the public AppKit query.
+pub fn is_process_frontmost(target_pid: pid_t) -> Option<bool> {
+    let get_front = get_front_process_fn()?;
+    let get_pid_psn = get_process_for_pid_fn()?;
+    let mut front_psn = [0u8; 8];
+    let mut target_psn = [0u8; 8];
+
+    if unsafe { get_front(front_psn.as_mut_ptr().cast()) } != 0
+        || unsafe { get_pid_psn(target_pid, target_psn.as_mut_ptr().cast()) } != 0
+    {
+        return None;
+    }
+
+    Some(front_psn == target_psn)
+}
+
 // ── Focus-without-raise ───────────────────────────────────────────────────────
 
 /// Activate `target_pid`'s window `target_wid` without raising any windows

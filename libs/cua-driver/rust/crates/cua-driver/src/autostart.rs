@@ -164,16 +164,19 @@ fn current_exe_for_autostart() -> Result<String> {
     // 260 chars needs the prefix to remain addressable.
     #[cfg(target_os = "windows")]
     let path = match path.strip_prefix(r"\\?\") {
-        Some(stripped)
-            if stripped.len() < 260
-                && stripped.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
-                && stripped.as_bytes().get(1) == Some(&b':') =>
-        {
+        Some(stripped) if stripped.len() < 260 && starts_with_drive_letter(stripped) => {
             stripped.to_owned()
         }
         _ => path,
     };
     Ok(path)
+}
+
+/// `true` when the path opens with a plain `<drive>:` — i.e. not the
+/// `UNC\server\share` form the extended-length namespace also carries.
+#[cfg(target_os = "windows")]
+fn starts_with_drive_letter(path: &str) -> bool {
+    matches!(path.as_bytes(), [drive, b':', ..] if drive.is_ascii_alphabetic())
 }
 
 // ── Windows impl ──────────────────────────────────────────────────────────

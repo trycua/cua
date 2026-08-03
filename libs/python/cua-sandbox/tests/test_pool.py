@@ -3,10 +3,54 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from cua_sandbox import Image, Pool
+from cua_sandbox import (
+    CreatePoolRequest,
+    Firmware,
+    Pool,
+    PoolSpec,
+    PoolTemplate,
+    SandboxService,
+    ServiceProtocol,
+)
 from cua_sandbox.sync import Pool as SyncPool
 from cua_sandbox.transport.fleet_cloud import _FleetClient
 from fleet_sdk import Sandbox as FleetSandbox
+
+
+def pool_request(
+    *,
+    name: str = "foo",
+    image: str = "example:latest",
+    replicas: int = 1,
+    services: dict[str, int] | None = None,
+    template: PoolTemplate | None = None,
+) -> CreatePoolRequest:
+    return CreatePoolRequest(
+        namespace=name,
+        spec=PoolSpec(
+            replicas=replicas,
+            services=[
+                SandboxService(name=service_name, target_port=port, protocol=ServiceProtocol.TCP)
+                for service_name, port in (services or {"server": 8000}).items()
+            ],
+            template=template
+            or PoolTemplate(
+                runtime=None,
+                runtime_class_name=None,
+                node_selector=None,
+                tolerations=None,
+                command=None,
+                container_disk_image=image,
+                image_pull_secret="ecr-credentials",
+                cpu_cores=None,
+                memory=None,
+                firmware=None,
+                probes=None,
+                oidc=None,
+            ),
+            autoscaling=None,
+        ),
+    )
 
 
 def fleet_pool(name: str = "foo") -> SimpleNamespace:
@@ -105,12 +149,11 @@ async def test_reconcile_creates_pool_from_registry_image(monkeypatch):
     client = FakeFleetClient()
     monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
 
-    pool = await Pool.reconcile(
-        {
-            "name": "foo",
-            "image": Image.from_registry("registry.example/workspace:latest").expose(3000),
-        }
+    request = pool_request(
+        image="registry.example/workspace:latest",
+        services={"server": 8000, "port-3000": 3000},
     )
+    pool = await Pool.reconcile(request)
 
     assert pool.name == "foo"
     assert pool.resource.metadata.name == "foo"
@@ -131,7 +174,7 @@ async def test_reconcile_closes_temporary_client_when_reconciliation_fails(monke
     monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
 
     with pytest.raises(RuntimeError, match="reconcile failed"):
-        await Pool.reconcile({"name": "foo", "image": Image.from_registry("example:latest")})
+        await Pool.reconcile(pool_request())
 
     assert client.closed is True
 
@@ -142,7 +185,7 @@ async def test_reconcile_updates_existing_pool_idempotently(monkeypatch):
     client = FakeFleetClient(existing=existing)
     monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
 
-    pool = await Pool.reconcile({"name": "foo", "image": Image.from_registry("example:latest")})
+    pool = await Pool.reconcile(pool_request())
 
     assert pool.resource is existing
     assert len(client.reconciled) == 1
@@ -156,7 +199,7 @@ async def test_claim_releases_claim_and_client_after_block_exception(monkeypatch
     claim_client = FakeFleetClient()
     clients = iter([reconcile_client, claim_client])
     monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(clients))
-    pool = await Pool.reconcile({"name": "foo", "image": Image.from_registry("example:latest")})
+    pool = await Pool.reconcile(pool_request())
 
     with pytest.raises(RuntimeError, match="body failed"):
         async with pool.claim() as sandbox:
@@ -175,7 +218,7 @@ async def test_claim_preserves_block_exception_when_release_fails(monkeypatch):
     claim_client = FakeFleetClient(release_error=RuntimeError("release failed"))
     clients = iter([reconcile_client, claim_client])
     monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(clients))
-    pool = await Pool.reconcile({"name": "foo", "image": Image.from_registry("example:latest")})
+    pool = await Pool.reconcile(pool_request())
 
     with pytest.raises(ValueError, match="body failed"):
         async with pool.claim():
@@ -191,7 +234,7 @@ async def test_claim_raises_release_failure_without_block_exception(monkeypatch)
     claim_client = FakeFleetClient(release_error=RuntimeError("release failed"))
     clients = iter([reconcile_client, claim_client])
     monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(clients))
-    pool = await Pool.reconcile({"name": "foo", "image": Image.from_registry("example:latest")})
+    pool = await Pool.reconcile(pool_request())
 
     with pytest.raises(RuntimeError, match="release failed"):
         async with pool.claim():
@@ -200,19 +243,11 @@ async def test_claim_raises_release_failure_without_block_exception(monkeypatch)
     assert claim_client.closed is True
 
 
-@pytest.mark.parametrize(
-    "config, message",
-    [
-        ({"image": Image.from_registry("example:latest")}, "name"),
-        ({"name": "foo"}, "image"),
-        ({"name": "foo", "image": "example:latest"}, "Image.from_registry"),
-        ({"name": "foo", "image": Image.linux()}, "Image.from_registry"),
-    ],
-)
+@pytest.mark.parametrize("invalid_value", [None, {}, "not-a-request"])
 @pytest.mark.asyncio
-async def test_reconcile_rejects_invalid_config(config, message):
-    with pytest.raises((TypeError, ValueError), match=message):
-        await Pool.reconcile(config)
+async def test_reconcile_rejects_non_request(invalid_value):
+    with pytest.raises(TypeError, match="CreatePoolRequest"):
+        await Pool.reconcile(invalid_value)
 
 
 def test_sync_pool_matches_blocking_context_manager(monkeypatch):
@@ -221,7 +256,7 @@ def test_sync_pool_matches_blocking_context_manager(monkeypatch):
     clients = iter([reconcile_client, claim_client])
     monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(clients))
 
-    pool = SyncPool.reconcile({"name": "foo", "image": Image.from_registry("example:latest")})
+    pool = SyncPool.reconcile(pool_request())
     with pool.claim() as sandbox:
         assert sandbox.name == "sandbox-1"
 
@@ -234,14 +269,12 @@ async def test_reconcile_preserves_replicas_and_named_services(monkeypatch):
     client = FakeFleetClient()
     monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
 
-    await Pool.reconcile(
-        {
-            "name": "foo",
-            "image": Image.from_registry("registry.example/workspace:latest"),
-            "replicas": 2,
-            "services": {"server": 8000, "mcp": 3000},
-        }
+    request = pool_request(
+        image="registry.example/workspace:latest",
+        replicas=2,
+        services={"server": 8000, "mcp": 3000},
     )
+    await Pool.reconcile(request)
 
     request = client.reconciled[0]
     assert request.spec.replicas == 2
@@ -252,12 +285,41 @@ async def test_reconcile_preserves_replicas_and_named_services(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_reconcile_forwards_native_create_pool_request_unchanged(monkeypatch):
+    client = FakeFleetClient()
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
+    request = pool_request(
+        image="registry.example/workspace:latest",
+        replicas=2,
+        services={"server": 8000, "mcp": 3000},
+        template=PoolTemplate(
+            runtime=None,
+            runtime_class_name=None,
+            node_selector=None,
+            tolerations=None,
+            command=None,
+            container_disk_image="registry.example/workspace:latest",
+            image_pull_secret="workspace-pull",
+            cpu_cores=10,
+            memory="20Gi",
+            firmware=Firmware.EFI,
+            probes=None,
+            oidc=None,
+        ),
+    )
+
+    await Pool.reconcile(request)
+
+    assert client.reconciled == [request]
+
+
+@pytest.mark.asyncio
 async def test_claim_exposes_named_service_requests(monkeypatch):
     reconcile_client = FakeFleetClient()
     claim_client = FakeFleetClient()
     clients = iter([reconcile_client, claim_client])
     monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(clients))
-    pool = await Pool.reconcile({"name": "foo", "image": Image.from_registry("example:latest")})
+    pool = await Pool.reconcile(pool_request())
 
     async with pool.claim() as sandbox:
         response = await sandbox.services.request(

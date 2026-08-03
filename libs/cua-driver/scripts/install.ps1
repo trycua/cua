@@ -1188,6 +1188,11 @@ function Remove-LegacyInstall {
     #    c. Stop-Process last — catches anything taskkill missed.
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
+    # Never kill the process tree we are running inside: when the installer is
+    # launched by `cua-driver update --apply`, our own parent IS a cua-driver.exe,
+    # and an unfiltered kill terminates the update mid-flight (the script dies
+    # right after the step banner above). Both cleanup passes below skip these.
+    $ancestorPids = @(Get-AncestorProcessIds)
     try {
         # Ends the running task instance. Returns non-zero when the task
         # isn't running or doesn't exist, both of which we swallow.
@@ -1195,12 +1200,8 @@ function Remove-LegacyInstall {
         Start-Sleep -Milliseconds 250
         # Force-kill via taskkill — handles High-IL processes that
         # Stop-Process can't touch from a Medium-IL caller.
-        # Never kill the process tree we are running inside: when the installer
-        # is launched by `cua-driver update --apply`, our own parent IS a
-        # cua-driver.exe, and an unfiltered /IM kill terminates the update
-        # mid-flight (the script dies right after the step banner above).
         $selfFilters = @()
-        foreach ($ancestorPid in (Get-AncestorProcessIds)) {
+        foreach ($ancestorPid in $ancestorPids) {
             $selfFilters += '/FI'
             $selfFilters += "PID ne $ancestorPid"
         }
@@ -1212,6 +1213,7 @@ function Remove-LegacyInstall {
     $procs = Get-Process -Name "cua-driver","cua-driver-uia" -ErrorAction SilentlyContinue
     if ($procs) {
         foreach ($p in $procs) {
+            if ($ancestorPids -contains $p.Id) { continue }
             try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
         }
     }

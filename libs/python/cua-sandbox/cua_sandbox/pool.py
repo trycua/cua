@@ -10,7 +10,12 @@ from typing import Any, cast
 from cua_sandbox.sandbox import Sandbox
 from cua_sandbox.transport.fleet import FleetTransport
 from cua_sandbox.transport.fleet_cloud import _FleetClient
-from fleet_sdk import ClaimSpec, CreateClaimRequest, CreatePoolRequest, SandboxTemplateRef
+from fleet_sdk import (
+    ClaimSpec,
+    CreateClaimRequest,
+    CreatePoolRequest,
+    SandboxTemplateRef,
+)
 
 logger = logging.getLogger(__name__)
 

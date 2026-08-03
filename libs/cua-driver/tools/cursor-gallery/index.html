@@ -9,13 +9,17 @@
   </head>
   <body>
     <main class="page-shell">
+      <div class="brand-bar" aria-label="Cua Driver cursor lab">
+        <span class="brand-wordmark">cua</span>
+        <span class="brand-surface">Driver · Cursor lab</span>
+      </div>
       <header class="hero">
         <div>
           <p class="eyebrow">CUA.DEFAULT · EXACT RENDERER PREVIEW</p>
-          <h1>Session-colored semantic motion</h1>
+          <h1>Session-colored <span class="accent">semantic motion.</span></h1>
           <p class="lede">
-            Exact frames from the Cua Driver native renderer. Every state keeps the shared floating
-            motion, with its semantic animation layered on top.
+            Exact frames from the Cua Driver native renderer. Build a production composition, compare
+            every badge context, then inspect the action artwork that makes it up.
           </p>
         </div>
         <div class="controls" aria-label="Animation controls">
@@ -30,80 +34,95 @@
               <option value="2">2×</option>
             </select>
           </label>
-          <button id="background-toggle" type="button">Mixed</button>
+          <button id="background-toggle" type="button">Dark</button>
         </div>
       </header>
 
-      <section class="gallery-section" aria-labelledby="actions-title">
+      <section id="runtime-preview-section" class="runtime-section" aria-labelledby="runtime-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-count">Production runtime</p>
+            <h2 id="runtime-title">Build the final cursor</h2>
+          </div>
+          <p>Choose action, delivery, and target semantics to preview the exact native overlay.</p>
+        </div>
+
+        <article class="runtime-card">
+          <div class="runtime-copy">
+            <p id="runtime-combination" class="section-count">Observe · Background · Browser</p>
+            <h3 id="runtime-preview-title">One cursor, every combination</h3>
+            <p>
+              The action animates around the pointer while the attached badge carries session
+              identity and optional execution context. Every selectable result below is exported
+              by the production Rust renderer.
+            </p>
+            <div class="preview-controls" aria-label="Final cursor preview controls">
+              <label>
+                <span>Action</span>
+                <select id="preview-action" aria-label="Preview action"></select>
+              </label>
+              <label>
+                <span>Delivery</span>
+                <select id="preview-delivery" aria-label="Preview delivery">
+                  <option value="none">None</option>
+                  <option value="background" selected>Background</option>
+                  <option value="foreground">Foreground</option>
+                </select>
+              </label>
+              <label>
+                <span>Target</span>
+                <select id="preview-target" aria-label="Preview target">
+                  <option value="none">None</option>
+                  <option value="ax">AX</option>
+                  <option value="pixel">Pixel</option>
+                  <option value="browser" selected>Browser</option>
+                  <option value="desktop">Desktop</option>
+                </select>
+              </label>
+            </div>
+          </div>
+          <div class="runtime-demo demo">
+            <video
+              id="runtime-preview"
+              class="cursor-video"
+              src="./generated/previews/observe--background--browser.webm"
+              data-group="previews"
+              data-state="observe--background--browser"
+              autoplay
+              loop
+              muted
+              playsinline
+            ></video>
+          </div>
+          <div class="runtime-anatomy" aria-label="Runtime cursor anatomy">
+            <div><span class="anatomy-index">1</span><span><strong>Pointer and action</strong><span id="anatomy-action">Observe animation</span></span></div>
+            <div><span class="anatomy-index">2</span><span><strong>Session</strong>Research</span></div>
+            <div><span class="anatomy-index">3</span><span><strong>Delivery</strong><span id="anatomy-delivery">Filled background chip</span></span></div>
+            <div><span class="anatomy-index">4</span><span><strong>Target</strong><span id="anatomy-target">Outlined browser chip</span></span></div>
+          </div>
+        </article>
+      </section>
+
+      <section id="badge-contexts" class="gallery-section context-section" aria-labelledby="contexts-title" data-capture-group="contexts">
+        <div class="section-heading">
+          <div>
+            <p class="section-count">15 badge states</p>
+            <h2 id="contexts-title">Every delivery and target combination</h2>
+          </div>
+          <p>None, single-chip states, and all eight paired states—always in runtime badge order.</p>
+        </div>
+        <div id="contexts-grid" class="context-grid"></div>
+      </section>
+
+      <section class="gallery-section" aria-labelledby="actions-title" data-capture-group="actions">
         <div class="section-heading">
           <div>
             <p class="section-count">12 states</p>
             <h2 id="actions-title">Action animations</h2>
           </div>
-          <p>Hover or focus a card to bring its motion forward.</p>
+          <p>Theme-owned action layers are isolated here for visual review.</p>
         </div>
         <div id="actions-grid" class="state-grid"></div>
-      </section>
-
-      <section class="gallery-section" aria-labelledby="modifiers-title">
-        <div class="section-heading">
-          <div>
-            <p class="section-count">6 context chips</p>
-            <h2 id="modifiers-title">Delivery and target context</h2>
-          </div>
-          <p>Host-rendered context chips can appear together with any action.</p>
-        </div>
-        <div id="modifiers-grid" class="state-grid"></div>
-
-        <article class="combined-card">
-          <div>
-            <p class="section-count">Combined state</p>
-            <h3>Foreground click at an exact pixel</h3>
-            <p>The filled delivery chip comes first, followed by the outlined target chip.</p>
-          </div>
-          <div class="demo">
-            <video
-              class="cursor-video"
-              src="./generated/combined/foreground-pixel-click.webm"
-              data-group="combined"
-              data-state="foreground-pixel-click"
-              autoplay
-              loop
-              muted
-              playsinline
-            ></video>
-          </div>
-          <div class="legend">
-            <span>○ Foreground delivery</span>
-            <span>□ Pixel target</span>
-          </div>
-        </article>
-
-        <article class="combined-card">
-          <div>
-            <p class="section-count">Session identity</p>
-            <h3>Compact label on cursor reveal</h3>
-            <p>
-              The session-tinted badge holds for two seconds, then fades while the cursor remains.
-            </p>
-          </div>
-          <div class="demo">
-            <video
-              class="cursor-video"
-              src="./generated/session/badge.webm"
-              data-group="session"
-              data-state="badge"
-              autoplay
-              loop
-              muted
-              playsinline
-            ></video>
-          </div>
-          <div class="legend">
-            <span>● Circular session marker</span>
-            <span>◒ Session-accent gradient</span>
-          </div>
-        </article>
       </section>
 
       <footer>

@@ -439,7 +439,7 @@ impl NativeInputState {
 
     fn dispatch_batch(&mut self, batch: &InteractiveInputBatch) -> Result<()> {
         if self.config.delivery_mode == InteractiveDeliveryMode::PersistentForeground
-            && batch_requires_foreground_hid(&batch.events)
+            && batch_requires_foreground_ownership(&batch.events)
         {
             self.prepare_target()?;
         }
@@ -714,11 +714,17 @@ fn foreground_hid_route(
         && frontmost_pid == Some(target_pid)
 }
 
-fn batch_requires_foreground_hid(events: &[InteractiveInputEvent]) -> bool {
+fn batch_requires_foreground_ownership(events: &[InteractiveInputEvent]) -> bool {
     events.iter().any(|event| {
         matches!(
             event,
-            InteractiveInputEvent::TextCommit { .. } | InteractiveInputEvent::Key { .. }
+            InteractiveInputEvent::TextCommit { .. }
+                | InteractiveInputEvent::Key { .. }
+                | InteractiveInputEvent::Pointer {
+                    phase: PointerPhase::Down | PointerPhase::Up | PointerPhase::Cancel,
+                    ..
+                }
+                | InteractiveInputEvent::Scroll { .. }
         )
     })
 }
@@ -918,10 +924,17 @@ mod tests {
     }
 
     #[test]
-    fn only_keyboard_input_requires_foreground_verification() {
-        let pointer = InteractiveInputEvent::Pointer {
+    fn actionable_input_reasserts_persistent_foreground_ownership() {
+        let pointer_move = InteractiveInputEvent::Pointer {
             phase: PointerPhase::Move,
             button: None,
+            x_normalized: 0.5,
+            y_normalized: 0.5,
+            modifiers: Vec::new(),
+        };
+        let pointer_down = InteractiveInputEvent::Pointer {
+            phase: PointerPhase::Down,
+            button: Some(PointerButton::Left),
             x_normalized: 0.5,
             y_normalized: 0.5,
             modifiers: Vec::new(),
@@ -942,9 +955,11 @@ mod tests {
             repeat: false,
         };
 
-        assert!(!batch_requires_foreground_hid(&[pointer, scroll]));
-        assert!(batch_requires_foreground_hid(&[key]));
-        assert!(batch_requires_foreground_hid(&[
+        assert!(!batch_requires_foreground_ownership(&[pointer_move]));
+        assert!(batch_requires_foreground_ownership(&[pointer_down]));
+        assert!(batch_requires_foreground_ownership(&[scroll]));
+        assert!(batch_requires_foreground_ownership(&[key]));
+        assert!(batch_requires_foreground_ownership(&[
             InteractiveInputEvent::TextCommit {
                 text: "hello".to_owned()
             }

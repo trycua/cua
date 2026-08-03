@@ -1133,6 +1133,20 @@ Write-Step "cua-driver-rs installer (Windows)"
 Write-Step "  install dir : $VisibleBinDir"
 Write-Step "  package home: $HomeDir"
 
+function Get-AncestorProcessIds {
+    # PIDs of this process and its ancestors, so cleanup never kills the caller.
+    # `cua-driver update --apply` runs the installer as a child of cua-driver.exe.
+    $ids = @()
+    $currentPid = $PID
+    for ($depth = 0; $depth -lt 8 -and $currentPid; $depth++) {
+        $ids += $currentPid
+        $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$currentPid" -ErrorAction SilentlyContinue
+        if (-not $proc -or -not $proc.ParentProcessId) { break }
+        $currentPid = $proc.ParentProcessId
+    }
+    return $ids
+}
+
 function Remove-LegacyInstall {
     # Best-effort cleanup of v0.2.13-and-earlier install paths. Runs before
     # any new install when default paths are in use (so users who override
@@ -1143,8 +1157,14 @@ function Remove-LegacyInstall {
     if ($env:CUA_DRIVER_RS_INSTALL_DIR -or $env:CUA_DRIVER_RS_HOME) {
         return
     }
-    $hasLegacy = (Test-Path -LiteralPath $LegacyVisibleBinDir) -or `
-                 (Test-Path -LiteralPath $LegacyHomeDir)
+    # A bare `~/.cua-driver-rs` is NOT evidence of a legacy install: the current
+    # version still writes its update-check cache and telemetry ids there
+    # (see crates/cua-driver/src/version_check.rs, HOME_SUBDIRECTORY). Requiring
+    # an actual legacy artifact keeps `update --apply` from walking into this
+    # branch on every single run once the update banner has been checked once.
+    $hasLegacyHome = (Test-Path -LiteralPath (Join-Path $LegacyHomeDir 'packages')) -or `
+                     (Test-Path -LiteralPath (Join-Path $LegacyHomeDir 'bin'))
+    $hasLegacy = (Test-Path -LiteralPath $LegacyVisibleBinDir) -or $hasLegacyHome
     if (-not $hasLegacy) { return }
 
     Write-Step "detected legacy install layout (v0.2.13 or earlier); migrating to Cua\cua-driver"
@@ -1175,8 +1195,17 @@ function Remove-LegacyInstall {
         Start-Sleep -Milliseconds 250
         # Force-kill via taskkill — handles High-IL processes that
         # Stop-Process can't touch from a Medium-IL caller.
-        & taskkill.exe /F /IM "cua-driver.exe" /T 2>$null | Out-Null
-        & taskkill.exe /F /IM "cua-driver-uia.exe" /T 2>$null | Out-Null
+        # Never kill the process tree we are running inside: when the installer
+        # is launched by `cua-driver update --apply`, our own parent IS a
+        # cua-driver.exe, and an unfiltered /IM kill terminates the update
+        # mid-flight (the script dies right after the step banner above).
+        $selfFilters = @()
+        foreach ($ancestorPid in (Get-AncestorProcessIds)) {
+            $selfFilters += '/FI'
+            $selfFilters += "PID ne $ancestorPid"
+        }
+        & taskkill.exe /F /IM "cua-driver.exe" /T @selfFilters 2>$null | Out-Null
+        & taskkill.exe /F /IM "cua-driver-uia.exe" /T @selfFilters 2>$null | Out-Null
     } finally {
         $ErrorActionPreference = $prevEAP
     }

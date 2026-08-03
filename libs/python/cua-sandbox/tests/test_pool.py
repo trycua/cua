@@ -9,12 +9,17 @@ from cua_sandbox import (
     Pool,
     PoolSpec,
     PoolTemplate,
+    RuntimeKind,
     SandboxService,
     ServiceProtocol,
 )
 from cua_sandbox.sync import Pool as SyncPool
 from cua_sandbox.transport.fleet_cloud import _FleetClient
 from fleet_sdk import Sandbox as FleetSandbox
+
+
+def test_public_pool_schema_exports_runtime_kind() -> None:
+    assert RuntimeKind.KUBEVIRT.value == 0
 
 
 def pool_request(

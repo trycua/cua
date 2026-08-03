@@ -132,22 +132,30 @@ pub fn kick() -> Result<()> {
     platform::kick()
 }
 
-/// Find the cua-driver executable to bake into the autostart entry.
-/// Uses `std::env::current_exe`, canonicalised to its real path (resolves
-/// junction / symlink chains so a versioned upgrade flipping `current`
-/// stays transparent to the registered task). The resolved path is what
-/// gets stored in the Scheduled Task / LaunchAgent / unit file.
+/// Find the cua-driver executable to bake into the autostart entry. The
+/// resolved path is what gets stored in the Scheduled Task / LaunchAgent /
+/// unit file.
+///
+/// On Windows the path is used **as invoked**, without canonicalisation.
+/// Canonicalising resolves the `bin -> current -> releases/<version>` junction
+/// chain down to a versioned release path, which then gets baked into the
+/// Scheduled Task — so the next upgrade (which only flips `current`) leaves the
+/// task launching the previous build. Keeping the junction path is what makes a
+/// versioned upgrade transparent to the registered task.
+///
+/// Elsewhere the path is still canonicalised to resolve symlink chains.
 fn current_exe_for_autostart() -> Result<String> {
     let exe = std::env::current_exe()
         .map_err(|e| anyhow!("could not resolve current executable: {e}"))?;
-    let canonical = std::fs::canonicalize(&exe).unwrap_or(exe);
-    let path = canonical.to_string_lossy().into_owned();
-    // On Windows, `canonicalize` returns a `\\?\C:\...` extended-length
-    // path. PowerShell + the Task Scheduler XML schema both handle it
-    // correctly, but it looks alarming in `schtasks /Query` output.
-    // Strip the prefix for readability — the unprefixed form is still
-    // valid as long as the path fits MAX_PATH (260 chars), which any
-    // realistic install will.
+    #[cfg(target_os = "windows")]
+    let resolved = exe;
+    #[cfg(not(target_os = "windows"))]
+    let resolved = std::fs::canonicalize(&exe).unwrap_or(exe);
+    let path = resolved.to_string_lossy().into_owned();
+    // Defensive: should the path ever arrive in the `\\?\C:\...`
+    // extended-length form, strip the prefix for readability. PowerShell and
+    // the Task Scheduler XML schema handle both forms correctly, but the
+    // prefixed one looks alarming in `schtasks /Query` output.
     #[cfg(target_os = "windows")]
     let path = path
         .strip_prefix(r"\\?\")

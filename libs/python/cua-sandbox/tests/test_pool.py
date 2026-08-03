@@ -370,3 +370,21 @@ async def test_claim_forwards_native_claim_spec_unchanged(monkeypatch):
     request = claim_client.claims[0]
     assert request.pool is pool.resource
     assert request.spec is spec
+
+
+@pytest.mark.asyncio
+async def test_claim_without_spec_uses_operator_default(monkeypatch):
+    reconcile_client = FakeFleetClient()
+    claim_client = FakeFleetClient()
+    clients = iter([reconcile_client, claim_client])
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(clients))
+    pool = await Pool.reconcile(pool_request())
+
+    async with pool.claim() as sandbox:
+        assert sandbox.name == "sandbox-1"
+
+    request = claim_client.claims[0]
+    assert request.pool is pool.resource
+    assert request.spec is None
+    assert claim_client.released == ["claim-1"]
+    assert claim_client.closed is True

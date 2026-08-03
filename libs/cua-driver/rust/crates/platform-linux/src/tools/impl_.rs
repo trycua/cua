@@ -443,6 +443,9 @@ impl Tool for ListWindowsTool {
             tokio::task::spawn_blocking(move || crate::wayland::list_windows_dispatch(filter_pid))
                 .await
                 .unwrap_or_default();
+        // Exited applications can remain visible in AT-SPI/X11 as zombies;
+        // never return those stale targets to callers.
+        windows.retain(|window| window.pid.map_or(true, crate::proc_fs::is_process_live));
         if on_screen_only {
             windows.retain(|window| window.is_on_screen);
         }
@@ -661,6 +664,20 @@ impl Tool for GetWindowStateTool {
             .get("max_depth")
             .and_then(|v| v.as_u64())
             .map(|v| v.max(1) as usize);
+
+        let process_is_live = crate::proc_fs::is_process_live(pid);
+        let window_matches = if crate::wayland::is_wayland() {
+            crate::wayland::list_windows_dispatch(Some(pid))
+                .iter()
+                .any(|window| window.xid == xid && window.pid == Some(pid))
+        } else {
+            crate::x11::window_belongs_to_pid(xid, pid)
+        };
+        if !process_is_live || !window_matches {
+            return ToolResult::error(format!(
+                "Window target pid {pid}, window_id {xid} is stale or no longer running; refresh list_windows."
+            ));
+        }
 
         // Always walk the AT-SPI tree; capture the screenshot by default. The
         // tree+screenshot pair is the default so the agent grounds on both and

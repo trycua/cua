@@ -1,0 +1,27 @@
+---
+title: Fleet Device Authentication
+---
+
+
+For short-lived interactive Fleet prototyping, pass a caller-supplied device access token through the public SDK:
+
+```python
+import cua_sandbox as cua
+
+# Keep this temporary token in application memory. Do not write it to a file,
+# environment variable, terminal output, or logs.
+cua.configure(access_token=device_access_token)
+```
+
+The token is temporary and the SDK never refreshes it. If Fleet returns an unauthorized or expired-token error, authenticate again using your approved device-login flow and supply the new token with `cua.configure(access_token=...)`.
+
+Do not use private Fleet client imports or modify SDK internals. The Sandbox SDK does not read the CLI keyring or provide a token-export command; your application remains responsible for a credential-safe handoff.
+
+For long-lived or unattended Fleet workloads, prefer OAuth client credentials:
+
+```python
+import cua_sandbox as cua
+cua.configure(client_id="client-id", client_secret="client-secret")
+```
+
+An explicit per-call `api_key` continues to use the legacy cloud API. A configured temporary access token takes precedence over configured client credentials for Fleet operations.

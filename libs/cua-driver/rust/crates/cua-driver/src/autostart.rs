@@ -143,7 +143,8 @@ pub fn kick() -> Result<()> {
 /// task launching the previous build. Keeping the junction path is what makes a
 /// versioned upgrade transparent to the registered task.
 ///
-/// Elsewhere the path is still canonicalised to resolve symlink chains.
+/// Elsewhere the path is canonicalised (best-effort — on error the path is
+/// used as invoked) to resolve symlink chains.
 fn current_exe_for_autostart() -> Result<String> {
     let exe = std::env::current_exe()
         .map_err(|e| anyhow!("could not resolve current executable: {e}"))?;
@@ -156,11 +157,22 @@ fn current_exe_for_autostart() -> Result<String> {
     // extended-length form, strip the prefix for readability. PowerShell and
     // the Task Scheduler XML schema handle both forms correctly, but the
     // prefixed one looks alarming in `schtasks /Query` output.
+    //
+    // Only the plain drive-letter form is stripped, and only while the result
+    // still fits MAX_PATH: `\\?\UNC\server\share\...` is a different namespace
+    // (stripping it yields a bogus `UNC\server\...`), and a path longer than
+    // 260 chars needs the prefix to remain addressable.
     #[cfg(target_os = "windows")]
-    let path = path
-        .strip_prefix(r"\\?\")
-        .map(str::to_owned)
-        .unwrap_or(path);
+    let path = match path.strip_prefix(r"\\?\") {
+        Some(stripped)
+            if stripped.len() < 260
+                && stripped.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
+                && stripped.as_bytes().get(1) == Some(&b':') =>
+        {
+            stripped.to_owned()
+        }
+        _ => path,
+    };
     Ok(path)
 }
 

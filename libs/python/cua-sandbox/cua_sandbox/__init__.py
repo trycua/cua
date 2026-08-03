@@ -34,8 +34,8 @@ from fleet_sdk import (
     CreatePoolRequest,
     Firmware,
     PoolSpec,
-    RuntimeKind,
     PoolTemplate,
+    RuntimeKind,
     SandboxService,
     ServiceProtocol,
 )

@@ -576,7 +576,8 @@ fn send_click_synthesized_mods_impl(
         // Capture whether the target was ALREADY always-on-top so we don't strip
         // that state on restore — only demote below if WE promoted it.
         let was_topmost = (GetWindowLongPtrW(target, GWL_EXSTYLE) as u32) & WS_EX_TOPMOST.0 != 0;
-        let foreground_attach_failed = activate && !crate::input::force_foreground_attached(target);
+        let foreground_attach_failed =
+            activate && !crate::input::force_foreground_assisted(target).0;
         let noactivate = (!activate).then(|| crate::input::NoActivateGuard::arm(target));
         if !activate || foreground_attach_failed {
             let flags = if activate {

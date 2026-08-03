@@ -462,7 +462,7 @@ pub fn send_key_synthesized(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<
         // bring_to_front / macOS with_foreground_assist) — a bare
         // SetForegroundWindow is denied by the foreground-lock without UIAccess.
         // Restored to prev_fg below.
-        let _ = crate::input::inject::force_foreground_attached(target);
+        let _ = crate::input::force_foreground_assisted(target);
         // Brief settle so the foreground swap is processed before we send.
         sleep(Duration::from_millis(8));
 
@@ -581,7 +581,7 @@ pub fn send_text_synthesized(hwnd: u64, text: &str) -> Result<()> {
         // bring_to_front / macOS with_foreground_assist) — a bare
         // SetForegroundWindow is denied by the foreground-lock without UIAccess.
         // Restored to prev_fg below.
-        let _ = crate::input::inject::force_foreground_attached(target);
+        let _ = crate::input::force_foreground_assisted(target);
         sleep(Duration::from_millis(8));
         let actual_fg = GetForegroundWindow();
         if actual_fg != target {

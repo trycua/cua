@@ -8114,26 +8114,12 @@ fn menu_refusal(message: String) -> ToolResult {
 /// input, allowing a bounded retry without sending a real shortcut or text to
 /// whichever application currently has focus.
 fn activate_window_for_menu(hwnd: windows::Win32::Foundation::HWND) -> Result<bool, String> {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{
-        keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
-    };
-
-    if unsafe { crate::input::force_foreground_attached(hwnd) } {
-        return Ok(false);
+    let (activated, assisted) = unsafe { crate::input::force_foreground_assisted(hwnd) };
+    if activated {
+        Ok(assisted)
+    } else {
+        Err("invoke_menu: target window could not be activated".to_owned())
     }
-
-    const VK_NONAME: u8 = 0xFC;
-    unsafe {
-        keybd_event(VK_NONAME, 0, KEYBD_EVENT_FLAGS(0), 0);
-        keybd_event(VK_NONAME, 0, KEYEVENTF_KEYUP, 0);
-    }
-    for _ in 0..3 {
-        if unsafe { crate::input::force_foreground_attached(hwnd) } {
-            return Ok(true);
-        }
-        std::thread::sleep(std::time::Duration::from_millis(25));
-    }
-    Err("invoke_menu: target window could not be activated".to_owned())
 }
 
 #[async_trait]
@@ -8486,11 +8472,10 @@ impl Tool for BringToFrontTool {
             tokio::task::spawn_blocking(move || -> Result<(u64, u64, bool, bool), String> {
                 use windows::Win32::Foundation::HWND;
                 use windows::Win32::Graphics::Dwm::DwmFlush;
-                use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
                 use windows::Win32::UI::WindowsAndMessaging::{
-                    GetForegroundWindow, GetWindowThreadProcessId, IsIconic, IsWindow,
-                    SetForegroundWindow, SetWindowPos, ShowWindowAsync, HWND_NOTOPMOST,
-                    HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_RESTORE,
+                    GetForegroundWindow, IsIconic, IsWindow, SetWindowPos, ShowWindowAsync,
+                    HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+                    SW_RESTORE,
                 };
 
                 let target = HWND(hwnd as *mut _);
@@ -8550,22 +8535,9 @@ impl Tool for BringToFrontTool {
                     a && b
                 };
 
-                // Then best-effort focus/activation (needed for keyboard) via the
-                // AttachThreadInput trick — inherits the current FG thread's FG-lock
-                // token so SetForegroundWindow can succeed at Medium IL. Still denied
-                // on a maxed lock without UIAccess; the z-raise already made the
-                // window visible regardless.
-                let my_tid = unsafe { GetCurrentThreadId() };
-                let mut fg_pid = 0u32;
-                let fg_tid = unsafe { GetWindowThreadProcessId(prev_fg, Some(&mut fg_pid)) };
-                let attached = fg_tid != 0 && fg_tid != my_tid;
-                if attached {
-                    let _ = unsafe { AttachThreadInput(my_tid, fg_tid, true) };
-                }
-                let _ = unsafe { SetForegroundWindow(target) };
-                if attached {
-                    let _ = unsafe { AttachThreadInput(my_tid, fg_tid, false) };
-                }
+                // The caller explicitly requested a visible transition, so the
+                // shared foreground helper may claim the most-recent-input token.
+                let _ = unsafe { crate::input::force_foreground_assisted(target) };
                 let now_fg = unsafe { GetForegroundWindow() };
 
                 // A restored HWND can stop reporting iconic before its compositor

@@ -262,9 +262,10 @@ def test_sync_pool_matches_blocking_context_manager(monkeypatch):
     monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(clients))
 
     pool = SyncPool.reconcile(pool_request())
-    with pool.claim() as sandbox:
+    with pool.claim(bind_deadline=900) as sandbox:
         assert sandbox.name == "sandbox-1"
 
+    assert claim_client.claims[0].spec.bind_deadline == 900
     assert claim_client.released == ["claim-1"]
     assert claim_client.closed is True
 
@@ -338,3 +339,21 @@ async def test_claim_exposes_named_service_requests(monkeypatch):
     _, service, path, request = claim_client.service_requests[0]
     assert (service, path, request.method) == ("mcp", "/mcp", "POST")
     assert request.body == b'{"jsonrpc": "2.0", "method": "tools/list", "id": 1}'
+
+@pytest.mark.asyncio
+async def test_claim_forwards_bind_deadline_to_fleet(monkeypatch):
+    reconcile_client = FakeFleetClient()
+    claim_client = FakeFleetClient()
+    clients = iter([reconcile_client, claim_client])
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(clients))
+    pool = await Pool.reconcile(pool_request())
+
+    async with pool.claim(bind_deadline=900) as sandbox:
+        assert sandbox.name == "sandbox-1"
+
+    request = claim_client.claims[0]
+    assert request.pool is pool.resource
+    assert request.spec.bind_deadline == 900
+    assert request.spec.sandbox_template_ref.name == pool.name
+    assert request.spec.warmpool is None
+    assert request.spec.lifecycle is None

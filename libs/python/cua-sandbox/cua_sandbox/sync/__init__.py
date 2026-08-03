@@ -95,9 +95,9 @@ class Pool:
         return cls(_run(_AsyncPool.reconcile(request)))
 
     @contextmanager
-    def claim(self) -> Iterator[_SyncProxy]:
+    def claim(self, *, bind_deadline: int | None = None) -> Iterator[_SyncProxy]:
         """Synchronously lease a sandbox and release the claim on exit."""
-        context = self._async_pool.claim()
+        context = self._async_pool.claim(bind_deadline=bind_deadline)
         sandbox = _run(context.__aenter__())
         try:
             yield _SyncProxy(sandbox)

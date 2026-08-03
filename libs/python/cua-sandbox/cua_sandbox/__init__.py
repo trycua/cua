@@ -31,12 +31,14 @@ from cua_sandbox.runtime.compat import (
 from cua_sandbox.sandbox import Sandbox, SandboxInfo, sandbox
 from cua_sandbox.transport.cloud import CloudTransport
 from fleet_sdk import (
+    ClaimSpec,
     CreatePoolRequest,
     Firmware,
     PoolSpec,
     PoolTemplate,
     RuntimeKind,
     SandboxService,
+    SandboxTemplateRef,
     ServiceProtocol,
 )
 
@@ -47,6 +49,8 @@ __all__ = [
     "Image",
     "Pool",
     "CreatePoolRequest",
+    "ClaimSpec",
+    "SandboxTemplateRef",
     "PoolSpec",
     "RuntimeKind",
     "PoolTemplate",

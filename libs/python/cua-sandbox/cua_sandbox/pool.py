@@ -14,7 +14,6 @@ from fleet_sdk import (
     ClaimSpec,
     CreateClaimRequest,
     CreatePoolRequest,
-    SandboxTemplateRef,
 )
 
 logger = logging.getLogger(__name__)
@@ -63,11 +62,8 @@ class Pool:
             await client.close()
 
     @asynccontextmanager
-    async def claim(self, *, bind_deadline: int | None = None) -> AsyncIterator[Sandbox]:
+    async def claim(self, *, spec: ClaimSpec | None = None) -> AsyncIterator[Sandbox]:
         """Lease a sandbox and release its Fleet claim when the block exits.
-
-        ``bind_deadline`` overrides the Fleet operator deadline in seconds.
-        Leave it as ``None`` to use the operator default.
 
         A claim is released after both normal and exceptional block exits. If
         release fails while the block is already raising, the original block
@@ -81,14 +77,6 @@ class Pool:
         cleanup_error: Exception | None = None
 
         try:
-            spec = None
-            if bind_deadline is not None:
-                spec = ClaimSpec(
-                    sandbox_template_ref=SandboxTemplateRef(name=self.name),
-                    warmpool=None,
-                    bind_deadline=bind_deadline,
-                    lifecycle=None,
-                )
             claim = await client.create_claim(CreateClaimRequest(pool=self._resource, spec=spec))
             bound = await client.wait_claim(claim)
             sandbox = Sandbox(

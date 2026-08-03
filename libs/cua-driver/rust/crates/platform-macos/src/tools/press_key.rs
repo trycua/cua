@@ -207,6 +207,19 @@ impl Tool for PressKeyTool {
         };
         let pre_focus_ptr: Option<usize> = pre_focus_guard.as_ref().map(|g| g.as_ptr());
 
+        // An element target was explicitly requested (element_index/element_token)
+        // but couldn't be retained from the cache — the snapshot is stale. Fail
+        // loudly instead of silently falling through to the CGEvent post below,
+        // which would deliver the keystroke to whatever holds focus (possibly the
+        // user's own window). Same refusal every other element tool already makes.
+        if let Some(idx) = element_index {
+            if pre_focus_guard.is_none() {
+                return ToolResult::error(format!(
+                    "Element index {idx} not found. Call get_window_state first."
+                ));
+            }
+        }
+
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // Single-key presses can fire autocomplete (Return on a search
         // box opens a results popover) or trigger menu shortcuts that
@@ -225,11 +238,22 @@ impl Tool for PressKeyTool {
             || async move {
                 // Pre-focus the element under suppression so its
                 // side-effects are captured by the snapshot + lease.
-                if let Some(element_ptr) = pre_focus_ptr {
-                    let _ = tokio::task::spawn_blocking(move || {
+                // A failed focus is a hard error: posting the key anyway
+                // sends it wherever focus happens to be.
+                if let (Some(element_ptr), Some(idx)) = (pre_focus_ptr, element_index) {
+                    match tokio::task::spawn_blocking(move || {
                         crate::input::ax_actions::focus_element(element_ptr)
                     })
-                    .await;
+                    .await
+                    {
+                        Ok(Ok(())) => {}
+                        Ok(Err(e)) => {
+                            return Ok(Err(anyhow::anyhow!(
+                                "could not focus element index {idx}: {e}"
+                            )))
+                        }
+                        Err(e) => return Err(e),
+                    }
                     tokio::time::sleep(std::time::Duration::from_millis(30)).await;
                 }
 
@@ -302,5 +326,87 @@ impl Tool for PressKeyTool {
             Ok(Err(e)) => ToolResult::error(format!("press_key failed: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Above macOS's pid_max (99999): no process can be listening, so a
+    /// regression that posts the key anyway still cannot reach a real window.
+    const UNUSED_PID: i32 = 2_000_000;
+
+    fn tool() -> PressKeyTool {
+        PressKeyTool::new(Arc::new(ToolState::new(false, false, None)))
+    }
+
+    fn text_of(result: &ToolResult) -> &str {
+        match &result.content[0] {
+            cua_driver_core::protocol::Content::Text { text, .. } => text,
+            _ => panic!("expected text content"),
+        }
+    }
+
+    #[tokio::test]
+    async fn stale_element_index_refuses_instead_of_posting_the_key() {
+        // The element the caller addressed is not in the cache (stale
+        // snapshot). Posting the key anyway would deliver it to whatever
+        // holds focus — the user's own window, for a background agent.
+        let result = tool()
+            .invoke(serde_json::json!({
+                "pid": UNUSED_PID,
+                "key": "return",
+                "window_id": 7,
+                "element_index": 4242,
+            }))
+            .await;
+
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            text_of(&result),
+            "Element index 4242 not found. Call get_window_state first."
+        );
+    }
+
+    #[tokio::test]
+    async fn element_index_without_window_id_refuses() {
+        // Without window_id the element can never be retained from the cache,
+        // so the addressed target is unresolvable — same refusal as scroll.
+        let result = tool()
+            .invoke(serde_json::json!({
+                "pid": UNUSED_PID,
+                "key": "a",
+                "element_index": 3,
+            }))
+            .await;
+
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            text_of(&result),
+            "Element index 3 not found. Call get_window_state first."
+        );
+    }
+
+    #[tokio::test]
+    async fn ax_px_conflict_still_reports_the_addressing_error_first() {
+        // The new cache guard must not shadow the pre-existing addressing
+        // check: passing both forms is an argument error, not a stale element.
+        let result = tool()
+            .invoke(serde_json::json!({
+                "pid": UNUSED_PID,
+                "key": "return",
+                "window_id": 1,
+                "element_index": 9,
+                "x": 10.0,
+                "y": 20.0,
+            }))
+            .await;
+
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            text_of(&result),
+            "Pass either element_index (ax) or x,y (px) to press_key, not both."
+        );
     }
 }

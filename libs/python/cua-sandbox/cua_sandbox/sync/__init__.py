@@ -24,7 +24,7 @@ from cua_sandbox.image import Image
 from cua_sandbox.localhost import Localhost as _AsyncLocalhost
 from cua_sandbox.pool import Pool as _AsyncPool
 from cua_sandbox.sandbox import Sandbox as _AsyncSandbox
-from fleet_sdk import CreatePoolRequest
+from fleet_sdk import ClaimSpec, CreatePoolRequest
 
 
 def _get_or_create_loop() -> asyncio.AbstractEventLoop:
@@ -95,9 +95,9 @@ class Pool:
         return cls(_run(_AsyncPool.reconcile(request)))
 
     @contextmanager
-    def claim(self) -> Iterator[_SyncProxy]:
+    def claim(self, *, spec: ClaimSpec | None = None) -> Iterator[_SyncProxy]:
         """Synchronously lease a sandbox and release the claim on exit."""
-        context = self._async_pool.claim()
+        context = self._async_pool.claim(spec=spec)
         sandbox = _run(context.__aenter__())
         try:
             yield _SyncProxy(sandbox)

@@ -369,7 +369,7 @@ pub fn current_position(key: &str) -> (f64, f64) {
 /// `MoveTo` glides INTO the target instead of silently snapping. No-op when the
 /// cursor is already on-screen or its session already ended. Returns true if a
 /// seed was applied. Mirrors `platform_macos::cursor::overlay::seed_start_*`.
-fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
+pub(crate) fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
     let mut guard = RENDER.lock().unwrap();
     let Some(map) = guard.as_mut() else {
         return false;

@@ -3735,6 +3735,29 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
                 "expand quiet permission indicator: {}",
                 expanded.raw
             );
+            assert_eq!(
+                expanded.action_effect(),
+                Some("unverifiable"),
+                "the desktop click has no trusted effect read-back: {}",
+                expanded.raw
+            );
+            assert_eq!(
+                expanded.structured()["route"],
+                "global_input",
+                "{}",
+                expanded.raw
+            );
+            assert_eq!(
+                expanded.structured()["delivery"]["mode"],
+                "not_applicable",
+                "{}",
+                expanded.raw
+            );
+            assert!(
+                expanded.structured().get("evidence").is_none(),
+                "SendInput acceptance must not become confirmation evidence: {}",
+                expanded.raw
+            );
             thread::sleep(Duration::from_millis(250));
             let recaptured_window = fixture.driver.call(
                 "get_window_state",

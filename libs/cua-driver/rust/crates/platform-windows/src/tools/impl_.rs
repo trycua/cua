@@ -7127,15 +7127,13 @@ impl Tool for MoveCursorTool {
             self.state
                 .cursor_registry
                 .update_position(&cursor_key, x, y);
-        }
-        // A brand-new session cursor still sits at the off-screen sentinel
-        // (-200, -200). `render_state` only snaps that away on macOS
-        // (`move_to_snap_sentinel`), and the Windows equivalent —
-        // `seed_start_if_sentinel` — is otherwise reached only via
-        // `animate_cursor_to`, which this tool does not use. Without the seed the
-        // path below is planned from off-screen and a single move_cursor paints
-        // nothing.
-        if !cursor_key.is_empty() {
+            // A brand-new session cursor still sits at the off-screen sentinel
+            // (-200, -200). `render_state` only snaps that away on macOS
+            // (`move_to_snap_sentinel`), and the Windows equivalent —
+            // `seed_start_if_sentinel` — is otherwise reached only via
+            // `animate_cursor_to`, which this tool does not use. Without the seed
+            // the path below is planned from off-screen and a single move_cursor
+            // paints nothing.
             crate::overlay::seed_start_if_sentinel(&cursor_key, x, y);
         }
         // End pointing upper-left (45°) — matches Swift's

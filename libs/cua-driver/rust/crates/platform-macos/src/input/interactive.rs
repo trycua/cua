@@ -408,13 +408,18 @@ impl NativeInputState {
                 .is_none_or(|attempt| now.duration_since(attempt) >= FOREGROUND_ACTIVATION_RETRY);
             if activation_due {
                 self.last_activation_attempt = Some(now);
-                let skylight_accepted = crate::input::skylight::set_front_process_persistently(
+                let _ = crate::input::skylight::set_front_process_persistently(
                     self.config.pid as libc::pid_t,
                     self.config.window_id,
                 );
-                if !skylight_accepted || !self.target_is_frontmost() {
-                    crate::apps::activate_pid_all_windows(self.config.pid);
-                }
+                // SkyLight transfers WindowServer routing to the exact target
+                // window, but that alone does not always update AppKit's
+                // active-application state. Chromium/Electron then continues
+                // to reject input even though the process serial number looks
+                // frontmost. Pair every foreground transfer with the public
+                // application activation so the streamed app visibly becomes
+                // frontmost before the action is posted.
+                let _ = crate::apps::activate_pid_all_windows(self.config.pid);
                 // Foreground ownership changes asynchronously. Wait only as
                 // long as needed, then use target-routed delivery if macOS
                 // still refuses the activation request. Further activation

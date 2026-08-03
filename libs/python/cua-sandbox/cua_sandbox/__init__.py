@@ -30,6 +30,14 @@ from cua_sandbox.runtime.compat import (
 )
 from cua_sandbox.sandbox import Sandbox, SandboxInfo, sandbox
 from cua_sandbox.transport.cloud import CloudTransport
+from fleet_sdk import (
+    CreatePoolRequest,
+    Firmware,
+    PoolSpec,
+    PoolTemplate,
+    SandboxService,
+    ServiceProtocol,
+)
 
 __all__ = [
     "configure",
@@ -37,6 +45,12 @@ __all__ = [
     "whoami",
     "Image",
     "Pool",
+    "CreatePoolRequest",
+    "PoolSpec",
+    "PoolTemplate",
+    "SandboxService",
+    "ServiceProtocol",
+    "Firmware",
     "Sandbox",
     "SandboxInfo",
     "sandbox",

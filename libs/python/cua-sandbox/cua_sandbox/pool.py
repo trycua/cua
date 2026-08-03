@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, cast
 
-from cua_sandbox.image import Image
 from cua_sandbox.sandbox import Sandbox
 from cua_sandbox.transport.fleet import FleetTransport
-from cua_sandbox.transport.fleet_cloud import FleetCloudTransport, _FleetClient
-from fleet_sdk import CreateClaimRequest
+from cua_sandbox.transport.fleet_cloud import _FleetClient
+from fleet_sdk import CreateClaimRequest, CreatePoolRequest
 
 logger = logging.getLogger(__name__)
 
@@ -43,26 +42,18 @@ class Pool:
         return self._resource
 
     @classmethod
-    async def reconcile(cls, config: Mapping[str, Any]) -> "Pool":
-        """Create or update a Fleet pool from its desired configuration.
+    async def reconcile(cls, request: CreatePoolRequest) -> "Pool":
+        """Create or update a Fleet pool from a native Fleet request.
 
-        Repeated calls with the same configuration are idempotent: an existing
-        pool is updated in place rather than creating another pool. ``config``
-        requires a non-empty ``name`` and an ``image`` created with
-        :meth:`Image.from_registry`.
-
-        The Fleet client used to reconcile is closed before this method returns.
+        The request is passed unchanged to the generated Fleet client. Import
+        ``CreatePoolRequest`` and its nested schema types from ``cua_sandbox``
+        so callers do not depend on the generated binding package directly.
         """
-        name, image = cls._validate_config(config)
-        desired = FleetCloudTransport(
-            image=image,
-            name=name,
-            replicas=config.get("replicas", 1),
-            services=config.get("services"),
-        )._pool_request()
+        if not isinstance(request, CreatePoolRequest):
+            raise TypeError("Pool.reconcile requires a CreatePoolRequest")
         client = _FleetClient()
         try:
-            return cls(await client.reconcile_pool(desired))
+            return cls(await client.reconcile_pool(request))
         finally:
             await client.close()
 
@@ -118,18 +109,3 @@ class Pool:
 
             if cleanup_error is not None:
                 raise cleanup_error
-
-    @staticmethod
-    def _validate_config(config: Mapping[str, Any]) -> tuple[str, Image]:
-        if not isinstance(config, Mapping):
-            raise TypeError("Pool configuration must be a mapping")
-
-        name = config.get("name")
-        if not isinstance(name, str) or not name:
-            raise ValueError("Pool configuration requires a non-empty string 'name'")
-
-        image = config.get("image")
-        if not isinstance(image, Image):
-            raise TypeError("Pool configuration 'image' must be an Image.from_registry(...) value")
-        FleetCloudTransport._validate_image(image)
-        return name, image

@@ -18,12 +18,13 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import contextmanager
-from typing import Any, Iterator, Mapping, Optional
+from typing import Any, Iterator, Optional
 
 from cua_sandbox.image import Image
 from cua_sandbox.localhost import Localhost as _AsyncLocalhost
 from cua_sandbox.pool import Pool as _AsyncPool
 from cua_sandbox.sandbox import Sandbox as _AsyncSandbox
+from fleet_sdk import CreatePoolRequest
 
 
 def _get_or_create_loop() -> asyncio.AbstractEventLoop:
@@ -89,9 +90,9 @@ class Pool:
         return self._async_pool.name
 
     @classmethod
-    def reconcile(cls, config: Mapping[str, Any]) -> "Pool":
+    def reconcile(cls, request: CreatePoolRequest) -> "Pool":
         """Synchronously create or update a Fleet pool."""
-        return cls(_run(_AsyncPool.reconcile(config)))
+        return cls(_run(_AsyncPool.reconcile(request)))
 
     @contextmanager
     def claim(self) -> Iterator[_SyncProxy]:

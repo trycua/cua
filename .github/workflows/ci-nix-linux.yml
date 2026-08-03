@@ -18,7 +18,8 @@ on:
       - "libs/cua-driver/rust/crates/pip-preview/**"
       - "libs/cua-driver/rust/crates/platform-linux/**"
       - "libs/cua-driver/wayland-helper/**"
-      - "libs/cua-driver/tests/fixtures/shared/web/index.html"
+      - "libs/cua-driver/tests/fixtures/shared/web/**"
+      - "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/**"
       - ".github/workflows/ci-nix-linux.yml"
   push:
     branches: [main]
@@ -36,7 +37,8 @@ on:
       - "libs/cua-driver/rust/crates/pip-preview/**"
       - "libs/cua-driver/rust/crates/platform-linux/**"
       - "libs/cua-driver/wayland-helper/**"
-      - "libs/cua-driver/tests/fixtures/shared/web/index.html"
+      - "libs/cua-driver/tests/fixtures/shared/web/**"
+      - "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/**"
       - ".github/workflows/ci-nix-linux.yml"
   workflow_dispatch:
 
@@ -66,6 +68,8 @@ jobs:
             attribute: cua-driver-policy-yaml
           - name: Rego policy VM
             attribute: cua-driver-policy-rego
+          - name: transient-seat container
+            attribute: cua-driver-transient-seat
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install Nix
@@ -73,8 +77,29 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
+            extra-experimental-features = auto-allocate-uids cgroups
+            auto-allocate-uids = true
+            extra-system-features = uid-range
       - name: Build ${{ matrix.name }}
         run: >-
           nix build
           .#checks.x86_64-linux.${{ matrix.attribute }}
-          --no-link --print-build-logs --show-trace
+          --out-link "result-${{ matrix.attribute }}" --print-build-logs --show-trace
+      - name: Upload transient-seat evidence
+        if: always() && matrix.attribute == 'cua-driver-transient-seat'
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: cua-driver-transient-seat-evidence
+          path: result-cua-driver-transient-seat
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 14
+      - name: Verify transient-seat evidence and verdict
+        if: always() && matrix.attribute == 'cua-driver-transient-seat'
+        run: |
+          evidence=result-cua-driver-transient-seat
+          test -s "$evidence/transient-seat.gif"
+          test -s "$evidence/test.log"
+          test -s "$evidence/compositor.log"
+          test -s "$evidence/test-status"
+          test "$(cat "$evidence/test-status")" = 0

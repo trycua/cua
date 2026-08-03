@@ -221,6 +221,12 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
       --test harness_gtk3_test -- \
       --ignored --nocapture --test-threads=1
+  if [[ -n "${CUA_INJECT_SOCKET:-}" ]]; then
+    run_test transient-seat-behavior \
+      cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+        --test transient_seat_behavior_test -- \
+        --ignored --nocapture --test-threads=1
+  fi
 fi
 
 if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then

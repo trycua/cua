@@ -51,10 +51,20 @@ INCLUDES = r"""#include <stdint.h>
 #include <wlr/types/wlr_xdg_output_v1.h>
 
 #define CUA_MAXDEV 64
+#define CUA_TRANSIENT_SEAT_MAX 7
+#define CUA_TRANSIENT_SEAT_STRIDE 8
 /* Per-cursor / per-keyboard enter bookkeeping (idx = logical device). */
 struct cua_devstate { struct wlr_surface *entered; };
 static struct cua_devstate cua_ptr[CUA_MAXDEV];
 static struct cua_devstate cua_kbd_state[CUA_MAXDEV];
+/* Transient entries retain lifecycle identity and isolated logical device ranges.
+ * Injection uses the physical seat because clients bind its wl_pointer/wl_keyboard. */
+struct cua_transient_seat {
+	char name[64];
+	struct wlr_seat *seat;
+	int device_base;
+};
+static struct cua_transient_seat cua_transient_seats[CUA_TRANSIENT_SEAT_MAX];
 static int g_keymap_fd = -1;
 static size_t g_keymap_size = 0;
 static struct wlr_keyboard g_keyboard;
@@ -70,7 +80,6 @@ static void cua_ftl_request_activate(struct wl_listener *listener, void *data);
 static void cua_maybe_focus_new_toplevel(struct tinywl_toplevel *toplevel);
 static pid_t cua_toplevel_pid(struct tinywl_toplevel *t);
 static bool cua_pid_in_family(pid_t pid, pid_t root_pid);
-
 """
 
 # A foreign-toplevel handle pointer on each toplevel (for list_windows).
@@ -91,11 +100,21 @@ static void cua_focus_toplevel(struct tinywl_toplevel *toplevel) {
 	 * attached. Headless CI has none, so explicit activation establishes the
 	 * logical focus without coupling it to the initial map/configure handshake. */
 	struct wlr_surface *surface = toplevel->xdg_toplevel->base->surface;
-	if (toplevel->server->seat->keyboard_state.focused_surface != surface) {
-		struct wlr_keyboard_modifiers modifiers = {0};
-		wlr_seat_keyboard_notify_enter(
-			toplevel->server->seat, surface, NULL, 0, &modifiers);
-	}
+	wlr_log(WLR_INFO, "[cua] focus target=%p focused=%p client=%p", surface,
+		toplevel->server->seat->keyboard_state.focused_surface,
+		toplevel->server->seat->keyboard_state.focused_client);
+	// Always resend enter after focus_toplevel(): tinywl can update focused_surface
+	// without a wl_keyboard.enter when the synthetic keyboard has no backend.
+	wlr_seat_keyboard_notify_enter(
+		toplevel->server->seat, surface, g_keyboard.keycodes,
+		g_keyboard.num_keycodes, &g_keyboard.modifiers);
+}
+/* Chromium dispatches the queued keyboard batch only while the physical seat
+ * remains focused on the temporary target. */
+static void cua_restore_default_focus(struct tinywl_server *server,
+		struct tinywl_toplevel *toplevel) {
+	if (toplevel) cua_focus_toplevel(toplevel);
+	else wlr_seat_keyboard_notify_clear_focus(server->seat);
 }
 /* New child toplevels may request focus as part of their normal map sequence.
  * Preserve that behavior only when the current keyboard focus belongs to the
@@ -272,6 +291,46 @@ static const char *cua_query_geometry(struct tinywl_server *server, pid_t target
 	snprintf(out, out_len, "geometry %d %d %d %d", x, y, scene_x, scene_y);
 	return NULL;
 }
+static struct cua_transient_seat *cua_transient_seat_find(const char *name) {
+	for (int i = 0; i < CUA_TRANSIENT_SEAT_MAX; i++) {
+		if (cua_transient_seats[i].seat && !strcmp(cua_transient_seats[i].name, name))
+			return &cua_transient_seats[i];
+	}
+	return NULL;
+}
+static const char *cua_transient_seat_create(struct tinywl_server *server, const char *name) {
+	if (!name[0] || strlen(name) >= sizeof cua_transient_seats[0].name) return "bad-seat-name";
+	if (cua_transient_seat_find(name)) return "seat-exists";
+	for (int i = 0; i < CUA_TRANSIENT_SEAT_MAX; i++) {
+		struct cua_transient_seat *entry = &cua_transient_seats[i];
+		if (entry->seat) continue;
+		entry->seat = wlr_seat_create(server->wl_display, name);
+		if (!entry->seat) return "seat-create-failed";
+		wlr_seat_set_keyboard(entry->seat, &g_keyboard);
+		wlr_seat_set_capabilities(entry->seat,
+			WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_KEYBOARD);
+		snprintf(entry->name, sizeof entry->name, "%s", name);
+		entry->device_base = (i + 1) * CUA_TRANSIENT_SEAT_STRIDE;
+		return NULL;
+	}
+	return "seat-limit";
+}
+static const char *cua_transient_seat_destroy(const char *name) {
+	struct cua_transient_seat *entry = cua_transient_seat_find(name);
+	if (!entry) return "unknown-seat";
+	for (int i = 0; i < CUA_TRANSIENT_SEAT_STRIDE; i++) {
+		cua_ptr[entry->device_base + i].entered = NULL;
+		cua_kbd_state[entry->device_base + i].entered = NULL;
+	}
+	wlr_seat_destroy(entry->seat);
+	memset(entry, 0, sizeof *entry);
+	return NULL;
+}
+static bool cua_transient_device(const struct cua_transient_seat *entry, int idx, int *device) {
+	if (idx < 0 || idx >= CUA_TRANSIENT_SEAT_STRIDE) return false;
+	*device = entry->device_base + idx;
+	return true;
+}
 static void cua_ptr_leave(struct wlr_seat *seat, struct wlr_surface *surf) {
 	if (!surf) return;
 	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(seat, wl_resource_get_client(surf->resource));
@@ -318,7 +377,7 @@ static bool cua_motion(struct tinywl_server *server, struct tinywl_toplevel *t, 
 	 * focus/grab state was never updated. Device 0 is the normal single-pointer
 	 * route, so use the protocol-complete seat notifications there. Higher
 	 * logical device indices retain direct delivery for independent cursors. */
-	if (idx == 0) {
+	if (idx % CUA_TRANSIENT_SEAT_STRIDE == 0) {
 		wlr_seat_pointer_notify_enter(server->seat, surface, local_x, local_y);
 		wlr_seat_pointer_notify_motion(server->seat, cua_now_ms(), local_x, local_y);
 		/* Real cursors emit a separate frame event after the motion callback.
@@ -366,7 +425,7 @@ static bool cua_button(struct tinywl_server *server, struct tinywl_toplevel *t, 
 	struct wlr_surface *surface = cua_ptr[idx].entered ? cua_ptr[idx].entered : t->xdg_toplevel->base->surface;
 	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(server->seat, wl_resource_get_client(surface->resource));
 	if (!sc || wl_list_empty(&sc->pointers)) return false;
-	if (idx == 0) {
+	if (idx % CUA_TRANSIENT_SEAT_STRIDE == 0) {
 		wlr_seat_pointer_notify_button(server->seat, cua_now_ms(), button,
 			pressed ? WLR_BUTTON_PRESSED : WLR_BUTTON_RELEASED);
 		/* See cua_motion: there is no hardware cursor-frame callback for the
@@ -451,20 +510,23 @@ static void cua_init_keymap(struct tinywl_server *server) {
 	xkb_keymap_unref(km); xkb_context_unref(ctx);
 	wlr_log(WLR_INFO, "[cua] xkb keymap + chartab ready (%zu bytes)", g_keymap_size);
 }
-/* Ensure the target client's keyboard has had keymap + enter sent once (focus
- * free). idx 0 is the typing keyboard. */
-static struct wlr_seat_client *cua_kbd_enter(struct tinywl_server *server, struct tinywl_toplevel *t) {
+/* Ensure the target client's keyboard has had keymap + enter sent once for this
+ * logical keyboard. Index zero remains the physical/default keyboard. */
+static struct wlr_seat_client *cua_kbd_enter(struct tinywl_server *server, struct tinywl_toplevel *t, int idx) {
+	if (idx < 0 || idx >= CUA_MAXDEV) return NULL;
 	struct wlr_surface *surface = t->xdg_toplevel->base->surface;
 	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(server->seat, wl_resource_get_client(surface->resource));
 	if (!sc || wl_list_empty(&sc->keyboards)) return NULL;
 	struct wlr_surface *focused = server->seat->keyboard_state.focused_surface;
 	if (focused && wlr_surface_get_root_surface(focused) == surface) {
-		/* Foreground delivery already has a protocol-complete seat enter. The
-		 * key path below uses wlr_seat_keyboard_notify_key for this target. */
-		cua_kbd_state[0].entered = surface;
+		/* The physical keyboard is already protocol-focused on this target.
+		 * Transient typing temporarily establishes this state and restores it after
+		 * delivery, so Chromium follows its normal keyboard path without retaining
+		 * a default-seat focus change. */
+		cua_kbd_state[idx].entered = surface;
 		return sc;
 	}
-	if (cua_kbd_state[0].entered != surface) {
+	if (cua_kbd_state[idx].entered != surface) {
 		struct wl_resource *res; struct wl_array keys; wl_array_init(&keys);
 		wl_resource_for_each(res, &sc->keyboards) {
 			wl_keyboard_send_keymap(res, WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1, g_keymap_fd, g_keymap_size);
@@ -472,7 +534,7 @@ static struct wlr_seat_client *cua_kbd_enter(struct tinywl_server *server, struc
 			wl_keyboard_send_modifiers(res, wlr_seat_client_next_serial(sc), 0, 0, 0, 0);
 		}
 		wl_array_release(&keys);
-		cua_kbd_state[0].entered = surface;
+		cua_kbd_state[idx].entered = surface;
 	}
 	return sc;
 }
@@ -489,15 +551,16 @@ static void cua_kbd_key(struct wlr_seat_client *sc, uint32_t keycode, bool press
 			pressed ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED);
 }
 /* Preserve compositor-native keyboard delivery when the addressed surface is
- * already the logical seat focus. Chromium relies on wlroots' focused-seat
- * state for foreground keyboard events; sending a raw wl_keyboard.key to its
- * resource can be acknowledged while never reaching the renderer. Background
- * targets retain the direct resource path that makes focus-free input possible. */
+ * already the logical seat focus. Background targets retain the direct resource
+ * path that makes focus-free input possible. */
 static void cua_kbd_key_target(struct tinywl_server *server, struct tinywl_toplevel *t,
-		struct wlr_seat_client *sc, uint32_t keycode, bool pressed) {
+		struct wlr_seat_client *sc, int idx, uint32_t keycode, bool pressed) {
 	struct wlr_surface *target = wlr_surface_get_root_surface(t->xdg_toplevel->base->surface);
 	struct wlr_surface *focused = server->seat->keyboard_state.focused_surface;
 	struct wlr_surface *focused_root = focused ? wlr_surface_get_root_surface(focused) : NULL;
+	wlr_log(WLR_INFO, "[cua] key idx=%d route=%s target=%p focused=%p entry-client=%p focused-client=%p key=%u state=%u",
+		idx, target == focused_root ? "seat" : "direct", target, focused_root, sc,
+		server->seat->keyboard_state.focused_client, keycode, pressed);
 	if (target == focused_root) {
 		wlr_seat_keyboard_notify_key(server->seat, cua_now_ms(), keycode,
 			pressed ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED);
@@ -505,27 +568,59 @@ static void cua_kbd_key_target(struct tinywl_server *server, struct tinywl_tople
 		cua_kbd_key(sc, keycode, pressed);
 	}
 }
-static bool cua_type_cp(struct tinywl_server *server, struct tinywl_toplevel *t, uint32_t cp) {
+static bool cua_type_cp(struct tinywl_server *server, struct tinywl_toplevel *t, int idx, uint32_t cp) {
 	if (cp >= 128 || !g_chartab[cp].valid) return false;
-	struct wlr_seat_client *sc = cua_kbd_enter(server, t);
+	struct wlr_seat_client *sc = cua_kbd_enter(server, t, idx);
 	if (!sc) return false;
 	struct cua_keyent e = g_chartab[cp];
 	if (e.shift) cua_kbd_mods(sc, g_shift_mask);
-	cua_kbd_key_target(server, t, sc, e.keycode, true);
-	cua_kbd_key_target(server, t, sc, e.keycode, false);
+	cua_kbd_key_target(server, t, sc, idx, e.keycode, true);
+	cua_kbd_key_target(server, t, sc, idx, e.keycode, false);
 	if (e.shift) cua_kbd_mods(sc, 0);
 	return true;
 }
 /* Decode a hex-encoded ASCII string and type it focus-free into `t`. */
-static bool cua_type_hex(struct tinywl_server *server, struct tinywl_toplevel *t, const char *hex) {
+static bool cua_type_hex(struct tinywl_server *server, struct tinywl_toplevel *t, int idx, const char *hex) {
 	if (!t) return false;
+	/* Chromium only dispatches keyboard events from wlroots' focused-seat route.
+	 * A transient logical seat borrows that route for one typed string, then puts
+	 * the physical/default focus back exactly where it was. */
+	struct wlr_surface *restore = server->seat->keyboard_state.focused_surface;
+	struct wlr_surface *target = t->xdg_toplevel->base->surface;
+	struct wlr_surface *restore_root = restore ? wlr_surface_get_root_surface(restore) : NULL;
+	struct wlr_surface *target_root = wlr_surface_get_root_surface(target);
+	struct tinywl_toplevel *restore_toplevel = NULL;
+	struct tinywl_toplevel *candidate;
+	wl_list_for_each(candidate, &server->toplevels, link) {
+		struct wlr_surface *surface = candidate->xdg_toplevel->base->surface;
+		if (surface == restore_root) { restore_toplevel = candidate; break; }
+	}
+	bool restore_focus = idx != 0 && restore_root != target_root;
+	if (restore_focus) {
+		cua_focus_toplevel(t);
+		/* Send the focus transition before the injected key batch. Chromium drops
+		 * keys that arrive in the same unflushed compositor callback as focus. */
+		wl_display_flush_clients(server->wl_display);
+		/* Let the client consume wl_keyboard.enter before the first key. */
+		struct timespec settle = { .tv_sec = 0, .tv_nsec = 100 * 1000 * 1000 };
+		nanosleep(&settle, NULL);
+	}
+	bool ok = true;
 	for (const char *p = hex; p[0] && p[1]; p += 2) {
 		int hi = (p[0] <= '9') ? p[0] - '0' : (p[0] | 0x20) - 'a' + 10;
 		int lo = (p[1] <= '9') ? p[1] - '0' : (p[1] | 0x20) - 'a' + 10;
-		if (!cua_type_cp(server, t, (uint32_t)((hi << 4) | lo))) return false;
+		if (!cua_type_cp(server, t, idx, (uint32_t)((hi << 4) | lo))) { ok = false; break; }
 	}
-	return true;
+	if (restore_focus) {
+		/* Keep focus through a client dispatch interval before sending leave. */
+		wl_display_flush_clients(server->wl_display);
+		struct timespec settle = { .tv_sec = 0, .tv_nsec = 100 * 1000 * 1000 };
+		nanosleep(&settle, NULL);
+		cua_restore_default_focus(server, restore_toplevel);
+	}
+	return ok;
 }
+
 static uint32_t cua_named_keycode(const char *name) {
 	uint32_t kc = 0;
 	if (!strcasecmp(name, "enter") || !strcasecmp(name, "return")) kc = KEY_ENTER;
@@ -551,10 +646,10 @@ static int cua_key_named(struct tinywl_server *server, struct tinywl_toplevel *t
 	if (!t) return 0;
 	uint32_t kc = cua_named_keycode(name);
 	if (!kc) return 0;
-	struct wlr_seat_client *sc = cua_kbd_enter(server, t);
+	struct wlr_seat_client *sc = cua_kbd_enter(server, t, 0);
 	if (!sc) return -1;
-	cua_kbd_key_target(server, t, sc, kc, true);
-	cua_kbd_key_target(server, t, sc, kc, false);
+	cua_kbd_key_target(server, t, sc, 0, kc, true);
+	cua_kbd_key_target(server, t, sc, 0, kc, false);
 	return 1;
 }
 static int cua_hotkey(struct tinywl_server *server, struct tinywl_toplevel *t, const char *mods, const char *key) {
@@ -575,11 +670,11 @@ static int cua_hotkey(struct tinywl_server *server, struct tinywl_toplevel *t, c
 		else if (!strcasecmp(mod, "meta") || !strcasecmp(mod, "super") || !strcasecmp(mod, "win") || !strcasecmp(mod, "cmd")) mask |= g_logo_mask;
 		else return 0;
 	}
-	struct wlr_seat_client *sc = cua_kbd_enter(server, t);
+	struct wlr_seat_client *sc = cua_kbd_enter(server, t, 0);
 	if (!sc) return -1;
 	cua_kbd_mods(sc, mask);
-	cua_kbd_key_target(server, t, sc, kc, true);
-	cua_kbd_key_target(server, t, sc, kc, false);
+	cua_kbd_key_target(server, t, sc, 0, kc, true);
+	cua_kbd_key_target(server, t, sc, 0, kc, false);
 	cua_kbd_mods(sc, 0);
 	return 1;
 }
@@ -592,7 +687,49 @@ static const char *cua_handle_cmd(struct tinywl_server *server, char *line) {
 	if (sscanf(line, "%7s", cmd) != 1) return "empty";
 	const char *err = NULL;
 	struct tinywl_toplevel *t;
-	if (!strcmp(cmd, "d")) {
+	if (!strcmp(cmd, "seat")) {
+		char action[16], name[64];
+		if (sscanf(line, "seat %15s %63s", action, name) != 2) return "bad-args";
+		if (!strcmp(action, "create")) return cua_transient_seat_create(server, name);
+		if (!strcmp(action, "destroy")) return cua_transient_seat_destroy(name);
+		return "unknown-seat-action";
+	} else if (!strcmp(cmd, "sm") || !strcmp(cmd, "sb") || !strcmp(cmd, "st")) {
+		char seat_name[64];
+		struct cua_transient_seat *entry;
+		struct wlr_seat *physical = server->seat;
+		int idx, device;
+		bool ok = false;
+		if (!strcmp(cmd, "sm")) {
+			double x, y;
+			if (sscanf(line, "sm %63s %127s %d %lf %lf", seat_name, app, &idx, &x, &y) != 5) return "bad-args";
+			if (!(entry = cua_transient_seat_find(seat_name))) return "unknown-seat";
+			if (!cua_transient_device(entry, idx, &device)) return "bad-device";
+			if (!(t = cua_resolve_target(server, app, &err))) return err;
+			server->seat = entry->seat;
+			ok = cua_motion(server, t, device, x, y);
+			server->seat = physical;
+			return ok ? NULL : "no-pointer-resource";
+		}
+		if (!strcmp(cmd, "sb")) {
+			unsigned button, pressed;
+			if (sscanf(line, "sb %63s %127s %d %u %u", seat_name, app, &idx, &button, &pressed) != 5) return "bad-args";
+			if (!(entry = cua_transient_seat_find(seat_name))) return "unknown-seat";
+			if (!cua_transient_device(entry, idx, &device)) return "bad-device";
+			if (!(t = cua_resolve_target(server, app, &err))) return err;
+			server->seat = entry->seat;
+			ok = cua_button(server, t, device, button, pressed != 0);
+			server->seat = physical;
+			return ok ? NULL : "no-pointer-resource";
+		}
+		char hex[8192];
+		if (sscanf(line, "st %63s %127s %8191s", seat_name, app, hex) != 3) return "bad-args";
+		if (!(entry = cua_transient_seat_find(seat_name))) return "unknown-seat";
+		if (!(t = cua_resolve_target(server, app, &err))) return err;
+		server->seat = entry->seat;
+		ok = cua_type_hex(server, t, entry->device_base, hex);
+		server->seat = physical;
+		return ok ? NULL : "no-keyboard-resource";
+	} else if (!strcmp(cmd, "d")) {
 		double x, y; unsigned count, btn;
 		if (sscanf(line, "d %lf %lf %u %u", &x, &y, &count, &btn) != 4) return "bad-args";
 		if (!(t = cua_desktop_motion(server, x, y))) return "no-surface-at-point";
@@ -617,7 +754,7 @@ static const char *cua_handle_cmd(struct tinywl_server *server, char *line) {
 		char hex[8192];
 		if (sscanf(line, "t %127s %8191s", app, hex) != 2) return "bad-args";
 		if (!(t = cua_resolve_target(server, app, &err))) return err;
-		if (!cua_type_hex(server, t, hex)) return "no-keyboard-resource";
+		if (!cua_type_hex(server, t, 0, hex)) return "no-keyboard-resource";
 		return NULL;
 	} else if (!strcmp(cmd, "k")) {
 		char key[32];

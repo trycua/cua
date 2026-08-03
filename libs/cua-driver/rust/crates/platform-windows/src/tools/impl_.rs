@@ -2940,7 +2940,7 @@ impl Tool for ClickTool {
                 let activate = delivery == DeliveryMode::Foreground;
                 let send_result = tokio::task::spawn_blocking(move || {
                     let mod_refs: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
-                    if activate && !mod_refs.is_empty() {
+                    if activate {
                         crate::input::send_click_synthesized_active_mods(
                             hwnd, tx, ty, count, &btn_fg, &mod_refs,
                         )
@@ -3093,13 +3093,9 @@ impl Tool for ClickTool {
                 };
                 let send_result = tokio::task::spawn_blocking(move || {
                     let mod_refs: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
-                    if mod_refs.is_empty() {
-                        crate::input::send_click_synthesized(hwnd, cx, cy, count, &btn_fg)
-                    } else {
-                        crate::input::send_click_synthesized_active_mods(
-                            hwnd, cx, cy, count, &btn_fg, &mod_refs,
-                        )
-                    }
+                    crate::input::send_click_synthesized_active_mods(
+                        hwnd, cx, cy, count, &btn_fg, &mod_refs,
+                    )
                 })
                 .await;
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
@@ -3404,15 +3400,9 @@ impl Tool for ClickTool {
                 let mods_owned = modifiers.clone();
                 let send_result = tokio::task::spawn_blocking(move || {
                     let mod_refs: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
-                    if mod_refs.is_empty() {
-                        crate::input::send_click_synthesized(
-                            hwnd, sx as i32, sy as i32, count, &btn,
-                        )
-                    } else {
-                        crate::input::send_click_synthesized_active_mods(
-                            hwnd, sx as i32, sy as i32, count, &btn, &mod_refs,
-                        )
-                    }
+                    crate::input::send_click_synthesized_active_mods(
+                        hwnd, sx as i32, sy as i32, count, &btn, &mod_refs,
+                    )
                 })
                 .await;
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
@@ -3927,7 +3917,7 @@ impl Tool for TypeTextTool {
                     Err(message) => return ToolResult::error(message),
                 };
                 let focus_result = tokio::task::spawn_blocking(move || {
-                    crate::input::send_click_synthesized(hwnd, cx, cy, 1, "left")
+                    crate::input::send_click_synthesized_active_mods(hwnd, cx, cy, 1, "left", &[])
                 })
                 .await;
                 match focus_result {
@@ -6010,7 +6000,7 @@ impl Tool for DoubleClickTool {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
                 let send_result = tokio::task::spawn_blocking(move || {
-                    crate::input::send_click_synthesized(hwnd, cx, cy, 2, "left")
+                    crate::input::send_click_synthesized_active_mods(hwnd, cx, cy, 2, "left", &[])
                 })
                 .await;
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
@@ -6112,7 +6102,14 @@ impl Tool for DoubleClickTool {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
                 let send_result = tokio::task::spawn_blocking(move || {
-                    crate::input::send_click_synthesized(hwnd, sx_i, sy_i, 2, "left")
+                    crate::input::send_click_synthesized_active_mods(
+                        hwnd,
+                        sx_i,
+                        sy_i,
+                        2,
+                        "left",
+                        &[],
+                    )
                 })
                 .await;
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
@@ -6344,7 +6341,7 @@ impl Tool for RightClickTool {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
                 let send_result = tokio::task::spawn_blocking(move || {
-                    crate::input::send_click_synthesized(hwnd, cx, cy, 1, "right")
+                    crate::input::send_click_synthesized_active_mods(hwnd, cx, cy, 1, "right", &[])
                 })
                 .await;
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
@@ -6443,7 +6440,14 @@ impl Tool for RightClickTool {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
                 let send_result = tokio::task::spawn_blocking(move || {
-                    crate::input::send_click_synthesized(hwnd, sx_i, sy_i, 1, "right")
+                    crate::input::send_click_synthesized_active_mods(
+                        hwnd,
+                        sx_i,
+                        sy_i,
+                        1,
+                        "right",
+                        &[],
+                    )
                 })
                 .await;
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));

@@ -56,7 +56,7 @@ struct EnumState {
 /// EnumWindows already reported). The pid filter is applied to the merged
 /// list.
 pub fn list_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
-    let win32_windows = enumerate_via_enum_windows();
+    let win32_windows = list_windows_via_win32(None);
     let uia_windows = crate::uia::enumerate_top_level_windows();
 
     let mut seen: HashSet<u64> = HashSet::with_capacity(uia_windows.len() + win32_windows.len());
@@ -81,6 +81,25 @@ pub fn list_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
         merged.retain(|w| w.pid == fp);
     }
     merged
+}
+
+/// Resolve one exact Win32 window without entering the global UIA tree.
+///
+/// Exact `(pid, HWND)` callers already have a native identity anchor. Avoiding
+/// the UIA union keeps an unrelated unresponsive provider from blocking that
+/// ownership check.
+pub(crate) fn find_window_by_pid_and_handle(pid: u32, hwnd: u64) -> Option<WindowInfo> {
+    list_windows_via_win32(Some(pid))
+        .into_iter()
+        .find(|window| window.hwnd == hwnd)
+}
+
+pub(crate) fn list_windows_via_win32(filter_pid: Option<u32>) -> Vec<WindowInfo> {
+    let mut windows = enumerate_via_enum_windows();
+    if let Some(pid) = filter_pid {
+        windows.retain(|window| window.pid == pid);
+    }
+    windows
 }
 
 /// Walk `EnumWindows` and collect every visible, non-empty-titled

@@ -518,7 +518,7 @@ impl Tool for ListAppsTool {
             // log level — enable with `RUST_LOG=cua_driver=debug` when debugging
             // a slow list_apps invocation).
             let t0 = std::time::Instant::now();
-            let wins = crate::win32::list_windows(None);
+            let wins = crate::win32::list_windows_via_win32(None);
             tracing::debug!(target: "list_apps", "step 1 list_windows: {} wins ({}ms)", wins.len(), t0.elapsed().as_millis());
             let mut seen_pids = std::collections::HashSet::new();
             let mut running_pids: Vec<u32> = Vec::new();

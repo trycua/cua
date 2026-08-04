@@ -9,7 +9,7 @@ on:
       version:
         description: "Patch version to publish (without v prefix)"
         required: true
-        default: "0.0.5"
+        default: "0.0.9"
   workflow_call:
     inputs:
       version:
@@ -86,26 +86,26 @@ jobs:
         include:
           - platform: linux-x86_64
             runner: ubuntu-22.04
-            wheel: cua_train-0.1.4-py3-none-manylinux_2_34_x86_64.whl
-            sha256: 8b2c20a603772408ad25629e5fa16bfc36bb81ed6a876fd99f1ccfab5c242252
+            wheel: cua_train-0.1.5-py3-none-manylinux_2_34_x86_64.whl
+            sha256: 72824b317888d1bbf21585907c8291ce648007e052e92c1e4cd8d475750b57a5
             library_suffix: .so
             audit: auditwheel
           - platform: linux-aarch64
             runner: ubuntu-24.04-arm
-            wheel: cua_train-0.1.4-py3-none-manylinux_2_34_aarch64.whl
-            sha256: d0ea3e67a67c394ca05fad227ddd53987b53fbfbff907e43aa2ac6476f941df4
+            wheel: cua_train-0.1.5-py3-none-manylinux_2_34_aarch64.whl
+            sha256: d6adca168fbd9777ef3fccf21f0d39b180cde440494f8f0ff7d47a46de2e6d5a
             library_suffix: .so
             audit: auditwheel
           - platform: macos-x86_64
             runner: macos-15-intel
-            wheel: cua_train-0.1.4-py3-none-macosx_10_12_x86_64.whl
-            sha256: 20e59a46ae5bc20bc48e34bc8b0c8b623682068be5c31b430477bdf57e946745
+            wheel: cua_train-0.1.5-py3-none-macosx_10_12_x86_64.whl
+            sha256: 605cdd794edbd04a88f5a99f3713fd5b87fa8c634285839015a61894544cd1d1
             library_suffix: .dylib
             audit: delocate
           - platform: macos-arm64
             runner: macos-14
-            wheel: cua_train-0.1.4-py3-none-macosx_11_0_arm64.whl
-            sha256: cf5f4e26f77b4438849b5e6216829422980150439a88aa9a62a78dab74a95eb6
+            wheel: cua_train-0.1.5-py3-none-macosx_11_0_arm64.whl
+            sha256: 82ec2795fad892dc6238fcbcabb861e78d214f6603d765419a2b10fddef05fda
             library_suffix: .dylib
             audit: delocate
     steps:
@@ -173,8 +173,8 @@ jobs:
               Firmware,
               HttpHeader,
               HttpRequest,
-              PoolSpec,
-              PoolTemplate,
+              OsGymSandboxTemplateSpec,
+              OsGymSandboxWarmPoolSpec,
               RuntimeKind,
               SandboxService,
           )
@@ -192,8 +192,8 @@ jobs:
               Firmware,
               HttpHeader,
               HttpRequest,
-              PoolSpec,
-              PoolTemplate,
+              OsGymSandboxTemplateSpec,
+              OsGymSandboxWarmPoolSpec,
               RuntimeKind,
               SandboxService,
           ))

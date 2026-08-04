@@ -26,12 +26,12 @@ def _csv(rows: list[list[str]]) -> bytes:
 
 
 def _write_source_wheel(path: Path) -> dict[str, bytes]:
-    dist_info = "cua_train-0.1.4.dist-info"
+    dist_info = "cua_train-0.1.5.dist-info"
     entries = {
         "cua_train/__init__.py": b"TrainClient = object\n",
         "fleet_sdk/__init__.py": b"CyclopsClient = object\n",
         "fleet_sdk/libcyclops_sdk.so": b"native payload",
-        f"{dist_info}/METADATA": b"Metadata-Version: 2.4\nName: cua-train\nVersion: 0.1.4\nDescription-Content-Type: text/markdown\n\n",
+        f"{dist_info}/METADATA": b"Metadata-Version: 2.4\nName: cua-train\nVersion: 0.1.5\nDescription-Content-Type: text/markdown\n\n",
         f"{dist_info}/WHEEL": b"Wheel-Version: 1.0\nRoot-Is-Purelib: false\nTag: py3-none-manylinux_2_34_x86_64\n",
     }
     record_name = f"{dist_info}/RECORD"
@@ -45,7 +45,7 @@ def _write_source_wheel(path: Path) -> dict[str, bytes]:
 
 
 def test_repack_changes_only_distribution_metadata(tmp_path: Path):
-    source = tmp_path / "cua_train-0.1.4-py3-none-manylinux_2_34_x86_64.whl"
+    source = tmp_path / "cua_train-0.1.5-py3-none-manylinux_2_34_x86_64.whl"
     source_entries = _write_source_wheel(source)
 
     destination = repack(
@@ -67,7 +67,7 @@ def test_repack_changes_only_distribution_metadata(tmp_path: Path):
 
 
 def test_repack_rejects_unpinned_source(tmp_path: Path):
-    source = tmp_path / "cua_train-0.1.4-py3-none-manylinux_2_34_x86_64.whl"
+    source = tmp_path / "cua_train-0.1.5-py3-none-manylinux_2_34_x86_64.whl"
     _write_source_wheel(source)
 
     with pytest.raises(WheelError, match="SHA-256 mismatch"):

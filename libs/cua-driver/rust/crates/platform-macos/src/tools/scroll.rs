@@ -232,6 +232,18 @@ impl Tool for ScrollTool {
         // background-safe scroll: no activation, z-order change, or cursor move.
         if matches!(direction.as_str(), "up" | "down") {
             if let (Some(index), Some(wid)) = (element_index, window_id) {
+                if !delivery_mode.is_foreground() {
+                    if let Err(refusal_result) = super::gate_background_window_action(
+                        pid,
+                        wid,
+                        pre_focus_ptr,
+                        cua_driver_core::background_input::BackgroundAction::AxSemantic,
+                    )
+                    .await
+                    {
+                        return refusal_result;
+                    }
+                }
                 let native_element_guard = self
                     .state
                     .element_cache
@@ -406,6 +418,32 @@ impl Tool for ScrollTool {
         };
 
         if let Some(target) = wheel_target {
+            if !delivery_mode.is_foreground() {
+                if let Some(wid) = target.wid {
+                    if let (Some((lx, ly)), Some(bounds)) =
+                        (target.win_local, crate::windows::window_bounds_by_id(wid))
+                    {
+                        if lx < 0.0 || ly < 0.0 || lx > bounds.width || ly > bounds.height {
+                            return ToolResult::error(format!(
+                                "scroll: window-local point ({lx:.1}, {ly:.1}) pt lies outside \
+                                 window {wid}'s {:.0}×{:.0} pt frame; background delivery \
+                                 refused",
+                                bounds.width, bounds.height
+                            ));
+                        }
+                    }
+                    if let Err(refusal_result) = super::gate_background_window_action(
+                        pid,
+                        wid,
+                        pre_focus_ptr,
+                        cua_driver_core::background_input::BackgroundAction::WindowPointer,
+                    )
+                    .await
+                    {
+                        return refusal_result;
+                    }
+                }
+            }
             let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
             // Pin + glide the agent-cursor overlay to the target for visibility
             // (overlay only — does NOT move the hardware cursor). Mirrors click.
@@ -505,6 +543,21 @@ impl Tool for ScrollTool {
             _ => "down",
         };
         let key = key.to_owned();
+
+        if !delivery_mode.is_foreground() {
+            if let Some(wid) = window_id {
+                if let Err(refusal_result) = super::gate_background_window_action(
+                    pid,
+                    wid,
+                    pre_focus_ptr,
+                    cua_driver_core::background_input::BackgroundAction::GenericKey,
+                )
+                .await
+                {
+                    return refusal_result;
+                }
+            }
+        }
 
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // Scroll keystrokes (PageDown / arrow) into search-box autocomplete

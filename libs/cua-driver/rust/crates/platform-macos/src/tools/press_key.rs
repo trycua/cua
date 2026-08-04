@@ -76,8 +76,8 @@ fn validate_post_target(pid: i32) -> anyhow::Result<()> {
     }
 }
 
-fn read_ax_key_state(pid: i32, element_ptr: usize) -> Option<AxKeyState> {
-    if super::type_text::target_in_web_area(pid, Some((element_ptr, None))) {
+fn read_ax_key_state(pid: i32, window_id: Option<u32>, element_ptr: usize) -> Option<AxKeyState> {
+    if super::type_text::target_in_web_area(pid, Some((element_ptr, None)), window_id) {
         return None;
     }
     let element = element_ptr as AXUIElementRef;
@@ -90,16 +90,22 @@ fn read_ax_key_state(pid: i32, element_ptr: usize) -> Option<AxKeyState> {
 
 fn dispatch_with_ax_oracle(
     pid: i32,
+    window_id: Option<u32>,
     explicit_element_ptr: Option<usize>,
     dispatch: impl FnOnce() -> anyhow::Result<()>,
 ) -> anyhow::Result<bool> {
     let (element_ptr, owns_element) = match explicit_element_ptr {
         Some(ptr) => (Some(ptr), false),
-        None => unsafe { focused_element_of_pid(pid) }
-            .map(|element| (Some(element as usize), true))
-            .unwrap_or((None, false)),
+        None => unsafe {
+            match window_id {
+                Some(wid) => crate::ax::exact_target::focused_element_in_window(pid, wid),
+                None => focused_element_of_pid(pid),
+            }
+        }
+        .map(|element| (Some(element as usize), true))
+        .unwrap_or((None, false)),
     };
-    let before = element_ptr.and_then(|ptr| read_ax_key_state(pid, ptr));
+    let before = element_ptr.and_then(|ptr| read_ax_key_state(pid, window_id, ptr));
     let result = dispatch();
     // Native controls normally publish their new value/selection on the next
     // run-loop turn. Keep this bounded and reuse the exact retained element so
@@ -107,7 +113,7 @@ fn dispatch_with_ax_oracle(
     if before.is_some() {
         std::thread::sleep(std::time::Duration::from_millis(60));
     }
-    let after = element_ptr.and_then(|ptr| read_ax_key_state(pid, ptr));
+    let after = element_ptr.and_then(|ptr| read_ax_key_state(pid, window_id, ptr));
     if owns_element {
         if let Some(ptr) = element_ptr {
             unsafe { CFRelease(ptr as _) };
@@ -431,7 +437,7 @@ impl Tool for PressKeyTool {
                                 "delivery_mode=foreground requires window_id for press_key"
                             )
                         })?;
-                        return dispatch_with_ax_oracle(pid, pre_focus_ptr, || {
+                        return dispatch_with_ax_oracle(pid, window_id, pre_focus_ptr, || {
                             crate::input::skylight::with_foreground_hid_activation(
                                 pid as libc::pid_t,
                                 wid,
@@ -450,7 +456,7 @@ impl Tool for PressKeyTool {
                         });
                     }
                     // background (default): auth-envelope post, no raise.
-                    dispatch_with_ax_oracle(pid, pre_focus_ptr, || {
+                    dispatch_with_ax_oracle(pid, window_id, pre_focus_ptr, || {
                         crate::input::keyboard::press_key(pid, &key, &m)
                     })
                 })

@@ -16,6 +16,16 @@ pub struct DoubleClickTool {
     state: Arc<ToolState>,
 }
 
+fn background_action_for_element(
+    has_ax_open: bool,
+) -> cua_driver_core::background_input::BackgroundAction {
+    if has_ax_open {
+        cua_driver_core::background_input::BackgroundAction::AxSemantic
+    } else {
+        cua_driver_core::background_input::BackgroundAction::WindowPointer
+    }
+}
+
 impl DoubleClickTool {
     pub fn new(state: Arc<ToolState>) -> Self {
         Self { state }
@@ -113,11 +123,39 @@ impl Tool for DoubleClickTool {
             };
             let element_ptr = element_guard.as_ptr();
 
+            // Choose one background actuator before dispatch. An element that
+            // advertises AXOpen uses the exact semantic route; all other
+            // elements require the stricter routed-pointer proof. Do not let a
+            // failed AXOpen silently cross into an ungated pointer fallback.
+            let has_ax_open = tokio::task::spawn_blocking(move || unsafe {
+                copy_action_names(element_ptr as AXUIElementRef)
+                    .iter()
+                    .any(|action| action == "AXOpen")
+            })
+            .await
+            .unwrap_or(false);
+            if !delivery_mode.is_foreground() {
+                let action = background_action_for_element(has_ax_open);
+                if let Err(refusal_result) =
+                    super::gate_background_window_action(pid, wid, Some(element_ptr), action).await
+                {
+                    return refusal_result;
+                }
+            }
+
             // Thread the resolved session cursor key into the blocking AX path
             // so its ClickPulse lands on THIS session's cursor, not "default".
             let ck = cursor_key.clone();
             let result = tokio::task::spawn_blocking(move || {
-                ax_double_click(pid, wid, element_ptr, idx, &ck)
+                ax_double_click(
+                    pid,
+                    wid,
+                    element_ptr,
+                    idx,
+                    &ck,
+                    has_ax_open,
+                    delivery_mode.is_foreground(),
+                )
             })
             .await;
 
@@ -154,12 +192,42 @@ impl Tool for DoubleClickTool {
         // local point as screen-absolute).
         let (screen_x, screen_y, win_local_x, win_local_y) = if let Some(wid) = window_id {
             match super::px_frame::resolve_or_refuse(wid).await {
-                Ok(frame) => frame.to_screen(cx, cy),
+                Ok(frame) => {
+                    let translated = frame.to_screen(cx, cy);
+                    if !delivery_mode.is_foreground()
+                        && (translated.2 < 0.0
+                            || translated.3 < 0.0
+                            || translated.2 > frame.bounds.width
+                            || translated.3 > frame.bounds.height)
+                    {
+                        return ToolResult::error(format!(
+                            "double_click: window-local point ({:.1}, {:.1}) pt lies outside \
+                             window {wid}'s {:.0}×{:.0} pt frame; background delivery refused",
+                            translated.2, translated.3, frame.bounds.width, frame.bounds.height
+                        ));
+                    }
+                    translated
+                }
                 Err(refusal) => return refusal,
             }
         } else {
             (cx, cy, cx, cy)
         };
+
+        if !delivery_mode.is_foreground() {
+            if let Some(wid) = window_id {
+                if let Err(refusal_result) = super::gate_background_window_action(
+                    pid,
+                    wid,
+                    None,
+                    cua_driver_core::background_input::BackgroundAction::WindowPointer,
+                )
+                .await
+                {
+                    return refusal_result;
+                }
+            }
+        }
 
         // Pin overlay above the target window before animating.
         if let Some(wid) = window_id {
@@ -235,15 +303,22 @@ fn ax_double_click(
     element_ptr: usize,
     idx: usize,
     cursor_key: &str,
+    has_ax_open: bool,
+    allow_pointer_fallback: bool,
 ) -> anyhow::Result<String> {
     let element = element_ptr as AXUIElementRef;
 
     // Try AXOpen first (Finder items, openable list rows, document cells).
-    let actions = unsafe { copy_action_names(element) };
-    if actions.iter().any(|a| a == "AXOpen") {
+    if has_ax_open {
         let err = unsafe { perform_action(element, "AXOpen") };
         if err == kAXErrorSuccess {
             return Ok(format!("AXOpen performed on element [{idx}]."));
+        }
+        if !allow_pointer_fallback {
+            anyhow::bail!(
+                "AXOpen returned {err} for element [{idx}]; background delivery will not \
+                 improvise a pointer fallback after choosing the semantic route"
+            );
         }
         tracing::debug!(
             "AXOpen returned {err} for element [{idx}], falling back to pixel double-click"
@@ -280,4 +355,21 @@ fn ax_double_click(
     Ok(format!(
         "✅ Double-clicked element [{idx}] at ({cx:.1}, {cy:.1})."
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn background_element_route_does_not_guess_across_actuator_classes() {
+        assert_eq!(
+            background_action_for_element(true),
+            cua_driver_core::background_input::BackgroundAction::AxSemantic
+        );
+        assert_eq!(
+            background_action_for_element(false),
+            cua_driver_core::background_input::BackgroundAction::WindowPointer
+        );
+    }
 }

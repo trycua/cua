@@ -160,6 +160,22 @@ impl Tool for SetValueTool {
                 }
             };
         let element_ptr = element_guard.as_ptr();
+
+        // set_value is an always-background semantic AX mutation. Re-prove
+        // that the retained element still belongs to the requested exact
+        // window immediately before any cursor or AX work; a cache hit alone
+        // is not delivery proof after a window lifecycle or Space change.
+        if let Err(refusal_result) = super::gate_background_window_action(
+            pid,
+            window_id,
+            Some(element_ptr),
+            cua_driver_core::background_input::BackgroundAction::AxSemantic,
+        )
+        .await
+        {
+            return refusal_result;
+        }
+
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
         let center_ptr = element_ptr as usize;
         if let Ok(Some((screen_x, screen_y))) = tokio::task::spawn_blocking(move || unsafe {

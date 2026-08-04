@@ -34,6 +34,14 @@ struct WheelTarget {
     wid: Option<u32>,
 }
 
+fn after_exact_target_gate<T>(
+    gate: Result<(), ToolResult>,
+    action: impl FnOnce() -> T,
+) -> Result<T, ToolResult> {
+    gate?;
+    Ok(action())
+}
+
 pub struct ScrollTool {
     state: Arc<ToolState>,
 }
@@ -359,25 +367,61 @@ impl Tool for ScrollTool {
 
         // Resolve a screen-space wheel target, if a target was supplied.
         let wheel_target: Option<WheelTarget> = if let Some(element_ptr) = pre_focus_ptr {
+            // Revealing an element is itself an AX mutation. Prove that the
+            // cached element still belongs to the exact requested window before
+            // AXScrollToVisible for every direction, then keep the lease for the
+            // stricter pointer revalidation below.
+            let semantic_gate = if !delivery_mode.is_foreground() {
+                if let Some(wid) = window_id {
+                    if let Some(lease) = _mutation_lease.as_ref() {
+                        lease
+                            .gate_again(
+                                wid,
+                                Some(element_ptr),
+                                cua_driver_core::background_input::BackgroundAction::AxSemantic,
+                            )
+                            .await
+                    } else {
+                        match super::gate_background_window_action(
+                            pid,
+                            wid,
+                            Some(element_ptr),
+                            cua_driver_core::background_input::BackgroundAction::AxSemantic,
+                        )
+                        .await
+                        {
+                            Ok(lease) => {
+                                _mutation_lease = Some(lease);
+                                Ok(())
+                            }
+                            Err(refusal) => Err(refusal),
+                        }
+                    }
+                } else {
+                    Ok(())
+                }
+            } else {
+                Ok(())
+            };
             // Element path: wheel at the element's screen-space center. Both AX
             // coordinates and window bounds are logical top-left points, so no
             // Retina scaling is needed here.
             let wid = window_id;
-            tokio::task::spawn_blocking(move || {
+            let target_task = tokio::task::spawn_blocking(move || {
                 // Web content can be present in AX while its frame is below
                 // the outer page viewport. Ask the accessibility hierarchy to
                 // reveal the target before taking the screen-space center;
                 // otherwise the wheel is posted outside the rendered window
                 // and nested overflow regions never receive it.
-                unsafe {
-                    let _ = crate::ax::bindings::perform_action(
+                after_exact_target_gate(semantic_gate, || unsafe {
+                    crate::ax::bindings::perform_action(
                         element_ptr as AXUIElementRef,
                         "AXScrollToVisible",
-                    );
-                }
+                    )
+                })?;
                 std::thread::sleep(std::time::Duration::from_millis(40));
                 let center = unsafe { element_screen_center(element_ptr as AXUIElementRef) };
-                center.map(|(cx, cy)| {
+                Ok(center.map(|(cx, cy)| {
                     let win_local = wid
                         .and_then(crate::windows::window_bounds_by_id)
                         .map(|b| (cx - b.x, cy - b.y));
@@ -387,11 +431,13 @@ impl Tool for ScrollTool {
                         win_local,
                         wid,
                     }
-                })
-            })
-            .await
-            .ok()
-            .flatten()
+                }))
+            });
+            match target_task.await {
+                Ok(Ok(target)) => target,
+                Ok(Err(refusal)) => return refusal,
+                Err(_) => None,
+            }
         } else if let (Some(mut cx), Some(mut cy)) = (x_arg, y_arg) {
             // Targeted x,y are window-local screenshot pixels and REQUIRE a
             // window_id to anchor the window→screen conversion (schema contract).
@@ -447,6 +493,9 @@ impl Tool for ScrollTool {
                             ));
                         }
                     }
+                    // The semantic reveal gate does not authorize pointer
+                    // delivery. Revalidate the stricter route immediately
+                    // before proceeding to wheel dispatch.
                     if let Some(lease) = _mutation_lease.as_ref() {
                         if let Err(refusal_result) = lease
                             .gate_again(
@@ -718,5 +767,45 @@ unsafe fn collect_ax_buttons(
             collect_ax_buttons(child, depth + 1, buttons);
             CFRelease(child as CFTypeRef);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cua_driver_core::background_input::{
+        decide_background_input, BackgroundAction, BackgroundInputDecision, BackgroundTargetFacts,
+        ElementAncestry, ExactWindowTarget, WindowServerOwnership,
+    };
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    fn exact_target_refusal_prevents_ax_reveal() {
+        let action_ran = AtomicBool::new(false);
+        let target = ExactWindowTarget {
+            pid: 42,
+            window_id: 7,
+        };
+        let facts = BackgroundTargetFacts {
+            window_server: WindowServerOwnership::SamePid,
+            ax_window_present: true,
+            target_minimized: Some(false),
+            app_hidden: Some(false),
+            competing_keyboard_destinations: 0,
+            element: ElementAncestry::OutsideTargetWindow,
+        };
+        let refusal = match decide_background_input(target, &facts, BackgroundAction::AxSemantic) {
+            BackgroundInputDecision::Refuse(refusal) => Err(
+                super::super::background_refusal_result(target.pid, target.window_id, &refusal),
+            ),
+            BackgroundInputDecision::Execute { .. } => panic!("exact-target facts must refuse"),
+        };
+
+        let result = after_exact_target_gate(refusal, || {
+            action_ran.store(true, Ordering::SeqCst);
+        });
+
+        assert!(result.is_err());
+        assert!(!action_ran.load(Ordering::SeqCst));
     }
 }

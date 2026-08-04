@@ -632,6 +632,11 @@ fn harness_appkit_px_background_press_key_reports_honest_delivery_truth() {
                     "press_key",
                     serde_json::json!({
                         "pid": exited_pid,
+                        // An explicit target bypasses the PID-only window resolver so
+                        // this negative oracle reaches the posting preflight. Without
+                        // one, the earlier and equally truthful result is
+                        // window_target_not_found because /usr/bin/true owns no window.
+                        "window_id": wid,
                         "key": "return",
                         "delivery_mode": "background"
                     }),

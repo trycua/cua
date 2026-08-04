@@ -44,8 +44,14 @@ type ConnectionIDFn = unsafe extern "C" fn() -> u32;
 /// `uint64_t CGSGetActiveSpace(uint32_t cid)`
 type GetActiveSpaceFn = unsafe extern "C" fn(u32) -> u64;
 
-/// `CFArrayRef CGSCopySpacesForWindows(uint32_t cid, uint32_t options, CFArrayRef windowIDs)`
-type CopySpacesForWindowsFn = unsafe extern "C" fn(u32, u32, *const c_void) -> *mut c_void;
+/// `CFArrayRef SLSCopySpacesForWindows(uint32_t cid, int selector, CFArrayRef windowIDs)`
+type CopySpacesForWindowsFn = unsafe extern "C" fn(u32, i32, *const c_void) -> *mut c_void;
+
+/// `CFStringRef SLSCopyManagedDisplayForWindow(uint32_t cid, uint32_t wid)`
+type CopyManagedDisplayForWindowFn = unsafe extern "C" fn(u32, u32) -> *mut c_void;
+
+/// `uint64_t SLSManagedDisplayGetCurrentSpace(uint32_t cid, CFStringRef display)`
+type ManagedDisplayGetCurrentSpaceFn = unsafe extern "C" fn(u32, *const c_void) -> u64;
 
 // ── NSMenu shortcut activation SPIs ──────────────────────────────────────────
 
@@ -148,12 +154,38 @@ fn connection_id_fn() -> Option<ConnectionIDFn> {
 
 fn get_active_space_fn() -> Option<GetActiveSpaceFn> {
     static SYM: OnceLock<Option<GetActiveSpaceFn>> = OnceLock::new();
-    *SYM.get_or_init(|| find_sym(b"CGSGetActiveSpace\0").map(|p| unsafe { as_fn(p) }))
+    *SYM.get_or_init(|| {
+        find_sym(b"SLSGetActiveSpace\0")
+            .or_else(|| find_sym(b"CGSGetActiveSpace\0"))
+            .map(|p| unsafe { as_fn(p) })
+    })
 }
 
 fn copy_spaces_for_windows_fn() -> Option<CopySpacesForWindowsFn> {
     static SYM: OnceLock<Option<CopySpacesForWindowsFn>> = OnceLock::new();
-    *SYM.get_or_init(|| find_sym(b"CGSCopySpacesForWindows\0").map(|p| unsafe { as_fn(p) }))
+    *SYM.get_or_init(|| {
+        find_sym(b"SLSCopySpacesForWindows\0")
+            .or_else(|| find_sym(b"CGSCopySpacesForWindows\0"))
+            .map(|p| unsafe { as_fn(p) })
+    })
+}
+
+fn copy_managed_display_for_window_fn() -> Option<CopyManagedDisplayForWindowFn> {
+    static SYM: OnceLock<Option<CopyManagedDisplayForWindowFn>> = OnceLock::new();
+    *SYM.get_or_init(|| {
+        find_sym(b"SLSCopyManagedDisplayForWindow\0")
+            .or_else(|| find_sym(b"CGSCopyManagedDisplayForWindow\0"))
+            .map(|p| unsafe { as_fn(p) })
+    })
+}
+
+fn managed_display_get_current_space_fn() -> Option<ManagedDisplayGetCurrentSpaceFn> {
+    static SYM: OnceLock<Option<ManagedDisplayGetCurrentSpaceFn>> = OnceLock::new();
+    *SYM.get_or_init(|| {
+        find_sym(b"SLSManagedDisplayGetCurrentSpace\0")
+            .or_else(|| find_sym(b"CGSManagedDisplayGetCurrentSpace\0"))
+            .map(|p| unsafe { as_fn(p) })
+    })
 }
 
 fn factory_msg_send_fn() -> Option<FactoryMsgSendFn> {
@@ -354,100 +386,104 @@ pub fn main_connection_id() -> Option<u32> {
 /// when the symbol is unavailable (future macOS version that removes it).
 pub fn get_active_space() -> Option<u64> {
     let cid = main_connection_id()?;
-    get_active_space_fn().map(|f| unsafe { f(cid) })
+    nonzero_space_id(get_active_space_fn().map(|f| unsafe { f(cid) }))
 }
 
-/// Return the Space ID for a specific window.
-///
-/// Uses the private `CGSCopySpacesForWindows` SPI from SkyLight.  This
-/// function queries one window at a time — it creates a temporary CFArray
-/// with the single window ID, calls `CGSCopySpacesForWindows`, and extracts
-/// the first (only) space ID from the result.  Returns `None` when the symbol
-/// is unavailable or the query produces no result.
-pub fn get_window_space(window_id: u32) -> Option<u64> {
-    use core_foundation::{
-        array::CFArray,
-        base::{CFTypeRef, TCFType},
-        number::CFNumber,
-    };
-
-    let cid = main_connection_id()?;
-    let f = copy_spaces_for_windows_fn()?;
-
-    let num = CFNumber::from(window_id as i64);
-    let num_ref: *const c_void = num.as_concrete_TypeRef() as *const c_void;
-    let arr = unsafe { CFArray::<CFTypeRef>::from_copyable(&[num_ref]) };
-
-    let result_ptr: *mut c_void = unsafe { f(cid, 7, arr.as_concrete_TypeRef() as *const c_void) };
-    if result_ptr.is_null() {
-        return None;
-    }
-
-    let result: CFArray<CFTypeRef> = unsafe { CFArray::wrap_under_create_rule(result_ptr as _) };
-    if result.len() == 0 {
-        return None;
-    }
-
-    let space_ptr = unsafe { *result.get(0)? };
-    let space_num = unsafe { CFNumber::wrap_under_get_rule(space_ptr as _) };
-    space_num.to_i64().map(|v| v as u64)
+fn nonzero_space_id(space_id: Option<u64>) -> Option<u64> {
+    space_id.filter(|id| *id != 0)
 }
 
-/// Return Space IDs for multiple windows in a single SPI call.
-///
-/// Batches all window IDs into one `CGSCopySpacesForWindows` call
-/// instead of N separate calls. Returns a Vec where `result[i]`
-/// corresponds to `window_ids[i]`. Entries are `None` when the
-/// window has no space assignment or the SPI is unavailable.
-pub fn get_window_spaces(window_ids: &[u32]) -> Vec<Option<u64>> {
-    if window_ids.is_empty() {
-        return vec![];
+/// A consistent WindowServer connection and active-Space snapshot for one
+/// enumeration. Space membership must be queried one window at a time:
+/// `SLSCopySpacesForWindows` returns the set union for its input window list,
+/// not a positionally aligned result.
+pub(crate) struct SpaceQuery {
+    connection_id: u32,
+    current_space_id: Option<u64>,
+    copy_spaces_for_windows: Option<CopySpacesForWindowsFn>,
+    copy_managed_display_for_window: Option<CopyManagedDisplayForWindowFn>,
+    managed_display_get_current_space: Option<ManagedDisplayGetCurrentSpaceFn>,
+}
+
+impl SpaceQuery {
+    pub(crate) fn new() -> Option<Self> {
+        let connection_id = main_connection_id()?;
+        let current_space_id =
+            nonzero_space_id(get_active_space_fn().map(|f| unsafe { f(connection_id) }));
+        Some(Self {
+            connection_id,
+            current_space_id,
+            copy_spaces_for_windows: copy_spaces_for_windows_fn(),
+            copy_managed_display_for_window: copy_managed_display_for_window_fn(),
+            managed_display_get_current_space: managed_display_get_current_space_fn(),
+        })
     }
 
-    let cid = match main_connection_id() {
-        Some(cid) => cid,
-        None => return vec![None; window_ids.len()],
-    };
-    let f = match copy_spaces_for_windows_fn() {
-        Some(f) => f,
-        None => return vec![None; window_ids.len()],
-    };
-
-    use core_foundation::{
-        array::CFArray,
-        base::{CFTypeRef, TCFType},
-        number::CFNumber,
-    };
-
-    let nums: Vec<CFNumber> = window_ids
-        .iter()
-        .map(|&id| CFNumber::from(id as i64))
-        .collect();
-    let refs: Vec<*const c_void> = nums
-        .iter()
-        .map(|n| n.as_concrete_TypeRef() as *const c_void)
-        .collect();
-    let arr = unsafe { CFArray::<CFTypeRef>::from_copyable(&refs) };
-
-    let result_ptr = unsafe { f(cid, 7, arr.as_concrete_TypeRef() as *const c_void) };
-    if result_ptr.is_null() {
-        return vec![None; window_ids.len()];
+    pub(crate) fn current_space_id(&self) -> Option<u64> {
+        self.current_space_id
     }
 
-    let result: CFArray<CFTypeRef> = unsafe { CFArray::wrap_under_create_rule(result_ptr as _) };
+    /// Return every Space containing `window_id`.
+    pub(crate) fn window_space_ids(&self, window_id: u32) -> Option<Vec<u64>> {
+        use core_foundation::{
+            array::CFArray,
+            base::{CFGetTypeID, CFTypeRef, TCFType},
+            number::CFNumber,
+        };
 
-    let mut spaces = Vec::with_capacity(window_ids.len());
-    for i in 0..result.len() {
-        let item = unsafe { result.get(i) };
-        match item {
-            Some(ptr) => {
-                let num = unsafe { CFNumber::wrap_under_get_rule(*ptr as _) };
-                spaces.push(num.to_i64().map(|v| v as u64));
-            }
-            None => spaces.push(None),
+        let copy_spaces = self.copy_spaces_for_windows?;
+        let window_number = CFNumber::from(window_id as i64);
+        let window_ref = window_number.as_concrete_TypeRef() as *const c_void;
+        let windows = CFArray::<CFTypeRef>::from_copyable(&[window_ref]);
+        let result_ptr = unsafe {
+            copy_spaces(
+                self.connection_id,
+                0x7,
+                windows.as_concrete_TypeRef() as *const c_void,
+            )
+        };
+        if result_ptr.is_null() {
+            return None;
         }
+
+        let result: CFArray<CFTypeRef> =
+            unsafe { CFArray::wrap_under_create_rule(result_ptr as _) };
+        let mut space_ids = Vec::with_capacity(result.len() as usize);
+        for item in result.iter() {
+            let item = *item;
+            if unsafe { CFGetTypeID(item) } != CFNumber::type_id() {
+                return None;
+            }
+            let number = unsafe { CFNumber::wrap_under_get_rule(item as _) };
+            let space_id = u64::try_from(number.to_i64()?).ok()?;
+            if space_id != 0 {
+                space_ids.push(space_id);
+            }
+        }
+
+        (!space_ids.is_empty()).then_some(space_ids)
     }
-    spaces
+
+    /// Return the active Space on the display WindowServer associates with
+    /// `window_id`. This avoids comparing every window against the main
+    /// display's active Space when displays use independent Spaces.
+    pub(crate) fn current_space_for_window(&self, window_id: u32) -> Option<u64> {
+        use core_foundation::{base::TCFType, string::CFString};
+
+        let copy_display = self.copy_managed_display_for_window?;
+        let get_current_space = self.managed_display_get_current_space?;
+        let display_ptr = unsafe { copy_display(self.connection_id, window_id) };
+        if display_ptr.is_null() {
+            return None;
+        }
+        let display = unsafe { CFString::wrap_under_create_rule(display_ptr as _) };
+        nonzero_space_id(Some(unsafe {
+            get_current_space(
+                self.connection_id,
+                display.as_concrete_TypeRef() as *const c_void,
+            )
+        }))
+    }
 }
 
 // ── Focus-without-raise ───────────────────────────────────────────────────────

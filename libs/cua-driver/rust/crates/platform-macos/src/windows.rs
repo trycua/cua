@@ -27,6 +27,11 @@ pub struct WindowInfo {
     pub space_ids: Option<Vec<u64>>,
 }
 
+pub(crate) struct WindowEnumeration {
+    pub(crate) windows: Vec<WindowInfo>,
+    pub(crate) current_space_id: Option<u64>,
+}
+
 // ── CGWindow option flags ─────────────────────────────────────────────────────
 // Apple-canonical kCG* naming preserved to match the public Apple headers — the
 // upper-case-globals lint would rename them to KCG_..., which would silently
@@ -58,11 +63,19 @@ extern "C" {
 
 /// Enumerate all windows (including off-screen).
 pub fn all_windows() -> Vec<WindowInfo> {
+    all_windows_with_space_snapshot().windows
+}
+
+pub(crate) fn all_windows_with_space_snapshot() -> WindowEnumeration {
     enumerate_windows(kCGWindowListExcludeDesktopElements, LayerFilter::ZeroOnly)
 }
 
 /// Enumerate only on-screen windows.
 pub fn visible_windows() -> Vec<WindowInfo> {
+    visible_windows_with_space_snapshot().windows
+}
+
+pub(crate) fn visible_windows_with_space_snapshot() -> WindowEnumeration {
     enumerate_windows(
         kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
         LayerFilter::ZeroOnly,
@@ -79,7 +92,7 @@ pub fn visible_windows() -> Vec<WindowInfo> {
 /// `get_window_state` tell "no such window" apart from "exists, but is not a
 /// layer-0 window" (issue #2237).
 fn all_windows_any_layer() -> Vec<WindowInfo> {
-    enumerate_windows(kCGWindowListExcludeDesktopElements, LayerFilter::AnyLayer)
+    enumerate_windows(kCGWindowListExcludeDesktopElements, LayerFilter::AnyLayer).windows
 }
 
 /// Which CGWindow layers an enumeration admits.
@@ -91,7 +104,7 @@ enum LayerFilter {
     AnyLayer,
 }
 
-fn enumerate_windows(options: u32, layers: LayerFilter) -> Vec<WindowInfo> {
+fn enumerate_windows(options: u32, layers: LayerFilter) -> WindowEnumeration {
     use core_foundation::{
         array::CFArray,
         base::{CFGetTypeID, CFTypeRef, TCFType},
@@ -102,20 +115,24 @@ fn enumerate_windows(options: u32, layers: LayerFilter) -> Vec<WindowInfo> {
     };
     use std::os::raw::c_void;
 
-    // Capture the current active space once so every window in this batch is
-    // compared against the same snapshot.  Spurious dlopen/dlsym calls on every
-    // window are also avoided.
-    let current_space = crate::input::skylight::get_active_space();
+    let space_query = (layers == LayerFilter::ZeroOnly)
+        .then(crate::input::skylight::SpaceQuery::new)
+        .flatten();
+    let current_space_id = space_query
+        .as_ref()
+        .and_then(|query| query.current_space_id());
 
     let raw_ref = unsafe { CGWindowListCopyWindowInfo(options, kCGNullWindowID) };
     if raw_ref.is_null() {
-        return vec![];
+        return WindowEnumeration {
+            windows: vec![],
+            current_space_id,
+        };
     }
 
     let raw: CFArray<CFTypeRef> = unsafe { CFArray::wrap_under_create_rule(raw_ref as _) };
     let total = raw.len() as usize;
     let mut results = Vec::new();
-    let mut layer0_wids: Vec<u32> = Vec::new();
 
     for (idx, item) in raw.iter().enumerate() {
         let item = *item;
@@ -229,19 +246,37 @@ fn enumerate_windows(options: u32, layers: LayerFilter) -> Vec<WindowInfo> {
             on_current_space: None,
             space_ids: None,
         });
-        layer0_wids.push(window_id);
     }
 
-    // Batch query spaces for all layer-0 windows in one SPI call.
-    let space_results = crate::input::skylight::get_window_spaces(&layer0_wids);
-    for (i, win) in results.iter_mut().enumerate() {
-        if let Some(space_id) = space_results.get(i).copied().flatten() {
-            win.space_ids = Some(vec![space_id]);
-            win.on_current_space = current_space.map(|cur| space_id == cur);
+    if layers == LayerFilter::ZeroOnly {
+        let Some(query) = &space_query else {
+            return WindowEnumeration {
+                windows: results,
+                current_space_id,
+            };
+        };
+        for window in &mut results {
+            let space_ids = query.window_space_ids(window.window_id);
+            let display_space_id = space_ids
+                .as_ref()
+                .and_then(|_| query.current_space_for_window(window.window_id));
+            window.on_current_space =
+                window_on_current_space(space_ids.as_deref(), display_space_id);
+            window.space_ids = space_ids;
         }
     }
 
-    results
+    WindowEnumeration {
+        windows: results,
+        current_space_id,
+    }
+}
+
+fn window_on_current_space(
+    space_ids: Option<&[u64]>,
+    current_space_id: Option<u64>,
+) -> Option<bool> {
+    Some(space_ids?.contains(&current_space_id?))
 }
 
 fn z_index_from_front_to_back(total: usize, position: usize) -> usize {
@@ -363,6 +398,18 @@ mod tests {
             .collect();
         assert_eq!(indices, vec![3, 2, 1]);
         assert!(indices[0] > indices[2]);
+    }
+
+    #[test]
+    fn space_membership_checks_all_spaces_for_a_window() {
+        assert_eq!(window_on_current_space(Some(&[2, 4]), Some(4)), Some(true));
+        assert_eq!(window_on_current_space(Some(&[2, 4]), Some(3)), Some(false));
+    }
+
+    #[test]
+    fn space_membership_stays_unknown_without_either_side() {
+        assert_eq!(window_on_current_space(None, Some(4)), None);
+        assert_eq!(window_on_current_space(Some(&[4]), None), None);
     }
 
     fn window(window_id: u32, pid: i32, app_name: &str) -> WindowInfo {

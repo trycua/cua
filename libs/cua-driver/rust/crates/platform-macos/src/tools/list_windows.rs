@@ -53,19 +53,19 @@ impl Tool for ListWindowsTool {
         let pid_filter: Option<i32> = args.opt_i64("pid").map(|v| v as i32);
         let on_screen_only = args.bool_or("on_screen_only", false);
 
-        let mut windows = if on_screen_only {
-            crate::windows::visible_windows()
+        let enumeration = if on_screen_only {
+            crate::windows::visible_windows_with_space_snapshot()
         } else {
-            crate::windows::all_windows()
+            crate::windows::all_windows_with_space_snapshot()
         };
+        let current_space_id = enumeration.current_space_id;
+        let mut windows = enumeration.windows;
 
         if let Some(pid) = pid_filter {
             windows.retain(|w| w.pid == pid);
         }
 
         let windows_json: Vec<Value> = windows.iter().map(window_record_json).collect();
-
-        let current_space_id = crate::input::skylight::get_active_space();
 
         ToolResult::text(format!("Found {} window(s).", windows_json.len())).with_structured(
             serde_json::json!({

@@ -24,7 +24,7 @@ use cua_driver_core::server::{
     handle_request, observe_proxy_session_started, observe_proxy_tool_completed,
     tool_observation_timer, StdioExecutionPath,
 };
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tracing::{debug, error, warn};
 
 use crate::serve::{is_daemon_listening, send_request, DaemonRequest, ToolObservationOrigin};
@@ -204,8 +204,34 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
 
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
-    let mut reader = BufReader::new(stdin);
-    let mut writer = tokio::io::BufWriter::new(stdout);
+    run_proxy_io(
+        BufReader::new(stdin),
+        tokio::io::BufWriter::new(stdout),
+        &socket_path,
+        &cached_tools_list,
+        &session_id,
+        daemon_observes_tool_calls,
+    )
+    .await
+}
+
+/// Run the service-owned stdio loop over caller-provided I/O.
+///
+/// A clean reader EOF must return `Ok(())` promptly. The caller then drops the
+/// persistent control connection, allowing the daemon to reap the MCP session
+/// and its recording, preview, and overlay state (issue #2002).
+async fn run_proxy_io<R, W>(
+    mut reader: R,
+    mut writer: W,
+    socket_path: &str,
+    cached_tools_list: &Arc<serde_json::Value>,
+    session_id: &str,
+    daemon_observes_tool_calls: bool,
+) -> anyhow::Result<()>
+where
+    R: AsyncBufRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
     let mut line = String::new();
     let mut session_observed = false;
 
@@ -237,7 +263,7 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
                 let session_context = (!daemon_observes_tool_calls)
                     .then(|| {
                         req.tool_call().ok().and_then(|call| {
-                            let known_tool = proxy_knows_tool(&cached_tools_list, &call.name);
+                            let known_tool = proxy_knows_tool(cached_tools_list, &call.name);
                             cua_driver_core::session::begin_tool_call(
                                 &call.name,
                                 &call.args,
@@ -252,7 +278,7 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
                     .then(|| {
                         tool_observation_timer(
                             &req,
-                            |name| proxy_knows_tool(&cached_tools_list, name),
+                            |name| proxy_knows_tool(cached_tools_list, name),
                             StdioExecutionPath::DaemonProxy,
                         )
                     })
@@ -261,9 +287,9 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
                 let response = handle_proxy_request(
                     req,
                     id,
-                    &socket_path,
-                    &cached_tools_list,
-                    &session_id,
+                    socket_path,
+                    cached_tools_list,
+                    session_id,
                     daemon_observes_tool_calls,
                 )
                 .await;
@@ -761,17 +787,69 @@ async fn forward_tool_call(
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 //
-// Unit-test only the JSON shape of the proxy's tool-error envelope.
-// The full proxy loop is exercised by the macOS integration test
-// (the daemon-backed integration harness); these tests just lock
-// in the per-branch reshape so a
-// regression to `Response::error` for tool-level failures would fail
-// fast in CI on every platform.
+// The daemon-backed integration harness exercises the full proxy lifecycle.
+// These tests lock in the I/O loop's transport contract and the per-branch
+// response reshaping without requiring a live daemon.
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::serve::DaemonResponse;
+
+    #[tokio::test]
+    async fn proxy_loop_returns_promptly_on_clean_eof() {
+        let reader = BufReader::new(&b""[..]);
+        let mut writer = Vec::new();
+        let cached_tools = Arc::new(serde_json::json!({"tools": []}));
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            run_proxy_io(
+                reader,
+                &mut writer,
+                "unused.sock",
+                &cached_tools,
+                "eof-test-session",
+                false,
+            ),
+        )
+        .await
+        .expect("clean EOF must return promptly");
+
+        assert!(result.is_ok(), "clean EOF must not error: {result:?}");
+        assert!(writer.is_empty(), "no request means no output");
+    }
+
+    #[tokio::test]
+    async fn proxy_loop_serves_initialize_before_eof() {
+        let input = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}\n";
+        let reader = BufReader::new(&input[..]);
+        let mut writer = Vec::new();
+        let cached_tools = Arc::new(serde_json::json!({"tools": []}));
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            run_proxy_io(
+                reader,
+                &mut writer,
+                "unused.sock",
+                &cached_tools,
+                "initialize-test-session",
+                false,
+            ),
+        )
+        .await
+        .expect("initialize followed by EOF must return promptly");
+
+        assert!(
+            result.is_ok(),
+            "initialize exchange must not error: {result:?}"
+        );
+        let response: serde_json::Value =
+            serde_json::from_slice(&writer).expect("response must be JSON");
+        assert_eq!(response["id"], 1);
+        assert!(response.get("result").is_some());
+    }
 
     /// Reconstruct the `!resp.ok` branch in isolation so we can assert
     /// on the serialized shape without spinning up a real daemon /

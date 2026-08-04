@@ -375,6 +375,7 @@ async fn pid_of(
 struct ApplicationSelection<T> {
     target_pid: u32,
     fallback: Option<T>,
+    populated: Vec<T>,
 }
 
 impl<T> ApplicationSelection<T> {
@@ -382,6 +383,7 @@ impl<T> ApplicationSelection<T> {
         Self {
             target_pid,
             fallback: None,
+            populated: Vec::new(),
         }
     }
 
@@ -389,22 +391,24 @@ impl<T> ApplicationSelection<T> {
         candidate_pid == Some(self.target_pid)
     }
 
-    /// Return an informative candidate immediately. Childless or temporarily
-    /// unreadable candidates remain eligible only when no informative match is
-    /// found, preserving the old first-match behavior for genuinely empty apps.
-    fn consider_matching(&mut self, candidate: T, has_children: bool) -> Option<T> {
+    /// Retain every populated exact-PID candidate so resolution can reject an
+    /// ambiguous registry instead of silently choosing whichever entry sorted
+    /// first. The first childless candidate remains the compatibility fallback
+    /// for applications that genuinely expose no top-level accessibles.
+    fn consider_matching(&mut self, candidate: T, has_children: bool) {
         if has_children {
-            Some(candidate)
-        } else {
-            if self.fallback.is_none() {
-                self.fallback = Some(candidate);
-            }
-            None
+            self.populated.push(candidate);
+        } else if self.fallback.is_none() {
+            self.fallback = Some(candidate);
         }
     }
 
-    fn into_fallback(self) -> Option<T> {
-        self.fallback
+    fn into_selected(mut self) -> std::result::Result<Option<T>, usize> {
+        match self.populated.len() {
+            0 => Ok(self.fallback),
+            1 => Ok(self.populated.pop()),
+            count => Err(count),
+        }
     }
 }
 
@@ -489,16 +493,19 @@ async fn app_for_pid<'a>(
             }
         };
         dlog!("  matching app has_children={has_children}");
-        if let Some(app) = selection.consider_matching(app, has_children) {
-            return Ok(Some(app));
+        selection.consider_matching(app, has_children);
+    }
+    match selection.into_selected() {
+        Ok(Some(app)) => Ok(Some(app)),
+        Ok(None) => {
+            dlog!("no application accessible matched pid {pid}");
+            Ok(None)
         }
+        Err(count) => Err(anyhow!(
+            "ambiguous AT-SPI application selection for pid {pid}: \
+             {count} populated application accessibles matched"
+        )),
     }
-    if selection.fallback.is_some() {
-        dlog!("using first childless application accessible for pid {pid}");
-    } else {
-        dlog!("no application accessible matched pid {pid}");
-    }
-    Ok(selection.into_fallback())
 }
 
 /// Depth-first, pre-order walk of an application's windows. Mirrors the old
@@ -2665,21 +2672,49 @@ mod coord_tests {
             (Some(target_pid), "live-tree", true),
         ];
         let mut selection = ApplicationSelection::new(target_pid);
-        let mut selected = None;
-
         for (pid, app, has_children) in candidates {
             if selection.matches_pid(pid) {
-                if let Some(app) = selection.consider_matching(app, has_children) {
-                    selected = Some(app);
-                    break;
-                }
+                selection.consider_matching(app, has_children);
             }
         }
 
-        assert_eq!(
-            selected.or_else(|| selection.into_fallback()),
-            Some("live-tree")
-        );
+        assert_eq!(selection.into_selected(), Ok(Some("live-tree")));
+    }
+
+    #[test]
+    fn foreign_empty_application_before_target_is_ignored() {
+        let target_pid = 4242;
+        let candidates = [
+            (Some(9000), "foreign-empty", false),
+            (Some(target_pid), "target-live-tree", true),
+        ];
+        let mut selection = ApplicationSelection::new(target_pid);
+
+        for (pid, app, has_children) in candidates {
+            if selection.matches_pid(pid) {
+                selection.consider_matching(app, has_children);
+            }
+        }
+
+        assert_eq!(selection.into_selected(), Ok(Some("target-live-tree")));
+    }
+
+    #[test]
+    fn childless_exact_pid_application_remains_the_fallback() {
+        let mut selection = ApplicationSelection::new(4242);
+        selection.consider_matching("first-empty", false);
+        selection.consider_matching("second-empty", false);
+
+        assert_eq!(selection.into_selected(), Ok(Some("first-empty")));
+    }
+
+    #[test]
+    fn multiple_populated_exact_pid_applications_are_ambiguous() {
+        let mut selection = ApplicationSelection::new(4242);
+        selection.consider_matching("first-live-tree", true);
+        selection.consider_matching("second-live-tree", true);
+
+        assert_eq!(selection.into_selected(), Err(2));
     }
 
     #[test]

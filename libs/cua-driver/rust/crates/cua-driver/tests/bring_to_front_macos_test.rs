@@ -27,6 +27,7 @@ use cua_driver_testkit::{harness_app, Driver, McpDriver};
 
 const MAIN_TITLE: &str = "CuaTestHarness AppKit";
 const SECONDARY_TITLE: &str = "CuaTestHarness AppKit Secondary";
+const OCCLUDER_TITLE: &str = "CuaTestHarness SwiftUI";
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
     fn CGWindowListCopyWindowInfo(option: u32, relative_to_window: u32) -> CFArrayRef;
@@ -44,6 +45,10 @@ struct Fixture {
     report: tempfile::NamedTempFile,
 }
 
+struct Occluder {
+    pid: u32,
+}
+
 fn harness_exe() -> std::path::PathBuf {
     std::env::var("HARNESS_APPKIT_APP")
         .map(std::path::PathBuf::from)
@@ -51,6 +56,15 @@ fn harness_exe() -> std::path::PathBuf {
         .filter(|path| path.exists())
         .unwrap_or_else(|| harness_app("harness-appkit", "CuaTestHarness.AppKit.app"))
         .join("Contents/MacOS/CuaTestHarness.AppKit")
+}
+
+fn occluder_exe() -> std::path::PathBuf {
+    std::env::var("HARNESS_SWIFTUI_APP")
+        .map(std::path::PathBuf::from)
+        .ok()
+        .filter(|path| path.exists())
+        .unwrap_or_else(|| harness_app("harness-swiftui", "CuaTestHarness.SwiftUI.app"))
+        .join("Contents/MacOS/CuaTestHarness.SwiftUI")
 }
 
 fn launch(driver: &mut McpDriver, mode: Option<&str>) -> Fixture {
@@ -67,6 +81,37 @@ fn launch(driver: &mut McpDriver, mode: Option<&str>) -> Fixture {
     let pid = child.id();
     driver.reaper().push(child);
     Fixture { pid, report }
+}
+
+fn launch_occluder(driver: &mut McpDriver) -> Occluder {
+    let exe = occluder_exe();
+    assert!(
+        exe.exists(),
+        "required distinct-bundle SwiftUI occluder missing at {exe:?}"
+    );
+    let mut command = Command::new(exe);
+    command.stdout(Stdio::null()).stderr(Stdio::null());
+    let child = cua_driver_testkit::spawn_in_job(&mut command).expect("launch SwiftUI occluder");
+    let pid = child.id();
+    driver.reaper().push(child);
+    Occluder { pid }
+}
+
+fn wait_for_ordinary_window(pid: u32) -> u32 {
+    let deadline = Instant::now() + Duration::from_secs(12);
+    loop {
+        if let Some(window) = cg_windows()
+            .into_iter()
+            .find(|window| window.pid == pid && window.layer == 0)
+        {
+            return window.id;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "ordinary window for pid {pid} did not appear"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 fn wait_for_window_ids(fixture: &Fixture, names: &[&str]) -> HashMap<String, u32> {
@@ -209,12 +254,15 @@ fn exact_secondary_window_is_verified_and_prior_app_can_recover_focus() {
     let target = launch(&mut driver, Some("two-windows"));
     let target_windows = wait_for_window_ids(&target, &["main", "secondary"]);
     let secondary = target_windows["secondary"];
-    let occluder = launch(&mut driver, None);
-    let occluder_windows = wait_for_window_ids(&occluder, &["main"]);
-    let occluder_main = occluder_windows["main"];
+    // Use a distinct bundle identity for the prior app. Raw-launching a second
+    // copy of the AppKit fixture lets AX and WindowServer select that process's
+    // window while NSWorkspace continues to report the other same-bundle
+    // instance as frontmost, which is not representative app recovery.
+    let occluder = launch_occluder(&mut driver);
+    let occluder_main = wait_for_ordinary_window(occluder.pid);
 
     activate_and_raise(target.pid, MAIN_TITLE);
-    activate_and_raise(occluder.pid, MAIN_TITLE);
+    activate_and_raise(occluder.pid, OCCLUDER_TITLE);
     assert_ne!(
         layer_zero_front().id,
         secondary,

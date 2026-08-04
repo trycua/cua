@@ -127,6 +127,38 @@ fn launch_unknown_app_is_bounded_and_keeps_mcp_session_responsive() {
 }
 
 #[test]
+#[cfg(target_os = "windows")]
+#[ignore = "requires an interactive Windows desktop with Microsoft Edge installed"]
+fn launch_edge_from_apps_folder_registration() {
+    let Some(mut driver) = McpDriver::spawn_with_env(&[
+        ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
+        ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
+    ]) else {
+        return;
+    };
+
+    let launch = driver.call(
+        "launch_app",
+        serde_json::json!({
+            "name": "Microsoft Edge",
+            "urls": ["https://example.com"]
+        }),
+    );
+    assert!(
+        !launch.is_error(),
+        "Edge AppsFolder launch failed: {:?}",
+        launch.raw
+    );
+    assert!(
+        launch.structured()["pid"]
+            .as_u64()
+            .is_some_and(|pid| pid > 0),
+        "Edge AppsFolder launch returned no process id: {:?}",
+        launch.raw
+    );
+}
+
+#[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn get_config_and_check_permissions() {
     let Some(mut d) = spawn_unrestricted() else {

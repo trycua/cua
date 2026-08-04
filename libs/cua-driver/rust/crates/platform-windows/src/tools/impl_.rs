@@ -1562,6 +1562,12 @@ fn split_launchable_target(s: &str) -> (String, String) {
     (trimmed.to_owned(), String::new())
 }
 
+/// Index of the first URL not already consumed as the primary shell target.
+/// An explicit app target consumes no URL; a URLs-only launch consumes index 0.
+fn first_unopened_shell_url_index(has_app_target: bool) -> usize {
+    usize::from(!has_app_target)
+}
+
 /// Returns `true` when the launch target names a Chromium-based browser
 /// — i.e. one whose hidden launch under `SW_SHOWNOACTIVATE` will trigger
 /// renderer-occlusion throttling unless we inject the anti-throttling flags
@@ -1891,9 +1897,9 @@ impl Tool for LaunchAppTool {
                 the real packaged-process pid — required on Win11 for built-in apps like \
                 Notepad, Calculator, and Paint, which now ship as Microsoft Store packages \
                 where the legacy .exe in System32 is a ~7 KB stub that exits immediately. A \
-                plain `name` first attempts a `shell:AppsFolder` lookup; on a match it goes \
-                through the packaged-app path, otherwise it falls back to ShellExecuteEx's \
-                PATH search.\n\n\
+                plain `name` first attempts a `shell:AppsFolder` lookup; packaged matches use \
+                the activation manager while desktop registrations are launched through their \
+                shell parsing path. A miss falls back to ShellExecuteEx's PATH search.\n\n\
                 Returns the launched app's pid, name, active flag, AND a `windows` array — \
                 same per-window shape `list_windows` returns. When the launch settles but no \
                 window has materialized yet (transient; rare), `windows` comes back empty — \
@@ -2093,15 +2099,17 @@ impl Tool for LaunchAppTool {
         //   3. `bundle_id` containing `!`: packaged path, AUMID = value
         //      (Win32 PATH lookups never produce a `!` in the executable
         //      name, so this is a safe marker of caller intent).
-        //   4. `name` with no `path`: try `shell:AppsFolder` lookup; on a
-        //      hit, packaged path with the resolved AUMID. On miss, fall
-        //      through to ShellExecuteExW (existing Win32 path).
+        //   4. `name` with no `path`: try `shell:AppsFolder` lookup. A
+        //      packaged hit uses the resolved AUMID; a desktop registration
+        //      uses `shell:AppsFolder\<AppUserModelID>` via ShellExecuteExW.
+        //      On miss, fall through to the existing Win32 path.
         //   5. Anything else: existing ShellExecuteExW path.
         //
         // `path` is intentionally excluded from packaged routing — when
         // the caller has a concrete executable in mind they want
         // CreateProcess semantics, not Start Menu activation.
         let mut name_lookup_missed = false;
+        let mut shell_target_from_name: Option<String> = None;
         let aumid_for_uwp: Option<String> = if launch_path_opt.is_some() || path_opt.is_some() {
             None
         } else if let Some(a) = aumid_opt.clone() {
@@ -2116,10 +2124,19 @@ impl Tool for LaunchAppTool {
             // interactive shell broker is unhealthy. Bound it before the
             // separate ShellExecuteEx deadline below; the resolver keeps a
             // timed-out worker single-flight until COM really returns.
-            match crate::launch_uwp::resolve_aumid_by_name_bounded(n.clone()).await {
-                Ok(resolved) => {
-                    name_lookup_missed = resolved.is_none();
-                    resolved
+            match crate::launch_uwp::resolve_apps_folder_target_by_name_bounded(n.clone()).await {
+                Ok(Some(crate::launch_uwp::AppsFolderLaunchTarget::PackagedAumid(aumid))) => {
+                    Some(aumid)
+                }
+                Ok(Some(crate::launch_uwp::AppsFolderLaunchTarget::ShellLaunchPath(
+                    launch_path,
+                ))) => {
+                    shell_target_from_name = Some(launch_path);
+                    None
+                }
+                Ok(None) => {
+                    name_lookup_missed = true;
+                    None
                 }
                 Err(crate::launch_uwp::AppsFolderLookupError::Timeout) => {
                     return ToolResult::error(format!(
@@ -2140,13 +2157,14 @@ impl Tool for LaunchAppTool {
         } else {
             None
         };
+        let resolved_target = shell_target_from_name.or(target);
 
         // Single launch path. `display` is the human-readable identifier
         // we report in the success header; for the packaged path it's
         // the AUMID, which is more informative than the display name.
         let display = aumid_for_uwp
             .clone()
-            .or_else(|| target.clone())
+            .or_else(|| resolved_target.clone())
             .unwrap_or_else(|| urls.join(", "));
 
         // When the resolved target came from `launch_path` it may carry
@@ -2159,7 +2177,7 @@ impl Tool for LaunchAppTool {
         let (target_file_opt, extra_joined) = {
             let base_extra = extra_args.join(" ");
             if launch_path_opt.is_some() {
-                if let Some(t) = target.as_deref() {
+                if let Some(t) = resolved_target.as_deref() {
                     let (file, args_tail) = split_launchable_target(t);
                     let combined = if args_tail.is_empty() {
                         base_extra
@@ -2174,7 +2192,7 @@ impl Tool for LaunchAppTool {
                     (None, base_extra)
                 }
             } else {
-                (target.clone(), base_extra)
+                (resolved_target.clone(), base_extra)
             }
         };
 
@@ -2334,7 +2352,11 @@ impl Tool for LaunchAppTool {
                 // Open any additional URLs in the default browser (no focus
                 // steal, no pid capture for these — Swift's NSWorkspace flow
                 // behaves the same way for secondary URLs).
-                for url in &urls_clone[urls_clone.len().min(1)..] {
+                // When an app target was launched above, none of the URLs has
+                // been consumed yet. URLs-only launches use the first URL as
+                // `lpFile`, so only their remaining URLs belong here.
+                let first_unopened_url = first_unopened_shell_url_index(target_for_shell.is_some());
+                for url in &urls_clone[first_unopened_url.min(urls_clone.len())..] {
                     let file = to_wide(url);
                     let mut url_info = SHELLEXECUTEINFOW {
                         cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
@@ -9541,7 +9563,9 @@ mod cursor_key_resolution_tests {
 
 #[cfg(test)]
 mod launch_focus_restore_decision_tests {
-    use super::{should_restore_foreground_after_launch, LaunchTargetShape};
+    use super::{
+        first_unopened_shell_url_index, should_restore_foreground_after_launch, LaunchTargetShape,
+    };
 
     fn empty() -> LaunchTargetShape {
         LaunchTargetShape {
@@ -9655,6 +9679,16 @@ mod launch_focus_restore_decision_tests {
         // Empty params (validated as an error before launch dispatch) — no
         // restore needed because nothing was launched.
         assert!(!should_restore_foreground_after_launch(empty()));
+    }
+
+    #[test]
+    fn named_app_launch_forwards_every_url() {
+        assert_eq!(first_unopened_shell_url_index(true), 0);
+    }
+
+    #[test]
+    fn urls_only_launch_does_not_reopen_primary_url() {
+        assert_eq!(first_unopened_shell_url_index(false), 1);
     }
 }
 

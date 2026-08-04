@@ -212,6 +212,14 @@ Every navigation is checked against the origin set, so a manifest that allows
 generic desktop input consequently belong to separate manifests and separate
 runtimes. Use `list_windows` for the `window_id` a browser call needs.
 
+An origin scope binds one runtime's tool surface. It is not a property of the
+browser, the profile, or the machine. A second runtime that can deliver generic
+input to a browser window — including any standard-mode runtime, which allows
+input against every application — voids the first runtime's origin scope
+without violating it. Scope a companion runtime to non-browser applications
+with `desktop.display: false`, and treat same-user processes outside Cua Driver
+as outside the boundary entirely.
+
 Version 1 manifests remain loadable. They may name exact PIDs, windows, and
 paths, but version 2 is preferred for pre-launch and unattended workflows.
 

@@ -138,6 +138,13 @@ An agent that needs both a browser and generic desktop input needs two
 runtimes: this manifest for the browser, and a separate application-scoped
 manifest for the desktop work.
 
+Scope that second runtime so it cannot reach a browser window. A runtime that
+can click the browser makes the first runtime's origin list decorative, because
+nothing checks an origin on the generic input path. Give it a bounded manifest
+naming only the non-browser applications it needs, and keep
+`desktop.display: false`. A standard-mode runtime is not a substitute: standard
+allows input against any application, including the browser.
+
 ## 3. Choose desktop scope
 
 Application entries with `windows: all` authorize observation and input for

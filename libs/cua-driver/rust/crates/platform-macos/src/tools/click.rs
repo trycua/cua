@@ -438,6 +438,26 @@ impl Tool for ClickTool {
             };
             let element_ptr = element_guard.as_ptr();
 
+            // ── Exact-target background gate (macOS background input v1) ──
+            // The element branch is semantic AX delivery, except button=middle
+            // which falls back to a routed pixel click at the element's center
+            // and is therefore held to the stricter WindowPointer rung. Gate
+            // BEFORE any cursor/dispatch work so a stale or sibling-owned
+            // target refuses instead of acting on the wrong window.
+            if !delivery_mode.is_foreground() {
+                let gate_action = if button_str == "middle" {
+                    cua_driver_core::background_input::BackgroundAction::WindowPointer
+                } else {
+                    cua_driver_core::background_input::BackgroundAction::AxSemantic
+                };
+                if let Err(refusal_result) =
+                    super::gate_background_window_action(pid, wid, Some(element_ptr), gate_action)
+                        .await
+                {
+                    return refusal_result;
+                }
+            }
+
             // Surface 5: button=right on the AX path → AXShowMenu (the same surface
             // the dedicated `right_click` tool dispatches). Threads through the
             // identical perform_ax_click code path with the action remapped.
@@ -541,7 +561,7 @@ impl Tool for ClickTool {
             } else {
                 false
             };
-            let selection_pixel = if selection_candidate {
+            let mut selection_pixel = if selection_candidate {
                 if let Some((cx, cy)) = center {
                     super::px_frame::resolve_or_refuse(wid)
                         .await
@@ -558,6 +578,24 @@ impl Tool for ClickTool {
             } else {
                 None
             };
+            // The selection fallback delivers a routed window-local pixel
+            // click — a stricter (WindowPointer) rung than the semantic gate
+            // above. In background, drop the fallback rather than silently
+            // escalate when the pointer rung would refuse (e.g. a
+            // minimized/hidden target); the semantic path still runs.
+            if selection_pixel.is_some()
+                && !delivery_mode.is_foreground()
+                && super::gate_background_window_action(
+                    pid,
+                    wid,
+                    Some(element_ptr),
+                    cua_driver_core::background_input::BackgroundAction::WindowPointer,
+                )
+                .await
+                .is_err()
+            {
+                selection_pixel = None;
+            }
 
             // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
             // Capture prior frontmost, arm the wildcard suppressor in the
@@ -787,13 +825,57 @@ impl Tool for ClickTool {
             // CGEventSetWindowLocation in the Chromium recipe.
             let (screen_x, screen_y, win_local_x, win_local_y) = if let Some(wid) = window_id {
                 match super::px_frame::resolve_or_refuse(wid).await {
-                    Ok(frame) => frame.to_screen(cx, cy),
+                    Ok(frame) => {
+                        let (sx, sy, lx, ly) = frame.to_screen(cx, cy);
+                        // A window-local point outside the live frame would
+                        // dispatch onto whatever occupies that screen point —
+                        // the same wrong-surface misclick class as #2237.
+                        // Refuse in background, where the caller cannot see
+                        // what is actually under the translated point.
+                        if !delivery_mode.is_foreground()
+                            && (lx < 0.0
+                                || ly < 0.0
+                                || lx > frame.bounds.width
+                                || ly > frame.bounds.height)
+                        {
+                            return ToolResult::error(format!(
+                                "click: window-local point ({lx:.1}, {ly:.1}) pt lies outside \
+                                 window {wid}'s {:.0}×{:.0} pt frame; background delivery \
+                                 refused. Re-read coordinates from a fresh get_window_state \
+                                 screenshot.",
+                                frame.bounds.width, frame.bounds.height
+                            ));
+                        }
+                        (sx, sy, lx, ly)
+                    }
                     Err(refusal) => return refusal,
                 }
             } else {
                 // No window_id → treat x,y as screen coordinates (legacy behaviour).
                 (cx, cy, cx, cy)
             };
+
+            // ── Exact-target background gate (macOS background input v1) ──
+            // A window-addressed background pixel action targets coordinates,
+            // which only mean something while the exact window is current and
+            // not minimized/hidden: a stale target would let the pid-scoped
+            // hit-test or routed events land on a same-process sibling. Gate
+            // BEFORE the AX hit-test backend and any cursor/dispatch work.
+            // delivery_mode:"foreground" stays the explicit last resort.
+            if !delivery_mode.is_foreground() {
+                if let Some(wid) = window_id {
+                    if let Err(refusal_result) = super::gate_background_window_action(
+                        pid,
+                        wid,
+                        None,
+                        cua_driver_core::background_input::BackgroundAction::WindowPointer,
+                    )
+                    .await
+                    {
+                        return refusal_result;
+                    }
+                }
+            }
 
             // A background PX action can still use an accessibility delivery
             // backend after resolving the requested screen point. This keeps
@@ -806,10 +888,20 @@ impl Tool for ClickTool {
                 && modifiers.is_empty()
             {
                 let focus_only = action == "focus";
+                let hit_test_wid = window_id.expect("guarded by window_id.is_some() above");
                 let ax_result = tokio::task::spawn_blocking(move || unsafe {
                     let Some(element) = element_at_screen_position(pid, screen_x, screen_y) else {
                         return Ok::<bool, anyhow::Error>(false);
                     };
+                    // The pid-scoped hit-test can resolve an element from a
+                    // same-process sibling overlapping the requested point.
+                    // Require proven ancestry in the requested window before
+                    // acting; otherwise fall through to the routed pixel path
+                    // (already gated for this exact window).
+                    if crate::ax::exact_target::element_window_id(element) != Some(hit_test_wid) {
+                        CFRelease(element as _);
+                        return Ok(false);
+                    }
                     let delivered = if focus_only {
                         crate::input::ax_actions::focus_element(element as usize).is_ok()
                     } else {

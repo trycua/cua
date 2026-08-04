@@ -181,8 +181,11 @@ impl Tool for SetValueTool {
         // the renderer never observes it. Reuse type_text's bounded ancestor
         // check so native browser chrome stays trusted but rendered content is
         // always reported as unverified.
-        let ax_echo_surface =
-            super::type_text::target_in_web_area(pid, Some((element_ptr, Some(element_index))));
+        let ax_echo_surface = super::type_text::target_in_web_area(
+            pid,
+            Some((element_ptr, Some(element_index))),
+            Some(window_id),
+        );
 
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // AXValue writes on popups / sliders can cause reflex activations

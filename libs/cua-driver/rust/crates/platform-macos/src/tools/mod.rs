@@ -177,6 +177,70 @@ impl DeliveryMode {
     }
 }
 
+/// Convert a pure background-input refusal into the structured refusal result
+/// shape shared by exact-target tools: `code`, `effect: "refused"`, the
+/// requested target, and the safe next route when one exists. No actuator ran.
+pub(crate) fn background_refusal_result(
+    pid: i32,
+    window_id: u32,
+    refusal: &cua_driver_core::background_input::BackgroundRefusal,
+) -> cua_driver_core::protocol::ToolResult {
+    let mut structured = serde_json::json!({
+        "code": refusal.code,
+        "effect": "refused",
+        "pid": pid,
+        "window_id": window_id,
+        "reason": refusal.reason,
+    });
+    if let Some(advice) = refusal.advice {
+        structured["escalation"] = serde_json::json!({
+            "recommended": advice,
+            "reason": refusal.reason,
+        });
+    }
+    cua_driver_core::protocol::ToolResult::error(format!(
+        "Background input refused ({}): {}",
+        refusal.code, refusal.reason
+    ))
+    .with_structured(structured)
+}
+
+/// Gather fresh exact-target facts and ask the pure core for one background
+/// decision. `element_ptr` must stay retained by the caller across this call.
+/// Returns the target-bound verification on `Execute`, or the ready-to-return
+/// refusal result. No input of the requested class may be sent after `Err`.
+pub(crate) async fn gate_background_window_action(
+    pid: i32,
+    window_id: u32,
+    element_ptr: Option<usize>,
+    action: cua_driver_core::background_input::BackgroundAction,
+) -> Result<
+    cua_driver_core::background_input::TargetBoundVerification,
+    cua_driver_core::protocol::ToolResult,
+> {
+    use cua_driver_core::background_input::{
+        decide_background_input, BackgroundInputDecision, ExactWindowTarget,
+    };
+    let facts = match tokio::task::spawn_blocking(move || {
+        crate::ax::exact_target::gather_background_facts(pid, window_id, element_ptr)
+    })
+    .await
+    {
+        Ok(facts) => facts,
+        Err(error) => {
+            return Err(cua_driver_core::protocol::ToolResult::error(format!(
+                "Could not gather exact-target facts for pid {pid} window {window_id}: {error}"
+            )));
+        }
+    };
+    match decide_background_input(ExactWindowTarget { pid, window_id }, &facts, action) {
+        BackgroundInputDecision::Execute { verification } => Ok(verification),
+        BackgroundInputDecision::Refuse(refusal) => {
+            Err(background_refusal_result(pid, window_id, &refusal))
+        }
+    }
+}
+
 /// Finish the post-action observation window. Embedded interactive clients
 /// that already observe the target continuously may opt out through the
 /// private registry argument to avoid adding a one-second acknowledgement

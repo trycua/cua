@@ -8,8 +8,9 @@
 //!
 //! Element indices match the markdown produced by [`walk_tree`]: a depth-first,
 //! pre-order traversal of the target application's windows, numbering the
-//! nodes that advertise AT-SPI actions OR a Value interface (see is_indexable). `perform_action`, `set_value`, and
-//! `get_element_bounds` index into that same ordered set.
+//! nodes accepted by the shared [`is_indexable`] capability predicate.
+//! `perform_action`, `set_value`, and `get_element_bounds` index into that same
+//! ordered set.
 
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -18,7 +19,7 @@ use anyhow::{anyhow, Result};
 use atspi::connection::{AccessibilityConnection, P2P};
 use atspi::proxy::accessible::AccessibleProxy;
 use atspi::proxy::proxy_ext::ProxyExt;
-use atspi::{CoordType, Interface, State};
+use atspi::{CoordType, Interface, State, StateSet};
 
 use super::AtspiNode;
 
@@ -368,6 +369,50 @@ async fn pid_of(
     dbus.get_connection_unix_process_id(bus).await.ok()
 }
 
+/// Keep the first matching application as a compatibility fallback, but allow
+/// a later registration with a real child tree to win. Some Qt processes
+/// publish an empty application object before their populated one (#2678,
+/// #2706).
+struct ApplicationSelection<T> {
+    target_pid: u32,
+    fallback: Option<T>,
+    populated: Vec<T>,
+}
+
+impl<T> ApplicationSelection<T> {
+    fn new(target_pid: u32) -> Self {
+        Self {
+            target_pid,
+            fallback: None,
+            populated: Vec::new(),
+        }
+    }
+
+    fn matches_pid(&self, candidate_pid: Option<u32>) -> bool {
+        candidate_pid == Some(self.target_pid)
+    }
+
+    /// Retain every populated exact-PID candidate so resolution can reject an
+    /// ambiguous registry instead of silently choosing whichever entry sorted
+    /// first. The first childless candidate remains the compatibility fallback
+    /// for applications that genuinely expose no top-level accessibles.
+    fn consider_matching(&mut self, candidate: T, has_children: bool) {
+        if has_children {
+            self.populated.push(candidate);
+        } else if self.fallback.is_none() {
+            self.fallback = Some(candidate);
+        }
+    }
+
+    fn into_selected(mut self) -> std::result::Result<Option<T>, usize> {
+        match self.populated.len() {
+            0 => Ok(self.fallback),
+            1 => Ok(self.populated.pop()),
+            count => Err(count),
+        }
+    }
+}
+
 /// Locate the application accessible whose backing process is `pid`.
 async fn app_for_pid<'a>(
     conn: &'a AccessibilityConnection,
@@ -404,6 +449,7 @@ async fn app_for_pid<'a>(
         "registry root has {} application(s); seeking pid {pid}",
         apps.len()
     );
+    let mut selection = ApplicationSelection::new(pid);
     for child in apps {
         // A modal-grabbed app can't answer the pid query; skip it after
         // CALL_TIMEOUT rather than blocking the whole walk on it.
@@ -418,22 +464,49 @@ async fn app_for_pid<'a>(
             }
         };
         dlog!("  app bus={:?} pid={:?}", child.name_as_str(), cpid);
-        if cpid == Some(pid) {
-            let child = match RawObjectRef::from_atspi(&child) {
-                Some(child) => child,
-                None => continue,
-            };
-            return match call(accessible_for(conn, &child)).await {
-                Some(r) => r.map(Some),
-                None => {
-                    dlog!("  accessible_for timed out for pid {pid}");
-                    Ok(None)
-                }
-            };
+        if !selection.matches_pid(cpid) {
+            continue;
         }
+        let child = match RawObjectRef::from_atspi(&child) {
+            Some(child) => child,
+            None => continue,
+        };
+        let app = match call(accessible_for(conn, &child)).await {
+            Some(Ok(app)) => app,
+            Some(Err(error)) => {
+                dlog!("  accessible_for failed for pid {pid}: {error:#}");
+                continue;
+            }
+            None => {
+                dlog!("  accessible_for timed out for pid {pid}");
+                continue;
+            }
+        };
+        let has_children = match call(app.get_children()).await {
+            Some(Ok(children)) => !children.is_empty(),
+            Some(Err(error)) => {
+                dlog!("  get_children failed for pid {pid}: {error:#}");
+                false
+            }
+            None => {
+                dlog!("  get_children timed out for pid {pid}");
+                false
+            }
+        };
+        dlog!("  matching app has_children={has_children}");
+        selection.consider_matching(app, has_children);
     }
-    dlog!("no application accessible matched pid {pid}");
-    Ok(None)
+    match selection.into_selected() {
+        Ok(Some(app)) => Ok(Some(app)),
+        Ok(None) => {
+            dlog!("no application accessible matched pid {pid}");
+            Ok(None)
+        }
+        Err(count) => Err(anyhow!(
+            "ambiguous AT-SPI application selection for pid {pid}: \
+             {count} populated application accessibles matched"
+        )),
+    }
 }
 
 /// Depth-first, pre-order walk of an application's windows. Mirrors the old
@@ -601,7 +674,7 @@ async fn collect_visited_bounded<'a>(
         let enabled = state_r
             .as_ref()
             .and_then(|state| state.as_ref().ok())
-            .map(|state| state.contains(State::Enabled) && state.contains(State::Sensitive));
+            .map(is_enabled_state);
         let selectable = state_r
             .as_ref()
             .and_then(|state| state.as_ref().ok())
@@ -809,6 +882,16 @@ fn format_value(v: f64) -> String {
     format!("{v:?}")
 }
 
+/// Interpret the positive AT-SPI states that establish user operability.
+///
+/// GTK3 commonly publishes both `Enabled` and `Sensitive`. GTK4's native
+/// exporter derives widget operability from its `disabled` accessibility state
+/// and publishes `Sensitive` alone for an enabled widget. Either positive state
+/// therefore establishes operability; an empty set still means disabled.
+fn is_enabled_state(state: &StateSet) -> bool {
+    state.contains(State::Enabled) || state.contains(State::Sensitive)
+}
+
 /// Whether a walked node is exposed as an indexed, usable element.
 ///
 /// Historically this was "the node advertises AT-SPI Actions" (buttons, menu
@@ -816,7 +899,10 @@ fn format_value(v: f64) -> String {
 /// selectable list rows. GTK list rows expose Component + Selectable state but
 /// no Action even though a coordinate click on their bounds is operable. Keep
 /// every such control in the shared index space so physical-input fallbacks can
-/// address it without inventing pixels in the caller.
+/// address it without inventing pixels in the caller. Some GTK4 buttons expose
+/// only Component plus their control role; include those only when the state set
+/// positively verifies that they are enabled. Passive component-backed labels
+/// and containers remain outside the index.
 ///
 /// This predicate is the single source of truth for the element-index space and
 /// MUST be applied identically in `render` and in every `action_nodes` filter
@@ -824,22 +910,36 @@ fn format_value(v: f64) -> String {
 /// any divergence would desync indices between the snapshot and the operations.
 fn is_indexable(v: &Visited) -> bool {
     is_indexable_capabilities(
+        &v.role,
         !v.actions.is_empty(),
         v.has_editable,
         v.has_value,
         v.selectable,
+        v.has_component,
         v.enabled,
     )
 }
 
 fn is_indexable_capabilities(
+    role: &str,
     has_action: bool,
     has_editable: bool,
     has_value: bool,
     has_selectable_state: bool,
+    has_component: bool,
     enabled: Option<bool>,
 ) -> bool {
-    (has_action || has_editable || has_value || has_selectable_state) && enabled != Some(false)
+    let normalized_role = role.trim().to_ascii_lowercase();
+    let pixel_addressable_control = has_component
+        && enabled == Some(true)
+        && matches!(normalized_role.as_str(), "button" | "push button");
+    !is_passive_role(&normalized_role)
+        && (has_action
+            || has_editable
+            || has_value
+            || has_selectable_state
+            || pixel_addressable_control)
+        && enabled == Some(true)
 }
 
 // ── Public (sync) entry points ───────────────────────────────────────────────
@@ -2585,30 +2685,108 @@ async fn element_bounds_for_visited(
 mod coord_tests {
     use super::parse_gtk_frame_extents;
     use super::{
-        activation_index, combine_wayland_content_offsets, is_activation_action,
+        activation_index, combine_wayland_content_offsets, is_activation_action, is_enabled_state,
         is_indexable_capabilities, is_passive_role, is_web_process_bus,
         prefer_authoritative_wayland_origin, rebase_renderer_window_offset, screen_extent_rebase,
-        select_click_target,
+        select_click_target, ApplicationSelection,
     };
+    use atspi::{State, StateSet};
+
+    #[test]
+    fn duplicate_pid_prefers_populated_application_after_empty_registration() {
+        let target_pid = 4242;
+        let candidates = [
+            (Some(9000), "other-process", true),
+            (Some(target_pid), "empty-root", false),
+            (Some(target_pid), "live-tree", true),
+        ];
+        let mut selection = ApplicationSelection::new(target_pid);
+        for (pid, app, has_children) in candidates {
+            if selection.matches_pid(pid) {
+                selection.consider_matching(app, has_children);
+            }
+        }
+
+        assert_eq!(selection.into_selected(), Ok(Some("live-tree")));
+    }
+
+    #[test]
+    fn foreign_empty_application_before_target_is_ignored() {
+        let target_pid = 4242;
+        let candidates = [
+            (Some(9000), "foreign-empty", false),
+            (Some(target_pid), "target-live-tree", true),
+        ];
+        let mut selection = ApplicationSelection::new(target_pid);
+
+        for (pid, app, has_children) in candidates {
+            if selection.matches_pid(pid) {
+                selection.consider_matching(app, has_children);
+            }
+        }
+
+        assert_eq!(selection.into_selected(), Ok(Some("target-live-tree")));
+    }
+
+    #[test]
+    fn childless_exact_pid_application_remains_the_fallback() {
+        let mut selection = ApplicationSelection::new(4242);
+        selection.consider_matching("first-empty", false);
+        selection.consider_matching("second-empty", false);
+
+        assert_eq!(selection.into_selected(), Ok(Some("first-empty")));
+    }
+
+    #[test]
+    fn multiple_populated_exact_pid_applications_are_ambiguous() {
+        let mut selection = ApplicationSelection::new(4242);
+        selection.consider_matching("first-live-tree", true);
+        selection.consider_matching("second-live-tree", true);
+
+        assert_eq!(selection.into_selected(), Err(2));
+    }
 
     #[test]
     fn operable_nodes_are_addressable() {
         assert!(is_indexable_capabilities(
+            "entry",
             false,
             true,
             false,
             false,
+            true,
             Some(true)
         ));
-        assert!(is_indexable_capabilities(true, false, false, false, None));
         assert!(is_indexable_capabilities(
+            "button",
+            true,
+            false,
+            false,
+            false,
+            false,
+            Some(true)
+        ));
+        assert!(is_indexable_capabilities(
+            "slider",
             false,
             false,
             true,
             false,
+            true,
             Some(true)
         ));
         assert!(is_indexable_capabilities(
+            "list item",
+            false,
+            false,
+            false,
+            true,
+            true,
+            Some(true)
+        ));
+        assert!(!is_indexable_capabilities(
+            "label",
+            false,
             false,
             false,
             false,
@@ -2616,19 +2794,80 @@ mod coord_tests {
             Some(true)
         ));
         assert!(!is_indexable_capabilities(
-            false,
-            false,
-            false,
-            false,
-            Some(true)
-        ));
-        assert!(!is_indexable_capabilities(
+            "button",
             true,
             false,
             false,
             false,
+            true,
             Some(false)
         ));
+        assert!(!is_indexable_capabilities(
+            "button", true, false, false, false, true, None
+        ));
+        assert!(!is_indexable_capabilities(
+            "label",
+            true,
+            false,
+            false,
+            false,
+            true,
+            Some(true)
+        ));
+    }
+
+    #[test]
+    fn gtk_state_sets_establish_operability_from_enabled_or_sensitive() {
+        assert!(is_enabled_state(&StateSet::new(State::Enabled)));
+        assert!(is_enabled_state(&StateSet::new(State::Sensitive)));
+        assert!(is_enabled_state(&StateSet::new(
+            State::Enabled | State::Sensitive
+        )));
+        assert!(!is_enabled_state(&StateSet::empty()));
+    }
+
+    #[test]
+    fn enabled_component_backed_buttons_are_pixel_addressable() {
+        for role in ["button", "push button", " Button "] {
+            assert!(is_indexable_capabilities(
+                role,
+                false,
+                false,
+                false,
+                false,
+                true,
+                Some(true)
+            ));
+        }
+    }
+
+    #[test]
+    fn component_role_fallback_rejects_unverified_or_passive_nodes() {
+        for enabled in [None, Some(false)] {
+            assert!(!is_indexable_capabilities(
+                "button", false, false, false, false, true, enabled
+            ));
+        }
+        assert!(!is_indexable_capabilities(
+            "button",
+            false,
+            false,
+            false,
+            false,
+            false,
+            Some(true)
+        ));
+        for role in ["label", "application", "panel", "frame", "window"] {
+            assert!(!is_indexable_capabilities(
+                role,
+                false,
+                false,
+                false,
+                false,
+                true,
+                Some(true)
+            ));
+        }
     }
 
     #[test]

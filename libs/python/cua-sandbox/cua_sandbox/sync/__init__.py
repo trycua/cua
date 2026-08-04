@@ -23,8 +23,9 @@ from typing import Any, Iterator, Optional
 from cua_sandbox.image import Image
 from cua_sandbox.localhost import Localhost as _AsyncLocalhost
 from cua_sandbox.pool import Pool as _AsyncPool
+from cua_sandbox.pool import Template as _AsyncTemplate
 from cua_sandbox.sandbox import Sandbox as _AsyncSandbox
-from fleet_sdk import ClaimSpec, CreatePoolRequest
+from fleet_sdk import ClaimSpec, CreatePoolRequest, CreateTemplateRequest
 
 
 def _get_or_create_loop() -> asyncio.AbstractEventLoop:
@@ -72,6 +73,22 @@ class _SyncProxy:
 
     def __repr__(self) -> str:
         return f"Sync({self._async_obj!r})"
+
+
+class Template:
+    """Blocking facade for :class:`cua_sandbox.Template`."""
+
+    def __init__(self, async_template: _AsyncTemplate) -> None:
+        self._async_template = async_template
+
+    @property
+    def name(self) -> str:
+        return self._async_template.name
+
+    @classmethod
+    def reconcile(cls, request: CreateTemplateRequest) -> "Template":
+        """Synchronously create or update a Fleet sandbox template."""
+        return cls(_run(_AsyncTemplate.reconcile(request)))
 
 
 class Pool:

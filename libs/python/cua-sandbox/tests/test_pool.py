@@ -6,16 +6,20 @@ import pytest
 from cua_sandbox import (
     ClaimSpec,
     CreatePoolRequest,
+    CreateTemplateRequest,
     Firmware,
+    OsGymSandboxTemplateSpec,
+    OsGymSandboxWarmPoolSpec,
     Pool,
-    PoolSpec,
-    PoolTemplate,
     RuntimeKind,
     SandboxService,
     SandboxTemplateRef,
     ServiceProtocol,
+    Template,
+    VmTemplate,
 )
 from cua_sandbox.sync import Pool as SyncPool
+from cua_sandbox.sync import Template as SyncTemplate
 from cua_sandbox.transport.fleet_cloud import _FleetClient
 from fleet_sdk import Sandbox as FleetSandbox
 
@@ -27,35 +31,52 @@ def test_public_pool_schema_exports_runtime_kind() -> None:
 def pool_request(
     *,
     name: str = "foo",
-    image: str = "example:latest",
+    template_name: str | None = None,
     replicas: int = 1,
-    services: dict[str, int] | None = None,
-    template: PoolTemplate | None = None,
 ) -> CreatePoolRequest:
     return CreatePoolRequest(
         namespace=name,
-        spec=PoolSpec(
+        spec=OsGymSandboxWarmPoolSpec(
             replicas=replicas,
-            services=[
-                SandboxService(name=service_name, target_port=port, protocol=ServiceProtocol.TCP)
-                for service_name, port in (services or {"server": 8000}).items()
-            ],
-            template=template
-            or PoolTemplate(
+            sandbox_template_ref=SandboxTemplateRef(name=template_name or name),
+            autoscaling=None,
+        ),
+    )
+
+
+def template_request(
+    *,
+    name: str = "foo",
+    image: str = "example:latest",
+    services: dict[str, int] | None = None,
+    vm_template: VmTemplate | None = None,
+) -> CreateTemplateRequest:
+    return CreateTemplateRequest(
+        namespace=name,
+        name=name,
+        spec=OsGymSandboxTemplateSpec(
+            vm_template=vm_template
+            or VmTemplate(
+                container_disk_image=image,
+                command=None,
                 runtime=None,
                 runtime_class_name=None,
                 node_selector=None,
                 tolerations=None,
-                command=None,
-                container_disk_image=image,
+                image_pull_policy=None,
                 image_pull_secret="ecr-credentials",
                 cpu_cores=None,
                 memory=None,
                 firmware=None,
                 probes=None,
+                services=[
+                    SandboxService(
+                        name=service_name, target_port=port, protocol=ServiceProtocol.TCP
+                    )
+                    for service_name, port in (services or {"server": 8000}).items()
+                ],
                 oidc=None,
             ),
-            autoscaling=None,
         ),
     )
 
@@ -63,7 +84,19 @@ def pool_request(
 def fleet_pool(name: str = "foo") -> SimpleNamespace:
     return SimpleNamespace(
         metadata=SimpleNamespace(name=name, namespace=name),
-        spec=SimpleNamespace(services=[]),
+        spec=SimpleNamespace(
+            replicas=1,
+            sandbox_template_ref=SimpleNamespace(name=name),
+            autoscaling=None,
+        ),
+        status=SimpleNamespace(replicas=1, ready_replicas=1, selector=None),
+    )
+
+
+def fleet_template(name: str = "foo") -> SimpleNamespace:
+    return SimpleNamespace(
+        metadata=SimpleNamespace(name=name, namespace=name),
+        spec=SimpleNamespace(vm_template=SimpleNamespace(services=[])),
     )
 
 
@@ -79,6 +112,7 @@ class FakeFleetClient:
         self.reconcile_error = reconcile_error
         self.release_error = release_error
         self.reconciled: list[object] = []
+        self.reconciled_templates: list[object] = []
         self.claims: list[object] = []
         self.released: list[object] = []
         self.service_requests: list[object] = []
@@ -89,6 +123,12 @@ class FakeFleetClient:
         if self.reconcile_error:
             raise self.reconcile_error
         return self.existing or fleet_pool(request.namespace)
+
+    async def reconcile_template(self, request: object) -> object:
+        self.reconciled_templates.append(request)
+        if self.reconcile_error:
+            raise self.reconcile_error
+        return self.existing or fleet_template(request.name)
 
     async def create_claim(self, request: object) -> object:
         self.claims.append(request)
@@ -152,15 +192,26 @@ async def test_fleet_client_reconcile_pool_delegates_to_generated_client() -> No
 
 
 @pytest.mark.asyncio
-async def test_reconcile_creates_pool_from_registry_image(monkeypatch):
+async def test_fleet_client_reconcile_template_delegates_to_generated_client() -> None:
+    expected = fleet_template()
+
+    class GeneratedClient:
+        async def reconcile_template(self, request: object) -> object:
+            assert request == "desired"
+            return expected
+
+    client = object.__new__(_FleetClient)
+    client._client = GeneratedClient()
+
+    assert await client.reconcile_template("desired") is expected
+
+
+@pytest.mark.asyncio
+async def test_reconcile_creates_pool_referencing_a_template(monkeypatch):
     client = FakeFleetClient()
     monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
 
-    request = pool_request(
-        image="registry.example/workspace:latest",
-        services={"server": 8000, "port-3000": 3000},
-    )
-    pool = await Pool.reconcile(request)
+    pool = await Pool.reconcile(pool_request(template_name="workspace"))
 
     assert pool.name == "foo"
     assert pool.resource.metadata.name == "foo"
@@ -168,11 +219,59 @@ async def test_reconcile_creates_pool_from_registry_image(monkeypatch):
     assert len(client.reconciled) == 1
     request = client.reconciled[0]
     assert request.namespace == "foo"
-    assert request.spec.template.container_disk_image == "registry.example/workspace:latest"
-    assert [(service.name, service.target_port) for service in request.spec.services] == [
+    assert request.spec.sandbox_template_ref.name == "workspace"
+    assert request.spec.replicas == 1
+
+
+@pytest.mark.asyncio
+async def test_template_reconcile_creates_template_from_registry_image(monkeypatch):
+    client = FakeFleetClient()
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
+
+    request = template_request(
+        image="registry.example/workspace:latest",
+        services={"server": 8000, "port-3000": 3000},
+    )
+    template = await Template.reconcile(request)
+
+    assert template.name == "foo"
+    assert template.resource.metadata.name == "foo"
+    assert client.closed is True
+    assert client.reconciled_templates == [request]
+    vm_template = client.reconciled_templates[0].spec.vm_template
+    assert vm_template.container_disk_image == "registry.example/workspace:latest"
+    assert [(service.name, service.target_port) for service in vm_template.services] == [
         ("server", 8000),
         ("port-3000", 3000),
     ]
+
+
+@pytest.mark.asyncio
+async def test_template_reconcile_closes_temporary_client_when_reconciliation_fails(monkeypatch):
+    client = FakeFleetClient(reconcile_error=RuntimeError("reconcile failed"))
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
+
+    with pytest.raises(RuntimeError, match="reconcile failed"):
+        await Template.reconcile(template_request())
+
+    assert client.closed is True
+
+
+@pytest.mark.parametrize("invalid_value", [None, {}, "not-a-request", pool_request()])
+@pytest.mark.asyncio
+async def test_template_reconcile_rejects_non_request(invalid_value):
+    with pytest.raises(TypeError, match="CreateTemplateRequest"):
+        await Template.reconcile(invalid_value)
+
+
+def test_sync_template_reconcile_matches_async_facade(monkeypatch):
+    client = FakeFleetClient()
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
+
+    template = SyncTemplate.reconcile(template_request())
+
+    assert template.name == "foo"
+    assert client.closed is True
 
 
 @pytest.mark.asyncio
@@ -196,7 +295,7 @@ async def test_reconcile_updates_existing_pool_idempotently(monkeypatch):
 
     assert pool.resource is existing
     assert len(client.reconciled) == 1
-    assert client.reconciled[0].spec.template.container_disk_image == "example:latest"
+    assert client.reconciled[0].spec.sandbox_template_ref.name == "foo"
     assert client.closed is True
 
 
@@ -279,20 +378,31 @@ def test_sync_pool_matches_blocking_context_manager(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_reconcile_preserves_replicas_and_named_services(monkeypatch):
+async def test_reconcile_preserves_replicas_and_template_reference(monkeypatch):
     client = FakeFleetClient()
     monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
 
-    request = pool_request(
-        image="registry.example/workspace:latest",
-        replicas=2,
-        services={"server": 8000, "mcp": 3000},
-    )
-    await Pool.reconcile(request)
+    await Pool.reconcile(pool_request(replicas=2, template_name="workspace"))
 
     request = client.reconciled[0]
     assert request.spec.replicas == 2
-    assert [(service.name, service.target_port) for service in request.spec.services] == [
+    assert request.spec.sandbox_template_ref.name == "workspace"
+
+
+@pytest.mark.asyncio
+async def test_template_reconcile_preserves_named_services(monkeypatch):
+    client = FakeFleetClient()
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
+
+    await Template.reconcile(
+        template_request(
+            image="registry.example/workspace:latest",
+            services={"server": 8000, "mcp": 3000},
+        )
+    )
+
+    vm_template = client.reconciled_templates[0].spec.vm_template
+    assert [(service.name, service.target_port) for service in vm_template.services] == [
         ("server", 8000),
         ("mcp", 3000),
     ]
@@ -302,29 +412,41 @@ async def test_reconcile_preserves_replicas_and_named_services(monkeypatch):
 async def test_reconcile_forwards_native_create_pool_request_unchanged(monkeypatch):
     client = FakeFleetClient()
     monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
-    request = pool_request(
-        image="registry.example/workspace:latest",
-        replicas=2,
-        services={"server": 8000, "mcp": 3000},
-        template=PoolTemplate(
-            runtime=None,
+    request = pool_request(replicas=2, template_name="workspace")
+
+    await Pool.reconcile(request)
+
+    assert client.reconciled == [request]
+
+
+@pytest.mark.asyncio
+async def test_template_reconcile_forwards_native_request_unchanged(monkeypatch):
+    client = FakeFleetClient()
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
+    request = template_request(
+        vm_template=VmTemplate(
+            container_disk_image="registry.example/workspace:latest",
+            command=None,
+            runtime=RuntimeKind.KUBEVIRT,
             runtime_class_name=None,
             node_selector=None,
             tolerations=None,
-            command=None,
-            container_disk_image="registry.example/workspace:latest",
+            image_pull_policy=None,
             image_pull_secret="workspace-pull",
             cpu_cores=10,
             memory="20Gi",
             firmware=Firmware.EFI,
             probes=None,
+            services=[
+                SandboxService(name="server", target_port=8000, protocol=ServiceProtocol.TCP)
+            ],
             oidc=None,
         ),
     )
 
-    await Pool.reconcile(request)
+    await Template.reconcile(request)
 
-    assert client.reconciled == [request]
+    assert client.reconciled_templates == [request]
 
 
 @pytest.mark.asyncio

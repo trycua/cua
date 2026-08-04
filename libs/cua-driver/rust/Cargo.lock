@@ -986,6 +986,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64",
+ "core-foundation",
  "cua-driver-contract",
  "cua-driver-core",
  "cua-driver-sdk",

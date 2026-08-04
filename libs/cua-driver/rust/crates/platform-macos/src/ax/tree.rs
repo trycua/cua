@@ -14,8 +14,6 @@
 use super::bindings::*;
 use super::window_scope::{decide_window_scope, TopLevelCandidate, WindowScope};
 use core_foundation::base::{CFEqual, CFRelease, CFRetain, CFTypeRef};
-use std::collections::HashSet;
-use std::sync::{Mutex, OnceLock};
 
 /// Default maximum depth for AX tree walks. Deep menus and complex web views
 /// can nest deeply; 25 covers realistic app chrome without exploding on
@@ -36,14 +34,6 @@ pub const DEFAULT_MAX_DEPTH: usize = 25;
 /// (issue #22865).
 pub const DEFAULT_MAX_ELEMENTS: usize = 2_000;
 
-/// How long to let a freshly-enabled Chromium/Electron app build its
-/// web-content AX tree before we read it. The tree is materialized
-/// asynchronously over IPC once the app detects an assistive client, so a
-/// walk that starts immediately sees only the chrome (title bar, a handful
-/// of elements). This settle is paid at most once per pid — see
-/// `enabled_pids`.
-const CHROMIUM_SETTLE_SECONDS: f64 = 0.5;
-
 /// Bound each native AX request. Tokio cannot cancel a blocked
 /// `AXUIElementCopyAttributeValue` after `spawn_blocking` starts, so the native
 /// messaging timeout is what keeps an unresponsive app from retaining a worker
@@ -52,14 +42,6 @@ const AX_MESSAGING_TIMEOUT_SECONDS: f32 = 2.0;
 
 unsafe fn set_messaging_timeout(element: AXUIElementRef) {
     let _ = AXUIElementSetMessagingTimeout(element, AX_MESSAGING_TIMEOUT_SECONDS);
-}
-
-/// Pids for which we have already flipped on accessibility and paid the
-/// one-time settle delay. Repeat snapshots of the same app skip the settle:
-/// the tree is already built and stays built for the life of the process.
-fn enabled_pids() -> &'static Mutex<HashSet<i32>> {
-    static ENABLED_PIDS: OnceLock<Mutex<HashSet<i32>>> = OnceLock::new();
-    ENABLED_PIDS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
 /// A single node in the AX tree.
@@ -234,20 +216,11 @@ pub fn walk_tree_bounded(
         // asks for it. Without this, the first walk of such an app returns an
         // empty/title-bar-only tree (#1616). Flip the enablement attribute,
         // then — only when the flip actually took and only the first time we
-        // see this pid — let the asynchronously-built tree settle before we
-        // read it. Native Cocoa apps reject the attribute, so they pay no
-        // settle cost. This relies on the MAX_ELEMENTS node cap to keep the
-        // now-materialized (potentially large) tree bounded.
-        let already_enabled = enabled_pids()
-            .lock()
-            .map(|s| s.contains(&pid))
-            .unwrap_or(false);
-        if !already_enabled && enable_chromium_accessibility(app_elem) {
-            crate::permissions::panel::pump_run_loop_briefly(CHROMIUM_SETTLE_SECONDS);
-            if let Ok(mut set) = enabled_pids().lock() {
-                set.insert(pid);
-            }
-        }
+        // see this process lifetime — let the asynchronously-built tree settle
+        // before we read it. Native Cocoa apps reject the attribute, so they
+        // pay no settle cost. This relies on the MAX_ELEMENTS node cap to keep
+        // the now-materialized (potentially large) tree bounded.
+        super::enablement::ensure_chromium_ax_enabled(pid, app_elem);
 
         // Union AXChildren + AXWindows — the only way to see background windows.
         // AXChildren omits windows when the app isn't frontmost (AppKit limitation).

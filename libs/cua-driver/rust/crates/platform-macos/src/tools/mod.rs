@@ -107,6 +107,9 @@ mod pid_window_target_tests {
     }
 }
 
+#[cfg(test)]
+mod background_input_regression_tests;
+
 fn pid_window_guarded<T: Tool + 'static>(
     tool: T,
     candidates: &WindowTargetCandidates,
@@ -177,6 +180,106 @@ impl DeliveryMode {
     }
 }
 
+/// Convert a pure background-input refusal into the structured refusal result
+/// shape shared by exact-target tools: `code`, `effect: "refused"`, the
+/// requested target, and the safe next route when one exists. No actuator ran.
+pub(crate) fn background_refusal_result(
+    pid: i32,
+    window_id: u32,
+    refusal: &cua_driver_core::background_input::BackgroundRefusal,
+) -> cua_driver_core::protocol::ToolResult {
+    let mut structured = serde_json::json!({
+        "code": refusal.code,
+        "effect": "refused",
+        "pid": pid,
+        "window_id": window_id,
+        "reason": refusal.reason,
+    });
+    if let Some(advice) = refusal.advice {
+        structured["escalation"] = serde_json::json!({
+            "recommended": advice,
+            "reason": refusal.reason,
+        });
+    }
+    cua_driver_core::protocol::ToolResult::error(format!(
+        "Background input refused ({}): {}",
+        refusal.code, refusal.reason
+    ))
+    .with_structured(structured)
+}
+
+/// Exclusive per-process ownership of one background mutation. Callers must
+/// keep this value alive through actuator dispatch, focus restoration, and
+/// target-bound verification.
+pub(crate) struct BackgroundMutationLease {
+    pid: i32,
+    _guard: tokio::sync::OwnedMutexGuard<()>,
+}
+
+impl BackgroundMutationLease {
+    /// Revalidate another actuator class while retaining the same per-PID
+    /// lease. This supports explicit ladders without deadlocking by attempting
+    /// to reacquire the coordinator recursively.
+    pub(crate) async fn gate_again(
+        &self,
+        window_id: u32,
+        element_ptr: Option<usize>,
+        action: cua_driver_core::background_input::BackgroundAction,
+    ) -> Result<(), cua_driver_core::protocol::ToolResult> {
+        decide_background_window_action(self.pid, window_id, element_ptr, action).await
+    }
+}
+
+async fn decide_background_window_action(
+    pid: i32,
+    window_id: u32,
+    element_ptr: Option<usize>,
+    action: cua_driver_core::background_input::BackgroundAction,
+) -> Result<(), cua_driver_core::protocol::ToolResult> {
+    use cua_driver_core::background_input::{
+        decide_background_input, BackgroundInputDecision, ExactWindowTarget,
+    };
+    let facts = match tokio::task::spawn_blocking(move || {
+        crate::ax::exact_target::gather_background_facts(pid, window_id, element_ptr)
+    })
+    .await
+    {
+        Ok(facts) => facts,
+        Err(error) => {
+            return Err(cua_driver_core::protocol::ToolResult::error(format!(
+                "Could not gather exact-target facts for pid {pid} window {window_id}: {error}"
+            )));
+        }
+    };
+    match decide_background_input(ExactWindowTarget { pid, window_id }, &facts, action) {
+        BackgroundInputDecision::Execute { .. } => Ok(()),
+        BackgroundInputDecision::Refuse(refusal) => {
+            Err(background_refusal_result(pid, window_id, &refusal))
+        }
+    }
+}
+
+/// Acquire the per-PID mutation coordinator, gather fresh exact-target facts,
+/// and ask the pure core for one background decision. `element_ptr` must stay
+/// retained by the caller until the returned lease is dropped.
+pub(crate) async fn gate_background_window_action(
+    pid: i32,
+    window_id: u32,
+    element_ptr: Option<usize>,
+    action: cua_driver_core::background_input::BackgroundAction,
+) -> Result<BackgroundMutationLease, cua_driver_core::protocol::ToolResult> {
+    let lease = acquire_background_mutation(pid).await;
+    lease.gate_again(window_id, element_ptr, action).await?;
+    Ok(lease)
+}
+
+pub(crate) async fn acquire_background_mutation(pid: i32) -> BackgroundMutationLease {
+    BackgroundMutationLease {
+        pid,
+        _guard: crate::background_mutation::acquire(pid).await,
+    }
+}
+
 /// Finish the post-action observation window. Embedded interactive clients
 /// that already observe the target continuously may opt out through the
 /// private registry argument to avoid adding a one-second acknowledgement
@@ -230,6 +333,7 @@ pub(crate) async fn focus_by_pixel(
     session: Option<String>,
     session_id: Option<String>,
     from_zoom: bool,
+    mutation_lease: Option<&BackgroundMutationLease>,
 ) -> Result<(), cua_driver_core::protocol::ToolResult> {
     use cua_driver_core::tool::Tool;
     let mut click_args = serde_json::json!({
@@ -239,6 +343,15 @@ pub(crate) async fn focus_by_pixel(
     });
     if let Some(wid) = window_id {
         click_args["window_id"] = serde_json::json!(wid);
+        if let Some(lease) = mutation_lease {
+            lease
+                .gate_again(
+                    wid,
+                    None,
+                    cua_driver_core::background_input::BackgroundAction::WindowPointer,
+                )
+                .await?;
+        }
     }
     if let Some(ref s) = session {
         click_args["session"] = serde_json::json!(s);
@@ -249,9 +362,13 @@ pub(crate) async fn focus_by_pixel(
     if from_zoom {
         click_args["from_zoom"] = serde_json::json!(true);
     }
-    let focus = click::ClickTool::new(state.clone())
-        .invoke(click_args)
-        .await;
+    let click_tool = click::ClickTool::new(state.clone());
+    let click = click_tool.invoke(click_args);
+    let focus = if let Some(lease) = mutation_lease {
+        crate::background_mutation::with_held_lease(lease.pid, click).await
+    } else {
+        click.await
+    };
     if focus.is_error != Some(true) {
         // AXFocused is non-destructive: unlike a second real click, it keeps a
         // Cmd+A selection intact before a follow-up type_text or Cmd+V.

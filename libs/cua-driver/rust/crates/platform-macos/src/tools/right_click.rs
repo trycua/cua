@@ -153,6 +153,18 @@ impl Tool for RightClickTool {
             };
             let element_ptr = element_guard.as_ptr();
 
+            let _mutation_lease = match super::gate_background_window_action(
+                pid,
+                wid,
+                Some(element_ptr),
+                cua_driver_core::background_input::BackgroundAction::AxSemantic,
+            )
+            .await
+            {
+                Ok(lease) => lease,
+                Err(refusal_result) => return refusal_result,
+            };
+
             let result =
                 tokio::task::spawn_blocking(move || ax_show_menu(element_ptr, idx, pid, wid)).await;
 
@@ -176,11 +188,46 @@ impl Tool for RightClickTool {
         // refuses a window with no live frame).
         let (screen_x, screen_y, win_local_x, win_local_y) = if let Some(wid) = window_id {
             match super::px_frame::resolve_or_refuse(wid).await {
-                Ok(frame) => frame.to_screen(cx, cy),
+                Ok(frame) => {
+                    let translated = frame.to_screen(cx, cy);
+                    if !delivery_mode.is_foreground()
+                        && (translated.2 < 0.0
+                            || translated.3 < 0.0
+                            || translated.2 > frame.bounds.width
+                            || translated.3 > frame.bounds.height)
+                    {
+                        return ToolResult::error(format!(
+                            "right_click: window-local point ({:.1}, {:.1}) pt lies outside \
+                             window {wid}'s {:.0}×{:.0} pt frame; background delivery refused",
+                            translated.2, translated.3, frame.bounds.width, frame.bounds.height
+                        ));
+                    }
+                    translated
+                }
                 Err(refusal) => return refusal,
             }
         } else {
             (cx, cy, cx, cy)
+        };
+
+        let _mutation_lease = if !delivery_mode.is_foreground() {
+            if let Some(wid) = window_id {
+                match super::gate_background_window_action(
+                    pid,
+                    wid,
+                    None,
+                    cua_driver_core::background_input::BackgroundAction::WindowPointer,
+                )
+                .await
+                {
+                    Ok(lease) => Some(lease),
+                    Err(refusal_result) => return refusal_result,
+                }
+            } else {
+                None
+            }
+        } else {
+            None
         };
 
         // Pin overlay above the target window before animating.

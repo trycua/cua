@@ -2022,6 +2022,7 @@ impl Tool for LaunchAppTool {
         // `path` is intentionally excluded from packaged routing — when
         // the caller has a concrete executable in mind they want
         // CreateProcess semantics, not Start Menu activation.
+        let mut name_lookup_missed = false;
         let aumid_for_uwp: Option<String> = if launch_path_opt.is_some() || path_opt.is_some() {
             None
         } else if let Some(a) = aumid_opt.clone() {
@@ -2032,12 +2033,31 @@ impl Tool for LaunchAppTool {
         {
             Some(b)
         } else if let Some(n) = name_opt.clone() {
-            // Run the (cached) AppsFolder lookup on a blocking thread to
-            // avoid stalling the async runtime on the cold-enumeration
-            // path (~200 ms first call, ~µs after).
-            tokio::task::spawn_blocking(move || crate::launch_uwp::resolve_aumid_by_name(&n))
-                .await
-                .unwrap_or(None)
+            // The cold AppsFolder COM walk can stop making progress when its
+            // interactive shell broker is unhealthy. Bound it before the
+            // separate ShellExecuteEx deadline below; the resolver keeps a
+            // timed-out worker single-flight until COM really returns.
+            match crate::launch_uwp::resolve_aumid_by_name_bounded(n.clone()).await {
+                Ok(resolved) => {
+                    name_lookup_missed = resolved.is_none();
+                    resolved
+                }
+                Err(crate::launch_uwp::AppsFolderLookupError::Timeout) => {
+                    return ToolResult::error(format!(
+                        "App name lookup for {n:?} is temporarily unavailable: Windows did not respond to the shell:AppsFolder query within 4s. No app was launched; retry after the shell recovers, or pass an explicit path or aumid."
+                    ))
+                }
+                Err(crate::launch_uwp::AppsFolderLookupError::Busy) => {
+                    return ToolResult::error(format!(
+                        "App name lookup for {n:?} is temporarily unavailable because a prior Windows shell lookup is still running or cooling down. No app was launched; retry later, or pass an explicit path or aumid."
+                    ))
+                }
+                Err(crate::launch_uwp::AppsFolderLookupError::Unavailable) => {
+                    return ToolResult::error(format!(
+                        "App name lookup for {n:?} is unavailable because the Windows shell lookup worker failed. No app was launched; pass an explicit path or aumid."
+                    ))
+                }
+            }
         } else {
             None
         };
@@ -2262,6 +2282,12 @@ impl Tool for LaunchAppTool {
 
             match result {
                 Ok(Ok(Ok(p))) => p,
+                Ok(Ok(Err(e))) if name_lookup_missed => {
+                    return ToolResult::error(format!(
+                        "App {:?} was not found in shell:AppsFolder or by Windows PATH/association lookup: {e}",
+                        name_opt.as_deref().unwrap_or("")
+                    ))
+                }
                 Ok(Ok(Err(e))) => return ToolResult::error(format!("Failed to launch: {e}")),
                 Ok(Err(e)) => return ToolResult::error(format!("Task error: {e}")),
                 Err(_elapsed) => {

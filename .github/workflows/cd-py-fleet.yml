@@ -173,8 +173,8 @@ jobs:
               Firmware,
               HttpHeader,
               HttpRequest,
-              PoolSpec,
-              PoolTemplate,
+              OsGymSandboxTemplateSpec,
+              OsGymSandboxWarmPoolSpec,
               RuntimeKind,
               SandboxService,
           )
@@ -192,8 +192,8 @@ jobs:
               Firmware,
               HttpHeader,
               HttpRequest,
-              PoolSpec,
-              PoolTemplate,
+              OsGymSandboxTemplateSpec,
+              OsGymSandboxWarmPoolSpec,
               RuntimeKind,
               SandboxService,
           ))

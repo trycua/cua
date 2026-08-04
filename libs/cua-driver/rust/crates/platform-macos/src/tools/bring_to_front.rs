@@ -26,7 +26,9 @@ pub struct BringToFrontTool;
 
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
-const VERIFY_TIMEOUT: Duration = Duration::from_millis(900);
+// LaunchServices can publish the new NSWorkspace frontmost application after
+// WindowServer and AX have already converged on the requested exact window.
+const VERIFY_TIMEOUT: Duration = Duration::from_millis(1800);
 const VERIFY_POLL: Duration = Duration::from_millis(20);
 const VERIFY_STABLE: Duration = Duration::from_millis(100);
 

@@ -10,7 +10,7 @@
 
 #![cfg(target_os = "macos")]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -49,6 +49,14 @@ struct Occluder {
     pid: u32,
 }
 
+impl Drop for Occluder {
+    fn drop(&mut self) {
+        let _ = Command::new("kill")
+            .args(["-TERM", &self.pid.to_string()])
+            .status();
+    }
+}
+
 fn harness_exe() -> std::path::PathBuf {
     std::env::var("HARNESS_APPKIT_APP")
         .map(std::path::PathBuf::from)
@@ -83,18 +91,54 @@ fn launch(driver: &mut McpDriver, mode: Option<&str>) -> Fixture {
     Fixture { pid, report }
 }
 
-fn launch_occluder(driver: &mut McpDriver) -> Occluder {
+fn running_executable_pids(exe: &std::path::Path) -> HashSet<u32> {
+    let output = Command::new("pgrep")
+        .args([
+            "-f",
+            "-x",
+            "--",
+            exe.to_str().expect("UTF-8 SwiftUI fixture path"),
+        ])
+        .output()
+        .expect("query SwiftUI fixture processes");
+    if !output.status.success() {
+        return HashSet::new();
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.trim().parse().ok())
+        .collect()
+}
+
+fn launch_occluder(_driver: &mut McpDriver) -> Occluder {
     let exe = occluder_exe();
     assert!(
         exe.exists(),
         "required distinct-bundle SwiftUI occluder missing at {exe:?}"
     );
-    let mut command = Command::new(exe);
-    command.stdout(Stdio::null()).stderr(Stdio::null());
-    let child = cua_driver_testkit::spawn_in_job(&mut command).expect("launch SwiftUI occluder");
-    let pid = child.id();
-    driver.reaper().push(child);
-    Occluder { pid }
+    let app = exe
+        .ancestors()
+        .nth(3)
+        .expect("SwiftUI executable is inside an app bundle");
+    let previous = running_executable_pids(&exe);
+    let opened = Command::new("open")
+        .args(["-n", "-g"])
+        .arg(app)
+        .status()
+        .expect("launch SwiftUI occluder through LaunchServices");
+    assert!(opened.success(), "LaunchServices rejected SwiftUI occluder");
+
+    let deadline = Instant::now() + Duration::from_secs(12);
+    loop {
+        if let Some(pid) = running_executable_pids(&exe).difference(&previous).next() {
+            return Occluder { pid: *pid };
+        }
+        assert!(
+            Instant::now() < deadline,
+            "LaunchServices SwiftUI process did not appear"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 fn wait_for_ordinary_window(pid: u32) -> u32 {

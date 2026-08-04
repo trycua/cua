@@ -63,7 +63,10 @@ fn def() -> &'static ToolDef {
              synthesized — special keys (Return / Escape / arrows) go through \
              `press_key` / `hotkey`. For Chromium / Electron inputs that don't \
              implement `kAXSelectedText`, the tool falls back to CGEvent \
-             character synthesis automatically.\n\n\
+             character synthesis automatically when the estimated route stays \
+             within the daemon transport budget. Longer synthesized routes are \
+             refused before character events and return a safe chunk size; \
+             one-call AX insertion remains uncapped.\n\n\
              Optional `element_index` + `window_id` (from the last \
              `get_window_state` snapshot) directs the write to a specific field. \
              Without `element_index`, the write goes to the pid's currently \
@@ -167,6 +170,13 @@ impl Tool for TypeTextTool {
                 cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&input.text)
                     .into_owned();
             let delay_ms = args.u64_or("delay_ms", 30).min(200);
+            if let Some(refusal) = synthesis_preflight(
+                TextDeliveryRoute::UnicodeSynthesis,
+                text.chars().count(),
+                delay_ms,
+            ) {
+                return synthesis_refusal_result("hid", &refusal, AxAttempt::NotAttempted);
+            }
             let result = tokio::task::spawn_blocking(move || {
                 crate::input::keyboard::type_text_global(&text, delay_ms)
             })
@@ -393,6 +403,11 @@ impl Tool for TypeTextTool {
                 let wid = window_id.expect("background refusals require a window target");
                 return super::background_refusal_result(pid, wid, &refusal);
             }
+            Ok(Ok(TypeTextDelivery::SynthesisRefused {
+                path,
+                refusal,
+                ax_attempt,
+            })) => return synthesis_refusal_result(path, &refusal, ax_attempt),
             Ok(Ok(TypeTextDelivery::Typed(outcome))) => Ok(Ok(outcome)),
             Ok(Err(error)) => Ok(Err(error)),
             Err(error) => Err(error),
@@ -558,6 +573,150 @@ const PATH_AX: &str = "ax";
 const PATH_KEY_EVENTS: &str = "key_events";
 const PATH_KEY_EVENTS_FG: &str = "key_events_fg";
 
+// The daemon transport has a 120-second request deadline. Character synthesis
+// is synchronous and costs at least one 8ms key-down gap plus either the
+// requested delay or an 8ms key-up gap per character. Keep the complete
+// scheduled synthesis sleeps + read-back estimate within 100 seconds, reserving
+// 20 seconds for event construction/posting, routing, focus assistance,
+// queueing, response serialization, and transport.
+// Atomic AX writes are deliberately excluded: their cost does not scale per
+// character and a single write remains the preferred route for large text.
+const SYNTHESIS_BUDGET_MS: u64 = 100_000;
+const KEY_DOWN_GAP_MS: u64 = 8;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TextDeliveryRoute {
+    AtomicAx,
+    UnicodeSynthesis,
+    PhysicalSynthesis,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SynthesisRefusal {
+    requested_chars: usize,
+    estimated_duration_ms: u64,
+    per_character_ms: u64,
+    max_chunk_chars: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AxAttempt {
+    NotAttempted,
+    Rejected,
+    Unchanged,
+    Unverifiable,
+}
+
+impl AxAttempt {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::NotAttempted => "not_attempted",
+            Self::Rejected => "rejected",
+            Self::Unchanged => "unchanged",
+            Self::Unverifiable => "unverifiable",
+        }
+    }
+}
+
+fn synthesis_preflight(
+    route: TextDeliveryRoute,
+    requested_chars: usize,
+    delay_ms: u64,
+) -> Option<SynthesisRefusal> {
+    if route == TextDeliveryRoute::AtomicAx {
+        return None;
+    }
+    let per_character_ms = match route {
+        TextDeliveryRoute::AtomicAx => unreachable!(),
+        // PID-routed and desktop Unicode paths post one key-down and one
+        // key-up, sleeping 8ms after the down and max(delay, 8) after the up.
+        TextDeliveryRoute::UnicodeSynthesis => {
+            KEY_DOWN_GAP_MS.saturating_add(delay_ms.max(KEY_DOWN_GAP_MS))
+        }
+        // Physical HID may need Shift down/up around each printable key. Use
+        // that four-event worst case for a payload-independent safe bound.
+        TextDeliveryRoute::PhysicalSynthesis => 24u64.saturating_add(delay_ms.max(8)),
+    };
+    let drain_ms = DELIVERY_DRAIN_TIMEOUT.as_millis() as u64;
+    let estimated_duration_ms = (requested_chars as u64)
+        .saturating_mul(per_character_ms)
+        .saturating_add(drain_ms);
+    if estimated_duration_ms <= SYNTHESIS_BUDGET_MS {
+        return None;
+    }
+    let max_chunk_chars = SYNTHESIS_BUDGET_MS
+        .saturating_sub(drain_ms)
+        .checked_div(per_character_ms)
+        .unwrap_or_default() as usize;
+    Some(SynthesisRefusal {
+        requested_chars,
+        estimated_duration_ms,
+        per_character_ms,
+        max_chunk_chars,
+    })
+}
+
+fn synthesis_refusal_result(
+    path: &'static str,
+    refusal: &SynthesisRefusal,
+    ax_attempt: AxAttempt,
+) -> ToolResult {
+    let effect = if ax_attempt == AxAttempt::Unverifiable {
+        "indeterminate"
+    } else {
+        "refused"
+    };
+    let retryable = ax_attempt != AxAttempt::Unverifiable;
+    let escalation = if retryable {
+        serde_json::json!({
+            "recommended": "chunk",
+            "reason": format!(
+                "Character synthesis would exceed the bounded transport-safe budget. Retry in chunks of at most {} characters at this delay.",
+                refusal.max_chunk_chars
+            )
+        })
+    } else {
+        serde_json::json!({
+            "recommended": "verify_state",
+            "reason": "The atomic AX attempt could not be observed. Re-read the target before deciding whether any suffix remains; do not retry blindly."
+        })
+    };
+    let mut structured = serde_json::json!({
+        "code": "type_text_synthesis_budget_exceeded",
+        "path": path,
+        "effect": effect,
+        "requested_chars": refusal.requested_chars,
+        "estimated_duration_ms": refusal.estimated_duration_ms,
+        "synthesis_budget_ms": SYNTHESIS_BUDGET_MS,
+        "per_character_ms": refusal.per_character_ms,
+        "max_chunk_chars": refusal.max_chunk_chars,
+        "synthesized_chars": 0,
+        "atomic_ax_effect": ax_attempt.as_str(),
+        "retryable": retryable,
+        "escalation": escalation,
+    });
+    if ax_attempt != AxAttempt::Unverifiable {
+        structured["delivered_chars"] = serde_json::json!(0);
+        structured["retry_from_character"] = serde_json::json!(0);
+    }
+    let message = if retryable {
+        format!(
+            "type_text refused character synthesis before emitting character events: {} characters require an estimated {}ms at {}ms per character, exceeding the {}ms budget; retry in chunks of at most {} characters",
+            refusal.requested_chars,
+            refusal.estimated_duration_ms,
+            refusal.per_character_ms,
+            SYNTHESIS_BUDGET_MS,
+            refusal.max_chunk_chars,
+        )
+    } else {
+        format!(
+            "type_text did not synthesize character events because {} characters require an estimated {}ms, exceeding the {}ms budget; the preceding atomic AX attempt was unverifiable, so re-read the target before retrying",
+            refusal.requested_chars, refusal.estimated_duration_ms, SYNTHESIS_BUDGET_MS,
+        )
+    };
+    ToolResult::error(message).with_structured(structured)
+}
+
 fn path_has_untrusted_web_readback(path: &str) -> bool {
     path == PATH_AX || path == PATH_KEY_EVENTS || path == PATH_KEY_EVENTS_FG
 }
@@ -612,6 +771,11 @@ enum BackgroundKeyboardPolicy {
 enum TypeTextDelivery {
     Typed(TypeTextOutcome),
     Refused(BackgroundRefusal),
+    SynthesisRefused {
+        path: &'static str,
+        refusal: SynthesisRefusal,
+        ax_attempt: AxAttempt,
+    },
 }
 
 /// Decide the keyboard policy for a window-addressed background `type_text`.
@@ -696,6 +860,7 @@ fn foreground_settle_ms(pid: i32, frontmost_pid: Option<i32>) -> u64 {
 /// Apps that normalize input (smart quotes, autocomplete) may fail the
 /// substring/length test even though something landed — we report `false`
 /// (unverified) rather than erroring, so the agent can still confirm.
+#[cfg(test)]
 fn verify_typed(before: Option<&str>, after: Option<&str>, text: &str) -> bool {
     matches!(typed_progress(before, after, text), TypedProgress::Complete)
 }
@@ -941,6 +1106,26 @@ fn type_text_blocking(
 
     // --- Foreground rung: explicit agent request (skip AX/background ladder). ---
     if delivery_mode.is_foreground() {
+        let screen_sharing_target = crate::input::keyboard::is_screen_sharing_pid(pid);
+        if let Some(refusal) = synthesis_preflight(
+            if screen_sharing_target {
+                TextDeliveryRoute::PhysicalSynthesis
+            } else {
+                TextDeliveryRoute::UnicodeSynthesis
+            },
+            text.chars().count(),
+            delay_ms,
+        ) {
+            return Ok(TypeTextDelivery::SynthesisRefused {
+                path: if window_id.is_some() {
+                    PATH_KEY_EVENTS_FG
+                } else {
+                    PATH_KEY_EVENTS
+                },
+                refusal,
+                ax_attempt: AxAttempt::NotAttempted,
+            });
+        }
         // Settle between front+focus and the first keystroke — see the
         // "i love u" -> "love u" first-char-drop note in cgevent_type_verified.
         // A target that was already frontmost pays only 20ms for element-focus
@@ -950,7 +1135,6 @@ fn type_text_blocking(
         // dropped. 200ms covers that re-grab without penalizing an already
         // armed interactive stream on every text chunk.
         let foreground_settle_ms = foreground_settle_ms(pid, apps::frontmost_pid());
-        let screen_sharing_target = crate::input::keyboard::is_screen_sharing_pid(pid);
         let do_type = || {
             cgevent_type_verified(
                 pid,
@@ -1026,6 +1210,17 @@ fn type_text_blocking(
         if let BackgroundKeyboardPolicy::SemanticOnly(refusal) = keyboard_policy {
             return Ok(TypeTextDelivery::Refused(refusal));
         }
+        if let Some(refusal) = synthesis_preflight(
+            TextDeliveryRoute::UnicodeSynthesis,
+            text.chars().count(),
+            delay_ms,
+        ) {
+            return Ok(TypeTextDelivery::SynthesisRefused {
+                path: PATH_KEY_EVENTS,
+                refusal,
+                ax_attempt: AxAttempt::NotAttempted,
+            });
+        }
         tracing::debug!(
             "type_text: pid {pid} is a terminal emulator; skipping AX value-set, \
              using CGEvent key-event synthesis"
@@ -1061,25 +1256,33 @@ fn type_text_blocking(
             }
         },
     };
+    let mut ax_attempt = AxAttempt::NotAttempted;
     if let Some((element, owns, idx_opt)) = ax_target {
         let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
         let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
         let err = unsafe { set_string_attr(element, "AXSelectedText", text) };
-        // Landed iff the API succeeded AND a read-back positively confirms the
-        // intended `text` — it now contains `text`, or the field grew vs
-        // `before`. A non-empty `AXValue` alone is NOT enough: a pre-filled
-        // field whose `AXSelectedText` write silently no-ops still reads back
-        // its old (non-empty) value, which would otherwise report a false
-        // success. `verify_typed` compares the read-back against `before`/`text`.
+        // Classify the atomic write before considering synthesis. Complete AX
+        // delivery returns immediately. Partial delivery is surfaced as such
+        // instead of appending the full payload again. When synthesis would
+        // exceed its transport-safe budget, rejected/unchanged AX writes fail
+        // safely and unreadable AX state is reported as indeterminate.
         let after = unsafe { copy_string_attr(element, "AXValue") };
-        let ax_landed =
-            err == kAXErrorSuccess && verify_typed(before.as_deref(), after.as_deref(), text);
+        let ax_progress = if err == kAXErrorSuccess {
+            Some(typed_progress(before.as_deref(), after.as_deref(), text))
+        } else {
+            None
+        };
+        // AXValue is not renderer evidence in web content. An unchanged echo
+        // there cannot prove that zero characters landed, so blind retry is
+        // unsafe even though no synthesis has run yet.
+        let unchanged_web_readback = ax_progress == Some(TypedProgress::Unchanged)
+            && target_in_web_area(pid, Some((element as usize, idx_opt)), window_id);
         if owns {
             unsafe {
                 CFRelease(element as _);
             }
         }
-        if ax_landed {
+        if ax_progress == Some(TypedProgress::Complete) {
             let idx_str = idx_opt.map(|i| format!(" [{i}]")).unwrap_or_default();
             return Ok(TypeTextDelivery::Typed(TypeTextOutcome {
                 detail: format!(" into{idx_str} {role} \"{title}\""),
@@ -1088,6 +1291,22 @@ fn type_text_blocking(
                 delivered_chars: Some(text.chars().count()),
             }));
         }
+        if let Some(TypedProgress::Partial(delivered_chars)) = ax_progress {
+            let idx_str = idx_opt.map(|i| format!(" [{i}]")).unwrap_or_default();
+            return Ok(TypeTextDelivery::Typed(TypeTextOutcome {
+                detail: format!(" via partial AX write into{idx_str} {role} \"{title}\""),
+                path: PATH_AX,
+                verified: false,
+                delivered_chars: Some(delivered_chars),
+            }));
+        }
+        ax_attempt = match ax_progress {
+            Some(TypedProgress::Unchanged) if unchanged_web_readback => AxAttempt::Unverifiable,
+            Some(TypedProgress::Unchanged) => AxAttempt::Unchanged,
+            Some(TypedProgress::Unverifiable) => AxAttempt::Unverifiable,
+            None => AxAttempt::Rejected,
+            Some(TypedProgress::Complete | TypedProgress::Partial(_)) => unreachable!(),
+        };
         tracing::debug!(
             "AX write did not land for {role} \"{title}\" (err={err}); \
              falling back to CGEvent keystrokes"
@@ -1101,6 +1320,18 @@ fn type_text_blocking(
     // the structured refusal instead of escalating.
     if let BackgroundKeyboardPolicy::SemanticOnly(refusal) = keyboard_policy {
         return Ok(TypeTextDelivery::Refused(refusal));
+    }
+
+    if let Some(refusal) = synthesis_preflight(
+        TextDeliveryRoute::UnicodeSynthesis,
+        text.chars().count(),
+        delay_ms,
+    ) {
+        return Ok(TypeTextDelivery::SynthesisRefused {
+            path: PATH_KEY_EVENTS,
+            refusal,
+            ax_attempt,
+        });
     }
 
     // --- Background rung 2: CGEvent keystrokes with read-back. ---
@@ -1185,6 +1416,76 @@ mod tests {
             Ok(TypeTextDelivery::Refused(returned)) => assert_eq!(returned, refusal),
             other => panic!("expected a structured refusal, got {:?}", other.is_ok()),
         }
+    }
+
+    #[test]
+    fn oversized_synthesis_is_refused_before_the_terminal_event_path() {
+        let text = "x".repeat(6_500);
+        let result = type_text_blocking(
+            -1,
+            &text,
+            None,
+            0,
+            /*is_terminal_target=*/ true,
+            super::super::DeliveryMode::Background,
+            None,
+            BackgroundKeyboardPolicy::Allowed,
+        )
+        .expect("preflight refusal must not attempt the invalid pid");
+        let TypeTextDelivery::SynthesisRefused {
+            path,
+            refusal,
+            ax_attempt,
+        } = result
+        else {
+            panic!("oversized terminal synthesis must fail before mutation");
+        };
+        assert_eq!(path, PATH_KEY_EVENTS);
+        assert_eq!(ax_attempt, AxAttempt::NotAttempted);
+        assert_eq!(refusal.requested_chars, 6_500);
+        assert_eq!(refusal.estimated_duration_ms, 106_000);
+        assert_eq!(refusal.max_chunk_chars, 6_125);
+    }
+
+    #[test]
+    fn synthesis_preflight_accepts_the_exact_transport_safe_boundary() {
+        assert!(synthesis_preflight(TextDeliveryRoute::UnicodeSynthesis, 6_125, 0).is_none());
+        assert!(synthesis_preflight(TextDeliveryRoute::UnicodeSynthesis, 6_126, 0).is_some());
+    }
+
+    #[test]
+    fn large_atomic_ax_payloads_are_not_subject_to_the_synthesis_budget() {
+        assert!(synthesis_preflight(TextDeliveryRoute::AtomicAx, 100_000, 200).is_none());
+        assert_eq!(
+            typed_progress(None, Some(&"x".repeat(11_500)), &"x".repeat(11_500)),
+            TypedProgress::Complete,
+            "a successful one-call AX insertion remains eligible regardless of size"
+        );
+    }
+
+    #[test]
+    fn refusal_diagnostics_distinguish_safe_chunking_from_indeterminate_ax() {
+        let refusal = synthesis_preflight(TextDeliveryRoute::UnicodeSynthesis, 6_500, 0)
+            .expect("payload must exceed the synthesis budget");
+        let safe = synthesis_refusal_result(PATH_KEY_EVENTS, &refusal, AxAttempt::Rejected);
+        let safe = safe.structured_content.expect("structured refusal");
+        assert_eq!(safe["code"], "type_text_synthesis_budget_exceeded");
+        assert_eq!(safe["effect"], "refused");
+        assert_eq!(safe["delivered_chars"], 0);
+        assert_eq!(safe["synthesized_chars"], 0);
+        assert_eq!(safe["retryable"], true);
+        assert_eq!(safe["escalation"]["recommended"], "chunk");
+
+        let indeterminate =
+            synthesis_refusal_result(PATH_KEY_EVENTS, &refusal, AxAttempt::Unverifiable);
+        let indeterminate = indeterminate
+            .structured_content
+            .expect("structured indeterminate result");
+        assert_eq!(indeterminate["effect"], "indeterminate");
+        assert!(indeterminate.get("delivered_chars").is_none());
+        assert_eq!(indeterminate["synthesized_chars"], 0);
+        assert_eq!(indeterminate["retryable"], false);
+        assert_eq!(indeterminate["escalation"]["recommended"], "verify_state");
     }
 
     #[test]

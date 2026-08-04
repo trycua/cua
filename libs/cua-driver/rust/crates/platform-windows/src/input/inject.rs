@@ -39,6 +39,9 @@ use windows::Win32::UI::Controls::{
     CreateSyntheticPointerDevice, DestroySyntheticPointerDevice, HSYNTHETICPOINTERDEVICE,
     POINTER_FEEDBACK_DEFAULT, POINTER_TYPE_INFO, POINTER_TYPE_INFO_0,
 };
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+};
 use windows::Win32::UI::Input::Pointer::{
     InjectSyntheticPointerInput, POINTER_FLAG_DOWN, POINTER_FLAG_INCONTACT, POINTER_FLAG_INRANGE,
     POINTER_FLAG_UP, POINTER_FLAG_UPDATE, POINTER_INFO, POINTER_PEN_INFO, POINTER_TOUCH_INFO,
@@ -127,6 +130,28 @@ pub(crate) unsafe fn force_foreground_attached(target: HWND) -> bool {
         let _ = AttachThreadInput(my_tid, cur_tid, false);
     }
     GetForegroundWindow() == target
+}
+
+/// Retry an explicit visible foreground transition after a reserved no-name
+/// key grants this process the most-recent-input token. The key has no
+/// application meaning; the retry count keeps the transition bounded.
+pub(crate) unsafe fn force_foreground_assisted(target: HWND) -> (bool, bool) {
+    if unsafe { force_foreground_attached(target) } {
+        return (true, false);
+    }
+
+    const VK_NONAME: u8 = 0xFC;
+    unsafe {
+        keybd_event(VK_NONAME, 0, KEYBD_EVENT_FLAGS(0), 0);
+        keybd_event(VK_NONAME, 0, KEYEVENTF_KEYUP, 0);
+    }
+    for _ in 0..3 {
+        if unsafe { force_foreground_attached(target) } {
+            return (true, true);
+        }
+        sleep(Duration::from_millis(25));
+    }
+    (false, true)
 }
 
 /// RAII guard that makes a specific target window **unable to become the

@@ -642,7 +642,7 @@ Declare a session — a named, color-coded identity for THIS agent run. Pass a s
 
 **Arguments:**
 
-- `capture_scope` (string, optional): Per-session perception/action modality. auto starts window-only and requires explicit escalation before desktop tools; window and desktop are strict. Immutable for the live session. default: `"auto"`
+- `capture_scope` (string, optional): Per-session perception/action modality. auto starts window-only and requires explicit escalation before desktop tools; escalation permanently switches that session to desktop scope. To recover window scope, call end_session, then start_session with a new session id. window and desktop are strict. Immutable for the live session. default: `"auto"`
 - `cursor_theme` (object or null, optional): Optional initial cursor theme. The host applies it before the cursor is
 first made visible, avoiding a flash of the default theme.
 - `session` (string, required): Stable session id for this run (e.g. "research-run-1").
@@ -986,7 +986,7 @@ Perform hover, right-click, double-click, scroll, or drag in an exactly-bound br
 
 ### `escalate_session`
 
-Unlock the desktop phase of an auto capture-scope session after the window action ladder has been exhausted and verified. This is a one-way transition for the live session and records a bounded reason.
+Unlock the desktop phase of an auto capture-scope session after the window action ladder has been exhausted and verified. Escalation is permanent for that session and disables window-scoped tools. To recover window scope, call end_session, then start_session with a new session id.
 
 **Arguments:**
 

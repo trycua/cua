@@ -366,7 +366,9 @@ sessions may choose different policies safely.
 - `auto` (default): begins with effective scope `window`. Desktop perception
   and actions are locked until the window ladder is exhausted, each attempted
   action is verified, and the caller explicitly invokes `escalate_session`.
-  Escalation is one-way for the live session.
+  Escalation is permanent for that session, and window-scoped tools remain
+  disabled. To recover window scope, call `end_session`, then call
+  `start_session` with a new session id.
 - `window`: strict window-only perception and actions. Desktop tools are always
   rejected with `desktop_scope_disabled`.
 - `desktop`: strict full-desktop perception and foreground/system actions.

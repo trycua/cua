@@ -75,15 +75,18 @@ function mixChannel(base, accent, weight) {
 }
 
 function badgeStyle(fillColor) {
-  const start = fillColor.map((channel, index) => mixChannel([94, 151, 178][index], channel, 0.52));
-  const end = fillColor.map((channel, index) => mixChannel([13, 27, 38][index], channel, 0.18));
+  const start = fillColor.map((channel, index) => mixChannel([94, 151, 178][index], channel, 0.66));
+  const end = fillColor.map((channel, index) => mixChannel([13, 27, 38][index], channel, 0.26));
+  // The rim carries session identity now that the orb is gone, matching
+  // paint_session_badge in the Rust renderer.
+  const rim = fillColor.map((channel) => mixChannel(255, channel, 0.55));
   return [
     'spacing: 7px',
     'padding: 6px 10px',
     `background-gradient-start: rgba(${start[0]}, ${start[1]}, ${start[2]}, 0.93)`,
     `background-gradient-end: rgba(${end[0]}, ${end[1]}, ${end[2]}, 0.96)`,
     'background-gradient-direction: horizontal',
-    'border: 1px solid rgba(255, 255, 255, 0.63)',
+    `border: 1px solid rgba(${rim[0]}, ${rim[1]}, ${rim[2]}, 0.75)`,
     'border-radius: 14px',
     'box-shadow: 0 2px 9px rgba(0, 0, 0, 0.30)',
   ].join(';');
@@ -721,12 +724,6 @@ export default class WinRectsExtension extends Extension {
     });
     this._cursor.set_pivot_point(0.5, 0.5);
     Main.layoutManager.addTopChrome(this._cursor);
-    this._badgeDot = new St.Widget({
-      width: 10,
-      height: 10,
-      style: `background-color: ${this._fillColorCss}; border: 1px solid white; border-radius: 99px;`,
-      y_align: Clutter.ActorAlign.CENTER,
-    });
     this._badgeLabel = new St.Label({
       text: '',
       visible: false,
@@ -759,7 +756,6 @@ export default class WinRectsExtension extends Extension {
       can_focus: false,
       style: badgeStyle(this._fillColor),
     });
-    this._badge.add_child(this._badgeDot);
     this._badge.add_child(this._badgeLabel);
     this._badge.add_child(this._deliveryChip);
     this._badge.add_child(this._targetChip);
@@ -804,8 +800,6 @@ export default class WinRectsExtension extends Extension {
           this._updateModifierChips();
         }
       }
-      const badgeAlpha = Math.max(labelAlpha, chipAlpha);
-      if (this._badgeDot) this._badgeDot.opacity = Math.round(255 * badgeAlpha);
       if (this._badgeLabel) {
         this._badgeLabel.opacity = Math.round(255 * labelAlpha);
         if (labelAlpha <= 0.001 && this._badgeLabel.visible) {
@@ -840,7 +834,6 @@ export default class WinRectsExtension extends Extension {
       this._badge.destroy();
       this._badge = null;
     }
-    this._badgeDot = null;
     this._badgeLabel = null;
     this._deliveryChip = null;
     this._targetChip = null;
@@ -966,10 +959,6 @@ export default class WinRectsExtension extends Extension {
     const rgb = Number.parseInt(match[1], 16);
     this._fillColor = [(rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff];
     this._fillColorCss = `#${match[1].toLowerCase()}`;
-    if (this._badgeDot)
-      this._badgeDot.set_style(
-        `background-color: ${this._fillColorCss}; border: 1px solid white; border-radius: 99px;`
-      );
     if (this._badge) this._badge.set_style(badgeStyle(this._fillColor));
     this._deliveryChip?.queue_repaint();
     this._targetChip?.queue_repaint();

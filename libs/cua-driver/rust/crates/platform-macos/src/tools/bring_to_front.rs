@@ -327,27 +327,24 @@ impl Tool for BringToFrontTool {
             }
 
             let skylight_accepted = crate::input::skylight::make_exact_window_key(pid, window_id);
-            let path = if skylight_accepted {
-                "skylight_ax"
-            } else {
-                let cocoa_accepted = unsafe {
-                    app.activateWithOptions(
-                        NSApplicationActivationOptions::NSApplicationActivateAllWindows,
-                    )
-                };
-                if cocoa_accepted {
-                    "cocoa_ax"
-                } else {
-                    "cocoa"
-                }
-            };
-            let cocoa_accepted = if skylight_accepted {
-                false
-            } else {
-                // `path` already records the result of the single Cocoa call.
-                path == "cocoa_ax"
+            // SkyLight can make the exact window key and first in layer-0 order
+            // without updating NSWorkspace's frontmost application. Always pair
+            // it with public process activation, then re-assert only the exact AX
+            // window below so success proves all three postconditions.
+            let cocoa_accepted = unsafe {
+                app.activateWithOptions(
+                    NSApplicationActivationOptions::NSApplicationActivateAllWindows,
+                )
             };
             let ax_requested = raise_exact_ax_window(pid, window_id);
+            let path = match (skylight_accepted, cocoa_accepted, ax_requested) {
+                (true, true, _) => "skylight_cocoa_ax",
+                (true, false, _) => "skylight_ax",
+                (false, true, true) => "cocoa_ax",
+                (false, true, false) => "cocoa",
+                (false, false, true) => "ax",
+                (false, false, false) => "none",
+            };
             let request_accepted = skylight_accepted || cocoa_accepted || ax_requested;
             return exact_result(
                 pid,

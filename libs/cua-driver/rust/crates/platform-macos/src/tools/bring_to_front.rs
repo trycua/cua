@@ -58,7 +58,7 @@ fn def() -> &'static ToolDef {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ExactWindowObservation {
-    frontmost_pid: Option<i32>,
+    workspace_frontmost_pid: Option<i32>,
     front_process_matches_target: Option<bool>,
     focused_window_id: Option<u32>,
     frontmost_ordinary_window_id: Option<u32>,
@@ -66,9 +66,16 @@ struct ExactWindowObservation {
 }
 
 impl ExactWindowObservation {
+    fn frontmost_pid(self, pid: i32) -> Option<i32> {
+        match self.front_process_matches_target {
+            Some(true) => Some(pid),
+            Some(false) => None,
+            None => self.workspace_frontmost_pid,
+        }
+    }
+
     fn process_activated(self, pid: i32) -> bool {
-        self.front_process_matches_target
-            .unwrap_or(self.frontmost_pid == Some(pid))
+        self.frontmost_pid(pid) == Some(pid)
     }
 
     fn exact_window_focused(self, window_id: u32) -> bool {
@@ -122,7 +129,7 @@ fn observe_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
         .max_by_key(|window| window.z_index)
         .map(|window| window.window_id);
     ExactWindowObservation {
-        frontmost_pid: crate::apps::frontmost_pid(),
+        workspace_frontmost_pid: crate::apps::frontmost_pid(),
         front_process_matches_target: crate::input::skylight::front_process_matches(pid, window_id),
         focused_window_id: crate::ax::bindings::focused_window_id_of_pid(pid),
         frontmost_ordinary_window_id,
@@ -190,6 +197,7 @@ fn exact_result(
     let outcome = classify_exact_outcome(request_accepted, pid, window_id, observation);
     let activated = outcome == ExactOutcome::Activated;
     let process_activated = observation.process_activated(pid);
+    let frontmost_pid = observation.frontmost_pid(pid);
     let exact_window_focused = observation.exact_window_focused(window_id);
     let exact_window_frontmost_ordinary = observation.exact_window_frontmost_ordinary(window_id);
     let status = match outcome {
@@ -213,7 +221,8 @@ fn exact_result(
             "target_visible_ordinary": observation.target_visible_ordinary,
         },
         "observed": {
-            "frontmost_pid": observation.frontmost_pid,
+            "frontmost_pid": frontmost_pid,
+            "workspace_frontmost_pid": observation.workspace_frontmost_pid,
             "front_process_matches_target": observation.front_process_matches_target,
             "focused_window_id": observation.focused_window_id,
             "frontmost_ordinary_window_id": observation.frontmost_ordinary_window_id,
@@ -416,14 +425,14 @@ mod tests {
     use super::*;
 
     fn observation(
-        frontmost_pid: Option<i32>,
+        workspace_frontmost_pid: Option<i32>,
         front_process_matches_target: Option<bool>,
         focused_window_id: Option<u32>,
         frontmost_ordinary_window_id: Option<u32>,
         target_visible_ordinary: bool,
     ) -> ExactWindowObservation {
         ExactWindowObservation {
-            frontmost_pid,
+            workspace_frontmost_pid,
             front_process_matches_target,
             focused_window_id,
             frontmost_ordinary_window_id,
@@ -527,7 +536,8 @@ mod tests {
         assert_eq!(structured["activated"], false);
         assert_eq!(structured["request_accepted"], true);
         assert_eq!(structured["process_activated"], true);
-        assert_eq!(structured["observed"]["frontmost_pid"], 9);
+        assert_eq!(structured["observed"]["frontmost_pid"], 42);
+        assert_eq!(structured["observed"]["workspace_frontmost_pid"], 9);
         assert_eq!(structured["observed"]["front_process_matches_target"], true);
         assert_eq!(structured["exact_window_effect"]["focused"], false);
         assert_eq!(
@@ -535,6 +545,35 @@ mod tests {
             true
         );
         assert_eq!(structured["exact_window_effect"]["verified"], false);
+    }
+
+    #[test]
+    fn structured_frontmost_pid_never_echoes_stale_workspace_state_as_authoritative() {
+        let definite_negative = exact_result(
+            42,
+            7,
+            "skylight_ax",
+            true,
+            observation(Some(42), Some(false), Some(7), Some(7), true),
+        )
+        .structured_content
+        .expect("structured negative result");
+        assert_eq!(definite_negative["process_activated"], false);
+        assert_eq!(definite_negative["observed"]["frontmost_pid"], Value::Null);
+        assert_eq!(definite_negative["observed"]["workspace_frontmost_pid"], 42);
+
+        let fallback = exact_result(
+            42,
+            7,
+            "cocoa_ax",
+            true,
+            observation(Some(42), None, Some(7), Some(7), true),
+        )
+        .structured_content
+        .expect("structured fallback result");
+        assert_eq!(fallback["process_activated"], true);
+        assert_eq!(fallback["observed"]["frontmost_pid"], 42);
+        assert_eq!(fallback["observed"]["workspace_frontmost_pid"], 42);
     }
 
     #[test]

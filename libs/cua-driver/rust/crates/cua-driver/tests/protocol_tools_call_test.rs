@@ -38,7 +38,13 @@ fn tools_call_list_apps() {
         "method": "tools/call",
         "params": { "name": "list_apps", "arguments": {} }
     }));
+    let started = std::time::Instant::now();
     let resp = d.recv();
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(8),
+        "list_apps exceeded its optional installed-app discovery budget: {:?}",
+        started.elapsed()
+    );
     assert_eq!(resp["id"], 2);
     assert!(resp["result"]["content"].is_array());
     if cfg!(target_os = "windows") {

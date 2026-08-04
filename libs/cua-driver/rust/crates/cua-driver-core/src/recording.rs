@@ -18,6 +18,7 @@ use std::time::Instant;
 use serde_json::Value;
 
 use crate::cursor_sampler::CursorSampler;
+use crate::recording_loader::parse_screen_from_summary;
 use crate::video::{self, VideoBackend, VideoMetadata};
 
 // ── Platform screenshot callback ─────────────────────────────────────────────
@@ -94,6 +95,23 @@ pub fn set_click_marker_fn(f: impl Fn(&[u8], f64, f64) -> Option<Vec<u8>> + Send
     let _ = CLICK_MARKER_FN.set(Box::new(f));
 }
 
+// ── Platform window-origin callback ──────────────────────────────────────────
+//
+// Resolves the screen-space origin of the screenshot bitmap for a window.
+// Element-indexed click results report screen-absolute coordinates, while
+// click.png markers are drawn in screenshot-local pixels.
+
+type WindowBitmapOriginFnBox =
+    Box<dyn Fn(Option<u64>, Option<i64>) -> Option<(f64, f64)> + Send + Sync>;
+static WINDOW_BITMAP_ORIGIN_FN: OnceLock<WindowBitmapOriginFnBox> = OnceLock::new();
+
+/// Register the platform-specific screenshot-origin resolver. Call once at startup.
+pub fn set_window_bitmap_origin_fn(
+    f: impl Fn(Option<u64>, Option<i64>) -> Option<(f64, f64)> + Send + Sync + 'static,
+) {
+    let _ = WINDOW_BITMAP_ORIGIN_FN.set(Box::new(f));
+}
+
 // ── Platform AX-snapshot callback ────────────────────────────────────────────
 //
 // Takes (window_id, pid) and returns JSON bytes for the phase's application
@@ -131,6 +149,7 @@ struct TurnCapture {
     state: Option<Vec<u8>>,
     screenshot: Option<Vec<u8>>,
     screenshot_classification: Option<&'static str>,
+    bitmap_origin: Option<(f64, f64)>,
 }
 
 /// A reserved recording turn captured immediately before tool dispatch.
@@ -537,13 +556,16 @@ impl RecordingSession {
             }
         }
         let click_point = resolve_click_point(tool_name, &args, window_id, pid, element_index);
+        let capture_bitmap_origin = matches!(tool_name, "click" | "double_click" | "right_click")
+            && args.opt_f64("x").zip(args.opt_f64("y")).is_none();
         let before = if capture_visual_state {
-            capture_turn(window_id, pid)
+            capture_turn(window_id, pid, capture_bitmap_origin)
         } else {
             TurnCapture {
                 state: None,
                 screenshot: None,
                 screenshot_classification: Some("privacy_suppressed"),
+                bitmap_origin: None,
             }
         };
 
@@ -632,17 +654,31 @@ impl Default for RecordingSession {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-fn capture_turn(window_id: Option<u64>, pid: Option<i64>) -> TurnCapture {
+fn capture_turn(
+    window_id: Option<u64>,
+    pid: Option<i64>,
+    capture_bitmap_origin: bool,
+) -> TurnCapture {
     let screenshot = SCREENSHOT_FN
         .get()
         .map(|capture| capture(window_id, pid))
         .unwrap_or_else(|| ScreenshotCapture::unavailable("capture_hook_unavailable"));
+    // Resolve geometry while reserving the before/after capture, not later in
+    // finish_turn when the action may already have closed or moved the target.
+    let bitmap_origin = if capture_bitmap_origin && screenshot.png.is_some() {
+        WINDOW_BITMAP_ORIGIN_FN
+            .get()
+            .and_then(|origin| origin(window_id, pid))
+    } else {
+        None
+    };
     TurnCapture {
         state: AX_SNAPSHOT_FN
             .get()
             .and_then(|capture| capture(window_id, pid)),
         screenshot: screenshot.png,
         screenshot_classification: screenshot.classification,
+        bitmap_origin,
     }
 }
 
@@ -778,15 +814,28 @@ fn write_turn(
     std::fs::create_dir_all(&turn_dir)?;
     let now = now_ms();
     let after = if capture_visual_state {
-        capture_turn(window_id, pid)
+        capture_turn(window_id, pid, false)
     } else {
         TurnCapture {
             state: None,
             screenshot: None,
             screenshot_classification: Some("privacy_suppressed"),
+            bitmap_origin: None,
         }
     };
     let click_family = matches!(tool_name.as_str(), "click" | "double_click" | "right_click");
+    use crate::tool_args::ArgsExt;
+    let has_explicit_click_point = args.opt_f64("x").zip(args.opt_f64("y")).is_some();
+    // Explicit pixel clicks already use screenshot-local coordinates. For an
+    // element-indexed Windows action, prefer the actual screen-space point from
+    // the result summary over the pre-dispatch cache estimate, then convert it
+    // into the reserved screenshot's local coordinate space. The cached point
+    // remains the fallback when the action result has no parseable coordinates.
+    let click_point = if click_family && !has_explicit_click_point {
+        click_point_from_result_summary(result_text, before.bitmap_origin).or(click_point)
+    } else {
+        click_point
+    };
     let refused_before_target_resolution = click_family && result_is_error && click_point.is_none();
     let click_expected = click_family && !refused_before_target_resolution;
 
@@ -845,6 +894,19 @@ fn write_turn(
     )?;
 
     Ok(())
+}
+
+fn click_point_from_result_summary(
+    result_text: &str,
+    bitmap_origin: Option<(f64, f64)>,
+) -> Option<(f64, f64)> {
+    let screen = parse_screen_from_summary(result_text)?;
+    let origin = bitmap_origin?;
+    Some(screen_to_window_local(screen, origin))
+}
+
+fn screen_to_window_local(screen: (f64, f64), bitmap_origin: (f64, f64)) -> (f64, f64) {
+    (screen.0 - bitmap_origin.0, screen.1 - bitmap_origin.1)
 }
 
 fn write_json_atomic(path: &Path, value: &Value) -> anyhow::Result<()> {
@@ -940,6 +1002,25 @@ mod tests {
     }
 
     #[test]
+    fn result_summary_screen_coords_are_converted_to_window_local_click_point() {
+        assert_eq!(
+            parse_screen_from_summary("Performed UIA Invoke on [28] (screen (745,679))."),
+            Some((745.0, 679.0)),
+        );
+        assert_eq!(
+            screen_to_window_local((745.0, 679.0), (701.0, 601.0)),
+            (44.0, 78.0)
+        );
+        assert_eq!(
+            click_point_from_result_summary(
+                "Performed UIA Invoke on [28] (screen (745,679)).",
+                Some((701.0, 601.0)),
+            ),
+            Some((44.0, 78.0))
+        );
+    }
+
+    #[test]
     fn turn_capture_brackets_action_and_preserves_post_action_aliases() {
         static SCREENSHOTS: AtomicUsize = AtomicUsize::new(0);
         static STATES: AtomicUsize = AtomicUsize::new(0);
@@ -963,7 +1044,10 @@ mod tests {
         });
         set_click_marker_fn(|_, _, _| Some(b"click".to_vec()));
         set_element_bounds_fn(|window_id, pid, element_index| {
-            Some((window_id as f64 + element_index as f64, pid as f64))
+            (element_index != 28).then_some((window_id as f64 + element_index as f64, pid as f64))
+        });
+        set_window_bitmap_origin_fn(|window_id, pid| {
+            ((window_id, pid) == (Some(2), Some(1))).then_some((701.0, 601.0))
         });
 
         let output_dir = std::env::temp_dir().join(format!(
@@ -1035,6 +1119,23 @@ mod tests {
         assert_eq!(token_action["click_point"]["y"], 1.0);
         assert!(token_turn.join("click.png").exists());
 
+        let pending = session
+            .begin_turn(
+                "click",
+                &serde_json::json!({"pid": 1, "window_id": 2, "element_index": 28}),
+                now_ms(),
+            )
+            .expect("element-indexed click should reserve a targeted turn");
+        session.finish_turn(pending, "Performed UIA Invoke on [28] (screen (745,679)).");
+        let summary_turn = output_dir.join("turn-00003");
+        let summary_action: Value = serde_json::from_slice(
+            &std::fs::read(summary_turn.join("action.json")).expect("read summary action"),
+        )
+        .expect("parse summary action");
+        assert_eq!(summary_action["click_point"]["x"], 44.0);
+        assert_eq!(summary_action["click_point"]["y"], 78.0);
+        assert!(summary_turn.join("click.png").exists());
+
         let stale_snapshot = crate::element_token::global().register_snapshot(1, 88, 1);
         let stale_token = crate::element_token::token_for(stale_snapshot, 0);
         let _newer_snapshot = crate::element_token::global().register_snapshot(1, 88, 1);
@@ -1046,7 +1147,7 @@ mod tests {
             )
             .expect("stale-token refusal should reserve an evidence turn");
         session.finish_turn_with_outcome(pending, "stale token", None, true);
-        let refused_turn = output_dir.join("turn-00003");
+        let refused_turn = output_dir.join("turn-00004");
         let refused_action: Value = serde_json::from_slice(
             &std::fs::read(refused_turn.join("action.json")).expect("read refused action"),
         )
@@ -1075,7 +1176,7 @@ mod tests {
             "after.png",
             "evidence.json",
         ];
-        for directory in [&turn, &token_turn] {
+        for directory in [&turn, &token_turn, &summary_turn] {
             for file in files {
                 std::fs::remove_file(directory.join(file)).expect("remove turn fixture file");
             }

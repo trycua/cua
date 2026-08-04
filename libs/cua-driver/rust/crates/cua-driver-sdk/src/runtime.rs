@@ -613,6 +613,9 @@ fn configure_windows_runtime() {
     cua_driver_core::recording::set_element_bounds_fn(|window_id, pid, index| {
         platform_windows::recording_hooks::element_window_local_xy(window_id, pid, index)
     });
+    cua_driver_core::recording::set_window_bitmap_origin_fn(|window_id, pid| {
+        platform_windows::recording_hooks::window_bitmap_origin_xy(window_id, pid)
+    });
     cua_driver_core::video::set_video_backend_factory(Box::new(
         cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory,
     ));

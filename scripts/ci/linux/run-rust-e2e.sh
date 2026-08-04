@@ -213,6 +213,16 @@ if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
 fi
 
 if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
+  run_test wayland-overlay-idle-no-overlay \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test wayland_overlay_idle_test -- \
+      --ignored --exact no_overlay_flag_never_starts_wayland_overlay_thread \
+      --nocapture --test-threads=1
+  run_test wayland-overlay-idle-recovery \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test wayland_overlay_idle_test -- \
+      --ignored --exact wayland_overlay_quiesces_and_recovers_after_capture_and_cursor_activity \
+      --nocapture --test-threads=1
   run_test agent-cursor-showcase \
     cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
       --test agent_cursor_showcase_test -- \

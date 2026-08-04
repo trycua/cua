@@ -378,8 +378,13 @@ pub fn remove_cursor(key: CursorKey) {
     if key.is_empty() {
         return;
     }
+    let msg = OverlayMsg::Remove(key);
     if let Some(tx) = CMD_TX.get() {
-        let _ = tx.try_send(OverlayMsg::Remove(key));
+        let _ = tx.try_send(msg.clone());
+    }
+    #[cfg(target_os = "linux")]
+    if crate::wayland::is_wayland() && !crate::wayland::shell_helper::available() {
+        let _ = crate::wayland::overlay::forward(&msg);
     }
 }
 

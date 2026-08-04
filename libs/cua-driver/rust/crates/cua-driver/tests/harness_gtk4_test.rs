@@ -120,7 +120,11 @@ fn gtk4_tree_resolves_after_foreign_gtk3_application() {
         );
         assert_ne!(gtk4_pid, gtk3_pid, "fixtures must be distinct processes");
         let gtk4 = settled_snapshot(&mut driver, gtk4_pid, gtk4_window, "GTK4 actionable target");
-        assert!(!gtk4.is_error(), "GTK4 get_window_state failed: {gtk4:?}");
+        assert!(
+            !gtk4.is_error(),
+            "GTK4 get_window_state failed: {}",
+            gtk4.raw
+        );
         assert_eq!(
             gtk4.structured()["degraded"].as_bool(),
             None,

@@ -30,6 +30,8 @@ const MAX_BATCH_EVENTS: usize = 256;
 const TEXT_EVENT_UTF16_UNITS: usize = 20;
 const SCROLL_PHASE_FIELD: u32 = 99;
 const SCROLL_MOMENTUM_PHASE_FIELD: u32 = 123;
+const PHASELESS_PRECISE_PIXELS_PER_LINE: f64 = 10.0;
+const FOREGROUND_ACTIVATION_RETRY: Duration = Duration::from_millis(250);
 
 /// Controls whether events remain PID-routed or use the foreground HID queue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -360,12 +362,15 @@ fn run_worker(
 struct NativeInputState {
     config: InteractiveInputConfig,
     source: CGEventSource,
+    foreground_hid_active: bool,
+    last_activation_attempt: Option<Instant>,
     pressed_button: Option<PointerButton>,
     click_group_id: i64,
     scroll_residual_x: f64,
     scroll_residual_y: f64,
     bounds: crate::windows::WindowBounds,
     last_bounds_refresh: Instant,
+    bounds_refresh_rx: Option<Receiver<Result<crate::windows::WindowBounds>>>,
 }
 
 impl NativeInputState {
@@ -377,38 +382,78 @@ impl NativeInputState {
         Self {
             config,
             source,
+            foreground_hid_active: false,
+            last_activation_attempt: None,
             pressed_button: None,
             click_group_id: 1,
             scroll_residual_x: 0.0,
             scroll_residual_y: 0.0,
             bounds,
             last_bounds_refresh: Instant::now(),
+            bounds_refresh_rx: None,
         }
     }
 
-    fn prepare_target(&self) -> Result<()> {
-        if self.config.delivery_mode == InteractiveDeliveryMode::PersistentForeground
-            && crate::apps::frontmost_pid() != Some(self.config.pid)
-        {
-            if !crate::input::skylight::set_front_process_persistently(
-                self.config.pid as libc::pid_t,
-                self.config.window_id,
-            ) {
-                crate::apps::activate_pid(self.config.pid);
+    fn prepare_target(&mut self) -> Result<()> {
+        self.foreground_hid_active = false;
+        if self.config.delivery_mode == InteractiveDeliveryMode::PersistentForeground {
+            if self.target_is_frontmost() {
+                self.foreground_hid_active = true;
+                return Ok(());
             }
-            // Paid once when opening the session, never on the event hot path.
-            thread::sleep(std::time::Duration::from_millis(40));
+
+            let now = Instant::now();
+            let activation_due = self
+                .last_activation_attempt
+                .is_none_or(|attempt| now.duration_since(attempt) >= FOREGROUND_ACTIVATION_RETRY);
+            if activation_due {
+                self.last_activation_attempt = Some(now);
+                let _ = crate::input::skylight::set_front_process_persistently(
+                    self.config.pid as libc::pid_t,
+                    self.config.window_id,
+                );
+                // SkyLight transfers WindowServer routing to the exact target
+                // window, but that alone does not always update AppKit's
+                // active-application state. Chromium/Electron then continues
+                // to reject input even though the process serial number looks
+                // frontmost. Pair every foreground transfer with the public
+                // application activation so the streamed app visibly becomes
+                // frontmost before the action is posted.
+                let _ = crate::apps::activate_pid_all_windows(self.config.pid);
+                // Foreground ownership changes asynchronously. Wait only as
+                // long as needed, then use target-routed delivery if macOS
+                // still refuses the activation request. Further activation
+                // attempts are throttled so this wait never enters the input
+                // hot path on every batch.
+                for _ in 0..4 {
+                    if self.target_is_frontmost() {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+            }
+            self.foreground_hid_active = self.target_is_frontmost();
         }
         Ok(())
     }
 
+    fn target_is_frontmost(&self) -> bool {
+        let frontmost_pid =
+            match crate::input::skylight::is_process_frontmost(self.config.pid as libc::pid_t) {
+                Some(true) => Some(self.config.pid),
+                Some(false) => None,
+                None => crate::apps::frontmost_pid(),
+            };
+        foreground_hid_route(self.config.delivery_mode, self.config.pid, frontmost_pid)
+    }
+
     fn dispatch_batch(&mut self, batch: &InteractiveInputBatch) -> Result<()> {
         if self.config.delivery_mode == InteractiveDeliveryMode::PersistentForeground
-            && crate::apps::frontmost_pid() != Some(self.config.pid)
+            && batch_requires_foreground_ownership(&batch.events)
         {
             self.prepare_target()?;
         }
-        self.refresh_bounds_if_due()?;
+        self.refresh_bounds_nonblocking();
         for event in &batch.events {
             self.dispatch_event(event)?;
         }
@@ -530,8 +575,18 @@ impl NativeInputState {
         precise: bool,
     ) -> Result<()> {
         let (point, window_local) = self.resolve_point(x_normalized, y_normalized)?;
-        self.scroll_residual_x += delta_x;
-        self.scroll_residual_y += delta_y;
+        // Some high-resolution wheels report precise deltas without native
+        // gesture phases. Chromium ignores PID-routed continuous pixel events
+        // in that shape, so convert only that shape into proportional line
+        // motion. Real trackpad gestures retain pixel units and all phases.
+        let phase_less_precise = phase_less_precise_scroll(precise, phase, momentum_phase);
+        let delta_scale = if phase_less_precise {
+            PHASELESS_PRECISE_PIXELS_PER_LINE.recip()
+        } else {
+            1.0
+        };
+        self.scroll_residual_x += delta_x * delta_scale;
+        self.scroll_residual_y += delta_y * delta_scale;
         let integral_x = extract_integral(&mut self.scroll_residual_x);
         let integral_y = extract_integral(&mut self.scroll_residual_y);
 
@@ -545,7 +600,7 @@ impl NativeInputState {
             return Ok(());
         }
 
-        let units = if precise {
+        let units = if precise && !phase_less_precise {
             ScrollEventUnit::PIXEL
         } else {
             ScrollEventUnit::LINE
@@ -555,7 +610,7 @@ impl NativeInputState {
                 .map_err(|_| native("scroll event creation failed"))?;
         event.set_integer_value_field(
             EventField::SCROLL_WHEEL_EVENT_IS_CONTINUOUS,
-            i64::from(precise),
+            i64::from(precise && !phase_less_precise),
         );
         event.set_integer_value_field(SCROLL_PHASE_FIELD, scroll_phase_value(phase));
         event.set_integer_value_field(
@@ -564,20 +619,16 @@ impl NativeInputState {
         );
         unsafe { CGEventSetLocation(event.as_ptr().cast(), point.x, point.y) };
 
-        if self.is_foreground() {
-            event.post(CGEventTapLocation::HID);
-        } else {
-            super::mouse::post_mouse_event(
-                self.config.pid,
-                &event,
-                Some(window_local),
-                Some(self.config.window_id),
-                Some(self.click_group_id),
-                0,
-                0,
-                0,
-            );
-        }
+        // Wheel delivery remains explicitly PID/window-routed even while the
+        // target is persistently foreground. Chromium can silently reject an
+        // otherwise valid global HID wheel event, whereas the stamped native
+        // routes are immediate and preserve gesture/momentum fields.
+        super::mouse::post_scroll_event(
+            self.config.pid,
+            &event,
+            Some(window_local),
+            Some(self.config.window_id),
+        );
         Ok(())
     }
 
@@ -589,19 +640,49 @@ impl NativeInputState {
         ))
     }
 
-    fn refresh_bounds_if_due(&mut self) -> Result<()> {
-        // Window enumeration is substantially more expensive than event
-        // creation. A short cache preserves resize responsiveness without
-        // putting a WindowServer round trip on every pointer sample.
-        if self.last_bounds_refresh.elapsed() >= Duration::from_millis(100) {
-            self.bounds = target_window_bounds(&self.config)?;
-            self.last_bounds_refresh = Instant::now();
+    fn refresh_bounds_nonblocking(&mut self) {
+        if let Some(receiver) = &self.bounds_refresh_rx {
+            match receiver.try_recv() {
+                Ok(Ok(bounds)) => {
+                    self.bounds = bounds;
+                    self.bounds_refresh_rx = None;
+                    self.last_bounds_refresh = Instant::now();
+                }
+                Ok(Err(_)) | Err(mpsc::TryRecvError::Disconnected) => {
+                    // Capture/session lifetime remains the source of truth for
+                    // target closure. Keep the last valid geometry if a
+                    // transient WindowServer lookup fails.
+                    self.bounds_refresh_rx = None;
+                    self.last_bounds_refresh = Instant::now();
+                }
+                Err(mpsc::TryRecvError::Empty) => return,
+            }
         }
-        Ok(())
+
+        // Window enumeration can block behind WindowServer for more than a
+        // second after login/display changes. Refresh it off the native input
+        // worker so pointer and scroll dispatch never inherit that latency.
+        if self.bounds_refresh_rx.is_none()
+            && self.last_bounds_refresh.elapsed() >= Duration::from_millis(100)
+        {
+            let config = self.config.clone();
+            let (reply, receiver) = mpsc::channel();
+            match thread::Builder::new()
+                .name(format!(
+                    "cua-input-bounds-{}-{}",
+                    config.pid, config.window_id
+                ))
+                .spawn(move || {
+                    let _ = reply.send(target_window_bounds(&config));
+                }) {
+                Ok(_) => self.bounds_refresh_rx = Some(receiver),
+                Err(_) => self.last_bounds_refresh = Instant::now(),
+            }
+        }
     }
 
     fn post_keyboard(&self, event: &CGEvent) {
-        if self.is_foreground() {
+        if self.foreground_hid_active {
             event.post(CGEventTapLocation::HID);
         } else {
             super::keyboard::post_keyboard_event(self.config.pid, event);
@@ -615,25 +696,47 @@ impl NativeInputState {
         button: PointerButton,
         click: bool,
     ) {
-        if self.is_foreground() {
-            event.post(CGEventTapLocation::HID);
-        } else {
-            super::mouse::post_mouse_event(
-                self.config.pid,
-                event,
-                Some(window_local),
-                Some(self.config.window_id),
-                Some(self.click_group_id),
-                i64::from(click),
-                pointer_button_number(button),
-                if click { 3 } else { 0 },
-            );
-        }
+        // Pointer delivery remains explicitly PID/window-routed even while the
+        // target owns the foreground. macOS can accept a global HID post while
+        // Electron/Chromium silently ignores it after login or display-session
+        // changes. The stamped SkyLight + public routes are the same proven
+        // path used by the one-shot click tool and preserve exact-window hit
+        // testing without moving the host's visible hardware cursor.
+        super::mouse::post_mouse_event(
+            self.config.pid,
+            event,
+            Some(window_local),
+            Some(self.config.window_id),
+            Some(self.click_group_id),
+            i64::from(click),
+            pointer_button_number(button),
+            if click { 3 } else { 0 },
+        );
     }
+}
 
-    fn is_foreground(&self) -> bool {
-        self.config.delivery_mode == InteractiveDeliveryMode::PersistentForeground
-    }
+fn foreground_hid_route(
+    delivery_mode: InteractiveDeliveryMode,
+    target_pid: i32,
+    frontmost_pid: Option<i32>,
+) -> bool {
+    delivery_mode == InteractiveDeliveryMode::PersistentForeground
+        && frontmost_pid == Some(target_pid)
+}
+
+fn batch_requires_foreground_ownership(events: &[InteractiveInputEvent]) -> bool {
+    events.iter().any(|event| {
+        matches!(
+            event,
+            InteractiveInputEvent::TextCommit { .. }
+                | InteractiveInputEvent::Key { .. }
+                | InteractiveInputEvent::Pointer {
+                    phase: PointerPhase::Down | PointerPhase::Up | PointerPhase::Cancel,
+                    ..
+                }
+                | InteractiveInputEvent::Scroll { .. }
+        )
+    })
 }
 
 fn modifier_flags(modifiers: &[Modifier]) -> CGEventFlags {
@@ -715,6 +818,14 @@ fn text_event_chunks(text: &str) -> Vec<Vec<u16>> {
     chunks
 }
 
+fn phase_less_precise_scroll(
+    precise: bool,
+    phase: GesturePhase,
+    momentum_phase: GesturePhase,
+) -> bool {
+    precise && phase == GesturePhase::None && momentum_phase == GesturePhase::None
+}
+
 fn scroll_phase_value(phase: GesturePhase) -> i64 {
     match phase {
         GesturePhase::None => 0,
@@ -758,6 +869,25 @@ mod tests {
     }
 
     #[test]
+    fn only_phase_less_precise_scroll_uses_line_fallback() {
+        assert!(phase_less_precise_scroll(
+            true,
+            GesturePhase::None,
+            GesturePhase::None
+        ));
+        assert!(!phase_less_precise_scroll(
+            true,
+            GesturePhase::Changed,
+            GesturePhase::None
+        ));
+        assert!(!phase_less_precise_scroll(
+            false,
+            GesturePhase::None,
+            GesturePhase::None
+        ));
+    }
+
+    #[test]
     fn maps_native_scroll_phases() {
         assert_eq!(scroll_phase_value(GesturePhase::MayBegin), 128);
         assert_eq!(scroll_phase_value(GesturePhase::Began), 1);
@@ -782,5 +912,67 @@ mod tests {
         assert_eq!(chunks.len(), 2);
         assert_eq!(chunks[0].len(), 19);
         assert_eq!(chunks[1], "😀".encode_utf16().collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn foreground_hid_requires_verified_target_ownership() {
+        assert!(foreground_hid_route(
+            InteractiveDeliveryMode::PersistentForeground,
+            42,
+            Some(42)
+        ));
+        assert!(!foreground_hid_route(
+            InteractiveDeliveryMode::PersistentForeground,
+            42,
+            Some(7)
+        ));
+        assert!(!foreground_hid_route(
+            InteractiveDeliveryMode::Background,
+            42,
+            Some(42)
+        ));
+    }
+
+    #[test]
+    fn actionable_input_reasserts_persistent_foreground_ownership() {
+        let pointer_move = InteractiveInputEvent::Pointer {
+            phase: PointerPhase::Move,
+            button: None,
+            x_normalized: 0.5,
+            y_normalized: 0.5,
+            modifiers: Vec::new(),
+        };
+        let pointer_down = InteractiveInputEvent::Pointer {
+            phase: PointerPhase::Down,
+            button: Some(PointerButton::Left),
+            x_normalized: 0.5,
+            y_normalized: 0.5,
+            modifiers: Vec::new(),
+        };
+        let scroll = InteractiveInputEvent::Scroll {
+            x_normalized: 0.5,
+            y_normalized: 0.5,
+            delta_x: 0.0,
+            delta_y: 1.0,
+            phase: GesturePhase::Changed,
+            momentum_phase: GesturePhase::None,
+            precise: true,
+        };
+        let key = InteractiveInputEvent::Key {
+            key: "a".to_owned(),
+            state: KeyState::Down,
+            modifiers: Vec::new(),
+            repeat: false,
+        };
+
+        assert!(!batch_requires_foreground_ownership(&[pointer_move]));
+        assert!(batch_requires_foreground_ownership(&[pointer_down]));
+        assert!(batch_requires_foreground_ownership(&[scroll]));
+        assert!(batch_requires_foreground_ownership(&[key]));
+        assert!(batch_requires_foreground_ownership(&[
+            InteractiveInputEvent::TextCommit {
+                text: "hello".to_owned()
+            }
+        ]));
     }
 }

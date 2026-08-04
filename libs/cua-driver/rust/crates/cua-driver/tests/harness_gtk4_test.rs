@@ -10,7 +10,8 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use cua_driver_testkit::e2e::{
-    execute_case, native_readonly_case, DriverRoute, Evidence, Observation, OracleKind, Targeting,
+    execute_case, native_readonly_case, recording_evidence, DriverRoute, Evidence, Observation,
+    OracleKind, Targeting,
 };
 use cua_driver_testkit::{harness_app, Driver, McpDriver, ToolResponse};
 
@@ -95,9 +96,10 @@ fn gtk4_tree_resolves_after_foreign_gtk3_application() {
         DriverRoute::AxRead,
         vec![OracleKind::AxState],
     );
-    execute_case(case, |_| {
+    execute_case(case, |evidence| {
         let mut driver = McpDriver::spawn_named("linux-gtk4-foreign-app-target-selection")
             .expect("start source-built Linux driver");
+        *evidence = recording_evidence(driver.recording_dir());
 
         let (gtk3_pid, gtk3_window) = launch_fixture(
             &mut driver,
@@ -118,6 +120,7 @@ fn gtk4_tree_resolves_after_foreign_gtk3_application() {
             "CuaTestHarness.Gtk4",
             "CuaTestHarness GTK4",
         );
+        driver.start_behavior_recording();
         assert_ne!(gtk4_pid, gtk3_pid, "fixtures must be distinct processes");
         let gtk4 = settled_snapshot(&mut driver, gtk4_pid, gtk4_window, "GTK4 actionable target");
         assert!(

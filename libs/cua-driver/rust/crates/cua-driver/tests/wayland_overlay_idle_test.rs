@@ -120,8 +120,13 @@ fn wayland_overlay_quiesces_and_recovers_after_capture_and_cursor_activity() {
     let pid = driver.daemon_pid().expect("daemon-backed driver pid");
     initialize(&mut driver);
 
-    // Exercise the reported trigger class: capture followed by cursor motion.
-    call(&mut driver, 2, "screenshot", serde_json::json!({}));
+    // Exercise the reported trigger class: native compositor capture followed
+    // by daemon-owned cursor motion. Call the Linux capture backend directly:
+    // `screenshot` is intentionally denied at the MCP authorization boundary
+    // until that tool has a reviewed risk classification.
+    let capture = platform_linux::wayland::screenshot_display_dispatch()
+        .expect("capture native Wayland display before overlay activity");
+    assert!(!capture.is_empty(), "native Wayland capture was empty");
     call(
         &mut driver,
         3,

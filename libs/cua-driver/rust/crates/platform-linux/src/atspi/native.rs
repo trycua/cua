@@ -27,6 +27,12 @@ use super::AtspiNode;
 const CALL_TIMEOUT: Duration = Duration::from_secs(3);
 /// Overall budget for one tree walk / operation.
 const OP_TIMEOUT: Duration = Duration::from_secs(25);
+/// Startup may run before `serve` binds its socket or MCP reads stdin. A
+/// reachable but wedged accessibility bus must not hold either entry point
+/// forever. The worker is deliberately left running after this readiness
+/// budget so a late registry reply can still establish the process-lifetime
+/// listener.
+const LISTENER_STARTUP_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Run `fut` with [`CALL_TIMEOUT`]; `None` on timeout so the caller can skip
 /// the node and keep walking rather than blocking forever.
@@ -105,17 +111,109 @@ async fn shared_connection() -> Result<&'static AccessibilityConnection> {
 /// Establish the process-lifetime listener before accessibility-aware apps are
 /// launched. Idempotent; later calls reuse the same connection.
 pub fn ensure_listener_active() -> Result<()> {
-    let connect = || runtime().block_on(async { shared_connection().await.map(|_| ()) });
-    if tokio::runtime::Handle::try_current().is_ok() {
-        // The daemon builds its registry from its Tokio entry-point. Calling
-        // Runtime::block_on there panics even though this module owns a separate
-        // runtime, so initialize the AT-SPI connection on a plain thread and
-        // wait for it before accessibility-aware apps can launch.
-        std::thread::spawn(connect)
-            .join()
-            .map_err(|_| anyhow!("AT-SPI listener initialization thread panicked"))?
-    } else {
-        connect()
+    wait_for_listener_startup(LISTENER_STARTUP_TIMEOUT, || {
+        runtime().block_on(async { shared_connection().await.map(|_| ()) })
+    })
+}
+
+fn wait_for_listener_startup(
+    timeout: Duration,
+    connect: impl FnOnce() -> Result<()> + Send + 'static,
+) -> Result<()> {
+    let (completed_tx, completed_rx) = std::sync::mpsc::sync_channel(1);
+    std::thread::Builder::new()
+        .name("cua-atspi-listener".into())
+        .spawn(move || {
+            let _ = completed_tx.send(connect());
+        })
+        .map_err(|error| anyhow!("could not spawn AT-SPI listener initialization: {error}"))?;
+
+    match completed_rx.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(anyhow!(
+            "AT-SPI listener initialization did not complete within {} ms; continuing in the background",
+            timeout.as_millis()
+        )),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Err(anyhow!("AT-SPI listener initialization thread panicked"))
+        }
+    }
+}
+
+#[cfg(test)]
+mod listener_startup_tests {
+    use super::wait_for_listener_startup;
+    use anyhow::anyhow;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Condvar, Mutex,
+    };
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn healthy_listener_initialization_completes_before_readiness_returns() {
+        let initialized = Arc::new(AtomicBool::new(false));
+        let initialized_in_worker = initialized.clone();
+
+        wait_for_listener_startup(Duration::from_secs(1), move || {
+            initialized_in_worker.store(true, Ordering::SeqCst);
+            Ok(())
+        })
+        .expect("healthy listener startup");
+
+        assert!(initialized.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn unreachable_listener_initialization_returns_its_error() {
+        let error = wait_for_listener_startup(Duration::from_secs(1), || {
+            Err(anyhow!("synthetic AT-SPI connection failure"))
+        })
+        .expect_err("unreachable listener must fail");
+
+        assert!(error
+            .to_string()
+            .contains("synthetic AT-SPI connection failure"));
+    }
+
+    #[test]
+    fn stalled_listener_is_bounded_and_keeps_initializing_in_background() {
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let gate_in_worker = gate.clone();
+        let completed = Arc::new(AtomicBool::new(false));
+        let completed_in_worker = completed.clone();
+        let started_at = Instant::now();
+
+        let error = wait_for_listener_startup(Duration::from_millis(50), move || {
+            let (lock, ready) = &*gate_in_worker;
+            let released = lock.lock().expect("listener gate lock");
+            drop(
+                ready
+                    .wait_while(released, |released| !*released)
+                    .expect("listener gate wait"),
+            );
+            completed_in_worker.store(true, Ordering::SeqCst);
+            Ok(())
+        })
+        .expect_err("stalled listener must exceed the readiness budget");
+
+        assert!(error.to_string().contains("continuing in the background"));
+        assert!(
+            started_at.elapsed() < Duration::from_secs(1),
+            "stalled initialization exceeded its bounded wait"
+        );
+        let (lock, ready) = &*gate;
+        *lock.lock().expect("release listener gate") = true;
+        ready.notify_one();
+
+        let completion_deadline = Instant::now() + Duration::from_secs(1);
+        while !completed.load(Ordering::SeqCst) && Instant::now() < completion_deadline {
+            std::thread::yield_now();
+        }
+        assert!(
+            completed.load(Ordering::SeqCst),
+            "timed-out initialization worker was not allowed to finish"
+        );
     }
 }
 

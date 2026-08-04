@@ -58,6 +58,26 @@ fn resolve_onscreen_point_with_scroll(
     cy: i32,
     action_verb: &str,
 ) -> Result<(i32, i32), String> {
+    // Issue #2015: refuse the iconic sentinel BEFORE the containment check
+    // below, which structurally cannot catch it. A minimized window's
+    // `GetWindowRect` is the off-screen iconic position
+    // `(-32000, -32000)-(-31840, -31972)`, and UIA mirrors that same sentinel
+    // into every element's `BoundingRectangle`. Both sides of
+    // `point_in_window_bounds` are then poisoned identically, so a sentinel
+    // center tests as *inside* its sentinel window rect, the guard passes, and
+    // the click is posted to coordinates no monitor covers — the tool reports
+    // success and nothing happens. `capture.rs` already refuses iconic windows
+    // outright; the input path must refuse them too rather than silently no-op.
+    if crate::input::is_iconic_sentinel_point(cx, cy) || crate::input::window_is_iconic(hwnd) {
+        return Err(format!(
+            "Element [{idx}] resolves to ({cx},{cy}), which is the Win32 iconic \
+             sentinel rather than a location on any display — window 0x{hwnd:x} \
+             is minimized (or reported minimized bounds), so {action_verb} would \
+             be posted off-screen and silently do nothing. Call bring_to_front \
+             with this window_id to restore it, then re-snapshot with \
+             get_window_state before retrying."
+        ));
+    }
     let cached_center_in_window = crate::input::point_in_window_bounds(hwnd, cx, cy);
     // A center can still be clipped by a ScrollViewer or a docked sibling while
     // remaining inside the outer HWND rectangle. UIA's IsOffscreen property is

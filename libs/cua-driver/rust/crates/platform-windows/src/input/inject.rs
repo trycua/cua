@@ -408,6 +408,130 @@ pub fn point_in_window_bounds(hwnd: u64, x: i32, y: i32) -> bool {
     x >= r.left && x < r.right && y >= r.top && y < r.bottom
 }
 
+/// Any coordinate at or below this is the Win32 iconic sentinel, never a real
+/// display position.
+///
+/// Windows parks minimized windows at the fixed off-screen "iconic position"
+/// `(-32000, -32000)`. The ceiling sits well below the reach of any physical
+/// multi-monitor layout — spanning to `-30000` would take fifteen 1920-wide
+/// displays stacked left of the primary — while staying above the sentinel, so
+/// legitimate negative-origin secondary monitors are unaffected.
+pub const ICONIC_COORD_CEILING: i32 = -30000;
+
+/// True when `(x, y)` is the Win32 iconic sentinel rather than a real position.
+///
+/// Issue #2015: a minimized window's `GetWindowRect` is
+/// `(-32000, -32000)-(-31840, -31972)` — width 160, height 28, *both positive*.
+/// It therefore satisfies every `right > left && bottom > top` validity check in
+/// the bounds path, and UIA mirrors the same sentinel into the
+/// `BoundingRectangle` of every element inside that window. Because the element
+/// center and the window rect are then poisoned by the *same* sentinel, a
+/// containment test of one against the other passes, and the click is dispatched
+/// to coordinates no monitor covers. The tool reports success; nothing happens.
+///
+/// Testing the absolute coordinate catches that shape whether or not the owning
+/// window is currently iconic — the reported symptom included elements carrying
+/// sentinel bounds while their window looked visible on a secondary monitor.
+pub fn is_iconic_sentinel_point(x: i32, y: i32) -> bool {
+    x <= ICONIC_COORD_CEILING || y <= ICONIC_COORD_CEILING
+}
+
+/// True when `hwnd` is minimized (iconic).
+///
+/// Authoritative counterpart to [`is_iconic_sentinel_point`]: the capture path
+/// already refuses iconic windows outright (see `capture.rs`), and the input
+/// path needs the same signal so an element action can fail loudly instead of
+/// posting into the off-screen iconic region.
+pub fn window_is_iconic(hwnd: u64) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::IsIconic;
+    if hwnd == 0 {
+        return false;
+    }
+    unsafe { IsIconic(HWND(hwnd as *mut _)).as_bool() }
+}
+
+#[cfg(test)]
+mod iconic_sentinel_tests {
+    use super::*;
+
+    /// The exact rect Win32 hands back for a minimized window, as documented on
+    /// the capture-path guard in `capture.rs`.
+    const ICONIC_RECT: (i32, i32, i32, i32) = (-32000, -32000, -31840, -31972);
+
+    #[test]
+    fn iconic_rect_passes_the_positive_extent_check_that_guards_the_bounds_path() {
+        // This is why #2015 is silent rather than refused: the sentinel rect is
+        // a *well-formed* rectangle, so validity checks phrased as
+        // "right > left && bottom > top" admit it.
+        let (left, top, right, bottom) = ICONIC_RECT;
+        assert!(right > left, "sentinel width is positive: {right} > {left}");
+        assert!(
+            bottom > top,
+            "sentinel height is positive: {bottom} > {top}"
+        );
+    }
+
+    #[test]
+    fn sentinel_origin_is_detected() {
+        let (left, top, ..) = ICONIC_RECT;
+        assert!(is_iconic_sentinel_point(left, top));
+    }
+
+    #[test]
+    fn a_point_inside_the_sentinel_rect_is_detected() {
+        // The element center the click path actually computes: the midpoint of
+        // the iconic rect. Pre-fix this landed inside the equally-poisoned
+        // window rect and passed the containment guard.
+        let (left, top, right, bottom) = ICONIC_RECT;
+        let (cx, cy) = ((left + right) / 2, (top + bottom) / 2);
+        assert!(
+            is_iconic_sentinel_point(cx, cy),
+            "iconic center ({cx},{cy}) must be rejected"
+        );
+    }
+
+    #[test]
+    fn either_axis_alone_is_enough() {
+        // The negative-Y report in #2015 carried a sentinel Y with an ordinary X.
+        assert!(is_iconic_sentinel_point(640, -32000));
+        assert!(is_iconic_sentinel_point(-32000, 480));
+    }
+
+    #[test]
+    fn real_negative_origin_monitors_are_not_rejected() {
+        // Regression guard for #1979 / #1981: negative-X and negative-Y layouts
+        // are legitimate and must keep working.
+        for (x, y) in [
+            (-1920, 0),     // #1979 secondary to the left
+            (-1795, 383),   // the mis-routed click coordinate from #1979
+            (-2560, 0),     // wider secondary to the left
+            (0, -1080),     // secondary above primary (negative-Y)
+            (-1920, -1080), // secondary up-and-left
+            (0, 0),
+            (1920, 1080),
+        ] {
+            assert!(
+                !is_iconic_sentinel_point(x, y),
+                "({x},{y}) is a real display coordinate, not the sentinel"
+            );
+        }
+    }
+
+    #[test]
+    fn ceiling_sits_between_real_layouts_and_the_sentinel() {
+        assert!(
+            ICONIC_COORD_CEILING > -32000,
+            "ceiling must admit the sentinel"
+        );
+        assert!(
+            !is_iconic_sentinel_point(ICONIC_COORD_CEILING + 1, 0),
+            "just above the ceiling is still a real coordinate"
+        );
+        assert!(is_iconic_sentinel_point(ICONIC_COORD_CEILING, 0));
+    }
+}
+
 /// One pen press-drag-release from screen `(sx0,sy0)` to `(sx1,sy1)`, with
 /// `steps` interpolated in-contact UPDATE points between the down and the up.
 /// A single synthetic pen device is created for the whole stroke. The barrel

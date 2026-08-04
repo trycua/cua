@@ -200,7 +200,7 @@ jobs:
             Set-Content -LiteralPath (Join-Path $legacyHome "version_check.json") -Value "{}"
             Set-Content -LiteralPath (Join-Path $legacyHome ".telemetry_id") -Value "synthetic-e2e-id"
 
-            $firstOutput = (& .\libs\cua-driver\scripts\install.ps1 -NoPathUpdate 2>&1 | Out-String)
+            $firstOutput = (& .\libs\cua-driver\scripts\install.ps1 -NoPathUpdate *>&1 | Out-String)
             $firstOutput | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "cua-driver-release-install.txt")
             if ($firstOutput -match "detected legacy install layout") { throw "cache-only home was treated as legacy" }
             if (-not (Test-Path -LiteralPath $installed)) { throw "missing installed binary: $installed" }
@@ -209,7 +209,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "install did not register cua-driver-serve" }
 
             New-Item -ItemType Directory -Force -Path (Join-Path $legacyHome "packages") | Out-Null
-            $secondOutput = (& .\libs\cua-driver\scripts\install.ps1 -NoPathUpdate 2>&1 | Out-String)
+            $secondOutput = (& .\libs\cua-driver\scripts\install.ps1 -NoPathUpdate *>&1 | Out-String)
             $secondOutput | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "cua-driver-release-reinstall.txt")
             if ($secondOutput -notmatch "detected legacy install layout") { throw "true legacy marker was not detected" }
             if (-not (Test-Path -LiteralPath $installed)) { throw "reinstall removed the installed binary" }

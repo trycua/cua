@@ -153,7 +153,7 @@ impl Tool for RightClickTool {
             };
             let element_ptr = element_guard.as_ptr();
 
-            if let Err(refusal_result) = super::gate_background_window_action(
+            let _mutation_lease = match super::gate_background_window_action(
                 pid,
                 wid,
                 Some(element_ptr),
@@ -161,8 +161,9 @@ impl Tool for RightClickTool {
             )
             .await
             {
-                return refusal_result;
-            }
+                Ok(lease) => lease,
+                Err(refusal_result) => return refusal_result,
+            };
 
             let result =
                 tokio::task::spawn_blocking(move || ax_show_menu(element_ptr, idx, pid, wid)).await;
@@ -209,9 +210,9 @@ impl Tool for RightClickTool {
             (cx, cy, cx, cy)
         };
 
-        if !delivery_mode.is_foreground() {
+        let _mutation_lease = if !delivery_mode.is_foreground() {
             if let Some(wid) = window_id {
-                if let Err(refusal_result) = super::gate_background_window_action(
+                match super::gate_background_window_action(
                     pid,
                     wid,
                     None,
@@ -219,10 +220,15 @@ impl Tool for RightClickTool {
                 )
                 .await
                 {
-                    return refusal_result;
+                    Ok(lease) => Some(lease),
+                    Err(refusal_result) => return refusal_result,
                 }
+            } else {
+                None
             }
-        }
+        } else {
+            None
+        };
 
         // Pin overlay above the target window before animating.
         if let Some(wid) = window_id {

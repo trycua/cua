@@ -270,16 +270,17 @@ impl Tool for TypeTextTool {
         // AX write only (exact element, no CGEvent fallback), or a structured
         // refusal. delivery_mode:"foreground" stays the caller's explicit
         // last resort and is not gated here.
-        let keyboard_policy = if !delivery_mode.is_foreground() && window_id.is_some() {
-            let wid = window_id.expect("checked above");
-            let gate_element_ptr = element_guard.as_ref().map(|(g, _)| g.as_ptr() as usize);
-            match background_keyboard_policy(pid, wid, gate_element_ptr).await {
-                Ok(policy) => policy,
-                Err(refusal_result) => return refusal_result,
-            }
-        } else {
-            BackgroundKeyboardPolicy::Allowed
-        };
+        let (_mutation_lease, keyboard_policy) =
+            if !delivery_mode.is_foreground() && window_id.is_some() {
+                let wid = window_id.expect("checked above");
+                let gate_element_ptr = element_guard.as_ref().map(|(g, _)| g.as_ptr() as usize);
+                match background_keyboard_policy(pid, wid, gate_element_ptr).await {
+                    Ok((lease, policy)) => (Some(lease), policy),
+                    Err(refusal_result) => return refusal_result,
+                }
+            } else {
+                (None, BackgroundKeyboardPolicy::Allowed)
+            };
 
         // ── px form: focus by pixel-click, then type into the focused element ──
         // Pass x,y (no element_index) for an *element px action*: pixel-click the
@@ -310,6 +311,7 @@ impl Tool for TypeTextTool {
                 args.opt_str("session"),
                 args.opt_str("_session_id"),
                 from_zoom,
+                _mutation_lease.as_ref(),
             )
             .await
             {
@@ -624,10 +626,11 @@ async fn background_keyboard_policy(
     pid: i32,
     window_id: u32,
     element_ptr: Option<usize>,
-) -> Result<BackgroundKeyboardPolicy, ToolResult> {
+) -> Result<(super::BackgroundMutationLease, BackgroundKeyboardPolicy), ToolResult> {
     use cua_driver_core::background_input::{
         decide_background_input, BackgroundAction, BackgroundInputDecision, ExactWindowTarget,
     };
+    let lease = super::acquire_background_mutation(pid).await;
     let facts = match tokio::task::spawn_blocking(move || {
         crate::ax::exact_target::gather_background_facts(pid, window_id, element_ptr)
     })
@@ -642,13 +645,13 @@ async fn background_keyboard_policy(
     };
     let target = ExactWindowTarget { pid, window_id };
     match decide_background_input(target, &facts, BackgroundAction::InsertText) {
-        BackgroundInputDecision::Execute { .. } => Ok(BackgroundKeyboardPolicy::Allowed),
+        BackgroundInputDecision::Execute { .. } => Ok((lease, BackgroundKeyboardPolicy::Allowed)),
         BackgroundInputDecision::Refuse(refusal) => {
             let semantic_available = element_ptr.is_some()
                 && decide_background_input(target, &facts, BackgroundAction::AxSemantic)
                     .is_execute();
             if semantic_available {
-                Ok(BackgroundKeyboardPolicy::SemanticOnly(refusal))
+                Ok((lease, BackgroundKeyboardPolicy::SemanticOnly(refusal)))
             } else {
                 Err(super::background_refusal_result(pid, window_id, &refusal))
             }

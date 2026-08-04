@@ -116,8 +116,8 @@ impl Tool for TypeTextCharsTool {
         // transport with no semantic AX rung. A window-addressed request must
         // prove exact delivery before any event is posted; there is no
         // semantic fallback here, so a refusal is final.
-        if let Some(wid) = window_id {
-            if let Err(refusal_result) = super::gate_background_window_action(
+        let _mutation_lease = if let Some(wid) = window_id {
+            match super::gate_background_window_action(
                 pid,
                 wid,
                 element_ptr,
@@ -125,9 +125,12 @@ impl Tool for TypeTextCharsTool {
             )
             .await
             {
-                return refusal_result;
+                Ok(lease) => Some(lease),
+                Err(refusal_result) => return refusal_result,
             }
-        }
+        } else {
+            None
+        };
 
         // Pre-focus element if requested.
         if !type_chars_only {

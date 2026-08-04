@@ -165,7 +165,7 @@ impl Tool for SetValueTool {
         // that the retained element still belongs to the requested exact
         // window immediately before any cursor or AX work; a cache hit alone
         // is not delivery proof after a window lifecycle or Space change.
-        if let Err(refusal_result) = super::gate_background_window_action(
+        let _mutation_lease = match super::gate_background_window_action(
             pid,
             window_id,
             Some(element_ptr),
@@ -173,8 +173,9 @@ impl Tool for SetValueTool {
         )
         .await
         {
-            return refusal_result;
-        }
+            Ok(lease) => lease,
+            Err(refusal_result) => return refusal_result,
+        };
 
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
         let center_ptr = element_ptr as usize;

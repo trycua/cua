@@ -226,6 +226,7 @@ impl Tool for ScrollTool {
                 ));
             }
         }
+        let mut _mutation_lease: Option<super::BackgroundMutationLease> = None;
 
         // AppKit exposes vertical scroll-bar buttons beneath the text area's
         // AXScrollArea parent. Pressing those controls is a true
@@ -233,15 +234,29 @@ impl Tool for ScrollTool {
         if matches!(direction.as_str(), "up" | "down") {
             if let (Some(index), Some(wid)) = (element_index, window_id) {
                 if !delivery_mode.is_foreground() {
-                    if let Err(refusal_result) = super::gate_background_window_action(
-                        pid,
-                        wid,
-                        pre_focus_ptr,
-                        cua_driver_core::background_input::BackgroundAction::AxSemantic,
-                    )
-                    .await
-                    {
-                        return refusal_result;
+                    if let Some(lease) = _mutation_lease.as_ref() {
+                        if let Err(refusal_result) = lease
+                            .gate_again(
+                                wid,
+                                pre_focus_ptr,
+                                cua_driver_core::background_input::BackgroundAction::AxSemantic,
+                            )
+                            .await
+                        {
+                            return refusal_result;
+                        }
+                    } else {
+                        match super::gate_background_window_action(
+                            pid,
+                            wid,
+                            pre_focus_ptr,
+                            cua_driver_core::background_input::BackgroundAction::AxSemantic,
+                        )
+                        .await
+                        {
+                            Ok(lease) => _mutation_lease = Some(lease),
+                            Err(refusal_result) => return refusal_result,
+                        }
                     }
                 }
                 let native_element_guard = self
@@ -432,15 +447,29 @@ impl Tool for ScrollTool {
                             ));
                         }
                     }
-                    if let Err(refusal_result) = super::gate_background_window_action(
-                        pid,
-                        wid,
-                        pre_focus_ptr,
-                        cua_driver_core::background_input::BackgroundAction::WindowPointer,
-                    )
-                    .await
-                    {
-                        return refusal_result;
+                    if let Some(lease) = _mutation_lease.as_ref() {
+                        if let Err(refusal_result) = lease
+                            .gate_again(
+                                wid,
+                                pre_focus_ptr,
+                                cua_driver_core::background_input::BackgroundAction::WindowPointer,
+                            )
+                            .await
+                        {
+                            return refusal_result;
+                        }
+                    } else {
+                        match super::gate_background_window_action(
+                            pid,
+                            wid,
+                            pre_focus_ptr,
+                            cua_driver_core::background_input::BackgroundAction::WindowPointer,
+                        )
+                        .await
+                        {
+                            Ok(lease) => _mutation_lease = Some(lease),
+                            Err(refusal_result) => return refusal_result,
+                        }
                     }
                 }
             }
@@ -546,15 +575,29 @@ impl Tool for ScrollTool {
 
         if !delivery_mode.is_foreground() {
             if let Some(wid) = window_id {
-                if let Err(refusal_result) = super::gate_background_window_action(
-                    pid,
-                    wid,
-                    pre_focus_ptr,
-                    cua_driver_core::background_input::BackgroundAction::GenericKey,
-                )
-                .await
-                {
-                    return refusal_result;
+                if let Some(lease) = _mutation_lease.as_ref() {
+                    if let Err(refusal_result) = lease
+                        .gate_again(
+                            wid,
+                            pre_focus_ptr,
+                            cua_driver_core::background_input::BackgroundAction::GenericKey,
+                        )
+                        .await
+                    {
+                        return refusal_result;
+                    }
+                } else {
+                    match super::gate_background_window_action(
+                        pid,
+                        wid,
+                        pre_focus_ptr,
+                        cua_driver_core::background_input::BackgroundAction::GenericKey,
+                    )
+                    .await
+                    {
+                        Ok(lease) => _mutation_lease = Some(lease),
+                        Err(refusal_result) => return refusal_result,
+                    }
                 }
             }
         }

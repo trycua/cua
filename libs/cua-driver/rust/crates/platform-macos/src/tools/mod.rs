@@ -205,19 +205,34 @@ pub(crate) fn background_refusal_result(
     .with_structured(structured)
 }
 
-/// Gather fresh exact-target facts and ask the pure core for one background
-/// decision. `element_ptr` must stay retained by the caller across this call.
-/// Returns the target-bound verification on `Execute`, or the ready-to-return
-/// refusal result. No input of the requested class may be sent after `Err`.
-pub(crate) async fn gate_background_window_action(
+/// Exclusive per-process ownership of one background mutation. Callers must
+/// keep this value alive through actuator dispatch, focus restoration, and
+/// target-bound verification.
+pub(crate) struct BackgroundMutationLease {
+    pid: i32,
+    _guard: tokio::sync::OwnedMutexGuard<()>,
+}
+
+impl BackgroundMutationLease {
+    /// Revalidate another actuator class while retaining the same per-PID
+    /// lease. This supports explicit ladders without deadlocking by attempting
+    /// to reacquire the coordinator recursively.
+    pub(crate) async fn gate_again(
+        &self,
+        window_id: u32,
+        element_ptr: Option<usize>,
+        action: cua_driver_core::background_input::BackgroundAction,
+    ) -> Result<(), cua_driver_core::protocol::ToolResult> {
+        decide_background_window_action(self.pid, window_id, element_ptr, action).await
+    }
+}
+
+async fn decide_background_window_action(
     pid: i32,
     window_id: u32,
     element_ptr: Option<usize>,
     action: cua_driver_core::background_input::BackgroundAction,
-) -> Result<
-    cua_driver_core::background_input::TargetBoundVerification,
-    cua_driver_core::protocol::ToolResult,
-> {
+) -> Result<(), cua_driver_core::protocol::ToolResult> {
     use cua_driver_core::background_input::{
         decide_background_input, BackgroundInputDecision, ExactWindowTarget,
     };
@@ -234,10 +249,31 @@ pub(crate) async fn gate_background_window_action(
         }
     };
     match decide_background_input(ExactWindowTarget { pid, window_id }, &facts, action) {
-        BackgroundInputDecision::Execute { verification } => Ok(verification),
+        BackgroundInputDecision::Execute { .. } => Ok(()),
         BackgroundInputDecision::Refuse(refusal) => {
             Err(background_refusal_result(pid, window_id, &refusal))
         }
+    }
+}
+
+/// Acquire the per-PID mutation coordinator, gather fresh exact-target facts,
+/// and ask the pure core for one background decision. `element_ptr` must stay
+/// retained by the caller until the returned lease is dropped.
+pub(crate) async fn gate_background_window_action(
+    pid: i32,
+    window_id: u32,
+    element_ptr: Option<usize>,
+    action: cua_driver_core::background_input::BackgroundAction,
+) -> Result<BackgroundMutationLease, cua_driver_core::protocol::ToolResult> {
+    let lease = acquire_background_mutation(pid).await;
+    lease.gate_again(window_id, element_ptr, action).await?;
+    Ok(lease)
+}
+
+pub(crate) async fn acquire_background_mutation(pid: i32) -> BackgroundMutationLease {
+    BackgroundMutationLease {
+        pid,
+        _guard: crate::background_mutation::acquire(pid).await,
     }
 }
 
@@ -294,6 +330,7 @@ pub(crate) async fn focus_by_pixel(
     session: Option<String>,
     session_id: Option<String>,
     from_zoom: bool,
+    mutation_lease: Option<&BackgroundMutationLease>,
 ) -> Result<(), cua_driver_core::protocol::ToolResult> {
     use cua_driver_core::tool::Tool;
     let mut click_args = serde_json::json!({
@@ -303,6 +340,15 @@ pub(crate) async fn focus_by_pixel(
     });
     if let Some(wid) = window_id {
         click_args["window_id"] = serde_json::json!(wid);
+        if let Some(lease) = mutation_lease {
+            lease
+                .gate_again(
+                    wid,
+                    None,
+                    cua_driver_core::background_input::BackgroundAction::WindowPointer,
+                )
+                .await?;
+        }
     }
     if let Some(ref s) = session {
         click_args["session"] = serde_json::json!(s);
@@ -313,9 +359,13 @@ pub(crate) async fn focus_by_pixel(
     if from_zoom {
         click_args["from_zoom"] = serde_json::json!(true);
     }
-    let focus = click::ClickTool::new(state.clone())
-        .invoke(click_args)
-        .await;
+    let click_tool = click::ClickTool::new(state.clone());
+    let click = click_tool.invoke(click_args);
+    let focus = if let Some(lease) = mutation_lease {
+        crate::background_mutation::with_held_lease(lease.pid, click).await
+    } else {
+        click.await
+    };
     if focus.is_error != Some(true) {
         // AXFocused is non-destructive: unlike a second real click, it keeps a
         // Cmd+A selection intact before a follow-up type_text or Cmd+V.

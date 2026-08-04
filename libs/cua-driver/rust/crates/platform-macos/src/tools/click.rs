@@ -444,19 +444,21 @@ impl Tool for ClickTool {
             // and is therefore held to the stricter WindowPointer rung. Gate
             // BEFORE any cursor/dispatch work so a stale or sibling-owned
             // target refuses instead of acting on the wrong window.
-            if !delivery_mode.is_foreground() {
+            let _mutation_lease = if !delivery_mode.is_foreground() {
                 let gate_action = if button_str == "middle" {
                     cua_driver_core::background_input::BackgroundAction::WindowPointer
                 } else {
                     cua_driver_core::background_input::BackgroundAction::AxSemantic
                 };
-                if let Err(refusal_result) =
-                    super::gate_background_window_action(pid, wid, Some(element_ptr), gate_action)
-                        .await
+                match super::gate_background_window_action(pid, wid, Some(element_ptr), gate_action)
+                    .await
                 {
-                    return refusal_result;
+                    Ok(lease) => Some(lease),
+                    Err(refusal_result) => return refusal_result,
                 }
-            }
+            } else {
+                None
+            };
 
             // Surface 5: button=right on the AX path → AXShowMenu (the same surface
             // the dedicated `right_click` tool dispatches). Threads through the
@@ -585,14 +587,16 @@ impl Tool for ClickTool {
             // minimized/hidden target); the semantic path still runs.
             if selection_pixel.is_some()
                 && !delivery_mode.is_foreground()
-                && super::gate_background_window_action(
-                    pid,
-                    wid,
-                    Some(element_ptr),
-                    cua_driver_core::background_input::BackgroundAction::WindowPointer,
-                )
-                .await
-                .is_err()
+                && _mutation_lease
+                    .as_ref()
+                    .expect("background element actions hold the per-pid lease")
+                    .gate_again(
+                        wid,
+                        Some(element_ptr),
+                        cua_driver_core::background_input::BackgroundAction::WindowPointer,
+                    )
+                    .await
+                    .is_err()
             {
                 selection_pixel = None;
             }
@@ -862,9 +866,10 @@ impl Tool for ClickTool {
             // hit-test or routed events land on a same-process sibling. Gate
             // BEFORE the AX hit-test backend and any cursor/dispatch work.
             // delivery_mode:"foreground" stays the explicit last resort.
-            if !delivery_mode.is_foreground() {
+            let mutation_lease_held = crate::background_mutation::held_by_current_task(pid);
+            let _mutation_lease = if !delivery_mode.is_foreground() && !mutation_lease_held {
                 if let Some(wid) = window_id {
-                    if let Err(refusal_result) = super::gate_background_window_action(
+                    match super::gate_background_window_action(
                         pid,
                         wid,
                         None,
@@ -872,10 +877,15 @@ impl Tool for ClickTool {
                     )
                     .await
                     {
-                        return refusal_result;
+                        Ok(lease) => Some(lease),
+                        Err(refusal_result) => return refusal_result,
                     }
+                } else {
+                    None
                 }
-            }
+            } else {
+                None
+            };
 
             // A background PX action can still use an accessibility delivery
             // backend after resolving the requested screen point. This keeps

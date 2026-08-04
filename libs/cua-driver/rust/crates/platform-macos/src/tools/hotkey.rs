@@ -233,9 +233,9 @@ impl Tool for HotkeyTool {
         // destination) BEFORE anything is sent — including the px focus
         // click. delivery_mode:"foreground" stays the caller's explicit last
         // resort and is not gated here.
-        if !fg {
+        let _mutation_lease = if !fg {
             if let Some(wid) = window_id {
-                if let Err(refusal_result) = super::gate_background_window_action(
+                match super::gate_background_window_action(
                     pid,
                     wid,
                     None,
@@ -243,10 +243,15 @@ impl Tool for HotkeyTool {
                 )
                 .await
                 {
-                    return refusal_result;
+                    Ok(lease) => Some(lease),
+                    Err(refusal_result) => return refusal_result,
                 }
+            } else {
+                None
             }
-        }
+        } else {
+            None
+        };
 
         // px form: focus the field before sending the combo. Foreground delivery
         // still needs to front the target for the chord itself: the focus helper
@@ -269,6 +274,7 @@ impl Tool for HotkeyTool {
                     args.opt_str("session"),
                     args.opt_str("_session_id"),
                     from_zoom,
+                    _mutation_lease.as_ref(),
                 )
                 .await
                 {

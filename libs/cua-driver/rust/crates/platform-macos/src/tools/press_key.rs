@@ -352,9 +352,9 @@ impl Tool for PressKeyTool {
         // destination, proven element ancestry) BEFORE anything is sent —
         // including the px focus click. delivery_mode:"foreground" stays the
         // caller's explicit last resort and is not gated here.
-        if !fg {
+        let _mutation_lease = if !fg {
             if let Some(wid) = window_id {
-                if let Err(refusal_result) = super::gate_background_window_action(
+                match super::gate_background_window_action(
                     pid,
                     wid,
                     pre_focus_ptr,
@@ -362,10 +362,15 @@ impl Tool for PressKeyTool {
                 )
                 .await
                 {
-                    return refusal_result;
+                    Ok(lease) => Some(lease),
+                    Err(refusal_result) => return refusal_result,
                 }
+            } else {
+                None
             }
-        }
+        } else {
+            None
+        };
 
         // px form: pixel-click to focus, then the key goes to the focused element.
         // Reuses click's translation + delivery_mode; after it, deliver via the
@@ -386,6 +391,7 @@ impl Tool for PressKeyTool {
                     args.opt_str("session"),
                     args.opt_str("_session_id"),
                     from_zoom,
+                    _mutation_lease.as_ref(),
                 )
                 .await
                 {

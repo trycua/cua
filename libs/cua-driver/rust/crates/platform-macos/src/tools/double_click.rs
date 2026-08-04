@@ -134,14 +134,17 @@ impl Tool for DoubleClickTool {
             })
             .await
             .unwrap_or(false);
-            if !delivery_mode.is_foreground() {
+            let _mutation_lease = if !delivery_mode.is_foreground() {
                 let action = background_action_for_element(has_ax_open);
-                if let Err(refusal_result) =
-                    super::gate_background_window_action(pid, wid, Some(element_ptr), action).await
+                match super::gate_background_window_action(pid, wid, Some(element_ptr), action)
+                    .await
                 {
-                    return refusal_result;
+                    Ok(lease) => Some(lease),
+                    Err(refusal_result) => return refusal_result,
                 }
-            }
+            } else {
+                None
+            };
 
             // Thread the resolved session cursor key into the blocking AX path
             // so its ClickPulse lands on THIS session's cursor, not "default".
@@ -214,9 +217,9 @@ impl Tool for DoubleClickTool {
             (cx, cy, cx, cy)
         };
 
-        if !delivery_mode.is_foreground() {
+        let _mutation_lease = if !delivery_mode.is_foreground() {
             if let Some(wid) = window_id {
-                if let Err(refusal_result) = super::gate_background_window_action(
+                match super::gate_background_window_action(
                     pid,
                     wid,
                     None,
@@ -224,10 +227,15 @@ impl Tool for DoubleClickTool {
                 )
                 .await
                 {
-                    return refusal_result;
+                    Ok(lease) => Some(lease),
+                    Err(refusal_result) => return refusal_result,
                 }
+            } else {
+                None
             }
-        }
+        } else {
+            None
+        };
 
         // Pin overlay above the target window before animating.
         if let Some(wid) = window_id {

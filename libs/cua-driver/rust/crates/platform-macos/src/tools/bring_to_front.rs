@@ -26,9 +26,7 @@ pub struct BringToFrontTool;
 
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
-// LaunchServices can publish the new NSWorkspace frontmost application after
-// WindowServer and AX have already converged on the requested exact window.
-const VERIFY_TIMEOUT: Duration = Duration::from_millis(1800);
+const VERIFY_TIMEOUT: Duration = Duration::from_millis(900);
 const VERIFY_POLL: Duration = Duration::from_millis(20);
 const VERIFY_STABLE: Duration = Duration::from_millis(100);
 
@@ -61,6 +59,7 @@ fn def() -> &'static ToolDef {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ExactWindowObservation {
     frontmost_pid: Option<i32>,
+    front_process_matches_target: Option<bool>,
     focused_window_id: Option<u32>,
     frontmost_ordinary_window_id: Option<u32>,
     target_visible_ordinary: bool,
@@ -68,7 +67,8 @@ struct ExactWindowObservation {
 
 impl ExactWindowObservation {
     fn process_activated(self, pid: i32) -> bool {
-        self.frontmost_pid == Some(pid)
+        self.front_process_matches_target
+            .unwrap_or(self.frontmost_pid == Some(pid))
     }
 
     fn exact_window_focused(self, window_id: u32) -> bool {
@@ -123,6 +123,7 @@ fn observe_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
         .map(|window| window.window_id);
     ExactWindowObservation {
         frontmost_pid: crate::apps::frontmost_pid(),
+        front_process_matches_target: crate::input::skylight::front_process_matches(pid, window_id),
         focused_window_id: crate::ax::bindings::focused_window_id_of_pid(pid),
         frontmost_ordinary_window_id,
         target_visible_ordinary,
@@ -213,6 +214,7 @@ fn exact_result(
         },
         "observed": {
             "frontmost_pid": observation.frontmost_pid,
+            "front_process_matches_target": observation.front_process_matches_target,
             "focused_window_id": observation.focused_window_id,
             "frontmost_ordinary_window_id": observation.frontmost_ordinary_window_id,
         }
@@ -415,12 +417,14 @@ mod tests {
 
     fn observation(
         frontmost_pid: Option<i32>,
+        front_process_matches_target: Option<bool>,
         focused_window_id: Option<u32>,
         frontmost_ordinary_window_id: Option<u32>,
         target_visible_ordinary: bool,
     ) -> ExactWindowObservation {
         ExactWindowObservation {
             frontmost_pid,
+            front_process_matches_target,
             focused_window_id,
             frontmost_ordinary_window_id,
             target_visible_ordinary,
@@ -430,14 +434,19 @@ mod tests {
     #[test]
     fn exact_success_requires_process_focus_and_layer_zero_order() {
         assert_eq!(
-            classify_exact_outcome(true, 42, 7, observation(Some(42), Some(7), Some(7), true)),
+            classify_exact_outcome(
+                true,
+                42,
+                7,
+                observation(Some(9), Some(true), Some(7), Some(7), true),
+            ),
             ExactOutcome::Activated
         );
         for incomplete in [
-            observation(Some(9), Some(7), Some(7), true),
-            observation(Some(42), Some(8), Some(7), true),
-            observation(Some(42), Some(7), Some(8), true),
-            observation(Some(42), Some(7), Some(7), false),
+            observation(Some(42), Some(false), Some(7), Some(7), true),
+            observation(Some(42), Some(true), Some(8), Some(7), true),
+            observation(Some(42), Some(true), Some(7), Some(8), true),
+            observation(Some(42), Some(true), Some(7), Some(7), false),
         ] {
             assert_eq!(
                 classify_exact_outcome(true, 42, 7, incomplete),
@@ -447,13 +456,45 @@ mod tests {
     }
 
     #[test]
+    fn process_oracle_falls_back_to_workspace_only_when_skylight_is_unavailable() {
+        assert_eq!(
+            classify_exact_outcome(
+                true,
+                42,
+                7,
+                observation(Some(42), None, Some(7), Some(7), true),
+            ),
+            ExactOutcome::Activated
+        );
+        assert_eq!(
+            classify_exact_outcome(
+                true,
+                42,
+                7,
+                observation(Some(9), None, Some(7), Some(7), true),
+            ),
+            ExactOutcome::Partial
+        );
+    }
+
+    #[test]
     fn request_acceptance_or_z_order_alone_is_only_partial() {
         assert_eq!(
-            classify_exact_outcome(true, 42, 7, observation(Some(42), Some(8), Some(7), true)),
+            classify_exact_outcome(
+                true,
+                42,
+                7,
+                observation(Some(42), Some(true), Some(8), Some(7), true),
+            ),
             ExactOutcome::Partial
         );
         assert_eq!(
-            classify_exact_outcome(false, 42, 7, observation(None, None, Some(7), true)),
+            classify_exact_outcome(
+                false,
+                42,
+                7,
+                observation(None, Some(false), None, Some(7), true),
+            ),
             ExactOutcome::Partial
         );
     }
@@ -461,7 +502,12 @@ mod tests {
     #[test]
     fn no_request_and_no_observed_effect_is_failed() {
         assert_eq!(
-            classify_exact_outcome(false, 42, 7, observation(Some(9), Some(8), Some(8), true)),
+            classify_exact_outcome(
+                false,
+                42,
+                7,
+                observation(Some(9), Some(false), Some(8), Some(8), true),
+            ),
             ExactOutcome::Failed
         );
     }
@@ -473,7 +519,7 @@ mod tests {
             7,
             "skylight_ax",
             true,
-            observation(Some(42), Some(8), Some(7), true),
+            observation(Some(9), Some(true), Some(8), Some(7), true),
         );
         assert_eq!(result.is_error, Some(true));
         let structured = result.structured_content.expect("structured result");
@@ -481,6 +527,8 @@ mod tests {
         assert_eq!(structured["activated"], false);
         assert_eq!(structured["request_accepted"], true);
         assert_eq!(structured["process_activated"], true);
+        assert_eq!(structured["observed"]["frontmost_pid"], 9);
+        assert_eq!(structured["observed"]["front_process_matches_target"], true);
         assert_eq!(structured["exact_window_effect"]["focused"], false);
         assert_eq!(
             structured["exact_window_effect"]["frontmost_ordinary"],
@@ -496,7 +544,7 @@ mod tests {
             7,
             "skylight_ax",
             true,
-            observation(Some(42), Some(7), Some(7), true),
+            observation(Some(9), Some(true), Some(7), Some(7), true),
         );
         assert_eq!(result.is_error, None);
         let structured = result.structured_content.expect("structured result");

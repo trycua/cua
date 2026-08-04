@@ -77,6 +77,12 @@ jobs:
       - name: Run Windows installed-app discovery unit tests
         working-directory: libs/cua-driver/rust
         run: "cargo test -p platform-windows win32::installed_apps::tests:: --lib --locked"
+      - name: Run Windows app-name lookup deadline tests
+        working-directory: libs/cua-driver/rust
+        run: "cargo test -p platform-windows launch_uwp::tests::apps_folder_lookup_timeout_is_single_flight_and_recovers_after_cooldown --lib --locked -- --exact"
+      - name: Prove unknown app launch stays bounded and responsive
+        working-directory: libs/cua-driver/rust
+        run: "cargo test -p cua-driver --test protocol_tools_call_test launch_unknown_app_is_bounded_and_keeps_mcp_session_responsive --locked -- --exact --nocapture"
       - name: Run transport-independent authorization and SDK tests
         working-directory: libs/cua-driver/rust
         run: |

@@ -12,6 +12,8 @@
 #![cfg(any(target_os = "macos", target_os = "windows"))]
 
 use cua_driver_testkit::RawDriver;
+#[cfg(target_os = "windows")]
+use cua_driver_testkit::{Driver, McpDriver};
 
 fn spawn_unrestricted() -> Option<RawDriver> {
     RawDriver::spawn_with_env(&[
@@ -71,6 +73,57 @@ fn tools_call_list_apps() {
             text
         );
     }
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn launch_unknown_app_is_bounded_and_keeps_mcp_session_responsive() {
+    let Some(mut driver) = McpDriver::spawn_with_env(&[
+        ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
+        ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
+    ]) else {
+        return;
+    };
+    let missing_name = format!("CuaMissingAppIssue2856_{}.exe", std::process::id());
+
+    let launch_started = std::time::Instant::now();
+    let launch = driver.call("launch_app", serde_json::json!({ "name": missing_name }));
+    let launch_elapsed = launch_started.elapsed();
+    assert!(
+        launch_elapsed < std::time::Duration::from_secs(10),
+        "unknown-app launch exceeded its hard response budget: {launch_elapsed:?}; response={:?}",
+        launch.raw
+    );
+    assert!(
+        launch.is_error(),
+        "unknown app should fail: {:?}",
+        launch.raw
+    );
+    let error = launch.text().to_ascii_lowercase();
+    assert!(
+        error.contains("not found") || error.contains("lookup") && error.contains("unavailable"),
+        "expected an explicit not-found or lookup-unavailable error, got: {}",
+        launch.text()
+    );
+
+    let follow_up_started = std::time::Instant::now();
+    let windows = driver.call("list_windows", serde_json::json!({}));
+    let follow_up_elapsed = follow_up_started.elapsed();
+    assert!(
+        follow_up_elapsed < std::time::Duration::from_secs(5),
+        "follow-up list_windows call was not responsive: {follow_up_elapsed:?}; response={:?}",
+        windows.raw
+    );
+    assert!(
+        !windows.is_error(),
+        "follow-up list_windows failed after unknown launch: {:?}",
+        windows.raw
+    );
+    assert!(
+        windows.structured()["windows"].is_array(),
+        "follow-up list_windows returned no windows array: {:?}",
+        windows.raw
+    );
 }
 
 #[test]

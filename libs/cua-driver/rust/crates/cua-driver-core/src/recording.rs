@@ -787,8 +787,16 @@ fn write_turn(
         }
     };
     let click_family = matches!(tool_name.as_str(), "click" | "double_click" | "right_click");
+    let action_refused = action_record
+        .is_some_and(|record| record.effect == crate::action_record::ActionEffect::Refused);
     let refused_before_target_resolution = click_family && result_is_error && click_point.is_none();
-    let click_expected = click_family && !refused_before_target_resolution;
+    // A target may resolve successfully and still be refused before input
+    // dispatch (for example, a minimized Windows element). Retaining the
+    // resolved point in action.json is useful diagnostic context, but a
+    // crosshair would falsely imply that a click was delivered.
+    let refused_before_dispatch = click_family && result_is_error && action_refused;
+    let click_expected =
+        click_family && !refused_before_target_resolution && !refused_before_dispatch;
 
     let mut payload = serde_json::json!({
         "tool": tool_name,
@@ -820,14 +828,16 @@ fn write_turn(
     // the pre-action image. This also keeps modal-dismiss evidence available
     // after the modal HWND has closed.
     let mut click_captured = false;
-    if let (Some((cx, cy)), Some(screenshot), Some(marker)) = (
-        click_point,
-        before.screenshot.as_deref(),
-        CLICK_MARKER_FN.get(),
-    ) {
-        if let Some(click_png) = marker(screenshot, cx, cy) {
-            std::fs::write(turn_dir.join("click.png"), click_png)?;
-            click_captured = true;
+    if click_expected {
+        if let (Some((cx, cy)), Some(screenshot), Some(marker)) = (
+            click_point,
+            before.screenshot.as_deref(),
+            CLICK_MARKER_FN.get(),
+        ) {
+            if let Some(click_png) = marker(screenshot, cx, cy) {
+                std::fs::write(turn_dir.join("click.png"), click_png)?;
+                click_captured = true;
+            }
         }
     }
     write_evidence_manifest(
@@ -839,6 +849,8 @@ fn write_turn(
         click_captured,
         if refused_before_target_resolution {
             "action_refused_before_target_resolution"
+        } else if refused_before_dispatch {
+            "action_refused_before_dispatch"
         } else {
             "not_a_click_action"
         },
@@ -1064,6 +1076,49 @@ mod tests {
             "action_refused_before_target_resolution"
         );
 
+        let pending = session
+            .begin_turn(
+                "click",
+                &serde_json::json!({"pid": 1, "window_id": 2, "x": 3, "y": 4}),
+                now_ms(),
+            )
+            .expect("resolved refusal should reserve an evidence turn");
+        let refusal_record = crate::action_record::ActionExecutionRecord::builder(
+            crate::action_record::ActionEffect::Refused,
+            crate::action_record::ActionTransport::WindowsTargetedInjection,
+            crate::action_record::RequestedDelivery::Background,
+        )
+        .build()
+        .expect("valid refusal record");
+        session.finish_turn_with_outcome(
+            pending,
+            "refused before dispatch",
+            Some(&refusal_record),
+            true,
+        );
+        let resolved_refusal_turn = output_dir.join("turn-00004");
+        let resolved_refusal_action: Value = serde_json::from_slice(
+            &std::fs::read(resolved_refusal_turn.join("action.json"))
+                .expect("read resolved refusal action"),
+        )
+        .expect("parse resolved refusal action");
+        assert_eq!(resolved_refusal_action["click_point"]["x"], 3.0);
+        assert_eq!(resolved_refusal_action["action_truth"]["effect"], "refused");
+        assert!(!resolved_refusal_turn.join("click.png").exists());
+        let resolved_refusal_manifest: Value = serde_json::from_slice(
+            &std::fs::read(resolved_refusal_turn.join("evidence.json"))
+                .expect("read resolved refusal evidence"),
+        )
+        .expect("parse resolved refusal evidence");
+        assert_eq!(
+            resolved_refusal_manifest["click"]["status"],
+            "not_applicable"
+        );
+        assert_eq!(
+            resolved_refusal_manifest["click"]["classification"],
+            "action_refused_before_dispatch"
+        );
+
         let files = [
             "action.json",
             "app_state.json",
@@ -1081,11 +1136,13 @@ mod tests {
             }
             std::fs::remove_dir(directory).expect("remove turn fixture directory");
         }
-        for file in files.into_iter().filter(|file| *file != "click.png") {
-            std::fs::remove_file(refused_turn.join(file))
-                .expect("remove refused turn fixture file");
+        for directory in [&refused_turn, &resolved_refusal_turn] {
+            for file in files.iter().copied().filter(|file| *file != "click.png") {
+                std::fs::remove_file(directory.join(file))
+                    .expect("remove refused turn fixture file");
+            }
+            std::fs::remove_dir(directory).expect("remove refused turn fixture directory");
         }
-        std::fs::remove_dir(refused_turn).expect("remove refused turn fixture directory");
         std::fs::remove_dir(&output_dir).expect("remove recording fixture directory");
     }
 

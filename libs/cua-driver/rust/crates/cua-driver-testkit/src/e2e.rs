@@ -1587,15 +1587,23 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
         let refused_before_target_resolution = action.as_ref().is_some_and(|value| {
             value["result_error"].as_bool() == Some(true) && value.get("click_point").is_none()
         });
-        if refused_before_target_resolution {
+        let refused_before_dispatch = action.as_ref().is_some_and(|value| {
+            value["result_error"].as_bool() == Some(true)
+                && value["action_truth"]["effect"].as_str() == Some("refused")
+        });
+        if refused_before_target_resolution || refused_before_dispatch {
             let click = manifest.as_ref().map(|value| &value["click"]);
+            let expected_classification = if refused_before_target_resolution {
+                "action_refused_before_target_resolution"
+            } else {
+                "action_refused_before_dispatch"
+            };
             if !click.is_some_and(|value| {
                 value["status"].as_str() == Some("not_applicable")
-                    && value["classification"].as_str()
-                        == Some("action_refused_before_target_resolution")
+                    && value["classification"].as_str() == Some(expected_classification)
             }) {
                 errors.push(format!(
-                    "invalid refused-click evidence for {cell_id}/{turn_name}: expected not_applicable/action_refused_before_target_resolution"
+                    "invalid refused-click evidence for {cell_id}/{turn_name}: expected not_applicable/{expected_classification}"
                 ));
             }
             return;
@@ -2241,7 +2249,9 @@ mod tests {
                 "tool":"click",
                 "arguments":{"pid":1,"window_id":2,"element_index":3},
                 "result_summary":"refused (window_minimized): restore before retrying",
-                "result_error":true
+                "result_error":true,
+                "click_point":{"x":10,"y":20},
+                "action_truth":{"effect":"refused"}
             }"#,
         )
         .expect("write minimized refusal action");
@@ -2251,7 +2261,7 @@ mod tests {
                 "schema":"cua-turn-evidence/v1",
                 "before":{"state":{"status":"captured"},"screenshot":{"status":"unavailable","classification":"target_minimized"}},
                 "after":{"state":{"status":"captured"},"screenshot":{"status":"unavailable","classification":"target_minimized"}},
-                "click":{"status":"not_applicable","classification":"action_refused_before_target_resolution"}
+                "click":{"status":"not_applicable","classification":"action_refused_before_dispatch"}
             }"#,
         )
         .expect("write minimized refusal evidence manifest");

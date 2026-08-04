@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::reaper::ChildReaper;
+use crate::reaper::{spawn_in_job, ChildReaper};
 
 #[cfg(not(unix))]
 static DAEMON_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -14,6 +14,7 @@ static DAEMON_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 /// Keeps the temporary socket directory alive for the daemon lifetime.
 pub(crate) struct TestDaemon {
     pub(crate) socket: String,
+    pub(crate) pid: u32,
     #[cfg(unix)]
     _socket_dir: tempfile::TempDir,
 }
@@ -85,16 +86,18 @@ impl TestDaemon {
         for (key, value) in env {
             command.env(key, value);
         }
-        reaper
-            .spawn(&mut command)
+        let child = spawn_in_job(&mut command)
             .inspect_err(|error| eprintln!("[testkit] daemon spawn failed: {error}"))
             .ok()?;
+        let pid = child.id();
+        reaper.push(child);
 
         let deadline = Instant::now() + Duration::from_secs(10);
         while Instant::now() < deadline {
             if daemon_is_listening(binary, &socket) {
                 return Some(Self {
                     socket,
+                    pid,
                     #[cfg(unix)]
                     _socket_dir: socket_dir,
                 });

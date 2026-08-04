@@ -67,9 +67,8 @@ Spins up a local VM using QEMU or Lume, destroyed on exit.
 
 ```python
 from cua_sandbox import Sandbox, Image
-from cua_sandbox.runtime import QEMURuntime
 
-async with Sandbox.ephemeral(Image.linux(), local=True, runtime=QEMURuntime()) as sb:
+async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
     await sb.shell.run("uname -a")
 ```
 

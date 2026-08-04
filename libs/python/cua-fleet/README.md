@@ -1,16 +1,14 @@
 # cua-fleet
 
-Cua Fleet facade for the [Cua Cloud](https://run.cua.ai) Python SDK.
+Python distribution for the native [Cua Fleet](https://run.cua.ai) SDK.
 
 ```bash
 pip install cua-fleet
 ```
 
 ```python
-from cua_fleet import TrainClient
-
-client = TrainClient.from_key(
-    client_id="ukey-...",
-    client_secret="...",
-)
+from fleet_sdk import CyclopsClient
 ```
+
+For higher-level sandbox lifecycle and computer-control workflows, use
+[`cua-sandbox`](../cua-sandbox/README.md) instead.

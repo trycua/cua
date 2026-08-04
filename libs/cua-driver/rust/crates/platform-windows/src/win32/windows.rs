@@ -24,8 +24,8 @@ use std::sync::Mutex;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT, TRUE};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumChildWindows, EnumWindows, GetClassNameW, GetWindowRect, GetWindowTextLengthW,
-    GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
+    EnumChildWindows, EnumWindows, GetClassNameW, GetWindow, GetWindowRect, GetWindowTextLengthW,
+    GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, GW_OWNER,
 };
 
 #[derive(Debug, Clone)]
@@ -89,9 +89,127 @@ pub fn list_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
 /// the UIA union keeps an unrelated unresponsive provider from blocking that
 /// ownership check.
 pub(crate) fn find_window_by_pid_and_handle(pid: u32, hwnd: u64) -> Option<WindowInfo> {
-    list_windows_via_win32(Some(pid))
-        .into_iter()
-        .find(|window| window.hwnd == hwnd)
+    exact_window_from_probe(pid, hwnd, window_info_by_handle)
+}
+
+fn exact_window_from_probe(
+    pid: u32,
+    hwnd: u64,
+    probe: impl FnOnce(u64) -> Option<WindowInfo>,
+) -> Option<WindowInfo> {
+    probe(hwnd).filter(|window| window.pid == pid && window.hwnd == hwnd)
+}
+
+/// Return the native owner of one exact HWND without enumerating Win32 or UIA.
+pub(crate) fn window_owner_pid(hwnd: u64) -> Option<u32> {
+    let hwnd = HWND(hwnd as *mut _);
+    if hwnd.0.is_null() || !unsafe { IsWindow(hwnd) }.as_bool() {
+        return None;
+    }
+    let mut pid = 0;
+    let thread_id = unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+    (thread_id != 0 && pid != 0).then_some(pid)
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PostActionForegroundRelation {
+    exact_match: bool,
+    target_live: bool,
+    actual_live: bool,
+    actual_visible: bool,
+    same_pid: bool,
+    ownership_reaches_target: bool,
+}
+
+fn post_action_foreground_allowed(relation: PostActionForegroundRelation) -> bool {
+    relation.target_live
+        && relation.actual_live
+        && relation.actual_visible
+        && relation.same_pid
+        && (relation.exact_match || relation.ownership_reaches_target)
+}
+
+fn owner_chain_reaches_target(
+    target: u64,
+    actual: u64,
+    mut owner_of: impl FnMut(u64) -> Option<u64>,
+) -> bool {
+    let mut current = actual;
+    for _ in 0..64 {
+        let Some(owner) = owner_of(current) else {
+            return false;
+        };
+        if owner == target {
+            return true;
+        }
+        if owner == current || owner == actual {
+            return false;
+        }
+        current = owner;
+    }
+    false
+}
+
+/// Verify the foreground after an exact-target pointer action.
+///
+/// The requested HWND must become foreground before input is sent. The action
+/// may then legitimately open a same-process owned popup or modal, so the
+/// post-action check accepts that transient only when it is still a live,
+/// visible HWND and its complete `GW_OWNER` chain reaches the exact target.
+/// Unrelated same-process siblings and foreign foreground windows fail closed.
+pub(crate) fn post_action_foreground_matches(target: u64, actual: u64) -> bool {
+    let target_pid = window_owner_pid(target);
+    let actual_pid = window_owner_pid(actual);
+    let actual_hwnd = HWND(actual as *mut _);
+    let actual_visible = actual_pid.is_some() && unsafe { IsWindowVisible(actual_hwnd) }.as_bool();
+    let ownership_reaches_target = target != actual
+        && owner_chain_reaches_target(target, actual, |hwnd| {
+            let owner = unsafe { GetWindow(HWND(hwnd as *mut _), GW_OWNER) }
+                .ok()
+                .unwrap_or_default();
+            (!owner.0.is_null()).then_some(owner.0 as usize as u64)
+        });
+
+    post_action_foreground_allowed(PostActionForegroundRelation {
+        exact_match: target == actual,
+        target_live: target_pid.is_some(),
+        actual_live: actual_pid.is_some(),
+        actual_visible,
+        same_pid: target_pid.is_some() && target_pid == actual_pid,
+        ownership_reaches_target,
+    })
+}
+
+fn window_info_by_handle(hwnd: u64) -> Option<WindowInfo> {
+    let native = HWND(hwnd as *mut _);
+    let pid = window_owner_pid(hwnd)?;
+    if !unsafe { IsWindowVisible(native) }.as_bool() {
+        return None;
+    }
+    let title_len = unsafe { GetWindowTextLengthW(native) };
+    if title_len == 0 {
+        return None;
+    }
+    let mut buf = vec![0u16; (title_len + 1) as usize];
+    unsafe { GetWindowTextW(native, &mut buf) };
+    let title_len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    let title = String::from_utf16_lossy(&buf[..title_len]);
+    if title.trim().is_empty() {
+        return None;
+    }
+    let minimized = unsafe { IsIconic(native) }.as_bool();
+    let (x, y, width, height) = get_window_bounds(native);
+    Some(WindowInfo {
+        hwnd,
+        pid,
+        title,
+        x,
+        y,
+        width,
+        height,
+        is_on_screen: !minimized,
+        minimized,
+    })
 }
 
 pub(crate) fn list_windows_via_win32(filter_pid: Option<u32>) -> Vec<WindowInfo> {
@@ -183,6 +301,106 @@ fn get_window_bounds(hwnd: HWND) -> (i32, i32, i32, i32) {
             rect.right - rect.left,
             rect.bottom - rect.top,
         )
+    }
+}
+
+#[cfg(test)]
+mod exact_window_tests {
+    use super::{
+        exact_window_from_probe, owner_chain_reaches_target, post_action_foreground_allowed,
+        PostActionForegroundRelation, WindowInfo,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn window(pid: u32, hwnd: u64) -> WindowInfo {
+        WindowInfo {
+            hwnd,
+            pid,
+            title: "Exact target".into(),
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 100,
+            is_on_screen: true,
+            minimized: false,
+        }
+    }
+
+    #[test]
+    fn exact_lookup_probes_only_the_requested_native_handle() {
+        let calls = AtomicUsize::new(0);
+        let found = exact_window_from_probe(42, 0x1234, |hwnd| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(hwnd, 0x1234);
+            Some(window(42, hwnd))
+        });
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(found.map(|window| window.hwnd), Some(0x1234));
+    }
+
+    #[test]
+    fn exact_lookup_rejects_wrong_pid_or_handle() {
+        assert!(exact_window_from_probe(42, 7, |_| Some(window(43, 7))).is_none());
+        assert!(exact_window_from_probe(42, 7, |_| Some(window(42, 8))).is_none());
+    }
+
+    fn relation(
+        exact_match: bool,
+        same_pid: bool,
+        ownership_reaches_target: bool,
+    ) -> PostActionForegroundRelation {
+        PostActionForegroundRelation {
+            exact_match,
+            target_live: true,
+            actual_live: true,
+            actual_visible: true,
+            same_pid,
+            ownership_reaches_target,
+        }
+    }
+
+    #[test]
+    fn exact_or_owned_modal_foreground_is_allowed() {
+        assert!(post_action_foreground_allowed(relation(true, true, false)));
+        assert!(post_action_foreground_allowed(relation(false, true, true)));
+    }
+
+    #[test]
+    fn nested_owned_popup_chain_reaches_exact_target() {
+        let owners = [(30, 20), (20, 10)];
+        assert!(owner_chain_reaches_target(10, 30, |hwnd| {
+            owners
+                .iter()
+                .find_map(|(child, owner)| (*child == hwnd).then_some(*owner))
+        }));
+    }
+
+    #[test]
+    fn unrelated_same_pid_sibling_and_foreign_foreground_are_denied() {
+        assert!(!post_action_foreground_allowed(relation(
+            false, true, false
+        )));
+        assert!(!post_action_foreground_allowed(relation(
+            false, false, true
+        )));
+        assert!(!owner_chain_reaches_target(10, 30, |hwnd| {
+            (hwnd == 30).then_some(40)
+        }));
+    }
+
+    #[test]
+    fn stale_invisible_or_cyclic_foreground_is_denied() {
+        let mut stale = relation(false, true, true);
+        stale.target_live = false;
+        assert!(!post_action_foreground_allowed(stale));
+        stale.target_live = true;
+        stale.actual_live = false;
+        assert!(!post_action_foreground_allowed(stale));
+        stale.actual_live = true;
+        stale.actual_visible = false;
+        assert!(!post_action_foreground_allowed(stale));
+        assert!(!owner_chain_reaches_target(10, 30, |_| Some(30)));
     }
 }
 

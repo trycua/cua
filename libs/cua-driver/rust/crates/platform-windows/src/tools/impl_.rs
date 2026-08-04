@@ -274,17 +274,116 @@ fn pid_window_target_candidates(pid: i64) -> Vec<WindowTargetCandidate> {
     let Ok(pid) = u32::try_from(pid) else {
         return Vec::new();
     };
-    window_target_candidates_for_pid(crate::win32::list_windows(Some(pid)), pid)
+    window_target_candidates_for_pid(crate::win32::list_windows_via_win32(Some(pid)), pid)
+}
+
+struct ExactPidWindowTargetGuard {
+    inner: Box<dyn Tool>,
+}
+
+fn exact_window_ownership_result(
+    pid: u32,
+    window_id: u64,
+    owner_pid: Option<u32>,
+) -> Result<(), ToolResult> {
+    match owner_pid {
+        Some(owner_pid) if owner_pid == pid => Ok(()),
+        Some(owner_pid) => Err(ToolResult::error(format!(
+            "window_id {window_id} belongs to pid {owner_pid}, not pid {pid}."
+        ))
+        .with_structured(json!({
+            "code": "window_target_mismatch",
+            "effect": "refused",
+            "pid": pid,
+            "window_id": window_id,
+            "owner_pid": owner_pid,
+        }))),
+        None => Err(ToolResult::error(format!(
+            "window_id {window_id} is closed, stale, or invalid."
+        ))
+        .with_structured(json!({
+            "code": "window_target_not_found",
+            "effect": "refused",
+            "pid": pid,
+            "window_id": window_id,
+        }))),
+    }
+}
+
+#[async_trait]
+impl Tool for ExactPidWindowTargetGuard {
+    fn def(&self) -> &ToolDef {
+        self.inner.def()
+    }
+
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> cua_driver_core::tool::ProtectedResourceOwnership {
+        self.inner
+            .protected_resource_ownership(adapter_id, args)
+            .await
+    }
+
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        self.inner.protected_resource_scope(adapter_id, args).await
+    }
+
+    async fn validate_protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+        approved_scope: &Value,
+    ) -> Result<(), String> {
+        self.inner
+            .validate_protected_resource_scope(adapter_id, args, approved_scope)
+            .await
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        if args.get("scope").and_then(Value::as_str) != Some("desktop") {
+            if let (Some(pid), Some(window_id)) = (
+                args.get("pid").and_then(Value::as_u64),
+                args.get("window_id").and_then(Value::as_u64),
+            ) {
+                let Ok(pid) = u32::try_from(pid) else {
+                    return ToolResult::error("pid is outside the Windows process-id range.")
+                        .with_structured(json!({
+                            "code": "window_target_mismatch",
+                            "effect": "refused",
+                            "pid": pid,
+                            "window_id": window_id,
+                        }));
+                };
+                let owner_pid =
+                    tokio::task::spawn_blocking(move || crate::win32::window_owner_pid(window_id))
+                        .await
+                        .ok()
+                        .flatten();
+                if let Err(result) = exact_window_ownership_result(pid, window_id, owner_pid) {
+                    return result;
+                }
+            }
+        }
+        self.inner.invoke(args).await
+    }
 }
 
 fn pid_window_guarded<T: Tool + 'static>(
     tool: T,
     candidates: &WindowTargetCandidates,
 ) -> Box<dyn Tool> {
-    Box::new(PidOnlyWindowTargetGuard::new(
-        Box::new(tool),
-        candidates.clone(),
-    ))
+    Box::new(ExactPidWindowTargetGuard {
+        inner: Box::new(PidOnlyWindowTargetGuard::new(
+            Box::new(tool),
+            candidates.clone(),
+        )),
+    })
 }
 
 /// The cursor key for an anonymous (cursor-less) call. A run opts into a cursor
@@ -857,7 +956,7 @@ fn z_index_from_front_to_back(total: usize, position: usize) -> usize {
 
 #[cfg(test)]
 mod list_windows_z_index_tests {
-    use super::z_index_from_front_to_back;
+    use super::{exact_window_ownership_result, z_index_from_front_to_back};
 
     #[test]
     fn enum_windows_front_to_back_order_normalizes_to_higher_is_frontmost() {
@@ -866,6 +965,25 @@ mod list_windows_z_index_tests {
             .collect();
         assert_eq!(indices, vec![2, 1, 0]);
         assert!(indices[0] > indices[2]);
+    }
+
+    #[test]
+    fn explicit_pid_hwnd_guard_refuses_wrong_or_stale_owners() {
+        assert!(exact_window_ownership_result(42, 7, Some(42)).is_ok());
+
+        let wrong = exact_window_ownership_result(42, 7, Some(99)).unwrap_err();
+        assert_eq!(wrong.is_error, Some(true));
+        assert_eq!(
+            wrong.structured_content.as_ref().unwrap()["code"],
+            "window_target_mismatch"
+        );
+        assert_eq!(wrong.structured_content.as_ref().unwrap()["owner_pid"], 99);
+
+        let stale = exact_window_ownership_result(42, 7, None).unwrap_err();
+        assert_eq!(
+            stale.structured_content.as_ref().unwrap()["code"],
+            "window_target_not_found"
+        );
     }
 }
 
@@ -2843,10 +2961,11 @@ impl Tool for ClickTool {
         let hwnd = match hwnd_opt {
             Some(h) => h,
             None => {
-                let windows =
-                    tokio::task::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
-                        .await
-                        .unwrap_or_default();
+                let windows = tokio::task::spawn_blocking(move || {
+                    crate::win32::list_windows_via_win32(Some(pid))
+                })
+                .await
+                .unwrap_or_default();
                 match windows.first() {
                     Some(w) => w.hwnd,
                     None => {
@@ -8558,10 +8677,8 @@ impl Tool for BringToFrontTool {
                     format!("✅ bring_to_front: pid {pid} hwnd 0x{hwnd:x} is now foreground (was 0x{prev:x}).")
                 } else if raised {
                     format!(
-                        "✅ bring_to_front: pid {pid} hwnd 0x{hwnd:x} raised to the visible front \
-                         (z-order, no focus steal), but the foreground-lock denied keyboard focus — \
-                         focus is still 0x{now:x}. A delivery_mode:\"foreground\" pointer click will \
-                         land; for keyboard focus run the cua-driver-uia worker."
+                        "bring_to_front: exact target hwnd 0x{hwnd:x} was raised in z-order, but \
+                         Windows kept foreground on hwnd 0x{now:x}; foreground activation failed."
                     )
                 } else {
                     format!(
@@ -8569,19 +8686,35 @@ impl Tool for BringToFrontTool {
                          foreground 0x{now:x})."
                     )
                 };
-                let r = if focused || raised {
-                    ToolResult::text(msg)
+                let structured = if focused {
+                    json!({
+                        "previous_fg_hwnd": format!("0x{prev:x}"),
+                        "now_fg_hwnd": format!("0x{now:x}"),
+                        "target_hwnd": format!("0x{hwnd:x}"),
+                        "landed_on_target": true,
+                        "raised": raised,
+                        "restored": restored,
+                    })
                 } else {
-                    ToolResult::error(msg)
+                    json!({
+                        "code": "foreground_unavailable",
+                        "effect": "refused",
+                        "pid": pid,
+                        "window_id": hwnd,
+                        "actual_foreground_window_id": now,
+                        "previous_fg_hwnd": format!("0x{prev:x}"),
+                        "now_fg_hwnd": format!("0x{now:x}"),
+                        "target_hwnd": format!("0x{hwnd:x}"),
+                        "landed_on_target": false,
+                        "raised": raised,
+                        "restored": restored,
+                    })
                 };
-                r.with_structured(json!({
-                    "previous_fg_hwnd": format!("0x{prev:x}"),
-                    "now_fg_hwnd":      format!("0x{now:x}"),
-                    "target_hwnd":      format!("0x{hwnd:x}"),
-                    "landed_on_target": focused,
-                    "raised":           raised,
-                    "restored":         restored,
-                }))
+                if focused {
+                    ToolResult::text(msg).with_structured(structured)
+                } else {
+                    ToolResult::error(msg).with_structured(structured)
+                }
             }
             Ok(Err(e)) => ToolResult::error(format!("bring_to_front: {e}")),
             Err(join) => {

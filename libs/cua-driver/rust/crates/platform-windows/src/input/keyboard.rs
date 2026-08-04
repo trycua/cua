@@ -478,7 +478,7 @@ pub fn send_key_synthesized(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<
         if actual_fg != target {
             // Don't restore — prev_fg is presumably still foreground anyway.
             bail!(
-                "Foreground swap to target HWND {:?} was rejected by Windows \
+                "foreground_unavailable: foreground swap to exact target HWND {:?} was rejected by Windows \
                  (actual foreground is HWND {:?}). This daemon is not at \
                  UIAccess integrity, so SetForegroundWindow is subject to the \
                  foreground-lock and the swap silently fails. Without the \
@@ -586,7 +586,7 @@ pub fn send_text_synthesized(hwnd: u64, text: &str) -> Result<()> {
         let actual_fg = GetForegroundWindow();
         if actual_fg != target {
             bail!(
-                "Foreground swap to target HWND {:?} was rejected by Windows \
+                "foreground_unavailable: foreground swap to exact target HWND {:?} was rejected by Windows \
                  (actual foreground is HWND {:?}). This daemon is not at \
                  UIAccess integrity, so SetForegroundWindow is subject to the \
                  foreground-lock and the swap silently fails. Without the swap, \

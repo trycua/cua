@@ -22,9 +22,11 @@ use super::bindings::{enable_chromium_accessibility, AXUIElementRef};
 /// lifetime.
 const CHROMIUM_SETTLE_SECONDS: f64 = 0.5;
 
+type ProcessStartStamp = (u64, u64);
+
 /// Kernel start time of a process: `(pbi_start_tvsec, pbi_start_tvusec)`.
 /// `None` when the process is gone or proc info is unreadable.
-fn process_start_stamp(pid: i32) -> Option<(u64, u64)> {
+fn process_start_stamp(pid: i32) -> Option<ProcessStartStamp> {
     // SAFETY: proc_pidinfo writes at most `size` bytes into `info` and returns
     // the number of bytes filled (<= size) or <= 0 on failure.
     unsafe {
@@ -46,9 +48,16 @@ fn process_start_stamp(pid: i32) -> Option<(u64, u64)> {
 
 /// Process lifetimes for which enablement has already run and the settle has
 /// been paid. Values are the process start stamp observed at enablement time.
-fn enabled_processes() -> &'static Mutex<HashMap<i32, Option<(u64, u64)>>> {
-    static ENABLED: OnceLock<Mutex<HashMap<i32, Option<(u64, u64)>>>> = OnceLock::new();
+fn enabled_processes() -> &'static Mutex<HashMap<i32, Option<ProcessStartStamp>>> {
+    static ENABLED: OnceLock<Mutex<HashMap<i32, Option<ProcessStartStamp>>>> = OnceLock::new();
     ENABLED.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cached_lifetime_is_current(
+    cached: Option<&Option<ProcessStartStamp>>,
+    observed: Option<ProcessStartStamp>,
+) -> bool {
+    cached.is_some_and(|cached| cached.is_some() && *cached == observed)
 }
 
 /// Flip Chromium/Electron accessibility on for `pid`'s application element and
@@ -62,13 +71,7 @@ pub unsafe fn ensure_chromium_ax_enabled(pid: i32, app_element: AXUIElementRef) 
     let stamp = process_start_stamp(pid);
     let already_enabled = enabled_processes()
         .lock()
-        .map(|cache| {
-            cache
-                .get(&pid)
-                // An unreadable stamp on either side is not lifetime proof;
-                // treat it as a different process and re-enable (harmless).
-                .is_some_and(|cached| cached.is_some() && *cached == stamp)
-        })
+        .map(|cache| cached_lifetime_is_current(cache.get(&pid), stamp))
         .unwrap_or(false);
     if already_enabled {
         return;
@@ -108,5 +111,23 @@ mod tests {
                 "cache keys must differ across processes"
             );
         }
+    }
+
+    #[test]
+    fn cache_hit_requires_the_same_readable_process_lifetime() {
+        let first_launch = Some((100, 10));
+        let relaunched = Some((101, 20));
+
+        assert!(cached_lifetime_is_current(
+            Some(&first_launch),
+            first_launch
+        ));
+        assert!(
+            !cached_lifetime_is_current(Some(&first_launch), relaunched),
+            "a relaunched process must not inherit the prior enablement cache entry"
+        );
+        assert!(!cached_lifetime_is_current(Some(&first_launch), None));
+        assert!(!cached_lifetime_is_current(Some(&None), first_launch));
+        assert!(!cached_lifetime_is_current(None, first_launch));
     }
 }

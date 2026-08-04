@@ -107,6 +107,9 @@ mod pid_window_target_tests {
     }
 }
 
+#[cfg(test)]
+mod background_input_regression_tests;
+
 fn pid_window_guarded<T: Tool + 'static>(
     tool: T,
     candidates: &WindowTargetCandidates,

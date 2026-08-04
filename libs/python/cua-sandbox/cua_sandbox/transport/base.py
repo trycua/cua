@@ -73,6 +73,7 @@ class Transport(ABC):
         method: str,
         path: str,
         json_body: Any = None,
+        headers: Any = None,
     ) -> Any:
         """Request an auxiliary named service exposed by this sandbox."""
         raise NotImplementedError(f"{type(self).__name__} does not support named service requests.")

@@ -52,10 +52,13 @@ class FleetTransport(Transport):
         method: str,
         path: str,
         json_body: Any = None,
+        headers: dict[str, str] | None = None,
     ) -> httpx.Response:
         if name not in self._bound.services:
             raise ValueError(f"Fleet sandbox does not expose service {name!r}")
-        return await self._request(method, path, json_body=json_body, service_name=name)
+        return await self._request(
+            method, path, json_body=json_body, service_name=name, extra_headers=headers
+        )
 
     async def _request(
         self,
@@ -64,12 +67,15 @@ class FleetTransport(Transport):
         *,
         json_body: Any = None,
         service_name: str | None = None,
+        extra_headers: dict[str, str] | None = None,
     ) -> httpx.Response:
         assert self._connected, "Transport not connected"
         body = None if json_body is None else json.dumps(json_body).encode()
         headers = (
             [] if body is None else [HttpHeader(name="content-type", value="application/json")]
         )
+        for name, value in (extra_headers or {}).items():
+            headers.append(HttpHeader(name=name, value=value))
         result = await self._sdk.service_request(
             self._bound,
             service_name or self._service_name,

@@ -1,4 +1,4 @@
-"""Fleet pool API for reusable cloud sandboxes."""
+"""Fleet template and pool APIs for reusable cloud sandboxes."""
 
 from __future__ import annotations
 
@@ -14,18 +14,64 @@ from fleet_sdk import (
     ClaimSpec,
     CreateClaimRequest,
     CreatePoolRequest,
+    CreateTemplateRequest,
 )
 
 logger = logging.getLogger(__name__)
+
+
+class Template:
+    """A reconciled Fleet sandbox template.
+
+    A template holds the VM shape — image, resources, firmware, exposed
+    services — that warm pools and claims reference by name through
+    ``spec.sandboxTemplateRef``. Reconcile a template before reconciling a
+    pool that points at it.
+
+    Template instances retain only Fleet resource metadata; each call opens
+    and closes its own Fleet client.
+    """
+
+    def __init__(self, resource: Any) -> None:
+        self._resource = resource
+
+    @property
+    def name(self) -> str:
+        """The template name."""
+        return cast(str, self._resource.metadata.name)
+
+    @property
+    def resource(self) -> Any:
+        """The underlying Fleet SDK template resource."""
+        return self._resource
+
+    @classmethod
+    async def reconcile(cls, request: CreateTemplateRequest) -> "Template":
+        """Create or update a Fleet sandbox template from a native request.
+
+        The request is passed unchanged to the generated Fleet client. Import
+        ``CreateTemplateRequest`` and its nested schema types from
+        ``cua_sandbox`` so callers do not depend on the generated binding
+        package directly.
+        """
+        if not isinstance(request, CreateTemplateRequest):
+            raise TypeError("Template.reconcile requires a CreateTemplateRequest")
+        client = _FleetClient()
+        try:
+            return cls(await client.reconcile_template(request))
+        finally:
+            await client.close()
 
 
 class Pool:
     """A reconciled Fleet pool that can lease cloud sandboxes.
 
     ``reconcile`` creates a pool when it is absent and updates its desired
-    configuration when it already exists. The supplied ``image`` must be an
-    :meth:`Image.from_registry` image; Fleet does not support locally-built
-    images, layers, snapshots, or custom disks.
+    configuration when it already exists. A pool carries no VM shape of its
+    own: it names a :class:`Template` through ``spec.sandboxTemplateRef``, so
+    reconcile that template first. Fleet templates require an
+    :meth:`Image.from_registry` image; locally-built images, layers,
+    snapshots, and custom disks are not supported.
 
     Pool instances retain only Fleet resource metadata. Each call to
     :meth:`claim` creates and closes its own Fleet client, so a Pool may be

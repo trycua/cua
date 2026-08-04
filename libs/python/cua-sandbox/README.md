@@ -92,17 +92,62 @@ Fleet is the OAuth cloud backend. Configure OAuth credentials once; Fleet uses `
 
 Fleet does not support snapshots or custom disks, and currently supports only `us-east-1`. `await sb.tunnel.forward(3000)` returns the authenticated Fleet service URL for an exposed port; it does not open a local SSH tunnel.
 
-## Fleet pools
+## Fleet templates and pools
 
-Use a pool to keep reusable registry-image sandboxes warm. Reconciliation is idempotent: it creates a missing pool or updates the existing pool with the same name. Each claim is released when the context exits, including when the block raises.
+Use a pool to keep reusable registry-image sandboxes warm. The VM shape — image, resources, exposed services — lives in a *template*; a pool only says how many replicas to keep warm and which template to use. Reconcile the template first, then the pool that references it. Reconciliation is idempotent for both: it creates the missing resource or updates the existing one with the same name. Each claim is released when the context exits, including when the block raises.
 
 ```python
-from cua_sandbox import Image, Pool
+from cua_sandbox import (
+    CreatePoolRequest,
+    CreateTemplateRequest,
+    OsGymSandboxTemplateSpec,
+    OsGymSandboxWarmPoolSpec,
+    Pool,
+    SandboxService,
+    SandboxTemplateRef,
+    ServiceProtocol,
+    Template,
+    VmTemplate,
+)
 
-pool = await Pool.reconcile({
-    "name": "foo",
-    "image": Image.from_registry("registry.example/workspace:latest"),
-})
+await Template.reconcile(
+    CreateTemplateRequest(
+        namespace="foo",
+        name="workspace",
+        spec=OsGymSandboxTemplateSpec(
+            vm_template=VmTemplate(
+                container_disk_image="registry.example/workspace:latest",
+                command=None,
+                runtime=None,
+                runtime_class_name=None,
+                node_selector=None,
+                tolerations=None,
+                image_pull_policy=None,
+                image_pull_secret="ecr-credentials",
+                cpu_cores=4,
+                memory="8Gi",
+                firmware=None,
+                probes=None,
+                services=[
+                    SandboxService(name="server", target_port=8000, protocol=ServiceProtocol.TCP),
+                    SandboxService(name="mcp", target_port=3000, protocol=ServiceProtocol.TCP),
+                ],
+                oidc=None,
+            ),
+        ),
+    )
+)
+
+pool = await Pool.reconcile(
+    CreatePoolRequest(
+        namespace="foo",
+        spec=OsGymSandboxWarmPoolSpec(
+            replicas=1,
+            sandbox_template_ref=SandboxTemplateRef(name="workspace"),
+            autoscaling=None,
+        ),
+    )
+)
 
 async with pool.claim() as sb:
     result = await sb.shell.run("echo hello")
@@ -117,10 +162,10 @@ async with pool.claim() as sb:
 For scripts that use the synchronous facade:
 
 ```python
-from cua_sandbox import Image
-from cua_sandbox.sync import Pool
+from cua_sandbox.sync import Pool, Template
 
-pool = Pool.reconcile({"name": "foo", "image": Image.from_registry("example:latest")})
+Template.reconcile(template_request)  # same CreateTemplateRequest as above
+pool = Pool.reconcile(pool_request)  # same CreatePoolRequest as above
 with pool.claim() as sb:
     result = sb.shell.run("echo hello")
 ```

@@ -226,6 +226,17 @@ cua-driver revoke --all
 `revoke --all` suspends the complete runtime generation. Restart the daemon
 before starting a new bounded run.
 
+## Know what the manifest is worth
+
+A manifest bounds one runtime's tool surface. It is not a sandbox around your
+machine, your browser, or your logged-in accounts. Another Cua Driver runtime,
+or any other process running as the same user, is unaffected by it — including
+a standard-mode runtime, which allows input against every application.
+
+Read [Permission modes](/reference/cua-driver/permission-modes#origin-scope-excludes-generic-input)
+before relying on a manifest as a security boundary rather than as a reviewed
+statement of what one agent run may do.
+
 ## Rules to remember
 
 - The manifest only narrows the built-in and configured policy ceilings.

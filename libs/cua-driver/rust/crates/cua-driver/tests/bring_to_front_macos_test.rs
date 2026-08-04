@@ -10,6 +10,7 @@
 
 #![cfg(target_os = "macos")]
 
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -26,9 +27,6 @@ use cua_driver_testkit::{harness_app, Driver, McpDriver};
 
 const MAIN_TITLE: &str = "CuaTestHarness AppKit";
 const SECONDARY_TITLE: &str = "CuaTestHarness AppKit Secondary";
-const SHEET_TITLE: &str = "CuaTestHarness AppKit Sheet";
-const FLOATING_TITLE: &str = "CuaTestHarness AppKit Floating";
-
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
     fn CGWindowListCopyWindowInfo(option: u32, relative_to_window: u32) -> CFArrayRef;
@@ -38,8 +36,12 @@ extern "C" {
 struct OracleWindow {
     id: u32,
     pid: u32,
-    title: String,
     layer: i32,
+}
+
+struct Fixture {
+    pid: u32,
+    report: tempfile::NamedTempFile,
 }
 
 fn harness_exe() -> std::path::PathBuf {
@@ -51,34 +53,45 @@ fn harness_exe() -> std::path::PathBuf {
         .join("Contents/MacOS/CuaTestHarness.AppKit")
 }
 
-fn launch(driver: &mut McpDriver, mode: Option<&str>) -> u32 {
+fn launch(driver: &mut McpDriver, mode: Option<&str>) -> Fixture {
     let exe = harness_exe();
     assert!(exe.exists(), "required AppKit harness missing at {exe:?}");
+    let report = tempfile::NamedTempFile::new().expect("create AppKit window report");
     let mut command = Command::new(exe);
     command.stdout(Stdio::null()).stderr(Stdio::null());
+    command.env("CUA_HARNESS_WINDOW_REPORT", report.path());
     if let Some(mode) = mode {
         command.env("CUA_HARNESS_BRING_TO_FRONT_MODE", mode);
     }
     let child = cua_driver_testkit::spawn_in_job(&mut command).expect("launch AppKit harness");
     let pid = child.id();
     driver.reaper().push(child);
-    pid
+    Fixture { pid, report }
 }
 
-fn wait_for_windows(pid: u32, titles: &[&str]) -> Vec<OracleWindow> {
+fn wait_for_window_ids(fixture: &Fixture, names: &[&str]) -> HashMap<String, u32> {
     let deadline = Instant::now() + Duration::from_secs(12);
     loop {
+        let report = std::fs::read_to_string(fixture.report.path()).unwrap_or_default();
+        let ids: HashMap<String, u32> = report
+            .lines()
+            .filter_map(|line| line.split_once('='))
+            .filter_map(|(name, id)| id.parse().ok().map(|id| (name.to_owned(), id)))
+            .collect();
         let windows = cg_windows();
-        if titles.iter().all(|title| {
-            windows
-                .iter()
-                .any(|window| window.pid == pid && window.title == *title)
+        if names.iter().all(|name| {
+            ids.get(*name).is_some_and(|id| {
+                windows
+                    .iter()
+                    .any(|window| window.pid == fixture.pid && window.id == *id)
+            })
         }) {
-            return windows;
+            return ids;
         }
         assert!(
             Instant::now() < deadline,
-            "windows {titles:?} for pid {pid} did not appear; observed={windows:?}"
+            "windows {names:?} for pid {} did not appear; report={report:?}; observed={windows:?}",
+            fixture.pid
         );
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -109,17 +122,6 @@ fn cg_windows() -> Vec<OracleWindow> {
                 })
                 .unwrap_or_default()
         };
-        let string = |key: &str| -> String {
-            let key = CFString::new(key);
-            dictionary
-                .find(key.as_concrete_TypeRef() as *const c_void)
-                .and_then(|value| unsafe {
-                    let value = *value;
-                    (CFGetTypeID(value) == CFString::type_id())
-                        .then(|| CFString::wrap_under_get_rule(value as _).to_string())
-                })
-                .unwrap_or_default()
-        };
         let on_screen = {
             let key = CFString::new("kCGWindowIsOnscreen");
             dictionary
@@ -134,7 +136,6 @@ fn cg_windows() -> Vec<OracleWindow> {
             windows.push(OracleWindow {
                 id: number("kCGWindowNumber") as u32,
                 pid: number("kCGWindowOwnerPID") as u32,
-                title: string("kCGWindowName"),
                 layer: number("kCGWindowLayer") as i32,
             });
         }
@@ -205,18 +206,14 @@ fn layer_zero_front() -> OracleWindow {
 fn exact_secondary_window_is_verified_and_prior_app_can_recover_focus() {
     let mut driver = McpDriver::spawn_macos_daemon_proxy_named("macos-bring-to-front-exact")
         .expect("start installed macOS daemon proxy");
-    let target_pid = launch(&mut driver, Some("two-windows"));
-    let target_windows = wait_for_windows(target_pid, &[MAIN_TITLE, SECONDARY_TITLE]);
-    let secondary = target_windows
-        .iter()
-        .find(|window| window.pid == target_pid && window.title == SECONDARY_TITLE)
-        .expect("secondary target")
-        .id;
-    let occluder_pid = launch(&mut driver, None);
-    wait_for_windows(occluder_pid, &[MAIN_TITLE]);
+    let target = launch(&mut driver, Some("two-windows"));
+    let target_windows = wait_for_window_ids(&target, &["main", "secondary"]);
+    let secondary = target_windows["secondary"];
+    let occluder = launch(&mut driver, None);
+    wait_for_window_ids(&occluder, &["main"]);
 
-    activate_and_raise(target_pid, MAIN_TITLE);
-    activate_and_raise(occluder_pid, MAIN_TITLE);
+    activate_and_raise(target.pid, MAIN_TITLE);
+    activate_and_raise(occluder.pid, MAIN_TITLE);
     assert_ne!(
         layer_zero_front().id,
         secondary,
@@ -225,7 +222,7 @@ fn exact_secondary_window_is_verified_and_prior_app_can_recover_focus() {
 
     let result = driver.call(
         "bring_to_front",
-        serde_json::json!({"pid": target_pid, "window_id": secondary}),
+        serde_json::json!({"pid": target.pid, "window_id": secondary}),
     );
     assert!(
         !result.is_error(),
@@ -239,11 +236,11 @@ fn exact_secondary_window_is_verified_and_prior_app_can_recover_focus() {
     assert_eq!(result.structured()["exact_window_effect"]["verified"], true);
     assert_eq!(
         frontmost_pid(),
-        target_pid,
+        target.pid,
         "independent frontmost-process oracle"
     );
     assert_eq!(
-        focused_window_title(target_pid),
+        focused_window_title(target.pid),
         SECONDARY_TITLE,
         "independent AX key-window oracle"
     );
@@ -253,16 +250,16 @@ fn exact_secondary_window_is_verified_and_prior_app_can_recover_focus() {
         "independent CGWindow z-order oracle"
     );
 
-    assert_ne!(focused_window_title(target_pid), MAIN_TITLE);
+    assert_ne!(focused_window_title(target.pid), MAIN_TITLE);
 
-    let recovered = driver.call("bring_to_front", serde_json::json!({"pid": occluder_pid}));
+    let recovered = driver.call("bring_to_front", serde_json::json!({"pid": occluder.pid}));
     assert!(
         !recovered.is_error(),
         "prior app recovery failed: {}",
         recovered.text()
     );
-    assert_eq!(frontmost_pid(), occluder_pid);
-    assert_eq!(layer_zero_front().pid, occluder_pid);
+    assert_eq!(frontmost_pid(), occluder.pid);
+    assert_eq!(layer_zero_front().pid, occluder.pid);
 }
 
 #[test]
@@ -270,16 +267,12 @@ fn exact_secondary_window_is_verified_and_prior_app_can_recover_focus() {
 fn modal_sheet_never_yields_false_parent_success() {
     let mut driver = McpDriver::spawn_macos_daemon_proxy_named("macos-bring-to-front-sheet")
         .expect("start installed macOS daemon proxy");
-    let target_pid = launch(&mut driver, Some("sheet"));
-    let windows = wait_for_windows(target_pid, &[MAIN_TITLE, SECONDARY_TITLE, SHEET_TITLE]);
-    let parent = windows
-        .iter()
-        .find(|window| window.pid == target_pid && window.title == MAIN_TITLE)
-        .expect("sheet parent")
-        .id;
+    let target = launch(&mut driver, Some("sheet"));
+    let windows = wait_for_window_ids(&target, &["main", "secondary", "sheet"]);
+    let parent = windows["main"];
     let result = driver.call(
         "bring_to_front",
-        serde_json::json!({"pid": target_pid, "window_id": parent}),
+        serde_json::json!({"pid": target.pid, "window_id": parent}),
     );
     assert!(
         result.is_error(),
@@ -287,7 +280,7 @@ fn modal_sheet_never_yields_false_parent_success() {
         result.raw
     );
     assert_eq!(result.structured()["activated"], false);
-    assert_ne!(focused_window_title(target_pid), MAIN_TITLE);
+    assert_ne!(focused_window_title(target.pid), MAIN_TITLE);
 }
 
 #[test]
@@ -295,23 +288,24 @@ fn modal_sheet_never_yields_false_parent_success() {
 fn floating_panel_is_typed_nonordinary_without_focus_theft() {
     let mut driver = McpDriver::spawn_macos_daemon_proxy_named("macos-bring-to-front-floating")
         .expect("start installed macOS daemon proxy");
-    let target_pid = launch(&mut driver, Some("floating"));
-    let windows = wait_for_windows(target_pid, &[MAIN_TITLE, SECONDARY_TITLE, FLOATING_TITLE]);
-    let floating = windows
-        .iter()
-        .find(|window| window.pid == target_pid && window.title == FLOATING_TITLE)
-        .expect("floating panel");
+    let target = launch(&mut driver, Some("floating"));
+    let windows = wait_for_window_ids(&target, &["main", "secondary", "floating"]);
+    let floating_id = windows["floating"];
+    let floating = cg_windows()
+        .into_iter()
+        .find(|window| window.pid == target.pid && window.id == floating_id)
+        .expect("floating panel in CoreGraphics oracle");
     assert_ne!(
         floating.layer, 0,
         "fixture floating panel unexpectedly ordinary"
     );
-    let occluder_pid = launch(&mut driver, None);
-    wait_for_windows(occluder_pid, &[MAIN_TITLE]);
-    activate_and_raise(occluder_pid, MAIN_TITLE);
+    let occluder = launch(&mut driver, None);
+    wait_for_window_ids(&occluder, &["main"]);
+    activate_and_raise(occluder.pid, MAIN_TITLE);
 
     let result = driver.call(
         "bring_to_front",
-        serde_json::json!({"pid": target_pid, "window_id": floating.id}),
+        serde_json::json!({"pid": target.pid, "window_id": floating.id}),
     );
     assert!(
         result.is_error(),
@@ -325,7 +319,7 @@ fn floating_panel_is_typed_nonordinary_without_focus_theft() {
     assert_eq!(result.structured()["request_accepted"], false);
     assert_eq!(
         frontmost_pid(),
-        occluder_pid,
+        occluder.pid,
         "validation stole focus before refusing"
     );
 }

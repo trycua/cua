@@ -541,6 +541,31 @@ final class BringToFrontMatrixWindows {
     }
 }
 
+func writeBringToFrontWindowReport(
+    main: NSWindow,
+    matrix: BringToFrontMatrixWindows?
+) {
+    guard let path = ProcessInfo.processInfo.environment["CUA_HARNESS_WINDOW_REPORT"] else {
+        return
+    }
+    var lines = ["main=\(main.windowNumber)"]
+    if let matrix {
+        lines.append("secondary=\(matrix.secondary.windowNumber)")
+        if let sheet = matrix.sheet {
+            lines.append("sheet=\(sheet.windowNumber)")
+        }
+        if let floating = matrix.floating {
+            lines.append("floating=\(floating.windowNumber)")
+        }
+    }
+    do {
+        try (lines.joined(separator: "\n") + "\n").write(
+            toFile: path, atomically: true, encoding: .utf8)
+    } catch {
+        fputs("failed to write window report: \(error)\n", stderr)
+    }
+}
+
 // MARK: - Menu bar (Mac-specific scenario: ns_menubar)
 
 func installMenuBar(target: HarnessWindowController) {
@@ -592,6 +617,7 @@ struct CuaAppKitHarness {
             matrixWindows = BringToFrontMatrixWindows(parent: controller.window, mode: mode)
         }
         app.activate(ignoringOtherApps: true)
+        writeBringToFrontWindowReport(main: controller.window, matrix: matrixWindows)
         app.run()
         _ = matrixWindows
     }

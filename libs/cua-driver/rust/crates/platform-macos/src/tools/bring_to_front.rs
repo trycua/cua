@@ -177,6 +177,25 @@ fn raise_exact_ax_window(pid: i32, window_id: u32) -> bool {
     }
 }
 
+/// Ask the target application's accessibility object to become frontmost.
+///
+/// `NSRunningApplication::activateWithOptions` is only a request receipt and
+/// can leave `NSWorkspace.frontmostApplication` unchanged even after SkyLight
+/// and the window AX object have made the exact window key and first in layer-0
+/// order. `AXFrontmost` is the permission-backed equivalent of System Events'
+/// `set frontmost to true`; the independent postcondition remains authoritative.
+fn activate_ax_application(pid: i32) -> bool {
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return false;
+        }
+        let activated = set_bool_attr_true(app, "AXFrontmost") == 0;
+        CFRelease(app as CFTypeRef);
+        activated
+    }
+}
+
 fn exact_result(
     pid: i32,
     window_id: u32,
@@ -328,24 +347,35 @@ impl Tool for BringToFrontTool {
 
             let skylight_accepted = crate::input::skylight::make_exact_window_key(pid, window_id);
             // SkyLight can make the exact window key and first in layer-0 order
-            // without updating NSWorkspace's frontmost application. Always pair
-            // it with public process activation, then re-assert only the exact AX
-            // window below so success proves all three postconditions.
+            // without updating NSWorkspace's frontmost application. Pair its
+            // request with both public Cocoa activation and permission-backed
+            // AXFrontmost, then re-assert only the exact AX window below so
+            // success proves all three postconditions.
             let cocoa_accepted = unsafe {
                 app.activateWithOptions(
                     NSApplicationActivationOptions::NSApplicationActivateAllWindows,
                 )
             };
-            let ax_requested = raise_exact_ax_window(pid, window_id);
-            let path = match (skylight_accepted, cocoa_accepted, ax_requested) {
-                (true, true, _) => "skylight_cocoa_ax",
-                (true, false, _) => "skylight_ax",
+            let ax_frontmost_requested = activate_ax_application(pid);
+            let ax_window_requested = raise_exact_ax_window(pid, window_id);
+            let path = match (
+                skylight_accepted,
+                cocoa_accepted,
+                ax_frontmost_requested || ax_window_requested,
+            ) {
+                (true, true, true) => "skylight_cocoa_ax",
+                (true, true, false) => "skylight_cocoa",
+                (true, false, true) => "skylight_ax",
+                (true, false, false) => "skylight",
                 (false, true, true) => "cocoa_ax",
                 (false, true, false) => "cocoa",
                 (false, false, true) => "ax",
                 (false, false, false) => "none",
             };
-            let request_accepted = skylight_accepted || cocoa_accepted || ax_requested;
+            let request_accepted = skylight_accepted
+                || cocoa_accepted
+                || ax_frontmost_requested
+                || ax_window_requested;
             return exact_result(
                 pid,
                 window_id,

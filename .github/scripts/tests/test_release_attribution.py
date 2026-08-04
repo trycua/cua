@@ -517,3 +517,33 @@ def test_unresolved_human_coauthor_fails_closed():
                 "optOutHandles": [],
             },
         )
+
+
+def test_pr_2805_coauthor_resolves_through_trusted_identity_override():
+    config = json.loads((REPO_ROOT / ".github/release-attribution-config.json").read_text())
+    commit = CommitRecord(
+        "aebd9962d2686e75ff9e17e0a3735e303ff96981",
+        "fix(cua-driver): stop Windows update --apply from killing itself (#2805)",
+        "Co-authored-by: Roman Syuzyov <rsyuzyov@gmail.com>",
+    )
+    pull = {
+        "user": {"login": "rsyuzyov"},
+        "author_association": "CONTRIBUTOR",
+        "body": "",
+        "labels": [],
+    }
+
+    contributors, issues, visual_requested = _change_contributors(
+        pull,
+        commit,
+        FakeGitHub(commit.sha),
+        "trycua/cua",
+        config,
+    )
+
+    assert contributors == [
+        {"login": "rsyuzyov", "role": "author", "external": True},
+        {"login": "rsyuzyov", "role": "coauthor", "external": True},
+    ]
+    assert issues == []
+    assert visual_requested is False

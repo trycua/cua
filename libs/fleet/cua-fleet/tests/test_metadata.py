@@ -6,8 +6,8 @@ from pathlib import Path
 
 def test_metadata_pins_published_cua_train() -> None:
     project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())["project"]
-    assert project["version"] == "0.0.8"
-    assert project["dependencies"] == ["cua-train==0.1.4"]
+    assert project["version"] == "0.0.9"
+    assert project["dependencies"] == ["cua-train==0.1.5"]
 
 
 def test_publish_prepare_checks_out_canonical_metadata() -> None:
@@ -22,14 +22,14 @@ def test_publish_prepare_checks_out_canonical_metadata() -> None:
     assert "@v" not in workflow.read_text()
 
 
-def test_publish_repackages_the_published_cua_train_0_1_4_wheels() -> None:
+def test_publish_repackages_the_published_cua_train_0_1_5_wheels() -> None:
     workflow = (Path(__file__).parents[3] / ".github/workflows/cua-fleet-publish.yml").read_text()
 
     expected_sources = {
-        "cua_train-0.1.4-py3-none-manylinux_2_34_x86_64.whl": "8b2c20a603772408ad25629e5fa16bfc36bb81ed6a876fd99f1ccfab5c242252",
-        "cua_train-0.1.4-py3-none-manylinux_2_34_aarch64.whl": "d0ea3e67a67c394ca05fad227ddd53987b53fbfbff907e43aa2ac6476f941df4",
-        "cua_train-0.1.4-py3-none-macosx_10_12_x86_64.whl": "20e59a46ae5bc20bc48e34bc8b0c8b623682068be5c31b430477bdf57e946745",
-        "cua_train-0.1.4-py3-none-macosx_11_0_arm64.whl": "cf5f4e26f77b4438849b5e6216829422980150439a88aa9a62a78dab74a95eb6",
+        "cua_train-0.1.5-py3-none-manylinux_2_34_x86_64.whl": "72824b317888d1bbf21585907c8291ce648007e052e92c1e4cd8d475750b57a5",
+        "cua_train-0.1.5-py3-none-manylinux_2_34_aarch64.whl": "d6adca168fbd9777ef3fccf21f0d39b180cde440494f8f0ff7d47a46de2e6d5a",
+        "cua_train-0.1.5-py3-none-macosx_10_12_x86_64.whl": "605cdd794edbd04a88f5a99f3713fd5b87fa8c634285839015a61894544cd1d1",
+        "cua_train-0.1.5-py3-none-macosx_11_0_arm64.whl": "82ec2795fad892dc6238fcbcabb861e78d214f6603d765419a2b10fddef05fda",
     }
 
     for wheel, digest in expected_sources.items():

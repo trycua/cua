@@ -119,8 +119,9 @@ if [[ "${BUILD_FIXTURES}" == 1 ]]; then
     --manifest-path "${RUST_ROOT}/Cargo.toml"
   case "${SUITE}" in
     shared) FIXTURE_TARGETS="${CUA_E2E_HARNESS_FILTER:-electron,tauri}" ;;
-    native|capture) FIXTURE_TARGETS="electron,gtk3" ;;
-    *) FIXTURE_TARGETS="${CUA_E2E_HARNESS_FILTER:-electron,tauri},gtk3" ;;
+    native) FIXTURE_TARGETS="electron,gtk3,gtk4" ;;
+    capture) FIXTURE_TARGETS="electron,gtk3" ;;
+    *) FIXTURE_TARGETS="${CUA_E2E_HARNESS_FILTER:-electron,tauri},gtk3,gtk4" ;;
   esac
   bash "${DRIVER_ROOT}/tests/fixtures/build/linux.sh" --only "${FIXTURE_TARGETS}"
 fi
@@ -138,7 +139,10 @@ if [[ ("${SUITE}" == shared || "${SUITE}" == all) \
   )
 fi
 if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
-  required_fixtures+=("${CUA_TEST_APPS_ROOT}/harness-gtk3/CuaTestHarness.Gtk3")
+  required_fixtures+=(
+    "${CUA_TEST_APPS_ROOT}/harness-gtk3/CuaTestHarness.Gtk3"
+    "${CUA_TEST_APPS_ROOT}/harness-gtk4/CuaTestHarness.Gtk4"
+  )
 fi
 for fixture in "${required_fixtures[@]}"; do
   if [[ ! -x "${fixture}" ]]; then
@@ -220,6 +224,10 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
   run_test gtk3-native-harness \
     cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
       --test harness_gtk3_test -- \
+      --ignored --nocapture --test-threads=1
+  run_test gtk4-target-selection \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test harness_gtk4_test -- \
       --ignored --nocapture --test-threads=1
 fi
 

@@ -733,6 +733,7 @@ impl Tool for GetWindowStateTool {
 
                 if let Some(tr) = tree_opt {
                     let source_trusted = tr.trusted;
+                    let source_degraded_reason = tr.degraded_reason.clone();
                     let count = tr
                         .nodes
                         .iter()
@@ -856,11 +857,13 @@ impl Tool for GetWindowStateTool {
                     // degraded so callers don't read `elements: []` as authoritative.
                     if !source_trusted {
                         structured["degraded"] = json!(true);
-                        structured["degraded_reason"] = json!(
-                            "x11_property_fallback_partial: AT-SPI was unavailable and \
-                             Cua Driver only recovered window metadata. Treat it as \
-                             discovery evidence; it cannot prove checked state."
-                        );
+                        structured["degraded_reason"] = json!(source_degraded_reason
+                            .unwrap_or_else(|| {
+                                "x11_property_fallback_partial: AT-SPI was unavailable and \
+                                 Cua Driver only recovered window metadata. Treat it as \
+                                 discovery evidence; it cannot prove checked state."
+                                    .to_owned()
+                            }));
                     } else if count == 0 {
                         structured["degraded"] = json!(true);
                         structured["degraded_reason"] = json!(

@@ -114,19 +114,22 @@ pub(crate) fn window_owner_pid(hwnd: u64) -> Option<u32> {
 #[derive(Clone, Copy, Debug)]
 struct PostActionForegroundRelation {
     exact_match: bool,
-    target_live: bool,
+    target_identity_live: bool,
+    target_gone: bool,
     actual_live: bool,
     actual_visible: bool,
     same_pid: bool,
     ownership_reaches_target: bool,
+    actual_is_prior_owner: bool,
 }
 
 fn post_action_foreground_allowed(relation: PostActionForegroundRelation) -> bool {
-    relation.target_live
-        && relation.actual_live
+    relation.actual_live
         && relation.actual_visible
         && relation.same_pid
-        && (relation.exact_match || relation.ownership_reaches_target)
+        && ((relation.target_identity_live
+            && (relation.exact_match || relation.ownership_reaches_target))
+            || (relation.target_gone && relation.actual_is_prior_owner))
 }
 
 fn owner_chain_reaches_target(
@@ -150,20 +153,48 @@ fn owner_chain_reaches_target(
     false
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PostActionForegroundTarget {
+    hwnd: u64,
+    pid: u32,
+    owner: Option<u64>,
+}
+
+/// Snapshot the exact target identity and owner before pointer input is sent.
+pub(crate) fn capture_post_action_foreground_target(
+    target: u64,
+) -> Option<PostActionForegroundTarget> {
+    let pid = window_owner_pid(target)?;
+    let owner = unsafe { GetWindow(HWND(target as *mut _), GW_OWNER) }
+        .ok()
+        .filter(|owner| !owner.0.is_null())
+        .map(|owner| owner.0 as usize as u64);
+    Some(PostActionForegroundTarget {
+        hwnd: target,
+        pid,
+        owner,
+    })
+}
+
 /// Verify the foreground after an exact-target pointer action.
 ///
 /// The requested HWND must become foreground before input is sent. The action
 /// may then legitimately open a same-process owned popup or modal, so the
 /// post-action check accepts that transient only when it is still a live,
 /// visible HWND and its complete `GW_OWNER` chain reaches the exact target.
+/// A dismiss action may instead destroy the requested owned modal; that is
+/// accepted only when foreground returns to its snapshotted same-process owner.
 /// Unrelated same-process siblings and foreign foreground windows fail closed.
-pub(crate) fn post_action_foreground_matches(target: u64, actual: u64) -> bool {
-    let target_pid = window_owner_pid(target);
+pub(crate) fn post_action_foreground_matches(
+    target: PostActionForegroundTarget,
+    actual: u64,
+) -> bool {
+    let current_target_pid = window_owner_pid(target.hwnd);
     let actual_pid = window_owner_pid(actual);
     let actual_hwnd = HWND(actual as *mut _);
     let actual_visible = actual_pid.is_some() && unsafe { IsWindowVisible(actual_hwnd) }.as_bool();
-    let ownership_reaches_target = target != actual
-        && owner_chain_reaches_target(target, actual, |hwnd| {
+    let ownership_reaches_target = target.hwnd != actual
+        && owner_chain_reaches_target(target.hwnd, actual, |hwnd| {
             let owner = unsafe { GetWindow(HWND(hwnd as *mut _), GW_OWNER) }
                 .ok()
                 .unwrap_or_default();
@@ -171,12 +202,14 @@ pub(crate) fn post_action_foreground_matches(target: u64, actual: u64) -> bool {
         });
 
     post_action_foreground_allowed(PostActionForegroundRelation {
-        exact_match: target == actual,
-        target_live: target_pid.is_some(),
+        exact_match: target.hwnd == actual,
+        target_identity_live: current_target_pid == Some(target.pid),
+        target_gone: current_target_pid.is_none(),
         actual_live: actual_pid.is_some(),
         actual_visible,
-        same_pid: target_pid.is_some() && target_pid == actual_pid,
+        same_pid: actual_pid == Some(target.pid),
         ownership_reaches_target,
+        actual_is_prior_owner: target.owner == Some(actual),
     })
 }
 
@@ -352,11 +385,13 @@ mod exact_window_tests {
     ) -> PostActionForegroundRelation {
         PostActionForegroundRelation {
             exact_match,
-            target_live: true,
+            target_identity_live: true,
+            target_gone: false,
             actual_live: true,
             actual_visible: true,
             same_pid,
             ownership_reaches_target,
+            actual_is_prior_owner: false,
         }
     }
 
@@ -390,11 +425,27 @@ mod exact_window_tests {
     }
 
     #[test]
-    fn stale_invisible_or_cyclic_foreground_is_denied() {
+    fn dismissed_owned_modal_may_return_to_its_snapshotted_owner_only() {
+        let mut dismissed = relation(false, true, false);
+        dismissed.target_identity_live = false;
+        dismissed.target_gone = true;
+        dismissed.actual_is_prior_owner = true;
+        assert!(post_action_foreground_allowed(dismissed));
+
+        dismissed.actual_is_prior_owner = false;
+        assert!(!post_action_foreground_allowed(dismissed));
+
+        dismissed.actual_is_prior_owner = true;
+        dismissed.same_pid = false;
+        assert!(!post_action_foreground_allowed(dismissed));
+    }
+
+    #[test]
+    fn stale_reused_invisible_or_cyclic_foreground_is_denied() {
         let mut stale = relation(false, true, true);
-        stale.target_live = false;
+        stale.target_identity_live = false;
         assert!(!post_action_foreground_allowed(stale));
-        stale.target_live = true;
+        stale.target_identity_live = true;
         stale.actual_live = false;
         assert!(!post_action_foreground_allowed(stale));
         stale.actual_live = true;

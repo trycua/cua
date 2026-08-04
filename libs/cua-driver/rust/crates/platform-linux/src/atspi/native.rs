@@ -41,6 +41,13 @@ async fn call<T>(fut: impl std::future::Future<Output = T>) -> Option<T> {
     tokio::time::timeout(CALL_TIMEOUT, fut).await.ok()
 }
 
+async fn before_snapshot_deadline<T>(
+    deadline: tokio::time::Instant,
+    work: impl std::future::Future<Output = T>,
+) -> std::result::Result<T, tokio::time::error::Elapsed> {
+    tokio::time::timeout_at(deadline, work).await
+}
+
 /// Drive an AT-SPI op `work` on the runtime, bounded by [`OP_TIMEOUT`].
 ///
 /// Individual interface calls are each bounded by [`call`], and `app_for_pid` /
@@ -969,11 +976,15 @@ pub(super) fn walk_tree_bounded_with_timeout(
     timeout: Duration,
 ) -> Result<Option<(String, Vec<AtspiNode>, Vec<(usize, i32, i32, u32, u32)>)>> {
     runtime().block_on(async {
+        // Tree traversal and bounds collection form one snapshot. Keep one
+        // deadline for both phases so a dead AT-SPI peer cannot outlive the
+        // operation timeout while resolving geometry.
+        let deadline = tokio::time::Instant::now() + timeout;
         let walk = async {
             let conn = shared_connection().await?;
             collect_visited_bounded(conn, pid, max_elements, max_depth).await
         };
-        let visited = match tokio::time::timeout(timeout, walk).await {
+        let visited = match before_snapshot_deadline(deadline, walk).await {
             Ok(result) => result?,
             Err(_) => {
                 dlog!("walk_tree timed out for pid {pid}");
@@ -984,7 +995,18 @@ pub(super) fn walk_tree_bounded_with_timeout(
             return Ok(None);
         };
         let (markdown, nodes) = render(&visited);
-        let bounds = element_bounds_for_visited(&visited, pid, xid).await;
+        let bounds = match before_snapshot_deadline(
+            deadline,
+            element_bounds_for_visited(&visited, pid, xid),
+        )
+        .await
+        {
+            Ok(bounds) => bounds,
+            Err(_) => {
+                dlog!("element bounds timed out for pid {pid}");
+                Vec::new()
+            }
+        };
         Ok(Some((markdown, nodes, bounds)))
     })
 }
@@ -2685,12 +2707,13 @@ async fn element_bounds_for_visited(
 mod coord_tests {
     use super::parse_gtk_frame_extents;
     use super::{
-        activation_index, combine_wayland_content_offsets, is_activation_action, is_enabled_state,
-        is_indexable_capabilities, is_passive_role, is_web_process_bus,
-        prefer_authoritative_wayland_origin, rebase_renderer_window_offset, screen_extent_rebase,
-        select_click_target, ApplicationSelection,
+        activation_index, before_snapshot_deadline, combine_wayland_content_offsets,
+        is_activation_action, is_enabled_state, is_indexable_capabilities, is_passive_role,
+        is_web_process_bus, prefer_authoritative_wayland_origin, rebase_renderer_window_offset,
+        screen_extent_rebase, select_click_target, ApplicationSelection,
     };
     use atspi::{State, StateSet};
+    use std::time::Duration;
 
     #[test]
     fn duplicate_pid_prefers_populated_application_after_empty_registration() {
@@ -2744,6 +2767,20 @@ mod coord_tests {
         selection.consider_matching("second-live-tree", true);
 
         assert_eq!(selection.into_selected(), Err(2));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn one_absolute_deadline_spans_traversal_and_bounds() {
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(100);
+
+        before_snapshot_deadline(deadline, tokio::time::sleep(Duration::from_millis(60)))
+            .await
+            .expect("traversal should fit the shared budget");
+        before_snapshot_deadline(deadline, tokio::time::sleep(Duration::from_millis(60)))
+            .await
+            .expect_err("bounds must receive only the traversal's remaining budget");
+
+        assert_eq!(tokio::time::Instant::now(), deadline);
     }
 
     #[test]

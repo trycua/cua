@@ -16,7 +16,7 @@ pub mod mouse;
 
 pub(crate) use inject::{force_foreground_assisted, force_foreground_attached};
 pub use inject::{
-    inject_click_screen, is_iconic_sentinel_point, point_in_window_bounds, window_is_iconic,
+    inject_click_screen, point_in_window_bounds, point_on_virtual_desktop, window_is_iconic,
     ForegroundLockGuard, NoActivateGuard,
 };
 pub use keyboard::{

@@ -1,6 +1,6 @@
-package cyclops_sdk
+package fleet_sdk
 
-// #include <cyclops_sdk.h>
+// #include <fleet_sdk.h>
 import "C"
 
 import (
@@ -374,7 +374,7 @@ func uniffiCheckChecksums() {
 	})
 	if bindingsContractVersion != int(scaffoldingContractVersion) {
 		// If this happens try cleaning and rebuilding your project
-		panic("cyclops_sdk: UniFFI contract version mismatch")
+		panic("fleet_sdk: UniFFI contract version mismatch")
 	}
 	{
 		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
@@ -382,7 +382,7 @@ func uniffiCheckChecksums() {
 		})
 		if checksum != 23330 {
 			// If this happens try cleaning and rebuilding your project
-			panic("cyclops_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim: UniFFI API checksum mismatch")
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim: UniFFI API checksum mismatch")
 		}
 	}
 	{
@@ -391,7 +391,7 @@ func uniffiCheckChecksums() {
 		})
 		if checksum != 20460 {
 			// If this happens try cleaning and rebuilding your project
-			panic("cyclops_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim: UniFFI API checksum mismatch")
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim: UniFFI API checksum mismatch")
 		}
 	}
 	{
@@ -400,7 +400,7 @@ func uniffiCheckChecksums() {
 		})
 		if checksum != 17760 {
 			// If this happens try cleaning and rebuilding your project
-			panic("cyclops_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim: UniFFI API checksum mismatch")
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim: UniFFI API checksum mismatch")
 		}
 	}
 	{
@@ -409,7 +409,7 @@ func uniffiCheckChecksums() {
 		})
 		if checksum != 7802 {
 			// If this happens try cleaning and rebuilding your project
-			panic("cyclops_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims: UniFFI API checksum mismatch")
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims: UniFFI API checksum mismatch")
 		}
 	}
 	{
@@ -418,7 +418,7 @@ func uniffiCheckChecksums() {
 		})
 		if checksum != 18984 {
 			// If this happens try cleaning and rebuilding your project
-			panic("cyclops_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim: UniFFI API checksum mismatch")
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim: UniFFI API checksum mismatch")
 		}
 	}
 	{
@@ -427,7 +427,7 @@ func uniffiCheckChecksums() {
 		})
 		if checksum != 48557 {
 			// If this happens try cleaning and rebuilding your project
-			panic("cyclops_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool: UniFFI API checksum mismatch")
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool: UniFFI API checksum mismatch")
 		}
 	}
 	{
@@ -436,7 +436,7 @@ func uniffiCheckChecksums() {
 		})
 		if checksum != 31235 {
 			// If this happens try cleaning and rebuilding your project
-			panic("cyclops_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool: UniFFI API checksum mismatch")
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool: UniFFI API checksum mismatch")
 		}
 	}
 	{
@@ -445,7 +445,7 @@ func uniffiCheckChecksums() {
 		})
 		if checksum != 49450 {
 			// If this happens try cleaning and rebuilding your project
-			panic("cyclops_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool: UniFFI API checksum mismatch")
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool: UniFFI API checksum mismatch")
 		}
 	}
 	{
@@ -454,7 +454,16 @@ func uniffiCheckChecksums() {
 		})
 		if checksum != 27984 {
 			// If this happens try cleaning and rebuilding your project
-			panic("cyclops_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools: UniFFI API checksum mismatch")
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool()
+		})
+		if checksum != 53919 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool: UniFFI API checksum mismatch")
 		}
 	}
 	{
@@ -463,7 +472,7 @@ func uniffiCheckChecksums() {
 		})
 		if checksum != 17695 {
 			// If this happens try cleaning and rebuilding your project
-			panic("cyclops_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool: UniFFI API checksum mismatch")
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool: UniFFI API checksum mismatch")
 		}
 	}
 	{
@@ -472,7 +481,61 @@ func uniffiCheckChecksums() {
 		})
 		if checksum != 46699 {
 			// If this happens try cleaning and rebuilding your project
-			panic("cyclops_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request: UniFFI API checksum mismatch")
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template()
+		})
+		if checksum != 13689 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template()
+		})
+		if checksum != 54852 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_template()
+		})
+		if checksum != 8909 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_template: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_templates()
+		})
+		if checksum != 58376 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_templates: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template()
+		})
+		if checksum != 36469 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template()
+		})
+		if checksum != 18704 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template: UniFFI API checksum mismatch")
 		}
 	}
 	{
@@ -481,7 +544,7 @@ func uniffiCheckChecksums() {
 		})
 		if checksum != 1180 {
 			// If this happens try cleaning and rebuilding your project
-			panic("cyclops_sdk: uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token: UniFFI API checksum mismatch")
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token: UniFFI API checksum mismatch")
 		}
 	}
 	{
@@ -490,7 +553,7 @@ func uniffiCheckChecksums() {
 		})
 		if checksum != 38803 {
 			// If this happens try cleaning and rebuilding your project
-			panic("cyclops_sdk: uniffi_cyclops_sdk_checksum_method_httpclient_execute: UniFFI API checksum mismatch")
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_httpclient_execute: UniFFI API checksum mismatch")
 		}
 	}
 	{
@@ -499,7 +562,7 @@ func uniffiCheckChecksums() {
 		})
 		if checksum != 54404 {
 			// If this happens try cleaning and rebuilding your project
-			panic("cyclops_sdk: uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect: UniFFI API checksum mismatch")
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect: UniFFI API checksum mismatch")
 		}
 	}
 	{
@@ -508,7 +571,7 @@ func uniffiCheckChecksums() {
 		})
 		if checksum != 55589 {
 			// If this happens try cleaning and rebuilding your project
-			panic("cyclops_sdk: uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_browser_with_access_token: UniFFI API checksum mismatch")
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_browser_with_access_token: UniFFI API checksum mismatch")
 		}
 	}
 	{
@@ -517,7 +580,16 @@ func uniffiCheckChecksums() {
 		})
 		if checksum != 10148 {
 			// If this happens try cleaning and rebuilding your project
-			panic("cyclops_sdk: uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token: UniFFI API checksum mismatch")
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_and_native_http_client()
+		})
+		if checksum != 42291 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_and_native_http_client: UniFFI API checksum mismatch")
 		}
 	}
 	{
@@ -526,7 +598,25 @@ func uniffiCheckChecksums() {
 		})
 		if checksum != 58487 {
 			// If this happens try cleaning and rebuilding your project
-			panic("cyclops_sdk: uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider: UniFFI API checksum mismatch")
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client()
+		})
+		if checksum != 62005 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client()
+		})
+		if checksum != 49301 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client: UniFFI API checksum mismatch")
 		}
 	}
 	{
@@ -535,7 +625,7 @@ func uniffiCheckChecksums() {
 		})
 		if checksum != 25746 {
 			// If this happens try cleaning and rebuilding your project
-			panic("cyclops_sdk: uniffi_cyclops_sdk_checksum_constructor_cyclopscredentials_new: UniFFI API checksum mismatch")
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_constructor_cyclopscredentials_new: UniFFI API checksum mismatch")
 		}
 	}
 }
@@ -992,7 +1082,7 @@ func cyclops_sdk_transport_cgo_dispatchCallbackInterfaceAccessTokenProviderMetho
 	guardHandle := cgo.NewHandle(cancel)
 	*uniffiOutDroppedCallback = C.UniffiForeignFutureDroppedCallbackStruct{
 		handle: C.uint64_t(guardHandle),
-		free:   C.UniffiForeignFutureDroppedCallback(C.cyclops_sdk_uniffiFreeGorutine),
+		free:   C.UniffiForeignFutureDroppedCallback(C.fleet_sdk_uniffiFreeGorutine),
 	}
 
 	// Wait for compleation or cancel
@@ -1071,8 +1161,15 @@ type CyclopsClientInterface interface {
 	DeletePool(pool Pool) error
 	GetPool(name string) (Pool, error)
 	ListPools(namespace string) ([]Pool, error)
+	ReconcilePool(request CreatePoolRequest) (Pool, error)
 	UpdatePool(pool Pool) (Pool, error)
 	ServiceRequest(sandbox Sandbox, service string, path string, request HttpRequest) (HttpResponse, error)
+	CreateTemplate(request CreateTemplateRequest) (Template, error)
+	DeleteTemplate(template Template) error
+	GetTemplate(namespace string, name string) (Template, error)
+	ListTemplates(namespace string) ([]Template, error)
+	ReconcileTemplate(request CreateTemplateRequest) (Template, error)
+	UpdateTemplate(template Template) (Template, error)
 }
 type CyclopsClient struct {
 	ffiObject FfiObject
@@ -1114,9 +1211,45 @@ func CyclopsClientConnectWithAccessToken(configuration CyclopsTokenProviderConfi
 	}
 }
 
+func CyclopsClientConnectWithAccessTokenAndNativeHttpClient(configuration CyclopsTokenProviderConfiguration, accessToken string) (*CyclopsClient, error) {
+	_uniffiRV, _uniffiErr := rustCallWithError[*SdkError](FfiConverterSdkError{}, func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_and_native_http_client(FfiConverterCyclopsTokenProviderConfigurationINSTANCE.Lower(configuration), FfiConverterStringINSTANCE.Lower(accessToken), _uniffiStatus)
+	})
+	if _uniffiErr != nil {
+		var _uniffiDefaultValue *CyclopsClient
+		return _uniffiDefaultValue, _uniffiErr
+	} else {
+		return FfiConverterCyclopsClientINSTANCE.Lift(_uniffiRV), nil
+	}
+}
+
 func CyclopsClientConnectWithAccessTokenProvider(configuration CyclopsTokenProviderConfiguration, tokenProvider AccessTokenProvider, httpClient HttpClient) (*CyclopsClient, error) {
 	_uniffiRV, _uniffiErr := rustCallWithError[*SdkError](FfiConverterSdkError{}, func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
 		return C.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider(FfiConverterCyclopsTokenProviderConfigurationINSTANCE.Lower(configuration), FfiConverterAccessTokenProviderINSTANCE.Lower(tokenProvider), FfiConverterHttpClientINSTANCE.Lower(httpClient), _uniffiStatus)
+	})
+	if _uniffiErr != nil {
+		var _uniffiDefaultValue *CyclopsClient
+		return _uniffiDefaultValue, _uniffiErr
+	} else {
+		return FfiConverterCyclopsClientINSTANCE.Lift(_uniffiRV), nil
+	}
+}
+
+func CyclopsClientConnectWithAccessTokenProviderAndNativeHttpClient(configuration CyclopsTokenProviderConfiguration, tokenProvider AccessTokenProvider) (*CyclopsClient, error) {
+	_uniffiRV, _uniffiErr := rustCallWithError[*SdkError](FfiConverterSdkError{}, func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client(FfiConverterCyclopsTokenProviderConfigurationINSTANCE.Lower(configuration), FfiConverterAccessTokenProviderINSTANCE.Lower(tokenProvider), _uniffiStatus)
+	})
+	if _uniffiErr != nil {
+		var _uniffiDefaultValue *CyclopsClient
+		return _uniffiDefaultValue, _uniffiErr
+	} else {
+		return FfiConverterCyclopsClientINSTANCE.Lift(_uniffiRV), nil
+	}
+}
+
+func CyclopsClientConnectWithNativeHttpClient(configuration CyclopsConfiguration) (*CyclopsClient, error) {
+	_uniffiRV, _uniffiErr := rustCallWithError[*SdkError](FfiConverterSdkError{}, func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_native_http_client(FfiConverterCyclopsConfigurationINSTANCE.Lower(configuration), _uniffiStatus)
 	})
 	if _uniffiErr != nil {
 		var _uniffiDefaultValue *CyclopsClient
@@ -1433,6 +1566,41 @@ func (_self *CyclopsClient) ListPools(namespace string) ([]Pool, error) {
 	return res, err
 }
 
+func (_self *CyclopsClient) ReconcilePool(request CreatePoolRequest) (Pool, error) {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	res, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) RustBufferI {
+			res := C.ffi_cyclops_sdk_rust_future_complete_rust_buffer(handle, status)
+			return GoRustBuffer{
+				inner: res,
+			}
+		},
+		// liftFn
+		func(ffi RustBufferI) Pool {
+			return FfiConverterPoolINSTANCE.Lift(ffi)
+		},
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_pool(
+			_pointer, FfiConverterCreatePoolRequestINSTANCE.Lower(request)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_rust_buffer(handle)
+		},
+	)
+
+	if err == nil {
+		return res, nil
+	}
+
+	return res, err
+}
+
 func (_self *CyclopsClient) UpdatePool(pool Pool) (Pool, error) {
 	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
 	defer _self.ffiObject.decrementPointer()
@@ -1486,6 +1654,212 @@ func (_self *CyclopsClient) ServiceRequest(sandbox Sandbox, service string, path
 		},
 		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request(
 			_pointer, FfiConverterSandboxINSTANCE.Lower(sandbox), FfiConverterStringINSTANCE.Lower(service), FfiConverterStringINSTANCE.Lower(path), FfiConverterHttpRequestINSTANCE.Lower(request)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_rust_buffer(handle)
+		},
+	)
+
+	if err == nil {
+		return res, nil
+	}
+
+	return res, err
+}
+
+func (_self *CyclopsClient) CreateTemplate(request CreateTemplateRequest) (Template, error) {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	res, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) RustBufferI {
+			res := C.ffi_cyclops_sdk_rust_future_complete_rust_buffer(handle, status)
+			return GoRustBuffer{
+				inner: res,
+			}
+		},
+		// liftFn
+		func(ffi RustBufferI) Template {
+			return FfiConverterTemplateINSTANCE.Lift(ffi)
+		},
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_template(
+			_pointer, FfiConverterCreateTemplateRequestINSTANCE.Lower(request)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_rust_buffer(handle)
+		},
+	)
+
+	if err == nil {
+		return res, nil
+	}
+
+	return res, err
+}
+
+func (_self *CyclopsClient) DeleteTemplate(template Template) error {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	_, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) struct{} {
+			C.ffi_cyclops_sdk_rust_future_complete_void(handle, status)
+			return struct{}{}
+		},
+		// liftFn
+		func(_ struct{}) struct{} { return struct{}{} },
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_template(
+			_pointer, FfiConverterTemplateINSTANCE.Lower(template)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_void(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_void(handle)
+		},
+	)
+
+	if err == nil {
+		return nil
+	}
+
+	return err
+}
+
+func (_self *CyclopsClient) GetTemplate(namespace string, name string) (Template, error) {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	res, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) RustBufferI {
+			res := C.ffi_cyclops_sdk_rust_future_complete_rust_buffer(handle, status)
+			return GoRustBuffer{
+				inner: res,
+			}
+		},
+		// liftFn
+		func(ffi RustBufferI) Template {
+			return FfiConverterTemplateINSTANCE.Lift(ffi)
+		},
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_template(
+			_pointer, FfiConverterStringINSTANCE.Lower(namespace), FfiConverterStringINSTANCE.Lower(name)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_rust_buffer(handle)
+		},
+	)
+
+	if err == nil {
+		return res, nil
+	}
+
+	return res, err
+}
+
+func (_self *CyclopsClient) ListTemplates(namespace string) ([]Template, error) {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	res, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) RustBufferI {
+			res := C.ffi_cyclops_sdk_rust_future_complete_rust_buffer(handle, status)
+			return GoRustBuffer{
+				inner: res,
+			}
+		},
+		// liftFn
+		func(ffi RustBufferI) []Template {
+			return FfiConverterSequenceTemplateINSTANCE.Lift(ffi)
+		},
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_templates(
+			_pointer, FfiConverterStringINSTANCE.Lower(namespace)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_rust_buffer(handle)
+		},
+	)
+
+	if err == nil {
+		return res, nil
+	}
+
+	return res, err
+}
+
+func (_self *CyclopsClient) ReconcileTemplate(request CreateTemplateRequest) (Template, error) {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	res, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) RustBufferI {
+			res := C.ffi_cyclops_sdk_rust_future_complete_rust_buffer(handle, status)
+			return GoRustBuffer{
+				inner: res,
+			}
+		},
+		// liftFn
+		func(ffi RustBufferI) Template {
+			return FfiConverterTemplateINSTANCE.Lift(ffi)
+		},
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_template(
+			_pointer, FfiConverterCreateTemplateRequestINSTANCE.Lower(request)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_rust_buffer(handle)
+		},
+	)
+
+	if err == nil {
+		return res, nil
+	}
+
+	return res, err
+}
+
+func (_self *CyclopsClient) UpdateTemplate(template Template) (Template, error) {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	res, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) RustBufferI {
+			res := C.ffi_cyclops_sdk_rust_future_complete_rust_buffer(handle, status)
+			return GoRustBuffer{
+				inner: res,
+			}
+		},
+		// liftFn
+		func(ffi RustBufferI) Template {
+			return FfiConverterTemplateINSTANCE.Lift(ffi)
+		},
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_update_template(
+			_pointer, FfiConverterTemplateINSTANCE.Lower(template)),
 		// pollFn
 		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
 			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
@@ -1759,7 +2133,7 @@ func cyclops_sdk_transport_cgo_dispatchCallbackInterfaceHttpClientMethod0(uniffi
 	guardHandle := cgo.NewHandle(cancel)
 	*uniffiOutDroppedCallback = C.UniffiForeignFutureDroppedCallbackStruct{
 		handle: C.uint64_t(guardHandle),
-		free:   C.UniffiForeignFutureDroppedCallback(C.cyclops_sdk_uniffiFreeGorutine),
+		free:   C.UniffiForeignFutureDroppedCallback(C.fleet_sdk_uniffiFreeGorutine),
 	}
 
 	// Wait for compleation or cancel
@@ -1932,12 +2306,12 @@ func (_ FfiDestroyerCreateClaimRequest) Destroy(value CreateClaimRequest) {
 
 type CreatePoolRequest struct {
 	Namespace string
-	Spec      cyclops_sdk_schema.PoolSpec
+	Spec      cyclops_sdk_schema.OsGymSandboxWarmPoolSpec
 }
 
 func (r *CreatePoolRequest) Destroy() {
 	FfiDestroyerString{}.Destroy(r.Namespace)
-	cyclops_sdk_schema.FfiDestroyerPoolSpec{}.Destroy(r.Spec)
+	cyclops_sdk_schema.FfiDestroyerOsGymSandboxWarmPoolSpec{}.Destroy(r.Spec)
 }
 
 type FfiConverterCreatePoolRequest struct{}
@@ -1951,7 +2325,7 @@ func (c FfiConverterCreatePoolRequest) Lift(rb RustBufferI) CreatePoolRequest {
 func (c FfiConverterCreatePoolRequest) Read(reader io.Reader) CreatePoolRequest {
 	return CreatePoolRequest{
 		FfiConverterStringINSTANCE.Read(reader),
-		cyclops_sdk_schema.FfiConverterPoolSpecINSTANCE.Read(reader),
+		cyclops_sdk_schema.FfiConverterOsGymSandboxWarmPoolSpecINSTANCE.Read(reader),
 	}
 }
 
@@ -1965,12 +2339,60 @@ func (c FfiConverterCreatePoolRequest) LowerExternal(value CreatePoolRequest) Ex
 
 func (c FfiConverterCreatePoolRequest) Write(writer io.Writer, value CreatePoolRequest) {
 	FfiConverterStringINSTANCE.Write(writer, value.Namespace)
-	cyclops_sdk_schema.FfiConverterPoolSpecINSTANCE.Write(writer, value.Spec)
+	cyclops_sdk_schema.FfiConverterOsGymSandboxWarmPoolSpecINSTANCE.Write(writer, value.Spec)
 }
 
 type FfiDestroyerCreatePoolRequest struct{}
 
 func (_ FfiDestroyerCreatePoolRequest) Destroy(value CreatePoolRequest) {
+	value.Destroy()
+}
+
+type CreateTemplateRequest struct {
+	Namespace string
+	Name      string
+	Spec      cyclops_sdk_schema.OsGymSandboxTemplateSpec
+}
+
+func (r *CreateTemplateRequest) Destroy() {
+	FfiDestroyerString{}.Destroy(r.Namespace)
+	FfiDestroyerString{}.Destroy(r.Name)
+	cyclops_sdk_schema.FfiDestroyerOsGymSandboxTemplateSpec{}.Destroy(r.Spec)
+}
+
+type FfiConverterCreateTemplateRequest struct{}
+
+var FfiConverterCreateTemplateRequestINSTANCE = FfiConverterCreateTemplateRequest{}
+
+func (c FfiConverterCreateTemplateRequest) Lift(rb RustBufferI) CreateTemplateRequest {
+	return LiftFromRustBuffer[CreateTemplateRequest](c, rb)
+}
+
+func (c FfiConverterCreateTemplateRequest) Read(reader io.Reader) CreateTemplateRequest {
+	return CreateTemplateRequest{
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterStringINSTANCE.Read(reader),
+		cyclops_sdk_schema.FfiConverterOsGymSandboxTemplateSpecINSTANCE.Read(reader),
+	}
+}
+
+func (c FfiConverterCreateTemplateRequest) Lower(value CreateTemplateRequest) C.RustBuffer {
+	return LowerIntoRustBuffer[CreateTemplateRequest](c, value)
+}
+
+func (c FfiConverterCreateTemplateRequest) LowerExternal(value CreateTemplateRequest) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[CreateTemplateRequest](c, value))
+}
+
+func (c FfiConverterCreateTemplateRequest) Write(writer io.Writer, value CreateTemplateRequest) {
+	FfiConverterStringINSTANCE.Write(writer, value.Namespace)
+	FfiConverterStringINSTANCE.Write(writer, value.Name)
+	cyclops_sdk_schema.FfiConverterOsGymSandboxTemplateSpecINSTANCE.Write(writer, value.Spec)
+}
+
+type FfiDestroyerCreateTemplateRequest struct{}
+
+func (_ FfiDestroyerCreateTemplateRequest) Destroy(value CreateTemplateRequest) {
 	value.Destroy()
 }
 
@@ -2239,21 +2661,26 @@ func (_ FfiDestroyerHttpResponse) Destroy(value HttpResponse) {
 }
 
 // UniFFI cannot emit aliases for external record types. Generated bindings use
-// `OSGymWorkspacePoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
+// `OSGymSandboxWarmPoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
+//
+// A `Pool` is the `osgym.cua.ai/v1alpha1 OSGymSandboxWarmPool` CR verbatim —
+// the SDK is a naive CRUD mapper over the native CRDs, with no translation
+// layer (the legacy `cua.ai/v1 OSGymWorkspacePool` and its operator compat
+// shim are gone).
 type Pool struct {
 	ApiVersion string
 	Kind       string
 	Metadata   ResourceMetadata
-	Spec       cyclops_sdk_schema.PoolSpec
-	Status     *cyclops_sdk_schema.OsGymWorkspacePoolStatus
+	Spec       cyclops_sdk_schema.OsGymSandboxWarmPoolSpec
+	Status     *cyclops_sdk_schema.OsGymSandboxWarmPoolStatus
 }
 
 func (r *Pool) Destroy() {
 	FfiDestroyerString{}.Destroy(r.ApiVersion)
 	FfiDestroyerString{}.Destroy(r.Kind)
 	FfiDestroyerResourceMetadata{}.Destroy(r.Metadata)
-	cyclops_sdk_schema.FfiDestroyerPoolSpec{}.Destroy(r.Spec)
-	FfiDestroyerOptionalOsGymWorkspacePoolStatus{}.Destroy(r.Status)
+	cyclops_sdk_schema.FfiDestroyerOsGymSandboxWarmPoolSpec{}.Destroy(r.Spec)
+	FfiDestroyerOptionalOsGymSandboxWarmPoolStatus{}.Destroy(r.Status)
 }
 
 type FfiConverterPool struct{}
@@ -2269,8 +2696,8 @@ func (c FfiConverterPool) Read(reader io.Reader) Pool {
 		FfiConverterStringINSTANCE.Read(reader),
 		FfiConverterStringINSTANCE.Read(reader),
 		FfiConverterResourceMetadataINSTANCE.Read(reader),
-		cyclops_sdk_schema.FfiConverterPoolSpecINSTANCE.Read(reader),
-		FfiConverterOptionalOsGymWorkspacePoolStatusINSTANCE.Read(reader),
+		cyclops_sdk_schema.FfiConverterOsGymSandboxWarmPoolSpecINSTANCE.Read(reader),
+		FfiConverterOptionalOsGymSandboxWarmPoolStatusINSTANCE.Read(reader),
 	}
 }
 
@@ -2286,8 +2713,8 @@ func (c FfiConverterPool) Write(writer io.Writer, value Pool) {
 	FfiConverterStringINSTANCE.Write(writer, value.ApiVersion)
 	FfiConverterStringINSTANCE.Write(writer, value.Kind)
 	FfiConverterResourceMetadataINSTANCE.Write(writer, value.Metadata)
-	cyclops_sdk_schema.FfiConverterPoolSpecINSTANCE.Write(writer, value.Spec)
-	FfiConverterOptionalOsGymWorkspacePoolStatusINSTANCE.Write(writer, value.Status)
+	cyclops_sdk_schema.FfiConverterOsGymSandboxWarmPoolSpecINSTANCE.Write(writer, value.Spec)
+	FfiConverterOptionalOsGymSandboxWarmPoolStatusINSTANCE.Write(writer, value.Status)
 }
 
 type FfiDestroyerPool struct{}
@@ -2393,6 +2820,60 @@ func (c FfiConverterSandbox) Write(writer io.Writer, value Sandbox) {
 type FfiDestroyerSandbox struct{}
 
 func (_ FfiDestroyerSandbox) Destroy(value Sandbox) {
+	value.Destroy()
+}
+
+// The `osgym.cua.ai/v1alpha1 OSGymSandboxTemplate` CR verbatim. Warm pools
+// and claims reference one by name via `spec.sandboxTemplateRef.name`.
+type Template struct {
+	ApiVersion string
+	Kind       string
+	Metadata   ResourceMetadata
+	Spec       cyclops_sdk_schema.OsGymSandboxTemplateSpec
+}
+
+func (r *Template) Destroy() {
+	FfiDestroyerString{}.Destroy(r.ApiVersion)
+	FfiDestroyerString{}.Destroy(r.Kind)
+	FfiDestroyerResourceMetadata{}.Destroy(r.Metadata)
+	cyclops_sdk_schema.FfiDestroyerOsGymSandboxTemplateSpec{}.Destroy(r.Spec)
+}
+
+type FfiConverterTemplate struct{}
+
+var FfiConverterTemplateINSTANCE = FfiConverterTemplate{}
+
+func (c FfiConverterTemplate) Lift(rb RustBufferI) Template {
+	return LiftFromRustBuffer[Template](c, rb)
+}
+
+func (c FfiConverterTemplate) Read(reader io.Reader) Template {
+	return Template{
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterResourceMetadataINSTANCE.Read(reader),
+		cyclops_sdk_schema.FfiConverterOsGymSandboxTemplateSpecINSTANCE.Read(reader),
+	}
+}
+
+func (c FfiConverterTemplate) Lower(value Template) C.RustBuffer {
+	return LowerIntoRustBuffer[Template](c, value)
+}
+
+func (c FfiConverterTemplate) LowerExternal(value Template) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[Template](c, value))
+}
+
+func (c FfiConverterTemplate) Write(writer io.Writer, value Template) {
+	FfiConverterStringINSTANCE.Write(writer, value.ApiVersion)
+	FfiConverterStringINSTANCE.Write(writer, value.Kind)
+	FfiConverterResourceMetadataINSTANCE.Write(writer, value.Metadata)
+	cyclops_sdk_schema.FfiConverterOsGymSandboxTemplateSpecINSTANCE.Write(writer, value.Spec)
+}
+
+type FfiDestroyerTemplate struct{}
+
+func (_ FfiDestroyerTemplate) Destroy(value Template) {
 	value.Destroy()
 }
 
@@ -3220,44 +3701,44 @@ func (_ FfiDestroyerOptionalOsGymSandboxClaimStatus) Destroy(value *cyclops_sdk_
 	}
 }
 
-type FfiConverterOptionalOsGymWorkspacePoolStatus struct{}
+type FfiConverterOptionalOsGymSandboxWarmPoolStatus struct{}
 
-var FfiConverterOptionalOsGymWorkspacePoolStatusINSTANCE = FfiConverterOptionalOsGymWorkspacePoolStatus{}
+var FfiConverterOptionalOsGymSandboxWarmPoolStatusINSTANCE = FfiConverterOptionalOsGymSandboxWarmPoolStatus{}
 
-func (c FfiConverterOptionalOsGymWorkspacePoolStatus) Lift(rb RustBufferI) *cyclops_sdk_schema.OsGymWorkspacePoolStatus {
-	return LiftFromRustBuffer[*cyclops_sdk_schema.OsGymWorkspacePoolStatus](c, rb)
+func (c FfiConverterOptionalOsGymSandboxWarmPoolStatus) Lift(rb RustBufferI) *cyclops_sdk_schema.OsGymSandboxWarmPoolStatus {
+	return LiftFromRustBuffer[*cyclops_sdk_schema.OsGymSandboxWarmPoolStatus](c, rb)
 }
 
-func (_ FfiConverterOptionalOsGymWorkspacePoolStatus) Read(reader io.Reader) *cyclops_sdk_schema.OsGymWorkspacePoolStatus {
+func (_ FfiConverterOptionalOsGymSandboxWarmPoolStatus) Read(reader io.Reader) *cyclops_sdk_schema.OsGymSandboxWarmPoolStatus {
 	if readInt8(reader) == 0 {
 		return nil
 	}
-	temp := cyclops_sdk_schema.FfiConverterOsGymWorkspacePoolStatusINSTANCE.Read(reader)
+	temp := cyclops_sdk_schema.FfiConverterOsGymSandboxWarmPoolStatusINSTANCE.Read(reader)
 	return &temp
 }
 
-func (c FfiConverterOptionalOsGymWorkspacePoolStatus) Lower(value *cyclops_sdk_schema.OsGymWorkspacePoolStatus) C.RustBuffer {
-	return LowerIntoRustBuffer[*cyclops_sdk_schema.OsGymWorkspacePoolStatus](c, value)
+func (c FfiConverterOptionalOsGymSandboxWarmPoolStatus) Lower(value *cyclops_sdk_schema.OsGymSandboxWarmPoolStatus) C.RustBuffer {
+	return LowerIntoRustBuffer[*cyclops_sdk_schema.OsGymSandboxWarmPoolStatus](c, value)
 }
 
-func (c FfiConverterOptionalOsGymWorkspacePoolStatus) LowerExternal(value *cyclops_sdk_schema.OsGymWorkspacePoolStatus) ExternalCRustBuffer {
-	return RustBufferFromC(LowerIntoRustBuffer[*cyclops_sdk_schema.OsGymWorkspacePoolStatus](c, value))
+func (c FfiConverterOptionalOsGymSandboxWarmPoolStatus) LowerExternal(value *cyclops_sdk_schema.OsGymSandboxWarmPoolStatus) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[*cyclops_sdk_schema.OsGymSandboxWarmPoolStatus](c, value))
 }
 
-func (_ FfiConverterOptionalOsGymWorkspacePoolStatus) Write(writer io.Writer, value *cyclops_sdk_schema.OsGymWorkspacePoolStatus) {
+func (_ FfiConverterOptionalOsGymSandboxWarmPoolStatus) Write(writer io.Writer, value *cyclops_sdk_schema.OsGymSandboxWarmPoolStatus) {
 	if value == nil {
 		writeInt8(writer, 0)
 	} else {
 		writeInt8(writer, 1)
-		cyclops_sdk_schema.FfiConverterOsGymWorkspacePoolStatusINSTANCE.Write(writer, *value)
+		cyclops_sdk_schema.FfiConverterOsGymSandboxWarmPoolStatusINSTANCE.Write(writer, *value)
 	}
 }
 
-type FfiDestroyerOptionalOsGymWorkspacePoolStatus struct{}
+type FfiDestroyerOptionalOsGymSandboxWarmPoolStatus struct{}
 
-func (_ FfiDestroyerOptionalOsGymWorkspacePoolStatus) Destroy(value *cyclops_sdk_schema.OsGymWorkspacePoolStatus) {
+func (_ FfiDestroyerOptionalOsGymSandboxWarmPoolStatus) Destroy(value *cyclops_sdk_schema.OsGymSandboxWarmPoolStatus) {
 	if value != nil {
-		cyclops_sdk_schema.FfiDestroyerOsGymWorkspacePoolStatus{}.Destroy(*value)
+		cyclops_sdk_schema.FfiDestroyerOsGymSandboxWarmPoolStatus{}.Destroy(*value)
 	}
 }
 
@@ -3490,6 +3971,53 @@ func (FfiDestroyerSequencePool) Destroy(sequence []Pool) {
 	}
 }
 
+type FfiConverterSequenceTemplate struct{}
+
+var FfiConverterSequenceTemplateINSTANCE = FfiConverterSequenceTemplate{}
+
+func (c FfiConverterSequenceTemplate) Lift(rb RustBufferI) []Template {
+	return LiftFromRustBuffer[[]Template](c, rb)
+}
+
+func (c FfiConverterSequenceTemplate) Read(reader io.Reader) []Template {
+	length := readInt32(reader)
+	if length == 0 {
+		return nil
+	}
+	result := make([]Template, 0, length)
+	for i := int32(0); i < length; i++ {
+		result = append(result, FfiConverterTemplateINSTANCE.Read(reader))
+	}
+	return result
+}
+
+func (c FfiConverterSequenceTemplate) Lower(value []Template) C.RustBuffer {
+	return LowerIntoRustBuffer[[]Template](c, value)
+}
+
+func (c FfiConverterSequenceTemplate) LowerExternal(value []Template) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[[]Template](c, value))
+}
+
+func (c FfiConverterSequenceTemplate) Write(writer io.Writer, value []Template) {
+	if len(value) > math.MaxInt32 {
+		panic("[]Template is too large to fit into Int32")
+	}
+
+	writeInt32(writer, int32(len(value)))
+	for _, item := range value {
+		FfiConverterTemplateINSTANCE.Write(writer, item)
+	}
+}
+
+type FfiDestroyerSequenceTemplate struct{}
+
+func (FfiDestroyerSequenceTemplate) Destroy(sequence []Template) {
+	for _, value := range sequence {
+		FfiDestroyerTemplate{}.Destroy(value)
+	}
+}
+
 type FfiConverterMapStringString struct{}
 
 var FfiConverterMapStringStringINSTANCE = FfiConverterMapStringString{}
@@ -3547,8 +4075,8 @@ type rustFuturePollFunc func(C.uint64_t, C.UniffiRustFutureContinuationCallback,
 type rustFutureCompleteFunc[T any] func(C.uint64_t, *C.RustCallStatus) T
 type rustFutureFreeFunc func(C.uint64_t)
 
-//export cyclops_sdk_uniffiFutureContinuationCallback
-func cyclops_sdk_uniffiFutureContinuationCallback(data C.uint64_t, pollResult C.int8_t) {
+//export fleet_sdk_uniffiFutureContinuationCallback
+func fleet_sdk_uniffiFutureContinuationCallback(data C.uint64_t, pollResult C.int8_t) {
 	h := cgo.Handle(uintptr(data))
 	waiter := h.Value().(chan int8)
 	waiter <- int8(pollResult)
@@ -3573,7 +4101,7 @@ func uniffiRustCallAsync[E any, T any, F any](
 	for pollResult != uniffiRustFuturePollReady {
 		pollFunc(
 			rustFuture,
-			(C.UniffiRustFutureContinuationCallback)(C.cyclops_sdk_uniffiFutureContinuationCallback),
+			(C.UniffiRustFutureContinuationCallback)(C.fleet_sdk_uniffiFutureContinuationCallback),
 			C.uint64_t(chanHandle),
 		)
 		pollResult = <-waiter
@@ -3589,8 +4117,8 @@ func uniffiRustCallAsync[E any, T any, F any](
 	return liftFunc(ffiValue), err
 }
 
-//export cyclops_sdk_uniffiFreeGorutine
-func cyclops_sdk_uniffiFreeGorutine(data C.uint64_t) {
+//export fleet_sdk_uniffiFreeGorutine
+func fleet_sdk_uniffiFreeGorutine(data C.uint64_t) {
 	handle := cgo.Handle(uintptr(data))
 	defer handle.Delete()
 

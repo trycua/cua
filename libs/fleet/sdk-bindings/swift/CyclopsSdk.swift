@@ -796,6 +796,18 @@ public protocol CyclopsClientProtocol: AnyObject, Sendable {
 
     func serviceRequest(sandbox: Sandbox, service: String, path: String, request: HttpRequest) async throws  -> HttpResponse
 
+    func createTemplate(request: CreateTemplateRequest) async throws  -> Template
+
+    func deleteTemplate(template: Template) async throws
+
+    func getTemplate(namespace: String, name: String) async throws  -> Template
+
+    func listTemplates(namespace: String) async throws  -> [Template]
+
+    func reconcileTemplate(request: CreateTemplateRequest) async throws  -> Template
+
+    func updateTemplate(template: Template) async throws  -> Template
+
 }
 open class CyclopsClient: CyclopsClientProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -1114,6 +1126,108 @@ open func serviceRequest(sandbox: Sandbox, service: String, path: String, reques
             completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeHttpResponse_lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+open func createTemplate(request: CreateTemplateRequest)async throws  -> Template  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_create_template(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeCreateTemplateRequest_lower(request)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeTemplate_lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+open func deleteTemplate(template: Template)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_template(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeTemplate_lower(template)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_void,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_void,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+open func getTemplate(namespace: String, name: String)async throws  -> Template  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_get_template(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(namespace),FfiConverterString.lower(name)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeTemplate_lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+open func listTemplates(namespace: String)async throws  -> [Template]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_list_templates(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(namespace)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeTemplate.lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+open func reconcileTemplate(request: CreateTemplateRequest)async throws  -> Template  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_template(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeCreateTemplateRequest_lower(request)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeTemplate_lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+open func updateTemplate(template: Template)async throws  -> Template  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_update_template(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeTemplate_lower(template)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeTemplate_lift,
             errorHandler: FfiConverterTypeSdkError_lift
         )
 }
@@ -1617,11 +1731,11 @@ public func FfiConverterTypeCreateClaimRequest_lower(_ value: CreateClaimRequest
 
 public struct CreatePoolRequest: Equatable, Hashable {
     public var namespace: String
-    public var spec: PoolSpec
+    public var spec: OsGymSandboxWarmPoolSpec
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(namespace: String, spec: PoolSpec) {
+    public init(namespace: String, spec: OsGymSandboxWarmPoolSpec) {
         self.namespace = namespace
         self.spec = spec
     }
@@ -1643,13 +1757,13 @@ public struct FfiConverterTypeCreatePoolRequest: FfiConverterRustBuffer {
         return
             try CreatePoolRequest(
                 namespace: FfiConverterString.read(from: &buf),
-                spec: FfiConverterTypePoolSpec.read(from: &buf)
+                spec: FfiConverterTypeOSGymSandboxWarmPoolSpec.read(from: &buf)
         )
     }
 
     public static func write(_ value: CreatePoolRequest, into buf: inout [UInt8]) {
         FfiConverterString.write(value.namespace, into: &buf)
-        FfiConverterTypePoolSpec.write(value.spec, into: &buf)
+        FfiConverterTypeOSGymSandboxWarmPoolSpec.write(value.spec, into: &buf)
     }
 }
 
@@ -1666,6 +1780,64 @@ public func FfiConverterTypeCreatePoolRequest_lift(_ buf: RustBuffer) throws -> 
 #endif
 public func FfiConverterTypeCreatePoolRequest_lower(_ value: CreatePoolRequest) -> RustBuffer {
     return FfiConverterTypeCreatePoolRequest.lower(value)
+}
+
+
+public struct CreateTemplateRequest {
+    public var namespace: String
+    public var name: String
+    public var spec: OsGymSandboxTemplateSpec
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(namespace: String, name: String, spec: OsGymSandboxTemplateSpec) {
+        self.namespace = namespace
+        self.name = name
+        self.spec = spec
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CreateTemplateRequest: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCreateTemplateRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CreateTemplateRequest {
+        return
+            try CreateTemplateRequest(
+                namespace: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                spec: FfiConverterTypeOSGymSandboxTemplateSpec.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CreateTemplateRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.namespace, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterTypeOSGymSandboxTemplateSpec.write(value.spec, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCreateTemplateRequest_lift(_ buf: RustBuffer) throws -> CreateTemplateRequest {
+    return try FfiConverterTypeCreateTemplateRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCreateTemplateRequest_lower(_ value: CreateTemplateRequest) -> RustBuffer {
+    return FfiConverterTypeCreateTemplateRequest.lower(value)
 }
 
 
@@ -1985,18 +2157,23 @@ public func FfiConverterTypeHttpResponse_lower(_ value: HttpResponse) -> RustBuf
 
 /**
  * UniFFI cannot emit aliases for external record types. Generated bindings use
- * `OSGymWorkspacePoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
+ * `OSGymSandboxWarmPoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
+ *
+ * A `Pool` is the `osgym.cua.ai/v1alpha1 OSGymSandboxWarmPool` CR verbatim —
+ * the SDK is a naive CRUD mapper over the native CRDs, with no translation
+ * layer (the legacy `cua.ai/v1 OSGymWorkspacePool` and its operator compat
+ * shim are gone).
  */
 public struct Pool: Equatable, Hashable {
     public var apiVersion: String
     public var kind: String
     public var metadata: ResourceMetadata
-    public var spec: PoolSpec
-    public var status: OsGymWorkspacePoolStatus?
+    public var spec: OsGymSandboxWarmPoolSpec
+    public var status: OsGymSandboxWarmPoolStatus?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(apiVersion: String, kind: String, metadata: ResourceMetadata, spec: PoolSpec, status: OsGymWorkspacePoolStatus?) {
+    public init(apiVersion: String, kind: String, metadata: ResourceMetadata, spec: OsGymSandboxWarmPoolSpec, status: OsGymSandboxWarmPoolStatus?) {
         self.apiVersion = apiVersion
         self.kind = kind
         self.metadata = metadata
@@ -2023,8 +2200,8 @@ public struct FfiConverterTypePool: FfiConverterRustBuffer {
                 apiVersion: FfiConverterString.read(from: &buf),
                 kind: FfiConverterString.read(from: &buf),
                 metadata: FfiConverterTypeResourceMetadata.read(from: &buf),
-                spec: FfiConverterTypePoolSpec.read(from: &buf),
-                status: FfiConverterOptionTypeOSGymWorkspacePoolStatus.read(from: &buf)
+                spec: FfiConverterTypeOSGymSandboxWarmPoolSpec.read(from: &buf),
+                status: FfiConverterOptionTypeOSGymSandboxWarmPoolStatus.read(from: &buf)
         )
     }
 
@@ -2032,8 +2209,8 @@ public struct FfiConverterTypePool: FfiConverterRustBuffer {
         FfiConverterString.write(value.apiVersion, into: &buf)
         FfiConverterString.write(value.kind, into: &buf)
         FfiConverterTypeResourceMetadata.write(value.metadata, into: &buf)
-        FfiConverterTypePoolSpec.write(value.spec, into: &buf)
-        FfiConverterOptionTypeOSGymWorkspacePoolStatus.write(value.status, into: &buf)
+        FfiConverterTypeOSGymSandboxWarmPoolSpec.write(value.spec, into: &buf)
+        FfiConverterOptionTypeOSGymSandboxWarmPoolStatus.write(value.status, into: &buf)
     }
 }
 
@@ -2170,6 +2347,72 @@ public func FfiConverterTypeSandbox_lift(_ buf: RustBuffer) throws -> Sandbox {
 #endif
 public func FfiConverterTypeSandbox_lower(_ value: Sandbox) -> RustBuffer {
     return FfiConverterTypeSandbox.lower(value)
+}
+
+
+/**
+ * The `osgym.cua.ai/v1alpha1 OSGymSandboxTemplate` CR verbatim. Warm pools
+ * and claims reference one by name via `spec.sandboxTemplateRef.name`.
+ */
+public struct Template {
+    public var apiVersion: String
+    public var kind: String
+    public var metadata: ResourceMetadata
+    public var spec: OsGymSandboxTemplateSpec
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(apiVersion: String, kind: String, metadata: ResourceMetadata, spec: OsGymSandboxTemplateSpec) {
+        self.apiVersion = apiVersion
+        self.kind = kind
+        self.metadata = metadata
+        self.spec = spec
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension Template: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTemplate: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Template {
+        return
+            try Template(
+                apiVersion: FfiConverterString.read(from: &buf),
+                kind: FfiConverterString.read(from: &buf),
+                metadata: FfiConverterTypeResourceMetadata.read(from: &buf),
+                spec: FfiConverterTypeOSGymSandboxTemplateSpec.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: Template, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.apiVersion, into: &buf)
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterTypeResourceMetadata.write(value.metadata, into: &buf)
+        FfiConverterTypeOSGymSandboxTemplateSpec.write(value.spec, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTemplate_lift(_ buf: RustBuffer) throws -> Template {
+    return try FfiConverterTypeTemplate.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTemplate_lower(_ value: Template) -> RustBuffer {
+    return FfiConverterTypeTemplate.lower(value)
 }
 
 
@@ -2567,8 +2810,8 @@ fileprivate struct FfiConverterOptionTypeOSGymSandboxClaimStatus: FfiConverterRu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterOptionTypeOSGymWorkspacePoolStatus: FfiConverterRustBuffer {
-    typealias SwiftType = OsGymWorkspacePoolStatus?
+fileprivate struct FfiConverterOptionTypeOSGymSandboxWarmPoolStatus: FfiConverterRustBuffer {
+    typealias SwiftType = OsGymSandboxWarmPoolStatus?
 
     public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
         guard let value = value else {
@@ -2576,13 +2819,13 @@ fileprivate struct FfiConverterOptionTypeOSGymWorkspacePoolStatus: FfiConverterR
             return
         }
         writeInt(&buf, Int8(1))
-        FfiConverterTypeOSGymWorkspacePoolStatus.write(value, into: &buf)
+        FfiConverterTypeOSGymSandboxWarmPoolStatus.write(value, into: &buf)
     }
 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
-        case 1: return try FfiConverterTypeOSGymWorkspacePoolStatus.read(from: &buf)
+        case 1: return try FfiConverterTypeOSGymSandboxWarmPoolStatus.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -2707,6 +2950,31 @@ fileprivate struct FfiConverterSequenceTypePool: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypePool.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTemplate: FfiConverterRustBuffer {
+    typealias SwiftType = [Template]
+
+    public static func write(_ value: [Template], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTemplate.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Template] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Template]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTemplate.read(from: &buf))
         }
         return seq
     }
@@ -2925,6 +3193,24 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request() != 46699) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template() != 13689) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template() != 54852) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_template() != 8909) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_templates() != 58376) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template() != 36469) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template() != 18704) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token() != 1180) {

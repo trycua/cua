@@ -28,8 +28,8 @@ impl CyclopsClient {
         let namespace_item_url = routes::namespace_item(self.base_url(), &request.namespace)?;
         let collection_url = routes::pool_collection(self.base_url(), &request.namespace)?;
         let pool = Pool {
-            api_version: "cua.ai/v1".into(),
-            kind: "OSGymWorkspacePool".into(),
+            api_version: "osgym.cua.ai/v1alpha1".into(),
+            kind: "OSGymSandboxWarmPool".into(),
             metadata: ResourceMetadata {
                 namespace: request.namespace.clone(),
                 name: request.namespace,
@@ -54,7 +54,7 @@ impl CyclopsClient {
             NamespaceOwnership::Created
         );
         let result = self
-            .send_json(
+            .send_json_crud(
                 "create pool",
                 json_request("POST", collection_url, Some(to_json(&pool)?)),
                 &[200, 201, 202],
@@ -75,7 +75,7 @@ impl CyclopsClient {
     pub async fn list_pools(self: Arc<Self>, namespace: String) -> Result<Vec<Pool>, SdkError> {
         let collection_url = routes::pool_collection(self.base_url(), &namespace)?;
         let list: ResourceList<Pool> = self
-            .send_json(
+            .send_json_crud(
                 "list pools",
                 json_request("GET", collection_url, None),
                 &[200],
@@ -86,7 +86,7 @@ impl CyclopsClient {
 
     pub async fn get_pool(self: Arc<Self>, name: String) -> Result<Pool, SdkError> {
         let item_url = routes::named_pool_item(self.base_url(), &name)?;
-        self.send_json("get pool", json_request("GET", item_url, None), &[200])
+        self.send_json_crud("get pool", json_request("GET", item_url, None), &[200])
             .await
     }
 
@@ -109,7 +109,7 @@ impl CyclopsClient {
     pub async fn update_pool(self: Arc<Self>, pool: Pool) -> Result<Pool, SdkError> {
         let item_url = self.pool_item_url(&pool)?;
         let body = to_json(&pool)?;
-        self.send_json(
+        self.send_json_crud(
             "update pool",
             merge_patch_request(item_url, Some(body)),
             &[200],
@@ -124,7 +124,7 @@ impl CyclopsClient {
         let _lifecycle_guard = self
             .namespace_lifecycle_guard(&pool.metadata.namespace)
             .await;
-        self.send_unit(
+        self.send_unit_crud(
             "delete pool",
             json_request("DELETE", item_url, None),
             &[200, 202, 204, 404],
@@ -159,7 +159,7 @@ impl CyclopsClient {
     }
 
     async fn delete_namespace(&self, namespace_url: &Url) -> Result<(), SdkError> {
-        self.send_unit(
+        self.send_unit_crud(
             "delete namespace",
             json_request("DELETE", namespace_url.clone(), None),
             &[200, 202, 204, 404],
@@ -186,7 +186,7 @@ impl CyclopsClient {
         )
     }
 
-    async fn send_json<T: DeserializeOwned>(
+    pub(crate) async fn send_json_crud<T: DeserializeOwned>(
         &self,
         operation: &str,
         request: HttpRequest,
@@ -198,7 +198,7 @@ impl CyclopsClient {
         })
     }
 
-    async fn send_unit(
+    pub(crate) async fn send_unit_crud(
         &self,
         operation: &str,
         request: HttpRequest,

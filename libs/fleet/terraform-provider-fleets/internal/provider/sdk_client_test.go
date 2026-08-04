@@ -12,7 +12,7 @@ func TestNewCyclopsClientUsesStaticAccessToken(t *testing.T) {
 		if got := r.Header.Get("Authorization"); got != "Bearer static-token" {
 			t.Fatalf("authorization = %q, want static bearer token", got)
 		}
-		if r.URL.Path != "/api/k8s/apis/cua.ai/v1/namespaces/demo/osgymworkspacepools" {
+		if r.URL.Path != "/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/demo/osgymsandboxwarmpools" {
 			t.Fatalf("path = %q", r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
@@ -42,7 +42,7 @@ func TestNewCyclopsClientUsesOAuthCredentials(t *testing.T) {
 		if got := r.Header.Get("Authorization"); got != "Bearer oauth-token" {
 			t.Fatalf("authorization = %q, want OAuth bearer token", got)
 		}
-		if r.URL.Path != "/api/k8s/apis/cua.ai/v1/namespaces/demo/osgymworkspacepools" {
+		if r.URL.Path != "/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/demo/osgymsandboxwarmpools" {
 			t.Fatalf("path = %q", r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})

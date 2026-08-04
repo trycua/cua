@@ -615,6 +615,14 @@ mv "$raw_output/CyclopsSdkFFI.modulemap" "$generated_root/swift/"
 mv "$raw_output/CyclopsSdkSchemaFFI.h" "$generated_root/swift/"
 mv "$raw_output/CyclopsSdkSchemaFFI.modulemap" "$generated_root/swift/"
 cat "$generated_root/swift/CyclopsSdkFFI.modulemap" "$generated_root/swift/CyclopsSdkSchemaFFI.modulemap" > "$generated_root/swift/CyclopsSdk.modulemap"
+# UniFFI 0.31.0 assumes cross-crate external record types conform to
+# Equatable/Hashable. OsGymSandboxTemplateSpec transitively holds a
+# PreservedJson object, which is not Hashable in the schema module — drop the
+# synthesized conformance uniffi claims for every sdk record embedding it.
+for template_struct in Template CreateTemplateRequest; do
+  sed -i.bak "s/^public struct $template_struct: Equatable, Hashable {/public struct $template_struct {/" "$generated_root/swift/CyclopsSdk.swift"
+  rm "$generated_root/swift/CyclopsSdk.swift.bak"
+done
 
 mv "$raw_output/fleet_sdk.rb" "$generated_root/ruby/cyclops_sdk/sdk.rb"
 mv "$raw_output/cyclops_sdk_schema.rb" "$generated_root/ruby/cyclops_sdk/schema.rb"
@@ -798,8 +806,8 @@ def replace_buffer(match):
         f"{indent})"
     )
 text, buffer_replacements = re.subn(buffer_pattern, replace_buffer, text)
-if buffer_replacements != 12:
-    raise SystemExit(f"expected 12 Ruby Rust-buffer future wrappers, found {buffer_replacements}")
+if buffer_replacements != 17:
+    raise SystemExit(f"expected 17 Ruby Rust-buffer future wrappers, found {buffer_replacements}")
 
 void_pattern = r"(?m)^(\s*)FleetSdk\.rust_call_with_error\(([^,]+),:([a-z0-9_]+),(.*)\)$"
 def replace_void(match):
@@ -811,8 +819,8 @@ def replace_void(match):
         f"{indent})"
     )
 text, void_replacements = re.subn(void_pattern, replace_void, text)
-if void_replacements != 2:
-    raise SystemExit(f"expected 2 Ruby void future wrappers, found {void_replacements}")
+if void_replacements != 3:
+    raise SystemExit(f"expected 3 Ruby void future wrappers, found {void_replacements}")
 
 handle_map_anchor = """def self.uniffi_bytes(v)
   raise TypeError, \"no implicit conversion of #{v} into String\" unless v.respond_to?(:to_str)

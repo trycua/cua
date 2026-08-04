@@ -4,6 +4,7 @@ mod error;
 mod pools;
 mod routes;
 mod services;
+mod templates;
 mod transport;
 mod types;
 
@@ -14,9 +15,9 @@ pub use error::{
 pub use routes::validate_dns_label;
 pub use transport::{AccessTokenProvider, HttpClient};
 pub use types::{
-    Claim, CreateClaimRequest, CreatePoolRequest, CyclopsConfiguration, CyclopsCredentials,
-    CyclopsTokenProviderConfiguration, HttpHeader, HttpRequest, HttpResponse, Pool,
-    ResourceMetadata, Sandbox,
+    Claim, CreateClaimRequest, CreatePoolRequest, CreateTemplateRequest, CyclopsConfiguration,
+    CyclopsCredentials, CyclopsTokenProviderConfiguration, HttpHeader, HttpRequest, HttpResponse,
+    Pool, ResourceMetadata, Sandbox, Template,
 };
 
 uniffi::setup_scaffolding!("fleet_sdk");

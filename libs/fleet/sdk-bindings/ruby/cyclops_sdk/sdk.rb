@@ -216,7 +216,7 @@ private_constant :UniffiHandleMap
 
   def self.check_lower_TypeCreatePoolRequest(v)
 
-    RustBuffer.check_lower_TypePoolSpec(v.spec)
+    RustBuffer.check_lower_TypeOSGymSandboxWarmPoolSpec(v.spec)
   end
 
   def self.alloc_from_TypeCreatePoolRequest(v)
@@ -229,6 +229,27 @@ private_constant :UniffiHandleMap
   def consumeIntoTypeCreatePoolRequest
     consumeWithStream do |stream|
       return stream.readTypeCreatePoolRequest
+    end
+  end
+
+  # The Record type CreateTemplateRequest.
+
+  def self.check_lower_TypeCreateTemplateRequest(v)
+
+
+    RustBuffer.check_lower_TypeOSGymSandboxTemplateSpec(v.spec)
+  end
+
+  def self.alloc_from_TypeCreateTemplateRequest(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_TypeCreateTemplateRequest(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoTypeCreateTemplateRequest
+    consumeWithStream do |stream|
+      return stream.readTypeCreateTemplateRequest
     end
   end
 
@@ -349,8 +370,8 @@ private_constant :UniffiHandleMap
 
 
     RustBuffer.check_lower_TypeResourceMetadata(v.metadata)
-    RustBuffer.check_lower_TypePoolSpec(v.spec)
-    RustBuffer.check_lower_OptionalTypeOSGymWorkspacePoolStatus(v.status)
+    RustBuffer.check_lower_TypeOSGymSandboxWarmPoolSpec(v.spec)
+    RustBuffer.check_lower_OptionalTypeOSGymSandboxWarmPoolStatus(v.status)
   end
 
   def self.alloc_from_TypePool(v)
@@ -406,6 +427,28 @@ private_constant :UniffiHandleMap
   def consumeIntoTypeSandbox
     consumeWithStream do |stream|
       return stream.readTypeSandbox
+    end
+  end
+
+  # The Record type Template.
+
+  def self.check_lower_TypeTemplate(v)
+
+
+    RustBuffer.check_lower_TypeResourceMetadata(v.metadata)
+    RustBuffer.check_lower_TypeOSGymSandboxTemplateSpec(v.spec)
+  end
+
+  def self.alloc_from_TypeTemplate(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_TypeTemplate(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoTypeTemplate
+    consumeWithStream do |stream|
+      return stream.readTypeTemplate
     end
   end
 
@@ -478,24 +521,24 @@ private_constant :UniffiHandleMap
     end
   end
 
-  # The Optional<T> type for TypeOSGymWorkspacePoolStatus.
+  # The Optional<T> type for TypeOSGymSandboxWarmPoolStatus.
 
-  def self.check_lower_OptionalTypeOSGymWorkspacePoolStatus(v)
+  def self.check_lower_OptionalTypeOSGymSandboxWarmPoolStatus(v)
     if not v.nil?
-      RustBuffer.check_lower_TypeOSGymWorkspacePoolStatus(v)
+      RustBuffer.check_lower_TypeOSGymSandboxWarmPoolStatus(v)
     end
   end
 
-  def self.alloc_from_OptionalTypeOSGymWorkspacePoolStatus(v)
+  def self.alloc_from_OptionalTypeOSGymSandboxWarmPoolStatus(v)
     RustBuffer.allocWithBuilder do |builder|
-      builder.write_OptionalTypeOSGymWorkspacePoolStatus(v)
+      builder.write_OptionalTypeOSGymSandboxWarmPoolStatus(v)
       return builder.finalize()
     end
   end
 
-  def consumeIntoOptionalTypeOSGymWorkspacePoolStatus
+  def consumeIntoOptionalTypeOSGymSandboxWarmPoolStatus
     consumeWithStream do |stream|
-      return stream.readOptionalTypeOSGymWorkspacePoolStatus
+      return stream.readOptionalTypeOSGymSandboxWarmPoolStatus
     end
   end
 
@@ -601,6 +644,27 @@ private_constant :UniffiHandleMap
   def consumeIntoSequenceTypePool
     consumeWithStream do |stream|
       return stream.readSequenceTypePool
+    end
+  end
+
+  # The Sequence<T> type for TypeTemplate.
+
+  def self.check_lower_SequenceTypeTemplate(v)
+    v.each do |item|
+      RustBuffer.check_lower_TypeTemplate(item)
+    end
+  end
+
+  def self.alloc_from_SequenceTypeTemplate(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_SequenceTypeTemplate(v)
+      return builder.finalize()
+    end
+  end
+
+  def consumeIntoSequenceTypeTemplate
+    consumeWithStream do |stream|
+      return stream.readSequenceTypeTemplate
     end
   end
 
@@ -761,7 +825,17 @@ class RustBufferStream
   def readTypeCreatePoolRequest
     CreatePoolRequest.new(
       namespace: readString,
-      spec: readTypePoolSpec
+      spec: readTypeOSGymSandboxWarmPoolSpec
+    )
+  end
+
+  # The Record type CreateTemplateRequest.
+
+  def readTypeCreateTemplateRequest
+    CreateTemplateRequest.new(
+      namespace: readString,
+      name: readString,
+      spec: readTypeOSGymSandboxTemplateSpec
     )
   end
 
@@ -828,8 +902,8 @@ class RustBufferStream
       api_version: readString,
       kind: readString,
       metadata: readTypeResourceMetadata,
-      spec: readTypePoolSpec,
-      status: readOptionalTypeOSGymWorkspacePoolStatus
+      spec: readTypeOSGymSandboxWarmPoolSpec,
+      status: readOptionalTypeOSGymSandboxWarmPoolStatus
     )
   end
 
@@ -851,6 +925,17 @@ class RustBufferStream
       claim: readString,
       name: readString,
       services: readSequencestring
+    )
+  end
+
+  # The Record type Template.
+
+  def readTypeTemplate
+    Template.new(
+      api_version: readString,
+      kind: readString,
+      metadata: readTypeResourceMetadata,
+      spec: readTypeOSGymSandboxTemplateSpec
     )
   end
 
@@ -1002,17 +1087,17 @@ class RustBufferStream
     end
   end
 
-  # The Optional<T> type for TypeOSGymWorkspacePoolStatus.
+  # The Optional<T> type for TypeOSGymSandboxWarmPoolStatus.
 
-  def readOptionalTypeOSGymWorkspacePoolStatus
+  def readOptionalTypeOSGymSandboxWarmPoolStatus
     flag = unpack_from 1, 'c'
 
     if flag == 0
       return nil
     elsif flag == 1
-      return readTypeOSGymWorkspacePoolStatus
+      return readTypeOSGymSandboxWarmPoolStatus
     else
-      raise InternalError, 'Unexpected flag byte for OptionalTypeOSGymWorkspacePoolStatus'
+      raise InternalError, 'Unexpected flag byte for OptionalTypeOSGymSandboxWarmPoolStatus'
     end
   end
 
@@ -1089,6 +1174,22 @@ class RustBufferStream
 
     count.times do
       items.append readTypePool
+    end
+
+    items
+  end
+
+  # The Sequence<T> type for TypeTemplate.
+
+  def readSequenceTypeTemplate
+    count = unpack_from 4, 'l>'
+
+    raise InternalError, 'Unexpected negative sequence length' if count.negative?
+
+    items = []
+
+    count.times do
+      items.append readTypeTemplate
     end
 
     items
@@ -1233,7 +1334,15 @@ class RustBufferBuilder
 
   def write_TypeCreatePoolRequest(v)
     self.write_String(v.namespace)
-    self.write_TypePoolSpec(v.spec)
+    self.write_TypeOSGymSandboxWarmPoolSpec(v.spec)
+  end
+
+  # The Record type CreateTemplateRequest.
+
+  def write_TypeCreateTemplateRequest(v)
+    self.write_String(v.namespace)
+    self.write_String(v.name)
+    self.write_TypeOSGymSandboxTemplateSpec(v.spec)
   end
 
   # The Record type CyclopsConfiguration.
@@ -1288,8 +1397,8 @@ class RustBufferBuilder
     self.write_String(v.api_version)
     self.write_String(v.kind)
     self.write_TypeResourceMetadata(v.metadata)
-    self.write_TypePoolSpec(v.spec)
-    self.write_OptionalTypeOSGymWorkspacePoolStatus(v.status)
+    self.write_TypeOSGymSandboxWarmPoolSpec(v.spec)
+    self.write_OptionalTypeOSGymSandboxWarmPoolStatus(v.status)
   end
 
   # The Record type ResourceMetadata.
@@ -1307,6 +1416,15 @@ class RustBufferBuilder
     self.write_String(v.claim)
     self.write_String(v.name)
     self.write_Sequencestring(v.services)
+  end
+
+  # The Record type Template.
+
+  def write_TypeTemplate(v)
+    self.write_String(v.api_version)
+    self.write_String(v.kind)
+    self.write_TypeResourceMetadata(v.metadata)
+    self.write_TypeOSGymSandboxTemplateSpec(v.spec)
   end
 
 
@@ -1348,14 +1466,14 @@ class RustBufferBuilder
     end
   end
 
-  # The Optional<T> type for TypeOSGymWorkspacePoolStatus.
+  # The Optional<T> type for TypeOSGymSandboxWarmPoolStatus.
 
-  def write_OptionalTypeOSGymWorkspacePoolStatus(v)
+  def write_OptionalTypeOSGymSandboxWarmPoolStatus(v)
     if v.nil?
       pack_into(1, 'c', 0)
     else
       pack_into(1, 'c', 1)
-      self.write_TypeOSGymWorkspacePoolStatus(v)
+      self.write_TypeOSGymSandboxWarmPoolStatus(v)
     end
   end
 
@@ -1407,6 +1525,16 @@ class RustBufferBuilder
 
     items.each do |item|
       self.write_TypePool(item)
+    end
+  end
+
+  # The Sequence<T> type for TypeTemplate.
+
+  def write_SequenceTypeTemplate(items)
+    pack_into(4, 'l>', items.size)
+
+    items.each do |item|
+      self.write_TypeTemplate(item)
     end
   end
 
@@ -1923,6 +2051,24 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request,
     [:uint64, RustBuffer.by_value, RustBuffer.by_value, RustBuffer.by_value, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_create_template,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_template,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_get_template,
+    [:uint64, RustBuffer.by_value, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_list_templates,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_template,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_update_template,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
   attach_function :uniffi_cyclops_sdk_fn_clone_accesstokenprovider,
     [:uint64, RustCallStatus.by_ref],
     :uint64
@@ -2032,6 +2178,24 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request,
     [RustCallStatus.by_ref],
     :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_template,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_templates,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template,
+    [RustCallStatus.by_ref],
+    :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token,
     [RustCallStatus.by_ref],
     :uint16
@@ -2139,6 +2303,31 @@ class CreatePoolRequest
 
   def ==(other)
     if @namespace != other.namespace
+      return false
+    end
+    if @spec != other.spec
+      return false
+    end
+
+    true
+  end
+end
+
+  # Record type CreateTemplateRequest
+class CreateTemplateRequest
+  attr_reader :namespace, :name, :spec
+
+  def initialize(namespace:, name:, spec:)
+    @namespace = namespace
+    @name = name
+    @spec = spec
+  end
+
+  def ==(other)
+    if @namespace != other.namespace
+      return false
+    end
+    if @name != other.name
       return false
     end
     if @spec != other.spec
@@ -2378,6 +2567,35 @@ class Sandbox
       return false
     end
     if @services != other.services
+      return false
+    end
+
+    true
+  end
+end
+
+  # Record type Template
+class Template
+  attr_reader :api_version, :kind, :metadata, :spec
+
+  def initialize(api_version:, kind:, metadata:, spec:)
+    @api_version = api_version
+    @kind = kind
+    @metadata = metadata
+    @spec = spec
+  end
+
+  def ==(other)
+    if @api_version != other.api_version
+      return false
+    end
+    if @kind != other.kind
+      return false
+    end
+    if @metadata != other.metadata
+      return false
+    end
+    if @spec != other.spec
       return false
     end
 
@@ -2628,6 +2846,68 @@ end
       UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request(uniffi_clone_handle(),RustBuffer.alloc_from_TypeSandbox(sandbox),RustBuffer.allocFromString(service),RustBuffer.allocFromString(path),RustBuffer.alloc_from_TypeHttpRequest(request),RustCallStatus.new),
     )
     return result.consumeIntoTypeHttpResponse
+  end
+  def create_template(request)
+        request = request
+        RustBuffer.check_lower_TypeCreateTemplateRequest(request)
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+      SdkError,
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_template(uniffi_clone_handle(),RustBuffer.alloc_from_TypeCreateTemplateRequest(request),RustCallStatus.new),
+    )
+    return result.consumeIntoTypeTemplate
+  end
+  def delete_template(template)
+        template = template
+        RustBuffer.check_lower_TypeTemplate(template)
+      FleetSdk.uniffi_rust_future_void(
+        SdkError,
+        UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_template(uniffi_clone_handle(),RustBuffer.alloc_from_TypeTemplate(template),RustCallStatus.new),
+      )
+  end
+
+  def get_template(namespace, name)
+        namespace = FleetSdk::uniffi_utf8(namespace)
+
+        name = FleetSdk::uniffi_utf8(name)
+
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+
+      SdkError,
+
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_template(uniffi_clone_handle(),RustBuffer.allocFromString(namespace),RustBuffer.allocFromString(name),RustCallStatus.new),
+
+    )
+    return result.consumeIntoTypeTemplate
+  end
+  def list_templates(namespace)
+        namespace = FleetSdk::uniffi_utf8(namespace)
+
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+
+      SdkError,
+
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_templates(uniffi_clone_handle(),RustBuffer.allocFromString(namespace),RustCallStatus.new),
+
+    )
+    return result.consumeIntoSequenceTypeTemplate
+  end
+  def reconcile_template(request)
+        request = request
+        RustBuffer.check_lower_TypeCreateTemplateRequest(request)
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+      SdkError,
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_template(uniffi_clone_handle(),RustBuffer.alloc_from_TypeCreateTemplateRequest(request),RustCallStatus.new),
+    )
+    return result.consumeIntoTypeTemplate
+  end
+  def update_template(template)
+        template = template
+        RustBuffer.check_lower_TypeTemplate(template)
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+      SdkError,
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_update_template(uniffi_clone_handle(),RustBuffer.alloc_from_TypeTemplate(template),RustCallStatus.new),
+    )
+    return result.consumeIntoTypeTemplate
   end
 
 end

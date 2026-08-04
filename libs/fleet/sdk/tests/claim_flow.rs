@@ -2,7 +2,7 @@ mod support;
 
 use cyclops_sdk::{
     Claim, CreateClaimRequest, CyclopsClient, CyclopsConfiguration, CyclopsCredentials, HttpHeader,
-    HttpResponse, Pool, ResourceMetadata, SdkError,
+    HttpResponse, Pool, ResourceMetadata, SdkError, Template,
 };
 use cyclops_sdk_schema::ClaimSpec;
 use std::sync::Arc;
@@ -12,13 +12,13 @@ const BASE_URL: &str = "https://cyclops.example:8443/prefix";
 const TOKEN_URL: &str = "https://identity.example/oauth/token";
 const NAMESPACE: &str = "example-pool";
 const CLAIM_COLLECTION: &str = "https://cyclops.example:8443/prefix/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/example-pool/osgymsandboxclaims";
-const POOL_ITEM: &str = "https://cyclops.example:8443/prefix/api/k8s/apis/cua.ai/v1/namespaces/example-pool/osgymworkspacepools/example-pool";
+const TEMPLATE_ITEM: &str = "https://cyclops.example:8443/prefix/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/example-pool/osgymsandboxtemplates/example-pool-template";
 
 #[tokio::test]
 async fn creates_pending_demand_immediately_for_a_nonzero_unavailable_pool() {
     let spec = claim_spec("explicit-template");
     let created = claim("claim-1", spec.clone(), None);
-    let mut unavailable_pool = pool(1, None);
+    let mut unavailable_pool = pool(1);
     unavailable_pool.status = Some(
         serde_json::from_value(serde_json::json!({ "availableCount": 0, "phase": "Pending" }))
             .unwrap(),
@@ -60,7 +60,7 @@ async fn zero_and_nonzero_pools_post_claims_with_identical_sequencing() {
 
         client(Arc::clone(&http), 2, 2)
             .create_claim(CreateClaimRequest {
-                pool: pool(replicas, None),
+                pool: pool(replicas),
                 spec: None,
             })
             .await
@@ -120,7 +120,10 @@ async fn wait_claim_returns_bound_sandbox_with_sorted_deduplicated_pool_services
     let http = Arc::new(ScriptedHttpClient::new([
         Ok(token()),
         Ok(json_response(200, &current)),
-        Ok(json_response(200, &pool(1, Some(vec!["z", "a", "z"])))),
+        Ok(json_response(
+            200,
+            &template_named("example-pool-template", Some(vec!["z", "a", "z"])),
+        )),
     ]));
     let client = client(Arc::clone(&http), 1, 2);
 
@@ -141,7 +144,7 @@ async fn wait_claim_returns_bound_sandbox_with_sorted_deduplicated_pool_services
         &format!("{CLAIM_COLLECTION}/named-claim"),
         None,
     );
-    assert_request(&requests[1], "GET", POOL_ITEM, None);
+    assert_request(&requests[1], "GET", TEMPLATE_ITEM, None);
 }
 
 #[tokio::test]
@@ -179,7 +182,7 @@ async fn wait_claim_reports_terminal_and_timeout_statuses() {
 #[tokio::test]
 async fn generated_claim_names_are_unique_under_concurrency_and_fit_dns_labels() {
     let pool_name = "a".repeat(63);
-    let pool = pool_named(&pool_name, 0, None);
+    let pool = pool_named(&pool_name, 0);
     let first = claim("placeholder", claim_spec("short-template"), None);
     let second = first.clone();
     let http = Arc::new(ScriptedHttpClient::new([
@@ -226,9 +229,9 @@ async fn validation_and_malformed_responses_fail_without_unexpected_http() {
     let invalid_pool = Pool {
         metadata: ResourceMetadata {
             namespace: "Uppercase".into(),
-            ..pool(0, None).metadata
+            ..pool(0).metadata
         },
-        ..pool(0, None)
+        ..pool(0)
     };
     assert!(matches!(
         client(Arc::clone(&invalid_http), 1, 1)
@@ -286,20 +289,14 @@ fn client(http: Arc<ScriptedHttpClient>, pool_limit: u32, claim_limit: u32) -> A
     .unwrap()
 }
 
-fn pool(replicas: u32, services: Option<Vec<&str>>) -> Pool {
-    pool_named(NAMESPACE, replicas, services)
+fn pool(replicas: u32) -> Pool {
+    pool_named(NAMESPACE, replicas)
 }
 
-fn pool_named(name: &str, replicas: u32, services: Option<Vec<&str>>) -> Pool {
-    let services = services.map(|services| {
-        services
-            .into_iter()
-            .map(|name| serde_json::json!({ "name": name, "targetPort": 8080 }))
-            .collect::<Vec<_>>()
-    });
+fn pool_named(name: &str, replicas: u32) -> Pool {
     Pool {
-        api_version: "cua.ai/v1".into(),
-        kind: "OSGymWorkspacePool".into(),
+        api_version: "osgym.cua.ai/v1alpha1".into(),
+        kind: "OSGymSandboxWarmPool".into(),
         metadata: ResourceMetadata {
             namespace: name.into(),
             name: name.into(),
@@ -307,11 +304,35 @@ fn pool_named(name: &str, replicas: u32, services: Option<Vec<&str>>) -> Pool {
         },
         spec: serde_json::from_value(serde_json::json!({
             "replicas": replicas,
-            "template": { "containerDiskImage": "registry.example/image:latest" },
-            "services": services,
+            "sandboxTemplateRef": { "name": format!("{name}-template") },
         }))
         .unwrap(),
         status: None,
+    }
+}
+
+fn template_named(name: &str, services: Option<Vec<&str>>) -> Template {
+    let services = services.map(|services| {
+        services
+            .into_iter()
+            .map(|name| serde_json::json!({ "name": name, "targetPort": 8080 }))
+            .collect::<Vec<_>>()
+    });
+    Template {
+        api_version: "osgym.cua.ai/v1alpha1".into(),
+        kind: "OSGymSandboxTemplate".into(),
+        metadata: ResourceMetadata {
+            namespace: NAMESPACE.into(),
+            name: name.into(),
+            labels: None,
+        },
+        spec: serde_json::from_value(serde_json::json!({
+            "vmTemplate": {
+                "containerDiskImage": "registry.example/image:latest",
+                "services": services,
+            },
+        }))
+        .unwrap(),
     }
 }
 
@@ -382,7 +403,7 @@ fn assert_request(
 async fn default_template_ref_for_a_63_byte_pool_passes_through_without_dns_validation() {
     let pool_name = "a".repeat(63);
     let template_name = format!("{pool_name}-template");
-    let pool = pool_named(&pool_name, 0, None);
+    let pool = pool_named(&pool_name, 0);
     let http = Arc::new(ScriptedHttpClient::new([
         Ok(token()),
         Ok(json_response(
@@ -415,7 +436,7 @@ async fn explicit_non_dns_template_ref_passes_through_but_empty_ref_is_rejected_
     ]));
     client(Arc::clone(&http), 1, 1)
         .create_claim(CreateClaimRequest {
-            pool: pool(0, None),
+            pool: pool(0),
             spec: Some(claim_spec(template_name)),
         })
         .await
@@ -429,7 +450,7 @@ async fn explicit_non_dns_template_ref_passes_through_but_empty_ref_is_rejected_
     assert!(matches!(
         client(Arc::clone(&empty_http), 1, 1)
             .create_claim(CreateClaimRequest {
-                pool: pool(0, None),
+                pool: pool(0),
                 spec: Some(claim_spec("")),
             })
             .await,
@@ -439,7 +460,7 @@ async fn explicit_non_dns_template_ref_passes_through_but_empty_ref_is_rejected_
 }
 
 #[tokio::test]
-async fn wait_claim_uses_controller_removesuffix_behavior_for_template_refs_without_suffixes() {
+async fn wait_claim_fetches_the_template_named_by_the_claim_ref_verbatim() {
     let current = claim(
         "named-claim",
         claim_spec("example-pool"),
@@ -451,7 +472,10 @@ async fn wait_claim_uses_controller_removesuffix_behavior_for_template_refs_with
     let http = Arc::new(ScriptedHttpClient::new([
         Ok(token()),
         Ok(json_response(200, &current)),
-        Ok(json_response(200, &pool(1, Some(vec!["shell"])))),
+        Ok(json_response(
+            200,
+            &template_named("example-pool", Some(vec!["shell"])),
+        )),
     ]));
 
     assert_eq!(
@@ -469,7 +493,12 @@ async fn wait_claim_uses_controller_removesuffix_behavior_for_template_refs_with
         &format!("{CLAIM_COLLECTION}/named-claim"),
         None,
     );
-    assert_request(&requests[1], "GET", POOL_ITEM, None);
+    assert_request(
+        &requests[1],
+        "GET",
+        "https://cyclops.example:8443/prefix/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/example-pool/osgymsandboxtemplates/example-pool",
+        None,
+    );
 }
 
 #[tokio::test]

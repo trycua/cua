@@ -23,35 +23,35 @@ export type UniffiForeignFutureCompleterustBuffer = (
   callbackData: bigint,
   result: UniffiForeignFutureResultRustBuffer,
 ) => void;
-type UniffiCallbackInterfaceCyclopsSdkAccessTokenProviderMethod0 = (
+type UniffiCallbackInterfaceFleetSdkAccessTokenProviderMethod0 = (
   uniffiHandle: bigint,
   forceRefresh: number,
   uniffiFutureCallback: UniffiForeignFutureCompleterustBuffer,
   uniffiCallbackData: bigint,
 ) => UniffiForeignFutureDroppedCallbackStruct;
-type UniffiCallbackInterfaceCloneCyclopsSdkAccessTokenProvider = (
+type UniffiCallbackInterfaceCloneFleetSdkAccessTokenProvider = (
   handle: bigint,
 ) => UniffiResult<void>;
-type UniffiCallbackInterfaceFreeCyclopsSdkAccessTokenProvider = (
+type UniffiCallbackInterfaceFreeFleetSdkAccessTokenProvider = (
   handle: bigint,
 ) => void;
-export type UniffiVTableCallbackInterfaceCyclopsSdkAccessTokenProvider = {
-  uniffi_free: UniffiCallbackInterfaceFreeCyclopsSdkAccessTokenProvider;
-  uniffi_clone: UniffiCallbackInterfaceCloneCyclopsSdkAccessTokenProvider;
-  get_access_token: UniffiCallbackInterfaceCyclopsSdkAccessTokenProviderMethod0;
+export type UniffiVTableCallbackInterfaceFleetSdkAccessTokenProvider = {
+  uniffi_free: UniffiCallbackInterfaceFreeFleetSdkAccessTokenProvider;
+  uniffi_clone: UniffiCallbackInterfaceCloneFleetSdkAccessTokenProvider;
+  get_access_token: UniffiCallbackInterfaceFleetSdkAccessTokenProviderMethod0;
 };
-type UniffiCallbackInterfaceCyclopsSdkHttpClientMethod0 = (
+type UniffiCallbackInterfaceFleetSdkHttpClientMethod0 = (
   uniffiHandle: bigint,
   request: Uint8Array,
   uniffiFutureCallback: UniffiForeignFutureCompleterustBuffer,
   uniffiCallbackData: bigint,
 ) => UniffiForeignFutureDroppedCallbackStruct;
-type UniffiCallbackInterfaceCloneCyclopsSdkHttpClient = (
+type UniffiCallbackInterfaceCloneFleetSdkHttpClient = (
   handle: bigint,
 ) => UniffiResult<void>;
-type UniffiCallbackInterfaceFreeCyclopsSdkHttpClient = (handle: bigint) => void;
-export type UniffiVTableCallbackInterfaceCyclopsSdkHttpClient = {
-  uniffi_free: UniffiCallbackInterfaceFreeCyclopsSdkHttpClient;
-  uniffi_clone: UniffiCallbackInterfaceCloneCyclopsSdkHttpClient;
-  execute: UniffiCallbackInterfaceCyclopsSdkHttpClientMethod0;
+type UniffiCallbackInterfaceFreeFleetSdkHttpClient = (handle: bigint) => void;
+export type UniffiVTableCallbackInterfaceFleetSdkHttpClient = {
+  uniffi_free: UniffiCallbackInterfaceFreeFleetSdkHttpClient;
+  uniffi_clone: UniffiCallbackInterfaceCloneFleetSdkHttpClient;
+  execute: UniffiCallbackInterfaceFleetSdkHttpClientMethod0;
 };

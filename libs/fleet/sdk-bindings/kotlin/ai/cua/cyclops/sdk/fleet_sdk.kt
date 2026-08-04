@@ -33,11 +33,13 @@ import java.util.concurrent.ConcurrentHashMap
 import ai.cua.cyclops.sdk.schema.ClaimSpec
 import ai.cua.cyclops.sdk.schema.FfiConverterTypeClaimSpec
 import ai.cua.cyclops.sdk.schema.FfiConverterTypeOSGymSandboxClaimStatus
-import ai.cua.cyclops.sdk.schema.FfiConverterTypeOSGymWorkspacePoolStatus
-import ai.cua.cyclops.sdk.schema.FfiConverterTypePoolSpec
+import ai.cua.cyclops.sdk.schema.FfiConverterTypeOSGymSandboxTemplateSpec
+import ai.cua.cyclops.sdk.schema.FfiConverterTypeOSGymSandboxWarmPoolSpec
+import ai.cua.cyclops.sdk.schema.FfiConverterTypeOSGymSandboxWarmPoolStatus
 import ai.cua.cyclops.sdk.schema.OsGymSandboxClaimStatus
-import ai.cua.cyclops.sdk.schema.OsGymWorkspacePoolStatus
-import ai.cua.cyclops.sdk.schema.PoolSpec
+import ai.cua.cyclops.sdk.schema.OsGymSandboxTemplateSpec
+import ai.cua.cyclops.sdk.schema.OsGymSandboxWarmPoolSpec
+import ai.cua.cyclops.sdk.schema.OsGymSandboxWarmPoolStatus
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 import kotlinx.coroutines.CancellableContinuation
@@ -48,8 +50,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import ai.cua.cyclops.sdk.schema.RustBuffer as RustBufferClaimSpec
 import ai.cua.cyclops.sdk.schema.RustBuffer as RustBufferOSGymSandboxClaimStatus
-import ai.cua.cyclops.sdk.schema.RustBuffer as RustBufferOSGymWorkspacePoolStatus
-import ai.cua.cyclops.sdk.schema.RustBuffer as RustBufferPoolSpec
+import ai.cua.cyclops.sdk.schema.RustBuffer as RustBufferOSGymSandboxTemplateSpec
+import ai.cua.cyclops.sdk.schema.RustBuffer as RustBufferOSGymSandboxWarmPoolSpec
+import ai.cua.cyclops.sdk.schema.RustBuffer as RustBufferOSGymSandboxWarmPoolStatus
 
 // This is a helper for safely working with byte buffers returned from the Rust code.
 // A rust-owned buffer is represented by its capacity, its current length, and a
@@ -723,6 +726,18 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request(
     ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_template(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_templates(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template(
+    ): Short
     external fun uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_httpclient_execute(
@@ -805,6 +820,18 @@ external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_pool(`ptr`: Lo
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_update_pool(`ptr`: Long,`pool`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request(`ptr`: Long,`sandbox`: RustBuffer.ByValue,`service`: RustBuffer.ByValue,`path`: RustBuffer.ByValue,`request`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_create_template(`ptr`: Long,`request`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_template(`ptr`: Long,`template`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_get_template(`ptr`: Long,`namespace`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_list_templates(`ptr`: Long,`namespace`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_template(`ptr`: Long,`request`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_update_template(`ptr`: Long,`template`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cyclops_sdk_fn_clone_accesstokenprovider(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): Long
@@ -981,6 +1008,24 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request() != 46699.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template() != 13689.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template() != 54852.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_template() != 8909.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_templates() != 58376.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template() != 36469.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template() != 18704.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token() != 1180.toShort()) {
@@ -1956,6 +2001,18 @@ public interface CyclopsClientInterface {
 
     suspend fun `serviceRequest`(`sandbox`: Sandbox, `service`: kotlin.String, `path`: kotlin.String, `request`: HttpRequest): HttpResponse
 
+    suspend fun `createTemplate`(`request`: CreateTemplateRequest): Template
+
+    suspend fun `deleteTemplate`(`template`: Template)
+
+    suspend fun `getTemplate`(`namespace`: kotlin.String, `name`: kotlin.String): Template
+
+    suspend fun `listTemplates`(`namespace`: kotlin.String): List<Template>
+
+    suspend fun `reconcileTemplate`(`request`: CreateTemplateRequest): Template
+
+    suspend fun `updateTemplate`(`template`: Template): Template
+
     companion object
 }
 
@@ -2304,6 +2361,133 @@ open class CyclopsClient: Disposable, AutoCloseable, CyclopsClientInterface
         { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeHttpResponse.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `createTemplate`(`request`: CreateTemplateRequest) : Template {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_template(
+                uniffiHandle,
+                FfiConverterTypeCreateTemplateRequest.lower(`request`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeTemplate.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `deleteTemplate`(`template`: Template) {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_template(
+                uniffiHandle,
+                FfiConverterTypeTemplate.lower(`template`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `getTemplate`(`namespace`: kotlin.String, `name`: kotlin.String) : Template {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_template(
+                uniffiHandle,
+                FfiConverterString.lower(`namespace`),FfiConverterString.lower(`name`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeTemplate.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `listTemplates`(`namespace`: kotlin.String) : List<Template> {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_templates(
+                uniffiHandle,
+                FfiConverterString.lower(`namespace`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterSequenceTypeTemplate.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `reconcileTemplate`(`request`: CreateTemplateRequest) : Template {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_template(
+                uniffiHandle,
+                FfiConverterTypeCreateTemplateRequest.lower(`request`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeTemplate.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `updateTemplate`(`template`: Template) : Template {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_update_template(
+                uniffiHandle,
+                FfiConverterTypeTemplate.lower(`template`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeTemplate.lift(it) },
         // Error FFI converter
         SdkException.ErrorHandler,
     )
@@ -3104,7 +3288,7 @@ public object FfiConverterTypeCreateClaimRequest: FfiConverterRustBuffer<CreateC
 data class CreatePoolRequest (
     var `namespace`: kotlin.String
     ,
-    var `spec`: PoolSpec
+    var `spec`: OsGymSandboxWarmPoolSpec
 
 ){
 
@@ -3122,18 +3306,61 @@ public object FfiConverterTypeCreatePoolRequest: FfiConverterRustBuffer<CreatePo
     override fun read(buf: ByteBuffer): CreatePoolRequest {
         return CreatePoolRequest(
             FfiConverterString.read(buf),
-            FfiConverterTypePoolSpec.read(buf),
+            FfiConverterTypeOSGymSandboxWarmPoolSpec.read(buf),
         )
     }
 
     override fun allocationSize(value: CreatePoolRequest) = (
             FfiConverterString.allocationSize(value.`namespace`) +
-            FfiConverterTypePoolSpec.allocationSize(value.`spec`)
+            FfiConverterTypeOSGymSandboxWarmPoolSpec.allocationSize(value.`spec`)
     )
 
     override fun write(value: CreatePoolRequest, buf: ByteBuffer) {
             FfiConverterString.write(value.`namespace`, buf)
-            FfiConverterTypePoolSpec.write(value.`spec`, buf)
+            FfiConverterTypeOSGymSandboxWarmPoolSpec.write(value.`spec`, buf)
+    }
+}
+
+
+
+data class CreateTemplateRequest (
+    var `namespace`: kotlin.String
+    ,
+    var `name`: kotlin.String
+    ,
+    var `spec`: OsGymSandboxTemplateSpec
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeCreateTemplateRequest: FfiConverterRustBuffer<CreateTemplateRequest> {
+    override fun read(buf: ByteBuffer): CreateTemplateRequest {
+        return CreateTemplateRequest(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterTypeOSGymSandboxTemplateSpec.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: CreateTemplateRequest) = (
+            FfiConverterString.allocationSize(value.`namespace`) +
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterTypeOSGymSandboxTemplateSpec.allocationSize(value.`spec`)
+    )
+
+    override fun write(value: CreateTemplateRequest, buf: ByteBuffer) {
+            FfiConverterString.write(value.`namespace`, buf)
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterTypeOSGymSandboxTemplateSpec.write(value.`spec`, buf)
     }
 }
 
@@ -3400,7 +3627,12 @@ public object FfiConverterTypeHttpResponse: FfiConverterRustBuffer<HttpResponse>
 
 /**
  * UniFFI cannot emit aliases for external record types. Generated bindings use
- * `OSGymWorkspacePoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
+ * `OSGymSandboxWarmPoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
+ *
+ * A `Pool` is the `osgym.cua.ai/v1alpha1 OSGymSandboxWarmPool` CR verbatim —
+ * the SDK is a naive CRUD mapper over the native CRDs, with no translation
+ * layer (the legacy `cua.ai/v1 OSGymWorkspacePool` and its operator compat
+ * shim are gone).
  */
 data class Pool (
     var `apiVersion`: kotlin.String
@@ -3409,9 +3641,9 @@ data class Pool (
     ,
     var `metadata`: ResourceMetadata
     ,
-    var `spec`: PoolSpec
+    var `spec`: OsGymSandboxWarmPoolSpec
     ,
-    var `status`: OsGymWorkspacePoolStatus?
+    var `status`: OsGymSandboxWarmPoolStatus?
 
 ){
 
@@ -3431,8 +3663,8 @@ public object FfiConverterTypePool: FfiConverterRustBuffer<Pool> {
             FfiConverterString.read(buf),
             FfiConverterString.read(buf),
             FfiConverterTypeResourceMetadata.read(buf),
-            FfiConverterTypePoolSpec.read(buf),
-            FfiConverterOptionalTypeOSGymWorkspacePoolStatus.read(buf),
+            FfiConverterTypeOSGymSandboxWarmPoolSpec.read(buf),
+            FfiConverterOptionalTypeOSGymSandboxWarmPoolStatus.read(buf),
         )
     }
 
@@ -3440,16 +3672,16 @@ public object FfiConverterTypePool: FfiConverterRustBuffer<Pool> {
             FfiConverterString.allocationSize(value.`apiVersion`) +
             FfiConverterString.allocationSize(value.`kind`) +
             FfiConverterTypeResourceMetadata.allocationSize(value.`metadata`) +
-            FfiConverterTypePoolSpec.allocationSize(value.`spec`) +
-            FfiConverterOptionalTypeOSGymWorkspacePoolStatus.allocationSize(value.`status`)
+            FfiConverterTypeOSGymSandboxWarmPoolSpec.allocationSize(value.`spec`) +
+            FfiConverterOptionalTypeOSGymSandboxWarmPoolStatus.allocationSize(value.`status`)
     )
 
     override fun write(value: Pool, buf: ByteBuffer) {
             FfiConverterString.write(value.`apiVersion`, buf)
             FfiConverterString.write(value.`kind`, buf)
             FfiConverterTypeResourceMetadata.write(value.`metadata`, buf)
-            FfiConverterTypePoolSpec.write(value.`spec`, buf)
-            FfiConverterOptionalTypeOSGymWorkspacePoolStatus.write(value.`status`, buf)
+            FfiConverterTypeOSGymSandboxWarmPoolSpec.write(value.`spec`, buf)
+            FfiConverterOptionalTypeOSGymSandboxWarmPoolStatus.write(value.`status`, buf)
     }
 }
 
@@ -3541,6 +3773,58 @@ public object FfiConverterTypeSandbox: FfiConverterRustBuffer<Sandbox> {
             FfiConverterString.write(value.`claim`, buf)
             FfiConverterString.write(value.`name`, buf)
             FfiConverterSequenceString.write(value.`services`, buf)
+    }
+}
+
+
+
+/**
+ * The `osgym.cua.ai/v1alpha1 OSGymSandboxTemplate` CR verbatim. Warm pools
+ * and claims reference one by name via `spec.sandboxTemplateRef.name`.
+ */
+data class Template (
+    var `apiVersion`: kotlin.String
+    ,
+    var `kind`: kotlin.String
+    ,
+    var `metadata`: ResourceMetadata
+    ,
+    var `spec`: OsGymSandboxTemplateSpec
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeTemplate: FfiConverterRustBuffer<Template> {
+    override fun read(buf: ByteBuffer): Template {
+        return Template(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterTypeResourceMetadata.read(buf),
+            FfiConverterTypeOSGymSandboxTemplateSpec.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: Template) = (
+            FfiConverterString.allocationSize(value.`apiVersion`) +
+            FfiConverterString.allocationSize(value.`kind`) +
+            FfiConverterTypeResourceMetadata.allocationSize(value.`metadata`) +
+            FfiConverterTypeOSGymSandboxTemplateSpec.allocationSize(value.`spec`)
+    )
+
+    override fun write(value: Template, buf: ByteBuffer) {
+            FfiConverterString.write(value.`apiVersion`, buf)
+            FfiConverterString.write(value.`kind`, buf)
+            FfiConverterTypeResourceMetadata.write(value.`metadata`, buf)
+            FfiConverterTypeOSGymSandboxTemplateSpec.write(value.`spec`, buf)
     }
 }
 
@@ -4045,28 +4329,28 @@ public object FfiConverterOptionalTypeOSGymSandboxClaimStatus: FfiConverterRustB
 /**
  * @suppress
  */
-public object FfiConverterOptionalTypeOSGymWorkspacePoolStatus: FfiConverterRustBuffer<OsGymWorkspacePoolStatus?> {
-    override fun read(buf: ByteBuffer): OsGymWorkspacePoolStatus? {
+public object FfiConverterOptionalTypeOSGymSandboxWarmPoolStatus: FfiConverterRustBuffer<OsGymSandboxWarmPoolStatus?> {
+    override fun read(buf: ByteBuffer): OsGymSandboxWarmPoolStatus? {
         if (buf.get().toInt() == 0) {
             return null
         }
-        return FfiConverterTypeOSGymWorkspacePoolStatus.read(buf)
+        return FfiConverterTypeOSGymSandboxWarmPoolStatus.read(buf)
     }
 
-    override fun allocationSize(value: OsGymWorkspacePoolStatus?): ULong {
+    override fun allocationSize(value: OsGymSandboxWarmPoolStatus?): ULong {
         if (value == null) {
             return 1UL
         } else {
-            return 1UL + FfiConverterTypeOSGymWorkspacePoolStatus.allocationSize(value)
+            return 1UL + FfiConverterTypeOSGymSandboxWarmPoolStatus.allocationSize(value)
         }
     }
 
-    override fun write(value: OsGymWorkspacePoolStatus?, buf: ByteBuffer) {
+    override fun write(value: OsGymSandboxWarmPoolStatus?, buf: ByteBuffer) {
         if (value == null) {
             buf.put(0)
         } else {
             buf.put(1)
-            FfiConverterTypeOSGymWorkspacePoolStatus.write(value, buf)
+            FfiConverterTypeOSGymSandboxWarmPoolStatus.write(value, buf)
         }
     }
 }
@@ -4211,6 +4495,34 @@ public object FfiConverterSequenceTypePool: FfiConverterRustBuffer<List<Pool>> {
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypePool.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeTemplate: FfiConverterRustBuffer<List<Template>> {
+    override fun read(buf: ByteBuffer): List<Template> {
+        val len = buf.getInt()
+        return List<Template>(len) {
+            FfiConverterTypeTemplate.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<Template>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeTemplate.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<Template>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeTemplate.write(it, buf)
         }
     }
 }

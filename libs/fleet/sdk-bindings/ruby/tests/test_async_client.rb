@@ -7,7 +7,11 @@ TOKEN = 'https://keycloak.invalid/token'
 JSON_HEADERS = [['accept', 'application/json'], ['content-type', 'application/json'], ['authorization', 'Bearer offline-token']]
 
 def pool_json
-  { apiVersion: 'cua.ai/v1', kind: 'OSGymWorkspacePool', metadata: { namespace: 'default', name: 'default', labels: nil }, spec: { replicas: 1, template: { containerDiskImage: 'registry.example/desktop:offline' }, services: [{ name: 'mcp', targetPort: 8080 }] }, status: nil }
+  { apiVersion: 'osgym.cua.ai/v1alpha1', kind: 'OSGymSandboxWarmPool', metadata: { namespace: 'default', name: 'default', labels: nil }, spec: { replicas: 1, sandboxTemplateRef: { name: 'default' } }, status: nil }
+end
+
+def template_json
+  { apiVersion: 'osgym.cua.ai/v1alpha1', kind: 'OSGymSandboxTemplate', metadata: { namespace: 'default', name: 'default', labels: nil }, spec: { vmTemplate: { containerDiskImage: 'registry.example/desktop:offline', services: [{ name: 'mcp', targetPort: 8080 }] } } }
 end
 
 def claim_json(bound = false)
@@ -25,7 +29,8 @@ def service_expected(body, response)
 end
 
 def lifecycle_queue
-  pool_url = "#{BASE}/api/k8s/apis/cua.ai/v1/namespaces/default/osgymworkspacepools/default"
+  pool_url = "#{BASE}/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxwarmpools/default"
+  template_url = "#{BASE}/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxtemplates/default"
   claim_url = "#{BASE}/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxclaims/default"
   pool_body = JSON.generate(pool_json).b
   claim_body = '{"apiVersion":"osgym.cua.ai/v1alpha1","kind":"OSGymSandboxClaim","metadata":{"namespace":"default","name":"claim-1","labels":null},"spec":{"sandboxTemplateRef":{"name":"default"}},"status":null}'.b
@@ -35,7 +40,7 @@ def lifecycle_queue
     Expected.new('POST', pool_url.sub(%r{/default\z}, ''), JSON_HEADERS, pool_body, 201, pool_json),
     Expected.new('POST', claim_url.sub(%r{/default\z}, ''), JSON_HEADERS, claim_body, 201, claim_json),
     Expected.new('GET', claim_url, JSON_HEADERS, nil, 200, claim_json(true)),
-    Expected.new('GET', pool_url, JSON_HEADERS, nil, 200, pool_json),
+    Expected.new('GET', template_url, JSON_HEADERS, nil, 200, template_json),
     service_expected('{"offline":true}'.b, 'offline service accepted'),
     Expected.new('DELETE', claim_url, JSON_HEADERS, nil, 204, ''),
     Expected.new('DELETE', pool_url, JSON_HEADERS, nil, 204, ''),
@@ -85,8 +90,7 @@ def service_request(body)
 end
 
 sandbox = FleetSdk::Sandbox.new(namespace: 'default', claim: 'default', name: 'offline-sandbox', services: ['mcp'])
-vm_template = FleetSdk::VmTemplate.new(container_disk_image: 'registry.example/desktop:offline', command: nil, runtime: nil, runtime_class_name: nil, node_selector: nil, tolerations: nil, image_pull_policy: nil, image_pull_secret: nil, cpu_cores: nil, memory: nil, firmware: nil, probes: nil, services: nil, oidc: nil)
-spec = FleetSdk::PoolSpec.new(replicas: 1, template: FleetSdk::PoolTemplate.new(runtime: nil, runtime_class_name: nil, node_selector: nil, tolerations: nil, command: nil, container_disk_image: vm_template.container_disk_image, image_pull_secret: nil, cpu_cores: nil, memory: nil, firmware: nil, probes: nil, oidc: nil), autoscaling: nil, services: [FleetSdk::SandboxService.new(name: 'mcp', target_port: 8080, protocol: nil)])
+spec = FleetSdk::OSGymSandboxWarmPoolSpec.new(replicas: 1, sandbox_template_ref: FleetSdk::SandboxTemplateRef.new(name: 'default'), autoscaling: nil)
 transport = ScriptedHttpClient.new(lifecycle_queue)
 client = FleetSdk::CyclopsClient.connect(configuration, transport)
 pool = client.create_pool(FleetSdk::CreatePoolRequest.new(namespace: 'default', spec: spec))

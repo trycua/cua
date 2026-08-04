@@ -229,23 +229,20 @@ kotlin_sdk = (bindings / "kotlin/ai/cua/cyclops/sdk/fleet_sdk.kt").read_text(enc
 kotlin_schema = (bindings / "kotlin/ai/cua/cyclops/sdk/schema/cyclops_sdk_schema.kt").read_text(encoding="utf-8")
 if "package ai.cua.cyclops.sdk" not in kotlin_sdk or "package ai.cua.cyclops.sdk.schema" not in kotlin_schema:
     raise AssertionError("Kotlin components are not generated into distinct configured packages")
-if "var `spec`: PoolSpec" not in kotlin_sdk or "data class PoolSpec" not in kotlin_schema:
-    raise AssertionError("Kotlin PoolSpec external type is not linked through the schema package")
+if "var `spec`: OsGymSandboxWarmPoolSpec" not in kotlin_sdk or "data class OsGymSandboxWarmPoolSpec" not in kotlin_schema:
+    raise AssertionError("Kotlin OsGymSandboxWarmPoolSpec external type is not linked through the schema package")
 
 swift_sdk = (bindings / "swift/CyclopsSdk.swift").read_text(encoding="utf-8")
 swift_schema = (bindings / "swift/CyclopsSdkSchema.swift").read_text(encoding="utf-8")
-if "public var spec: PoolSpec" not in swift_sdk or "public struct PoolSpec" not in swift_schema:
-    raise AssertionError("Swift PoolSpec external type is not available for one-module compilation")
-pool_spec = re.search(
-    r"public struct PoolSpec: Equatable, Hashable \{(?P<body>.*?)\n\}\n\n#if compiler",
-    swift_schema,
-    re.DOTALL,
-)
-if pool_spec is None:
-    raise AssertionError("Swift PoolSpec is missing explicit Equatable and Hashable conformances")
-for method in ("public static func ==", "public func hash(into hasher: inout Hasher)"):
-    if method not in pool_spec.group("body"):
-        raise AssertionError(f"Swift PoolSpec is missing Rust-backed conformance method: {method}")
+if "public var spec: OsGymSandboxWarmPoolSpec" not in swift_sdk or "public struct OsGymSandboxWarmPoolSpec" not in swift_schema:
+    raise AssertionError("Swift OsGymSandboxWarmPoolSpec external type is not available for one-module compilation")
+if "public struct OsGymSandboxWarmPoolSpec: Equatable, Hashable {" not in swift_schema:
+    raise AssertionError("Swift OsGymSandboxWarmPoolSpec is missing Equatable and Hashable conformances")
+# The legacy PoolSpec carried Rust-backed ==/hash methods (it embedded a
+# PreservedJson object); no surviving schema record does, so records that
+# embed objects must instead NOT claim the conformances they cannot satisfy.
+if "public struct VmTemplate: Equatable" in swift_schema:
+    raise AssertionError("Swift VmTemplate (object-bearing record) must not claim Equatable")
 LANGUAGE_AUDIT
 }
 run_language_linkage_audits
@@ -296,14 +293,14 @@ class CallbackHttpClient(fleet_sdk.HttpClient):
             body = {"access_token": "offline-token", "expires_in": 3600}
         elif request.url.endswith("/api/namespaces"):
             body = {"metadata": {"name": "default"}}
-        elif request.url.endswith("/api/k8s/apis/cua.ai/v1/namespaces/default/osgymworkspacepools"):
+        elif request.url.endswith("/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxwarmpools"):
             body = {
-                "apiVersion": "cua.ai/v1",
-                "kind": "OSGymWorkspacePool",
+                "apiVersion": "osgym.cua.ai/v1alpha1",
+                "kind": "OSGymSandboxWarmPool",
                 "metadata": {"namespace": "default", "name": "offline-pool"},
                 "spec": {
                     "replicas": 1,
-                    "template": {"containerDiskImage": "registry.example/desktop:offline"},
+                    "sandboxTemplateRef": {"name": "default"},
                 },
             }
         else:
@@ -324,28 +321,14 @@ async def smoke_create_pool():
         ),
         transport,
     )
-    spec = fleet_sdk.PoolSpec(
+    spec = fleet_sdk.OsGymSandboxWarmPoolSpec(
         replicas=1,
-        template=fleet_sdk.PoolTemplate(
-            runtime=None,
-            runtime_class_name=None,
-            node_selector=None,
-            tolerations=None,
-            command=None,
-            container_disk_image="registry.example/desktop:offline",
-            image_pull_secret=None,
-            cpu_cores=None,
-            memory=None,
-            firmware=None,
-            probes=None,
-            oidc=None,
-        ),
+        sandbox_template_ref=fleet_sdk.SandboxTemplateRef(name="default"),
         autoscaling=None,
-        services=None,
     )
     pool = await client.create_pool(fleet_sdk.CreatePoolRequest(namespace="default", spec=spec))
     assert pool.metadata.name == "offline-pool"
-    assert any(request.url.endswith("/osgymworkspacepools") for request in transport.requests)
+    assert any(request.url.endswith("/osgymsandboxwarmpools") for request in transport.requests)
 
 asyncio.run(smoke_create_pool())
 PYTHON_SMOKE
@@ -366,11 +349,11 @@ grep -Fq -- "FleetSdk.uniffi_rust_future_rust_buffer" "$ruby_sdk_source" || fail
 grep -Fq -- "def self.uniffi_rust_future_void" "$ruby_sdk_source" || fail "Ruby bindings do not resolve void futures"
 grep -Fq -- "FleetSdk.uniffi_rust_future_void" "$ruby_sdk_source" || fail "Ruby async void methods do not resolve Rust futures"
 grep -Fq -- "UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_pool(uniffi_clone_handle(),RustBuffer.alloc_from_TypeCreatePoolRequest(request),RustCallStatus.new)" "$ruby_sdk_source" || fail "Ruby async factories do not pass the generated status placeholder"
-grep -Fq -- "    readTypePoolSpec" "$bindings_dir/ruby/cyclops_sdk.rb" || fail "Ruby facade does not delegate schema record readers"
+grep -Fq -- "    readTypeOSGymSandboxWarmPoolSpec" "$bindings_dir/ruby/cyclops_sdk.rb" || fail "Ruby facade does not delegate schema record readers"
 if grep -Fq -- "OsGym" "$ruby_sdk_source"; then
   fail "Ruby SDK retains cross-crate OsGym helper names"
 fi
-grep -Fq -- "    readTypeOSGymWorkspacePoolStatus" "$bindings_dir/ruby/cyclops_sdk.rb" || fail "Ruby facade does not delegate schema optional readers"
+grep -Fq -- "    readTypeOSGymSandboxWarmPoolStatus" "$bindings_dir/ruby/cyclops_sdk.rb" || fail "Ruby facade does not delegate schema status readers"
 if grep -Fq -- "return 0 if @handle.nil?" "$ruby_sdk_source"; then
   fail "Ruby callback bindings lower native callbacks to an invalid zero handle"
 fi

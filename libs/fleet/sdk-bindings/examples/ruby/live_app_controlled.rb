@@ -20,8 +20,12 @@ def required(name)
   ENV.fetch(name).tap { |value| raise "#{name} is required" if value.empty? }
 end
 
-def pool_spec
-  FleetSdk::PoolSpec.new(replicas: 1, template: FleetSdk::PoolTemplate.new(runtime: nil, runtime_class_name: nil, node_selector: nil, tolerations: nil, command: nil, container_disk_image: required('CUA_IMAGE'), image_pull_secret: required('CUA_IMAGE_PULL_SECRET'), cpu_cores: 4, memory: '4Gi', firmware: nil, probes: nil, oidc: nil), autoscaling: nil, services: [FleetSdk::SandboxService.new(name: 'mcp', target_port: 3000, protocol: nil)])
+def pool_spec(template_name)
+  FleetSdk::OSGymSandboxWarmPoolSpec.new(replicas: 1, sandbox_template_ref: FleetSdk::SandboxTemplateRef.new(name: template_name), autoscaling: nil)
+end
+
+def template_spec
+  FleetSdk::OSGymSandboxTemplateSpec.new(vm_template: FleetSdk::VmTemplate.new(container_disk_image: required('CUA_IMAGE'), command: nil, runtime: nil, runtime_class_name: nil, node_selector: nil, tolerations: nil, image_pull_policy: nil, image_pull_secret: required('CUA_IMAGE_PULL_SECRET'), cpu_cores: 4, memory: '4Gi', firmware: nil, probes: nil, services: [FleetSdk::SandboxService.new(name: 'mcp', target_port: 3000, protocol: nil)], oidc: nil))
 end
 
 def initialize_mcp(client, sandbox)
@@ -42,10 +46,13 @@ namespace = required('CYCLOPS_NAMESPACE')
 credentials = FleetSdk::CyclopsCredentials.new(required('CUA_CLIENT_ID'), required('CUA_CLIENT_SECRET'))
 configuration = FleetSdk::CyclopsConfiguration.new(base_url: required('CUA_BASE_URL'), token_url: required('CUA_TOKEN_URL'), credentials: credentials, pool_poll_interval_ms: 5000, pool_poll_limit: 120, claim_poll_interval_ms: 5000, claim_poll_limit: 120)
 client = FleetSdk::CyclopsClient.connect(configuration, NetHttpClient.new)
+template_name = "#{namespace}-template"
 pool = nil
+template = nil
 claim = nil
 begin
-  pool = client.create_pool(FleetSdk::CreatePoolRequest.new(namespace: namespace, spec: pool_spec))
+  pool = client.create_pool(FleetSdk::CreatePoolRequest.new(namespace: namespace, spec: pool_spec(template_name)))
+  template = client.create_template(FleetSdk::CreateTemplateRequest.new(namespace: namespace, name: template_name, spec: template_spec))
   claim = client.create_claim(FleetSdk::CreateClaimRequest.new(pool: pool, spec: nil))
   sandbox = client.wait_claim(claim)
   status = initialize_mcp(client, sandbox)
@@ -54,6 +61,10 @@ ensure
   begin
     client.delete_claim(claim) unless claim.nil?
   ensure
-    client.delete_pool(pool) unless pool.nil?
+    begin
+      client.delete_template(template) unless template.nil?
+    ensure
+      client.delete_pool(pool) unless pool.nil?
+    end
   end
 end

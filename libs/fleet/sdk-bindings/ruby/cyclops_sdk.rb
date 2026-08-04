@@ -8,20 +8,23 @@ module FleetSdk
   SCHEMA_CHECK_LOWER_METHODS = %i[
     check_lower_TypeClaimSpec
     check_lower_TypeOSGymSandboxClaimStatus
-    check_lower_TypeOSGymWorkspacePoolStatus
-    check_lower_TypePoolSpec
+    check_lower_TypeOSGymSandboxTemplateSpec
+    check_lower_TypeOSGymSandboxWarmPoolSpec
+    check_lower_TypeOSGymSandboxWarmPoolStatus
   ].freeze
   SCHEMA_READ_METHODS = %i[
     readTypeClaimSpec
     readTypeOSGymSandboxClaimStatus
-    readTypeOSGymWorkspacePoolStatus
-    readTypePoolSpec
+    readTypeOSGymSandboxTemplateSpec
+    readTypeOSGymSandboxWarmPoolSpec
+    readTypeOSGymSandboxWarmPoolStatus
   ].freeze
   SCHEMA_WRITE_METHODS = %i[
     write_TypeClaimSpec
     write_TypeOSGymSandboxClaimStatus
-    write_TypeOSGymWorkspacePoolStatus
-    write_TypePoolSpec
+    write_TypeOSGymSandboxTemplateSpec
+    write_TypeOSGymSandboxWarmPoolSpec
+    write_TypeOSGymSandboxWarmPoolStatus
   ].freeze
 
   schema_rust_buffer = CyclopsSdkSchema::RustBuffer

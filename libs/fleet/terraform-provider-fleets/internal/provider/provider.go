@@ -17,7 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
-	"github.com/trycua/cloud/cyclops-cs/sdk-bindings/go-uniffi/cyclops_sdk"
+	"github.com/trycua/cloud/cyclops-cs/sdk-bindings/go-uniffi/fleet_sdk"
 )
 
 const (
@@ -90,14 +90,14 @@ func (p *fleetsProvider) Resources(_ context.Context) []func() resource.Resource
 
 func (p *fleetsProvider) DataSources(_ context.Context) []func() datasource.DataSource { return nil }
 
-func newCyclopsClient(endpoint, accessToken, clientID, clientSecret, tokenURL string) (*cyclops_sdk.CyclopsClient, error) {
+func newCyclopsClient(endpoint, accessToken, clientID, clientSecret, tokenURL string) (*fleet_sdk.CyclopsClient, error) {
 	endpoint = strings.TrimRight(strings.TrimSpace(endpoint), "/")
 	if endpoint == "" {
 		return nil, fmt.Errorf("endpoint is required")
 	}
 	client := sdkHTTPClient{client: &http.Client{Timeout: 30 * time.Second}}
 	if accessToken != "" {
-		return cyclops_sdk.CyclopsClientConnectWithAccessToken(cyclops_sdk.CyclopsTokenProviderConfiguration{
+		return fleet_sdk.CyclopsClientConnectWithAccessToken(fleet_sdk.CyclopsTokenProviderConfiguration{
 			BaseUrl: endpoint, PoolPollIntervalMs: sdkPollIntervalMs, PoolPollLimit: sdkPollLimit,
 			ClaimPollIntervalMs: sdkPollIntervalMs, ClaimPollLimit: sdkPollLimit,
 		}, accessToken, client)
@@ -105,8 +105,8 @@ func newCyclopsClient(endpoint, accessToken, clientID, clientSecret, tokenURL st
 	if clientID == "" || clientSecret == "" || tokenURL == "" {
 		return nil, fmt.Errorf("set access_token or client_id, client_secret, and token_url")
 	}
-	return cyclops_sdk.CyclopsClientConnect(cyclops_sdk.CyclopsConfiguration{
-		BaseUrl: endpoint, TokenUrl: tokenURL, Credentials: cyclops_sdk.NewCyclopsCredentials(clientID, clientSecret),
+	return fleet_sdk.CyclopsClientConnect(fleet_sdk.CyclopsConfiguration{
+		BaseUrl: endpoint, TokenUrl: tokenURL, Credentials: fleet_sdk.NewCyclopsCredentials(clientID, clientSecret),
 		PoolPollIntervalMs: sdkPollIntervalMs, PoolPollLimit: sdkPollLimit,
 		ClaimPollIntervalMs: sdkPollIntervalMs, ClaimPollLimit: sdkPollLimit,
 	}, client)
@@ -114,34 +114,34 @@ func newCyclopsClient(endpoint, accessToken, clientID, clientSecret, tokenURL st
 
 type sdkHTTPClient struct{ client *http.Client }
 
-func (c sdkHTTPClient) Execute(request cyclops_sdk.HttpRequest) (cyclops_sdk.HttpResponse, error) {
+func (c sdkHTTPClient) Execute(request fleet_sdk.HttpRequest) (fleet_sdk.HttpResponse, error) {
 	var body io.Reader
 	if request.Body != nil {
 		body = bytes.NewReader(*request.Body)
 	}
 	nativeRequest, err := http.NewRequest(request.Method, request.Url, body)
 	if err != nil {
-		return cyclops_sdk.HttpResponse{}, err
+		return fleet_sdk.HttpResponse{}, err
 	}
 	for _, header := range request.Headers {
 		nativeRequest.Header.Add(header.Name, header.Value)
 	}
 	nativeResponse, err := c.client.Do(nativeRequest)
 	if err != nil {
-		return cyclops_sdk.HttpResponse{}, err
+		return fleet_sdk.HttpResponse{}, err
 	}
 	defer nativeResponse.Body.Close()
 	responseBody, err := io.ReadAll(nativeResponse.Body)
 	if err != nil {
-		return cyclops_sdk.HttpResponse{}, err
+		return fleet_sdk.HttpResponse{}, err
 	}
-	headers := make([]cyclops_sdk.HttpHeader, 0, len(nativeResponse.Header))
+	headers := make([]fleet_sdk.HttpHeader, 0, len(nativeResponse.Header))
 	for name, values := range nativeResponse.Header {
 		for _, value := range values {
-			headers = append(headers, cyclops_sdk.HttpHeader{Name: name, Value: value})
+			headers = append(headers, fleet_sdk.HttpHeader{Name: name, Value: value})
 		}
 	}
-	return cyclops_sdk.HttpResponse{Status: uint16(nativeResponse.StatusCode), Headers: headers, Body: responseBody}, nil
+	return fleet_sdk.HttpResponse{Status: uint16(nativeResponse.StatusCode), Headers: headers, Body: responseBody}, nil
 }
 
 func objectValue(ctx context.Context, object types.Object, target any, diagnostics *diag.Diagnostics) bool {

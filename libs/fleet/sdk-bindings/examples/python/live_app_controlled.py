@@ -6,36 +6,46 @@ import time
 from fleet_sdk import (
     CreateClaimRequest,
     CreatePoolRequest,
+    CreateTemplateRequest,
     CyclopsClient,
     CyclopsConfiguration,
     CyclopsCredentials,
     HttpHeader,
     HttpRequest,
-    PoolSpec,
-    PoolTemplate,
+    OsGymSandboxTemplateSpec,
+    OsGymSandboxWarmPoolSpec,
     SandboxService,
+    SandboxTemplateRef,
+    VmTemplate,
 )
 
 
-def pool_spec(image: str, image_pull_secret: str) -> PoolSpec:
-    return PoolSpec(
+def pool_spec(template_name: str) -> OsGymSandboxWarmPoolSpec:
+    return OsGymSandboxWarmPoolSpec(
         replicas=1,
-        template=PoolTemplate(
+        sandbox_template_ref=SandboxTemplateRef(name=template_name),
+        autoscaling=None,
+    )
+
+
+def template_spec(image: str, image_pull_secret: str) -> OsGymSandboxTemplateSpec:
+    return OsGymSandboxTemplateSpec(
+        vm_template=VmTemplate(
+            container_disk_image=image,
+            command=None,
             runtime=None,
             runtime_class_name=None,
             node_selector=None,
             tolerations=None,
-            command=None,
-            container_disk_image=image,
+            image_pull_policy=None,
             image_pull_secret=image_pull_secret,
             cpu_cores=4,
             memory="4Gi",
             firmware=None,
             probes=None,
+            services=[SandboxService(name="mcp", target_port=3000, protocol=None)],
             oidc=None,
-        ),
-        autoscaling=None,
-        services=[SandboxService(name="mcp", target_port=3000, protocol=None)],
+        )
     )
 
 
@@ -97,11 +107,20 @@ async def main() -> None:
             claim_poll_limit=120,
         )
     )
+    template_name = f"{namespace}-template"
     pool = None
+    template = None
     claim = None
     try:
         pool = await client.create_pool(
-            CreatePoolRequest(namespace=namespace, spec=pool_spec(image, image_pull_secret))
+            CreatePoolRequest(namespace=namespace, spec=pool_spec(template_name))
+        )
+        template = await client.create_template(
+            CreateTemplateRequest(
+                namespace=namespace,
+                name=template_name,
+                spec=template_spec(image, image_pull_secret),
+            )
         )
         claim = await client.create_claim(CreateClaimRequest(pool=pool, spec=None))
         sandbox = await client.wait_claim(claim)
@@ -121,6 +140,8 @@ async def main() -> None:
     finally:
         if claim is not None:
             await client.delete_claim(claim)
+        if template is not None:
+            await client.delete_template(template)
         if pool is not None:
             await client.delete_pool(pool)
 

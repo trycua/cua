@@ -500,23 +500,35 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool() != 48557:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template() != 13689:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() != 20460:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool() != 31235:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template() != 54852:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim() != 17760:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool() != 49450:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_template() != 8909:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims() != 7802:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools() != 27984:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_templates() != 58376:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool() != 53919:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template() != 36469:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request() != 46699:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool() != 17695:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template() != 18704:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim() != 18984:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -924,6 +936,11 @@ _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_pool.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_pool.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_template.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_template.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_claim.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -934,6 +951,11 @@ _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_pool.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_pool.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_template.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_template.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_claim.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -944,6 +966,12 @@ _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_pool.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_pool.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_template.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_template.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_claims.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -954,11 +982,21 @@ _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_pools.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_pools.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_templates.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_templates.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_pool.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_pool.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_template.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_template.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -972,6 +1010,11 @@ _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_update_pool.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_update_pool.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_update_template.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_update_template.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -1021,33 +1064,51 @@ _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim.restype
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_template.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_template.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_templates.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_templates.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim.restype = ctypes.c_uint16
@@ -1407,11 +1468,11 @@ class _UniffiFfiConverterTypeClaim(_UniffiConverterRustBuffer):
 
 
 
-class _UniffiFfiConverterOptionalTypeOSGymWorkspacePoolStatus(_UniffiConverterRustBuffer):
+class _UniffiFfiConverterOptionalTypeOSGymSandboxWarmPoolStatus(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
         if value is not None:
-            fleet_sdk._UniffiFfiConverterTypeOSGymWorkspacePoolStatus.check_lower(value)
+            fleet_sdk._UniffiFfiConverterTypeOSGymSandboxWarmPoolStatus.check_lower(value)
 
     @classmethod
     def write(cls, value, buf):
@@ -1420,7 +1481,7 @@ class _UniffiFfiConverterOptionalTypeOSGymWorkspacePoolStatus(_UniffiConverterRu
             return
 
         buf.write_u8(1)
-        fleet_sdk._UniffiFfiConverterTypeOSGymWorkspacePoolStatus.write(value, buf)
+        fleet_sdk._UniffiFfiConverterTypeOSGymSandboxWarmPoolStatus.write(value, buf)
 
     @classmethod
     def read(cls, buf):
@@ -1428,7 +1489,7 @@ class _UniffiFfiConverterOptionalTypeOSGymWorkspacePoolStatus(_UniffiConverterRu
         if flag == 0:
             return None
         elif flag == 1:
-            return fleet_sdk._UniffiFfiConverterTypeOSGymWorkspacePoolStatus.read(buf)
+            return fleet_sdk._UniffiFfiConverterTypeOSGymSandboxWarmPoolStatus.read(buf)
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
@@ -1436,9 +1497,14 @@ class _UniffiFfiConverterOptionalTypeOSGymWorkspacePoolStatus(_UniffiConverterRu
 class Pool:
     """
     UniFFI cannot emit aliases for external record types. Generated bindings use
-    `OSGymWorkspacePoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
+    `OSGymSandboxWarmPoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
+
+    A `Pool` is the `osgym.cua.ai/v1alpha1 OSGymSandboxWarmPool` CR verbatim —
+    the SDK is a naive CRUD mapper over the native CRDs, with no translation
+    layer (the legacy `cua.ai/v1 OSGymWorkspacePool` and its operator compat
+    shim are gone).
 """
-    def __init__(self, *, api_version:str, kind:str, metadata:ResourceMetadata, spec:fleet_sdk.PoolSpec, status:typing.Optional[fleet_sdk.OsGymWorkspacePoolStatus]):
+    def __init__(self, *, api_version:str, kind:str, metadata:ResourceMetadata, spec:fleet_sdk.OsGymSandboxWarmPoolSpec, status:typing.Optional[fleet_sdk.OsGymSandboxWarmPoolStatus]):
         self.api_version = api_version
         self.kind = kind
         self.metadata = metadata
@@ -1470,8 +1536,8 @@ class _UniffiFfiConverterTypePool(_UniffiConverterRustBuffer):
             api_version=_UniffiFfiConverterString.read(buf),
             kind=_UniffiFfiConverterString.read(buf),
             metadata=_UniffiFfiConverterTypeResourceMetadata.read(buf),
-            spec=fleet_sdk._UniffiFfiConverterTypePoolSpec.read(buf),
-            status=_UniffiFfiConverterOptionalTypeOSGymWorkspacePoolStatus.read(buf),
+            spec=fleet_sdk._UniffiFfiConverterTypeOSGymSandboxWarmPoolSpec.read(buf),
+            status=_UniffiFfiConverterOptionalTypeOSGymSandboxWarmPoolStatus.read(buf),
         )
 
     @staticmethod
@@ -1479,16 +1545,16 @@ class _UniffiFfiConverterTypePool(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.check_lower(value.api_version)
         _UniffiFfiConverterString.check_lower(value.kind)
         _UniffiFfiConverterTypeResourceMetadata.check_lower(value.metadata)
-        fleet_sdk._UniffiFfiConverterTypePoolSpec.check_lower(value.spec)
-        _UniffiFfiConverterOptionalTypeOSGymWorkspacePoolStatus.check_lower(value.status)
+        fleet_sdk._UniffiFfiConverterTypeOSGymSandboxWarmPoolSpec.check_lower(value.spec)
+        _UniffiFfiConverterOptionalTypeOSGymSandboxWarmPoolStatus.check_lower(value.status)
 
     @staticmethod
     def write(value, buf):
         _UniffiFfiConverterString.write(value.api_version, buf)
         _UniffiFfiConverterString.write(value.kind, buf)
         _UniffiFfiConverterTypeResourceMetadata.write(value.metadata, buf)
-        fleet_sdk._UniffiFfiConverterTypePoolSpec.write(value.spec, buf)
-        _UniffiFfiConverterOptionalTypeOSGymWorkspacePoolStatus.write(value.status, buf)
+        fleet_sdk._UniffiFfiConverterTypeOSGymSandboxWarmPoolSpec.write(value.spec, buf)
+        _UniffiFfiConverterOptionalTypeOSGymSandboxWarmPoolStatus.write(value.status, buf)
 
 class _UniffiFfiConverterOptionalTypeClaimSpec(_UniffiConverterRustBuffer):
     @classmethod
@@ -1553,7 +1619,7 @@ class _UniffiFfiConverterTypeCreateClaimRequest(_UniffiConverterRustBuffer):
 
 @dataclass
 class CreatePoolRequest:
-    def __init__(self, *, namespace:str, spec:fleet_sdk.PoolSpec):
+    def __init__(self, *, namespace:str, spec:fleet_sdk.OsGymSandboxWarmPoolSpec):
         self.namespace = namespace
         self.spec = spec
 
@@ -1574,18 +1640,62 @@ class _UniffiFfiConverterTypeCreatePoolRequest(_UniffiConverterRustBuffer):
     def read(buf):
         return CreatePoolRequest(
             namespace=_UniffiFfiConverterString.read(buf),
-            spec=fleet_sdk._UniffiFfiConverterTypePoolSpec.read(buf),
+            spec=fleet_sdk._UniffiFfiConverterTypeOSGymSandboxWarmPoolSpec.read(buf),
         )
 
     @staticmethod
     def check_lower(value):
         _UniffiFfiConverterString.check_lower(value.namespace)
-        fleet_sdk._UniffiFfiConverterTypePoolSpec.check_lower(value.spec)
+        fleet_sdk._UniffiFfiConverterTypeOSGymSandboxWarmPoolSpec.check_lower(value.spec)
 
     @staticmethod
     def write(value, buf):
         _UniffiFfiConverterString.write(value.namespace, buf)
-        fleet_sdk._UniffiFfiConverterTypePoolSpec.write(value.spec, buf)
+        fleet_sdk._UniffiFfiConverterTypeOSGymSandboxWarmPoolSpec.write(value.spec, buf)
+
+
+
+@dataclass
+class CreateTemplateRequest:
+    def __init__(self, *, namespace:str, name:str, spec:fleet_sdk.OsGymSandboxTemplateSpec):
+        self.namespace = namespace
+        self.name = name
+        self.spec = spec
+
+
+
+
+    def __str__(self):
+        return "CreateTemplateRequest(namespace={}, name={}, spec={})".format(self.namespace, self.name, self.spec)
+    def __eq__(self, other):
+        if self.namespace != other.namespace:
+            return False
+        if self.name != other.name:
+            return False
+        if self.spec != other.spec:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeCreateTemplateRequest(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return CreateTemplateRequest(
+            namespace=_UniffiFfiConverterString.read(buf),
+            name=_UniffiFfiConverterString.read(buf),
+            spec=fleet_sdk._UniffiFfiConverterTypeOSGymSandboxTemplateSpec.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.namespace)
+        _UniffiFfiConverterString.check_lower(value.name)
+        fleet_sdk._UniffiFfiConverterTypeOSGymSandboxTemplateSpec.check_lower(value.spec)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.namespace, buf)
+        _UniffiFfiConverterString.write(value.name, buf)
+        fleet_sdk._UniffiFfiConverterTypeOSGymSandboxTemplateSpec.write(value.spec, buf)
 
 
 class CyclopsCredentialsProtocol(typing.Protocol):
@@ -2083,6 +2193,58 @@ class _UniffiFfiConverterTypeSandbox(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.write(value.claim, buf)
         _UniffiFfiConverterString.write(value.name, buf)
         _UniffiFfiConverterSequenceString.write(value.services, buf)
+
+@dataclass
+class Template:
+    """
+    The `osgym.cua.ai/v1alpha1 OSGymSandboxTemplate` CR verbatim. Warm pools
+    and claims reference one by name via `spec.sandboxTemplateRef.name`.
+"""
+    def __init__(self, *, api_version:str, kind:str, metadata:ResourceMetadata, spec:fleet_sdk.OsGymSandboxTemplateSpec):
+        self.api_version = api_version
+        self.kind = kind
+        self.metadata = metadata
+        self.spec = spec
+
+
+
+
+    def __str__(self):
+        return "Template(api_version={}, kind={}, metadata={}, spec={})".format(self.api_version, self.kind, self.metadata, self.spec)
+    def __eq__(self, other):
+        if self.api_version != other.api_version:
+            return False
+        if self.kind != other.kind:
+            return False
+        if self.metadata != other.metadata:
+            return False
+        if self.spec != other.spec:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeTemplate(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return Template(
+            api_version=_UniffiFfiConverterString.read(buf),
+            kind=_UniffiFfiConverterString.read(buf),
+            metadata=_UniffiFfiConverterTypeResourceMetadata.read(buf),
+            spec=fleet_sdk._UniffiFfiConverterTypeOSGymSandboxTemplateSpec.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.api_version)
+        _UniffiFfiConverterString.check_lower(value.kind)
+        _UniffiFfiConverterTypeResourceMetadata.check_lower(value.metadata)
+        fleet_sdk._UniffiFfiConverterTypeOSGymSandboxTemplateSpec.check_lower(value.spec)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.api_version, buf)
+        _UniffiFfiConverterString.write(value.kind, buf)
+        _UniffiFfiConverterTypeResourceMetadata.write(value.metadata, buf)
+        fleet_sdk._UniffiFfiConverterTypeOSGymSandboxTemplateSpec.write(value.spec, buf)
 
 
 
@@ -2673,6 +2835,29 @@ class _UniffiFfiConverterSequenceTypePool(_UniffiConverterRustBuffer):
             _UniffiFfiConverterTypePool.read(buf) for i in range(count)
         ]
 
+class _UniffiFfiConverterSequenceTypeTemplate(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeTemplate.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeTemplate.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeTemplate.read(buf) for i in range(count)
+        ]
+
 
 class CyclopsClientProtocol(typing.Protocol):
 
@@ -2680,23 +2865,35 @@ class CyclopsClientProtocol(typing.Protocol):
         raise NotImplementedError
     async def create_pool(self, request: CreatePoolRequest) -> Pool:
         raise NotImplementedError
+    async def create_template(self, request: CreateTemplateRequest) -> Template:
+        raise NotImplementedError
     async def delete_claim(self, claim: Claim) -> None:
         raise NotImplementedError
     async def delete_pool(self, pool: Pool) -> None:
+        raise NotImplementedError
+    async def delete_template(self, template: Template) -> None:
         raise NotImplementedError
     async def get_claim(self, claim: Claim) -> Claim:
         raise NotImplementedError
     async def get_pool(self, name: str) -> Pool:
         raise NotImplementedError
+    async def get_template(self, namespace: str,name: str) -> Template:
+        raise NotImplementedError
     async def list_claims(self, namespace: str) -> typing.List[Claim]:
         raise NotImplementedError
     async def list_pools(self, namespace: str) -> typing.List[Pool]:
         raise NotImplementedError
+    async def list_templates(self, namespace: str) -> typing.List[Template]:
+        raise NotImplementedError
     async def reconcile_pool(self, request: CreatePoolRequest) -> Pool:
+        raise NotImplementedError
+    async def reconcile_template(self, request: CreateTemplateRequest) -> Template:
         raise NotImplementedError
     async def service_request(self, sandbox: Sandbox,service: str,path: str,request: HttpRequest) -> HttpResponse:
         raise NotImplementedError
     async def update_pool(self, pool: Pool) -> Pool:
+        raise NotImplementedError
+    async def update_template(self, template: Template) -> Template:
         raise NotImplementedError
     async def wait_claim(self, claim: Claim) -> Sandbox:
         raise NotImplementedError
@@ -2888,6 +3085,23 @@ class CyclopsClient(CyclopsClientProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    async def create_template(self, request: CreateTemplateRequest) -> Template:
+
+        _UniffiFfiConverterTypeCreateTemplateRequest.check_lower(request)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeCreateTemplateRequest.lower(request),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeTemplate.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_template(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def delete_claim(self, claim: Claim) -> None:
 
         _UniffiFfiConverterTypeClaim.check_lower(claim)
@@ -2916,6 +3130,23 @@ class CyclopsClient(CyclopsClientProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_pool(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cyclops_sdk_rust_future_poll_void,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_complete_void,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_free_void,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def delete_template(self, template: Template) -> None:
+
+        _UniffiFfiConverterTypeTemplate.check_lower(template)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeTemplate.lower(template),
+        )
+        _uniffi_lift_return = lambda val: None
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_template(*_uniffi_lowered_args),
             _UniffiLib.ffi_cyclops_sdk_rust_future_poll_void,
             _UniffiLib.ffi_cyclops_sdk_rust_future_complete_void,
             _UniffiLib.ffi_cyclops_sdk_rust_future_free_void,
@@ -2956,6 +3187,26 @@ class CyclopsClient(CyclopsClientProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    async def get_template(self, namespace: str,name: str) -> Template:
+
+        _UniffiFfiConverterString.check_lower(namespace)
+
+        _UniffiFfiConverterString.check_lower(name)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(namespace),
+            _UniffiFfiConverterString.lower(name),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeTemplate.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_template(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def list_claims(self, namespace: str) -> typing.List[Claim]:
 
         _UniffiFfiConverterString.check_lower(namespace)
@@ -2990,6 +3241,23 @@ class CyclopsClient(CyclopsClientProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    async def list_templates(self, namespace: str) -> typing.List[Template]:
+
+        _UniffiFfiConverterString.check_lower(namespace)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(namespace),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterSequenceTypeTemplate.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_templates(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def reconcile_pool(self, request: CreatePoolRequest) -> Pool:
 
         _UniffiFfiConverterTypeCreatePoolRequest.check_lower(request)
@@ -3001,6 +3269,23 @@ class CyclopsClient(CyclopsClientProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_pool(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def reconcile_template(self, request: CreateTemplateRequest) -> Template:
+
+        _UniffiFfiConverterTypeCreateTemplateRequest.check_lower(request)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeCreateTemplateRequest.lower(request),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeTemplate.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_template(*_uniffi_lowered_args),
             _UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer,
@@ -3044,6 +3329,23 @@ class CyclopsClient(CyclopsClientProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_update_pool(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def update_template(self, template: Template) -> Template:
+
+        _UniffiFfiConverterTypeTemplate.check_lower(template)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeTemplate.lower(template),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeTemplate.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_update_template(*_uniffi_lowered_args),
             _UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer,
@@ -3270,12 +3572,14 @@ __all__ = [
     "Pool",
     "CreateClaimRequest",
     "CreatePoolRequest",
+    "CreateTemplateRequest",
     "CyclopsConfiguration",
     "CyclopsTokenProviderConfiguration",
     "HttpHeader",
     "HttpRequest",
     "HttpResponse",
     "Sandbox",
+    "Template",
     "CyclopsCredentials",
     "CyclopsCredentialsProtocol",
     "AccessTokenProviderImpl",

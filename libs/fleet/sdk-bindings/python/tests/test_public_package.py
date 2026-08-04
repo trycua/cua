@@ -9,8 +9,8 @@ from fleet_sdk import (
     Firmware,
     HttpHeader,
     HttpRequest,
-    PoolSpec,
-    PoolTemplate,
+    OsGymSandboxTemplateSpec,
+    OsGymSandboxWarmPoolSpec,
     RuntimeKind,
     SandboxService,
 )

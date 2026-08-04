@@ -10,14 +10,15 @@ import {
   type UniffiForeignFutureDroppedCallbackStruct,
   type UniffiForeignFutureResultRustBuffer,
   type UniffiForeignFutureCompleterustBuffer,
-  type UniffiVTableCallbackInterfaceCyclopsSdkAccessTokenProvider,
-  type UniffiVTableCallbackInterfaceCyclopsSdkHttpClient,
-} from "./cyclops_sdk-ffi";
+  type UniffiVTableCallbackInterfaceFleetSdkAccessTokenProvider,
+  type UniffiVTableCallbackInterfaceFleetSdkHttpClient,
+} from "./fleet_sdk-ffi";
 import {
   type ClaimSpec,
   type OsGymSandboxClaimStatus,
-  type OsGymWorkspacePoolStatus,
-  type PoolSpec,
+  type OsGymSandboxTemplateSpec,
+  type OsGymSandboxWarmPoolSpec,
+  type OsGymSandboxWarmPoolStatus,
 } from "./cyclops_sdk_schema";
 import {
   type FfiConverter,
@@ -59,8 +60,9 @@ import uniffiCyclopsSdkSchemaModule from "./cyclops_sdk_schema";
 const {
   FfiConverterTypeClaimSpec,
   FfiConverterTypeOSGymSandboxClaimStatus,
-  FfiConverterTypeOSGymWorkspacePoolStatus,
-  FfiConverterTypePoolSpec,
+  FfiConverterTypeOSGymSandboxTemplateSpec,
+  FfiConverterTypeOSGymSandboxWarmPoolSpec,
+  FfiConverterTypeOSGymSandboxWarmPoolStatus,
 } = uniffiCyclopsSdkSchemaModule.converters;
 // wasm1: wrap the wasm-bindgen namespace once so the codegen call sites can
 // uniformly reference `nativeModule().rustbuffer_alloc` / `.rustbuffer_free`.
@@ -213,14 +215,19 @@ const FfiConverterTypeClaim = (() => {
 
 /**
  * UniFFI cannot emit aliases for external record types. Generated bindings use
- * `OSGymWorkspacePoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
+ * `OSGymSandboxWarmPoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
+ *
+ * A `Pool` is the `osgym.cua.ai/v1alpha1 OSGymSandboxWarmPool` CR verbatim —
+ * the SDK is a naive CRUD mapper over the native CRDs, with no translation
+ * layer (the legacy `cua.ai/v1 OSGymWorkspacePool` and its operator compat
+ * shim are gone).
  */
 export type Pool = {
   apiVersion: string;
   kind: string;
   metadata: ResourceMetadata;
-  spec: PoolSpec;
-  status?: OsGymWorkspacePoolStatus;
+  spec: OsGymSandboxWarmPoolSpec;
+  status?: OsGymSandboxWarmPoolStatus;
 };
 
 /**
@@ -246,16 +253,16 @@ const FfiConverterTypePool = (() => {
         apiVersion: FfiConverterString.read(from),
         kind: FfiConverterString.read(from),
         metadata: FfiConverterTypeResourceMetadata.read(from),
-        spec: FfiConverterTypePoolSpec.read(from),
-        status: FfiConverterOptionalTypeOSGymWorkspacePoolStatus.read(from),
+        spec: FfiConverterTypeOSGymSandboxWarmPoolSpec.read(from),
+        status: FfiConverterOptionalTypeOSGymSandboxWarmPoolStatus.read(from),
       };
     }
     write(value: TypeName, into: RustBuffer): void {
       FfiConverterString.write(value.apiVersion, into);
       FfiConverterString.write(value.kind, into);
       FfiConverterTypeResourceMetadata.write(value.metadata, into);
-      FfiConverterTypePoolSpec.write(value.spec, into);
-      FfiConverterOptionalTypeOSGymWorkspacePoolStatus.write(
+      FfiConverterTypeOSGymSandboxWarmPoolSpec.write(value.spec, into);
+      FfiConverterOptionalTypeOSGymSandboxWarmPoolStatus.write(
         value.status,
         into,
       );
@@ -265,8 +272,8 @@ const FfiConverterTypePool = (() => {
         FfiConverterString.allocationSize(value.apiVersion) +
         FfiConverterString.allocationSize(value.kind) +
         FfiConverterTypeResourceMetadata.allocationSize(value.metadata) +
-        FfiConverterTypePoolSpec.allocationSize(value.spec) +
-        FfiConverterOptionalTypeOSGymWorkspacePoolStatus.allocationSize(
+        FfiConverterTypeOSGymSandboxWarmPoolSpec.allocationSize(value.spec) +
+        FfiConverterOptionalTypeOSGymSandboxWarmPoolStatus.allocationSize(
           value.status,
         )
       );
@@ -322,7 +329,7 @@ const FfiConverterTypeCreateClaimRequest = (() => {
 
 export type CreatePoolRequest = {
   namespace: string;
-  spec: PoolSpec;
+  spec: OsGymSandboxWarmPoolSpec;
 };
 
 /**
@@ -348,17 +355,67 @@ const FfiConverterTypeCreatePoolRequest = (() => {
     read(from: RustBuffer): TypeName {
       return {
         namespace: FfiConverterString.read(from),
-        spec: FfiConverterTypePoolSpec.read(from),
+        spec: FfiConverterTypeOSGymSandboxWarmPoolSpec.read(from),
       };
     }
     write(value: TypeName, into: RustBuffer): void {
       FfiConverterString.write(value.namespace, into);
-      FfiConverterTypePoolSpec.write(value.spec, into);
+      FfiConverterTypeOSGymSandboxWarmPoolSpec.write(value.spec, into);
     }
     allocationSize(value: TypeName): number {
       return (
         FfiConverterString.allocationSize(value.namespace) +
-        FfiConverterTypePoolSpec.allocationSize(value.spec)
+        FfiConverterTypeOSGymSandboxWarmPoolSpec.allocationSize(value.spec)
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
+export type CreateTemplateRequest = {
+  namespace: string;
+  name: string;
+  spec: OsGymSandboxTemplateSpec;
+};
+
+/**
+ * Generated factory for {@link CreateTemplateRequest} record objects.
+ */
+export const CreateTemplateRequest = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<
+      CreateTemplateRequest,
+      ReturnType<typeof defaults>
+    >(defaults);
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () => Object.freeze(defaults()) as Partial<CreateTemplateRequest>,
+  });
+})();
+
+const FfiConverterTypeCreateTemplateRequest = (() => {
+  type TypeName = CreateTemplateRequest;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      return {
+        namespace: FfiConverterString.read(from),
+        name: FfiConverterString.read(from),
+        spec: FfiConverterTypeOSGymSandboxTemplateSpec.read(from),
+      };
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      FfiConverterString.write(value.namespace, into);
+      FfiConverterString.write(value.name, into);
+      FfiConverterTypeOSGymSandboxTemplateSpec.write(value.spec, into);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterString.allocationSize(value.namespace) +
+        FfiConverterString.allocationSize(value.name) +
+        FfiConverterTypeOSGymSandboxTemplateSpec.allocationSize(value.spec)
       );
     }
   }
@@ -808,6 +865,61 @@ const FfiConverterTypeSandbox = (() => {
         FfiConverterString.allocationSize(value.claim) +
         FfiConverterString.allocationSize(value.name) +
         FfiConverterSequenceString.allocationSize(value.services)
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
+/**
+ * The `osgym.cua.ai/v1alpha1 OSGymSandboxTemplate` CR verbatim. Warm pools
+ * and claims reference one by name via `spec.sandboxTemplateRef.name`.
+ */
+export type Template = {
+  apiVersion: string;
+  kind: string;
+  metadata: ResourceMetadata;
+  spec: OsGymSandboxTemplateSpec;
+};
+
+/**
+ * Generated factory for {@link Template} record objects.
+ */
+export const Template = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<Template, ReturnType<typeof defaults>>(defaults);
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () => Object.freeze(defaults()) as Partial<Template>,
+  });
+})();
+
+const FfiConverterTypeTemplate = (() => {
+  type TypeName = Template;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      return {
+        apiVersion: FfiConverterString.read(from),
+        kind: FfiConverterString.read(from),
+        metadata: FfiConverterTypeResourceMetadata.read(from),
+        spec: FfiConverterTypeOSGymSandboxTemplateSpec.read(from),
+      };
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      FfiConverterString.write(value.apiVersion, into);
+      FfiConverterString.write(value.kind, into);
+      FfiConverterTypeResourceMetadata.write(value.metadata, into);
+      FfiConverterTypeOSGymSandboxTemplateSpec.write(value.spec, into);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterString.allocationSize(value.apiVersion) +
+        FfiConverterString.allocationSize(value.kind) +
+        FfiConverterTypeResourceMetadata.allocationSize(value.metadata) +
+        FfiConverterTypeOSGymSandboxTemplateSpec.allocationSize(value.spec)
       );
     }
   }
@@ -1835,6 +1947,10 @@ export interface CyclopsClientLike {
     request: CreatePoolRequest,
     asyncOpts_?: { signal: AbortSignal },
   ) /*throws*/ : Promise<Pool>;
+  createTemplate(
+    request: CreateTemplateRequest,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<Template>;
   deleteClaim(
     claim: Claim,
     asyncOpts_?: { signal: AbortSignal },
@@ -1843,14 +1959,23 @@ export interface CyclopsClientLike {
     pool: Pool,
     asyncOpts_?: { signal: AbortSignal },
   ) /*throws*/ : Promise<void>;
+  deleteTemplate(
+    template: Template,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<void>;
   getClaim(
     claim: Claim,
     asyncOpts_?: { signal: AbortSignal },
   ) /*throws*/ : Promise<Claim>;
   getPool(
-    pool: Pool,
+    name: string,
     asyncOpts_?: { signal: AbortSignal },
   ) /*throws*/ : Promise<Pool>;
+  getTemplate(
+    namespace: string,
+    name: string,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<Template>;
   listClaims(
     namespace: string,
     asyncOpts_?: { signal: AbortSignal },
@@ -1859,6 +1984,18 @@ export interface CyclopsClientLike {
     namespace: string,
     asyncOpts_?: { signal: AbortSignal },
   ) /*throws*/ : Promise<Array<Pool>>;
+  listTemplates(
+    namespace: string,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<Array<Template>>;
+  reconcilePool(
+    request: CreatePoolRequest,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<Pool>;
+  reconcileTemplate(
+    request: CreateTemplateRequest,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<Template>;
   serviceRequest(
     sandbox: Sandbox,
     service: string,
@@ -1870,6 +2007,10 @@ export interface CyclopsClientLike {
     pool: Pool,
     asyncOpts_?: { signal: AbortSignal },
   ) /*throws*/ : Promise<Pool>;
+  updateTemplate(
+    template: Template,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<Template>;
   waitClaim(
     claim: Claim,
     asyncOpts_?: { signal: AbortSignal },
@@ -1981,6 +2122,33 @@ export class CyclopsClient
     );
   }
 
+  static connectWithAccessTokenAndNativeHttpClient(
+    configuration: CyclopsTokenProviderConfiguration,
+    accessToken: string,
+  ): CyclopsClientLike /*throws*/ {
+    return FfiConverterTypeCyclopsClient.lift(
+      uniffiCaller.rustCallWithError(
+        /*liftError:*/ FfiConverterTypeSdkError.lift.bind(
+          FfiConverterTypeSdkError,
+        ),
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_and_native_http_client(
+            FfiConverterTypeCyclopsTokenProviderConfiguration.lower(
+              configuration,
+              nativeModule().rustbuffer_alloc,
+            ),
+            FfiConverterString.lower(
+              accessToken,
+              nativeModule().rustbuffer_alloc,
+            ),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
   static connectWithAccessTokenProvider(
     configuration: CyclopsTokenProviderConfiguration,
     tokenProvider: AccessTokenProvider,
@@ -2003,6 +2171,55 @@ export class CyclopsClient
             ),
             FfiConverterTypeHttpClient.lower(
               httpClient,
+              nativeModule().rustbuffer_alloc,
+            ),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  static connectWithAccessTokenProviderAndNativeHttpClient(
+    configuration: CyclopsTokenProviderConfiguration,
+    tokenProvider: AccessTokenProvider,
+  ): CyclopsClientLike /*throws*/ {
+    return FfiConverterTypeCyclopsClient.lift(
+      uniffiCaller.rustCallWithError(
+        /*liftError:*/ FfiConverterTypeSdkError.lift.bind(
+          FfiConverterTypeSdkError,
+        ),
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client(
+            FfiConverterTypeCyclopsTokenProviderConfiguration.lower(
+              configuration,
+              nativeModule().rustbuffer_alloc,
+            ),
+            FfiConverterTypeAccessTokenProvider.lower(
+              tokenProvider,
+              nativeModule().rustbuffer_alloc,
+            ),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  static connectWithNativeHttpClient(
+    configuration: CyclopsConfiguration,
+  ): CyclopsClientLike /*throws*/ {
+    return FfiConverterTypeCyclopsClient.lift(
+      uniffiCaller.rustCallWithError(
+        /*liftError:*/ FfiConverterTypeSdkError.lift.bind(
+          FfiConverterTypeSdkError,
+        ),
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_native_http_client(
+            FfiConverterTypeCyclopsConfiguration.lower(
+              configuration,
               nativeModule().rustbuffer_alloc,
             ),
             callStatus,
@@ -2087,6 +2304,45 @@ export class CyclopsClient
     );
   }
 
+  async createTemplate(
+    request: CreateTemplateRequest,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<Template> /*throws*/ {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_create_template(
+          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
+          FfiConverterTypeCreateTemplateRequest.lower(
+            request,
+            nativeModule().rustbuffer_alloc,
+          ),
+        );
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+      // Async returns always go through the JS-side converter: the
+      // FFI symbol returns the future handle (u64), and the user-level
+      // RustBuffer comes back via the shared `rust_future_complete_*`
+      // export. The bytes the runtime hands back must be deserialized
+      // here using the per-callable return-type converter.
+      /*liftFunc:*/ FfiConverterTypeTemplate.lift.bind(
+        FfiConverterTypeTemplate,
+      ),
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
+        FfiConverterTypeSdkError,
+      ),
+    );
+  }
+
   async deleteClaim(
     claim: Claim,
     asyncOpts_?: { signal: AbortSignal },
@@ -2141,6 +2397,36 @@ export class CyclopsClient
     );
   }
 
+  async deleteTemplate(
+    template: Template,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<void> /*throws*/ {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_template(
+          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
+          FfiConverterTypeTemplate.lower(
+            template,
+            nativeModule().rustbuffer_alloc,
+          ),
+        );
+      },
+      /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_void,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_cancel_void,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_complete_void,
+      /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_void,
+      /*liftFunc:*/ (_v) => {},
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
+        FfiConverterTypeSdkError,
+      ),
+    );
+  }
+
   async getClaim(
     claim: Claim,
     asyncOpts_?: { signal: AbortSignal },
@@ -2176,7 +2462,7 @@ export class CyclopsClient
   }
 
   async getPool(
-    pool: Pool,
+    name: string,
     asyncOpts_?: { signal: AbortSignal },
   ): Promise<Pool> /*throws*/ {
     return await uniffiRustCallAsync(
@@ -2184,7 +2470,7 @@ export class CyclopsClient
       /*rustFutureFunc:*/ () => {
         return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_get_pool(
           uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
-          FfiConverterTypePool.lower(pool, nativeModule().rustbuffer_alloc),
+          FfiConverterString.lower(name, nativeModule().rustbuffer_alloc),
         );
       },
       /*pollFunc:*/ nativeModule()
@@ -2201,6 +2487,44 @@ export class CyclopsClient
       // export. The bytes the runtime hands back must be deserialized
       // here using the per-callable return-type converter.
       /*liftFunc:*/ FfiConverterTypePool.lift.bind(FfiConverterTypePool),
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
+        FfiConverterTypeSdkError,
+      ),
+    );
+  }
+
+  async getTemplate(
+    namespace: string,
+    name: string,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<Template> /*throws*/ {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_get_template(
+          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
+          FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc),
+          FfiConverterString.lower(name, nativeModule().rustbuffer_alloc),
+        );
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+      // Async returns always go through the JS-side converter: the
+      // FFI symbol returns the future handle (u64), and the user-level
+      // RustBuffer comes back via the shared `rust_future_complete_*`
+      // export. The bytes the runtime hands back must be deserialized
+      // here using the per-callable return-type converter.
+      /*liftFunc:*/ FfiConverterTypeTemplate.lift.bind(
+        FfiConverterTypeTemplate,
+      ),
       /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
       /*asyncOpts:*/ asyncOpts_,
       /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
@@ -2272,6 +2596,118 @@ export class CyclopsClient
       // here using the per-callable return-type converter.
       /*liftFunc:*/ FfiConverterSequenceTypePool.lift.bind(
         FfiConverterSequenceTypePool,
+      ),
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
+        FfiConverterTypeSdkError,
+      ),
+    );
+  }
+
+  async listTemplates(
+    namespace: string,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<Array<Template>> /*throws*/ {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_list_templates(
+          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
+          FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc),
+        );
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+      // Async returns always go through the JS-side converter: the
+      // FFI symbol returns the future handle (u64), and the user-level
+      // RustBuffer comes back via the shared `rust_future_complete_*`
+      // export. The bytes the runtime hands back must be deserialized
+      // here using the per-callable return-type converter.
+      /*liftFunc:*/ FfiConverterSequenceTypeTemplate.lift.bind(
+        FfiConverterSequenceTypeTemplate,
+      ),
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
+        FfiConverterTypeSdkError,
+      ),
+    );
+  }
+
+  async reconcilePool(
+    request: CreatePoolRequest,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<Pool> /*throws*/ {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_pool(
+          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
+          FfiConverterTypeCreatePoolRequest.lower(
+            request,
+            nativeModule().rustbuffer_alloc,
+          ),
+        );
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+      // Async returns always go through the JS-side converter: the
+      // FFI symbol returns the future handle (u64), and the user-level
+      // RustBuffer comes back via the shared `rust_future_complete_*`
+      // export. The bytes the runtime hands back must be deserialized
+      // here using the per-callable return-type converter.
+      /*liftFunc:*/ FfiConverterTypePool.lift.bind(FfiConverterTypePool),
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
+        FfiConverterTypeSdkError,
+      ),
+    );
+  }
+
+  async reconcileTemplate(
+    request: CreateTemplateRequest,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<Template> /*throws*/ {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_template(
+          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
+          FfiConverterTypeCreateTemplateRequest.lower(
+            request,
+            nativeModule().rustbuffer_alloc,
+          ),
+        );
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+      // Async returns always go through the JS-side converter: the
+      // FFI symbol returns the future handle (u64), and the user-level
+      // RustBuffer comes back via the shared `rust_future_complete_*`
+      // export. The bytes the runtime hands back must be deserialized
+      // here using the per-callable return-type converter.
+      /*liftFunc:*/ FfiConverterTypeTemplate.lift.bind(
+        FfiConverterTypeTemplate,
       ),
       /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
       /*asyncOpts:*/ asyncOpts_,
@@ -2355,6 +2791,45 @@ export class CyclopsClient
       // export. The bytes the runtime hands back must be deserialized
       // here using the per-callable return-type converter.
       /*liftFunc:*/ FfiConverterTypePool.lift.bind(FfiConverterTypePool),
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
+        FfiConverterTypeSdkError,
+      ),
+    );
+  }
+
+  async updateTemplate(
+    template: Template,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<Template> /*throws*/ {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_update_template(
+          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
+          FfiConverterTypeTemplate.lower(
+            template,
+            nativeModule().rustbuffer_alloc,
+          ),
+        );
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+      // Async returns always go through the JS-side converter: the
+      // FFI symbol returns the future handle (u64), and the user-level
+      // RustBuffer comes back via the shared `rust_future_complete_*`
+      // export. The bytes the runtime hands back must be deserialized
+      // here using the per-callable return-type converter.
+      /*liftFunc:*/ FfiConverterTypeTemplate.lift.bind(
+        FfiConverterTypeTemplate,
+      ),
       /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
       /*asyncOpts:*/ asyncOpts_,
       /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
@@ -2731,9 +3206,9 @@ const FfiConverterOptionalMapStringString = new FfiConverterOptional(
 const FfiConverterOptionalTypeOSGymSandboxClaimStatus =
   new FfiConverterOptional(FfiConverterTypeOSGymSandboxClaimStatus);
 
-// FfiConverter for OsGymWorkspacePoolStatus | undefined
-const FfiConverterOptionalTypeOSGymWorkspacePoolStatus =
-  new FfiConverterOptional(FfiConverterTypeOSGymWorkspacePoolStatus);
+// FfiConverter for OsGymSandboxWarmPoolStatus | undefined
+const FfiConverterOptionalTypeOSGymSandboxWarmPoolStatus =
+  new FfiConverterOptional(FfiConverterTypeOSGymSandboxWarmPoolStatus);
 
 // FfiConverter for ClaimSpec | undefined
 const FfiConverterOptionalTypeClaimSpec = new FfiConverterOptional(
@@ -2761,6 +3236,11 @@ const FfiConverterSequenceTypeClaim = new FfiConverterArray(
 // FfiConverter for Array<Pool>
 const FfiConverterSequenceTypePool = new FfiConverterArray(
   FfiConverterTypePool,
+);
+
+// FfiConverter for Array<Template>
+const FfiConverterSequenceTypeTemplate = new FfiConverterArray(
+  FfiConverterTypeTemplate,
 );
 
 /**
@@ -2818,11 +3298,35 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_and_native_http_client() !==
+    42291
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_and_native_http_client",
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider() !==
     58487
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client() !==
+    62005
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client() !==
+    49301
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client",
     );
   }
   if (
@@ -2842,6 +3346,14 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template() !==
+    13689
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template",
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() !==
     20460
   ) {
@@ -2858,6 +3370,14 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template() !==
+    54852
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template",
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim() !==
     17760
   ) {
@@ -2867,10 +3387,18 @@ function uniffiEnsureInitialized() {
   }
   if (
     nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool() !==
-    43327
+    49450
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_template() !==
+    8909
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_template",
     );
   }
   if (
@@ -2890,6 +3418,30 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_templates() !==
+    58376
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_templates",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool() !==
+    53919
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template() !==
+    36469
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template",
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request() !==
     46699
   ) {
@@ -2903,6 +3455,14 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template() !==
+    18704
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template",
     );
   }
   if (
@@ -2942,6 +3502,7 @@ export default Object.freeze({
     FfiConverterTypeClaim,
     FfiConverterTypeCreateClaimRequest,
     FfiConverterTypeCreatePoolRequest,
+    FfiConverterTypeCreateTemplateRequest,
     FfiConverterTypeCyclopsClient,
     FfiConverterTypeCyclopsConfiguration,
     FfiConverterTypeCyclopsCredentials,
@@ -2955,5 +3516,6 @@ export default Object.freeze({
     FfiConverterTypeResourceMetadata,
     FfiConverterTypeSandbox,
     FfiConverterTypeSdkError,
+    FfiConverterTypeTemplate,
   },
 });

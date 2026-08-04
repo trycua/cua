@@ -206,7 +206,9 @@ def check(root: Path) -> None:
 
     require_all(source["kotlin_live"], files["kotlin_live"], [
         ("Kotlin live HTTP callback", r"class\s+JavaHttpClient\s*:\s*HttpClient"),
-        ("Kotlin live typed pool", r"PoolSpec\(.*SandboxService\(\"mcp\",\s*3000u"),
+        ("Kotlin live typed pool", r"OsGymSandboxWarmPoolSpec\(.*SandboxTemplateRef\(templateName\)"),
+        ("Kotlin live typed template", r"CreateTemplateRequest\(namespace,\s*templateName,"),
+        ("Kotlin live template service", r"SandboxService\(\"mcp\",\s*3000u"),
         ("Kotlin live typed claim", r"CreateClaimRequest\(pool,\s*null\)"),
         ("Kotlin live MCP retry", r"response\.status\.toInt\(\)\s+in\s+setOf\(502,\s*503,\s*504\)"),
         ("Kotlin live cleanup", r"client\.deleteClaim.*client\.deletePool"),
@@ -222,7 +224,9 @@ def check(root: Path) -> None:
     ])
     require_all(source["swift_live"], files["swift_live"], [
         ("Swift live URLSession callback", r"final\s+class\s+UrlSessionHttpClient\s*:\s*HttpClient"),
-        ("Swift live typed pool", r"PoolSpec\(.*SandboxService\(name:\s*\"mcp\",\s*targetPort:\s*3000"),
+        ("Swift live typed pool", r"OsGymSandboxWarmPoolSpec\(replicas:\s*1,\s*sandboxTemplateRef:"),
+        ("Swift live typed template", r"CreateTemplateRequest\(namespace:\s*namespace,\s*name:\s*templateName"),
+        ("Swift live template service", r"SandboxService\(name:\s*\"mcp\",\s*targetPort:\s*3000"),
         ("Swift live typed claim", r"CreateClaimRequest\(pool:\s*pool,\s*spec:\s*nil\)"),
         ("Swift live MCP retry", r"\[502,\s*503,\s*504\]\.contains\(Int\(response\.status\)\)"),
         ("Swift live portable duration", r"advanced\(by:\s*\.seconds\(300\)\)"),
@@ -240,7 +244,9 @@ def check(root: Path) -> None:
     ])
     require_all(source["ruby_live"], files["ruby_live"], [
         ("Ruby live Net HTTP callback", r"class\s+NetHttpClient\s*<\s*FleetSdk::HttpClient"),
-        ("Ruby live typed pool", r"FleetSdk::PoolSpec\.new.*FleetSdk::SandboxService\.new\(name:\s*\x27mcp\x27,\s*target_port:\s*3000"),
+        ("Ruby live typed pool", r"FleetSdk::OSGymSandboxWarmPoolSpec\.new\(replicas:\s*1,\s*sandbox_template_ref:"),
+        ("Ruby live typed template", r"FleetSdk::CreateTemplateRequest\.new\(namespace:\s*namespace,\s*name:\s*template_name"),
+        ("Ruby live template service", r"FleetSdk::SandboxService\.new\(name:\s*\x27mcp\x27,\s*target_port:\s*3000"),
         ("Ruby live typed claim", r"CreateClaimRequest\.new\(pool:\s*pool,\s*spec:\s*nil\)"),
         ("Ruby live MCP retry", r"\[502,\s*503,\s*504\]\.include\?\(response\.status\)"),
         ("Ruby live cleanup", r"client\.delete_claim.*client\.delete_pool"),
@@ -274,7 +280,9 @@ def check(root: Path) -> None:
     require(files["python_live"].read_text(encoding="utf-8"), "Python live environment", r"os\.environ\[\"CUA_CLIENT_ID\"\].*os\.environ\[\"CUA_IMAGE\"\]", files["python_live"])
     require_all(source["python_live"], files["python_live"], [
         ("Python live native HTTP constructor", r"CyclopsClient\.connect_with_native_http_client\("),
-        ("Python live typed pool", r"PoolSpec\(.*SandboxService\(.*target_port=3000"),
+        ("Python live typed pool", r"OsGymSandboxWarmPoolSpec\(.*sandbox_template_ref"),
+        ("Python live typed template", r"CreateTemplateRequest\("),
+        ("Python live template service", r"SandboxService\(.*target_port=3000"),
         ("Python live typed claim", r"CreateClaimRequest\(pool=pool,\s*spec=None\)"),
         ("Python live MCP retry", r"response\.status\s+in\s+\(502,\s*503,\s*504\)"),
         ("Python live cleanup", r"await\s+client\.delete_claim.*await\s+client\.delete_pool"),

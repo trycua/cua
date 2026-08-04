@@ -4,7 +4,7 @@ use cyclops_sdk::{
     CreatePoolRequest, CyclopsClient, CyclopsConfiguration, CyclopsCredentials, HttpHeader,
     HttpResponse, Pool, ResourceMetadata, SdkError,
 };
-use cyclops_sdk_schema::PoolSpec;
+use cyclops_sdk_schema::OSGymSandboxWarmPoolSpec;
 use futures_timer::Delay;
 use std::{sync::Arc, time::Duration};
 use support::ScriptedHttpClient;
@@ -12,8 +12,8 @@ use support::ScriptedHttpClient;
 const BASE_URL: &str = "https://cyclops.example:8443";
 const TOKEN_URL: &str = "https://identity.example/oauth/token";
 const NAMESPACE: &str = "example-pool";
-const COLLECTION: &str = "https://cyclops.example:8443/api/k8s/apis/cua.ai/v1/namespaces/example-pool/osgymworkspacepools";
-const ITEM: &str = "https://cyclops.example:8443/api/k8s/apis/cua.ai/v1/namespaces/example-pool/osgymworkspacepools/example-pool";
+const COLLECTION: &str = "https://cyclops.example:8443/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/example-pool/osgymsandboxwarmpools";
+const ITEM: &str = "https://cyclops.example:8443/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/example-pool/osgymsandboxwarmpools/example-pool";
 const NAMESPACE_COLLECTION: &str = "https://cyclops.example:8443/api/namespaces";
 const NAMESPACE_ITEM: &str = "https://cyclops.example:8443/api/namespaces/example-pool";
 
@@ -295,7 +295,7 @@ async fn creates_for_different_namespaces_proceed_concurrently() {
     assert_eq!(second_pool, pool_named(OTHER_NAMESPACE));
 
     let other_collection = format!(
-        "https://cyclops.example:8443/api/k8s/apis/cua.ai/v1/namespaces/{OTHER_NAMESPACE}/osgymworkspacepools"
+        "https://cyclops.example:8443/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/{OTHER_NAMESPACE}/osgymsandboxwarmpools"
     );
     let requests = resource_requests(&http).await;
     assert_eq!(requests.len(), 3);
@@ -376,7 +376,7 @@ async fn gets_named_pool_and_updates_typed_pools() {
     let updated = Pool {
         spec: serde_json::from_value(serde_json::json!({
             "replicas": 2,
-            "template": { "containerDiskImage": "registry.example/updated:latest" },
+            "sandboxTemplateRef": { "name": "example-pool-template" },
         }))
         .unwrap(),
         ..pool()
@@ -408,7 +408,7 @@ async fn reconcile_updates_an_existing_named_pool() {
     let updated = Pool {
         spec: serde_json::from_value(serde_json::json!({
             "replicas": 2,
-            "template": { "containerDiskImage": "registry.example/updated:latest" },
+            "sandboxTemplateRef": { "name": "example-pool-template" },
         }))
         .unwrap(),
         ..pool()
@@ -752,8 +752,8 @@ fn pool() -> Pool {
 
 fn pool_named(namespace: &str) -> Pool {
     Pool {
-        api_version: "cua.ai/v1".into(),
-        kind: "OSGymWorkspacePool".into(),
+        api_version: "osgym.cua.ai/v1alpha1".into(),
+        kind: "OSGymSandboxWarmPool".into(),
         metadata: ResourceMetadata {
             namespace: namespace.into(),
             name: namespace.into(),
@@ -764,10 +764,10 @@ fn pool_named(namespace: &str) -> Pool {
     }
 }
 
-fn pool_spec() -> PoolSpec {
+fn pool_spec() -> OSGymSandboxWarmPoolSpec {
     serde_json::from_value(serde_json::json!({
         "replicas": 1,
-        "template": { "containerDiskImage": "registry.example/image:latest" },
+        "sandboxTemplateRef": { "name": "example-pool-template" },
     }))
     .unwrap()
 }

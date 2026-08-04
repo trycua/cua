@@ -295,13 +295,22 @@ pub fn enforce_tool(tool_name: &str, args: &Value) -> Result<(), ScopeViolation>
             ),
             state,
         }),
-        (EffectiveCaptureScope::Desktop, ToolScope::Window) => Err(ScopeViolation {
-            code: "window_scope_disabled",
-            message: format!(
-                "window-scope tool '{tool_name}' is disabled while session '{session}' is in desktop scope"
-            ),
-            state,
-        }),
+        (EffectiveCaptureScope::Desktop, ToolScope::Window) => {
+            let message = if state.policy == CaptureScopePolicy::Auto {
+                format!(
+                    "window-scope tool '{tool_name}' is disabled because escalation to desktop scope is permanent for session '{session}'; to recover, call end_session for session '{session}', then call start_session with a new session id"
+                )
+            } else {
+                format!(
+                    "window-scope tool '{tool_name}' is disabled while session '{session}' is in desktop scope"
+                )
+            };
+            Err(ScopeViolation {
+                code: "window_scope_disabled",
+                message,
+                state,
+            })
+        }
     }
 }
 
@@ -348,6 +357,39 @@ mod tests {
         assert_eq!(
             get_session(&desktop).unwrap().effective_scope(),
             EffectiveCaptureScope::Desktop
+        );
+    }
+
+    #[test]
+    fn escalated_auto_session_reports_permanent_scope_and_recovery() {
+        let session = fresh("auto-recovery");
+        bind_session(&session, Some(CaptureScopePolicy::Auto)).unwrap();
+        escalate_session(
+            &session,
+            EscalationReason::ForegroundIneffective,
+            Some("window ladder exhausted"),
+        )
+        .unwrap();
+
+        let violation = enforce_tool("get_window_state", &json!({"session": session})).unwrap_err();
+        assert_eq!(violation.code, "window_scope_disabled");
+        assert_eq!(
+            violation.message,
+            format!(
+                "window-scope tool 'get_window_state' is disabled because escalation to desktop scope is permanent for session '{session}'; to recover, call end_session for session '{session}', then call start_session with a new session id"
+            )
+        );
+        assert_eq!(
+            violation.as_json(&session),
+            json!({
+                "session": session,
+                "capture_scope": "auto",
+                "effective_scope": "desktop",
+                "desktop_unlocked": true,
+                "escalation_reason": "foreground_ineffective",
+                "escalation_detail": "window ladder exhausted",
+                "code": "window_scope_disabled"
+            })
         );
     }
 

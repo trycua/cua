@@ -48,6 +48,8 @@ use cua_driver_testkit::e2e::{
 use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::{run_with_background_oracles, ForegroundSentinel};
 use cua_driver_testkit::{ax, harness_app, spawn_in_job, Driver, McpDriver, ToolResponse};
+use windows::Win32::Foundation::HWND;
+use windows::Win32::UI::WindowsAndMessaging::{IsIconic, ShowWindow, SW_MINIMIZE};
 
 // ── harness launcher ─────────────────────────────────────────────────────────
 
@@ -547,6 +549,95 @@ fn harness_wpf_counter_invoke() {
             delivered_with_fixture_state(passed)
         },
     );
+}
+
+#[test]
+#[ignore]
+fn harness_wpf_minimized_element_click_refuses_without_side_effects() {
+    let case = CaseSpec::delivered(
+        "windows-wpf-minimized-element-click-refusal",
+        "wpf",
+        "wpf",
+        "left_click",
+        Targeting::Ax,
+        Delivery::Background,
+        Scope::Window,
+        DriverRoute::Composite,
+        vec![
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::Cursor,
+            OracleKind::NoLeakedInput,
+            OracleKind::Protocol,
+        ],
+    )
+    .expecting_refusal(vec![RefusalCode::WindowMinimized]);
+
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_named("windows-wpf-minimized-element-click-refusal")
+            .expect("required source-built driver did not start");
+        *evidence = recording_evidence(driver.recording_dir());
+        let state_dir = tempfile::tempdir().expect("create WPF fixture state directory");
+        let state_path = state_dir.path().join("state.json");
+        let pid = launch_harness_with_state_file(&mut driver, Some(&state_path))
+            .expect("required WPF harness did not launch");
+        let (wid, _) = driver
+            .find_window(pid as i64, "CuaTestHarness WPF")
+            .expect("main window");
+        wait_for_fixture_file_text(&state_path, "lbl-counter", "counter=0");
+        let ready = snapshot(&mut driver, pid, wid);
+        let idx = ax::element_index_by_id(ready.text(), "btn-increment")
+            .expect("btn-increment not in pre-minimize snapshot");
+
+        let sentinel = ForegroundSentinel::launch(&mut driver);
+        let hwnd = HWND(wid as *mut _);
+        let _ = unsafe { ShowWindow(hwnd, SW_MINIMIZE) };
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !unsafe { IsIconic(hwnd) }.as_bool() {
+            assert!(Instant::now() < deadline, "WPF target did not minimize");
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        driver.start_behavior_recording();
+
+        let (response, mut passed) = sentinel
+            .observe_desktop(|| {
+                driver.call(
+                    "click",
+                    serde_json::json!({
+                        "pid": pid as i64,
+                        "window_id": wid,
+                        "element_index": idx,
+                        "snapshot_id": ready.snapshot_id(),
+                        "delivery_mode": "background"
+                    }),
+                )
+            })
+            .unwrap_or_else(|error| panic!("minimized refusal leaked desktop state: {error}"));
+        assert!(
+            response.is_error(),
+            "minimized click reported success: {}",
+            response.text()
+        );
+        assert_eq!(response.structured()["status"], "refused");
+        assert_eq!(response.structured()["refusal"]["code"], "window_minimized");
+        assert!(
+            unsafe { IsIconic(hwnd) }.as_bool(),
+            "refused click restored or otherwise changed the minimized target"
+        );
+        std::thread::sleep(Duration::from_millis(300));
+        wait_for_fixture_file_text(&state_path, "lbl-counter", "counter=0");
+
+        passed.extend([OracleKind::FixtureState, OracleKind::Protocol]);
+        passed.sort();
+        passed.dedup();
+        Observation::refused(
+            RefusalCode::WindowMinimized,
+            passed,
+            response.text(),
+            Evidence::default(),
+        )
+    });
 }
 
 #[test]

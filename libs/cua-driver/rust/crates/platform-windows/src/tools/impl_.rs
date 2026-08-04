@@ -42,8 +42,8 @@ fn pin_overlay_above(key: &str, hwnd: u64) {
 /// Returns:
 /// - `Ok((cx,cy))` unchanged when already in bounds — fast path, no COM call;
 /// - `Ok((nx,ny))` with the post-scroll center when scrolling brought it in;
-/// - `Err(message)` when it is still off-screen — preserving the existing clean
-///   failure (a clear error beats a misfire onto the taskbar).
+/// - `Err(result)` with a typed refusal when minimized or still off-screen — a
+///   clear error beats a misfire onto the taskbar.
 ///
 /// Background-safe: ScrollIntoView is delivered over the accessibility channel
 /// (wrapped in the UWP fg-steal bypass) and does not raise or activate the
@@ -57,8 +57,39 @@ fn resolve_onscreen_point_with_scroll(
     cx: i32,
     cy: i32,
     action_verb: &str,
-) -> Result<(i32, i32), String> {
+) -> Result<(i32, i32), ToolResult> {
+    // Issue #2015: refuse the iconic sentinel BEFORE the containment check
+    // below, which structurally cannot catch it. A minimized window's
+    // `GetWindowRect` is the off-screen iconic position
+    // `(-32000, -32000)-(-31840, -31972)`, and UIA mirrors that same sentinel
+    // into every element's `BoundingRectangle`. Both sides of
+    // `point_in_window_bounds` are then poisoned identically, so a sentinel
+    // center tests as *inside* its sentinel window rect, the guard passes, and
+    // the click is posted to coordinates no monitor covers — the tool reports
+    // success and nothing happens. `capture.rs` already refuses iconic windows
+    // outright; the input path must refuse them too rather than silently no-op.
+    if let Some(refusal) = minimized_element_refusal(hwnd, idx, cx, cy, action_verb) {
+        return Err(refusal);
+    }
     let cached_center_in_window = crate::input::point_in_window_bounds(hwnd, cx, cy);
+    if cached_center_in_window && !crate::input::point_on_virtual_desktop(cx, cy) {
+        let message = format!(
+            "Element [{idx}] resolves to ({cx},{cy}) inside window 0x{hwnd:x}, but \
+             that point is outside the live Windows virtual desktop. The bounds \
+             may be a stale iconic position, so {action_verb} was refused before \
+             input dispatch. Restore or move the window onto a display, then \
+             re-snapshot with get_window_state before retrying."
+        );
+        return Err(ToolResult::error(message.clone()).with_structured(json!({
+            "status": "refused",
+            "code": "element_not_visible",
+            "effect": "refused",
+            "refusal": {
+                "code": "element_not_visible",
+                "message": message,
+            }
+        })));
+    }
     // A center can still be clipped by a ScrollViewer or a docked sibling while
     // remaining inside the outer HWND rectangle. UIA's IsOffscreen property is
     // authoritative for that case; without it a foreground tap can land on the
@@ -84,12 +115,60 @@ fn resolve_onscreen_point_with_scroll(
     } else if cached_center_in_window {
         return Ok((cx, cy));
     }
-    Err(format!(
+    let message = format!(
         "Element [{idx}] resolves to ({cx},{cy}) but is not visibly actionable — \
          tried UIA ScrollIntoView but it is still off-screen, so {action_verb} \
          would land on whatever covers that point. Make the window taller or \
          scroll the region into view, then retry."
-    ))
+    );
+    Err(ToolResult::error(message.clone()).with_structured(json!({
+        "status": "refused",
+        "code": "element_not_visible",
+        "effect": "refused",
+        "refusal": {
+            "code": "element_not_visible",
+            "message": message,
+        }
+    })))
+}
+
+fn minimized_element_refusal(
+    hwnd: u64,
+    idx: usize,
+    cx: i32,
+    cy: i32,
+    action_verb: &str,
+) -> Option<ToolResult> {
+    crate::input::window_is_iconic(hwnd).then(|| {
+        let message = format!(
+            "Element [{idx}] resolves to ({cx},{cy}), which is the Win32 iconic \
+             sentinel rather than a location on any display — window 0x{hwnd:x} \
+             is minimized, so {action_verb} would \
+             be posted off-screen and silently do nothing. Call bring_to_front \
+             with this window_id to restore it, then re-snapshot with \
+             get_window_state before retrying."
+        );
+        ToolResult::error(format!("refused (window_minimized): {message}")).with_structured(json!({
+            "status": "refused",
+            "code": "window_minimized",
+            "effect": "refused",
+            "refusal": {
+                "code": "window_minimized",
+                "message": message,
+            }
+        }))
+    })
+}
+
+fn tool_result_text(result: ToolResult) -> String {
+    result
+        .content
+        .into_iter()
+        .find_map(|content| match content {
+            cua_driver_core::protocol::Content::Text { text, .. } => Some(text),
+            _ => None,
+        })
+        .unwrap_or_else(|| "element action was refused".to_owned())
 }
 
 /// Convert (px, py) — "window-local screenshot pixels, top-left origin
@@ -3229,7 +3308,7 @@ impl Tool for ClickTool {
                     "a foreground click",
                 ) {
                     Ok(p) => p,
-                    Err(msg) => return ToolResult::error(msg),
+                    Err(result) => return result,
                 };
                 let btn_fg = btn.clone();
                 let mods_owned = modifiers.clone();
@@ -3252,6 +3331,12 @@ impl Tool for ClickTool {
                     Ok(Err(e)) => ToolResult::error(e.to_string()),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
+            }
+            // UIA and posted-message routes can report success without a
+            // user-visible effect on an iconic target. Refuse before any
+            // background route selects or dispatches its transport.
+            if let Some(result) = minimized_element_refusal(hwnd, idx, cx, cy, "clicking") {
+                return result;
             }
             // delivery_mode:"background" on WinUI3 for double / right / middle: single
             // left falls through to the UIA Invoke path below (already drives
@@ -3317,7 +3402,7 @@ impl Tool for ClickTool {
                     let (cx, cy) = resolve_onscreen_point_with_scroll(
                         &state_clone.element_cache, pid, hwnd, idx, cx, cy, "clicking",
                     )
-                    .map_err(|message| anyhow::anyhow!(message))?;
+                    .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
                     return crate::input::inject_click_screen(hwnd, cx, cy, count, &btn)
                         .map(|()| format!(
                             "✅ Injected click on [{idx}] (screen ({cx},{cy}), background, no foreground swap)."
@@ -3432,7 +3517,7 @@ impl Tool for ClickTool {
                         cy,
                         "clicking",
                     )
-                    .map_err(|message| anyhow::anyhow!(message))?;
+                    .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
                     return crate::input::inject_click_screen(hwnd, cx, cy, count, &btn)
                         .map(|()| {
                             format!(
@@ -4059,7 +4144,7 @@ impl Tool for TypeTextTool {
                     "foreground typing",
                 ) {
                     Ok(point) => point,
-                    Err(message) => return ToolResult::error(message),
+                    Err(result) => return result,
                 };
                 let focus_result = tokio::task::spawn_blocking(move || {
                     crate::input::send_click_synthesized_active_mods(hwnd, cx, cy, 1, "left", &[])
@@ -4744,7 +4829,7 @@ impl Tool for PressKeyTool {
                 "focusing for key delivery",
             ) {
                 Ok(point) => point,
-                Err(message) => return ToolResult::error(message),
+                Err(result) => return result,
             };
             let (mut px, mut py) = screen_to_bitmap(hwnd, cx, cy);
             if let Some(ratio) = self.state.resize_registry.ratio(pid) {
@@ -6089,7 +6174,7 @@ impl Tool for DoubleClickTool {
                 "double-clicking",
             ) {
                 Ok(p) => p,
-                Err(msg) => return ToolResult::error(msg),
+                Err(result) => return result,
             };
             pin_overlay_above(&cursor_key, hwnd);
             overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
@@ -6436,7 +6521,7 @@ impl Tool for RightClickTool {
                 "right-clicking",
             ) {
                 Ok(p) => p,
-                Err(msg) => return ToolResult::error(msg),
+                Err(result) => return result,
             };
             pin_overlay_above(&cursor_key, hwnd);
             overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;

@@ -315,6 +315,7 @@ pub enum RefusalCode {
     BrowserReconnectExhausted,
     BrowserInputIncomplete,
     BrowserActionUnavailable,
+    WindowMinimized,
 }
 
 impl RefusalCode {
@@ -336,6 +337,7 @@ impl RefusalCode {
             "browser_reconnect_exhausted" => Some(Self::BrowserReconnectExhausted),
             "browser_input_incomplete" => Some(Self::BrowserInputIncomplete),
             "browser_action_unavailable" => Some(Self::BrowserActionUnavailable),
+            "window_minimized" => Some(Self::WindowMinimized),
             _ => None,
         }
     }
@@ -1493,6 +1495,12 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
             .as_str()
             .is_some_and(|summary| summary.starts_with("✅ bring_to_front:"))
     });
+    let refused_minimized_action = action.as_ref().is_some_and(|value| {
+        value["result_error"].as_bool() == Some(true)
+            && value["result_summary"]
+                .as_str()
+                .is_some_and(|summary| summary.starts_with("refused (window_minimized):"))
+    });
     let restored_state_captured = manifest
         .as_ref()
         .is_some_and(|value| value["after"]["state"]["status"].as_str() == Some("captured"));
@@ -1506,6 +1514,8 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
                         && successful_restore
                         && restored_state_captured
                         && classification(phase, "screenshot") == Some("capture_failed"))))
+            || (refused_minimized_action
+                && classification(phase, "screenshot") == Some("target_minimized"))
     };
 
     for (phase, kind) in [("before", "screenshot"), ("after", "screenshot")] {
@@ -1577,15 +1587,23 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
         let refused_before_target_resolution = action.as_ref().is_some_and(|value| {
             value["result_error"].as_bool() == Some(true) && value.get("click_point").is_none()
         });
-        if refused_before_target_resolution {
+        let refused_before_dispatch = action.as_ref().is_some_and(|value| {
+            value["result_error"].as_bool() == Some(true)
+                && value["action_truth"]["effect"].as_str() == Some("refused")
+        });
+        if refused_before_target_resolution || refused_before_dispatch {
             let click = manifest.as_ref().map(|value| &value["click"]);
+            let expected_classification = if refused_before_target_resolution {
+                "action_refused_before_target_resolution"
+            } else {
+                "action_refused_before_dispatch"
+            };
             if !click.is_some_and(|value| {
                 value["status"].as_str() == Some("not_applicable")
-                    && value["classification"].as_str()
-                        == Some("action_refused_before_target_resolution")
+                    && value["classification"].as_str() == Some(expected_classification)
             }) {
                 errors.push(format!(
-                    "invalid refused-click evidence for {cell_id}/{turn_name}: expected not_applicable/action_refused_before_target_resolution"
+                    "invalid refused-click evidence for {cell_id}/{turn_name}: expected not_applicable/{expected_classification}"
                 ));
             }
             return;
@@ -2220,6 +2238,42 @@ mod tests {
 
         validate_catalog(&[case], &[result], Some(root.path()), true)
             .expect("a minimized target cannot provide a pre-restore screenshot");
+    }
+
+    #[test]
+    fn validator_accepts_missing_images_for_typed_minimized_refusal() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(
+            turn.join("action.json"),
+            br#"{
+                "tool":"click",
+                "arguments":{"pid":1,"window_id":2,"element_index":3},
+                "result_summary":"refused (window_minimized): restore before retrying",
+                "result_error":true,
+                "click_point":{"x":10,"y":20},
+                "action_truth":{"effect":"refused"}
+            }"#,
+        )
+        .expect("write minimized refusal action");
+        std::fs::write(
+            turn.join("evidence.json"),
+            br#"{
+                "schema":"cua-turn-evidence/v1",
+                "before":{"state":{"status":"captured"},"screenshot":{"status":"unavailable","classification":"target_minimized"}},
+                "after":{"state":{"status":"captured"},"screenshot":{"status":"unavailable","classification":"target_minimized"}},
+                "click":{"status":"not_applicable","classification":"action_refused_before_dispatch"}
+            }"#,
+        )
+        .expect("write minimized refusal evidence manifest");
+        for file in ["before.png", "after.png", "screenshot.png", "click.png"] {
+            let path = turn.join(file);
+            if path.exists() {
+                std::fs::remove_file(path).expect("remove unavailable image");
+            }
+        }
+
+        validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect("a typed minimized refusal cannot provide target images");
     }
 
     #[test]

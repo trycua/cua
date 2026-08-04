@@ -51,6 +51,9 @@ let kScrollTopMarker = "SCROLL_TOP_MARKER_v1"
 let kScrollBottomMarker = "SCROLL_BOTTOM_MARKER_v1"
 let kExitButtonAID = "btn-exit"
 let kMenuItemTitle = "Harness Test Item"
+let kSecondaryWindowTitle = "CuaTestHarness AppKit Secondary"
+let kSheetWindowTitle = "CuaTestHarness AppKit Sheet"
+let kFloatingWindowTitle = "CuaTestHarness AppKit Floating"
 
 // MARK: - Controller
 
@@ -499,6 +502,70 @@ final class ClickTargetButton: NSButton {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
+// Opt-in windows for the persistent exact-window activation certification.
+// Ordinary harness launches remain byte-for-byte and behaviorally unchanged.
+final class BringToFrontMatrixWindows {
+    let secondary: NSWindow
+    var sheet: NSWindow?
+    var floating: NSPanel?
+
+    init(parent: NSWindow, mode: String) {
+        secondary = NSWindow(
+            contentRect: NSRect(x: 40, y: 40, width: 420, height: 240),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        secondary.title = kSecondaryWindowTitle
+        secondary.isReleasedWhenClosed = false
+        secondary.isRestorable = false
+        secondary.contentView = NSTextField(labelWithString: "bring_to_front secondary ordinary window")
+        secondary.orderFront(nil)
+
+        if mode == "sheet" {
+            let candidate = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 360, height: 160),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            candidate.title = kSheetWindowTitle
+            candidate.contentView = NSTextField(labelWithString: "modal sheet blocks parent key status")
+            sheet = candidate
+            parent.beginSheet(candidate)
+        } else if mode == "floating" {
+            let candidate = NSPanel(
+                contentRect: NSRect(x: 180, y: 180, width: 320, height: 140),
+                styleMask: [.titled, .utilityWindow], backing: .buffered, defer: false)
+            candidate.title = kFloatingWindowTitle
+            candidate.level = .floating
+            candidate.isFloatingPanel = true
+            candidate.contentView = NSTextField(labelWithString: "floating accessory panel")
+            candidate.orderFront(nil)
+            floating = candidate
+        }
+    }
+}
+
+func writeBringToFrontWindowReport(
+    main: NSWindow,
+    matrix: BringToFrontMatrixWindows?
+) {
+    guard let path = ProcessInfo.processInfo.environment["CUA_HARNESS_WINDOW_REPORT"] else {
+        return
+    }
+    var lines = ["main=\(main.windowNumber)"]
+    if let matrix {
+        lines.append("secondary=\(matrix.secondary.windowNumber)")
+        if let sheet = matrix.sheet {
+            lines.append("sheet=\(sheet.windowNumber)")
+        }
+        if let floating = matrix.floating {
+            lines.append("floating=\(floating.windowNumber)")
+        }
+    }
+    do {
+        try (lines.joined(separator: "\n") + "\n").write(
+            toFile: path, atomically: true, encoding: .utf8)
+    } catch {
+        fputs("failed to write window report: \(error)\n", stderr)
+    }
+}
+
 // MARK: - Menu bar (Mac-specific scenario: ns_menubar)
 
 func installMenuBar(target: HarnessWindowController) {
@@ -545,7 +612,13 @@ struct CuaAppKitHarness {
         let controller = HarnessWindowController()
         installMenuBar(target: controller)
         controller.show()
+        var matrixWindows: BringToFrontMatrixWindows?
+        if let mode = ProcessInfo.processInfo.environment["CUA_HARNESS_BRING_TO_FRONT_MODE"] {
+            matrixWindows = BringToFrontMatrixWindows(parent: controller.window, mode: mode)
+        }
         app.activate(ignoringOtherApps: true)
+        writeBringToFrontWindowReport(main: controller.window, matrix: matrixWindows)
         app.run()
+        _ = matrixWindows
     }
 }

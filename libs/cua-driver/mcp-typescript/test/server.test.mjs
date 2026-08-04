@@ -16,12 +16,15 @@ class FakeAdapter {
         name: 'get_screen_size',
         description: 'Real bounded Cua Driver route',
         inputSchema: { type: 'object', additionalProperties: false },
+        outputSchema: { type: 'object' },
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,
           idempotentHint: true,
           openWorldHint: false,
         },
+        capabilities: ['screen.dimensions'],
+        risk: { class: 'r0' },
       },
     ];
   }
@@ -43,8 +46,14 @@ async function connectedPair(root = skillRoot) {
   const server = await createCuaMcpServer({ adapter, skillRoot: root });
   const client = new Client({ name: 'test-client', version: '1.0.0' }, { capabilities: {} });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const responses = [];
+  const send = serverTransport.send.bind(serverTransport);
+  serverTransport.send = async (message, options) => {
+    responses.push(structuredClone(message));
+    return send(message, options);
+  };
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
-  return { adapter, client, server };
+  return { adapter, client, responses, server };
 }
 
 test('initialize instructions carry a compact bundled skill catalog', async (t) => {
@@ -58,14 +67,18 @@ test('initialize instructions carry a compact bundled skill catalog', async (t) 
 });
 
 test('tools/list and tools/call preserve driver and skill routing', async (t) => {
-  const { adapter, client, server } = await connectedPair();
+  const { adapter, client, responses, server } = await connectedPair();
   t.after(() => Promise.all([client.close(), server.close()]));
   const listed = await client.listTools();
   assert.deepEqual(
     listed.tools.map((tool) => tool.name),
     ['get_screen_size', 'load-skill']
   );
+  assert.equal(listed.tools[0].outputSchema.type, 'object');
   assert.equal(listed.tools[1].annotations.readOnlyHint, true);
+  const wireList = responses.find((message) => message.result?.tools);
+  assert.deepEqual(wireList.result.tools[0].capabilities, ['screen.dimensions']);
+  assert.deepEqual(wireList.result.tools[0].risk, { class: 'r0' });
   const result = await client.callTool({ name: 'get_screen_size', arguments: { session: 'poc' } });
   assert.deepEqual(adapter.calls, [{ name: 'get_screen_size', args: { session: 'poc' } }]);
   assert.equal(result.content[1].type, 'image');
@@ -84,6 +97,23 @@ test('load-skill returns SKILL.md and blocks path traversal', async (t) => {
   });
   assert.equal(blocked.isError, true);
   assert.match(blocked.content[0].text, /traversal/);
+});
+
+test('load-skill validates its closed input schema', async (t) => {
+  const { client, server } = await connectedPair();
+  t.after(() => Promise.all([client.close(), server.close()]));
+  const wrongType = await client.callTool({
+    name: 'load-skill',
+    arguments: { name: 'cua-driver', path: 1 },
+  });
+  assert.equal(wrongType.isError, true);
+  assert.match(wrongType.content[0].text, /must be a string/);
+  const extra = await client.callTool({
+    name: 'load-skill',
+    arguments: { name: 'cua-driver', ignored: true },
+  });
+  assert.equal(extra.isError, true);
+  assert.match(extra.content[0].text, /Unknown load-skill fields/);
 });
 
 test('load-skill rejects symlinks that escape the bundled root', async (t) => {

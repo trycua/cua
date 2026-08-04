@@ -16,9 +16,10 @@ every platform tool in TypeScript.
 
 The server connects with `CuaDriver.connect()`. It does not normally call
 `CuaDriver.create()`, because a same-process runtime would move desktop
-ownership into Node and, on macOS, change the TCC responsibility identity. One
-generated client remains connected to one daemon socket for the MCP server's
-lifetime. Public session names, daemon state, consent decisions, desktop
+ownership into Node and, on macOS, change the TCC responsibility identity. The
+connection accepts both standalone and app-owned embedded daemons; the daemon
+process remains the execution boundary in either case. One generated client
+remains connected to one daemon socket for the MCP server's lifetime. Public session names, daemon state, consent decisions, desktop
 identity, and TCC attribution remain at the released daemon boundary. Destroying
 the client does not stop a daemon that it does not own.
 

@@ -57,13 +57,7 @@ export class UniffiDaemonAdapter implements DriverAdapter {
     const module = (await import(
       pathToFileURL(options.modulePath).href
     )) as GeneratedCuaDriverModule;
-    const driver = module.CuaDriver.connect(options.socketPath);
-    const metadata = await driver.metadata();
-    if (metadata.embedded) {
-      driver.uniffiDestroy();
-      throw new Error('expected the canonical Cua Driver daemon, got an embedded runtime');
-    }
-    return new UniffiDaemonAdapter(driver);
+    return new UniffiDaemonAdapter(module.CuaDriver.connect(options.socketPath));
   }
 
   async listTools(): Promise<Tool[]> {

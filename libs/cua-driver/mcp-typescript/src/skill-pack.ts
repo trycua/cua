@@ -63,14 +63,24 @@ export async function loadSkill(
   skillRoot: string,
   args: Record<string, unknown>
 ): Promise<CallToolResult> {
+  const extraKeys = Object.keys(args).filter((key) => key !== 'name' && key !== 'path');
+  if (extraKeys.length > 0) {
+    return {
+      content: [{ type: 'text', text: `Unknown load-skill fields: ${extraKeys.join(', ')}` }],
+      isError: true,
+    };
+  }
   if (args.name !== SKILL_NAME) {
     return {
       content: [{ type: 'text', text: `Unknown skill: ${String(args.name)}` }],
       isError: true,
     };
   }
+  if (args.path !== undefined && typeof args.path !== 'string') {
+    return { content: [{ type: 'text', text: 'skill path must be a string' }], isError: true };
+  }
   try {
-    const requestedPath = typeof args.path === 'string' ? args.path : 'SKILL.md';
+    const requestedPath = args.path ?? 'SKILL.md';
     const path = await resolveSkillFile(skillRoot, requestedPath);
     if (!path.endsWith('.md')) throw new Error('only Markdown skill files are readable');
     return { content: [{ type: 'text', text: await readFile(path, 'utf8') }] };

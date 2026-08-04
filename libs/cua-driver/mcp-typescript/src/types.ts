@@ -9,7 +9,6 @@ export interface DriverAdapter {
 export interface GeneratedCuaDriver {
   callTool(name: string, argumentsJson: string): Promise<{ rawJson: string }>;
   listToolsJson(): Promise<string>;
-  metadata(): Promise<{ embedded: boolean; hostBundleId?: string; pid: number }>;
   shutdown(): Promise<void>;
   uniffiDestroy(): void;
 }

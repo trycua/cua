@@ -368,7 +368,7 @@ Press and release a single key. Follows the same `delivery_mode` ladder as click
 • `background` (default): post to the pid WITHOUT fronting/raising — the auth-message path (Chromium-safe). With element_index it focuses that AX element first. `window_id` only targets; it does not raise.
 • `foreground`: guard and briefly front the exact window, focus an addressed AX element when supplied, send a genuine HID key transition so Chromium content, inline editors, and native menu equivalents receive it, then restore prior frontmost. Requires window_id.
 
-A key press is never driver-verifiable → effect:"unverifiable"; confirm via screenshot. Key names: return, tab, escape, up/down/left/right, space, delete, home, end, pageup, pagedown, f1-f12, plus any letter or digit. Modifiers array: cmd, shift, option/alt, ctrl, fn.
+A key press is confirmed only when a bounded native AX value/selection read-back changes on the same control. Otherwise a successfully attempted post remains effect:"unverifiable" without implying delivery failure or recommending foreground. Key names: return, tab, escape, up/down/left/right, space, delete, home, end, pageup, pagedown, f1-f12, plus any letter or digit. Modifiers array: cmd, shift, option/alt, ctrl, fn.
 
 **Arguments:**
 

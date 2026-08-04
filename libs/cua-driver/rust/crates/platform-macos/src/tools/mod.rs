@@ -90,6 +90,7 @@ mod pid_window_target_tests {
             layer: 0,
             z_index: 1,
             is_on_screen: true,
+            current_space_id: None,
             on_current_space: None,
             space_ids: None,
         }

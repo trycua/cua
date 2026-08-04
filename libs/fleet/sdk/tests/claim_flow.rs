@@ -32,7 +32,7 @@ async fn creates_pending_demand_immediately_for_a_nonzero_unavailable_pool() {
         client(Arc::clone(&http), 2, 2)
             .create_claim(CreateClaimRequest {
                 pool: unavailable_pool,
-                spec: Some(spec),
+                spec: Some(spec.clone()),
             })
             .await
             .unwrap(),
@@ -41,16 +41,11 @@ async fn creates_pending_demand_immediately_for_a_nonzero_unavailable_pool() {
 
     let requests = http.authenticated_requests().await;
     assert_eq!(requests.len(), 1);
-    assert_request(
-        &requests[0],
-        "POST",
-        CLAIM_COLLECTION,
-        Some(&json_bytes(&created)),
-    );
+    assert_claim_post(&requests[0], &spec);
 }
 
 #[tokio::test]
-async fn zero_and_nonzero_pools_post_claims_with_identical_sequencing() {
+async fn zero_and_nonzero_pools_post_a_single_claim_create() {
     for replicas in [0, 1] {
         let expected = claim("claim-1", claim_spec("example-pool-template"), None);
         let http = Arc::new(ScriptedHttpClient::new([
@@ -68,12 +63,7 @@ async fn zero_and_nonzero_pools_post_claims_with_identical_sequencing() {
 
         let requests = http.authenticated_requests().await;
         assert_eq!(requests.len(), 1, "replicas={replicas}");
-        assert_request(
-            &requests[0],
-            "POST",
-            CLAIM_COLLECTION,
-            Some(&json_bytes(&expected)),
-        );
+        assert_claim_post(&requests[0], &claim_spec("example-pool-template"));
     }
 }
 #[tokio::test]
@@ -371,6 +361,26 @@ fn response(status: u16, body: &[u8]) -> HttpResponse {
         body: body.to_vec(),
     }
 }
+fn assert_claim_post(request: &cyclops_sdk::HttpRequest, spec: &ClaimSpec) {
+    assert_eq!(request.method, "POST");
+    assert_eq!(request.url, CLAIM_COLLECTION);
+    let body: Claim = serde_json::from_slice(request.body.as_deref().unwrap()).unwrap();
+    assert_eq!(body.api_version, "osgym.cua.ai/v1alpha1");
+    assert_eq!(body.kind, "OSGymSandboxClaim");
+    assert_eq!(body.metadata.namespace, NAMESPACE);
+    assert_eq!(
+        serde_json::to_value(&body.spec).unwrap(),
+        serde_json::to_value(spec).unwrap()
+    );
+    let name = &body.metadata.name;
+    assert!(name.starts_with("claim-"), "unexpected claim name {name:?}");
+    assert!(name.len() <= 63);
+    assert!(
+        name.bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    );
+}
+
 fn assert_request(
     request: &cyclops_sdk::HttpRequest,
     method: &str,

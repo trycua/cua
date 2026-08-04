@@ -7,6 +7,7 @@ on:
       - "libs/cua-driver/compat-fixtures/**"
       - "libs/cua-driver/examples/agent-sdks/**"
       - "libs/cua-driver/typescript/**"
+      - "libs/cua-driver/mcp-typescript/**"
       - "libs/cua-driver/python/**"
       - "libs/cua-driver/rust/Cargo.toml"
       - "libs/cua-driver/rust/Cargo.lock"
@@ -33,6 +34,7 @@ on:
       - "libs/cua-driver/compat-fixtures/**"
       - "libs/cua-driver/examples/agent-sdks/**"
       - "libs/cua-driver/typescript/**"
+      - "libs/cua-driver/mcp-typescript/**"
       - "libs/cua-driver/python/**"
       - "libs/cua-driver/rust/Cargo.toml"
       - "libs/cua-driver/rust/Cargo.lock"
@@ -62,6 +64,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  mcp-typescript:
+    name: TypeScript MCP server
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: libs/cua-driver/mcp-typescript/package-lock.json
+      - name: Install MCP server dependencies
+        working-directory: libs/cua-driver/mcp-typescript
+        run: npm ci
+      - name: Test TypeScript MCP server
+        working-directory: libs/cua-driver/mcp-typescript
+        run: npm run format:check && npm run typecheck && npm test && npm audit --omit=dev --audit-level=high
+
   runtime-parity:
     name: Portable contract parity (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

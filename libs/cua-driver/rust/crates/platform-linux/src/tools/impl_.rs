@@ -1552,11 +1552,37 @@ fn x11_pixel_click_no_focus_steal(
                 },
             ) {
                 Ok(()) => return Ok(()),
+                Err(error) if crate::input::is_uinput_unavailable(&error) => return Err(error),
                 Err(e) => tracing::warn!("MPX click fell back to XSendEvent: {e}"),
             }
         }
     }
     crate::input::send_click(xid, lx, ly, count, button)
+}
+
+fn linux_input_error(error: anyhow::Error) -> ToolResult {
+    if crate::input::is_uinput_unavailable(&error) {
+        ToolResult::error(error.to_string()).with_structured(json!({
+            "code": crate::input::UINPUT_UNAVAILABLE_CODE,
+        }))
+    } else {
+        ToolResult::error(error.to_string())
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn uinput_failure_has_a_stable_structured_code() {
+    let result = linux_input_error(crate::input::uinput_unavailable("synthetic failure"));
+    assert_eq!(result.is_error, Some(true));
+    assert_eq!(
+        result
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.get("code"))
+            .and_then(Value::as_str),
+        Some(crate::input::UINPUT_UNAVAILABLE_CODE)
+    );
 }
 
 fn x11_pixel_click_no_focus_steal_modifiers(
@@ -2326,7 +2352,7 @@ impl Tool for ClickTool {
                 "✅ Clicked at ({x:.1}, {y:.1}) × {count} (delivery_mode={mode_label})."
             ))
             .with_structured(json!({ "path": path, "verified": false, "effect": "unverifiable" })),
-            Ok(Err(e)) => ToolResult::error(e.to_string()),
+            Ok(Err(e)) => linux_input_error(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
@@ -4081,6 +4107,9 @@ impl Tool for ScrollTool {
                             },
                         ) {
                             Ok(()) => return Ok(()),
+                            Err(error) if crate::input::is_uinput_unavailable(&error) => {
+                                return Err(error)
+                            }
                             Err(e) => tracing::warn!("MPX scroll fell back to XSendEvent: {e}"),
                         }
                     }
@@ -4121,7 +4150,7 @@ impl Tool for ScrollTool {
                 "Scrolled {direction} {amount} ticks (delivery_mode={mode_label})."
             ))
             .with_structured(json!({ "verified": false, "delivery_mode": mode_label })),
-            Ok(Err(e)) => ToolResult::error(e.to_string()),
+            Ok(Err(e)) => linux_input_error(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
@@ -4259,7 +4288,7 @@ impl Tool for DoubleClickTool {
                         Ok(Ok(())) => {
                             ToolResult::text(format!("✅ Double-clicked element [{idx}]."))
                         }
-                        Ok(Err(e)) => ToolResult::error(e.to_string()),
+                        Ok(Err(e)) => linux_input_error(e),
                         Err(e) => ToolResult::error(format!("Task error: {e}")),
                     }
                 }
@@ -4360,7 +4389,7 @@ impl Tool for DoubleClickTool {
                 "✅ Double-clicked at ({x:.1}, {y:.1}) (delivery_mode={mode_label})."
             ))
             .with_structured(json!({ "verified": false, "delivery_mode": mode_label })),
-            Ok(Err(e)) => ToolResult::error(e.to_string()),
+            Ok(Err(e)) => linux_input_error(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
@@ -4493,7 +4522,7 @@ impl Tool for RightClickTool {
                         Ok(Ok(())) => {
                             ToolResult::text(format!("✅ Right-clicked element [{idx}]."))
                         }
-                        Ok(Err(e)) => ToolResult::error(e.to_string()),
+                        Ok(Err(e)) => linux_input_error(e),
                         Err(e) => ToolResult::error(format!("Task error: {e}")),
                     }
                 }
@@ -4593,7 +4622,7 @@ impl Tool for RightClickTool {
                 "✅ Right-clicked at ({x:.1}, {y:.1}) (delivery_mode={mode_label})."
             ))
             .with_structured(json!({ "verified": false, "delivery_mode": mode_label })),
-            Ok(Err(e)) => ToolResult::error(e.to_string()),
+            Ok(Err(e)) => linux_input_error(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
@@ -5828,7 +5857,7 @@ impl Tool for ParallelMouseDragTool {
                         cursor_overlay::OverlayCommand::SetPressed(false),
                     );
                 }
-                ToolResult::error(e.to_string())
+                linux_input_error(e)
             }
             Err(e) => {
                 for (session, _) in &drags {

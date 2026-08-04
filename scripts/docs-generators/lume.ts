@@ -400,7 +400,9 @@ export function generateCommandDoc(cmd: CommandDoc, heading: string): string[] {
     lines.push('| ---- | ---- | -------- | ----------- |');
     for (const arg of cmd.arguments) {
       const required = arg.is_optional ? 'No' : 'Yes';
-      lines.push(`| \`<${arg.name}>\` | ${arg.type} | ${required} | ${arg.help} |`);
+      lines.push(
+        `| \`<${arg.name}>\` | ${escapeTableCell(arg.type)} | ${required} | ${escapeTableCell(arg.help)} |`
+      );
     }
     lines.push('');
   }
@@ -413,8 +415,10 @@ export function generateCommandDoc(cmd: CommandDoc, heading: string): string[] {
     lines.push('| ---- | ---- | ------- | ----------- |');
     for (const opt of cmd.options) {
       const shortFlag = opt.short_name ? `-${opt.short_name}, ` : '';
-      const defaultVal = opt.default_value || '-';
-      lines.push(`| \`${shortFlag}--${opt.name}\` | ${opt.type} | ${defaultVal} | ${opt.help} |`);
+      const defaultVal = opt.default_value ? escapeTableCell(opt.default_value) : '-';
+      lines.push(
+        `| \`${shortFlag}--${opt.name}\` | ${escapeTableCell(opt.type)} | ${defaultVal} | ${escapeTableCell(opt.help)} |`
+      );
     }
     lines.push('');
   }
@@ -427,7 +431,9 @@ export function generateCommandDoc(cmd: CommandDoc, heading: string): string[] {
     lines.push('| ---- | ------- | ----------- |');
     for (const flag of cmd.flags) {
       const shortFlag = flag.short_name ? `-${flag.short_name}, ` : '';
-      lines.push(`| \`${shortFlag}--${flag.name}\` | ${flag.default_value} | ${flag.help} |`);
+      lines.push(
+        `| \`${shortFlag}--${flag.name}\` | ${flag.default_value} | ${escapeTableCell(flag.help)} |`
+      );
     }
     lines.push('');
   }
@@ -461,6 +467,16 @@ export function generateCommandDoc(cmd: CommandDoc, heading: string): string[] {
   }
 
   return lines;
+}
+
+function escapeTableCell(value: string): string {
+  return value
+    .replace(/\n/g, ' ')
+    .replace(/\{/g, '&#123;')
+    .replace(/\}/g, '&#125;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\|/g, '\\|');
 }
 
 // ============================================================================
@@ -754,7 +770,9 @@ function getExamplePathValue(name: string): string {
 // Run
 // ============================================================================
 
-main().catch((error) => {
-  console.error('Error:', error);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error('Error:', error);
+    process.exit(1);
+  });
+}

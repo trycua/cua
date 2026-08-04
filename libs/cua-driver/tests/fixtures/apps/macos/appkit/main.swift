@@ -8,6 +8,7 @@
 //   counter        — NSButton increments NSTextField counter
 //   text_body      — NSTextField with the shared HARNESS_TEXT_MARKER_v1
 //   text_input     — NSTextField with a mirror label for type_text / set_value
+//                    and an opt-in controlled child-process command oracle
 //   click_target   — NSButton (AX-addressable) records click/double_click/right_click
 //   slider         — NSSlider drives drag / set_value (slider_value=)
 //   checkable_controls — NSButton checkbox (agreed=)
@@ -438,6 +439,30 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         guard let field = obj.object as? NSTextField else { return }
         if field === textInput {
             textInputCommit.stringValue = "committed=\(field.stringValue)"
+            runControlledCommand(field.stringValue)
+        }
+    }
+
+    /// Test-only terminal-like command seam. It accepts exactly one harmless
+    /// synthetic command and has a child process create the external oracle;
+    /// arbitrary field contents are never executed.
+    private func runControlledCommand(_ command: String) {
+        guard command == "printf cua-press-key",
+              let oraclePath = ProcessInfo.processInfo.environment["CUA_APPKIT_COMMAND_ORACLE"]
+        else { return }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = [
+            "-c",
+            "printf cua-press-key > \"$1\"",
+            "cua-appkit-command",
+            oraclePath,
+        ]
+        do {
+            try process.run()
+        } catch {
+            textInputCommit.stringValue = "command_error=launch_failed"
         }
     }
 

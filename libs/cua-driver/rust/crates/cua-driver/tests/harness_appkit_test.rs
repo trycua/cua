@@ -24,7 +24,7 @@
 
 #![cfg(target_os = "macos")]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
@@ -62,6 +62,10 @@ struct Harness {
 
 impl Harness {
     fn launch() -> Self {
+        Self::launch_with_command_oracle(None)
+    }
+
+    fn launch_with_command_oracle(command_oracle: Option<&Path>) -> Self {
         let exe = harness_exe();
         assert!(
             exe.exists(),
@@ -70,9 +74,12 @@ impl Harness {
         // Launch the binary directly (not via `open`) so we control the pid
         // and can kill it cleanly on Drop. The app still installs an AppKit
         // window via NSApp.run().
-        let app = Command::new(&exe)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+        let mut command = Command::new(&exe);
+        command.stdout(Stdio::null()).stderr(Stdio::null());
+        if let Some(path) = command_oracle {
+            command.env("CUA_APPKIT_COMMAND_ORACLE", path);
+        }
+        let app = command
             .spawn()
             .unwrap_or_else(|error| panic!("launch AppKit harness {exe:?}: {error}"));
         let pid = app.id();
@@ -532,6 +539,116 @@ fn harness_appkit_element_foreground_press_key_commits_edit() {
             Observation::delivered_with_fixture_state(Vec::new())
         },
     );
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_px_background_press_key_reports_honest_delivery_truth() {
+    let case = native_background_case(
+        "appkit",
+        "press_key_command",
+        Targeting::Px,
+        DriverRoute::MacosCgEventPid,
+    );
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&cell_id)
+            .expect("start installed macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let oracle_dir = tempfile::tempdir().expect("create command oracle directory");
+        let oracle_path = oracle_dir.path().join("child-process-output.txt");
+        let harness = Harness::launch_with_command_oracle(Some(&oracle_path));
+        let (wid, _) = driver
+            .find_window(harness.pid as i64, "CuaTestHarness AppKit")
+            .expect("AppKit main window not found");
+
+        let (_, passed) = run_with_background_oracles(
+            &mut driver,
+            TargetWindow {
+                pid: harness.pid,
+                native_id: wid,
+            },
+            |driver| {
+                let first = snapshot_elements(driver, harness.pid, wid);
+                let field = element_token_by_id(&first, "txt-input");
+                let set = driver.call(
+                    "set_value",
+                    serde_json::json!({
+                        "pid": harness.pid as i64,
+                        "window_id": wid,
+                        "element_token": field,
+                        "value": "printf cua-press-key"
+                    }),
+                );
+                assert!(!set.is_error(), "set command failed: {}", set.text());
+
+                let focused = snapshot_elements(driver, harness.pid, wid);
+                let (x, y, width, height) = element_pixel_frame(&focused, "txt-input");
+                let pressed = driver.call(
+                    "press_key",
+                    serde_json::json!({
+                        "pid": harness.pid as i64,
+                        "window_id": wid,
+                        "x": x + width / 2.0,
+                        "y": y + height / 2.0,
+                        "key": "return",
+                        "delivery_mode": "background"
+                    }),
+                );
+                assert!(
+                    !pressed.is_error(),
+                    "background Return failed: {}",
+                    pressed.text()
+                );
+                assert_eq!(pressed.action_route(), Some("synthetic_events"));
+                assert_eq!(pressed.action_delivery_mode(), Some("background"));
+                assert_eq!(pressed.action_effect(), Some("unverifiable"));
+                assert!(
+                    pressed.structured()["escalation"].is_null(),
+                    "accepted post without a positive oracle must not claim delivery_failed: {}",
+                    pressed.raw
+                );
+
+                let deadline = std::time::Instant::now() + Duration::from_secs(3);
+                loop {
+                    if std::fs::read_to_string(&oracle_path)
+                        .is_ok_and(|value| value == "cua-press-key")
+                    {
+                        break;
+                    }
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "background Return did not execute the controlled child process"
+                    );
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+
+                let mut exited = Command::new("/usr/bin/true")
+                    .spawn()
+                    .expect("spawn posting-failure fixture");
+                let exited_pid = exited.id();
+                exited.wait().expect("wait for posting-failure fixture");
+                let failed = driver.call(
+                    "press_key",
+                    serde_json::json!({
+                        "pid": exited_pid,
+                        // An explicit target bypasses the PID-only window resolver so
+                        // this negative oracle reaches the posting preflight. Without
+                        // one, the earlier and equally truthful result is
+                        // window_target_not_found because /usr/bin/true owns no window.
+                        "window_id": wid,
+                        "key": "return",
+                        "delivery_mode": "background"
+                    }),
+                );
+                assert!(failed.is_error(), "dead-pid post unexpectedly succeeded");
+                assert_eq!(failed.structured()["code"], "delivery_failed");
+            },
+        )
+        .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
+
+        Observation::delivered_with_fixture_state(passed)
+    });
 }
 
 #[test]

@@ -1137,8 +1137,10 @@ function Get-AncestorProcessIds {
     # PIDs of this process and its ancestors, so cleanup never kills the caller.
     # `cua-driver update --apply` runs the installer as a child of cua-driver.exe.
     $ids = @()
+    $seen = @{}
     $currentPid = $PID
-    for ($depth = 0; $depth -lt 8 -and $currentPid; $depth++) {
+    while ($currentPid -and -not $seen.ContainsKey([int]$currentPid)) {
+        $seen[[int]$currentPid] = $true
         $ids += $currentPid
         $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$currentPid" -ErrorAction SilentlyContinue
         if (-not $proc -or -not $proc.ParentProcessId) { break }

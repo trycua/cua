@@ -210,7 +210,8 @@ fn exact_secondary_window_is_verified_and_prior_app_can_recover_focus() {
     let target_windows = wait_for_window_ids(&target, &["main", "secondary"]);
     let secondary = target_windows["secondary"];
     let occluder = launch(&mut driver, None);
-    wait_for_window_ids(&occluder, &["main"]);
+    let occluder_windows = wait_for_window_ids(&occluder, &["main"]);
+    let occluder_main = occluder_windows["main"];
 
     activate_and_raise(target.pid, MAIN_TITLE);
     activate_and_raise(occluder.pid, MAIN_TITLE);
@@ -252,14 +253,17 @@ fn exact_secondary_window_is_verified_and_prior_app_can_recover_focus() {
 
     assert_ne!(focused_window_title(target.pid), MAIN_TITLE);
 
-    let recovered = driver.call("bring_to_front", serde_json::json!({"pid": occluder.pid}));
+    let recovered = driver.call(
+        "bring_to_front",
+        serde_json::json!({"pid": occluder.pid, "window_id": occluder_main}),
+    );
     assert!(
         !recovered.is_error(),
         "prior app recovery failed: {}",
         recovered.text()
     );
     assert_eq!(frontmost_pid(), occluder.pid);
-    assert_eq!(layer_zero_front().pid, occluder.pid);
+    assert_eq!(layer_zero_front().id, occluder_main);
 }
 
 #[test]

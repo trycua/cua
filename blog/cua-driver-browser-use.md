@@ -1,8 +1,8 @@
 # Blending the best of computer and browser use, without a Chrome extension
 
-_Published on July 29, 2026 by Francesco Bonacci_
+_Published on August 5, 2026 by Francesco Bonacci_
 
-Today, we're excited to announce browser use in Cua Driver. It gives coding agents an exact, page-aware browser interface alongside native desktop control, **without requiring a Chrome extension**. It is stable and available today in Cua Driver 0.14.0.
+Today, we're excited to announce browser use in Cua Driver. It gives coding agents an exact, page-aware browser interface alongside native desktop control, **without requiring a Chrome extension**. It is stable and available today in Cua Driver 0.18.0.
 
 When we started working on Cua Driver, we saw it as a CLI that would let coding agents operate desktop apps. As we worked through window discovery, accessibility, capture, input delivery, focus, and session isolation, we realized the larger opportunity. Low-level operating-system plumbing could give agents a much wider action surface.
 
@@ -69,7 +69,11 @@ Cua Driver never enables remote debugging as a side effect of inspection. If a b
 
 The recommended route creates a driver-owned isolated profile. Cua Driver launches it separately, never copies the user's normal profile into it, and removes an `isolated_new` profile when its session ends.
 
-If the task needs the user's signed-in Chrome profile, Cua Driver can attach to it in bounded or unrestricted mode. [Bounded mode](https://cua.ai/docs/how-to-guides/driver/write-a-bounded-manifest) is the recommended unattended path: a reviewed session manifest can allow `kind: existing_profile` and restrict the agent to named tools, applications, browser origins, and files. [Unrestricted mode](https://cua.ai/docs/reference/cua-driver/permission-modes) is available for disposable or fully trusted environments through `cua-driver serve --dangerously-bypass-approvals`. It bypasses Cua approval checks after that launch-time acknowledgement, so it should not be the default for a personal browser.
+Standard mode is the default. It allows routine observation, input, file transfer, and isolated browser use without Cua prompts, but existing-profile attachment remains an explicit boundary. A standalone runtime must be launched with `--grant existing-profile`, while an embedding application can authorize the exact browser resource through its host callback.
+
+For unattended work, [bounded mode](https://cua.ai/docs/how-to-guides/driver/write-a-bounded-manifest) is the recommended scoped path: a reviewed session manifest can allow `kind: existing_profile` and restrict the agent to named tools, applications, browser origins, and files. [Unrestricted mode](https://cua.ai/docs/reference/cua-driver/permission-modes) is available for disposable or fully trusted environments through `cua-driver serve --dangerously-bypass-approvals`. It bypasses Cua approval checks after that launch-time acknowledgement, so it should not be the default for a personal browser.
+
+Cua Driver does not show its own confirmation modal or persistent banner for existing-profile attachment. The launch grant, host callback, bounded manifest, or unrestricted dangerous acknowledgement supplies the authorization. The browser may still show its own remote-debugging consent prompt.
 
 An existing authenticated profile has a stronger boundary. On supported Chrome and Edge configurations, Cua Driver can open the browser's fixed remote-debugging page in the approved native window, toggle the exact per-instance setting, prove that the resulting endpoint belongs to the approved process, handle the browser-owned consent action, and close the temporary setup tab. It does not edit profile files, copy the profile, restart the browser, or terminate it.
 
@@ -170,7 +174,7 @@ Finally, a richer action surface is not free. It costs more tokens and time toda
 
 ## Use it today
 
-Browser use is stable and available today in Cua Driver 0.14.0 on macOS, Windows, and validated Linux configurations.
+Browser use is stable and available today in Cua Driver 0.18.0 on macOS, Windows, and validated Linux configurations.
 
 Install Cua Driver on macOS or Linux:
 
@@ -225,6 +229,6 @@ That is the foundation we want for coding agents. They can use the browser witho
 
 Source: [github.com/trycua/cua](https://github.com/trycua/cua)
 
-Release: [Cua Driver 0.14.0](https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.14.0)
+Release: [Cua Driver 0.18.0](https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.18.0)
 
 This browser-use capability was made possible thanks to contributions from [Gabriel Handford](https://github.com/gabriel), [Haoqing Wang](https://github.com/hqhq1025), [Manfred](https://github.com/ai-ag2026), [HsiangNianian](https://github.com/HsiangNianian), and [injaneity](https://github.com/injaneity). Their work spans exact Chromium window targeting and page actions, dialogs and uploads, inactive-tab capture, field replacement, browser-chrome certification, and honest verification of web input.

@@ -8,6 +8,7 @@ use cua_driver_testkit::e2e::{
     OracleKind, Scope, Targeting,
 };
 use cua_driver_testkit::{Driver, McpDriver};
+use cursor_overlay::{BADGE_CURSOR_GAP, BADGE_HEIGHT, BADGE_MAX_WIDTH};
 use image::RgbaImage;
 
 const CELL_ID: &str = "desktop-agent-cursor-showcase-px";
@@ -91,7 +92,7 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
         let cursor_frame = image::load_from_memory(&cursor_png)
             .expect("decode cursor desktop screenshot")
             .to_rgba8();
-        assert_cursor_pixels_changed(
+        assert_cursor_and_badge_pixels_changed(
             &baseline,
             &cursor_frame,
             center_x - 180.0,
@@ -177,7 +178,7 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
     });
 }
 
-fn assert_cursor_pixels_changed(
+fn assert_cursor_and_badge_pixels_changed(
     baseline: &RgbaImage,
     cursor_frame: &RgbaImage,
     logical_x: f64,
@@ -194,17 +195,68 @@ fn assert_cursor_pixels_changed(
     let scale_y = f64::from(baseline.height()) / logical_height;
     let center_x = (logical_x * scale_x).round() as i64;
     let center_y = (logical_y * scale_y).round() as i64;
-    let radius_x = (170.0 * scale_x).round() as i64;
-    let radius_y = (130.0 * scale_y).round() as i64;
-    let x0 = (center_x - radius_x).max(0) as u32;
-    let x1 = (center_x + radius_x)
-        .min(i64::from(baseline.width()))
-        .max(0) as u32;
-    let y0 = (center_y - radius_y).max(0) as u32;
-    let y1 = (center_y + radius_y)
-        .min(i64::from(baseline.height()))
-        .max(0) as u32;
-    let changed_pixels = (y0..y1)
+
+    // The pointer is anchored at the requested coordinate (with at most the
+    // renderer's small click offset). The session badge is a separate pill
+    // centered below it. Keep the regions disjoint so a visible pointer alone
+    // cannot satisfy the badge oracle, which was possible with the previous
+    // single large region/count check.
+    let pointer_radius_x = (48.0 * scale_x).ceil() as i64;
+    let pointer_radius_y = (48.0 * scale_y).ceil() as i64;
+    let pointer_pixels = changed_pixels_in_rect(
+        baseline,
+        cursor_frame,
+        center_x - pointer_radius_x,
+        center_y - pointer_radius_y,
+        center_x + pointer_radius_x,
+        center_y + (f64::from(BADGE_CURSOR_GAP) * scale_y).floor() as i64,
+    );
+
+    let badge_half_width = (f64::from(BADGE_MAX_WIDTH) * 0.5 * scale_x).ceil() as i64;
+    let badge_cursor_exclusion = (34.0 * scale_x).ceil() as i64;
+    let badge_top = center_y + (f64::from(BADGE_CURSOR_GAP) * scale_y).floor() as i64;
+    let badge_bottom =
+        center_y + (f64::from(BADGE_CURSOR_GAP + BADGE_HEIGHT) * scale_y).ceil() as i64;
+    // Ignore the center corridor where the pointer's lower edge or glow could
+    // overlap the pill. Requiring changed pixels in the badge's outer wings
+    // makes this an independent badge assertion.
+    let badge_pixels = changed_pixels_in_rect(
+        baseline,
+        cursor_frame,
+        center_x - badge_half_width,
+        badge_top,
+        center_x - badge_cursor_exclusion,
+        badge_bottom,
+    ) + changed_pixels_in_rect(
+        baseline,
+        cursor_frame,
+        center_x + badge_cursor_exclusion,
+        badge_top,
+        center_x + badge_half_width,
+        badge_bottom,
+    );
+
+    assert!(
+        pointer_pixels >= 12 && badge_pixels >= 24,
+        "agent cursor overlay was incomplete near ({logical_x:.0},{logical_y:.0}): \
+         pointer region changed {pointer_pixels} pixels (minimum 12), \
+         badge region changed {badge_pixels} pixels (minimum 24)"
+    );
+}
+
+fn changed_pixels_in_rect(
+    baseline: &RgbaImage,
+    cursor_frame: &RgbaImage,
+    x0: i64,
+    y0: i64,
+    x1: i64,
+    y1: i64,
+) -> usize {
+    let x0 = x0.clamp(0, i64::from(baseline.width())) as u32;
+    let x1 = x1.clamp(0, i64::from(baseline.width())) as u32;
+    let y0 = y0.clamp(0, i64::from(baseline.height())) as u32;
+    let y1 = y1.clamp(0, i64::from(baseline.height())) as u32;
+    (y0..y1)
         .flat_map(|pixel_y| (x0..x1).map(move |pixel_x| (pixel_x, pixel_y)))
         .filter(|(pixel_x, pixel_y)| {
             let before = baseline.get_pixel(*pixel_x, *pixel_y).0;
@@ -216,12 +268,7 @@ fn assert_cursor_pixels_changed(
                 .sum::<u16>()
                 >= 80
         })
-        .count();
-    assert!(
-        changed_pixels >= 24,
-        "agent cursor and session badge were not externally visible near \
-         ({logical_x:.0},{logical_y:.0}): only {changed_pixels} pixels changed"
-    );
+        .count()
 }
 
 fn capture_desktop_png(driver: &mut McpDriver) -> (Vec<u8>, f64, f64) {
@@ -263,6 +310,59 @@ fn call_ok(driver: &mut McpDriver, tool: &str, arguments: serde_json::Value) {
 
 fn settle(milliseconds: u64) {
     std::thread::sleep(Duration::from_millis(milliseconds));
+}
+
+#[cfg(test)]
+mod pixel_oracle_tests {
+    use super::*;
+    use image::Rgba;
+
+    const WIDTH: u32 = 400;
+    const HEIGHT: u32 = 300;
+    const CURSOR_X: f64 = 200.0;
+    const CURSOR_Y: f64 = 150.0;
+
+    #[test]
+    fn accepts_independent_pointer_and_badge_changes() {
+        let baseline = RgbaImage::new(WIDTH, HEIGHT);
+        let mut overlay = baseline.clone();
+        paint_changed_rect(&mut overlay, 196, 146, 200, 150);
+        paint_changed_rect(&mut overlay, 150, 180, 156, 186);
+
+        assert_cursor_and_badge_pixels_changed(
+            &baseline,
+            &overlay,
+            CURSOR_X,
+            CURSOR_Y,
+            f64::from(WIDTH),
+            f64::from(HEIGHT),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "badge region changed 0 pixels")]
+    fn rejects_pointer_without_badge() {
+        let baseline = RgbaImage::new(WIDTH, HEIGHT);
+        let mut pointer_only = baseline.clone();
+        paint_changed_rect(&mut pointer_only, 196, 146, 200, 150);
+
+        assert_cursor_and_badge_pixels_changed(
+            &baseline,
+            &pointer_only,
+            CURSOR_X,
+            CURSOR_Y,
+            f64::from(WIDTH),
+            f64::from(HEIGHT),
+        );
+    }
+
+    fn paint_changed_rect(image: &mut RgbaImage, x0: u32, y0: u32, x1: u32, y1: u32) {
+        for y in y0..y1 {
+            for x in x0..x1 {
+                image.put_pixel(x, y, Rgba([94, 192, 232, 255]));
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]

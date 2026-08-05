@@ -276,7 +276,9 @@ class Pool:
         finally:
             await client.close()
 
-    async def create_claim(self, *, spec: ClaimSpec | None = None, name: str | None = None) -> Lease:
+    async def create_claim(
+        self, *, spec: ClaimSpec | None = None, name: str | None = None
+    ) -> Lease:
         """Create a claim against this pool and return it as a :class:`Lease`.
 
         The claim is created and left held — nothing waits for the bind and

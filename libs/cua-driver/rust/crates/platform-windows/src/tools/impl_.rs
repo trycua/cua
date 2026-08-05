@@ -4156,8 +4156,8 @@ impl Tool for TypeTextTool {
         // conditional: indexed text still has a working UIA ValuePattern route,
         // while unindexed text would be posted to the top-level and disappear.
         if delivery == DeliveryMode::Background
-            && (crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::TextInput)
-                || (elem_idx.is_none() && crate::input::delivery::is_wpf_target_window(hwnd)))
+            && elem_idx.is_none()
+            && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::TextInput)
         {
             return crate::input::delivery::background_unavailable_error(
                 hwnd,

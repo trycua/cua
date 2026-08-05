@@ -4347,13 +4347,7 @@ impl Tool for TypeTextTool {
                     // read-back is "confirmed"; a deferred provider or an Electron UIA echo
                     // that we refuse to trust is "unverifiable". Only the echo
                     // recommends pixel escalation.
-                    let mut s = serde_json::json!({
-                        "path": "ax",
-                        "characters": text_len,
-                        "verified": verified,
-                        "verify": verify,
-                        "effect": if verified { "confirmed" } else { "unverifiable" },
-                    });
+                    let mut s = value_write_structured_result(text_len, verify, verified);
                     if ax_echo_surface {
                         // Electron UIA echo → the element px action is the next rung,
                         // not foreground (it's a renderer-focus problem, not an
@@ -4438,11 +4432,7 @@ impl Tool for TypeTextTool {
                          requested text, but the insertion point is not known). Take a \
                          fresh snapshot to verify the intended final value before retrying."
                     ))
-                    .with_structured(serde_json::json!({
-                        "path": "key_events", "characters": text_len,
-                        "verified": false, "verify": "changed_contains",
-                        "effect": "unverifiable",
-                    })),
+                    .with_structured(changed_contains_post_message_result(text_len)),
                     (Some(_), Some(_)) => ToolResult::text(format!(
                         "📨 Sent {text_len} char(s) to pid {raw_pid} via PostMessage, but \
                          the focused field's value did not contain the requested text \
@@ -4499,9 +4489,33 @@ fn post_message_readback_observed(
     )
 }
 
+fn value_write_structured_result(
+    text_len: usize,
+    verify: &str,
+    verified: bool,
+) -> serde_json::Value {
+    serde_json::json!({
+        "path": "ax",
+        "characters": text_len,
+        "verified": verified,
+        "verify": verify,
+        "effect": if verified { "confirmed" } else { "unverifiable" },
+    })
+}
+
+fn changed_contains_post_message_result(text_len: usize) -> serde_json::Value {
+    serde_json::json!({
+        "path": "key_events",
+        "characters": text_len,
+        "verified": false,
+        "verify": "changed_contains",
+        "effect": "unverifiable",
+    })
+}
+
 #[cfg(test)]
 mod post_message_readback_tests {
-    use super::post_message_readback_observed;
+    use super::{changed_contains_post_message_result, post_message_readback_observed};
 
     #[test]
     fn observes_only_a_changed_value_containing_the_requested_text() {
@@ -4526,6 +4540,27 @@ mod post_message_readback_tests {
             Some("different"),
             "hello"
         ));
+    }
+
+    #[test]
+    fn changed_contains_remains_unverifiable_without_retry_escalation() {
+        let result = changed_contains_post_message_result(5);
+        assert_eq!(result["effect"], "unverifiable");
+        assert_eq!(result["verify"], "changed_contains");
+        assert_eq!(result["verified"], false);
+        assert!(result.get("escalation").is_none());
+
+        let record = cua_driver_core::action_record::ActionExecutionRecord::from_legacy(
+            "type_text",
+            &serde_json::json!({"delivery_mode": "background"}),
+            &result,
+        )
+        .expect("changed-and-contains PostMessage result should normalize");
+        let public = serde_json::to_value(record.public_result().expect("valid ActionResult"))
+            .expect("serialize ActionResult");
+        assert_eq!(public["effect"], "unverifiable");
+        assert!(public.get("escalation").is_none());
+        assert!(public.get("evidence").is_none());
     }
 }
 
@@ -9965,7 +10000,7 @@ mod pid_window_target_tests {
 
 #[cfg(test)]
 mod value_write_readback_tests {
-    use super::classify_value_write_readback;
+    use super::{classify_value_write_readback, value_write_structured_result};
 
     #[test]
     fn confirms_when_the_expected_value_replaces_the_prior_value() {
@@ -9985,6 +10020,27 @@ mod value_write_readback_tests {
             classify_value_write_readback(None, "old value", "old valueinserted"),
             "pending"
         );
+    }
+
+    #[test]
+    fn deferred_publication_remains_unverifiable_without_retry_escalation() {
+        let result = value_write_structured_result(8, "pending", false);
+        assert_eq!(result["effect"], "unverifiable");
+        assert_eq!(result["verify"], "pending");
+        assert_eq!(result["verified"], false);
+        assert!(result.get("escalation").is_none());
+
+        let record = cua_driver_core::action_record::ActionExecutionRecord::from_legacy(
+            "type_text",
+            &serde_json::json!({"delivery_mode": "background"}),
+            &result,
+        )
+        .expect("deferred ValuePattern result should normalize");
+        let public = serde_json::to_value(record.public_result().expect("valid ActionResult"))
+            .expect("serialize ActionResult");
+        assert_eq!(public["effect"], "unverifiable");
+        assert!(public.get("escalation").is_none());
+        assert!(public.get("evidence").is_none());
     }
 
     #[test]

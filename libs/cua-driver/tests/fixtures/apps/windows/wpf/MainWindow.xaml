@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:sys="clr-namespace:System;assembly=mscorlib"
         xmlns:auto="clr-namespace:System.Windows.Automation;assembly=PresentationCore"
+        xmlns:local="clr-namespace:CuaTestHarness.Wpf"
         Title="CuaTestHarness WPF"
         AutomationProperties.AutomationId="wnd-main"
         Width="900" Height="650"
@@ -12,10 +13,8 @@
              Keyboard.Modifiers is sourced from GetKeyState(), so the
              foreground SendInput press_key case uses Ctrl+Shift+H to verify
              modifier-bearing letter delivery. -->
-        <KeyBinding Key="F5" Command="{x:Static local:MainWindow.AccelCmd}"
-                    xmlns:local="clr-namespace:CuaTestHarness.Wpf"/>
-        <KeyBinding Modifiers="Control+Shift" Key="H" Command="{x:Static local:MainWindow.AccelCmd}"
-                    xmlns:local="clr-namespace:CuaTestHarness.Wpf"/>
+        <KeyBinding Key="F5" Command="{x:Static local:MainWindow.AccelCmd}"/>
+        <KeyBinding Modifiers="Control+Shift" Key="H" Command="{x:Static local:MainWindow.AccelCmd}"/>
     </Window.InputBindings>
 
     <DockPanel LastChildFill="True">
@@ -46,16 +45,36 @@
                      stays within the visible window for PostMessage clicks
                      even when the main ScrollViewer hasn't been scrolled). -->
                 <GroupBox Header="text_input" Padding="10" Margin="0,0,0,12">
-                    <StackPanel>
-                        <TextBox x:Name="TxtInput"
-                                 AutomationProperties.AutomationId="txt-input"
-                                 Width="300" HorizontalAlignment="Left"
-                                 TextChanged="OnInputChanged"/>
-                        <TextBlock x:Name="LblInputMirror"
-                                   AutomationProperties.AutomationId="lbl-input-mirror"
-                                   Margin="0,6,0,0" FontFamily="Consolas"
-                                   Text="mirror="/>
-                    </StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBox x:Name="TxtInput"
+                                     AutomationProperties.AutomationId="txt-input"
+                                     Width="300" HorizontalAlignment="Left"
+                                     TextChanged="OnInputChanged"/>
+                            <TextBlock x:Name="LblInputMirror"
+                                       AutomationProperties.AutomationId="lbl-input-mirror"
+                                       Margin="0,6,0,0" FontFamily="Consolas"
+                                       Text="mirror="/>
+                        </StackPanel>
+                        <!-- Models providers that accept ValuePattern.SetValue but
+                             publish their value only after the UIA call unwinds.
+                             Keep it beside the original input so existing controls
+                             retain their vertical coordinates in the E2E fixture. -->
+                        <StackPanel Grid.Column="1" Margin="24,0,0,0">
+                            <local:DeferredValueTextBox x:Name="TxtDeferredInput"
+                                     AutomationProperties.AutomationId="txt-deferred-input"
+                                     Width="300" HorizontalAlignment="Left"
+                                     TextChanged="OnDeferredInputChanged"/>
+                            <TextBlock x:Name="LblDeferredInputMirror"
+                                       AutomationProperties.AutomationId="lbl-deferred-input-mirror"
+                                       Margin="0,6,0,0" FontFamily="Consolas"
+                                       Text="deferred_mirror="/>
+                        </StackPanel>
+                    </Grid>
                 </GroupBox>
 
                 <!-- Click target (Button) — also at top for visibility. -->

@@ -824,6 +824,60 @@ fn harness_wpf_set_value() {
     );
 }
 
+#[test]
+#[ignore]
+fn harness_wpf_deferred_type_text_requires_fresh_snapshot_before_retry() {
+    execute_case(
+        background_case("deferred-type-text", DriverRoute::UiaValue),
+        |evidence| {
+            with_named_session(
+                "windows-wpf-deferred-type-text-ax-background",
+                |pid, wid, driver| {
+                    *evidence = recording_evidence(driver.recording_dir());
+                    let snap = snapshot(driver, pid, wid);
+                    let idx = ax::element_index_by_id(snap.text(), "txt-deferred-input")
+                        .expect("txt-deferred-input not in snapshot");
+                    let (response, passed) = observe_background(driver, pid, wid, |driver| {
+                        driver.call(
+                            "type_text",
+                            serde_json::json!({
+                                "pid": pid as i64,
+                                "window_id": wid,
+                                "element_index": idx,
+                                "snapshot_id": snap.snapshot_id(),
+                                "text": "deferred-once",
+                                "delivery_mode": "background"
+                            }),
+                        )
+                    });
+                    assert!(
+                        !response.is_error(),
+                        "type_text failed: {}",
+                        response.text()
+                    );
+                    assert_eq!(response.action_effect(), Some("unverifiable"));
+                    assert_eq!(response.action_route(), Some("accessibility"));
+                    assert!(
+                        response.structured().get("escalation").is_none(),
+                        "deferred publication must not recommend an immediate retry: {}",
+                        response.structured()
+                    );
+
+                    std::thread::sleep(Duration::from_millis(700));
+                    let post = snapshot(driver, pid, wid);
+                    assert!(
+                        post.text().contains("deferred_mirror=deferred-once"),
+                        "fresh snapshot did not observe exactly one deferred write: {}",
+                        post.text().chars().take(700).collect::<String>()
+                    );
+                    delivered_with_fixture_state(passed)
+                },
+            )
+            .expect("required WPF session did not start")
+        },
+    );
+}
+
 // In test-batch mode (many harnesses launched/killed in sequence) the WPF
 // window's input pump occasionally misses background PostMessage events —
 // reproducibly passes in isolation, intermittently fails in batch.

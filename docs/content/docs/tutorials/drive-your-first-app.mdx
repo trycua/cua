@@ -119,7 +119,7 @@ If you see your running apps listed, the plumbing works. That is the only CLI yo
 
 Register Cua Driver with your agent harness once.
 
-<Tabs items={['Claude Code', 'Codex', 'Hermes']}>
+<Tabs items={['Claude Code', 'Codex', 'OpenClaw', 'Hermes']}>
   <Tab value="Claude Code">
     Install the Claude Code skill. This is turnkey: the skill teaches Claude Code how to drive apps through Cua Driver, and you then ask in plain English.
 
@@ -154,6 +154,23 @@ Register Cua Driver with your agent harness once.
 
     Restart Codex or open a fresh Codex session after registration so the new tools appear.
   </Tab>
+  <Tab value="OpenClaw">
+    Print the OpenClaw registration command:
+
+    ```bash
+    cua-driver mcp-config --client openclaw
+    ```
+
+    It prints a command you run to register the server, using the absolute installed binary path:
+
+    ```bash
+    openclaw mcp set cua-driver '{"command":"/Users/you/.local/bin/cua-driver","args":["mcp"]}'
+    ```
+
+    <Callout type="warn">
+      On macOS, a server spawned this way by the gateway does not inherit OpenClaw.app's own Accessibility and Screen Recording grants. If you are embedding Cua Driver inside OpenClaw rather than registering it as a separate MCP server, follow [Embedding](/reference/cua-driver/embedding) so the host owns the grants.
+    </Callout>
+  </Tab>
   <Tab value="Hermes">
     Print the Hermes snippet:
 
@@ -178,7 +195,7 @@ Register Cua Driver with your agent harness once.
   </Tab>
 </Tabs>
 
-Using Cursor, Gemini/Antigravity, OpenCode, OpenClaw, or Pi instead? See [Connect your agent](/how-to-guides/driver/connect-your-agent).
+Using Cursor, Gemini/Antigravity, OpenCode, or Pi instead? See [Connect your agent](/how-to-guides/driver/connect-your-agent).
 
 ## 4. Ask your agent
 

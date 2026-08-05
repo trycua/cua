@@ -27,6 +27,50 @@ does not. That is why assets are minted here rather than in the destination page
 <img width="1200" height="675" alt="windows-msbuild-piano" src="https://github.com/user-attachments/assets/6f878582-8f5d-4400-be44-fc503fcbc1ab" />
 <img width="1200" height="675" alt="windows-legacy-postal-app" src="https://github.com/user-attachments/assets/0fb62243-56ec-4d51-8771-35640a5e6031" />
 <img width="1920" height="1080" alt="windows-hermes-four-agent-windows" src="https://github.com/user-attachments/assets/15091959-0f93-4076-9338-18ef3a737091" />
+
+https://github.com/user-attachments/assets/4159f98d-9623-40d0-a85f-37c913b1403b
+
+
+
+https://github.com/user-attachments/assets/354af433-8769-44ff-beab-b5cb02ff798e
+
+
+
+https://github.com/user-attachments/assets/11b248e5-d505-4349-aaae-ad9f95a1162f
+
+
+
+https://github.com/user-attachments/assets/dcc5a81f-6379-4378-a225-adaf5dfa5dcd
+
+
+
+https://github.com/user-attachments/assets/35bf5156-d326-4484-ad1a-87a7991c85f6
+
+
+
+https://github.com/user-attachments/assets/9eafceca-1738-4e34-949a-2fb0dbe1832e
+
+
+
+https://github.com/user-attachments/assets/ef3c7ad5-2689-4de5-b844-1c1bb3b621ae
+
+
+
+https://github.com/user-attachments/assets/46f4be37-92c2-4360-bc20-bde35401bc71
+
+
+
+https://github.com/user-attachments/assets/17696766-210d-40b7-b95a-e81be383cc6f
+
+
+
+https://github.com/user-attachments/assets/7096c772-aa24-4286-a453-6aedfbeb3e23
+
+
+
+https://github.com/user-attachments/assets/c4e23e2f-1112-4b7b-a575-c6185c78eda4
+
+
 <img width="1200" height="675" alt="macos-trajectory-capture" src="https://github.com/user-attachments/assets/d896dd2f-3f0a-4978-93a3-c9a5c562c3e8" />
 <img width="1280" height="720" alt="macos-background-dev-loop" src="https://github.com/user-attachments/assets/34217d66-c560-4532-a77b-67ea2f8885af" />
 <img width="1200" height="675" alt="macos-background-chrome" src="https://github.com/user-attachments/assets/bcbe275a-9b37-4432-9f76-124d88574f6a" />

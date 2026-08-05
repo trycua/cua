@@ -162,3 +162,87 @@ finally {
     $env:CUA_DRIVER_RS_INSTALL_DIR = $savedInstallDir
     $env:CUA_DRIVER_RS_HOME = $savedHome
 }
+
+$rustWorkspace = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "rust"
+Push-Location $rustWorkspace
+try {
+    & cargo test -p cua-driver --bin cua-driver 'autostart::tests::' --locked -- --nocapture
+    if ($LASTEXITCODE -ne 0) {
+        throw "Windows autostart path tests failed with exit $LASTEXITCODE"
+    }
+
+    & cargo build -p cua-driver --bin cua-driver --locked
+    if ($LASTEXITCODE -ne 0) {
+        throw "Windows autostart task probe build failed with exit $LASTEXITCODE"
+    }
+}
+finally {
+    Pop-Location
+}
+
+# Exercise the installed topology and Task Scheduler end to end. Register the
+# task through bin -> current -> probe-v1, retarget current to probe-v2, then
+# prove the unchanged action reaches the new executable.
+$taskName = "cua-driver-serve"
+$taskProbeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("cua-driver-autostart-task-" + [guid]::NewGuid().ToString("N"))
+$taskPackages = Join-Path $taskProbeRoot "packages"
+$taskReleaseV1 = Join-Path $taskPackages "releases\probe-v1"
+$taskReleaseV2 = Join-Path $taskPackages "releases\probe-v2"
+$taskCurrent = Join-Path $taskPackages "current"
+$taskVisible = Join-Path $taskProbeRoot "bin"
+$taskVisibleExe = Join-Path $taskVisible "cua-driver.exe"
+$taskMarker = Join-Path $taskProbeRoot "probe-v2.txt"
+$realSchtasks = Join-Path $env:SystemRoot "System32\schtasks.exe"
+
+try {
+    New-Item -ItemType Directory -Force -Path $taskReleaseV1, $taskReleaseV2 | Out-Null
+    Copy-Item -LiteralPath (Join-Path $rustWorkspace "target\debug\cua-driver.exe") `
+        -Destination (Join-Path $taskReleaseV1 "cua-driver.exe")
+
+    $markerLiteral = $taskMarker.Replace('\', '\\').Replace('"', '\"')
+    $probeSourcePath = Join-Path $taskProbeRoot "probe-v2.rs"
+    $probeSource = @"
+fn main() {
+    std::fs::write("$markerLiteral", "probe-v2").unwrap();
+}
+"@
+    Set-Content -LiteralPath $probeSourcePath -Value $probeSource -Encoding UTF8
+    & rustc $probeSourcePath -o (Join-Path $taskReleaseV2 "cua-driver.exe")
+    if ($LASTEXITCODE -ne 0) {
+        throw "probe-v2 build failed with exit $LASTEXITCODE"
+    }
+
+    New-Item -ItemType Junction -Path $taskCurrent -Target $taskReleaseV1 | Out-Null
+    New-Item -ItemType Junction -Path $taskVisible -Target $taskCurrent | Out-Null
+
+    & $taskVisibleExe autostart enable
+    if ($LASTEXITCODE -ne 0) {
+        throw "autostart task registration failed with exit $LASTEXITCODE"
+    }
+    $beforeAction = (Get-ScheduledTask -TaskName $taskName -ErrorAction Stop).Actions | Select-Object -First 1
+    Assert-True ($beforeAction.Arguments -like "*$taskVisibleExe*") `
+        "Scheduled Task action did not retain the visible junction path: $($beforeAction.Arguments)"
+
+    [System.IO.Directory]::Delete($taskCurrent, $false)
+    New-Item -ItemType Junction -Path $taskCurrent -Target $taskReleaseV2 | Out-Null
+    $afterAction = (Get-ScheduledTask -TaskName $taskName -ErrorAction Stop).Actions | Select-Object -First 1
+    Assert-True ($afterAction.Arguments -eq $beforeAction.Arguments) `
+        "Scheduled Task action changed when the current junction was retargeted"
+
+    & $realSchtasks /Run /TN $taskName | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "retargeted autostart task failed to start with exit $LASTEXITCODE"
+    }
+    for ($attempt = 0; $attempt -lt 100 -and -not (Test-Path -LiteralPath $taskMarker); $attempt++) {
+        [System.Threading.Thread]::Sleep(100)
+    }
+    Assert-True (Test-Path -LiteralPath $taskMarker) "retargeted task did not launch probe-v2"
+    Assert-True ((Get-Content -LiteralPath $taskMarker -Raw) -eq "probe-v2") `
+        "retargeted task did not report the next probe version"
+
+    Write-Host "Windows Scheduled Task junction-retarget regression check passed."
+}
+finally {
+    & $realSchtasks /End /TN $taskName 2>$null | Out-Null
+    & $realSchtasks /Delete /TN $taskName /F 2>$null | Out-Null
+}

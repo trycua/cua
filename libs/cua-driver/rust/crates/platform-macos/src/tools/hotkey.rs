@@ -226,6 +226,33 @@ impl Tool for HotkeyTool {
             return error;
         }
 
+        // ── Exact-target background gate (macOS background input v1) ──
+        // A window-addressed background combo is process-scoped transport: it
+        // must prove exact delivery to the requested window (fresh AXWindows
+        // membership, not minimized/hidden, no competing same-pid keyboard
+        // destination) BEFORE anything is sent — including the px focus
+        // click. delivery_mode:"foreground" stays the caller's explicit last
+        // resort and is not gated here.
+        let _mutation_lease = if !fg {
+            if let Some(wid) = window_id {
+                match super::gate_background_window_action(
+                    pid,
+                    wid,
+                    None,
+                    cua_driver_core::background_input::BackgroundAction::GenericKey,
+                )
+                .await
+                {
+                    Ok(lease) => Some(lease),
+                    Err(refusal_result) => return refusal_result,
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // px form: focus the field before sending the combo. Foreground delivery
         // still needs to front the target for the chord itself: the focus helper
         // restores the previous app before returning.
@@ -247,6 +274,7 @@ impl Tool for HotkeyTool {
                     args.opt_str("session"),
                     args.opt_str("_session_id"),
                     from_zoom,
+                    _mutation_lease.as_ref(),
                 )
                 .await
                 {

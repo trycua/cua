@@ -48,7 +48,7 @@ Use this for "is X installed?" as well as "is X running?". For per-window state 
 
 List all layer-0 top-level windows currently known to WindowServer. Includes off-screen windows (minimized, on another Space, hidden-launched). Use this to find a window_id before calling get_window_state.
 
-Per-record fields: window_id, pid, app_name, title, bounds (x/y/width/height, top-left origin), z_index (integer or null; higher values are closer to the front; null means stacking order is unavailable and callers must not infer one), is_on_screen, on_current_space. To select a frontmost candidate, take the maximum integer z_index; if every value is null, use an explicit fallback instead of relying on array order.
+Per-record fields: window_id, pid, app_name, title, bounds (x/y/width/height, top-left origin), z_index (integer or null; higher values are closer to the front; null means stacking order is unavailable and callers must not infer one), is_on_screen, space_ids, current_space_id (the active Space on that window's display), and on_current_space. The top-level current_space_id is WindowServer's main/global active Space and can differ from a record's current_space_id when displays use independent Spaces. To select a frontmost candidate, take the maximum integer z_index; if every value is null, use an explicit fallback instead of relying on array order.
 
 **Arguments:**
 
@@ -337,7 +337,7 @@ When `from_zoom` is true, coordinates are in the last zoom image for this pid; t
 
 ### `type_text`
 
-Insert text into the target pid via `AXSetAttribute(kAXSelectedText)`. Works for standard Cocoa text fields and text views. No keystrokes are synthesized — special keys (Return / Escape / arrows) go through `press_key` / `hotkey`. For Chromium / Electron inputs that don't implement `kAXSelectedText`, the tool falls back to CGEvent character synthesis automatically.
+Insert text into the target pid via `AXSetAttribute(kAXSelectedText)`. Works for standard Cocoa text fields and text views. No keystrokes are synthesized — special keys (Return / Escape / arrows) go through `press_key` / `hotkey`. For Chromium / Electron inputs that don't implement `kAXSelectedText`, the tool falls back to CGEvent character synthesis automatically when the estimated route stays within the daemon transport budget. Longer synthesized routes are refused before character events and return a safe chunk size; one-call AX insertion remains uncapped.
 
 Optional `element_index` + `window_id` (from the last `get_window_state` snapshot) directs the write to a specific field. Without `element_index`, the write goes to the pid's currently focused element.
 
@@ -642,7 +642,7 @@ Declare a session — a named, color-coded identity for THIS agent run. Pass a s
 
 **Arguments:**
 
-- `capture_scope` (string, optional): Per-session perception/action modality. auto starts window-only and requires explicit escalation before desktop tools; window and desktop are strict. Immutable for the live session. default: `"auto"`
+- `capture_scope` (string, optional): Per-session perception/action modality. auto starts window-only and requires explicit escalation before desktop tools; escalation permanently switches that session to desktop scope. To recover window scope, call end_session, then start_session with a new session id. window and desktop are strict. Immutable for the live session. default: `"auto"`
 - `cursor_theme` (object or null, optional): Optional initial cursor theme. The host applies it before the cursor is
 first made visible, avoiding a flash of the default theme.
 - `session` (string, required): Stable session id for this run (e.g. "research-run-1").
@@ -876,11 +876,11 @@ Navigate one tab of an exactly-bound browser target to a new URL (http/https/abo
 
 ### `browser_click`
 
-Click a page element (by ref) or viewport coordinates in an exactly-bound tab. Default route is trusted hardware-like input (Input.dispatchMouseEvent), and refuses where that route cannot preserve standalone-browser background posture. input_route="dom_event" (synthetic el.click(), ref required) is used only when explicitly requested. Refused for heuristic bindings.
+Click a page element (by ref) or viewport coordinates in an exactly-bound tab. Default route is trusted hardware-like input (Input.dispatchMouseEvent), and refuses where that route cannot preserve standalone-browser background posture. input_route="dom_event" (synthetic el.click(), ref required) is used only when explicitly requested; it proves dispatch, not control activation, because trust-gated controls may ignore synthetic events. Refused for heuristic bindings.
 
 **Arguments:**
 
-- `input_route` (string, optional): "trusted" (default): Input.dispatchMouseEvent. It refuses rather than foregrounding a standalone browser. "dom_event": synthetic full-background DOM click, only when explicitly requested.
+- `input_route` (string, optional): "trusted" (default): Input.dispatchMouseEvent. It refuses rather than foregrounding a standalone browser. "dom_event": synthetic full-background DOM click, only when explicitly requested. Dispatch does not prove the control activated; refresh page state and verify the expected postcondition.
 - `ref` (string, optional): Page element ref in the p&lt;snapshot&gt;:&lt;index&gt; namespace from get_browser_state. Refs are invalidated by navigation and by newer snapshots of the same tab.
 - `session` (string, optional): Stable caller-declared session id. Browser targets, tabs, and refs are scoped to this session.
 - `tab_id` (string, required): Opaque tab id from get_browser_state (session-scoped).
@@ -986,7 +986,7 @@ Perform hover, right-click, double-click, scroll, or drag in an exactly-bound br
 
 ### `escalate_session`
 
-Unlock the desktop phase of an auto capture-scope session after the window action ladder has been exhausted and verified. This is a one-way transition for the live session and records a bounded reason.
+Unlock the desktop phase of an auto capture-scope session after the window action ladder has been exhausted and verified. Escalation is permanent for that session and disables window-scoped tools. To recover window scope, call end_session, then start_session with a new session id.
 
 **Arguments:**
 

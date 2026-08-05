@@ -160,6 +160,23 @@ impl Tool for SetValueTool {
                 }
             };
         let element_ptr = element_guard.as_ptr();
+
+        // set_value is an always-background semantic AX mutation. Re-prove
+        // that the retained element still belongs to the requested exact
+        // window immediately before any cursor or AX work; a cache hit alone
+        // is not delivery proof after a window lifecycle or Space change.
+        let _mutation_lease = match super::gate_background_window_action(
+            pid,
+            window_id,
+            Some(element_ptr),
+            cua_driver_core::background_input::BackgroundAction::AxSemantic,
+        )
+        .await
+        {
+            Ok(lease) => lease,
+            Err(refusal_result) => return refusal_result,
+        };
+
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
         let center_ptr = element_ptr as usize;
         if let Ok(Some((screen_x, screen_y))) = tokio::task::spawn_blocking(move || unsafe {
@@ -181,8 +198,11 @@ impl Tool for SetValueTool {
         // the renderer never observes it. Reuse type_text's bounded ancestor
         // check so native browser chrome stays trusted but rendered content is
         // always reported as unverified.
-        let ax_echo_surface =
-            super::type_text::target_in_web_area(pid, Some((element_ptr, Some(element_index))));
+        let ax_echo_surface = super::type_text::target_in_web_area(
+            pid,
+            Some((element_ptr, Some(element_index))),
+            Some(window_id),
+        );
 
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // AXValue writes on popups / sliders can cause reflex activations

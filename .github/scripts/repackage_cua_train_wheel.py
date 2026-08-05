@@ -14,7 +14,7 @@ import sys
 import zipfile
 
 SOURCE_NAME = "cua-train"
-SOURCE_VERSION = "0.1.5"
+SOURCE_VERSION = "0.1.6"
 DESTINATION_NAME = "cua-fleet"
 WHEEL_FILENAME = re.compile(
     r"^(?P<distribution>[A-Za-z0-9_]+)-(?P<version>[^-]+)-py3-none-(?P<platform>[^-]+)\.whl$"
@@ -119,7 +119,7 @@ def repack(
 
     metadata = parse_metadata(entries[metadata_name])
     if metadata.get("Name") != SOURCE_NAME or metadata.get("Version") != SOURCE_VERSION:
-        raise WheelError("source METADATA does not identify cua-train==0.1.5")
+        raise WheelError("source METADATA does not identify cua-train==0.1.6")
     wheel_metadata = entries[wheel_name].decode()
     if (
         "Root-Is-Purelib: false" not in wheel_metadata

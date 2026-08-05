@@ -42,8 +42,8 @@ fn pin_overlay_above(key: &str, hwnd: u64) {
 /// Returns:
 /// - `Ok((cx,cy))` unchanged when already in bounds — fast path, no COM call;
 /// - `Ok((nx,ny))` with the post-scroll center when scrolling brought it in;
-/// - `Err(message)` when it is still off-screen — preserving the existing clean
-///   failure (a clear error beats a misfire onto the taskbar).
+/// - `Err(result)` with a typed refusal when minimized or still off-screen — a
+///   clear error beats a misfire onto the taskbar.
 ///
 /// Background-safe: ScrollIntoView is delivered over the accessibility channel
 /// (wrapped in the UWP fg-steal bypass) and does not raise or activate the
@@ -57,8 +57,39 @@ fn resolve_onscreen_point_with_scroll(
     cx: i32,
     cy: i32,
     action_verb: &str,
-) -> Result<(i32, i32), String> {
+) -> Result<(i32, i32), ToolResult> {
+    // Issue #2015: refuse the iconic sentinel BEFORE the containment check
+    // below, which structurally cannot catch it. A minimized window's
+    // `GetWindowRect` is the off-screen iconic position
+    // `(-32000, -32000)-(-31840, -31972)`, and UIA mirrors that same sentinel
+    // into every element's `BoundingRectangle`. Both sides of
+    // `point_in_window_bounds` are then poisoned identically, so a sentinel
+    // center tests as *inside* its sentinel window rect, the guard passes, and
+    // the click is posted to coordinates no monitor covers — the tool reports
+    // success and nothing happens. `capture.rs` already refuses iconic windows
+    // outright; the input path must refuse them too rather than silently no-op.
+    if let Some(refusal) = minimized_element_refusal(hwnd, idx, cx, cy, action_verb) {
+        return Err(refusal);
+    }
     let cached_center_in_window = crate::input::point_in_window_bounds(hwnd, cx, cy);
+    if cached_center_in_window && !crate::input::point_on_virtual_desktop(cx, cy) {
+        let message = format!(
+            "Element [{idx}] resolves to ({cx},{cy}) inside window 0x{hwnd:x}, but \
+             that point is outside the live Windows virtual desktop. The bounds \
+             may be a stale iconic position, so {action_verb} was refused before \
+             input dispatch. Restore or move the window onto a display, then \
+             re-snapshot with get_window_state before retrying."
+        );
+        return Err(ToolResult::error(message.clone()).with_structured(json!({
+            "status": "refused",
+            "code": "element_not_visible",
+            "effect": "refused",
+            "refusal": {
+                "code": "element_not_visible",
+                "message": message,
+            }
+        })));
+    }
     // A center can still be clipped by a ScrollViewer or a docked sibling while
     // remaining inside the outer HWND rectangle. UIA's IsOffscreen property is
     // authoritative for that case; without it a foreground tap can land on the
@@ -84,12 +115,60 @@ fn resolve_onscreen_point_with_scroll(
     } else if cached_center_in_window {
         return Ok((cx, cy));
     }
-    Err(format!(
+    let message = format!(
         "Element [{idx}] resolves to ({cx},{cy}) but is not visibly actionable — \
          tried UIA ScrollIntoView but it is still off-screen, so {action_verb} \
          would land on whatever covers that point. Make the window taller or \
          scroll the region into view, then retry."
-    ))
+    );
+    Err(ToolResult::error(message.clone()).with_structured(json!({
+        "status": "refused",
+        "code": "element_not_visible",
+        "effect": "refused",
+        "refusal": {
+            "code": "element_not_visible",
+            "message": message,
+        }
+    })))
+}
+
+fn minimized_element_refusal(
+    hwnd: u64,
+    idx: usize,
+    cx: i32,
+    cy: i32,
+    action_verb: &str,
+) -> Option<ToolResult> {
+    crate::input::window_is_iconic(hwnd).then(|| {
+        let message = format!(
+            "Element [{idx}] resolves to ({cx},{cy}), which is the Win32 iconic \
+             sentinel rather than a location on any display — window 0x{hwnd:x} \
+             is minimized, so {action_verb} would \
+             be posted off-screen and silently do nothing. Call bring_to_front \
+             with this window_id to restore it, then re-snapshot with \
+             get_window_state before retrying."
+        );
+        ToolResult::error(format!("refused (window_minimized): {message}")).with_structured(json!({
+            "status": "refused",
+            "code": "window_minimized",
+            "effect": "refused",
+            "refusal": {
+                "code": "window_minimized",
+                "message": message,
+            }
+        }))
+    })
+}
+
+fn tool_result_text(result: ToolResult) -> String {
+    result
+        .content
+        .into_iter()
+        .find_map(|content| match content {
+            cua_driver_core::protocol::Content::Text { text, .. } => Some(text),
+            _ => None,
+        })
+        .unwrap_or_else(|| "element action was refused".to_owned())
 }
 
 /// Convert (px, py) — "window-local screenshot pixels, top-left origin
@@ -1483,6 +1562,12 @@ fn split_launchable_target(s: &str) -> (String, String) {
     (trimmed.to_owned(), String::new())
 }
 
+/// Index of the first URL not already consumed as the primary shell target.
+/// An explicit app target consumes no URL; a URLs-only launch consumes index 0.
+fn first_unopened_shell_url_index(has_app_target: bool) -> usize {
+    usize::from(!has_app_target)
+}
+
 /// Returns `true` when the launch target names a Chromium-based browser
 /// — i.e. one whose hidden launch under `SW_SHOWNOACTIVATE` will trigger
 /// renderer-occlusion throttling unless we inject the anti-throttling flags
@@ -1812,9 +1897,9 @@ impl Tool for LaunchAppTool {
                 the real packaged-process pid — required on Win11 for built-in apps like \
                 Notepad, Calculator, and Paint, which now ship as Microsoft Store packages \
                 where the legacy .exe in System32 is a ~7 KB stub that exits immediately. A \
-                plain `name` first attempts a `shell:AppsFolder` lookup; on a match it goes \
-                through the packaged-app path, otherwise it falls back to ShellExecuteEx's \
-                PATH search.\n\n\
+                plain `name` first attempts a `shell:AppsFolder` lookup; packaged matches use \
+                the activation manager while desktop registrations are launched through their \
+                shell parsing path. A miss falls back to ShellExecuteEx's PATH search.\n\n\
                 Returns the launched app's pid, name, active flag, AND a `windows` array — \
                 same per-window shape `list_windows` returns. When the launch settles but no \
                 window has materialized yet (transient; rare), `windows` comes back empty — \
@@ -2014,14 +2099,17 @@ impl Tool for LaunchAppTool {
         //   3. `bundle_id` containing `!`: packaged path, AUMID = value
         //      (Win32 PATH lookups never produce a `!` in the executable
         //      name, so this is a safe marker of caller intent).
-        //   4. `name` with no `path`: try `shell:AppsFolder` lookup; on a
-        //      hit, packaged path with the resolved AUMID. On miss, fall
-        //      through to ShellExecuteExW (existing Win32 path).
+        //   4. `name` with no `path`: try `shell:AppsFolder` lookup. A
+        //      packaged hit uses the resolved AUMID; a desktop registration
+        //      uses `shell:AppsFolder\<AppUserModelID>` via ShellExecuteExW.
+        //      On miss, fall through to the existing Win32 path.
         //   5. Anything else: existing ShellExecuteExW path.
         //
         // `path` is intentionally excluded from packaged routing — when
         // the caller has a concrete executable in mind they want
         // CreateProcess semantics, not Start Menu activation.
+        let mut name_lookup_missed = false;
+        let mut shell_target_from_name: Option<String> = None;
         let aumid_for_uwp: Option<String> = if launch_path_opt.is_some() || path_opt.is_some() {
             None
         } else if let Some(a) = aumid_opt.clone() {
@@ -2032,22 +2120,51 @@ impl Tool for LaunchAppTool {
         {
             Some(b)
         } else if let Some(n) = name_opt.clone() {
-            // Run the (cached) AppsFolder lookup on a blocking thread to
-            // avoid stalling the async runtime on the cold-enumeration
-            // path (~200 ms first call, ~µs after).
-            tokio::task::spawn_blocking(move || crate::launch_uwp::resolve_aumid_by_name(&n))
-                .await
-                .unwrap_or(None)
+            // The cold AppsFolder COM walk can stop making progress when its
+            // interactive shell broker is unhealthy. Bound it before the
+            // separate ShellExecuteEx deadline below; the resolver keeps a
+            // timed-out worker single-flight until COM really returns.
+            match crate::launch_uwp::resolve_apps_folder_target_by_name_bounded(n.clone()).await {
+                Ok(Some(crate::launch_uwp::AppsFolderLaunchTarget::PackagedAumid(aumid))) => {
+                    Some(aumid)
+                }
+                Ok(Some(crate::launch_uwp::AppsFolderLaunchTarget::ShellLaunchPath(
+                    launch_path,
+                ))) => {
+                    shell_target_from_name = Some(launch_path);
+                    None
+                }
+                Ok(None) => {
+                    name_lookup_missed = true;
+                    None
+                }
+                Err(crate::launch_uwp::AppsFolderLookupError::Timeout) => {
+                    return ToolResult::error(format!(
+                        "App name lookup for {n:?} is temporarily unavailable: Windows did not respond to the shell:AppsFolder query within 4s. No app was launched; retry after the shell recovers, or pass an explicit path or aumid."
+                    ))
+                }
+                Err(crate::launch_uwp::AppsFolderLookupError::Busy) => {
+                    return ToolResult::error(format!(
+                        "App name lookup for {n:?} is temporarily unavailable because a prior Windows shell lookup is still running or cooling down. No app was launched; retry later, or pass an explicit path or aumid."
+                    ))
+                }
+                Err(crate::launch_uwp::AppsFolderLookupError::Unavailable) => {
+                    return ToolResult::error(format!(
+                        "App name lookup for {n:?} is unavailable because the Windows shell lookup worker failed. No app was launched; pass an explicit path or aumid."
+                    ))
+                }
+            }
         } else {
             None
         };
+        let resolved_target = shell_target_from_name.or(target);
 
         // Single launch path. `display` is the human-readable identifier
         // we report in the success header; for the packaged path it's
         // the AUMID, which is more informative than the display name.
         let display = aumid_for_uwp
             .clone()
-            .or_else(|| target.clone())
+            .or_else(|| resolved_target.clone())
             .unwrap_or_else(|| urls.join(", "));
 
         // When the resolved target came from `launch_path` it may carry
@@ -2060,7 +2177,7 @@ impl Tool for LaunchAppTool {
         let (target_file_opt, extra_joined) = {
             let base_extra = extra_args.join(" ");
             if launch_path_opt.is_some() {
-                if let Some(t) = target.as_deref() {
+                if let Some(t) = resolved_target.as_deref() {
                     let (file, args_tail) = split_launchable_target(t);
                     let combined = if args_tail.is_empty() {
                         base_extra
@@ -2075,7 +2192,7 @@ impl Tool for LaunchAppTool {
                     (None, base_extra)
                 }
             } else {
-                (target.clone(), base_extra)
+                (resolved_target.clone(), base_extra)
             }
         };
 
@@ -2235,7 +2352,11 @@ impl Tool for LaunchAppTool {
                 // Open any additional URLs in the default browser (no focus
                 // steal, no pid capture for these — Swift's NSWorkspace flow
                 // behaves the same way for secondary URLs).
-                for url in &urls_clone[urls_clone.len().min(1)..] {
+                // When an app target was launched above, none of the URLs has
+                // been consumed yet. URLs-only launches use the first URL as
+                // `lpFile`, so only their remaining URLs belong here.
+                let first_unopened_url = first_unopened_shell_url_index(target_for_shell.is_some());
+                for url in &urls_clone[first_unopened_url.min(urls_clone.len())..] {
                     let file = to_wide(url);
                     let mut url_info = SHELLEXECUTEINFOW {
                         cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
@@ -2262,6 +2383,12 @@ impl Tool for LaunchAppTool {
 
             match result {
                 Ok(Ok(Ok(p))) => p,
+                Ok(Ok(Err(e))) if name_lookup_missed => {
+                    return ToolResult::error(format!(
+                        "App {:?} was not found in shell:AppsFolder or by Windows PATH/association lookup: {e}",
+                        name_opt.as_deref().unwrap_or("")
+                    ))
+                }
                 Ok(Ok(Err(e))) => return ToolResult::error(format!("Failed to launch: {e}")),
                 Ok(Err(e)) => return ToolResult::error(format!("Task error: {e}")),
                 Err(_elapsed) => {
@@ -3203,7 +3330,7 @@ impl Tool for ClickTool {
                     "a foreground click",
                 ) {
                     Ok(p) => p,
-                    Err(msg) => return ToolResult::error(msg),
+                    Err(result) => return result,
                 };
                 let btn_fg = btn.clone();
                 let mods_owned = modifiers.clone();
@@ -3226,6 +3353,12 @@ impl Tool for ClickTool {
                     Ok(Err(e)) => ToolResult::error(e.to_string()),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
+            }
+            // UIA and posted-message routes can report success without a
+            // user-visible effect on an iconic target. Refuse before any
+            // background route selects or dispatches its transport.
+            if let Some(result) = minimized_element_refusal(hwnd, idx, cx, cy, "clicking") {
+                return result;
             }
             // delivery_mode:"background" on WinUI3 for double / right / middle: single
             // left falls through to the UIA Invoke path below (already drives
@@ -3291,7 +3424,7 @@ impl Tool for ClickTool {
                     let (cx, cy) = resolve_onscreen_point_with_scroll(
                         &state_clone.element_cache, pid, hwnd, idx, cx, cy, "clicking",
                     )
-                    .map_err(|message| anyhow::anyhow!(message))?;
+                    .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
                     return crate::input::inject_click_screen(hwnd, cx, cy, count, &btn)
                         .map(|()| format!(
                             "✅ Injected click on [{idx}] (screen ({cx},{cy}), background, no foreground swap)."
@@ -3406,7 +3539,7 @@ impl Tool for ClickTool {
                         cy,
                         "clicking",
                     )
-                    .map_err(|message| anyhow::anyhow!(message))?;
+                    .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
                     return crate::input::inject_click_screen(hwnd, cx, cy, count, &btn)
                         .map(|()| {
                             format!(
@@ -4033,7 +4166,7 @@ impl Tool for TypeTextTool {
                     "foreground typing",
                 ) {
                     Ok(point) => point,
-                    Err(message) => return ToolResult::error(message),
+                    Err(result) => return result,
                 };
                 let focus_result = tokio::task::spawn_blocking(move || {
                     crate::input::send_click_synthesized_active_mods(hwnd, cx, cy, 1, "left", &[])
@@ -4718,7 +4851,7 @@ impl Tool for PressKeyTool {
                 "focusing for key delivery",
             ) {
                 Ok(point) => point,
-                Err(message) => return ToolResult::error(message),
+                Err(result) => return result,
             };
             let (mut px, mut py) = screen_to_bitmap(hwnd, cx, cy);
             if let Some(ratio) = self.state.resize_registry.ratio(pid) {
@@ -6063,7 +6196,7 @@ impl Tool for DoubleClickTool {
                 "double-clicking",
             ) {
                 Ok(p) => p,
-                Err(msg) => return ToolResult::error(msg),
+                Err(result) => return result,
             };
             pin_overlay_above(&cursor_key, hwnd);
             overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
@@ -6410,7 +6543,7 @@ impl Tool for RightClickTool {
                 "right-clicking",
             ) {
                 Ok(p) => p,
-                Err(msg) => return ToolResult::error(msg),
+                Err(result) => return result,
             };
             pin_overlay_above(&cursor_key, hwnd);
             overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
@@ -9430,7 +9563,9 @@ mod cursor_key_resolution_tests {
 
 #[cfg(test)]
 mod launch_focus_restore_decision_tests {
-    use super::{should_restore_foreground_after_launch, LaunchTargetShape};
+    use super::{
+        first_unopened_shell_url_index, should_restore_foreground_after_launch, LaunchTargetShape,
+    };
 
     fn empty() -> LaunchTargetShape {
         LaunchTargetShape {
@@ -9544,6 +9679,16 @@ mod launch_focus_restore_decision_tests {
         // Empty params (validated as an error before launch dispatch) — no
         // restore needed because nothing was launched.
         assert!(!should_restore_foreground_after_launch(empty()));
+    }
+
+    #[test]
+    fn named_app_launch_forwards_every_url() {
+        assert_eq!(first_unopened_shell_url_index(true), 0);
+    }
+
+    #[test]
+    fn urls_only_launch_does_not_reopen_primary_url() {
+        assert_eq!(first_unopened_shell_url_index(false), 1);
     }
 }
 

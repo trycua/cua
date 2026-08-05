@@ -584,11 +584,33 @@ impl Tool for GetWindowStateTool {
                      action."
                 ));
                 structured["escalation"] = serde_json::json!({
-                    "recommended": "px",
-                    "reason": "act by pixel (x,y) off the screenshot in this response — \
-                               the frame IS the requested window even though its AX \
-                               surface is unresolved."
+                    "recommended": "foreground",
+                    "reason": "observation-only: the screenshot in this response IS the \
+                               requested window, but background input (including px) is \
+                               refused while its AX surface is unresolved — events could \
+                               reach a same-process sibling window. Re-snapshot after the \
+                               app settles, or act with delivery_mode:\"foreground\"."
                 });
+            }
+        }
+        // Additive read-only `background_input` capability section (macOS
+        // background input v1): the same fresh facts that gate every
+        // background mutation, reported per route so an agent can choose
+        // before acting. Every action still revalidates — this is advisory,
+        // not a promise. Old consumers ignore the extra field.
+        {
+            let capture_available = screenshot_dims.is_some();
+            let report = tokio::task::spawn_blocking(move || {
+                let facts = crate::ax::exact_target::gather_background_facts(pid, window_id, None);
+                cua_driver_core::background_input::background_input_capability_report(
+                    cua_driver_core::background_input::ExactWindowTarget { pid, window_id },
+                    &facts,
+                    Some(capture_available),
+                )
+            })
+            .await;
+            if let Ok(report) = report {
+                structured["background_input"] = report;
             }
         }
         if let Some((sw, sh)) = screenshot_dims {

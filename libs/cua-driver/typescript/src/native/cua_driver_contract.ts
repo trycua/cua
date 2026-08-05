@@ -2791,7 +2791,7 @@ export type StartSessionInput = {
      */
     session: string,
     /**
-     * Per-session perception/action modality. auto starts window-only and requires explicit escalation before desktop tools; window and desktop are strict. Immutable for the live session.
+     * Per-session perception/action modality. auto starts window-only and requires explicit escalation before desktop tools; escalation permanently switches that session to desktop scope. To recover window scope, call end_session, then start_session with a new session id. window and desktop are strict. Immutable for the live session.
      */
     captureScope?: CaptureScope,
     /**

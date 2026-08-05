@@ -20,6 +20,7 @@ class Services:
         method: str,
         path: str,
         json: Any = None,
+        headers: dict[str, str] | None = None,
     ) -> Any:
         """Send a request to a named service on this sandbox.
 
@@ -27,4 +28,6 @@ class Services:
         transports raise :class:`NotImplementedError` unless they expose named
         services as well.
         """
-        return await self._transport.request_service(name, method=method, path=path, json_body=json)
+        return await self._transport.request_service(
+            name, method=method, path=path, json_body=json, headers=headers
+        )

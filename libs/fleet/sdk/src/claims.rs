@@ -57,7 +57,7 @@ impl CyclopsClient {
             kind: "OSGymSandboxClaim".into(),
             metadata: ResourceMetadata {
                 namespace: pool.metadata.namespace.clone(),
-                name: claim_name(self.next_claim_sequence()?),
+                name: claim_name()?,
                 labels: None,
             },
             spec,
@@ -184,8 +184,15 @@ impl CyclopsClient {
     }
 }
 
-fn claim_name(sequence: u64) -> String {
-    format!("claim-{sequence}")
+// Random petnames instead of a sequence: a per-client counter restarts at 1
+// for every fresh client, so retries and concurrent leases all proposed
+// claim-1 and collided with whatever the previous lease still held.
+fn claim_name() -> Result<String, SdkError> {
+    petname::petname(2, "-")
+        .map(|name| format!("claim-{name}"))
+        .ok_or_else(|| SdkError::Configuration {
+            reason: "claim name generation returned no words".into(),
+        })
 }
 
 fn service_names(template: &Template) -> Vec<String> {

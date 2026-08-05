@@ -273,6 +273,20 @@ place of `list_windows` there. Windows and Linux report `screenshot_width` and
 
 ---
 
+## Cinnamon disables accessibility advertisement
+
+On Cinnamon (`Cinnamon` or `X-Cinnamon`), Cua Driver leaves the session
+accessibility flags unchanged. Setting `ScreenReaderEnabled=true` launches
+Orca, while setting only `IsEnabled=true` can make the Cinnamon and GNOME
+settings schemas repeatedly overwrite each other.
+
+Applications that rely on Cua Driver to enable their accessibility bridge may
+therefore return a degraded or empty AT-SPI tree. Screenshots and available CDP
+browser routes continue to work. Do not set `CUA_DRIVER_RS_A11Y_ADVERTISE_MODE`
+to `all` or `is_enabled_only` in a normal Cinnamon session.
+
+---
+
 ## Permission boundaries
 
 Cua Driver is constrained by the macOS permission model. Two relevant grants:

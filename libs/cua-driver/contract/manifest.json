@@ -584,7 +584,7 @@
     },
     {
       "name": "escalate_session",
-      "description": "Unlock the desktop phase of an auto capture-scope session after the window action ladder has been exhausted and verified. This is a one-way transition for the live session and records a bounded reason.",
+      "description": "Unlock the desktop phase of an auto capture-scope session after the window action ladder has been exhausted and verified. Escalation is permanent for that session and disables window-scoped tools. To recover window scope, call end_session, then start_session with a new session id.",
       "platforms": [
         "macos",
         "windows",
@@ -2554,7 +2554,7 @@
         "properties": {
           "capture_scope": {
             "default": "auto",
-            "description": "Per-session perception/action modality. auto starts window-only and requires explicit escalation before desktop tools; window and desktop are strict. Immutable for the live session.",
+            "description": "Per-session perception/action modality. auto starts window-only and requires explicit escalation before desktop tools; escalation permanently switches that session to desktop scope. To recover window scope, call end_session, then start_session with a new session id. window and desktop are strict. Immutable for the live session.",
             "enum": [
               "auto",
               "window",

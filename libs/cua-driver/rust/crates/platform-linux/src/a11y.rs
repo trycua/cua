@@ -15,9 +15,12 @@
 //! A real screen reader turns the Chromium signal on. Doing that ourselves is
 //! unsafe on GNOME and COSMIC: their session services treat the signal as a user
 //! request and launch Orca. Those desktops therefore get only the generic
-//! `IsEnabled` signal by default. Other desktops retain the Chromium signal for
-//! compatibility, and a caller can choose either policy explicitly with
-//! `CUA_DRIVER_RS_A11Y_ADVERTISE_MODE`.
+//! `IsEnabled` signal by default. Cinnamon cannot safely receive even that
+//! reduced signal: its settings daemon derives toolkit accessibility from the
+//! screen-reader setting and can enter a high-frequency settings write loop when
+//! they disagree. Cinnamon therefore receives no advertisement by default.
+//! Other desktops retain the Chromium signal for compatibility, and a caller
+//! can choose either policy explicitly with `CUA_DRIVER_RS_A11Y_ADVERTISE_MODE`.
 //!
 //! Everything here is best-effort. A session without an accessibility bus (some
 //! headless or minimal setups) just yields an error we log and ignore; enabling
@@ -153,13 +156,22 @@ fn advertise_mode_from(
 }
 
 fn desktop_default_mode(desktop: Option<&str>) -> AdvertiseMode {
-    let launches_screen_reader = desktop.is_some_and(|desktop| {
-        desktop
-            .split([':', ';'])
-            .map(str::trim)
-            .any(|part| part.eq_ignore_ascii_case("gnome") || part.eq_ignore_ascii_case("cosmic"))
-    });
-    if launches_screen_reader {
+    let has_desktop = |candidate: &str| {
+        desktop.is_some_and(|desktop| {
+            desktop
+                .split([':', ';'])
+                .map(str::trim)
+                .any(|part| part.eq_ignore_ascii_case(candidate))
+        })
+    };
+
+    // Cinnamon mirrors its GNOME and Cinnamon accessibility schemas and
+    // recomputes toolkit accessibility from the assistive-technology toggles.
+    // Advertising only IsEnabled can therefore livelock the settings daemons,
+    // while advertising ScreenReaderEnabled launches Orca. Fail closed.
+    if has_desktop("cinnamon") || has_desktop("x-cinnamon") {
+        AdvertiseMode::None
+    } else if has_desktop("gnome") || has_desktop("cosmic") {
         AdvertiseMode::IsEnabledOnly
     } else {
         AdvertiseMode::All
@@ -193,6 +205,25 @@ mod tests {
         assert_eq!(
             advertise_mode_from(false, None, Some("pop:COSMIC")),
             AdvertiseMode::IsEnabledOnly
+        );
+    }
+
+    #[test]
+    fn cinnamon_default_leaves_accessibility_status_untouched() {
+        for desktop in ["Cinnamon", "X-Cinnamon", "LinuxMint:X-Cinnamon"] {
+            assert_eq!(
+                advertise_mode_from(false, None, Some(desktop)),
+                AdvertiseMode::None,
+                "desktop={desktop}"
+            );
+        }
+    }
+
+    #[test]
+    fn cinnamon_safety_wins_in_composite_desktop_names() {
+        assert_eq!(
+            advertise_mode_from(false, None, Some("GNOME:X-Cinnamon")),
+            AdvertiseMode::None
         );
     }
 

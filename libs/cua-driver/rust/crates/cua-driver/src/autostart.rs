@@ -132,28 +132,56 @@ pub fn kick() -> Result<()> {
     platform::kick()
 }
 
-/// Find the cua-driver executable to bake into the autostart entry.
-/// Uses `std::env::current_exe`, canonicalised to its real path (resolves
-/// junction / symlink chains so a versioned upgrade flipping `current`
-/// stays transparent to the registered task). The resolved path is what
-/// gets stored in the Scheduled Task / LaunchAgent / unit file.
+/// Find the cua-driver executable to bake into the autostart entry. The
+/// resolved path is what gets stored in the Scheduled Task / LaunchAgent /
+/// unit file.
+///
+/// On Windows the path is used **as invoked**, without canonicalisation.
+/// Canonicalising resolves the `bin -> current -> releases/<version>` junction
+/// chain down to a versioned release path, which then gets baked into the
+/// Scheduled Task — so the next upgrade (which only flips `current`) leaves the
+/// task launching the previous build. Keeping the junction path is what makes a
+/// versioned upgrade transparent to the registered task.
+///
+/// Elsewhere the path is canonicalised (best-effort — on error the path is
+/// used as invoked) to resolve symlink chains.
 fn current_exe_for_autostart() -> Result<String> {
     let exe = std::env::current_exe()
         .map_err(|e| anyhow!("could not resolve current executable: {e}"))?;
-    let canonical = std::fs::canonicalize(&exe).unwrap_or(exe);
-    let path = canonical.to_string_lossy().into_owned();
-    // On Windows, `canonicalize` returns a `\\?\C:\...` extended-length
-    // path. PowerShell + the Task Scheduler XML schema both handle it
-    // correctly, but it looks alarming in `schtasks /Query` output.
-    // Strip the prefix for readability — the unprefixed form is still
-    // valid as long as the path fits MAX_PATH (260 chars), which any
-    // realistic install will.
     #[cfg(target_os = "windows")]
-    let path = path
-        .strip_prefix(r"\\?\")
-        .map(str::to_owned)
-        .unwrap_or(path);
+    let resolved = exe;
+    #[cfg(not(target_os = "windows"))]
+    let resolved = std::fs::canonicalize(&exe).unwrap_or(exe);
+    let path = resolved.to_string_lossy().into_owned();
+    // Defensive: should the path ever arrive in the `\\?\C:\...`
+    // extended-length form, strip the prefix for readability. PowerShell and
+    // the Task Scheduler XML schema handle both forms correctly, but the
+    // prefixed one looks alarming in `schtasks /Query` output.
+    //
+    // Only the plain drive-letter form is stripped, and only while the result
+    // still fits MAX_PATH: `\\?\UNC\server\share\...` is a different namespace
+    // (stripping it yields a bogus `UNC\server\...`), and a path longer than
+    // 260 chars needs the prefix to remain addressable.
+    #[cfg(target_os = "windows")]
+    let path = windows_task_path(path);
     Ok(path)
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_task_path(path: String) -> String {
+    match path.strip_prefix(r"\\?\") {
+        Some(stripped) if stripped.len() < 260 && starts_with_drive_letter(stripped) => {
+            stripped.to_owned()
+        }
+        _ => path,
+    }
+}
+
+/// `true` when the path opens with a plain `<drive>:` — i.e. not the
+/// `UNC\server\share` form the extended-length namespace also carries.
+#[cfg(any(target_os = "windows", test))]
+fn starts_with_drive_letter(path: &str) -> bool {
+    matches!(path.as_bytes(), [drive, b':', ..] if drive.is_ascii_alphabetic())
 }
 
 // ── Windows impl ──────────────────────────────────────────────────────────
@@ -504,6 +532,97 @@ pub fn run_autostart_cmd(subcommand: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_task_path_strips_short_extended_drive_prefix() {
+        assert_eq!(
+            windows_task_path(r"\\?\C:\Users\Example\cua-driver.exe".to_owned()),
+            r"C:\Users\Example\cua-driver.exe"
+        );
+    }
+
+    #[test]
+    fn windows_task_path_preserves_extended_unc_path() {
+        let path = r"\\?\UNC\server\share\cua-driver.exe";
+        assert_eq!(windows_task_path(path.to_owned()), path);
+    }
+
+    #[test]
+    fn windows_task_path_preserves_extended_long_drive_path() {
+        let path = format!(r"\\?\C:\{}\cua-driver.exe", "nested".repeat(50));
+        assert!(path.len() >= 260);
+        assert_eq!(windows_task_path(path.clone()), path);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn child_reports_current_exe_for_junction_probe() {
+        let Ok(output_path) = std::env::var("CUA_CURRENT_EXE_PROBE_OUTPUT") else {
+            return;
+        };
+        std::fs::write(output_path, current_exe_for_autostart().unwrap()).unwrap();
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn current_exe_preserves_installer_junction_chain() {
+        use std::process::Command;
+
+        let temp = tempfile::tempdir().unwrap();
+        let releases = temp.path().join("packages").join("releases");
+        let release = releases.join("probe-v1");
+        let current = temp.path().join("packages").join("current");
+        let visible = temp.path().join("bin");
+        std::fs::create_dir_all(&release).unwrap();
+
+        let test_exe = std::env::current_exe().unwrap();
+        let exe_name = test_exe.file_name().unwrap();
+        std::fs::copy(&test_exe, release.join(exe_name)).unwrap();
+
+        for (link, target) in [(&current, &release), (&visible, &current)] {
+            let output = Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "failed to create junction {} -> {}: {}{}",
+                link.display(),
+                target.display(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        let visible_exe = visible.join(exe_name);
+        let probe_output = temp.path().join("current-exe.txt");
+        let child = Command::new(&visible_exe)
+            .args([
+                "--exact",
+                "autostart::tests::child_reports_current_exe_for_junction_probe",
+                "--nocapture",
+            ])
+            .env("CUA_CURRENT_EXE_PROBE_OUTPUT", &probe_output)
+            .output()
+            .unwrap();
+        assert!(
+            child.status.success(),
+            "junction-launched child failed: {}{}",
+            String::from_utf8_lossy(&child.stdout),
+            String::from_utf8_lossy(&child.stderr)
+        );
+
+        let observed = std::fs::read_to_string(&probe_output).unwrap();
+        let observed = windows_task_path(observed.trim().to_owned());
+        let expected = visible_exe.to_string_lossy();
+        assert_eq!(
+            observed.to_ascii_lowercase(),
+            expected.to_ascii_lowercase(),
+            "Windows resolved the invoked installer junction path to a release path"
+        );
+    }
 
     #[test]
     fn successful_task_query_is_registered() {

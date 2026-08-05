@@ -63,10 +63,67 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
-            libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
+            libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
+            imagemagick xvfb xauth x11-utils
       - name: Run Linux Rust tests
         working-directory: libs/cua-driver/rust
         run: cargo test -p cua-driver -p cua-driver-contract -p cua-driver-core -p cua-driver-testkit -p cursor-overlay -p cursor-theme-cli -p platform-linux --all-targets --locked
+      - name: Run X11 overlay click-through regression
+        working-directory: libs/cua-driver/rust
+        run: |
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            cargo test -p platform-linux \
+            x11_overlay_input_shape_stays_empty_and_clicks_pass_through_after_resize \
+            --locked -- --ignored --nocapture
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            cargo test -p platform-linux \
+            x11_overlay_owner_stays_click_through_across_cursor_lifecycle_and_randr \
+            --locked -- --ignored --nocapture
+      - name: Run X11 MIT-SHM capture correctness and performance regression
+        working-directory: libs/cua-driver/rust
+        run: |
+          Xvfb :98 -screen 0 1920x1080x24 -ac -nolisten tcp >xvfb-98.log 2>&1 &
+          xvfb_primary=$!
+          Xvfb :99 -screen 0 1920x1080x24 -ac -nolisten tcp >xvfb-99.log 2>&1 &
+          xvfb_secondary=$!
+          trap 'kill "$xvfb_primary" "$xvfb_secondary" 2>/dev/null || true' EXIT
+          for display in :98 :99; do
+            ready=false
+            for _ in $(seq 1 50); do
+              if DISPLAY="$display" xdpyinfo >/dev/null 2>&1; then
+                ready=true
+                break
+              fi
+              sleep 0.1
+            done
+            if [ "$ready" != true ]; then
+              echo "Xvfb failed to become ready on $display" >&2
+              exit 1
+            fi
+          done
+          source_sha=$(git rev-parse HEAD)
+          {
+            echo "source_sha=$source_sha"
+            DISPLAY=:98 CUA_X11_SECOND_DISPLAY=:99 CUA_X11_RESTART_DISPLAY=:100 \
+              cargo test -p platform-linux \
+              capture::tests::live_xshm_matches_xgetimage_across_resize_reconnect_and_repetition \
+              --locked -- --ignored --exact --nocapture --test-threads=1
+          } 2>&1 | tee x11-capture-evidence.log
+          kill "$xvfb_primary" "$xvfb_secondary" 2>/dev/null || true
+          wait "$xvfb_primary" "$xvfb_secondary" || true
+          trap - EXIT
+          sha256sum x11-capture-evidence.log xvfb-98.log xvfb-99.log >x11-capture-evidence.sha256
+      - name: Upload X11 capture evidence
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: x11-capture-evidence
+          if-no-files-found: error
+          path: |
+            libs/cua-driver/rust/x11-capture-evidence.log
+            libs/cua-driver/rust/x11-capture-evidence.sha256
+            libs/cua-driver/rust/xvfb-98.log
+            libs/cua-driver/rust/xvfb-99.log
       - name: Run real uinput device-name regression
         working-directory: libs/cua-driver/rust
         run: |

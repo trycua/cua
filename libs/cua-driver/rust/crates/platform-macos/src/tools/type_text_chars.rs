@@ -94,25 +94,55 @@ impl Tool for TypeTextCharsTool {
         };
         let type_chars_only = args.bool_or("type_chars_only", false);
 
-        // Pre-focus element if requested.
-        if !type_chars_only {
-            if let (Some(idx), Some(wid)) = (element_index, window_id) {
-                // Retain so a concurrent get_window_state can't free the element
-                // during the focus call (use-after-free → daemon crash). The
-                // guard outlives the awaited spawn_blocking below.
-                if let Some(element_guard) =
-                    self.state.element_cache.get_element_retained(pid, wid, idx)
-                {
-                    let element_ptr = element_guard.as_ptr();
-                    let _ = tokio::task::spawn_blocking(move || {
-                        crate::input::ax_actions::focus_element(element_ptr)
-                    })
-                    .await;
-                    drop(element_guard);
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        // Retain the addressed element (if any) so a concurrent
+        // get_window_state can't free it during the gate/focus below
+        // (use-after-free → daemon crash). Guard lives past the focus call.
+        let element_guard = if let (Some(idx), Some(wid)) = (element_index, window_id) {
+            match self.state.element_cache.get_element_retained(pid, wid, idx) {
+                Some(guard) => Some(guard),
+                None => {
+                    return ToolResult::error(format!(
+                        "Element index {idx} not found. Call get_window_state first."
+                    ));
                 }
             }
+        } else {
+            None
+        };
+        let element_ptr: Option<usize> = element_guard.as_ref().map(|g| g.as_ptr());
+
+        // ── Exact-target background gate (macOS background input v1) ──
+        // This tool is always background CGEvent keystrokes — process-scoped
+        // transport with no semantic AX rung. A window-addressed request must
+        // prove exact delivery before any event is posted; there is no
+        // semantic fallback here, so a refusal is final.
+        let _mutation_lease = if let Some(wid) = window_id {
+            match super::gate_background_window_action(
+                pid,
+                wid,
+                element_ptr,
+                cua_driver_core::background_input::BackgroundAction::InsertText,
+            )
+            .await
+            {
+                Ok(lease) => Some(lease),
+                Err(refusal_result) => return refusal_result,
+            }
+        } else {
+            None
+        };
+
+        // Pre-focus element if requested.
+        if !type_chars_only {
+            if let Some(element_ptr) = element_ptr {
+                let _ = tokio::task::spawn_blocking(move || {
+                    crate::input::ax_actions::focus_element(element_ptr)
+                })
+                .await;
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
         }
+        drop(element_guard);
 
         let text_len = text.chars().count();
         let result = tokio::task::spawn_blocking(move || {

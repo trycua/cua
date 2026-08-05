@@ -198,6 +198,7 @@ def test_cua_driver_release_footer_explains_github_prerelease_label():
     assert "Why GitHub says “Pre-release”" in body
     assert "repository-wide “Latest” pointer" in normalized
     assert "plain Cua Driver SemVer" in normalized
+    assert "0.17.0" not in footer
     assert "npm and PyPI" in normalized
     assert "`cua-driver-rs-v*` releases directly" in normalized
 

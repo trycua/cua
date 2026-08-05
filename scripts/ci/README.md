@@ -94,6 +94,12 @@ private `CUA_E2E_INTERNAL_LANE` partition to `shared`, `native`, or `capture`
 when it fans the same matrix into independent jobs. Those values are not public
 alternate suites.
 
+The complete harness result at the exact source SHA is the behavioral gate.
+Manual app smokes, standalone videos, legacy runners, and environment-parity
+replays are useful diagnostics but cannot replace it. When installed-browser
+behavior is in scope, run the standalone browser suite in addition to the
+complete repo-local matrix.
+
 The maintainer-facing macOS command is
 `libs/cua-driver/tests/runners/macos-lume/run-all.sh`. It verifies the private
 Lume seed, installs the exact committed source, and then delegates to the thin

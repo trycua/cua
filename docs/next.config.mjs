@@ -1,5 +1,5 @@
 import { createMDX } from 'fumadocs-mdx/next';
-import { networkInterfaces } from 'node:os';
+import { hostname, networkInterfaces } from 'node:os';
 
 const withMDX = createMDX();
 
@@ -10,6 +10,14 @@ const localDevOrigins = [
     .flat()
     .filter((address) => address && !address.internal)
     .map((address) => address.address),
+  // networkInterfaces() yields addresses only, so reaching the preview by name
+  // — a Tailscale MagicDNS host, a .local name — otherwise 403s on /_next/*
+  // and the page loads unhydrated: server-rendered HTML, no working sidebar.
+  hostname(),
+  // `**` matches any depth; a plain `*` matches a single segment and so would
+  // miss MagicDNS names like <host>.<tailnet>.ts.net.
+  '**.ts.net',
+  '*.local',
 ];
 
 /** @type {import('next').NextConfig} */

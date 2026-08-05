@@ -670,20 +670,6 @@ pub fn bundle_id_for_pid(pid: i32) -> Option<String> {
     }
 }
 
-/// Return the application bundle path for a running process.
-///
-/// Input routing uses this to distinguish Chromium/Electron and Catalyst
-/// applications without shelling out or trusting the process name.
-pub fn bundle_path_for_pid(pid: i32) -> Option<String> {
-    use objc2_app_kit::NSRunningApplication;
-    unsafe {
-        let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)?;
-        let url = app.bundleURL()?;
-        let path = url.path()?;
-        Some(path.to_string())
-    }
-}
-
 /// Return the localized application name for a running process by PID.
 /// Uses `ps -p {pid} -o comm=` which gives the command name without path.
 /// Returns `None` if the PID is unknown or the command fails.

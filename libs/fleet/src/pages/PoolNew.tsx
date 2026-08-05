@@ -11,19 +11,11 @@ import Input from "@cloudscape-design/components/input"
 import Select from "@cloudscape-design/components/select"
 import SpaceBetween from "@cloudscape-design/components/space-between"
 import Toggle from "@cloudscape-design/components/toggle"
-import { api, type PoolTemplateConfig } from "../api/cyclops"
 import { useFlash } from "../components/FlashContext"
-import { useFeatureFlags } from "../components/FeatureFlagContext"
+import { createPool } from "../sdk/pools"
+import type { PoolTemplateConfig } from "../sdk/models"
 
 const NAME_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
-
-const RUNTIME_OPTIONS = [
-  { label: "KubeVirt VM (Linux / Windows)", value: "kubevirt" },
-  { label: "macOS VM", value: "macos" },
-  { label: "gVisor pod (sandboxed Linux)", value: "gvisor" },
-]
-// A macOS pool's default desktop image (admin-only). Overridable in the field.
-const MACOS_DEFAULT_IMAGE = "127.0.0.1:5000/cua/macos-desktop-workspace:latest"
 
 const DEFAULTS = {
   cpu: 4,
@@ -114,15 +106,6 @@ export function PoolNew() {
   const [initialPoolSize, setInitialPoolSize] = useState(String(seed.autoscaling?.initialPoolSize ?? 0))
   const [maxPoolSize, setMaxPoolSize] = useState(String(seed.autoscaling?.maxPoolSize ?? 20))
   const [submitting, setSubmitting] = useState(false)
-  // macOS is an admin-only capability — the selector is only rendered for
-  // admins, and the backend independently rejects macos pool writes from
-  // non-admins (handlers/k8s.go macosPoolNeedsAdmin). Non-admins never see it.
-  const { admin } = useFeatureFlags()
-  const [runtime, setRuntime] = useState<"kubevirt" | "macos" | "gvisor">(seed.runtime ?? "kubevirt")
-  // Pod runtimes (macos, gvisor) are gated to admins in the UI; the backend
-  // independently rejects macos writes from non-admins (handlers/k8s.go).
-  const isPodRuntime = admin && runtime !== "kubevirt"
-  const isMacos = admin && runtime === "macos"
 
   const nameError = useMemo(() => {
     if (!name) return undefined
@@ -144,8 +127,7 @@ export function PoolNew() {
     setServices(prev => prev.filter(s => s.id !== id))
   }
 
-  // Collect the current form into the config object that api.createPool
-  // consumes.
+  // Collect the current form into the SDK's pool/template configuration.
   const buildValues = (): PoolTemplateConfig => {
     const validServices = services
       .filter(s => s.name.trim() && s.targetPort)
@@ -162,21 +144,15 @@ export function PoolNew() {
     } = {}
     if (readPort) probes.readinessProbe = { tcpSocket: { port: readPort } }
     if (livePort) probes.livenessProbe = { tcpSocket: { port: livePort } }
-    // A macOS pool auto-gets a `vnc` service (unless the user added one) so its
-    // desktop streams to the ClaimDetail DesktopPane over noVNC.
-    const svcs = isMacos && !validServices.some(s => s.name === "vnc")
-      ? [...validServices, { name: "vnc", targetPort: 6080, protocol: "TCP" }]
-      : validServices
     return {
       cpu: parseInt(cpu, 10) || DEFAULTS.cpu,
       ram: ram.trim() || DEFAULTS.ram,
       // Trim pasted whitespace: K8s rejects pod images with leading/trailing
       // spaces, which wedges the pool's VM in Starting forever.
-      ociImage: ociImage.trim() || (isMacos ? MACOS_DEFAULT_IMAGE : DEFAULTS.ociImage),
+      ociImage: ociImage.trim() || DEFAULTS.ociImage,
       firmware: firmware !== "bios" ? firmware : undefined,
-      runtime: isPodRuntime ? runtime : undefined,
       replicas: parseInt(replicas, 10) || DEFAULTS.replicas,
-      services: svcs.length ? svcs : undefined,
+      services: validServices.length ? validServices : undefined,
       probes: Object.keys(probes).length ? probes : undefined,
       autoscaling: autoscalingEnabled
         ? {
@@ -192,7 +168,7 @@ export function PoolNew() {
     if (!name || nameError) return
     setSubmitting(true)
     try {
-      await api.createPool(name, buildValues())
+      await createPool(name, buildValues())
       flash.push({ type: "success", header: `Created pool ${name}` })
       // Pool name = namespace name (1:1 mapping).
       navigate(`/pools/${name}/${name}`)
@@ -271,24 +247,9 @@ export function PoolNew() {
             />
           </FormField>
 
-          {admin && (
-            <FormField
-              label="Runtime"
-              description="Admin-only. macOS provisions a macOS sandbox (streamable over noVNC) instead of a KubeVirt VM."
-            >
-              <Select
-                selectedOption={RUNTIME_OPTIONS.find(o => o.value === runtime) ?? RUNTIME_OPTIONS[0]}
-                onChange={({ detail }) => setRuntime((detail.selectedOption.value as "kubevirt" | "macos" | "gvisor") ?? "kubevirt")}
-                options={RUNTIME_OPTIONS}
-              />
-            </FormField>
-          )}
-
           <FormField
             label="OCI image"
-            description={isMacos
-              ? "macOS sandbox image ref (defaults to the macos-desktop-workspace image if left blank)."
-              : "Workspace containerDisk image (and the image used by /reset-created VMs)."}
+            description="Workspace containerDisk image."
           >
             <Input
               value={ociImage}

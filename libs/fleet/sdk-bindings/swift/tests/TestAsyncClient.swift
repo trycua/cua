@@ -56,6 +56,23 @@ private func lifecycleQueue() -> [Expected] {
     ]
 }
 
+private func normalizedGeneratedClaimBody(_ body: Data?) -> Data? {
+    guard let body,
+          var object = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+          var metadata = object["metadata"] as? [String: Any],
+          let name = metadata["name"] as? String,
+          name.hasPrefix("claim-") else { return nil }
+    let suffix = name.dropFirst("claim-".count)
+    guard !suffix.isEmpty,
+          suffix.first != "-",
+          suffix.last != "-",
+          name.utf8.count <= 63,
+          suffix.allSatisfy({ $0.isLowercase || $0.isNumber || $0 == "-" }) else { return nil }
+    metadata["name"] = "claim-generated"
+    object["metadata"] = metadata
+    return try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+}
+
 actor ScriptedHttpClient: HttpClient {
     private var expected: [Expected]
     private var requests: [HttpRequest] = []
@@ -69,7 +86,11 @@ actor ScriptedHttpClient: HttpClient {
         let item = expected.removeFirst()
         precondition(request.method == item.method && request.url == item.url)
         precondition(request.headers == item.headers)
-        precondition(request.body == item.body)
+        if request.method == "POST" && request.url.hasSuffix("/osgymsandboxclaims") {
+            precondition(normalizedGeneratedClaimBody(request.body) == normalizedGeneratedClaimBody(item.body))
+        } else {
+            precondition(request.body == item.body)
+        }
         requests.append(request)
         return HttpResponse(status: item.status, headers: [], body: item.response)
     }

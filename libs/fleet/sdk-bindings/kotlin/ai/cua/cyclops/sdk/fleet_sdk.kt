@@ -712,6 +712,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim(
     ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces(
+    ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool(
@@ -737,6 +739,12 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_user_api_key(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token(
     ): Short
@@ -807,6 +815,8 @@ external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_list_claims(`ptr`: Long,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim(`ptr`: Long,`claim`: RustBuffer.ByValue,
 ): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_list_namespaces(`ptr`: Long,
+): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_create_pool(`ptr`: Long,`request`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_pool(`ptr`: Long,`pool`: RustBuffer.ByValue,
@@ -832,6 +842,12 @@ external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_list_templates(`ptr`: Lo
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_template(`ptr`: Long,`request`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_update_template(`ptr`: Long,`template`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_create_user_api_key(`ptr`: Long,`request`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_user_api_key(`ptr`: Long,`id`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_list_user_api_keys(`ptr`: Long,
 ): Long
 external fun uniffi_cyclops_sdk_fn_clone_accesstokenprovider(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): Long
@@ -989,6 +1005,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim() != 18984.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces() != 65288.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool() != 48557.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1026,6 +1045,15 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template() != 18704.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key() != 9174.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_user_api_key() != 1700.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys() != 5949.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token() != 1180.toShort()) {
@@ -1987,6 +2015,8 @@ public interface CyclopsClientInterface {
 
     suspend fun `waitClaim`(`claim`: Claim): Sandbox
 
+    suspend fun `listNamespaces`(): List<Namespace>
+
     suspend fun `createPool`(`request`: CreatePoolRequest): Pool
 
     suspend fun `deletePool`(`pool`: Pool)
@@ -2012,6 +2042,12 @@ public interface CyclopsClientInterface {
     suspend fun `reconcileTemplate`(`request`: CreateTemplateRequest): Template
 
     suspend fun `updateTemplate`(`template`: Template): Template
+
+    suspend fun `createUserApiKey`(`request`: CreateUserApiKeyRequest): NewUserApiKey
+
+    suspend fun `deleteUserApiKey`(`id`: kotlin.String)
+
+    suspend fun `listUserApiKeys`(): List<UserApiKey>
 
     companion object
 }
@@ -2213,6 +2249,27 @@ open class CyclopsClient: Disposable, AutoCloseable, CyclopsClientInterface
         { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeSandbox.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `listNamespaces`() : List<Namespace> {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_namespaces(
+                uniffiHandle,
+
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterSequenceTypeNamespace.lift(it) },
         // Error FFI converter
         SdkException.ErrorHandler,
     )
@@ -2488,6 +2545,70 @@ open class CyclopsClient: Disposable, AutoCloseable, CyclopsClientInterface
         { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeTemplate.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `createUserApiKey`(`request`: CreateUserApiKeyRequest) : NewUserApiKey {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_user_api_key(
+                uniffiHandle,
+                FfiConverterTypeCreateUserApiKeyRequest.lower(`request`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeNewUserApiKey.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `deleteUserApiKey`(`id`: kotlin.String) {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_user_api_key(
+                uniffiHandle,
+                FfiConverterString.lower(`id`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `listUserApiKeys`() : List<UserApiKey> {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_user_api_keys(
+                uniffiHandle,
+
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterSequenceTypeUserApiKey.lift(it) },
         // Error FFI converter
         SdkException.ErrorHandler,
     )
@@ -3366,6 +3487,44 @@ public object FfiConverterTypeCreateTemplateRequest: FfiConverterRustBuffer<Crea
 
 
 
+data class CreateUserApiKeyRequest (
+    var `name`: kotlin.String
+    ,
+    var `scope`: List<kotlin.String>
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeCreateUserApiKeyRequest: FfiConverterRustBuffer<CreateUserApiKeyRequest> {
+    override fun read(buf: ByteBuffer): CreateUserApiKeyRequest {
+        return CreateUserApiKeyRequest(
+            FfiConverterString.read(buf),
+            FfiConverterSequenceString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: CreateUserApiKeyRequest) = (
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterSequenceString.allocationSize(value.`scope`)
+    )
+
+    override fun write(value: CreateUserApiKeyRequest, buf: ByteBuffer) {
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterSequenceString.write(value.`scope`, buf)
+    }
+}
+
+
+
 data class CyclopsConfiguration (
     var `baseUrl`: kotlin.String
     ,
@@ -3625,6 +3784,107 @@ public object FfiConverterTypeHttpResponse: FfiConverterRustBuffer<HttpResponse>
 
 
 
+data class Namespace (
+    var `name`: kotlin.String
+    ,
+    var `status`: kotlin.String
+    ,
+    var `createdAt`: kotlin.String
+    ,
+    var `labels`: Map<kotlin.String, kotlin.String>?
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeNamespace: FfiConverterRustBuffer<Namespace> {
+    override fun read(buf: ByteBuffer): Namespace {
+        return Namespace(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalMapStringString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: Namespace) = (
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterString.allocationSize(value.`status`) +
+            FfiConverterString.allocationSize(value.`createdAt`) +
+            FfiConverterOptionalMapStringString.allocationSize(value.`labels`)
+    )
+
+    override fun write(value: Namespace, buf: ByteBuffer) {
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterString.write(value.`status`, buf)
+            FfiConverterString.write(value.`createdAt`, buf)
+            FfiConverterOptionalMapStringString.write(value.`labels`, buf)
+    }
+}
+
+
+
+data class NewUserApiKey (
+    var `clientId`: kotlin.String
+    ,
+    var `clientSecret`: kotlin.String
+    ,
+    var `tokenUrl`: kotlin.String
+    ,
+    var `name`: kotlin.String
+    ,
+    var `scope`: List<kotlin.String>
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeNewUserApiKey: FfiConverterRustBuffer<NewUserApiKey> {
+    override fun read(buf: ByteBuffer): NewUserApiKey {
+        return NewUserApiKey(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterSequenceString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: NewUserApiKey) = (
+            FfiConverterString.allocationSize(value.`clientId`) +
+            FfiConverterString.allocationSize(value.`clientSecret`) +
+            FfiConverterString.allocationSize(value.`tokenUrl`) +
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterSequenceString.allocationSize(value.`scope`)
+    )
+
+    override fun write(value: NewUserApiKey, buf: ByteBuffer) {
+            FfiConverterString.write(value.`clientId`, buf)
+            FfiConverterString.write(value.`clientSecret`, buf)
+            FfiConverterString.write(value.`tokenUrl`, buf)
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterSequenceString.write(value.`scope`, buf)
+    }
+}
+
+
+
 /**
  * UniFFI cannot emit aliases for external record types. Generated bindings use
  * `OSGymSandboxWarmPoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
@@ -3693,6 +3953,8 @@ data class ResourceMetadata (
     var `name`: kotlin.String
     ,
     var `labels`: Map<kotlin.String, kotlin.String>?
+    ,
+    var `creationTimestamp`: kotlin.String?
 
 ){
 
@@ -3712,19 +3974,22 @@ public object FfiConverterTypeResourceMetadata: FfiConverterRustBuffer<ResourceM
             FfiConverterString.read(buf),
             FfiConverterString.read(buf),
             FfiConverterOptionalMapStringString.read(buf),
+            FfiConverterOptionalString.read(buf),
         )
     }
 
     override fun allocationSize(value: ResourceMetadata) = (
             FfiConverterString.allocationSize(value.`namespace`) +
             FfiConverterString.allocationSize(value.`name`) +
-            FfiConverterOptionalMapStringString.allocationSize(value.`labels`)
+            FfiConverterOptionalMapStringString.allocationSize(value.`labels`) +
+            FfiConverterOptionalString.allocationSize(value.`creationTimestamp`)
     )
 
     override fun write(value: ResourceMetadata, buf: ByteBuffer) {
             FfiConverterString.write(value.`namespace`, buf)
             FfiConverterString.write(value.`name`, buf)
             FfiConverterOptionalMapStringString.write(value.`labels`, buf)
+            FfiConverterOptionalString.write(value.`creationTimestamp`, buf)
     }
 }
 
@@ -3825,6 +4090,54 @@ public object FfiConverterTypeTemplate: FfiConverterRustBuffer<Template> {
             FfiConverterString.write(value.`kind`, buf)
             FfiConverterTypeResourceMetadata.write(value.`metadata`, buf)
             FfiConverterTypeOSGymSandboxTemplateSpec.write(value.`spec`, buf)
+    }
+}
+
+
+
+data class UserApiKey (
+    var `id`: kotlin.String
+    ,
+    var `clientId`: kotlin.String
+    ,
+    var `name`: kotlin.String
+    ,
+    var `scope`: List<kotlin.String>
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeUserApiKey: FfiConverterRustBuffer<UserApiKey> {
+    override fun read(buf: ByteBuffer): UserApiKey {
+        return UserApiKey(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterSequenceString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: UserApiKey) = (
+            FfiConverterString.allocationSize(value.`id`) +
+            FfiConverterString.allocationSize(value.`clientId`) +
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterSequenceString.allocationSize(value.`scope`)
+    )
+
+    override fun write(value: UserApiKey, buf: ByteBuffer) {
+            FfiConverterString.write(value.`id`, buf)
+            FfiConverterString.write(value.`clientId`, buf)
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterSequenceString.write(value.`scope`, buf)
     }
 }
 
@@ -4233,6 +4546,38 @@ public object FfiConverterTypeSdkError : FfiConverterRustBuffer<SdkException> {
 /**
  * @suppress
  */
+public object FfiConverterOptionalString: FfiConverterRustBuffer<kotlin.String?> {
+    override fun read(buf: ByteBuffer): kotlin.String? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterString.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.String?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterString.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.String?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterString.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalByteArray: FfiConverterRustBuffer<kotlin.ByteArray?> {
     override fun read(buf: ByteBuffer): kotlin.ByteArray? {
         if (buf.get().toInt() == 0) {
@@ -4477,6 +4822,34 @@ public object FfiConverterSequenceTypeHttpHeader: FfiConverterRustBuffer<List<Ht
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeNamespace: FfiConverterRustBuffer<List<Namespace>> {
+    override fun read(buf: ByteBuffer): List<Namespace> {
+        val len = buf.getInt()
+        return List<Namespace>(len) {
+            FfiConverterTypeNamespace.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<Namespace>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeNamespace.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<Namespace>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeNamespace.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypePool: FfiConverterRustBuffer<List<Pool>> {
     override fun read(buf: ByteBuffer): List<Pool> {
         val len = buf.getInt()
@@ -4523,6 +4896,34 @@ public object FfiConverterSequenceTypeTemplate: FfiConverterRustBuffer<List<Temp
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeTemplate.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeUserApiKey: FfiConverterRustBuffer<List<UserApiKey>> {
+    override fun read(buf: ByteBuffer): List<UserApiKey> {
+        val len = buf.getInt()
+        return List<UserApiKey>(len) {
+            FfiConverterTypeUserApiKey.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<UserApiKey>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeUserApiKey.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<UserApiKey>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeUserApiKey.write(it, buf)
         }
     }
 }

@@ -2,7 +2,7 @@ use cyclops_sdk_schema::{
     ClaimSpec, OSGymSandboxClaimStatus, OSGymSandboxTemplateSpec, OSGymSandboxWarmPoolSpec,
     OSGymSandboxWarmPoolStatus,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::{collections::HashMap, fmt, sync::Arc};
 
 #[derive(uniffi::Object)]
@@ -84,6 +84,12 @@ pub struct ResourceMetadata {
     pub namespace: String,
     pub name: String,
     pub labels: Option<HashMap<String, String>>,
+    #[serde(
+        rename = "creationTimestamp",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub creation_timestamp: Option<String>,
 }
 
 /// UniFFI cannot emit aliases for external record types. Generated bindings use
@@ -131,6 +137,50 @@ impl PartialEq for Claim {
             && schema_values_equal(&self.spec, &other.spec)
             && schema_values_equal(&self.status, &other.status)
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
+#[serde(rename_all = "camelCase")]
+pub struct Namespace {
+    pub name: String,
+    pub status: String,
+    pub created_at: String,
+    pub labels: Option<HashMap<String, String>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
+pub struct UserApiKey {
+    pub id: String,
+    #[serde(rename = "client_id")]
+    pub client_id: String,
+    pub name: String,
+    #[serde(default, deserialize_with = "deserialize_nullable_scope")]
+    pub scope: Vec<String>,
+}
+
+fn deserialize_nullable_scope<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<Vec<String>>::deserialize(deserializer).map(Option::unwrap_or_default)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
+pub struct CreateUserApiKeyRequest {
+    pub name: String,
+    pub scope: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
+pub struct NewUserApiKey {
+    #[serde(rename = "client_id")]
+    pub client_id: String,
+    #[serde(rename = "client_secret")]
+    pub client_secret: String,
+    #[serde(rename = "token_url")]
+    pub token_url: String,
+    pub name: String,
+    pub scope: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]

@@ -27,6 +27,7 @@ impl CyclopsClient {
                 namespace: request.namespace,
                 name: request.name,
                 labels: None,
+                creation_timestamp: None,
             },
             spec: request.spec,
         };

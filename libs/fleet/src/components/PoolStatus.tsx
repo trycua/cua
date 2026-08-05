@@ -1,7 +1,7 @@
 import StatusIndicator, {
   StatusIndicatorProps,
 } from "@cloudscape-design/components/status-indicator"
-import { PoolStatus } from "../api/pools"
+import type { PoolStatus } from "../sdk/status"
 
 const POOL_STATUS_TYPE: Record<PoolStatus["kind"], StatusIndicatorProps.Type> = {
   healthy: "success",

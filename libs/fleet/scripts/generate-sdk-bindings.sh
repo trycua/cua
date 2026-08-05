@@ -799,6 +799,7 @@ text = text.replace(future_runtime_anchor, future_runtime, 1)
 buffer_pattern = r"(?m)^(\s*)result = FleetSdk\.rust_call_with_error\(([^,]+),:([a-z0-9_]+),(.*)\)$"
 def replace_buffer(match):
     indent, error_module, function, arguments = match.groups()
+    arguments = arguments.rstrip().removesuffix(",")
     return (
         f"{indent}result = FleetSdk.uniffi_rust_future_rust_buffer(\n"
         f"{indent}  {error_module},\n"
@@ -806,12 +807,13 @@ def replace_buffer(match):
         f"{indent})"
     )
 text, buffer_replacements = re.subn(buffer_pattern, replace_buffer, text)
-if buffer_replacements != 17:
-    raise SystemExit(f"expected 17 Ruby Rust-buffer future wrappers, found {buffer_replacements}")
+if buffer_replacements != 20:
+    raise SystemExit(f"expected 20 Ruby Rust-buffer future wrappers, found {buffer_replacements}")
 
 void_pattern = r"(?m)^(\s*)FleetSdk\.rust_call_with_error\(([^,]+),:([a-z0-9_]+),(.*)\)$"
 def replace_void(match):
     indent, error_module, function, arguments = match.groups()
+    arguments = arguments.rstrip().removesuffix(",")
     return (
         f"{indent}FleetSdk.uniffi_rust_future_void(\n"
         f"{indent}  {error_module},\n"
@@ -819,8 +821,8 @@ def replace_void(match):
         f"{indent})"
     )
 text, void_replacements = re.subn(void_pattern, replace_void, text)
-if void_replacements != 3:
-    raise SystemExit(f"expected 3 Ruby void future wrappers, found {void_replacements}")
+if void_replacements != 4:
+    raise SystemExit(f"expected 4 Ruby void future wrappers, found {void_replacements}")
 
 handle_map_anchor = """def self.uniffi_bytes(v)
   raise TypeError, \"no implicit conversion of #{v} into String\" unless v.respond_to?(:to_str)

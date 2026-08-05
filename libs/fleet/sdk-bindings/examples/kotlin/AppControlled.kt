@@ -4,6 +4,17 @@ import kotlinx.coroutines.runBlocking
 import java.util.Collections
 
 private data class Expected(val method: String, val url: String, val headers: List<Pair<String, String>>, val body: ByteArray?, val status: UShort, val response: String)
+private val generatedClaimNamePattern = Regex("claim-[a-z0-9](?:[-a-z0-9]*[a-z0-9])?")
+private val claimNameFieldPattern = Regex("\"name\":\"(claim-[^\"]+)\"")
+
+private fun normalizedGeneratedClaimBody(body: ByteArray?): ByteArray? {
+    val text = body?.decodeToString() ?: return null
+    val match = claimNameFieldPattern.find(text) ?: return null
+    val name = match.groupValues[1]
+    check(name.length <= 63 && generatedClaimNamePattern.matches(name))
+    return text.replaceRange(match.groups[1]!!.range, "claim-generated").encodeToByteArray()
+}
+
 private class ScriptedHttpClient : HttpClient {
     private val lock = Any()
     private val expected = ArrayDeque(listOf(
@@ -22,7 +33,13 @@ private class ScriptedHttpClient : HttpClient {
         val item = expected.removeFirst()
         check(request.method == item.method && request.url == item.url)
         check(request.headers.map { it.name to it.value } == item.headers)
-        check((request.body == null && item.body == null) || (request.body != null && item.body != null && request.body.contentEquals(item.body)))
+        if (request.method == "POST" && request.url.endsWith("/osgymsandboxclaims")) {
+            val actualBody = normalizedGeneratedClaimBody(request.body)
+            val expectedBody = normalizedGeneratedClaimBody(item.body)
+            check(actualBody != null && expectedBody != null && actualBody.contentEquals(expectedBody))
+        } else {
+            check((request.body == null && item.body == null) || (request.body != null && item.body != null && request.body.contentEquals(item.body)))
+        }
         HttpResponse(item.status, emptyList(), item.response.encodeToByteArray())
     }
     fun assertExhausted() = check(expected.isEmpty())

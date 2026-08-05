@@ -782,6 +782,8 @@ public protocol CyclopsClientProtocol: AnyObject, Sendable {
 
     func waitClaim(claim: Claim) async throws  -> Sandbox
 
+    func listNamespaces() async throws  -> [Namespace]
+
     func createPool(request: CreatePoolRequest) async throws  -> Pool
 
     func deletePool(pool: Pool) async throws
@@ -807,6 +809,12 @@ public protocol CyclopsClientProtocol: AnyObject, Sendable {
     func reconcileTemplate(request: CreateTemplateRequest) async throws  -> Template
 
     func updateTemplate(template: Template) async throws  -> Template
+
+    func createUserApiKey(request: CreateUserApiKeyRequest) async throws  -> NewUserApiKey
+
+    func deleteUserApiKey(id: String) async throws
+
+    func listUserApiKeys() async throws  -> [UserApiKey]
 
 }
 open class CyclopsClient: CyclopsClientProtocol, @unchecked Sendable {
@@ -1007,6 +1015,23 @@ open func waitClaim(claim: Claim)async throws  -> Sandbox  {
             completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeSandbox_lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+open func listNamespaces()async throws  -> [Namespace]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_list_namespaces(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeNamespace.lift,
             errorHandler: FfiConverterTypeSdkError_lift
         )
 }
@@ -1228,6 +1253,57 @@ open func updateTemplate(template: Template)async throws  -> Template  {
             completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeTemplate_lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+open func createUserApiKey(request: CreateUserApiKeyRequest)async throws  -> NewUserApiKey  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_create_user_api_key(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeCreateUserApiKeyRequest_lower(request)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeNewUserApiKey_lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+open func deleteUserApiKey(id: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_user_api_key(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_void,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_void,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+open func listUserApiKeys()async throws  -> [UserApiKey]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_list_user_api_keys(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeUserApiKey.lift,
             errorHandler: FfiConverterTypeSdkError_lift
         )
 }
@@ -1841,6 +1917,60 @@ public func FfiConverterTypeCreateTemplateRequest_lower(_ value: CreateTemplateR
 }
 
 
+public struct CreateUserApiKeyRequest: Equatable, Hashable {
+    public var name: String
+    public var scope: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, scope: [String]) {
+        self.name = name
+        self.scope = scope
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CreateUserApiKeyRequest: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCreateUserApiKeyRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CreateUserApiKeyRequest {
+        return
+            try CreateUserApiKeyRequest(
+                name: FfiConverterString.read(from: &buf),
+                scope: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CreateUserApiKeyRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterSequenceString.write(value.scope, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCreateUserApiKeyRequest_lift(_ buf: RustBuffer) throws -> CreateUserApiKeyRequest {
+    return try FfiConverterTypeCreateUserApiKeyRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCreateUserApiKeyRequest_lower(_ value: CreateUserApiKeyRequest) -> RustBuffer {
+    return FfiConverterTypeCreateUserApiKeyRequest.lower(value)
+}
+
+
 public struct CyclopsConfiguration {
     public var baseUrl: String
     public var tokenUrl: String
@@ -2155,6 +2285,134 @@ public func FfiConverterTypeHttpResponse_lower(_ value: HttpResponse) -> RustBuf
 }
 
 
+public struct Namespace: Equatable, Hashable {
+    public var name: String
+    public var status: String
+    public var createdAt: String
+    public var labels: [String: String]?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, status: String, createdAt: String, labels: [String: String]?) {
+        self.name = name
+        self.status = status
+        self.createdAt = createdAt
+        self.labels = labels
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension Namespace: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNamespace: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Namespace {
+        return
+            try Namespace(
+                name: FfiConverterString.read(from: &buf),
+                status: FfiConverterString.read(from: &buf),
+                createdAt: FfiConverterString.read(from: &buf),
+                labels: FfiConverterOptionDictionaryStringString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: Namespace, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.status, into: &buf)
+        FfiConverterString.write(value.createdAt, into: &buf)
+        FfiConverterOptionDictionaryStringString.write(value.labels, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNamespace_lift(_ buf: RustBuffer) throws -> Namespace {
+    return try FfiConverterTypeNamespace.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNamespace_lower(_ value: Namespace) -> RustBuffer {
+    return FfiConverterTypeNamespace.lower(value)
+}
+
+
+public struct NewUserApiKey: Equatable, Hashable {
+    public var clientId: String
+    public var clientSecret: String
+    public var tokenUrl: String
+    public var name: String
+    public var scope: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(clientId: String, clientSecret: String, tokenUrl: String, name: String, scope: [String]) {
+        self.clientId = clientId
+        self.clientSecret = clientSecret
+        self.tokenUrl = tokenUrl
+        self.name = name
+        self.scope = scope
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension NewUserApiKey: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNewUserApiKey: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NewUserApiKey {
+        return
+            try NewUserApiKey(
+                clientId: FfiConverterString.read(from: &buf),
+                clientSecret: FfiConverterString.read(from: &buf),
+                tokenUrl: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                scope: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NewUserApiKey, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.clientId, into: &buf)
+        FfiConverterString.write(value.clientSecret, into: &buf)
+        FfiConverterString.write(value.tokenUrl, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterSequenceString.write(value.scope, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNewUserApiKey_lift(_ buf: RustBuffer) throws -> NewUserApiKey {
+    return try FfiConverterTypeNewUserApiKey.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNewUserApiKey_lower(_ value: NewUserApiKey) -> RustBuffer {
+    return FfiConverterTypeNewUserApiKey.lower(value)
+}
+
+
 /**
  * UniFFI cannot emit aliases for external record types. Generated bindings use
  * `OSGymSandboxWarmPoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
@@ -2234,13 +2492,15 @@ public struct ResourceMetadata: Equatable, Hashable {
     public var namespace: String
     public var name: String
     public var labels: [String: String]?
+    public var creationTimestamp: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(namespace: String, name: String, labels: [String: String]?) {
+    public init(namespace: String, name: String, labels: [String: String]?, creationTimestamp: String?) {
         self.namespace = namespace
         self.name = name
         self.labels = labels
+        self.creationTimestamp = creationTimestamp
     }
 
 
@@ -2261,7 +2521,8 @@ public struct FfiConverterTypeResourceMetadata: FfiConverterRustBuffer {
             try ResourceMetadata(
                 namespace: FfiConverterString.read(from: &buf),
                 name: FfiConverterString.read(from: &buf),
-                labels: FfiConverterOptionDictionaryStringString.read(from: &buf)
+                labels: FfiConverterOptionDictionaryStringString.read(from: &buf),
+                creationTimestamp: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -2269,6 +2530,7 @@ public struct FfiConverterTypeResourceMetadata: FfiConverterRustBuffer {
         FfiConverterString.write(value.namespace, into: &buf)
         FfiConverterString.write(value.name, into: &buf)
         FfiConverterOptionDictionaryStringString.write(value.labels, into: &buf)
+        FfiConverterOptionString.write(value.creationTimestamp, into: &buf)
     }
 }
 
@@ -2413,6 +2675,68 @@ public func FfiConverterTypeTemplate_lift(_ buf: RustBuffer) throws -> Template 
 #endif
 public func FfiConverterTypeTemplate_lower(_ value: Template) -> RustBuffer {
     return FfiConverterTypeTemplate.lower(value)
+}
+
+
+public struct UserApiKey: Equatable, Hashable {
+    public var id: String
+    public var clientId: String
+    public var name: String
+    public var scope: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, clientId: String, name: String, scope: [String]) {
+        self.id = id
+        self.clientId = clientId
+        self.name = name
+        self.scope = scope
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UserApiKey: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUserApiKey: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UserApiKey {
+        return
+            try UserApiKey(
+                id: FfiConverterString.read(from: &buf),
+                clientId: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                scope: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UserApiKey, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.clientId, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterSequenceString.write(value.scope, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUserApiKey_lift(_ buf: RustBuffer) throws -> UserApiKey {
+    return try FfiConverterTypeUserApiKey.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUserApiKey_lower(_ value: UserApiKey) -> RustBuffer {
+    return FfiConverterTypeUserApiKey.lower(value)
 }
 
 
@@ -2738,6 +3062,30 @@ public func FfiConverterTypeSdkError_lower(_ value: SdkError) -> RustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
+    typealias SwiftType = String?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterString.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterString.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionData: FfiConverterRustBuffer {
     typealias SwiftType = Data?
 
@@ -2933,6 +3281,31 @@ fileprivate struct FfiConverterSequenceTypeHttpHeader: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeNamespace: FfiConverterRustBuffer {
+    typealias SwiftType = [Namespace]
+
+    public static func write(_ value: [Namespace], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeNamespace.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Namespace] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Namespace]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeNamespace.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypePool: FfiConverterRustBuffer {
     typealias SwiftType = [Pool]
 
@@ -2975,6 +3348,31 @@ fileprivate struct FfiConverterSequenceTypeTemplate: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeTemplate.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeUserApiKey: FfiConverterRustBuffer {
+    typealias SwiftType = [UserApiKey]
+
+    public static func write(_ value: [UserApiKey], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeUserApiKey.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [UserApiKey] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [UserApiKey]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeUserApiKey.read(from: &buf))
         }
         return seq
     }
@@ -3174,6 +3572,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim() != 18984) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces() != 65288) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool() != 48557) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -3211,6 +3612,15 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template() != 18704) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key() != 9174) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_user_api_key() != 1700) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys() != 5949) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token() != 1180) {

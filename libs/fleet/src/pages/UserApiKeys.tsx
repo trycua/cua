@@ -22,11 +22,13 @@ import Multiselect, {
 import SpaceBetween from "@cloudscape-design/components/space-between"
 import Table from "@cloudscape-design/components/table"
 import {
-  type UserApiKey,
+  createUserKey,
+  deleteUserKey,
+  listUserKeys,
   type NewUserApiKey,
-  userKeysApi,
-  namespacesApi,
-} from "../api/cyclops"
+  type UserApiKey,
+} from "../sdk/userKeys"
+import { listNamespaces } from "../sdk/pools"
 
 export function UserApiKeys() {
   const [keys, setKeys] = useState<UserApiKey[]>([])
@@ -45,8 +47,8 @@ export function UserApiKeys() {
     setLoading(true)
     try {
       const [userKeys, namespaces] = await Promise.all([
-        userKeysApi.list(),
-        namespacesApi.list().catch(() => []),
+        listUserKeys(),
+        listNamespaces().catch(() => []),
       ])
       setKeys(userKeys)
       setNsOptions(
@@ -71,7 +73,7 @@ export function UserApiKeys() {
     setCreating(true)
     try {
       const scope = selectedScope.map(o => o.value!).filter(Boolean)
-      const k = await userKeysApi.create(
+      const k = await createUserKey(
         name,
         scope.length > 0 ? scope : undefined,
       )
@@ -88,7 +90,7 @@ export function UserApiKeys() {
 
   const remove = async (id: string) => {
     try {
-      await userKeysApi.remove(id)
+      await deleteUserKey(id)
       setConfirmRevoke(null)
       await refresh()
     } catch (e) {
@@ -146,7 +148,7 @@ export function UserApiKeys() {
         items={keys}
         columnDefinitions={[
           { id: "name", header: "Name", cell: r => r.name },
-          { id: "client_id", header: "Client ID", cell: r => <code>{r.client_id}</code> },
+          { id: "client_id", header: "Client ID", cell: r => <code>{r.clientId}</code> },
           {
             id: "scope",
             header: "Scope",
@@ -191,8 +193,8 @@ export function UserApiKeys() {
                 <FormField label="Client ID">
                   <CopyToClipboard
                     variant="inline"
-                    textToCopy={created.client_id}
-                    textToDisplay={<code>{created.client_id}</code>}
+                    textToCopy={created.clientId}
+                    textToDisplay={<code>{created.clientId}</code>}
                     copyButtonAriaLabel="Copy client ID"
                     copySuccessText="Client ID copied"
                     copyErrorText="Failed to copy"
@@ -201,8 +203,8 @@ export function UserApiKeys() {
                 <FormField label="Client Secret">
                   <CopyToClipboard
                     variant="inline"
-                    textToCopy={created.client_secret}
-                    textToDisplay={<code>{created.client_secret}</code>}
+                    textToCopy={created.clientSecret}
+                    textToDisplay={<code>{created.clientSecret}</code>}
                     copyButtonAriaLabel="Copy client secret"
                     copySuccessText="Client secret copied"
                     copyErrorText="Failed to copy"

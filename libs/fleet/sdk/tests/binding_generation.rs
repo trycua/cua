@@ -55,6 +55,18 @@ fn generated_bindings_hide_raw_credentials_and_claim_update() {
     assert!(python.contains("def connect_with_access_token_and_native_http_client"));
     assert!(python.contains("async def reconcile_pool"));
     assert!(kotlin.contains("suspend fun `reconcilePool`"));
+    assert!(!python.contains("async def execute_authenticated"));
+    assert!(!kotlin.contains("suspend fun `executeAuthenticated`"));
+    assert!(python.contains("async def list_namespaces"));
+    assert!(python.contains("async def list_user_api_keys"));
+    assert!(python.contains("async def create_user_api_key"));
+    assert!(python.contains("async def delete_user_api_key"));
+    assert!(kotlin.contains("suspend fun `listNamespaces`"));
+    assert!(kotlin.contains("suspend fun `listUserApiKeys`"));
+    assert!(kotlin.contains("suspend fun `createUserApiKey`"));
+    assert!(kotlin.contains("suspend fun `deleteUserApiKey`"));
+    assert!(python.contains("creation_timestamp:typing.Optional[str]"));
+    assert!(kotlin.contains("var `creationTimestamp`: kotlin.String?"));
 
     fs::remove_dir_all(output).unwrap();
 }

@@ -59,6 +59,7 @@ impl CyclopsClient {
                 namespace: pool.metadata.namespace.clone(),
                 name: claim_name()?,
                 labels: None,
+                creation_timestamp: None,
             },
             spec,
             status: None,

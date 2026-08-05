@@ -335,7 +335,40 @@ PYTHON_SMOKE
 rm "$runtime_copy"
 runtime_copy=""
 "$generator" --check
+python_sdk_source="$bindings_dir/python/fleet_sdk/_sdk.py"
+kotlin_sdk_source="$bindings_dir/kotlin/ai/cua/cyclops/sdk/fleet_sdk.kt"
+swift_sdk_source="$bindings_dir/swift/CyclopsSdk.swift"
 ruby_sdk_source="$bindings_dir/ruby/cyclops_sdk/sdk.rb"
+node_sdk_source="$bindings_dir/ts-uniffi/fleet_sdk.ts"
+go_sdk_source="$bindings_dir/go-uniffi/fleet_sdk/fleet_sdk.go"
+if grep -Fq -- "execute_authenticated" "$python_sdk_source"; then fail "Python bindings export execute_authenticated"; fi
+if grep -Fq -- "executeAuthenticated" "$kotlin_sdk_source"; then fail "Kotlin bindings export executeAuthenticated"; fi
+if grep -Fq -- "executeAuthenticated" "$swift_sdk_source"; then fail "Swift bindings export executeAuthenticated"; fi
+if grep -Fq -- "execute_authenticated" "$ruby_sdk_source"; then fail "Ruby bindings export execute_authenticated"; fi
+if grep -Fq -- "executeAuthenticated" "$node_sdk_source"; then fail "Node bindings export executeAuthenticated"; fi
+if grep -Fq -- "ExecuteAuthenticated" "$go_sdk_source"; then fail "Go bindings export ExecuteAuthenticated"; fi
+for method in list_namespaces list_user_api_keys create_user_api_key delete_user_api_key; do
+  grep -Fq -- "async def $method" "$python_sdk_source" || fail "Python bindings omit $method"
+done
+for method in listNamespaces listUserApiKeys createUserApiKey deleteUserApiKey; do
+  grep -Fq -- "suspend fun \`$method\`" "$kotlin_sdk_source" || fail "Kotlin bindings omit $method"
+  grep -Fq -- "func $method" "$swift_sdk_source" || fail "Swift bindings omit $method"
+done
+for method in list_namespaces list_user_api_keys create_user_api_key delete_user_api_key; do
+  grep -Fq -- "def $method" "$ruby_sdk_source" || fail "Ruby bindings omit $method"
+done
+for method in listNamespaces listUserApiKeys createUserApiKey deleteUserApiKey; do
+  grep -Fq -- "$method(" "$node_sdk_source" || fail "Node bindings omit $method"
+done
+for method in ListNamespaces ListUserApiKeys CreateUserApiKey DeleteUserApiKey; do
+  grep -Fq -- "$method(" "$go_sdk_source" || fail "Go bindings omit $method"
+done
+grep -Fq -- "creation_timestamp:typing.Optional[str]" "$python_sdk_source" || fail "Python bindings omit creation_timestamp"
+grep -Fq -- "var \`creationTimestamp\`: kotlin.String?" "$kotlin_sdk_source" || fail "Kotlin bindings omit creationTimestamp"
+grep -Fq -- "public var creationTimestamp: String?" "$swift_sdk_source" || fail "Swift bindings omit creationTimestamp"
+grep -Fq -- "attr_reader :namespace, :name, :labels, :creation_timestamp" "$ruby_sdk_source" || fail "Ruby bindings omit creation_timestamp"
+grep -Fq -- "creationTimestamp?: string" "$node_sdk_source" || fail "Node bindings omit creationTimestamp"
+grep -Fq -- "CreationTimestamp *string" "$go_sdk_source" || fail "Go bindings omit CreationTimestamp"
 grep -Fq -- "@uniffi_handle_map = UniffiHandleMap.new" "$ruby_sdk_source" || fail "Ruby callback bindings do not retain native callback objects"
 grep -Fq -- "module UniffiCallbackInterfaceHttpClient" "$ruby_sdk_source" || fail "Ruby callback bindings do not register an HTTP callback vtable"
 grep -Fq -- "[VTableCallbackInterfaceHttpClient.by_ref]" "$ruby_sdk_source" || fail "Ruby callback vtable initializer has the wrong FFI signature"
@@ -348,6 +381,7 @@ grep -Fq -- "def self.uniffi_is_error_type?" "$ruby_sdk_source" || fail "Ruby ca
 grep -Fq -- "FleetSdk.uniffi_rust_future_rust_buffer" "$ruby_sdk_source" || fail "Ruby async methods do not resolve Rust-buffer futures"
 grep -Fq -- "def self.uniffi_rust_future_void" "$ruby_sdk_source" || fail "Ruby bindings do not resolve void futures"
 grep -Fq -- "FleetSdk.uniffi_rust_future_void" "$ruby_sdk_source" || fail "Ruby async void methods do not resolve Rust futures"
+if grep -Fq -- ",,RustCallStatus.new" "$ruby_sdk_source"; then fail "Ruby zero-argument async methods emit a duplicate status separator"; fi
 grep -Fq -- "UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_pool(uniffi_clone_handle(),RustBuffer.alloc_from_TypeCreatePoolRequest(request),RustCallStatus.new)" "$ruby_sdk_source" || fail "Ruby async factories do not pass the generated status placeholder"
 grep -Fq -- "    readTypeOSGymSandboxWarmPoolSpec" "$bindings_dir/ruby/cyclops_sdk.rb" || fail "Ruby facade does not delegate schema record readers"
 if grep -Fq -- "OsGym" "$ruby_sdk_source"; then

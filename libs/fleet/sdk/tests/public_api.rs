@@ -70,6 +70,7 @@ fn pool() -> Pool {
             namespace: "default".into(),
             name: "pool".into(),
             labels: None,
+            creation_timestamp: None,
         },
         spec: pool_spec(),
         status: None,
@@ -84,6 +85,7 @@ fn claim() -> Claim {
             namespace: "default".into(),
             name: "claim".into(),
             labels: None,
+            creation_timestamp: None,
         },
         spec: claim_spec(),
         status: None,
@@ -199,11 +201,31 @@ fn http_request_distinguishes_absent_and_empty_bodies() {
 }
 
 #[test]
+fn resource_metadata_preserves_kubernetes_creation_timestamp() {
+    let metadata: ResourceMetadata = serde_json::from_value(serde_json::json!({
+        "namespace": "default",
+        "name": "claim-1",
+        "creationTimestamp": "2026-08-04T12:34:56Z"
+    }))
+    .unwrap();
+
+    assert_eq!(
+        metadata.creation_timestamp.as_deref(),
+        Some("2026-08-04T12:34:56Z")
+    );
+    assert_eq!(
+        serde_json::to_value(metadata).unwrap()["creationTimestamp"],
+        "2026-08-04T12:34:56Z"
+    );
+}
+
+#[test]
 fn resources_use_canonical_schema_specs_and_statuses() {
     let metadata = ResourceMetadata {
         namespace: "default".into(),
         name: "example".into(),
         labels: None,
+        creation_timestamp: None,
     };
     assert_eq!(metadata.namespace, "default");
 

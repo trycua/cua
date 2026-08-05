@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from dataclasses import dataclass
 
 from fleet_sdk import (ClaimSpec, CreateClaimRequest, CreatePoolRequest, CyclopsClient,
@@ -21,6 +22,15 @@ class Expected:
     status: int
     response: object
 
+def normalized_generated_claim_body(body):
+    if body is None:
+        return None
+    value = json.loads(body)
+    name = value['metadata']['name']
+    assert len(name.encode()) <= 63 and re.fullmatch(r'claim-[a-z0-9](?:[-a-z0-9]*[a-z0-9])?', name), name
+    value['metadata']['name'] = 'claim-generated'
+    return json.dumps(value, separators=(',', ':'), sort_keys=True).encode()
+
 class ScriptedHttpClient(HttpClient):
     def __init__(self, expected):
         self.expected = list(expected)
@@ -32,7 +42,13 @@ class ScriptedHttpClient(HttpClient):
             assert self.expected, f'unexpected request: {request.method} {request.url}'
             item = self.expected.pop(0)
             actual_headers = [(header.name, header.value) for header in request.headers]
-            assert (request.method, request.url, actual_headers, request.body) == (item.method, item.url, item.headers, item.body)
+            actual = (request.method, request.url, actual_headers)
+            expected = (item.method, item.url, item.headers)
+            assert actual == expected, f"request mismatch:\nactual={actual!r}\nexpected={expected!r}"
+            if request.method == 'POST' and request.url.endswith('/osgymsandboxclaims'):
+                assert normalized_generated_claim_body(request.body) == normalized_generated_claim_body(item.body)
+            else:
+                assert (request.method, request.url, actual_headers, request.body) == (item.method, item.url, item.headers, item.body)
             self.requests.append(request)
             body = item.response if isinstance(item.response, bytes) else json.dumps(item.response, separators=(',', ':')).encode()
             return HttpResponse(status=item.status, headers=[], body=body)

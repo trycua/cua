@@ -249,21 +249,21 @@ impl CyclopsClient {
         NamespaceLifecycleGuard {}
     }
 
-    pub async fn execute_authenticated(
-        &self,
-        request: HttpRequest,
-    ) -> Result<HttpResponse, SdkError> {
-        self.transport
-            .execute_authenticated(request, AuthenticatedRequestClass::ControlPlane)
-            .await
-    }
-
     pub(crate) async fn execute_authenticated_service(
         &self,
         request: HttpRequest,
     ) -> Result<HttpResponse, SdkError> {
         self.transport
             .execute_authenticated(request, AuthenticatedRequestClass::ServiceProxy)
+            .await
+    }
+
+    pub async fn execute_authenticated(
+        &self,
+        request: HttpRequest,
+    ) -> Result<HttpResponse, SdkError> {
+        self.transport
+            .execute_authenticated(request, AuthenticatedRequestClass::ControlPlane)
             .await
     }
 }

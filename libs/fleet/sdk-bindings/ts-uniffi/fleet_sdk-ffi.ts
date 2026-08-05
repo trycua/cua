@@ -368,6 +368,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cyclops_sdk_fn_method_cyclopsclient_create_user_api_key": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_claim": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -379,6 +384,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_template": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_user_api_key": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
@@ -403,6 +413,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cyclops_sdk_fn_method_cyclopsclient_list_namespaces": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cyclops_sdk_fn_method_cyclopsclient_list_pools": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -410,6 +425,11 @@ const DEFINITIONS = {
     },
     "uniffi_cyclops_sdk_fn_method_cyclopsclient_list_templates": {
       args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_fn_method_cyclopsclient_list_user_api_keys": {
+      args: [FfiType.Handle],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
@@ -513,6 +533,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim": {
       args: [],
       ret: FfiType.UInt16,
@@ -524,6 +549,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_user_api_key": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -548,12 +578,22 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
     "uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_templates": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -740,15 +780,19 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_fn_method_cyclopsclient_create_claim(uniffiSelf: bigint, request: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_create_pool(uniffiSelf: bigint, request: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_create_template(uniffiSelf: bigint, request: Uint8Array): bigint;
+    uniffi_cyclops_sdk_fn_method_cyclopsclient_create_user_api_key(uniffiSelf: bigint, request: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_claim(uniffiSelf: bigint, claim: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_pool(uniffiSelf: bigint, pool: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_template(uniffiSelf: bigint, template: Uint8Array): bigint;
+    uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_user_api_key(uniffiSelf: bigint, id: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_get_claim(uniffiSelf: bigint, claim: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_get_pool(uniffiSelf: bigint, name: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_get_template(uniffiSelf: bigint, namespace: Uint8Array, name: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_list_claims(uniffiSelf: bigint, namespace: Uint8Array): bigint;
+    uniffi_cyclops_sdk_fn_method_cyclopsclient_list_namespaces(uniffiSelf: bigint): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_list_pools(uniffiSelf: bigint, namespace: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_list_templates(uniffiSelf: bigint, namespace: Uint8Array): bigint;
+    uniffi_cyclops_sdk_fn_method_cyclopsclient_list_user_api_keys(uniffiSelf: bigint): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_pool(uniffiSelf: bigint, request: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_template(uniffiSelf: bigint, request: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request(uniffiSelf: bigint, sandbox: Uint8Array, service: Uint8Array, path: Uint8Array, request: Uint8Array): bigint;
@@ -769,15 +813,19 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template(): number;
+    uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template(): number;
+    uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_user_api_key(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_template(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims(): number;
+    uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_templates(): number;
+    uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request(): number;

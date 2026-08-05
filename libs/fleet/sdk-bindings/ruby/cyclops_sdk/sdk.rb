@@ -253,6 +253,26 @@ private_constant :UniffiHandleMap
     end
   end
 
+  # The Record type CreateUserApiKeyRequest.
+
+  def self.check_lower_TypeCreateUserApiKeyRequest(v)
+
+    RustBuffer.check_lower_Sequencestring(v.scope)
+  end
+
+  def self.alloc_from_TypeCreateUserApiKeyRequest(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_TypeCreateUserApiKeyRequest(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoTypeCreateUserApiKeyRequest
+    consumeWithStream do |stream|
+      return stream.readTypeCreateUserApiKeyRequest
+    end
+  end
+
   # The Record type CyclopsConfiguration.
 
   def self.check_lower_TypeCyclopsConfiguration(v)
@@ -364,6 +384,51 @@ private_constant :UniffiHandleMap
     end
   end
 
+  # The Record type Namespace.
+
+  def self.check_lower_TypeNamespace(v)
+
+
+
+    RustBuffer.check_lower_OptionalMapStringString(v.labels)
+  end
+
+  def self.alloc_from_TypeNamespace(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_TypeNamespace(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoTypeNamespace
+    consumeWithStream do |stream|
+      return stream.readTypeNamespace
+    end
+  end
+
+  # The Record type NewUserApiKey.
+
+  def self.check_lower_TypeNewUserApiKey(v)
+
+
+
+
+    RustBuffer.check_lower_Sequencestring(v.scope)
+  end
+
+  def self.alloc_from_TypeNewUserApiKey(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_TypeNewUserApiKey(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoTypeNewUserApiKey
+    consumeWithStream do |stream|
+      return stream.readTypeNewUserApiKey
+    end
+  end
+
   # The Record type Pool.
 
   def self.check_lower_TypePool(v)
@@ -393,6 +458,7 @@ private_constant :UniffiHandleMap
 
 
     RustBuffer.check_lower_OptionalMapStringString(v.labels)
+    RustBuffer.check_lower_Optionalstring(v.creation_timestamp)
   end
 
   def self.alloc_from_TypeResourceMetadata(v)
@@ -452,11 +518,54 @@ private_constant :UniffiHandleMap
     end
   end
 
+  # The Record type UserApiKey.
+
+  def self.check_lower_TypeUserApiKey(v)
+
+
+
+    RustBuffer.check_lower_Sequencestring(v.scope)
+  end
+
+  def self.alloc_from_TypeUserApiKey(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_TypeUserApiKey(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoTypeUserApiKey
+    consumeWithStream do |stream|
+      return stream.readTypeUserApiKey
+    end
+  end
 
 
 
 
 
+
+
+  # The Optional<T> type for string.
+
+  def self.check_lower_Optionalstring(v)
+    if not v.nil?
+
+    end
+  end
+
+  def self.alloc_from_Optionalstring(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_Optionalstring(v)
+      return builder.finalize()
+    end
+  end
+
+  def consumeIntoOptionalstring
+    consumeWithStream do |stream|
+      return stream.readOptionalstring
+    end
+  end
 
   # The Optional<T> type for bytes.
 
@@ -626,6 +735,27 @@ private_constant :UniffiHandleMap
     end
   end
 
+  # The Sequence<T> type for TypeNamespace.
+
+  def self.check_lower_SequenceTypeNamespace(v)
+    v.each do |item|
+      RustBuffer.check_lower_TypeNamespace(item)
+    end
+  end
+
+  def self.alloc_from_SequenceTypeNamespace(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_SequenceTypeNamespace(v)
+      return builder.finalize()
+    end
+  end
+
+  def consumeIntoSequenceTypeNamespace
+    consumeWithStream do |stream|
+      return stream.readSequenceTypeNamespace
+    end
+  end
+
   # The Sequence<T> type for TypePool.
 
   def self.check_lower_SequenceTypePool(v)
@@ -665,6 +795,27 @@ private_constant :UniffiHandleMap
   def consumeIntoSequenceTypeTemplate
     consumeWithStream do |stream|
       return stream.readSequenceTypeTemplate
+    end
+  end
+
+  # The Sequence<T> type for TypeUserApiKey.
+
+  def self.check_lower_SequenceTypeUserApiKey(v)
+    v.each do |item|
+      RustBuffer.check_lower_TypeUserApiKey(item)
+    end
+  end
+
+  def self.alloc_from_SequenceTypeUserApiKey(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_SequenceTypeUserApiKey(v)
+      return builder.finalize()
+    end
+  end
+
+  def consumeIntoSequenceTypeUserApiKey
+    consumeWithStream do |stream|
+      return stream.readSequenceTypeUserApiKey
     end
   end
 
@@ -839,6 +990,15 @@ class RustBufferStream
     )
   end
 
+  # The Record type CreateUserApiKeyRequest.
+
+  def readTypeCreateUserApiKeyRequest
+    CreateUserApiKeyRequest.new(
+      name: readString,
+      scope: readSequencestring
+    )
+  end
+
   # The Record type CyclopsConfiguration.
 
   def readTypeCyclopsConfiguration
@@ -895,6 +1055,29 @@ class RustBufferStream
     )
   end
 
+  # The Record type Namespace.
+
+  def readTypeNamespace
+    Namespace.new(
+      name: readString,
+      status: readString,
+      created_at: readString,
+      labels: readOptionalMapStringString
+    )
+  end
+
+  # The Record type NewUserApiKey.
+
+  def readTypeNewUserApiKey
+    NewUserApiKey.new(
+      client_id: readString,
+      client_secret: readString,
+      token_url: readString,
+      name: readString,
+      scope: readSequencestring
+    )
+  end
+
   # The Record type Pool.
 
   def readTypePool
@@ -913,7 +1096,8 @@ class RustBufferStream
     ResourceMetadata.new(
       namespace: readString,
       name: readString,
-      labels: readOptionalMapStringString
+      labels: readOptionalMapStringString,
+      creation_timestamp: readOptionalstring
     )
   end
 
@@ -936,6 +1120,17 @@ class RustBufferStream
       kind: readString,
       metadata: readTypeResourceMetadata,
       spec: readTypeOSGymSandboxTemplateSpec
+    )
+  end
+
+  # The Record type UserApiKey.
+
+  def readTypeUserApiKey
+    UserApiKey.new(
+      id: readString,
+      client_id: readString,
+      name: readString,
+      scope: readSequencestring
     )
   end
 
@@ -1044,6 +1239,20 @@ class RustBufferStream
     raise InternalError, 'Unexpected variant tag for TypeSdkError'
   end
 
+
+  # The Optional<T> type for string.
+
+  def readOptionalstring
+    flag = unpack_from 1, 'c'
+
+    if flag == 0
+      return nil
+    elsif flag == 1
+      return readString
+    else
+      raise InternalError, 'Unexpected flag byte for Optionalstring'
+    end
+  end
 
   # The Optional<T> type for bytes.
 
@@ -1163,6 +1372,22 @@ class RustBufferStream
     items
   end
 
+  # The Sequence<T> type for TypeNamespace.
+
+  def readSequenceTypeNamespace
+    count = unpack_from 4, 'l>'
+
+    raise InternalError, 'Unexpected negative sequence length' if count.negative?
+
+    items = []
+
+    count.times do
+      items.append readTypeNamespace
+    end
+
+    items
+  end
+
   # The Sequence<T> type for TypePool.
 
   def readSequenceTypePool
@@ -1190,6 +1415,22 @@ class RustBufferStream
 
     count.times do
       items.append readTypeTemplate
+    end
+
+    items
+  end
+
+  # The Sequence<T> type for TypeUserApiKey.
+
+  def readSequenceTypeUserApiKey
+    count = unpack_from 4, 'l>'
+
+    raise InternalError, 'Unexpected negative sequence length' if count.negative?
+
+    items = []
+
+    count.times do
+      items.append readTypeUserApiKey
     end
 
     items
@@ -1345,6 +1586,13 @@ class RustBufferBuilder
     self.write_TypeOSGymSandboxTemplateSpec(v.spec)
   end
 
+  # The Record type CreateUserApiKeyRequest.
+
+  def write_TypeCreateUserApiKeyRequest(v)
+    self.write_String(v.name)
+    self.write_Sequencestring(v.scope)
+  end
+
   # The Record type CyclopsConfiguration.
 
   def write_TypeCyclopsConfiguration(v)
@@ -1391,6 +1639,25 @@ class RustBufferBuilder
     self.write_Bytes(v.body)
   end
 
+  # The Record type Namespace.
+
+  def write_TypeNamespace(v)
+    self.write_String(v.name)
+    self.write_String(v.status)
+    self.write_String(v.created_at)
+    self.write_OptionalMapStringString(v.labels)
+  end
+
+  # The Record type NewUserApiKey.
+
+  def write_TypeNewUserApiKey(v)
+    self.write_String(v.client_id)
+    self.write_String(v.client_secret)
+    self.write_String(v.token_url)
+    self.write_String(v.name)
+    self.write_Sequencestring(v.scope)
+  end
+
   # The Record type Pool.
 
   def write_TypePool(v)
@@ -1407,6 +1674,7 @@ class RustBufferBuilder
     self.write_String(v.namespace)
     self.write_String(v.name)
     self.write_OptionalMapStringString(v.labels)
+    self.write_Optionalstring(v.creation_timestamp)
   end
 
   # The Record type Sandbox.
@@ -1427,11 +1695,31 @@ class RustBufferBuilder
     self.write_TypeOSGymSandboxTemplateSpec(v.spec)
   end
 
+  # The Record type UserApiKey.
+
+  def write_TypeUserApiKey(v)
+    self.write_String(v.id)
+    self.write_String(v.client_id)
+    self.write_String(v.name)
+    self.write_Sequencestring(v.scope)
+  end
 
 
 
 
 
+
+
+  # The Optional<T> type for string.
+
+  def write_Optionalstring(v)
+    if v.nil?
+      pack_into(1, 'c', 0)
+    else
+      pack_into(1, 'c', 1)
+      self.write_String(v)
+    end
+  end
 
   # The Optional<T> type for bytes.
 
@@ -1518,6 +1806,16 @@ class RustBufferBuilder
     end
   end
 
+  # The Sequence<T> type for TypeNamespace.
+
+  def write_SequenceTypeNamespace(items)
+    pack_into(4, 'l>', items.size)
+
+    items.each do |item|
+      self.write_TypeNamespace(item)
+    end
+  end
+
   # The Sequence<T> type for TypePool.
 
   def write_SequenceTypePool(items)
@@ -1535,6 +1833,16 @@ class RustBufferBuilder
 
     items.each do |item|
       self.write_TypeTemplate(item)
+    end
+  end
+
+  # The Sequence<T> type for TypeUserApiKey.
+
+  def write_SequenceTypeUserApiKey(items)
+    pack_into(4, 'l>', items.size)
+
+    items.each do |item|
+      self.write_TypeUserApiKey(item)
     end
   end
 
@@ -2030,6 +2338,9 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_list_namespaces,
+    [:uint64, RustCallStatus.by_ref],
+    :uint64
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_create_pool,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
@@ -2068,6 +2379,15 @@ module UniFFILib
     :uint64
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_update_template,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_create_user_api_key,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_user_api_key,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_list_user_api_keys,
+    [:uint64, RustCallStatus.by_ref],
     :uint64
   attach_function :uniffi_cyclops_sdk_fn_clone_accesstokenprovider,
     [:uint64, RustCallStatus.by_ref],
@@ -2157,6 +2477,9 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim,
     [RustCallStatus.by_ref],
     :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces,
+    [RustCallStatus.by_ref],
+    :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool,
     [RustCallStatus.by_ref],
     :uint16
@@ -2194,6 +2517,15 @@ module UniFFILib
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_user_api_key,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys,
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token,
@@ -2331,6 +2663,27 @@ class CreateTemplateRequest
       return false
     end
     if @spec != other.spec
+      return false
+    end
+
+    true
+  end
+end
+
+  # Record type CreateUserApiKeyRequest
+class CreateUserApiKeyRequest
+  attr_reader :name, :scope
+
+  def initialize(name:, scope:)
+    @name = name
+    @scope = scope
+  end
+
+  def ==(other)
+    if @name != other.name
+      return false
+    end
+    if @scope != other.scope
       return false
     end
 
@@ -2487,6 +2840,68 @@ class HttpResponse
   end
 end
 
+  # Record type Namespace
+class Namespace
+  attr_reader :name, :status, :created_at, :labels
+
+  def initialize(name:, status:, created_at:, labels:)
+    @name = name
+    @status = status
+    @created_at = created_at
+    @labels = labels
+  end
+
+  def ==(other)
+    if @name != other.name
+      return false
+    end
+    if @status != other.status
+      return false
+    end
+    if @created_at != other.created_at
+      return false
+    end
+    if @labels != other.labels
+      return false
+    end
+
+    true
+  end
+end
+
+  # Record type NewUserApiKey
+class NewUserApiKey
+  attr_reader :client_id, :client_secret, :token_url, :name, :scope
+
+  def initialize(client_id:, client_secret:, token_url:, name:, scope:)
+    @client_id = client_id
+    @client_secret = client_secret
+    @token_url = token_url
+    @name = name
+    @scope = scope
+  end
+
+  def ==(other)
+    if @client_id != other.client_id
+      return false
+    end
+    if @client_secret != other.client_secret
+      return false
+    end
+    if @token_url != other.token_url
+      return false
+    end
+    if @name != other.name
+      return false
+    end
+    if @scope != other.scope
+      return false
+    end
+
+    true
+  end
+end
+
   # Record type Pool
 class Pool
   attr_reader :api_version, :kind, :metadata, :spec, :status
@@ -2522,12 +2937,13 @@ end
 
   # Record type ResourceMetadata
 class ResourceMetadata
-  attr_reader :namespace, :name, :labels
+  attr_reader :namespace, :name, :labels, :creation_timestamp
 
-  def initialize(namespace:, name:, labels:)
+  def initialize(namespace:, name:, labels:, creation_timestamp:)
     @namespace = namespace
     @name = name
     @labels = labels
+    @creation_timestamp = creation_timestamp
   end
 
   def ==(other)
@@ -2538,6 +2954,9 @@ class ResourceMetadata
       return false
     end
     if @labels != other.labels
+      return false
+    end
+    if @creation_timestamp != other.creation_timestamp
       return false
     end
 
@@ -2596,6 +3015,35 @@ class Template
       return false
     end
     if @spec != other.spec
+      return false
+    end
+
+    true
+  end
+end
+
+  # Record type UserApiKey
+class UserApiKey
+  attr_reader :id, :client_id, :name, :scope
+
+  def initialize(id:, client_id:, name:, scope:)
+    @id = id
+    @client_id = client_id
+    @name = name
+    @scope = scope
+  end
+
+  def ==(other)
+    if @id != other.id
+      return false
+    end
+    if @client_id != other.client_id
+      return false
+    end
+    if @name != other.name
+      return false
+    end
+    if @scope != other.scope
       return false
     end
 
@@ -2772,6 +3220,13 @@ end
     )
     return result.consumeIntoTypeSandbox
   end
+  def list_namespaces()
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+      SdkError,
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_namespaces(uniffi_clone_handle(),RustCallStatus.new),
+    )
+    return result.consumeIntoSequenceTypeNamespace
+  end
   def create_pool(request)
         request = request
         RustBuffer.check_lower_TypeCreatePoolRequest(request)
@@ -2908,6 +3363,34 @@ end
       UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_update_template(uniffi_clone_handle(),RustBuffer.alloc_from_TypeTemplate(template),RustCallStatus.new),
     )
     return result.consumeIntoTypeTemplate
+  end
+  def create_user_api_key(request)
+        request = request
+        RustBuffer.check_lower_TypeCreateUserApiKeyRequest(request)
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+      SdkError,
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_user_api_key(uniffi_clone_handle(),RustBuffer.alloc_from_TypeCreateUserApiKeyRequest(request),RustCallStatus.new),
+    )
+    return result.consumeIntoTypeNewUserApiKey
+  end
+  def delete_user_api_key(id)
+        id = FleetSdk::uniffi_utf8(id)
+
+      FleetSdk.uniffi_rust_future_void(
+
+        SdkError,
+
+        UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_user_api_key(uniffi_clone_handle(),RustBuffer.allocFromString(id),RustCallStatus.new),
+
+      )
+  end
+
+  def list_user_api_keys()
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+      SdkError,
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_user_api_keys(uniffi_clone_handle(),RustCallStatus.new),
+    )
+    return result.consumeIntoSequenceTypeUserApiKey
   end
 
 end

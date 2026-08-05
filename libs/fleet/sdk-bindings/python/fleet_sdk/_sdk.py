@@ -502,11 +502,15 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template() != 13689:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key() != 9174:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() != 20460:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool() != 31235:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template() != 54852:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_user_api_key() != 1700:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim() != 17760:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -516,9 +520,13 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims() != 7802:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces() != 65288:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools() != 27984:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_templates() != 58376:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys() != 5949:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool() != 53919:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -941,6 +949,11 @@ _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_template.argtypes =
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_template.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_user_api_key.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_user_api_key.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_claim.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -956,6 +969,11 @@ _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_template.argtypes =
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_template.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_user_api_key.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_user_api_key.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_claim.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -977,6 +995,10 @@ _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_claims.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_claims.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_namespaces.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_namespaces.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_pools.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -987,6 +1009,10 @@ _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_templates.argtypes = 
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_templates.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_user_api_keys.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_user_api_keys.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_pool.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -1067,6 +1093,9 @@ _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool.restype 
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim.restype = ctypes.c_uint16
@@ -1076,6 +1105,9 @@ _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool.restype 
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_user_api_key.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_user_api_key.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim.restype = ctypes.c_uint16
@@ -1088,12 +1120,18 @@ _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_template.restype
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_templates.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_templates.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool.restype = ctypes.c_uint16
@@ -1339,24 +1377,52 @@ class _UniffiFfiConverterOptionalMapStringString(_UniffiConverterRustBuffer):
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
+class _UniffiFfiConverterOptionalString(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterString.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterString.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterString.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
 @dataclass
 class ResourceMetadata:
-    def __init__(self, *, namespace:str, name:str, labels:typing.Optional[dict[str, str]]):
+    def __init__(self, *, namespace:str, name:str, labels:typing.Optional[dict[str, str]], creation_timestamp:typing.Optional[str]):
         self.namespace = namespace
         self.name = name
         self.labels = labels
+        self.creation_timestamp = creation_timestamp
 
 
 
 
     def __str__(self):
-        return "ResourceMetadata(namespace={}, name={}, labels={})".format(self.namespace, self.name, self.labels)
+        return "ResourceMetadata(namespace={}, name={}, labels={}, creation_timestamp={})".format(self.namespace, self.name, self.labels, self.creation_timestamp)
     def __eq__(self, other):
         if self.namespace != other.namespace:
             return False
         if self.name != other.name:
             return False
         if self.labels != other.labels:
+            return False
+        if self.creation_timestamp != other.creation_timestamp:
             return False
         return True
 
@@ -1367,6 +1433,7 @@ class _UniffiFfiConverterTypeResourceMetadata(_UniffiConverterRustBuffer):
             namespace=_UniffiFfiConverterString.read(buf),
             name=_UniffiFfiConverterString.read(buf),
             labels=_UniffiFfiConverterOptionalMapStringString.read(buf),
+            creation_timestamp=_UniffiFfiConverterOptionalString.read(buf),
         )
 
     @staticmethod
@@ -1374,12 +1441,14 @@ class _UniffiFfiConverterTypeResourceMetadata(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.check_lower(value.namespace)
         _UniffiFfiConverterString.check_lower(value.name)
         _UniffiFfiConverterOptionalMapStringString.check_lower(value.labels)
+        _UniffiFfiConverterOptionalString.check_lower(value.creation_timestamp)
 
     @staticmethod
     def write(value, buf):
         _UniffiFfiConverterString.write(value.namespace, buf)
         _UniffiFfiConverterString.write(value.name, buf)
         _UniffiFfiConverterOptionalMapStringString.write(value.labels, buf)
+        _UniffiFfiConverterOptionalString.write(value.creation_timestamp, buf)
 
 
 
@@ -1696,6 +1765,65 @@ class _UniffiFfiConverterTypeCreateTemplateRequest(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.write(value.namespace, buf)
         _UniffiFfiConverterString.write(value.name, buf)
         fleet_sdk._UniffiFfiConverterTypeOSGymSandboxTemplateSpec.write(value.spec, buf)
+
+class _UniffiFfiConverterSequenceString(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterString.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterString.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterString.read(buf) for i in range(count)
+        ]
+
+@dataclass
+class CreateUserApiKeyRequest:
+    def __init__(self, *, name:str, scope:typing.List[str]):
+        self.name = name
+        self.scope = scope
+
+
+
+
+    def __str__(self):
+        return "CreateUserApiKeyRequest(name={}, scope={})".format(self.name, self.scope)
+    def __eq__(self, other):
+        if self.name != other.name:
+            return False
+        if self.scope != other.scope:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeCreateUserApiKeyRequest(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return CreateUserApiKeyRequest(
+            name=_UniffiFfiConverterString.read(buf),
+            scope=_UniffiFfiConverterSequenceString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.name)
+        _UniffiFfiConverterSequenceString.check_lower(value.scope)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.name, buf)
+        _UniffiFfiConverterSequenceString.write(value.scope, buf)
 
 
 class CyclopsCredentialsProtocol(typing.Protocol):
@@ -2123,28 +2251,107 @@ class _UniffiFfiConverterTypeHttpResponse(_UniffiConverterRustBuffer):
         _UniffiFfiConverterSequenceTypeHttpHeader.write(value.headers, buf)
         _UniffiFfiConverterBytes.write(value.body, buf)
 
-class _UniffiFfiConverterSequenceString(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, value):
-        for item in value:
-            _UniffiFfiConverterString.check_lower(item)
+@dataclass
+class Namespace:
+    def __init__(self, *, name:str, status:str, created_at:str, labels:typing.Optional[dict[str, str]]):
+        self.name = name
+        self.status = status
+        self.created_at = created_at
+        self.labels = labels
 
-    @classmethod
-    def write(cls, value, buf):
-        items = len(value)
-        buf.write_i32(items)
-        for item in value:
-            _UniffiFfiConverterString.write(item, buf)
 
-    @classmethod
-    def read(cls, buf):
-        count = buf.read_i32()
-        if count < 0:
-            raise InternalError("Unexpected negative sequence length")
 
-        return [
-            _UniffiFfiConverterString.read(buf) for i in range(count)
-        ]
+
+    def __str__(self):
+        return "Namespace(name={}, status={}, created_at={}, labels={})".format(self.name, self.status, self.created_at, self.labels)
+    def __eq__(self, other):
+        if self.name != other.name:
+            return False
+        if self.status != other.status:
+            return False
+        if self.created_at != other.created_at:
+            return False
+        if self.labels != other.labels:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeNamespace(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return Namespace(
+            name=_UniffiFfiConverterString.read(buf),
+            status=_UniffiFfiConverterString.read(buf),
+            created_at=_UniffiFfiConverterString.read(buf),
+            labels=_UniffiFfiConverterOptionalMapStringString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.name)
+        _UniffiFfiConverterString.check_lower(value.status)
+        _UniffiFfiConverterString.check_lower(value.created_at)
+        _UniffiFfiConverterOptionalMapStringString.check_lower(value.labels)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.name, buf)
+        _UniffiFfiConverterString.write(value.status, buf)
+        _UniffiFfiConverterString.write(value.created_at, buf)
+        _UniffiFfiConverterOptionalMapStringString.write(value.labels, buf)
+
+@dataclass
+class NewUserApiKey:
+    def __init__(self, *, client_id:str, client_secret:str, token_url:str, name:str, scope:typing.List[str]):
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.token_url = token_url
+        self.name = name
+        self.scope = scope
+
+
+
+
+    def __str__(self):
+        return "NewUserApiKey(client_id={}, client_secret={}, token_url={}, name={}, scope={})".format(self.client_id, self.client_secret, self.token_url, self.name, self.scope)
+    def __eq__(self, other):
+        if self.client_id != other.client_id:
+            return False
+        if self.client_secret != other.client_secret:
+            return False
+        if self.token_url != other.token_url:
+            return False
+        if self.name != other.name:
+            return False
+        if self.scope != other.scope:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeNewUserApiKey(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return NewUserApiKey(
+            client_id=_UniffiFfiConverterString.read(buf),
+            client_secret=_UniffiFfiConverterString.read(buf),
+            token_url=_UniffiFfiConverterString.read(buf),
+            name=_UniffiFfiConverterString.read(buf),
+            scope=_UniffiFfiConverterSequenceString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.client_id)
+        _UniffiFfiConverterString.check_lower(value.client_secret)
+        _UniffiFfiConverterString.check_lower(value.token_url)
+        _UniffiFfiConverterString.check_lower(value.name)
+        _UniffiFfiConverterSequenceString.check_lower(value.scope)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.client_id, buf)
+        _UniffiFfiConverterString.write(value.client_secret, buf)
+        _UniffiFfiConverterString.write(value.token_url, buf)
+        _UniffiFfiConverterString.write(value.name, buf)
+        _UniffiFfiConverterSequenceString.write(value.scope, buf)
 
 @dataclass
 class Sandbox:
@@ -2245,6 +2452,54 @@ class _UniffiFfiConverterTypeTemplate(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.write(value.kind, buf)
         _UniffiFfiConverterTypeResourceMetadata.write(value.metadata, buf)
         fleet_sdk._UniffiFfiConverterTypeOSGymSandboxTemplateSpec.write(value.spec, buf)
+
+@dataclass
+class UserApiKey:
+    def __init__(self, *, id:str, client_id:str, name:str, scope:typing.List[str]):
+        self.id = id
+        self.client_id = client_id
+        self.name = name
+        self.scope = scope
+
+
+
+
+    def __str__(self):
+        return "UserApiKey(id={}, client_id={}, name={}, scope={})".format(self.id, self.client_id, self.name, self.scope)
+    def __eq__(self, other):
+        if self.id != other.id:
+            return False
+        if self.client_id != other.client_id:
+            return False
+        if self.name != other.name:
+            return False
+        if self.scope != other.scope:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeUserApiKey(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return UserApiKey(
+            id=_UniffiFfiConverterString.read(buf),
+            client_id=_UniffiFfiConverterString.read(buf),
+            name=_UniffiFfiConverterString.read(buf),
+            scope=_UniffiFfiConverterSequenceString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.id)
+        _UniffiFfiConverterString.check_lower(value.client_id)
+        _UniffiFfiConverterString.check_lower(value.name)
+        _UniffiFfiConverterSequenceString.check_lower(value.scope)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.id, buf)
+        _UniffiFfiConverterString.write(value.client_id, buf)
+        _UniffiFfiConverterString.write(value.name, buf)
+        _UniffiFfiConverterSequenceString.write(value.scope, buf)
 
 
 
@@ -2812,6 +3067,29 @@ class _UniffiFfiConverterSequenceTypeClaim(_UniffiConverterRustBuffer):
             _UniffiFfiConverterTypeClaim.read(buf) for i in range(count)
         ]
 
+class _UniffiFfiConverterSequenceTypeNamespace(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeNamespace.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeNamespace.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeNamespace.read(buf) for i in range(count)
+        ]
+
 class _UniffiFfiConverterSequenceTypePool(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -2858,6 +3136,29 @@ class _UniffiFfiConverterSequenceTypeTemplate(_UniffiConverterRustBuffer):
             _UniffiFfiConverterTypeTemplate.read(buf) for i in range(count)
         ]
 
+class _UniffiFfiConverterSequenceTypeUserApiKey(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeUserApiKey.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeUserApiKey.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeUserApiKey.read(buf) for i in range(count)
+        ]
+
 
 class CyclopsClientProtocol(typing.Protocol):
 
@@ -2867,11 +3168,15 @@ class CyclopsClientProtocol(typing.Protocol):
         raise NotImplementedError
     async def create_template(self, request: CreateTemplateRequest) -> Template:
         raise NotImplementedError
+    async def create_user_api_key(self, request: CreateUserApiKeyRequest) -> NewUserApiKey:
+        raise NotImplementedError
     async def delete_claim(self, claim: Claim) -> None:
         raise NotImplementedError
     async def delete_pool(self, pool: Pool) -> None:
         raise NotImplementedError
     async def delete_template(self, template: Template) -> None:
+        raise NotImplementedError
+    async def delete_user_api_key(self, id: str) -> None:
         raise NotImplementedError
     async def get_claim(self, claim: Claim) -> Claim:
         raise NotImplementedError
@@ -2881,9 +3186,13 @@ class CyclopsClientProtocol(typing.Protocol):
         raise NotImplementedError
     async def list_claims(self, namespace: str) -> typing.List[Claim]:
         raise NotImplementedError
+    async def list_namespaces(self, ) -> typing.List[Namespace]:
+        raise NotImplementedError
     async def list_pools(self, namespace: str) -> typing.List[Pool]:
         raise NotImplementedError
     async def list_templates(self, namespace: str) -> typing.List[Template]:
+        raise NotImplementedError
+    async def list_user_api_keys(self, ) -> typing.List[UserApiKey]:
         raise NotImplementedError
     async def reconcile_pool(self, request: CreatePoolRequest) -> Pool:
         raise NotImplementedError
@@ -3102,6 +3411,23 @@ class CyclopsClient(CyclopsClientProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    async def create_user_api_key(self, request: CreateUserApiKeyRequest) -> NewUserApiKey:
+
+        _UniffiFfiConverterTypeCreateUserApiKeyRequest.check_lower(request)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeCreateUserApiKeyRequest.lower(request),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeNewUserApiKey.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_user_api_key(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def delete_claim(self, claim: Claim) -> None:
 
         _UniffiFfiConverterTypeClaim.check_lower(claim)
@@ -3147,6 +3473,23 @@ class CyclopsClient(CyclopsClientProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_template(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cyclops_sdk_rust_future_poll_void,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_complete_void,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_free_void,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def delete_user_api_key(self, id: str) -> None:
+
+        _UniffiFfiConverterString.check_lower(id)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(id),
+        )
+        _uniffi_lift_return = lambda val: None
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_user_api_key(*_uniffi_lowered_args),
             _UniffiLib.ffi_cyclops_sdk_rust_future_poll_void,
             _UniffiLib.ffi_cyclops_sdk_rust_future_complete_void,
             _UniffiLib.ffi_cyclops_sdk_rust_future_free_void,
@@ -3224,6 +3567,20 @@ class CyclopsClient(CyclopsClientProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    async def list_namespaces(self, ) -> typing.List[Namespace]:
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterSequenceTypeNamespace.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_namespaces(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def list_pools(self, namespace: str) -> typing.List[Pool]:
 
         _UniffiFfiConverterString.check_lower(namespace)
@@ -3252,6 +3609,20 @@ class CyclopsClient(CyclopsClientProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_templates(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def list_user_api_keys(self, ) -> typing.List[UserApiKey]:
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterSequenceTypeUserApiKey.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_user_api_keys(*_uniffi_lowered_args),
             _UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer,
@@ -3573,13 +3944,17 @@ __all__ = [
     "CreateClaimRequest",
     "CreatePoolRequest",
     "CreateTemplateRequest",
+    "CreateUserApiKeyRequest",
     "CyclopsConfiguration",
     "CyclopsTokenProviderConfiguration",
     "HttpHeader",
     "HttpRequest",
     "HttpResponse",
+    "Namespace",
+    "NewUserApiKey",
     "Sandbox",
     "Template",
+    "UserApiKey",
     "CyclopsCredentials",
     "CyclopsCredentialsProtocol",
     "AccessTokenProviderImpl",

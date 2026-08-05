@@ -5,6 +5,17 @@ require 'json'
 require 'thread'
 Expected = Struct.new(:method, :url, :headers, :body, :status, :response)
 BASE = 'https://cyclops.invalid'; TOKEN = 'https://keycloak.invalid/token'; JSON_HEADERS = [['accept','application/json'],['content-type','application/json'],['authorization','Bearer offline-token']]
+GENERATED_CLAIM_NAME = /\Aclaim-[a-z0-9](?:[-a-z0-9]*[a-z0-9])?\z/
+
+def normalized_generated_claim_body(body)
+  return nil if body.nil?
+  value = JSON.parse(body)
+  name = value.fetch('metadata').fetch('name')
+  raise "invalid generated claim name: #{name.inspect}" unless name.bytesize <= 63 && GENERATED_CLAIM_NAME.match?(name)
+  value['metadata']['name'] = 'claim-generated'
+  JSON.generate(value).b
+end
+
 def pool_json; { apiVersion:'osgym.cua.ai/v1alpha1',kind:'OSGymSandboxWarmPool',metadata:{namespace:'default',name:'default',labels:nil},spec:{replicas:1,sandboxTemplateRef:{name:'default'}},status:nil }; end
 def template_json; { apiVersion:'osgym.cua.ai/v1alpha1',kind:'OSGymSandboxTemplate',metadata:{namespace:'default',name:'default',labels:nil},spec:{vmTemplate:{containerDiskImage:'registry.example/desktop:offline',services:[{name:'mcp',targetPort:8080}]}} }; end
 def claim_json(bound=false); value={apiVersion:'osgym.cua.ai/v1alpha1',kind:'OSGymSandboxClaim',metadata:{namespace:'default',name:'default',labels:nil},spec:{sandboxTemplateRef:{name:'default'}},status:nil}; value[:status]={phase:'Bound',sandbox:{name:'offline-sandbox'}} if bound; value; end
@@ -19,7 +30,12 @@ class ScriptedHttpClient < FleetSdk::HttpClient
     @mutex.synchronize do
       item=@expected.shift or raise 'unexpected request'
       actual=[request.method,request.url,request.headers.map{|h|[h.name,h.value]},request.body]
-      raise "request mismatch: #{actual.inspect}" unless actual == [item.method,item.url,item.headers,item.body]
+      expected=[item.method,item.url,item.headers,item.body]
+      if request.method == 'POST' && request.url.end_with?('/osgymsandboxclaims')
+        raise "request mismatch: #{actual.inspect}" unless actual.first(3) == expected.first(3) && normalized_generated_claim_body(request.body) == normalized_generated_claim_body(item.body)
+      else
+        raise "request mismatch: #{actual.inspect}" unless actual == expected
+      end
       body=item.response.is_a?(String) ? item.response.b : JSON.generate(item.response).b
       FleetSdk::HttpResponse.new(status:item.status,headers:[],body:body)
     end

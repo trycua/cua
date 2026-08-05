@@ -34,6 +34,7 @@ impl CyclopsClient {
                 namespace: request.namespace.clone(),
                 name: request.namespace,
                 labels: None,
+                creation_timestamp: None,
             },
             spec: request.spec,
             status: None,

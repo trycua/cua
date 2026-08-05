@@ -1,5 +1,9 @@
 node_modules
 dist
+target
+sdk-bindings/ts-uniffi-browser/node_modules
+sdk-bindings/ts-uniffi-browser/examples/dist
+sdk-bindings/ts-uniffi-browser/ts/wasm-bindgen
 .git
 *.log
 README.md

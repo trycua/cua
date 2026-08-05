@@ -10,9 +10,7 @@ import {
 import AppLayout from "@cloudscape-design/components/app-layout"
 import Button from "@cloudscape-design/components/button"
 import SideNavigation from "@cloudscape-design/components/side-navigation"
-import TopNavigation, {
-  type TopNavigationProps,
-} from "@cloudscape-design/components/top-navigation"
+import TopNavigation from "@cloudscape-design/components/top-navigation"
 import Flashbar, {
   type FlashbarProps,
 } from "@cloudscape-design/components/flashbar"
@@ -21,14 +19,9 @@ import { PoolsList } from "./pages/PoolsList"
 import { ClaimDetail } from "./pages/ClaimDetail"
 import { PoolDetail } from "./pages/PoolDetail"
 import { PoolNew } from "./pages/PoolNew"
-import { PoolReplicaDetail } from "./pages/PoolReplicaDetail"
-import { NodesList } from "./pages/NodesList"
-import { OperatorEvents } from "./pages/OperatorEvents"
-import { ApiKeys } from "./pages/ApiKeys"
 import { UserApiKeys } from "./pages/UserApiKeys"
 import { Settings } from "./pages/Settings"
 import { FlashContext, type FlashMsg } from "./components/FlashContext"
-import { FeatureFlagProvider, useFeatureFlags } from "./components/FeatureFlagContext"
 import { logout, userInfo } from "./auth/keycloak"
 
 const VERSION_CHECK_INTERVAL_MS = 60_000
@@ -85,7 +78,6 @@ function Shell() {
   const [flashes, setFlashes] = useState<FlashbarProps.MessageDefinition[]>([])
   const { stale } = useStaleCheck()
   const [staleDismissed, setStaleDismissed] = useState(false)
-  const { admin } = useFeatureFlags()
   const user = userInfo()
   const pushFlash = useCallback((msg: FlashMsg) => {
     const id = crypto.randomUUID()
@@ -120,28 +112,6 @@ function Shell() {
               navigate("/pools")
             },
           },
-          ...(admin
-            ? ([
-                {
-                  type: "button",
-                  text: "Nodes",
-                  href: "#/nodes",
-                  onClick: e => {
-                    e.preventDefault()
-                    navigate("/nodes")
-                  },
-                },
-                {
-                  type: "button",
-                  text: "Operator events",
-                  href: "#/operator-events",
-                  onClick: e => {
-                    e.preventDefault()
-                    navigate("/operator-events")
-                  },
-                },
-              ] satisfies TopNavigationProps.Utility[])
-            : []),
           {
             type: "menu-dropdown",
             text: user.name ?? user.email ?? "Account",
@@ -169,16 +139,6 @@ function Shell() {
               }}
               items={[
                 { type: "link", text: "Pools", href: "#/pools" },
-                ...(admin
-                  ? [
-                      { type: "link" as const, text: "Nodes", href: "#/nodes" },
-                      {
-                        type: "link" as const,
-                        text: "Operator events",
-                        href: "#/operator-events",
-                      },
-                    ]
-                  : []),
                 { type: "link", text: "User API keys", href: "#/user-keys" },
                 { type: "link", text: "Settings", href: "#/settings" },
               ]}
@@ -220,47 +180,31 @@ function Shell() {
 export function App() {
   return (
     <BrowserRouter>
-      <FeatureFlagProvider>
-        <Routes>
-          <Route element={<Shell />}>
-            <Route index element={<Navigate to="/pools" replace />} />
-            <Route path="/pools" element={<PoolsList />} />
-            <Route path="/pools/new" element={<PoolNew />} />
-            {/* Templates feature removed — keep old links working. */}
-            <Route
-              path="/pools/templates"
-              element={<Navigate to="/pools" replace />}
-            />
-            <Route path="/pools/:namespace/:name" element={<PoolDetail />} />
-            <Route path="/nodes" element={<NodesList />} />
-            <Route path="/operator-events" element={<OperatorEvents />} />
-            <Route
-              path="/operator-logs"
-              element={<Navigate to="/operator-events" replace />}
-            />
-            <Route path="/api-keys" element={<ApiKeys />} />
-            <Route path="/user-keys" element={<UserApiKeys />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route
-              path="/pools/:namespace/:poolName/claims/:claimName"
-              element={<ClaimDetail />}
-            />
-            <Route
-              path="/pools/:namespace/:poolName/replicas/:vmName"
-              element={<PoolReplicaDetail />}
-            />
-            {/* Back-compat for old bookmarks. */}
-            <Route path="/modules" element={<Navigate to="/pools" replace />} />
-            <Route
-              path="/modules/new"
-              element={<Navigate to="/pools/new" replace />}
-            />
-            <Route path="/modules/:name" element={<RedirectModule />} />
-            {/* Back-compat: old /pools/:name URLs (no namespace) redirect to list. */}
-            <Route path="/pools/:name" element={<Navigate to="/pools" replace />} />
-          </Route>
-        </Routes>
-      </FeatureFlagProvider>
+      <Routes>
+        <Route element={<Shell />}>
+          <Route index element={<Navigate to="/pools" replace />} />
+          <Route path="/pools" element={<PoolsList />} />
+          <Route path="/pools/new" element={<PoolNew />} />
+          <Route
+            path="/pools/templates"
+            element={<Navigate to="/pools" replace />}
+          />
+          <Route path="/pools/:namespace/:name" element={<PoolDetail />} />
+          <Route path="/user-keys" element={<UserApiKeys />} />
+          <Route path="/settings" element={<Settings />} />
+          <Route
+            path="/pools/:namespace/:poolName/claims/:claimName"
+            element={<ClaimDetail />}
+          />
+          <Route path="/modules" element={<Navigate to="/pools" replace />} />
+          <Route
+            path="/modules/new"
+            element={<Navigate to="/pools/new" replace />}
+          />
+          <Route path="/modules/:name" element={<RedirectModule />} />
+          <Route path="/pools/:name" element={<Navigate to="/pools" replace />} />
+        </Route>
+      </Routes>
     </BrowserRouter>
   )
 }

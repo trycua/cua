@@ -590,6 +590,7 @@ async fn rejects_deleting_a_pool_outside_the_namespace_owned_lifecycle() {
             namespace: NAMESPACE.into(),
             name: "other-pool".into(),
             labels: None,
+            creation_timestamp: None,
         },
         ..pool()
     };
@@ -609,6 +610,7 @@ async fn updates_non_lifecycle_pool_resources_without_namespace_cleanup() {
             namespace: NAMESPACE.into(),
             name: "other-pool".into(),
             labels: None,
+            creation_timestamp: None,
         },
         ..pool()
     };
@@ -758,6 +760,7 @@ fn pool_named(namespace: &str) -> Pool {
             namespace: namespace.into(),
             name: namespace.into(),
             labels: None,
+            creation_timestamp: None,
         },
         spec: pool_spec(),
         status: None,

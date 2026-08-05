@@ -240,6 +240,7 @@ async fn validation_and_malformed_responses_fail_without_unexpected_http() {
             namespace: NAMESPACE.into(),
             name: "Uppercase".into(),
             labels: None,
+            creation_timestamp: None,
         },
         ..claim("valid-claim", claim_spec("example-pool-template"), None)
     };
@@ -291,6 +292,7 @@ fn pool_named(name: &str, replicas: u32) -> Pool {
             namespace: name.into(),
             name: name.into(),
             labels: None,
+            creation_timestamp: None,
         },
         spec: serde_json::from_value(serde_json::json!({
             "replicas": replicas,
@@ -315,6 +317,7 @@ fn template_named(name: &str, services: Option<Vec<&str>>) -> Template {
             namespace: NAMESPACE.into(),
             name: name.into(),
             labels: None,
+            creation_timestamp: None,
         },
         spec: serde_json::from_value(serde_json::json!({
             "vmTemplate": {
@@ -334,6 +337,7 @@ fn claim(name: &str, spec: ClaimSpec, status: Option<serde_json::Value>) -> Clai
             namespace: NAMESPACE.into(),
             name: name.into(),
             labels: None,
+            creation_timestamp: None,
         },
         spec,
         status: status.map(|status| serde_json::from_value(status).unwrap()),
@@ -519,6 +523,7 @@ async fn wait_claim_rejects_invalid_claim_identity_before_token_or_pool_lookup()
             namespace: NAMESPACE.into(),
             name: "Uppercase".into(),
             labels: None,
+            creation_timestamp: None,
         },
         ..claim("named-claim", claim_spec("example-pool-template"), None)
     };

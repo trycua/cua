@@ -250,6 +250,12 @@ struct Visited<'a> {
     /// Chromium keeps its document on the application's ordinary AT-SPI bus,
     /// where descendant Window extents already include the document origin.
     on_web_process_bus: bool,
+    /// Position of the application top-level (frame/window) this node descends
+    /// from, in `app.get_children()` order. AT-SPI exposes one application per
+    /// process, so a multi-window app publishes every window's controls in one
+    /// tree; this is what lets a caller that named an exact native window prove
+    /// which of those windows a node actually lives in.
+    frame_ordinal: usize,
     acc: AccessibleProxy<'a>,
 }
 
@@ -523,7 +529,128 @@ async fn collect_visited<'a>(
     conn: &'a AccessibilityConnection,
     pid: u32,
 ) -> Result<Option<Vec<Visited<'a>>>> {
-    collect_visited_bounded(conn, pid, None, None).await
+    collect_visited_bounded(conn, pid, 0, None, None)
+        .await
+        .map(|walked| walked.map(|(visited, _)| visited))
+}
+
+/// Screen-space distance between an AT-SPI frame's extents and a native
+/// window's geometry. Lower is a better correspondence; `None` when the frame
+/// reports no usable extents.
+fn frame_geometry_distance(
+    frame: (i32, i32, i32, i32),
+    window: &crate::x11::WindowInfo,
+) -> Option<u64> {
+    let (fx, fy, fw, fh) = frame;
+    if fw <= 0 || fh <= 0 {
+        return None;
+    }
+    let dx = i64::from(fx) - i64::from(window.x);
+    let dy = i64::from(fy) - i64::from(window.y);
+    let dw = i64::from(fw) - i64::from(window.width);
+    let dh = i64::from(fh) - i64::from(window.height);
+    Some(dx.unsigned_abs() + dy.unsigned_abs() + dw.unsigned_abs() + dh.unsigned_abs())
+}
+
+/// Server-side decorations offset a frame's reported origin from the native
+/// window's outer geometry, so an exact match is not required. The correlation
+/// must still be unambiguous: the best candidate has to be within this budget
+/// AND beat the runner-up by [`FRAME_MATCH_MARGIN_PX`].
+const FRAME_MATCH_TOLERANCE_PX: u64 = 160;
+
+/// How decisively the best frame must beat the second-best. Two windows of
+/// genuinely similar geometry are not disambiguated by this heuristic, and a
+/// caller that needs proof of window identity must get a refusal instead of a
+/// coin flip.
+const FRAME_MATCH_MARGIN_PX: u64 = 24;
+
+/// Pick the unique application top-level that corresponds to native window
+/// `xid`, or `None` when the correspondence cannot be proven.
+///
+/// AT-SPI publishes one application per process: every window of a multi-window
+/// app shares a single tree, and the protocol exposes no window handle to join
+/// on. Geometry is the available bridge — `Component.GetExtents` in screen
+/// coordinates against the X11 outer geometry the caller already named. This
+/// refuses ties rather than guessing, because callers use the result to decide
+/// which window they are about to act inside.
+fn correlate_frame_to_window(
+    candidates: &[(usize, (i32, i32, i32, i32))],
+    window: &crate::x11::WindowInfo,
+) -> Option<usize> {
+    let mut scored: Vec<(u64, usize)> = candidates
+        .iter()
+        .filter_map(|(ordinal, extents)| {
+            frame_geometry_distance(*extents, window).map(|distance| (distance, *ordinal))
+        })
+        .collect();
+    scored.sort_by_key(|(distance, ordinal)| (*distance, *ordinal));
+    let (best_distance, best_ordinal) = *scored.first()?;
+    if best_distance > FRAME_MATCH_TOLERANCE_PX {
+        return None;
+    }
+    if let Some((runner_up, _)) = scored.get(1) {
+        if runner_up.saturating_sub(best_distance) < FRAME_MATCH_MARGIN_PX {
+            return None;
+        }
+    }
+    Some(best_ordinal)
+}
+
+/// Resolve native window `xid` to the ordinal of the application top-level that
+/// renders it, or `None` when that cannot be proven. `None` means the walk stays
+/// application-wide: callers that merely want a tree carry on, and callers that
+/// need window identity must refuse.
+async fn resolve_window_frame(
+    conn: &AccessibilityConnection,
+    pid: u32,
+    xid: u64,
+    seeds: &[RawObjectRef],
+) -> Option<usize> {
+    if seeds.len() == 1 {
+        // One top-level: the caller's window is the only thing this
+        // application could be showing, and no geometry round-trip can make
+        // that more certain.
+        return Some(0);
+    }
+    let window = crate::x11::list_windows(Some(pid))
+        .into_iter()
+        .find(|candidate| candidate.xid == xid)?;
+    let mut candidates: Vec<(usize, (i32, i32, i32, i32))> = Vec::new();
+    for (ordinal, oref) in seeds.iter().enumerate() {
+        let Some(Ok(acc)) = call(accessible_for(conn, oref)).await else {
+            continue;
+        };
+        // Menus, tooltips and other transients are top-level accessibles too;
+        // only real windows can correspond to a native window id.
+        let role = match call(acc.get_role_name()).await {
+            Some(Ok(role)) => role,
+            _ => continue,
+        };
+        if !matches!(
+            role.as_str(),
+            "frame" | "window" | "dialog" | "alert" | "file chooser"
+        ) {
+            continue;
+        }
+        let Some(Ok(proxies)) = call(acc.proxies()).await else {
+            continue;
+        };
+        let Some(Ok(component)) = call(proxies.component()).await else {
+            continue;
+        };
+        if let Some(Ok(extents)) = call(component.get_extents(CoordType::Screen)).await {
+            candidates.push((ordinal, extents));
+        }
+    }
+    let resolved = correlate_frame_to_window(&candidates, &window);
+    if resolved.is_none() {
+        dlog!(
+            "could not correlate xid {xid} to one of pid {pid}'s {} top-level frame(s); \
+             walk stays application-scoped",
+            candidates.len()
+        );
+    }
+    resolved
 }
 
 /// `collect_visited` with caller-supplied caps.
@@ -535,28 +662,47 @@ async fn collect_visited<'a>(
 async fn collect_visited_bounded<'a>(
     conn: &'a AccessibilityConnection,
     pid: u32,
+    xid: u64,
     max_elements: Option<usize>,
     max_depth: Option<usize>,
-) -> Result<Option<Vec<Visited<'a>>>> {
+) -> Result<Option<(Vec<Visited<'a>>, Option<usize>)>> {
     let app = match app_for_pid(conn, pid).await? {
         Some(a) => a,
         None => return Ok(None),
     };
     let zconn = conn.connection();
 
-    // Stack of (object ref, depth, in_web_doc). Seed with the app's windows;
-    // push children reversed so siblings pop left-to-right and each subtree
-    // completes before the next sibling (pre-order). `in_web_doc` is inherited
-    // from ancestors so editables in page content can be told from chrome.
-    let mut stack: Vec<(RawObjectRef, usize, bool)> = match call(app.get_children()).await {
+    // Stack of (object ref, depth, in_web_doc, frame_ordinal). Seed with the
+    // app's windows; push children reversed so siblings pop left-to-right and
+    // each subtree completes before the next sibling (pre-order). `in_web_doc`
+    // is inherited from ancestors so editables in page content can be told from
+    // chrome. `frame_ordinal` is the seed's position in `get_children()` order
+    // and is likewise inherited, so every node carries the identity of the
+    // top-level window it belongs to.
+    let seeds: Vec<RawObjectRef> = match call(app.get_children()).await {
         Some(Ok(children)) => children
             .into_iter()
             .filter_map(|child| RawObjectRef::from_atspi(&child))
-            .rev()
-            .map(|r| (r, 0usize, false))
             .collect(),
         _ => Vec::new(),
     };
+
+    // Resolve which seed is the caller's window before walking, from the same
+    // child list the walk is about to seed from. Re-reading `get_children()`
+    // later could observe a different window set, and an ordinal resolved
+    // against one list but applied to another names the wrong window.
+    let scoped_frame = if xid == 0 {
+        None
+    } else {
+        resolve_window_frame(conn, pid, xid, &seeds).await
+    };
+
+    let mut stack: Vec<(RawObjectRef, usize, bool, usize)> = seeds
+        .into_iter()
+        .enumerate()
+        .map(|(ordinal, r)| (r, 0usize, false, ordinal))
+        .rev()
+        .collect();
 
     let mut visited: Vec<Visited<'a>> = Vec::new();
     // Guard against pathological/looping trees. Defaults to 5 000 (the
@@ -578,7 +724,7 @@ async fn collect_visited_bounded<'a>(
     // few seconds rather than ~25s.
     let mut consecutive_timeouts = 0u32;
 
-    while let Some((oref, depth, inherited_web_doc)) = stack.pop() {
+    while let Some((oref, depth, inherited_web_doc, frame_ordinal)) = stack.pop() {
         if budget == 0 {
             dlog!("node budget exhausted; truncating walk");
             break;
@@ -770,7 +916,7 @@ async fn collect_visited_bounded<'a>(
             match children_r {
                 Some(Ok(children)) => {
                     for c in children.into_iter().rev() {
-                        stack.push((c, depth + 1, child_in_web_doc));
+                        stack.push((c, depth + 1, child_in_web_doc, frame_ordinal));
                     }
                 }
                 Some(Err(error)) => dlog!("  get_children failed: {error:#}"),
@@ -794,12 +940,13 @@ async fn collect_visited_bounded<'a>(
             focused,
             in_web_doc,
             on_web_process_bus: is_web_process_bus(&oref.name),
+            frame_ordinal,
             acc,
         });
     }
 
     dlog!("walked pid {pid}: {} node(s)", visited.len());
-    Ok(Some(visited))
+    Ok(Some((visited, scoped_frame)))
 }
 
 /// Render visited nodes into the markdown + node list `walk_tree` returns.
@@ -809,10 +956,18 @@ async fn collect_visited_bounded<'a>(
 /// `parent_at_depth` tracks the most recently emitted actionable index at
 /// each depth, so descendants can look up their parent_element_index without
 /// a second pass.
-fn render(visited: &[Visited<'_>]) -> (String, Vec<AtspiNode>) {
+///
+/// `only_frame` restricts what is *emitted* to one application top-level while
+/// leaving the index space application-wide. Element indices are the contract
+/// between a snapshot and every actuator that later takes one
+/// (`perform_action`, `focus_element`, `set_value`, …), and those resolve an
+/// index against the whole application. Renumbering per window would make a
+/// window-scoped snapshot's indices name different elements at actuation time.
+fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<AtspiNode>) {
     let mut md = String::new();
     let mut nodes = Vec::new();
     let mut idx = 0usize;
+    let mut current_frame: Option<usize> = None;
     // Sparse stack: parent_at_depth[d] = Some(idx) for the actionable node
     // most recently emitted at depth d. When a new node appears at depth d,
     // its parent_element_index is the closest ancestor at depth < d that has
@@ -821,6 +976,14 @@ fn render(visited: &[Visited<'_>]) -> (String, Vec<AtspiNode>) {
     let mut parent_at_depth: Vec<Option<usize>> = Vec::new();
 
     for v in visited {
+        // Ancestry never spans two top-levels, so a frame change retires every
+        // recorded parent. Without this a window's first descendants could
+        // inherit a parent index from the previous window's subtree.
+        if current_frame != Some(v.frame_ordinal) {
+            current_frame = Some(v.frame_ordinal);
+            parent_at_depth.clear();
+        }
+        let emit = only_frame.is_none_or(|frame| frame == v.frame_ordinal);
         let indent = "  ".repeat(v.depth);
         // Resolve parent: walk parent_at_depth from v.depth-1 down to 0.
         let parent_element_index = if v.depth == 0 {
@@ -832,6 +995,12 @@ fn render(visited: &[Visited<'_>]) -> (String, Vec<AtspiNode>) {
         };
 
         if is_indexable(v) {
+            if !emit {
+                // Consume the index without emitting: indices stay aligned with
+                // the application-wide walk the actuators perform.
+                idx += 1;
+                continue;
+            }
             let act_str = v.actions.join(",");
             let val_part = match &v.value {
                 Some(val) if !val.is_empty() => format!(" value=\"{val}\""),
@@ -871,7 +1040,7 @@ fn render(visited: &[Visited<'_>]) -> (String, Vec<AtspiNode>) {
                 parent_at_depth[deeper] = None;
             }
             idx += 1;
-        } else if !v.name.is_empty() {
+        } else if emit && !v.name.is_empty() {
             md.push_str(&format!(
                 "{indent}- {role} = \"{name}\"\n",
                 role = v.role,
@@ -953,7 +1122,19 @@ fn is_indexable_capabilities(
 
 pub fn walk_tree(pid: u32) -> Result<Option<(String, Vec<AtspiNode>)>> {
     walk_tree_bounded(pid, 0, None, None)
-        .map(|snapshot| snapshot.map(|(markdown, nodes, _)| (markdown, nodes)))
+        .map(|snapshot| snapshot.map(|walked| (walked.markdown, walked.nodes)))
+}
+
+/// One accessibility snapshot, plus whether it was provably narrowed to the
+/// caller's window.
+pub struct WalkedTree {
+    pub markdown: String,
+    pub nodes: Vec<AtspiNode>,
+    pub bounds: Vec<(usize, i32, i32, u32, u32)>,
+    /// True when a non-zero `xid` was resolved to exactly one application
+    /// top-level and the snapshot contains only that window's nodes. False
+    /// means the snapshot spans every window the application publishes.
+    pub window_scoped: bool,
 }
 
 /// Walk the AT-SPI tree with caller-supplied node + depth caps.
@@ -964,7 +1145,7 @@ pub fn walk_tree_bounded(
     xid: u64,
     max_elements: Option<usize>,
     max_depth: Option<usize>,
-) -> Result<Option<(String, Vec<AtspiNode>, Vec<(usize, i32, i32, u32, u32)>)>> {
+) -> Result<Option<WalkedTree>> {
     walk_tree_bounded_with_timeout(pid, xid, max_elements, max_depth, OP_TIMEOUT)
 }
 
@@ -974,7 +1155,7 @@ pub(super) fn walk_tree_bounded_with_timeout(
     max_elements: Option<usize>,
     max_depth: Option<usize>,
     timeout: Duration,
-) -> Result<Option<(String, Vec<AtspiNode>, Vec<(usize, i32, i32, u32, u32)>)>> {
+) -> Result<Option<WalkedTree>> {
     runtime().block_on(async {
         // Tree traversal and bounds collection form one snapshot. Keep one
         // deadline for both phases so a dead AT-SPI peer cannot outlive the
@@ -982,19 +1163,19 @@ pub(super) fn walk_tree_bounded_with_timeout(
         let deadline = tokio::time::Instant::now() + timeout;
         let walk = async {
             let conn = shared_connection().await?;
-            collect_visited_bounded(conn, pid, max_elements, max_depth).await
+            collect_visited_bounded(conn, pid, xid, max_elements, max_depth).await
         };
-        let visited = match before_snapshot_deadline(deadline, walk).await {
+        let walked = match before_snapshot_deadline(deadline, walk).await {
             Ok(result) => result?,
             Err(_) => {
                 dlog!("walk_tree timed out for pid {pid}");
                 return Ok(None);
             }
         };
-        let Some(visited) = visited else {
+        let Some((visited, scoped_frame)) = walked else {
             return Ok(None);
         };
-        let (markdown, nodes) = render(&visited);
+        let (markdown, nodes) = render(&visited, scoped_frame);
         let bounds = match before_snapshot_deadline(
             deadline,
             element_bounds_for_visited(&visited, pid, xid),
@@ -1007,7 +1188,24 @@ pub(super) fn walk_tree_bounded_with_timeout(
                 Vec::new()
             }
         };
-        Ok(Some((markdown, nodes, bounds)))
+        // Bounds are keyed by the application-wide element index, so drop the
+        // entries for windows this snapshot no longer shows.
+        let bounds = if scoped_frame.is_some() {
+            let emitted: std::collections::HashSet<usize> =
+                nodes.iter().filter_map(|node| node.element_index).collect();
+            bounds
+                .into_iter()
+                .filter(|(index, ..)| emitted.contains(index))
+                .collect()
+        } else {
+            bounds
+        };
+        Ok(Some(WalkedTree {
+            markdown,
+            nodes,
+            bounds,
+            window_scoped: scoped_frame.is_some(),
+        }))
     })
 }
 
@@ -2701,6 +2899,109 @@ async fn element_bounds_for_visited(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod frame_correlation_tests {
+    use super::{correlate_frame_to_window, FRAME_MATCH_TOLERANCE_PX};
+    use crate::x11::WindowInfo;
+
+    fn window(x: i32, y: i32, width: u32, height: u32) -> WindowInfo {
+        WindowInfo {
+            xid: 4242,
+            pid: Some(99),
+            app_name: "Google-chrome".to_owned(),
+            title: "Cua - Google Chrome".to_owned(),
+            is_on_screen: true,
+            z_index: Some(3),
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    /// The configuration that made the existing-profile route unreachable: one
+    /// browser process publishing three windows.
+    #[test]
+    fn picks_the_frame_matching_the_named_window_among_siblings() {
+        let candidates = [
+            (0usize, (144, 51, 1244, 953)),
+            (1, (438, 80, 1050, 953)),
+            (2, (550, 225, 500, 584)),
+        ];
+        assert_eq!(
+            correlate_frame_to_window(&candidates, &window(438, 80, 1050, 953)),
+            Some(1)
+        );
+        assert_eq!(
+            correlate_frame_to_window(&candidates, &window(550, 225, 500, 584)),
+            Some(2)
+        );
+    }
+
+    /// Server-side decorations shift a frame's reported origin; a small offset
+    /// must still resolve rather than fall back to an application-wide walk.
+    #[test]
+    fn tolerates_decoration_offsets() {
+        let candidates = [(0usize, (440, 108, 1050, 925)), (1, (144, 51, 1244, 953))];
+        assert_eq!(
+            correlate_frame_to_window(&candidates, &window(438, 80, 1050, 953)),
+            Some(0)
+        );
+    }
+
+    /// Two windows of the same geometry cannot be told apart this way, and the
+    /// caller needs a refusal rather than a coin flip.
+    #[test]
+    fn refuses_when_two_frames_are_equally_plausible() {
+        let candidates = [(0usize, (438, 80, 1050, 953)), (1, (438, 80, 1050, 953))];
+        assert_eq!(
+            correlate_frame_to_window(&candidates, &window(438, 80, 1050, 953)),
+            None
+        );
+    }
+
+    #[test]
+    fn refuses_when_no_frame_is_close_enough() {
+        let candidates = [(0usize, (0, 0, 200, 200))];
+        assert_eq!(
+            correlate_frame_to_window(&candidates, &window(438, 80, 1050, 953)),
+            None
+        );
+    }
+
+    #[test]
+    fn refuses_when_the_application_publishes_no_frame_extents() {
+        assert_eq!(
+            correlate_frame_to_window(&[], &window(438, 80, 1050, 953)),
+            None
+        );
+    }
+
+    /// Zero-area extents are what a frame reports before it has been mapped;
+    /// they must never be treated as a match for a real window.
+    #[test]
+    fn ignores_frames_without_usable_extents() {
+        let candidates = [(0usize, (0, 0, 0, 0)), (1, (438, 80, 1050, 953))];
+        assert_eq!(
+            correlate_frame_to_window(&candidates, &window(438, 80, 1050, 953)),
+            Some(1)
+        );
+    }
+
+    /// Being the only candidate is not evidence of correspondence. (The walk
+    /// does short-circuit a genuinely single-top-level application before it
+    /// reaches this function — see `resolve_window_frame`.)
+    #[test]
+    fn a_sole_candidate_still_has_to_be_close_enough() {
+        let far_away = i32::try_from(FRAME_MATCH_TOLERANCE_PX).unwrap() + 500;
+        let candidates = [(0usize, (far_away, far_away, 1050, 953))];
+        assert_eq!(
+            correlate_frame_to_window(&candidates, &window(438, 80, 1050, 953)),
+            None
+        );
+    }
 }
 
 #[cfg(test)]

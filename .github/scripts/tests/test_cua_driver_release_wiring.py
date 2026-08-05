@@ -361,6 +361,17 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn("launches the installed", shared_hints)
         self.assertNotIn("launches CuaDriver", shared_hints)
 
+    def test_post_install_hints_include_muse_stdio_mcp_config(self) -> None:
+        shared_hints = self.read("libs/cua-driver/scripts/post-install-hints.txt")
+
+        self.assertIn("Muse Code (macOS / Linux", shared_hints)
+        self.assertIn("$XDG_CONFIG_HOME/muse/settings.json", shared_hints)
+        self.assertIn('"mcp_servers": {', shared_hints)
+        self.assertIn('"transport": "stdio"', shared_hints)
+        self.assertIn('"command": "{{BINARY}}"', shared_hints)
+        self.assertIn('"args": ["mcp"]', shared_hints)
+        self.assertIn("MCP servers load at startup", shared_hints)
+
     def test_local_macos_signing_uses_an_unambiguous_identity_hash(self) -> None:
         signing = self.read("libs/cua-driver/scripts/_local-signing.sh")
 

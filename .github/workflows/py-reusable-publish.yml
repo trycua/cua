@@ -19,6 +19,11 @@ on:
         description: "PyPI package name (e.g. cua-agent)"
         required: true
         type: string
+      checkout_ref:
+        description: "Git ref to publish from"
+        required: false
+        type: string
+        default: "main"
     secrets:
       PYPI_TOKEN:
         required: true
@@ -37,13 +42,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ inputs.checkout_ref }}
           fetch-depth: 0 # Full history for release creation
 
-      - name: Ensure latest main branch
+      - name: Ensure requested checkout ref
+        env:
+          CHECKOUT_REF: ${{ inputs.checkout_ref }}
         run: |
-          git fetch origin main
-          git reset --hard origin/main
+          if [ "$CHECKOUT_REF" = "main" ]; then
+            git fetch origin main
+            git reset --hard origin/main
+          fi
           echo "Current HEAD commit:"
           git log -1 --oneline
 

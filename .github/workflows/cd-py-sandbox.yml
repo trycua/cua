@@ -56,6 +56,7 @@ jobs:
       package_dir: "libs/python/cua-sandbox"
       version: ${{ needs.prepare.outputs.version }}
       base_package_name: "cua-sandbox"
+      checkout_ref: ${{ github.ref }}
     secrets:
       PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
 

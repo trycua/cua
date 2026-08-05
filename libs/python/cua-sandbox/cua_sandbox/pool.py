@@ -276,7 +276,7 @@ class Pool:
         finally:
             await client.close()
 
-    async def create_claim(self, *, spec: ClaimSpec | None = None) -> Lease:
+    async def create_claim(self, *, spec: ClaimSpec | None = None, name: str | None = None) -> Lease:
         """Create a claim against this pool and return it as a :class:`Lease`.
 
         The claim is created and left held — nothing waits for the bind and
@@ -284,10 +284,27 @@ class Pool:
         ``release`` drive the rest of the lifecycle explicitly, possibly from
         other processes via ``Lease.to_dict``/``from_dict``. Prefer
         :meth:`claim` when a single ``async with`` scope fits the caller.
+
+        A client-supplied ``name`` is used verbatim as the claim name; left
+        unset, the client generates a random ``claim-<petname>`` so concurrent
+        leases and retries cannot collide. Explicit names need a cua-fleet
+        release whose ``CreateClaimRequest`` carries a name field; older wheels
+        raise ``RuntimeError`` with an upgrade pointer.
         """
+        if name is None:
+            request = CreateClaimRequest(pool=self._resource, spec=spec)
+        else:
+            try:
+                request = CreateClaimRequest(pool=self._resource, spec=spec, name=name)
+            except TypeError as error:
+                raise RuntimeError(
+                    "the installed cua-fleet release does not support client-supplied "
+                    "claim names; upgrade to a build whose CreateClaimRequest carries "
+                    "a name field"
+                ) from error
         client = _FleetClient()
         try:
-            claim = await client.create_claim(CreateClaimRequest(pool=self._resource, spec=spec))
+            claim = await client.create_claim(request)
             return Lease(namespace=claim.metadata.namespace, name=claim.metadata.name)
         finally:
             await client.close()

@@ -695,3 +695,42 @@ def test_supports_claim_renewal_reflects_the_generated_client(monkeypatch):
     assert supports_claim_renewal() is False
     monkeypatch.setattr("cua_sandbox.pool.CyclopsClient", With)
     assert supports_claim_renewal() is True
+
+
+@pytest.mark.asyncio
+async def test_create_claim_passes_a_client_supplied_name_when_supported(monkeypatch):
+    reconcile_client = FakeFleetClient()
+    claim_client = FakeFleetClient()
+    clients = iter([reconcile_client, claim_client])
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(clients))
+
+    class NamedCreateClaimRequest:
+        def __init__(self, *, pool, spec, name=None):
+            self.pool = pool
+            self.spec = spec
+            self.name = name
+
+    monkeypatch.setattr("cua_sandbox.pool.CreateClaimRequest", NamedCreateClaimRequest)
+    pool = await Pool.reconcile(pool_request())
+
+    await pool.create_claim(name="claim-pinned")
+
+    assert claim_client.claims[0].name == "claim-pinned"
+    assert claim_client.closed is True
+
+
+@pytest.mark.asyncio
+async def test_create_claim_names_require_a_fleet_release_with_the_name_field(monkeypatch):
+    reconcile_client = FakeFleetClient()
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: reconcile_client)
+
+    class LegacyCreateClaimRequest:
+        def __init__(self, *, pool, spec):
+            self.pool = pool
+            self.spec = spec
+
+    monkeypatch.setattr("cua_sandbox.pool.CreateClaimRequest", LegacyCreateClaimRequest)
+    pool = await Pool.reconcile(pool_request())
+
+    with pytest.raises(RuntimeError, match="claim names"):
+        await pool.create_claim(name="claim-pinned")

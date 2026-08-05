@@ -12,7 +12,7 @@ description: Reference for every MCP tool Cua Driver exposes
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-`cua-driver` exposes 56 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
+`cua-driver` exposes 57 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
 
 Tool names are `snake_case`. Responses are MCP `CallTool.Result` envelopes: a text content block prefixed with a `✅` summary (or the error reason on failure), plus optional image or structured-content blocks on tools that produce them. See the [CLI reference](/reference/cua-driver/cli-reference) for CLI-specific options like `--socket` and `--screenshot-out-file`.
 
@@ -808,6 +808,21 @@ Install the ffmpeg binary used by start_recording's video capture (Linux/Windows
 - `confirm` (boolean, optional): Run the install command. Without it, only the planned command is reported.
 
 ## Other tools
+
+### `get_accessibility_surfaces`
+
+Observe the bounded semantic trees of top-level accessibility windows for one process that have no native window id. Results preserve each AXWindow boundary and expose no screenshot, element_index, element_token, or action-cache side effect. Native windows with an exact window_id remain observable through get_window_state.
+
+**Arguments:**
+
+- `max_depth` (integer, optional): default: `25`; range: 1–25
+- `max_elements` (integer, optional): default: `2000`; range: 1–2000
+- `pid` (integer, required): range: 1–unbounded
+- `session` (string, optional)
+
+```json
+{"pid":844}
+```
 
 ### `verify_state`
 

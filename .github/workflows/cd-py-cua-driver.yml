@@ -17,6 +17,7 @@ on:
       - completed
 
 permissions:
+  actions: read
   contents: read
   id-token: write
 
@@ -46,29 +47,55 @@ jobs:
             fi
             SHOULD_PUBLISH="true"
           else
-            # Extract from the tag that triggered the workflow_run
-            # Validate SHA format to prevent injection
-            HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
-            if ! echo "$HEAD_SHA" | grep -qE '^[0-9a-f]{40}$'; then
-              echo "Invalid SHA format: $HEAD_SHA"
-              VERSION="0.0.0"
-              SHOULD_PUBLISH="false"
+            # Publish dispatches run from main, so workflow_run.head_sha is the
+            # workflow revision rather than the immutable release tag. Resolve
+            # those runs from the exact metadata artifact produced by the
+            # successful release job.
+            RUN_ID="${{ github.event.workflow_run.id }}"
+            if ! echo "$RUN_ID" | grep -qE '^[0-9]+$'; then
+              echo "Invalid workflow run ID: $RUN_ID" >&2
+              exit 1
+            fi
+            ARTIFACTS_FILE="$RUNNER_TEMP/cua-driver-release-metadata-artifacts.txt"
+            gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts?per_page=100" \
+              --jq '.artifacts[] | select(.expired == false) | .name' \
+              > "$ARTIFACTS_FILE"
+            mapfile -t RELEASE_VERSIONS < <(
+              sed -nE \
+                's/^cua-driver-release-metadata-([0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?)$/\1/p' \
+                "$ARTIFACTS_FILE" | sort -u
+            )
+
+            if [ "${#RELEASE_VERSIONS[@]}" -gt 1 ]; then
+              echo "Multiple Cua Driver release metadata artifacts found for run $RUN_ID" >&2
+              printf '  %s\n' "${RELEASE_VERSIONS[@]}" >&2
+              exit 1
+            elif [ "${#RELEASE_VERSIONS[@]}" -eq 1 ]; then
+              VERSION="${RELEASE_VERSIONS[0]}"
+              TAG="cua-driver-rs-v$VERSION"
             else
+              # Tag-triggered candidate builds do not run the release job and
+              # therefore have no release metadata artifact. Preserve the tag
+              # SHA fallback so those runs continue to skip until publication.
+              HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
+              if ! echo "$HEAD_SHA" | grep -qE '^[0-9a-f]{40}$'; then
+                echo "Invalid SHA format: $HEAD_SHA" >&2
+                exit 1
+              fi
               git fetch --tags
               TAG=$(git tag --points-at "$HEAD_SHA" | grep '^cua-driver-rs-v' | head -1 || echo "")
-              if [ -n "$TAG" ]; then
-                VERSION="${TAG#cua-driver-rs-v}"
-                if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-                  SHOULD_PUBLISH="true"
-                else
-                  echo "GitHub Release $TAG is not available; skipping PyPI publish."
-                  SHOULD_PUBLISH="false"
-                fi
-              else
-                # No matching tag, skip
-                VERSION="0.0.0"
-                SHOULD_PUBLISH="false"
-              fi
+              VERSION="${TAG#cua-driver-rs-v}"
+            fi
+
+            if [ -n "$TAG" ] && gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              SHOULD_PUBLISH="true"
+            elif [ -n "$TAG" ]; then
+              echo "GitHub Release $TAG is not available; skipping SDK publish."
+              SHOULD_PUBLISH="false"
+            else
+              VERSION="0.0.0"
+              SHOULD_PUBLISH="false"
             fi
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"

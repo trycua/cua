@@ -301,10 +301,19 @@ async fn early_child_exit_resets_the_host_to_stopped() {
         "com.trycua.embedded-early-exit-test".into(),
     )
     .expect("construct host");
-    let error = host.clone().start().await.unwrap_err();
-    assert!(matches!(
-        error,
-        cua_driver_sdk::EmbeddedDriverError::ExitedBeforeReady { code: Some(7) }
-    ));
-    assert_eq!(host.state(), EmbeddedDriverHostState::Stopped);
+    for attempt in 1..=64 {
+        let error = host.clone().start().await.unwrap_err();
+        assert!(
+            matches!(
+                &error,
+                cua_driver_sdk::EmbeddedDriverError::ExitedBeforeReady { code: Some(7) }
+            ),
+            "attempt {attempt}/64 returned {error:?}"
+        );
+        assert_eq!(
+            host.state(),
+            EmbeddedDriverHostState::Stopped,
+            "attempt {attempt}/64 did not reset the host after {error:?}"
+        );
+    }
 }

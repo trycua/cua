@@ -328,15 +328,10 @@ class PtyInterface:
         sess = self._sessions.setdefault(pid, {})
         sess["stdin_queue"] = stdin_queue
 
-        params = {}
-        if self._api_key:
-            params["api_key"] = self._api_key
-        if self._vm_name:
-            params["container_name"] = self._vm_name
         ws_url = f"{self._ws_base}/pty/{pid}/ws"
         try:
             async with aiohttp.ClientSession() as http:
-                async with http.ws_connect(ws_url, params=params) as ws:
+                async with http.ws_connect(ws_url, headers=self._auth_headers()) as ws:
 
                     async def _write_stdin():
                         while True:

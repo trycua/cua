@@ -981,9 +981,9 @@ async def pty_ws(
 ):
     """WebSocket endpoint for interactive PTY session *pid*.
 
-    Auth (when CONTAINER_NAME is set): pass ``api_key`` and
-    ``container_name`` as query parameters, e.g.
-    ``/pty/123/ws?api_key=…&container_name=…``.
+    Auth (when CONTAINER_NAME is set): pass ``X-API-Key`` and
+    ``X-Container-Name`` request headers. Credentials are deliberately not
+    accepted in the URL, where proxies and access logs may retain them.
 
     Client → Server messages (JSON):
     - ``{"type": "stdin",   "data": "<base64>"}``
@@ -994,8 +994,8 @@ async def pty_ws(
     - ``{"type": "output", "data": "<base64>"}``
     - ``{"type": "exit",   "code": N}``
     """
-    container_name = websocket.query_params.get("container_name")
-    api_key = websocket.query_params.get("api_key")
+    container_name = websocket.headers.get("X-Container-Name")
+    api_key = websocket.headers.get("X-API-Key")
     try:
         await _require_auth(container_name, api_key)
     except HTTPException:

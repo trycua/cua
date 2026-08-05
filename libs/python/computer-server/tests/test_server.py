@@ -5,6 +5,7 @@ Following SRP: This file tests server initialization and basic operations.
 All external dependencies are mocked.
 """
 
+import asyncio
 import importlib.util
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
@@ -231,3 +232,71 @@ class TestMcpAcceptHeaderShim:
             )
             # Untouched: still exactly what the client sent.
             assert self._accept(seen["headers"]) == b"application/json"
+
+
+class TestPtyWebSocketAuthentication:
+    """Ensure PTY WebSocket credentials use headers and never query strings."""
+
+    @staticmethod
+    def _websocket(*, headers, query_params):
+        from fastapi import WebSocketDisconnect
+
+        websocket = Mock()
+        websocket.headers = headers
+        websocket.query_params = query_params
+        websocket.accept = AsyncMock()
+        websocket.close = AsyncMock()
+        websocket.receive_text = AsyncMock(side_effect=WebSocketDisconnect())
+        websocket.send_text = AsyncMock()
+        return websocket
+
+    @pytest.mark.asyncio
+    async def test_headers_are_passed_to_authentication(self):
+        try:
+            from computer_server import main
+        except ImportError:
+            pytest.skip("computer_server module not installed")
+        except Exception as e:
+            pytest.skip(f"Server initialization requires specific setup: {e}")
+
+        websocket = self._websocket(
+            headers={"X-Container-Name": "header-container", "X-API-Key": "header-key"},
+            query_params={"container_name": "query-container", "api_key": "query-key"},
+        )
+        queue = asyncio.Queue()
+
+        with (
+            patch.object(main, "_require_auth", new=AsyncMock()) as require_auth,
+            patch.object(main.pty_manager, "subscribe", return_value=queue),
+            patch.object(main.pty_manager, "unsubscribe"),
+        ):
+            await main.pty_ws(42, websocket)
+
+        require_auth.assert_awaited_once_with("header-container", "header-key")
+        websocket.accept.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_query_only_credentials_are_rejected(self):
+        try:
+            from computer_server import main
+            from fastapi import HTTPException
+        except ImportError:
+            pytest.skip("computer_server module not installed")
+        except Exception as e:
+            pytest.skip(f"Server initialization requires specific setup: {e}")
+
+        websocket = self._websocket(
+            headers={},
+            query_params={"container_name": "query-container", "api_key": "query-key"},
+        )
+
+        async def reject_missing_headers(container_name, api_key):
+            assert container_name is None
+            assert api_key is None
+            raise HTTPException(status_code=401)
+
+        with patch.object(main, "_require_auth", new=reject_missing_headers):
+            await main.pty_ws(42, websocket)
+
+        websocket.accept.assert_not_awaited()
+        websocket.close.assert_awaited_once_with(code=1008)

@@ -2,10 +2,12 @@
 
 mod bring_to_front;
 mod click;
+mod clipboard;
 mod double_click;
 mod drag;
 mod get_window_state;
 mod hotkey;
+mod invoke_menu;
 mod kill_app;
 mod launch_app;
 mod list_apps;
@@ -14,6 +16,7 @@ mod press_key;
 mod right_click;
 mod scroll;
 mod set_value;
+mod set_window_frame;
 mod type_text;
 // `screenshot` / `screenshot_compat` modules removed in PR #1692 —
 // `get_window_state` capture_mode:"vision" is the canonical screenshot
@@ -35,11 +38,88 @@ mod set_config;
 mod type_text_chars;
 mod zoom;
 
-use cua_driver_core::tool::ToolRegistry;
+use cua_driver_core::{
+    tool::{Tool, ToolRegistry},
+    window_target::{PidOnlyWindowTargetGuard, WindowTargetCandidate, WindowTargetCandidates},
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::{ax::cache::ElementCache, cursor::state::CursorRegistry};
+
+fn pid_window_target_candidates(pid: i64) -> Vec<WindowTargetCandidate> {
+    let Ok(pid) = i32::try_from(pid) else {
+        return Vec::new();
+    };
+    window_target_candidates_for_pid(crate::windows::all_windows(), pid)
+}
+
+fn window_target_candidates_for_pid(
+    windows: impl IntoIterator<Item = crate::windows::WindowInfo>,
+    pid: i32,
+) -> Vec<WindowTargetCandidate> {
+    windows
+        .into_iter()
+        .filter(|window| window.pid == pid)
+        .map(|window| WindowTargetCandidate {
+            window_id: u64::from(window.window_id),
+            title: window.title,
+            app_name: Some(window.app_name),
+            is_on_screen: window.is_on_screen,
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod pid_window_target_tests {
+    use super::*;
+    use cua_driver_core::window_target::{resolve_pid_window_target, PidWindowTargetResolution};
+
+    fn window(window_id: u32, pid: i32) -> crate::windows::WindowInfo {
+        crate::windows::WindowInfo {
+            window_id,
+            pid,
+            app_name: "Editor".into(),
+            title: format!("Document {window_id}"),
+            bounds: crate::windows::WindowBounds {
+                x: 0.0,
+                y: 0.0,
+                width: 640.0,
+                height: 480.0,
+            },
+            layer: 0,
+            z_index: 1,
+            is_on_screen: true,
+            current_space_id: None,
+            on_current_space: None,
+            space_ids: None,
+        }
+    }
+
+    #[test]
+    fn same_pid_sibling_windows_are_ambiguous() {
+        let candidates =
+            window_target_candidates_for_pid([window(7, 42), window(8, 42), window(9, 99)], 42);
+        assert!(matches!(
+            resolve_pid_window_target(candidates),
+            PidWindowTargetResolution::Ambiguous(windows)
+                if windows.iter().map(|window| window.window_id).collect::<Vec<_>>() == [7, 8]
+        ));
+    }
+}
+
+#[cfg(test)]
+mod background_input_regression_tests;
+
+fn pid_window_guarded<T: Tool + 'static>(
+    tool: T,
+    candidates: &WindowTargetCandidates,
+) -> Box<dyn Tool> {
+    Box::new(PidOnlyWindowTargetGuard::new(
+        Box::new(tool),
+        candidates.clone(),
+    ))
+}
 
 pub use check_permissions::{
     request_from_launchservices_host as request_permissions_from_launchservices_host,
@@ -101,6 +181,106 @@ impl DeliveryMode {
     }
 }
 
+/// Convert a pure background-input refusal into the structured refusal result
+/// shape shared by exact-target tools: `code`, `effect: "refused"`, the
+/// requested target, and the safe next route when one exists. No actuator ran.
+pub(crate) fn background_refusal_result(
+    pid: i32,
+    window_id: u32,
+    refusal: &cua_driver_core::background_input::BackgroundRefusal,
+) -> cua_driver_core::protocol::ToolResult {
+    let mut structured = serde_json::json!({
+        "code": refusal.code,
+        "effect": "refused",
+        "pid": pid,
+        "window_id": window_id,
+        "reason": refusal.reason,
+    });
+    if let Some(advice) = refusal.advice {
+        structured["escalation"] = serde_json::json!({
+            "recommended": advice,
+            "reason": refusal.reason,
+        });
+    }
+    cua_driver_core::protocol::ToolResult::error(format!(
+        "Background input refused ({}): {}",
+        refusal.code, refusal.reason
+    ))
+    .with_structured(structured)
+}
+
+/// Exclusive per-process ownership of one background mutation. Callers must
+/// keep this value alive through actuator dispatch, focus restoration, and
+/// target-bound verification.
+pub(crate) struct BackgroundMutationLease {
+    pid: i32,
+    _guard: tokio::sync::OwnedMutexGuard<()>,
+}
+
+impl BackgroundMutationLease {
+    /// Revalidate another actuator class while retaining the same per-PID
+    /// lease. This supports explicit ladders without deadlocking by attempting
+    /// to reacquire the coordinator recursively.
+    pub(crate) async fn gate_again(
+        &self,
+        window_id: u32,
+        element_ptr: Option<usize>,
+        action: cua_driver_core::background_input::BackgroundAction,
+    ) -> Result<(), cua_driver_core::protocol::ToolResult> {
+        decide_background_window_action(self.pid, window_id, element_ptr, action).await
+    }
+}
+
+async fn decide_background_window_action(
+    pid: i32,
+    window_id: u32,
+    element_ptr: Option<usize>,
+    action: cua_driver_core::background_input::BackgroundAction,
+) -> Result<(), cua_driver_core::protocol::ToolResult> {
+    use cua_driver_core::background_input::{
+        decide_background_input, BackgroundInputDecision, ExactWindowTarget,
+    };
+    let facts = match tokio::task::spawn_blocking(move || {
+        crate::ax::exact_target::gather_background_facts(pid, window_id, element_ptr)
+    })
+    .await
+    {
+        Ok(facts) => facts,
+        Err(error) => {
+            return Err(cua_driver_core::protocol::ToolResult::error(format!(
+                "Could not gather exact-target facts for pid {pid} window {window_id}: {error}"
+            )));
+        }
+    };
+    match decide_background_input(ExactWindowTarget { pid, window_id }, &facts, action) {
+        BackgroundInputDecision::Execute { .. } => Ok(()),
+        BackgroundInputDecision::Refuse(refusal) => {
+            Err(background_refusal_result(pid, window_id, &refusal))
+        }
+    }
+}
+
+/// Acquire the per-PID mutation coordinator, gather fresh exact-target facts,
+/// and ask the pure core for one background decision. `element_ptr` must stay
+/// retained by the caller until the returned lease is dropped.
+pub(crate) async fn gate_background_window_action(
+    pid: i32,
+    window_id: u32,
+    element_ptr: Option<usize>,
+    action: cua_driver_core::background_input::BackgroundAction,
+) -> Result<BackgroundMutationLease, cua_driver_core::protocol::ToolResult> {
+    let lease = acquire_background_mutation(pid).await;
+    lease.gate_again(window_id, element_ptr, action).await?;
+    Ok(lease)
+}
+
+pub(crate) async fn acquire_background_mutation(pid: i32) -> BackgroundMutationLease {
+    BackgroundMutationLease {
+        pid,
+        _guard: crate::background_mutation::acquire(pid).await,
+    }
+}
+
 /// Finish the post-action observation window. Embedded interactive clients
 /// that already observe the target continuously may opt out through the
 /// private registry argument to avoid adding a one-second acknowledgement
@@ -154,6 +334,7 @@ pub(crate) async fn focus_by_pixel(
     session: Option<String>,
     session_id: Option<String>,
     from_zoom: bool,
+    mutation_lease: Option<&BackgroundMutationLease>,
 ) -> Result<(), cua_driver_core::protocol::ToolResult> {
     use cua_driver_core::tool::Tool;
     let mut click_args = serde_json::json!({
@@ -163,6 +344,15 @@ pub(crate) async fn focus_by_pixel(
     });
     if let Some(wid) = window_id {
         click_args["window_id"] = serde_json::json!(wid);
+        if let Some(lease) = mutation_lease {
+            lease
+                .gate_again(
+                    wid,
+                    None,
+                    cua_driver_core::background_input::BackgroundAction::WindowPointer,
+                )
+                .await?;
+        }
     }
     if let Some(ref s) = session {
         click_args["session"] = serde_json::json!(s);
@@ -173,9 +363,13 @@ pub(crate) async fn focus_by_pixel(
     if from_zoom {
         click_args["from_zoom"] = serde_json::json!(true);
     }
-    let focus = click::ClickTool::new(state.clone())
-        .invoke(click_args)
-        .await;
+    let click_tool = click::ClickTool::new(state.clone());
+    let click = click_tool.invoke(click_args);
+    let focus = if let Some(lease) = mutation_lease {
+        crate::background_mutation::with_held_lease(lease.pid, click).await
+    } else {
+        click.await
+    };
     if focus.is_error != Some(true) {
         // AXFocused is non-destructive: unlike a second real click, it keeps a
         // Cmd+A selection intact before a follow-up type_text or Cmd+V.
@@ -649,16 +843,53 @@ pub fn register_all(
     ));
     registry.register(Box::new(launch_app::LaunchAppTool));
     registry.register(Box::new(kill_app::KillAppTool));
-    registry.register(Box::new(bring_to_front::BringToFrontTool));
-    registry.register(Box::new(click::ClickTool::new(state.clone())));
-    registry.register(Box::new(double_click::DoubleClickTool::new(state.clone())));
-    registry.register(Box::new(right_click::RightClickTool::new(state.clone())));
-    registry.register(Box::new(drag::DragTool::new(state.clone())));
-    registry.register(Box::new(type_text::TypeTextTool::new(state.clone())));
-    registry.register(Box::new(press_key::PressKeyTool::new(state.clone())));
-    registry.register(Box::new(hotkey::HotkeyTool::new(state.clone())));
-    registry.register(Box::new(set_value::SetValueTool::new(state.clone())));
-    registry.register(Box::new(scroll::ScrollTool::new(state.clone())));
+    let pid_window_candidates: WindowTargetCandidates = Arc::new(pid_window_target_candidates);
+    registry.register(pid_window_guarded(
+        bring_to_front::BringToFrontTool,
+        &pid_window_candidates,
+    ));
+    registry.register(Box::new(set_window_frame::SetWindowFrameTool));
+    registry.register(Box::new(invoke_menu::InvokeMenuTool));
+    registry.register(pid_window_guarded(
+        click::ClickTool::new(state.clone()),
+        &pid_window_candidates,
+    ));
+    registry.register(pid_window_guarded(
+        double_click::DoubleClickTool::new(state.clone()),
+        &pid_window_candidates,
+    ));
+    registry.register(pid_window_guarded(
+        right_click::RightClickTool::new(state.clone()),
+        &pid_window_candidates,
+    ));
+    registry.register(pid_window_guarded(
+        drag::DragTool::new(state.clone()),
+        &pid_window_candidates,
+    ));
+    registry.register(pid_window_guarded(
+        type_text::TypeTextTool::new(state.clone()),
+        &pid_window_candidates,
+    ));
+    registry.register(pid_window_guarded(
+        press_key::PressKeyTool::new(state.clone()),
+        &pid_window_candidates,
+    ));
+    registry.register(pid_window_guarded(
+        hotkey::HotkeyTool::new(state.clone()),
+        &pid_window_candidates,
+    ));
+    registry.register(pid_window_guarded(
+        set_value::SetValueTool::new(state.clone()),
+        &pid_window_candidates,
+    ));
+    registry.register(pid_window_guarded(
+        scroll::ScrollTool::new(state.clone()),
+        &pid_window_candidates,
+    ));
+    cua_driver_core::clipboard::register_clipboard_tools(
+        registry,
+        Arc::new(clipboard::MacosClipboard::new()),
+    );
     // The standalone `screenshot` tool was removed (#1692). The pixel-grounding
     // screenshot the Claude Code computer-use compat loop relies on now comes
     // from `get_window_state` (which always returns BOTH the tree AND a

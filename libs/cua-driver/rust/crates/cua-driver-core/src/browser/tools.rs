@@ -887,7 +887,9 @@ impl BrowserClickTool {
                 (Input.dispatchMouseEvent), and refuses where that route cannot \
                 preserve standalone-browser background posture. \
                 input_route=\"dom_event\" (synthetic \
-                el.click(), ref required) is used only when explicitly requested. \
+                el.click(), ref required) is used only when explicitly requested; \
+                it proves dispatch, not control activation, because trust-gated \
+                controls may ignore synthetic events. \
                 Refused for heuristic bindings."
                 .into(),
             input_schema: json!({
@@ -905,7 +907,9 @@ impl BrowserClickTool {
                         "description": "\"trusted\" (default): Input.dispatchMouseEvent. \
                             It refuses rather than foregrounding a standalone browser. \
                             \"dom_event\": synthetic full-background DOM click, only \
-                            when explicitly requested."
+                            when explicitly requested. Dispatch does not prove the \
+                            control activated; refresh page state and verify the \
+                            expected postcondition."
                     },
                 },
                 "required": ["target_id", "tab_id"],
@@ -1143,16 +1147,23 @@ impl Tool for BrowserClickTool {
                 .await
             {
                 Ok(_) => ToolResult::text(format!(
-                    "dispatched DOM click on {} in {tab_id}",
+                    "dispatched synthetic DOM click on {} in {tab_id}; application effect not \
+                     verified (trust-gated controls may ignore untrusted events). Refresh page \
+                     state and verify the expected postcondition",
                     ext_ref.as_deref().unwrap_or("?")
                 ))
                 .with_structured(json!({
                     "status": "ok",
+                    "effect": "unverifiable",
                     "route": "dom_event",
                     "target_id": target_id,
                     "tab_id": tab_id,
                     "ref": ext_ref,
                     "frame": frame_kind,
+                    "escalation": {
+                        "recommended": "page",
+                        "reason": "synthetic DOM dispatch cannot prove control activation; refresh page state and verify the expected postcondition",
+                    },
                 })),
                 Err(e) => ToolResult::error(format!("DOM click failed: {e}")),
             };

@@ -1,8 +1,13 @@
 # Migrating from the Cyclops provider
 
 `trycua/fleets` is the public Terraform Registry provider. The Cloud service
-APIs, OAuth environment variables, and `OSGymWorkspacePool` CRD remain
-unchanged.
+APIs and OAuth environment variables remain unchanged. `fleets_pool` now backs
+each pool with the native `osgym.cua.ai/v1alpha1` CRDs — an
+`OSGymSandboxWarmPool` and the `OSGymSandboxTemplate` it references — in place
+of the removed legacy pool CRD. The resource arguments are unchanged; the
+`phase`, `total_count`, `available_count`, and `claimed_count` attributes it
+used to export are replaced by `template_name`, `current_replicas`, and
+`ready_replicas`.
 
 | Previous surface | Fleets surface | Migration |
 | --- | --- | --- |

@@ -28,7 +28,7 @@ export_assets() {
     --features theme-authoring \
     -- "$FRAMES_DIR"
 
-  for group in actions modifiers combined session; do
+  for group in actions previews; do
     mkdir -p "$GENERATED_DIR/$group"
     for state_dir in "$FRAMES_DIR/$group"/*; do
       state=$(basename "$state_dir")
@@ -121,11 +121,6 @@ export_docs() {
     "action-animations" \
     "$capture_dir/actions" \
     "$docs_dir/action-animations.gif"
-  make_gif \
-    "delivery-target-context" \
-    "$capture_dir/modifiers" \
-    "$docs_dir/delivery-target-context.gif"
-
   echo "cursor-gallery: wrote documentation GIFs to $docs_dir"
 }
 

@@ -49,8 +49,10 @@ fn def() -> &'static ToolDef {
              A combo is never driver-verifiable (no read-back) → effect:\"unverifiable\"; \
              confirm via screenshot. NOTE: a keyboard combo does NOT focus a text \
              field — to type into a backgrounded Electron input, establish real \
-             renderer focus with a PIXEL click first, then `type_text` (do not reach \
-             for a clipboard + Cmd+V dance).\n\n\
+             renderer focus with a PIXEL click first, then `type_text`. If an app only \
+             accepts paste, call `clipboard_write`, then `clipboard_read` and verify its \
+             types (and text when applicable) before selecting or replacing editor content; \
+             only then send Cmd+V.\n\n\
              Recognized modifiers: cmd/command, shift, option/alt, ctrl/control, fn. \
              Non-modifier keys use the same vocabulary as `press_key`. Order: \
              modifiers first, one non-modifier last."
@@ -224,6 +226,33 @@ impl Tool for HotkeyTool {
             return error;
         }
 
+        // ── Exact-target background gate (macOS background input v1) ──
+        // A window-addressed background combo is process-scoped transport: it
+        // must prove exact delivery to the requested window (fresh AXWindows
+        // membership, not minimized/hidden, no competing same-pid keyboard
+        // destination) BEFORE anything is sent — including the px focus
+        // click. delivery_mode:"foreground" stays the caller's explicit last
+        // resort and is not gated here.
+        let _mutation_lease = if !fg {
+            if let Some(wid) = window_id {
+                match super::gate_background_window_action(
+                    pid,
+                    wid,
+                    None,
+                    cua_driver_core::background_input::BackgroundAction::GenericKey,
+                )
+                .await
+                {
+                    Ok(lease) => Some(lease),
+                    Err(refusal_result) => return refusal_result,
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // px form: focus the field before sending the combo. Foreground delivery
         // still needs to front the target for the chord itself: the focus helper
         // restores the previous app before returning.
@@ -245,6 +274,7 @@ impl Tool for HotkeyTool {
                     args.opt_str("session"),
                     args.opt_str("_session_id"),
                     from_zoom,
+                    _mutation_lease.as_ref(),
                 )
                 .await
                 {

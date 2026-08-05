@@ -200,6 +200,93 @@ client on Sway, GNOME, or KDE, and its capabilities are documented separately.
 
 ---
 
+## `elements[].frame` is screen-absolute, but pixel actions use screenshot pixels
+
+**Symptom:** a caller reads an element's `frame` from `get_window_state` and
+passes its center straight to `click({pid, window_id, x, y})`. The click lands
+somewhere other than the element — displaced by the window's screen origin, and
+possibly scaled by the capture ratio. Nothing refuses, because the coordinates
+were structurally valid; they simply addressed a different point.
+
+**Cause:** element geometry and pixel action arguments are expressed in two
+different coordinate spaces, and neither field restates its own space.
+
+| Surface                                                     | Space                                                | Units                                 |
+| ----------------------------------------------------------- | ---------------------------------------------------- | ------------------------------------- |
+| `elements[].frame` on macOS                                 | Screen-absolute, top-left origin                     | Logical points                        |
+| `elements[].frame` on Windows and Linux                     | Screen-absolute, top-left origin                     | Physical pixels                       |
+| `x`, `y` with `pid` and `window_id`                         | Window-local, top-left of the `get_window_state` PNG | Screenshot pixels                     |
+| `x`, `y` with `scope:"desktop"` and no `pid` or `window_id` | Screen-absolute                                      | Pixels in the `get_desktop_state` PNG |
+
+With `pid` and `window_id`, the pixel forms of `click`, `right_click`,
+`double_click`, `drag`, `scroll`, `type_text`, `press_key`, and `hotkey` read
+the window-local screenshot space. `double_click` currently labels these as
+screen coordinates in its generated argument reference, but its implementation
+uses the same window-local conversion as the other pixel actions.
+
+**What to do:** prefer `element_token`, or `element_index` with the matching
+`snapshot_id`. The accessibility path carries no coordinates, so it is
+unaffected by this mismatch, and it also works on backgrounded windows. Reach
+for a pixel action only on canvas, WebGL, or custom-drawn surfaces that expose
+no element.
+
+When a pixel action is unavoidable, match the scope to the space:
+
+- **Window scope.** Rebase onto the window origin, then rescale to the capture.
+  Take the origin and size from `list_windows` (`windows[].bounds`), which is
+  reported in the same units as `frame`, and take the capture size from the
+  snapshot's `screenshot_width` and `screenshot_height`:
+
+  ```text
+  scale_x = screenshot_width  / bounds.width
+  scale_y = screenshot_height / bounds.height
+
+  x = (frame.x + frame.w / 2 - bounds.x) * scale_x
+  y = (frame.y + frame.h / 2 - bounds.y) * scale_y
+  ```
+
+- **Desktop scope.** If the element is on the captured primary display, rescale
+  the frame center into the full-display PNG returned by `get_desktop_state`,
+  then call `click` with `scope:"desktop"` and no `pid` or `window_id`:
+
+  ```text
+  scale_x = desktop.screenshot_width  / desktop.screen_width
+  scale_y = desktop.screenshot_height / desktop.screen_height
+
+  x = (frame.x + frame.w / 2) * scale_x
+  y = (frame.y + frame.h / 2) * scale_y
+  ```
+
+  These ratios are normally 1 on Windows and Linux. On macOS Retina displays,
+  the frame is in logical points while the desktop PNG is in native pixels, so
+  the ratio is normally 2.
+
+<Callout type="info">
+  Do not assume a window-scope scale is 1. It is normally 2 on a Retina display, and may be a
+  fraction whenever a large window was downscaled to `max_image_dimension`. Re-derive it from each
+  snapshot rather than caching it across calls.
+</Callout>
+
+On macOS, `get_window_state` also reports `window_bounds`, which may be used in
+place of `list_windows` there. Windows and Linux report `screenshot_width` and
+`screenshot_height` only.
+
+---
+
+## Cinnamon disables accessibility advertisement
+
+On Cinnamon (`Cinnamon` or `X-Cinnamon`), Cua Driver leaves the session
+accessibility flags unchanged. Setting `ScreenReaderEnabled=true` launches
+Orca, while setting only `IsEnabled=true` can make the Cinnamon and GNOME
+settings schemas repeatedly overwrite each other.
+
+Applications that rely on Cua Driver to enable their accessibility bridge may
+therefore return a degraded or empty AT-SPI tree. Screenshots and available CDP
+browser routes continue to work. Do not set `CUA_DRIVER_RS_A11Y_ADVERTISE_MODE`
+to `all` or `is_enabled_only` in a normal Cinnamon session.
+
+---
+
 ## Permission boundaries
 
 Cua Driver is constrained by the macOS permission model. Two relevant grants:

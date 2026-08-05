@@ -5,7 +5,9 @@ use cyclops_sdk::{
     CyclopsCredentials, HttpClient, HttpError, HttpHeader, HttpRequest, HttpResponse, Pool,
     ResourceMetadata, Sandbox, SdkError,
 };
-use cyclops_sdk_schema::{ClaimSpec, OSGymSandboxClaimStatus, OSGymWorkspacePoolStatus, PoolSpec};
+use cyclops_sdk_schema::{
+    ClaimSpec, OSGymSandboxClaimStatus, OSGymSandboxWarmPoolSpec, OSGymSandboxWarmPoolStatus,
+};
 
 struct RecordingHttpClient;
 
@@ -45,10 +47,10 @@ fn configuration() -> CyclopsConfiguration {
     }
 }
 
-fn pool_spec() -> PoolSpec {
+fn pool_spec() -> OSGymSandboxWarmPoolSpec {
     serde_json::from_value(serde_json::json!({
         "replicas": 1,
-        "template": { "containerDiskImage": "registry.example/image:latest" },
+        "sandboxTemplateRef": { "name": "pool-template" },
     }))
     .unwrap()
 }
@@ -62,8 +64,8 @@ fn claim_spec() -> ClaimSpec {
 
 fn pool() -> Pool {
     Pool {
-        api_version: "cua.ai/v1".into(),
-        kind: "OSGymWorkspacePool".into(),
+        api_version: "osgym.cua.ai/v1alpha1".into(),
+        kind: "OSGymSandboxWarmPool".into(),
         metadata: ResourceMetadata {
             namespace: "default".into(),
             name: "pool".into(),
@@ -95,6 +97,11 @@ fn public_configuration_and_transport_are_constructible() {
 
     let client = CyclopsClient::connect(configuration, Arc::new(RecordingHttpClient));
     assert!(client.is_ok());
+}
+
+#[test]
+fn native_http_client_constructor_is_constructible_without_a_foreign_callback() {
+    assert!(CyclopsClient::connect_with_native_http_client(configuration()).is_ok());
 }
 
 #[test]
@@ -200,12 +207,12 @@ fn resources_use_canonical_schema_specs_and_statuses() {
     };
     assert_eq!(metadata.namespace, "default");
 
-    fn pool_status(_: Option<OSGymWorkspacePoolStatus>) {}
+    fn pool_status(_: Option<OSGymSandboxWarmPoolStatus>) {}
     fn claim_status(_: Option<OSGymSandboxClaimStatus>) {}
 
     fn assert_pool_types(pool: Pool) {
         let Pool { spec, status, .. } = pool;
-        let _: PoolSpec = spec;
+        let _: OSGymSandboxWarmPoolSpec = spec;
         pool_status(status);
     }
 
@@ -218,7 +225,7 @@ fn resources_use_canonical_schema_specs_and_statuses() {
     fn assert_create_pool_request(request: CreatePoolRequest) {
         let CreatePoolRequest { namespace, spec } = request;
         let _: String = namespace;
-        let _: PoolSpec = spec;
+        let _: OSGymSandboxWarmPoolSpec = spec;
     }
 
     fn assert_create_claim_request(request: CreateClaimRequest) {
@@ -258,7 +265,7 @@ fn resources_support_equality_and_kubernetes_camel_case_json() {
     assert_eq!(create_claim, create_claim.clone());
 
     let pool_json = serde_json::to_value(pool).unwrap();
-    assert_eq!(pool_json["apiVersion"], "cua.ai/v1");
+    assert_eq!(pool_json["apiVersion"], "osgym.cua.ai/v1alpha1");
     assert!(pool_json.get("api_version").is_none());
     let claim_json = serde_json::to_value(claim).unwrap();
     assert_eq!(claim_json["apiVersion"], "osgym.cua.ai/v1alpha1");

@@ -2,7 +2,10 @@ use crate::{
     AccessTokenProviderError, CyclopsConfiguration, CyclopsTokenProviderConfiguration, HttpError,
     HttpHeader, HttpRequest, HttpResponse, SdkError,
 };
+use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Deserialize;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::OnceLock;
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -18,6 +21,113 @@ const TOKEN_OPERATION: &str = "acquire OAuth token";
 pub(crate) enum AuthenticatedRequestClass {
     ControlPlane,
     ServiceProxy,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+static NATIVE_HTTP_RUNTIME: OnceLock<Result<tokio::runtime::Runtime, String>> = OnceLock::new();
+
+#[cfg(not(target_arch = "wasm32"))]
+fn native_http_runtime() -> Result<&'static tokio::runtime::Runtime, String> {
+    match NATIVE_HTTP_RUNTIME
+        .get_or_init(|| tokio::runtime::Runtime::new().map_err(|error| error.to_string()))
+    {
+        Ok(runtime) => Ok(runtime),
+        Err(reason) => Err(reason.clone()),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) struct NativeHttpClient {
+    client: reqwest::Client,
+}
+#[cfg(not(target_arch = "wasm32"))]
+impl NativeHttpClient {
+    pub(crate) fn new() -> Result<Self, SdkError> {
+        native_http_runtime().map_err(|reason| SdkError::Configuration {
+            reason: format!("could not create native HTTP runtime: {reason}"),
+        })?;
+        Ok(Self {
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .redirect(reqwest::redirect::Policy::none())
+                .no_proxy()
+                .build()
+                .map_err(|error| SdkError::Configuration {
+                    reason: format!("could not create native HTTP client: {error}"),
+                })?,
+        })
+    }
+}
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait::async_trait]
+impl HttpClient for NativeHttpClient {
+    async fn execute(&self, request: HttpRequest) -> Result<HttpResponse, HttpError> {
+        let method = reqwest::Method::from_bytes(request.method.as_bytes()).map_err(|error| {
+            HttpError::Transport {
+                reason: format!("invalid HTTP method: {error}"),
+            }
+        })?;
+        let mut headers = reqwest::header::HeaderMap::new();
+        for header in request.headers {
+            let name = reqwest::header::HeaderName::from_bytes(header.name.as_bytes()).map_err(
+                |error| HttpError::Transport {
+                    reason: format!("invalid HTTP header name: {error}"),
+                },
+            )?;
+            let value = reqwest::header::HeaderValue::from_str(&header.value).map_err(|error| {
+                HttpError::Transport {
+                    reason: format!("invalid HTTP header value: {error}"),
+                }
+            })?;
+            headers.append(name, value);
+        }
+        let mut native = self.client.request(method, request.url).headers(headers);
+        if let Some(body) = request.body {
+            native = native.body(body);
+        }
+        native_http_runtime()
+            .map_err(|reason| HttpError::Transport {
+                reason: format!("could not create native HTTP runtime: {reason}"),
+            })?
+            .spawn(async move {
+                let response = native.send().await.map_err(|error| HttpError::Transport {
+                    reason: format!("native HTTP request failed: {error}"),
+                })?;
+                let status = response.status().as_u16();
+                let headers = response
+                    .headers()
+                    .iter()
+                    .map(|(name, value)| {
+                        value
+                            .to_str()
+                            .map(|value| HttpHeader {
+                                name: name.as_str().into(),
+                                value: value.into(),
+                            })
+                            .map_err(|error| HttpError::Transport {
+                                reason: format!(
+                                    "native HTTP response contained a non-text header: {error}"
+                                ),
+                            })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let body = response
+                    .bytes()
+                    .await
+                    .map_err(|error| HttpError::Transport {
+                        reason: format!("could not read native HTTP response body: {error}"),
+                    })?;
+                Ok(HttpResponse {
+                    status,
+                    headers,
+                    body: body.to_vec(),
+                })
+            })
+            .await
+            .map_err(|error| HttpError::Transport {
+                reason: format!("native HTTP runtime task failed: {error}"),
+            })?
+    }
 }
 
 #[uniffi::export(with_foreign)]
@@ -330,11 +440,8 @@ impl Transport {
         else {
             unreachable!("client-credentials token acquisition requires client credentials")
         };
-        let body = url::form_urlencoded::Serializer::new(String::new())
-            .append_pair("grant_type", "client_credentials")
-            .append_pair("client_id", client_id)
-            .append_pair("client_secret", client_secret)
-            .finish();
+        let credentials = STANDARD.encode(format!("{client_id}:{client_secret}"));
+        let body = "grant_type=client_credentials".as_bytes().to_vec();
         let response = self
             .http_client
             .execute(HttpRequest {
@@ -349,8 +456,12 @@ impl Transport {
                         name: "content-type".into(),
                         value: "application/x-www-form-urlencoded".into(),
                     },
+                    HttpHeader {
+                        name: "authorization".into(),
+                        value: format!("Basic {credentials}"),
+                    },
                 ],
-                body: Some(body.into_bytes()),
+                body: Some(body),
             })
             .await
             .map_err(map_http_error)?;
@@ -442,5 +553,109 @@ fn with_bearer(mut request: HttpRequest, token: &str) -> HttpRequest {
 fn map_http_error(error: HttpError) -> SdkError {
     match error {
         HttpError::Transport { reason } => SdkError::Transport { reason },
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod native_http_client_tests {
+    use super::*;
+    use std::{
+        io::{ErrorKind, Read, Write},
+        net::{TcpListener, TcpStream},
+        thread,
+        time::Duration,
+    };
+
+    fn read_request(stream: &mut TcpStream) -> String {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut bytes = Vec::new();
+        let mut chunk = [0; 512];
+        while !bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+            let read = stream.read(&mut chunk).unwrap();
+            assert_ne!(read, 0, "client closed before completing its request");
+            bytes.extend_from_slice(&chunk[..read]);
+        }
+        String::from_utf8(bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn native_transport_preserves_duplicate_headers_and_error_bodies() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/native", listener.local_addr().unwrap());
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = read_request(&mut stream).to_ascii_lowercase();
+            assert!(request.contains("x-duplicate: first"));
+            assert!(request.contains("x-duplicate: second"));
+            stream.write_all(b"HTTP/1.1 500 Internal Server Error\r\nx-duplicate: one\r\nx-duplicate: two\r\ncontent-length: 17\r\nconnection: close\r\n\r\nnative error body").unwrap();
+        });
+        let response = NativeHttpClient::new()
+            .unwrap()
+            .execute(HttpRequest {
+                method: "GET".into(),
+                url,
+                headers: vec![
+                    HttpHeader {
+                        name: "x-duplicate".into(),
+                        value: "first".into(),
+                    },
+                    HttpHeader {
+                        name: "x-duplicate".into(),
+                        value: "second".into(),
+                    },
+                ],
+                body: None,
+            })
+            .await
+            .unwrap();
+        server.join().unwrap();
+        assert_eq!(response.status, 500);
+        assert_eq!(
+            response
+                .headers
+                .iter()
+                .filter(|header| header.name == "x-duplicate")
+                .map(|header| header.value.as_str())
+                .collect::<Vec<_>>(),
+            ["one", "two"]
+        );
+        assert_eq!(response.body, b"native error body");
+    }
+
+    #[tokio::test]
+    async fn native_transport_does_not_replay_bearers_to_redirect_hosts() {
+        let redirected = TcpListener::bind("127.0.0.1:0").unwrap();
+        redirected.set_nonblocking(true).unwrap();
+        let target = format!("http://{}/redirected", redirected.local_addr().unwrap());
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/initial", listener.local_addr().unwrap());
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            assert!(
+                read_request(&mut stream)
+                    .to_ascii_lowercase()
+                    .contains("authorization: bearer intended-token")
+            );
+            stream.write_all(format!("HTTP/1.1 302 Found\r\nlocation: {target}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n").as_bytes()).unwrap();
+        });
+        let response = NativeHttpClient::new()
+            .unwrap()
+            .execute(HttpRequest {
+                method: "GET".into(),
+                url,
+                headers: vec![HttpHeader {
+                    name: "authorization".into(),
+                    value: "Bearer intended-token".into(),
+                }],
+                body: None,
+            })
+            .await
+            .unwrap();
+        server.join().unwrap();
+        thread::sleep(Duration::from_millis(50));
+        assert_eq!(response.status, 302);
+        assert!(matches!(redirected.accept(), Err(error) if error.kind() == ErrorKind::WouldBlock));
     }
 }

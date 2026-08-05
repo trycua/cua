@@ -1,10 +1,13 @@
 // Package rbace2e reproduces — against a real kube-apiserver (envtest, no
 // cluster/VM/Docker) — the production 403 a cyclops-cs user hit creating a
-// workspace pool:
+// workspace pool. The incident happened on the legacy
+// cua.ai/osgymworkspacepools resource; the RBAC property it pinned is
+// resource-agnostic, so since the native-CRD migration the same tests run
+// against osgym.cua.ai/osgymsandboxwarmpools:
 //
-//	osgymworkspacepools.cua.ai is forbidden: User
+//	osgymsandboxwarmpools.osgym.cua.ai is forbidden: User
 //	"oidc:f70ef30e-9282-4a3b-b630-8a6bb4528c5d" cannot create resource
-//	"osgymworkspacepools" in API group "cua.ai" in the namespace
+//	"osgymsandboxwarmpools" in API group "osgym.cua.ai" in the namespace
 //	"godot-qa-godot-qa"
 //
 // Why this is the faithful layer: the 403 is an apiserver RBAC decision, not
@@ -76,14 +79,17 @@ const (
 // test honest: if the grant changes, the test reflects it.
 const poolClusterRole = "../../clusters/kopf-k3s/capsule/pool-manager-clusterrole.yaml"
 
-var poolGVR = schema.GroupVersionResource{Group: "cua.ai", Version: "v1", Resource: "osgymworkspacepools"}
+var poolGVR = schema.GroupVersionResource{Group: "osgym.cua.ai", Version: "v1alpha1", Resource: "osgymsandboxwarmpools"}
 
 func newPool(name string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": "cua.ai/v1",
-		"kind":       "OSGymWorkspacePool",
+		"apiVersion": "osgym.cua.ai/v1alpha1",
+		"kind":       "OSGymSandboxWarmPool",
 		"metadata":   map[string]any{"name": name},
-		"spec":       map[string]any{"replicas": int64(1)},
+		"spec": map[string]any{
+			"replicas":           int64(1),
+			"sandboxTemplateRef": map[string]any{"name": name + "-template"},
+		},
 	}}
 }
 
@@ -172,8 +178,8 @@ func TestPoolCreate_Forbidden_WhenOwnerUngoverned(t *testing.T) {
 	// Assert it is the exact apiserver RBAC denial from the report.
 	msg := err.Error()
 	for _, want := range []string{
-		`cannot create resource "osgymworkspacepools"`,
-		`in API group "cua.ai"`,
+		`cannot create resource "osgymsandboxwarmpools"`,
+		`in API group "osgym.cua.ai"`,
 		impUser,
 		namespace,
 	} {
@@ -230,17 +236,19 @@ func TestPoolCreate_Succeeds_WhenRemovedClusterWideGrantRestored(t *testing.T) {
 		t.Fatalf("baseline: expected Forbidden without the cluster-wide grant, got: %v", err)
 	}
 
-	// Restore EXACTLY the rule 5516dcf7 deleted (pre-regression state):
+	// Restore the modern equivalent of the rule 5516dcf7 deleted (the
+	// original granted cua.ai/osgymworkspacepools; the CRD is gone, so the
+	// analogous cluster-wide grant targets the native warm pools):
 	//   ClusterRole capsule-tenant-cluster-resources
-	//     - apiGroups: ["cua.ai"]
-	//       resources: ["osgymworkspacepools"]
+	//     - apiGroups: ["osgym.cua.ai"]
+	//       resources: ["osgymsandboxwarmpools"]
 	//       verbs: ["list","get","create","update","patch","delete"]
 	//   + ClusterRoleBinding of it to group system:authenticated.
 	if _, err := admin.RbacV1().ClusterRoles().Create(ctx, &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: "capsule-tenant-cluster-resources"},
 		Rules: []rbacv1.PolicyRule{{
-			APIGroups: []string{"cua.ai"},
-			Resources: []string{"osgymworkspacepools"},
+			APIGroups: []string{"osgym.cua.ai"},
+			Resources: []string{"osgymsandboxwarmpools"},
 			Verbs:     []string{"list", "get", "create", "update", "patch", "delete"},
 		}},
 	}, metav1.CreateOptions{}); err != nil {

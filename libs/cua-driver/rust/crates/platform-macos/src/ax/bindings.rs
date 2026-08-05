@@ -72,6 +72,11 @@ extern "C" {
         attribute: CFStringRef,
         value: CFTypeRef,
     ) -> AXError;
+    pub fn AXUIElementIsAttributeSettable(
+        element: AXUIElementRef,
+        attribute: CFStringRef,
+        settable: *mut u8,
+    ) -> AXError;
     pub fn AXUIElementSetMessagingTimeout(
         element: AXUIElementRef,
         timeout_in_seconds: f32,
@@ -111,6 +116,7 @@ pub unsafe fn element_at_screen_position(pid: i32, x: f64, y: f64) -> Option<AXU
 // ── AXValue functions ────────────────────────────────────────────────────────
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
+    pub fn AXValueCreate(the_type: AXValueType, value_ptr: *const c_void) -> AXValueRef;
     pub fn AXValueGetType(value: AXValueRef) -> AXValueType;
     pub fn AXValueGetValue(
         value: AXValueRef,
@@ -119,9 +125,34 @@ extern "C" {
     ) -> bool;
 }
 
+#[repr(C)]
+struct CGPointValue {
+    x: f64,
+    y: f64,
+}
+
+#[repr(C)]
+struct CGSizeValue {
+    width: f64,
+    height: f64,
+}
+
 // ── Helper functions ──────────────────────────────────────────────────────────
 
 use core_foundation::{array::CFArray, base::TCFType, string::CFString as CFStr};
+
+/// Whether an AX attribute is currently writable on this element.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
+pub unsafe fn is_attribute_settable(element: AXUIElementRef, attr_name: &str) -> bool {
+    let attr = CFStr::new(attr_name);
+    let mut settable = 0_u8;
+    AXUIElementIsAttributeSettable(element, attr.as_concrete_TypeRef(), &mut settable)
+        == kAXErrorSuccess
+        && settable != 0
+}
 
 /// Copy a string attribute from an AX element. Returns `None` on any error.
 ///
@@ -435,6 +466,26 @@ pub unsafe fn focused_element_of_pid(pid: i32) -> Option<AXUIElementRef> {
     Some(value as AXUIElementRef)
 }
 
+/// Return the CGWindowID of the application's focused AX window.
+///
+/// This is a narrow read-only proof used before global keyboard delivery: an
+/// already focused exact window must not be re-activated, because doing so can
+/// make a focus-proxy renderer drop its current key target.
+pub fn focused_window_id_of_pid(pid: i32) -> Option<u32> {
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return None;
+        }
+        let window = copy_element_attr(app, "AXFocusedWindow");
+        CFRelease(app as CFTypeRef);
+        let window = window?;
+        let window_id = ax_get_window_id(window);
+        CFRelease(window as CFTypeRef);
+        window_id
+    }
+}
+
 /// Get the children of an AX element.
 ///
 /// # Safety
@@ -526,6 +577,53 @@ pub unsafe fn set_number_attr(element: AXUIElementRef, attr_name: &str, value: f
     let attr = CFStr::new(attr_name);
     let cf_value = CFNumber::from(value);
     AXUIElementSetAttributeValue(element, attr.as_concrete_TypeRef(), cf_value.as_CFTypeRef())
+}
+
+/// Set an AX CGPoint attribute such as `AXPosition`.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
+pub unsafe fn set_point_attr(element: AXUIElementRef, attr_name: &str, x: f64, y: f64) -> AXError {
+    let attr = CFStr::new(attr_name);
+    let point = CGPointValue { x, y };
+    let value = AXValueCreate(
+        kAXValueCGPointType,
+        &point as *const CGPointValue as *const c_void,
+    );
+    if value.is_null() {
+        return kAXErrorFailure;
+    }
+    let result =
+        AXUIElementSetAttributeValue(element, attr.as_concrete_TypeRef(), value as CFTypeRef);
+    CFRelease(value as CFTypeRef);
+    result
+}
+
+/// Set an AX CGSize attribute such as `AXSize`.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
+pub unsafe fn set_size_attr(
+    element: AXUIElementRef,
+    attr_name: &str,
+    width: f64,
+    height: f64,
+) -> AXError {
+    let attr = CFStr::new(attr_name);
+    let size = CGSizeValue { width, height };
+    let value = AXValueCreate(
+        kAXValueCGSizeType,
+        &size as *const CGSizeValue as *const c_void,
+    );
+    if value.is_null() {
+        return kAXErrorFailure;
+    }
+    let result =
+        AXUIElementSetAttributeValue(element, attr.as_concrete_TypeRef(), value as CFTypeRef);
+    CFRelease(value as CFTypeRef);
+    result
 }
 
 /// Set an AX attribute to a CFBoolean true value.

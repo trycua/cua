@@ -35,7 +35,6 @@ class DriverResult(Protocol):
     is_error: bool
     text: str
     error_code: Optional[str]
-    verified: Optional[bool]
     degraded: bool
 
 
@@ -185,8 +184,19 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
     def _result_data(cls, result: DriverResult) -> Dict[str, Any]:
         cls._raise_for_error(result)
         data = cls._structured(result)
-        if result.verified is not None:
-            data.setdefault("verified", result.verified)
+        # computer-server's legacy envelope predates ActionResult. Preserve a
+        # compatibility boolean as a deliberately lossy "confirmed" bit:
+        # only a confirmed effect maps to True; every other action effect maps
+        # to False. New integrations must use `effect` instead.
+        if data.get("effect") == "confirmed":
+            data.setdefault("verified", True)
+        elif data.get("effect") in {
+            "unverifiable",
+            "partial",
+            "suspected_noop",
+            "refused",
+        }:
+            data.setdefault("verified", False)
         if result.degraded:
             data.setdefault("degraded", True)
         return data

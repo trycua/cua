@@ -14,7 +14,20 @@ allowed_image_repositories := {
 	"296062593712.dkr.ecr.us-west-2.amazonaws.com/ubuntu-vnc-cua-kubevirt",
 }
 
-template := object.get(object.get(input.object, "spec", {}), "template", {})
+# The VM shape lives at spec.vmTemplate on the native OSGymSandboxTemplate
+# and at spec.template on the retired legacy OSGymWorkspacePool (still
+# evaluated so a stale client cannot slip past the gate).
+vm_template := object.get(object.get(input.object, "spec", {}), "vmTemplate", {})
+
+legacy_template := object.get(object.get(input.object, "spec", {}), "template", {})
+
+template := vm_template {
+	vm_template != {}
+}
+
+template := legacy_template {
+	vm_template == {}
+}
 
 has_pull_secret {
 	object.get(template, "imagePullSecret", null) != null

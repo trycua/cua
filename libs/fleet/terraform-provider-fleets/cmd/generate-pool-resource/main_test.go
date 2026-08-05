@@ -32,6 +32,11 @@ func TestValidateMappingRejectsInvalidMapping(t *testing.T) {
 		{name: "duplicate nested Go name", scenario: "duplicate_nested_go_name", wantStderr: `duplicate Go field "Name" in block "service"`},
 		{name: "missing CRD path", scenario: "missing_crd_path", wantStderr: `spec.missing is not an object`},
 		{name: "wrong CRD type", scenario: "wrong_crd_type", wantStderr: `field replicas maps to CRD type "string", expected "integer"`},
+		{name: "unknown attribute CR", scenario: "unknown_attribute_cr", wantStderr: `"replicas" maps to unsupported cr "sandbox"`},
+		{name: "missing attribute CR", scenario: "missing_attribute_cr", wantStderr: `"replicas" maps to unsupported cr ""`},
+		{name: "unknown block CR", scenario: "unknown_block_cr", wantStderr: `"service" maps to unsupported cr "sandbox"`},
+		{name: "nested CR", scenario: "nested_cr", wantStderr: `field "name" in block "service" must not set cr`},
+		{name: "path in the other CR", scenario: "path_in_other_cr", wantStderr: `spec.vmTemplate.services is not an object`},
 	}
 
 	for _, test := range tests {
@@ -48,11 +53,21 @@ func TestValidateMappingRejectsInvalidMapping(t *testing.T) {
 }
 
 func TestRenderIsDeterministic(t *testing.T) {
-	root, config := validationFixture("valid")
-	first := render(root, config)
-	second := render(root, config)
+	schemas, config := validationFixture("valid")
+	first := render(schemas, config)
+	second := render(schemas, config)
 	if !bytes.Equal(first, second) {
 		t.Fatal("render() produced different output for identical input")
+	}
+}
+
+func TestReadCRDSchemasFindsBothNativeCRDs(t *testing.T) {
+	schemas := readCRDSchemas("../../../../clusters/base/osgym/crd.yaml")
+	if lookup(schemas.root(warmPoolCR, "replicas"), "spec.replicas")["type"] != "integer" {
+		t.Fatal("warm pool schema does not expose spec.replicas")
+	}
+	if lookup(schemas.root(templateCR, "container_disk_image"), "spec.vmTemplate.containerDiskImage")["type"] != "string" {
+		t.Fatal("template schema does not expose spec.vmTemplate.containerDiskImage")
 	}
 }
 
@@ -61,8 +76,8 @@ func TestValidationHelperProcess(t *testing.T) {
 	if scenario == "" {
 		return
 	}
-	root, config := validationFixture(scenario)
-	validateMapping(root, config)
+	schemas, config := validationFixture(scenario)
+	validateMapping(schemas, config)
 }
 
 func runValidationHelper(t *testing.T, scenario string) (string, error) {
@@ -73,20 +88,34 @@ func runValidationHelper(t *testing.T, scenario string) (string, error) {
 	return string(output), err
 }
 
-func validationFixture(scenario string) (map[string]any, mapping) {
-	root := map[string]any{
+func validationFixture(scenario string) (crdSchemas, mapping) {
+	warmPool := map[string]any{
 		"properties": map[string]any{
 			"spec": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"replicas": map[string]any{"type": "integer"},
-					"services": map[string]any{
-						"type": "array",
-						"items": map[string]any{
-							"type": "object",
-							"properties": map[string]any{
-								"name":       map[string]any{"type": "string"},
-								"targetPort": map[string]any{"type": "integer"},
+				},
+			},
+		},
+	}
+	template := map[string]any{
+		"properties": map[string]any{
+			"spec": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"vmTemplate": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"services": map[string]any{
+								"type": "array",
+								"items": map[string]any{
+									"type": "object",
+									"properties": map[string]any{
+										"name":       map[string]any{"type": "string"},
+										"targetPort": map[string]any{"type": "integer"},
+									},
+								},
 							},
 						},
 					},
@@ -94,13 +123,15 @@ func validationFixture(scenario string) (map[string]any, mapping) {
 			},
 		},
 	}
+	schemas := crdSchemas{warmPoolCR: warmPool, templateCR: template}
 	config := mapping{
 		Attributes: []field{
 			{Name: "name", GoName: "Name", ValueType: "string", Mode: "required", RequiresReplace: true},
-			{Name: "replicas", GoName: "Replicas", ValueType: "int64", Mode: "required", CRDPath: "spec.replicas"},
+			{Name: "replicas", GoName: "Replicas", ValueType: "int64", Mode: "required", CR: warmPoolCR, CRDPath: "spec.replicas"},
 		},
 		Blocks: []block{{
-			Name: "service", GoName: "Services", Model: "serviceModel", Collection: "set", CRDPath: "spec.services",
+			Name: "service", GoName: "Services", Model: "serviceModel", Collection: "set",
+			CR: templateCR, CRDPath: "spec.vmTemplate.services",
 			Fields: []field{{Name: "name", GoName: "Name", ValueType: "string", Mode: "required", CRDPath: "name"}},
 		}},
 	}
@@ -131,9 +162,23 @@ func validationFixture(scenario string) (map[string]any, mapping) {
 	case "missing_crd_path":
 		config.Attributes[1].CRDPath = "spec.missing"
 	case "wrong_crd_type":
-		root["properties"].(map[string]any)["spec"].(map[string]any)["properties"].(map[string]any)["replicas"].(map[string]any)["type"] = "string"
+		warmPoolSpec(warmPool)["replicas"].(map[string]any)["type"] = "string"
+	case "unknown_attribute_cr":
+		config.Attributes[1].CR = "sandbox"
+	case "missing_attribute_cr":
+		config.Attributes[1].CR = ""
+	case "unknown_block_cr":
+		config.Blocks[0].CR = "sandbox"
+	case "nested_cr":
+		config.Blocks[0].Fields[0].CR = templateCR
+	case "path_in_other_cr":
+		config.Blocks[0].CR = warmPoolCR
 	default:
 		panic("unknown validation scenario: " + scenario)
 	}
-	return root, config
+	return schemas, config
+}
+
+func warmPoolSpec(root map[string]any) map[string]any {
+	return root["properties"].(map[string]any)["spec"].(map[string]any)["properties"].(map[string]any)
 }

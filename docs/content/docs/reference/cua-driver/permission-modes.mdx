@@ -133,9 +133,7 @@ allow:
     - start_session
     - end_session
     - launch_app
-    - get_window_state
-    - click
-    - type_text
+    - list_windows
     - browser_prepare
     - get_browser_state
     - browser_navigate
@@ -179,6 +177,48 @@ process instance.
 Browser origins match exact scheme, host, and port. File roots are
 canonicalized and compared by path component, so a shared string prefix or a
 symlink escape does not grant access.
+
+### Origin scope excludes generic input
+
+`resources.browser.origins` binds the typed browser adapter only. A manifest
+that declares origins therefore cannot also allow a tool that reaches a page
+around that adapter, and the runtime refuses to start if it does:
+
+```text
+authorization startup error: origin-scoped bounded manifests cannot allow
+'click' because it bypasses the typed browser origin adapter
+```
+
+The excluded tools are `click`, `double_click`, `right_click`, `drag`,
+`scroll`, `type_text`, `press_key`, `hotkey`, `set_value`,
+`mouse_button_down`, `mouse_button_up`, `mouse_drag`, `parallel_mouse_drag`,
+`get_accessibility_tree`, `get_window_state`, `verify_state`,
+`get_desktop_state`, and `page`.
+
+The exclusion covers observation as well as input. A window screenshot or
+accessibility tree of a browser window exposes whichever tab is open,
+regardless of the origin allow-list, so where a browser window is in reach
+these tools bound neither what an agent may change nor what it may read.
+
+The check is evaluated at load time against `allow.tools` alone. It does not
+analyze whether the manifest's application scope actually puts a browser window
+in reach, so a manifest that names only a non-browser application is refused on
+the same terms. This is deliberate: deciding reachability would require the
+runtime to keep a list of browser identities, and a stale list would void the
+origin boundary silently instead of refusing loudly.
+
+Every navigation is checked against the origin set, so a manifest that allows
+`browser_navigate` with no origins refuses every navigation. Browser access and
+generic desktop input consequently belong to separate manifests and separate
+runtimes. Use `list_windows` for the `window_id` a browser call needs.
+
+An origin scope binds one runtime's tool surface. It is not a property of the
+browser, the profile, or the machine. A second runtime that can deliver generic
+input to a browser window — including any standard-mode runtime, which allows
+input against every application — voids the first runtime's origin scope
+without violating it. Scope a companion runtime to non-browser applications
+with `desktop.display: false`, and treat same-user processes outside Cua Driver
+as outside the boundary entirely.
 
 Version 1 manifests remain loadable. They may name exact PIDs, windows, and
 paths, but version 2 is preferred for pre-launch and unattended workflows.

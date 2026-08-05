@@ -8,7 +8,7 @@ stay inside a reviewed set of applications, browser origins, files, and tools.
 
 ## 1. Create the manifest
 
-Save this as `cua-session.yaml` and replace the example paths and origin:
+Save this as `cua-session.yaml` and replace the example paths:
 
 ```yaml
 version: 2
@@ -25,12 +25,6 @@ allow:
     - click
     - type_text
     - press_key
-    - browser_prepare
-    - get_browser_state
-    - browser_navigate
-    - browser_click
-    - browser_type
-    - browser_download
     - kill_app
 
 resources:
@@ -39,12 +33,6 @@ resources:
       launch: true
       windows: all
       terminate: driver_launched
-
-  browser:
-    profiles:
-      - kind: isolated
-    origins:
-      - https://app.example.com
 
   files:
     read:
@@ -57,6 +45,9 @@ resources:
   desktop:
     display: false
 ```
+
+This manifest drives a native application. Browser work uses a separate
+manifest, for the reason described in the next step.
 
 On macOS, replace `executable` with the application's `bundle_id`:
 
@@ -74,16 +65,61 @@ path.
 
 ## 2. Select browser access
 
+A bounded manifest that drives a browser is a separate, typed-browser-only
+manifest. It cannot also allow generic input or window observation.
+
+Every navigation is checked against `resources.browser.origins`, so a browser
+manifest must list at least one origin. Declaring origins then excludes the
+tools that could reach a page without crossing the typed browser adapter:
+`click`, `double_click`, `right_click`, `drag`, `scroll`, `type_text`,
+`press_key`, `hotkey`, `set_value`, the mouse primitives,
+`get_accessibility_tree`, `get_window_state`, `verify_state`,
+`get_desktop_state`, and `page`. Including any of them alongside origins is
+refused when the runtime starts:
+
+```text
+authorization startup error: origin-scoped bounded manifests cannot allow
+'click' because it bypasses the typed browser origin adapter
+```
+
+The check reads `allow.tools` alone, so it applies even when the manifest's
+application scope contains no browser. Use `list_windows` rather than
+`get_window_state` to find the `window_id` a browser call needs.
+
 For a driver-owned browser profile:
 
 ```yaml
+version: 2
+mode: bounded
+expires_after: 8h
+idle_timeout: 30m
+
+allow:
+  tools:
+    - start_session
+    - end_session
+    - launch_app
+    - list_windows
+    - browser_prepare
+    - get_browser_state
+    - browser_navigate
+    - browser_click
+    - browser_type
+    - browser_download
+
 resources:
   browser:
     profiles:
       - kind: isolated
+    origins:
+      - https://app.example.com
+
+  desktop:
+    display: false
 ```
 
-If the task must use a logged-in Chromium profile, make that choice explicit:
+If the task must use a logged-in Chromium profile, make that choice explicit by
+replacing the profile kind:
 
 ```yaml
 resources:
@@ -97,6 +133,17 @@ resources:
 An existing-profile entry authorizes attachment under bounded mode without a
 Cua modal or host callback. The typed browser tools still validate the live
 top-level origin before input.
+
+An agent that needs both a browser and generic desktop input needs two
+runtimes: this manifest for the browser, and a separate application-scoped
+manifest for the desktop work.
+
+Scope that second runtime so it cannot reach a browser window. A runtime that
+can click the browser makes the first runtime's origin list decorative, because
+nothing checks an origin on the generic input path. Give it a bounded manifest
+naming only the non-browser applications it needs, and keep
+`desktop.display: false`. A standard-mode runtime is not a substitute: standard
+allows input against any application, including the browser.
 
 ## 3. Choose desktop scope
 
@@ -179,12 +226,25 @@ cua-driver revoke --all
 `revoke --all` suspends the complete runtime generation. Restart the daemon
 before starting a new bounded run.
 
+## Know what the manifest is worth
+
+A manifest bounds one runtime's tool surface. It is not a sandbox around your
+machine, your browser, or your logged-in accounts. Another Cua Driver runtime,
+or any other process running as the same user, is unaffected by it — including
+a standard-mode runtime, which allows input against every application.
+
+Read [Permission modes](/reference/cua-driver/permission-modes#origin-scope-excludes-generic-input)
+before relying on a manifest as a security boundary rather than as a reviewed
+statement of what one agent run may do.
+
 ## Rules to remember
 
 - The manifest only narrows the built-in and configured policy ceilings.
 - Ownership never bypasses the manifest.
 - Unknown tools and missing resources fail closed.
 - Browser origins match exact scheme, host, and port.
+- Declaring browser origins excludes generic input and window observation from
+  the same manifest.
 - `terminate: driver_launched` requires a fresh process fingerprint match.
 - `ask.tools` is denied in unattended use because an agent cannot approve its
   own request.

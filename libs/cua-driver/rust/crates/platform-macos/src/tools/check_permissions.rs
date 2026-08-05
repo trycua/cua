@@ -4,7 +4,7 @@ use cua_driver_core::{
     tool::{ProtectedResourceOwnership, Tool, ToolDef},
 };
 use serde_json::Value;
-use std::sync::Arc;
+use std::{future::Future, sync::Arc, time::Duration};
 
 use super::ToolState;
 use crate::permissions::status::{
@@ -63,6 +63,64 @@ fn screen_recording_capturable() -> bool {
     SCShareableContent::get()
         .map(|c| !c.displays().is_empty())
         .unwrap_or(false)
+}
+
+const DIRECT_CAPTURE_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DirectCaptureProbeResult {
+    Ready,
+    Unavailable,
+    TimedOut,
+    Failed,
+}
+
+impl DirectCaptureProbeResult {
+    fn response_fields(self) -> (Option<bool>, &'static str, Option<Value>) {
+        match self {
+            Self::Ready => (Some(true), "ready", None),
+            Self::Unavailable => (Some(false), "unavailable", None),
+            Self::TimedOut => (
+                None,
+                "timed_out",
+                Some(serde_json::json!({
+                    "code": "direct_capture_probe_timed_out",
+                    "message": "The ScreenCaptureKit capability probe did not complete within 10 seconds.",
+                })),
+            ),
+            Self::Failed => (
+                None,
+                "probe_failed",
+                Some(serde_json::json!({
+                    "code": "direct_capture_probe_failed",
+                    "message": "The ScreenCaptureKit capability probe could not complete.",
+                })),
+            ),
+        }
+    }
+}
+
+async fn run_direct_capture_probe<F>(timeout: Duration, probe: F) -> DirectCaptureProbeResult
+where
+    F: Future<Output = Result<bool, tokio::task::JoinError>>,
+{
+    match tokio::time::timeout(timeout, probe).await {
+        Ok(Ok(true)) => DirectCaptureProbeResult::Ready,
+        Ok(Ok(false)) => DirectCaptureProbeResult::Unavailable,
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "direct ScreenCaptureKit capability probe failed");
+            DirectCaptureProbeResult::Failed
+        }
+        Err(_) => DirectCaptureProbeResult::TimedOut,
+    }
+}
+
+async fn bounded_screen_recording_capturable() -> DirectCaptureProbeResult {
+    run_direct_capture_probe(
+        DIRECT_CAPTURE_PROBE_TIMEOUT,
+        tokio::task::spawn_blocking(screen_recording_capturable),
+    )
+    .await
 }
 
 fn should_probe_direct_capture(
@@ -182,8 +240,9 @@ fn def() -> &'static ToolDef {
             Returns: `accessibility` + `screen_recording` (booleans from the TCC \
             preflight APIs), `screen_recording_capturable` (a live ScreenCaptureKit \
             probe when `prompt` is true; null on read-only calls), \
-            `direct_capture_status` (`ready`, `unavailable`, \
-            `blocked_by_screen_recording`, or `not_checked`), and `source` (which TCC identity the \
+            `direct_capture_status` (`ready`, `unavailable`, `timed_out`, `probe_failed`, \
+            `blocked_by_screen_recording`, or `not_checked`), `direct_capture_error` (a structured \
+            timeout/probe failure when applicable), and `source` (which TCC identity the \
             booleans reflect: the CuaDriver daemon vs the launching terminal/IDE). \
             macOS attributes grants to the responsible process, so a standalone call \
             from a terminal reports the terminal's grants, not the driver's. The \
@@ -260,20 +319,22 @@ impl Tool for CheckPermissionsTool {
         // private-window-picker bypass consent. A status/read-only call must
         // therefore never execute it. The explicit grant path opts in with
         // `prompt:true`, explains the dialog first, and verifies the result.
-        let (screen_recording_capturable, direct_capture_status) = if !should_prompt {
-            (None, "not_checked")
-        } else if !screen_recording {
-            (None, "blocked_by_screen_recording")
-        } else if should_probe_direct_capture(should_prompt, screen_recording, probe_direct_capture)
-        {
-            let capturable = screen_recording_capturable();
-            (
-                Some(capturable),
-                if capturable { "ready" } else { "unavailable" },
-            )
-        } else {
-            (None, "not_checked")
-        };
+        let (screen_recording_capturable, direct_capture_status, direct_capture_error) =
+            if !should_prompt {
+                (None, "not_checked", None)
+            } else if !screen_recording {
+                (None, "blocked_by_screen_recording", None)
+            } else if should_probe_direct_capture(
+                should_prompt,
+                screen_recording,
+                probe_direct_capture,
+            ) {
+                bounded_screen_recording_capturable()
+                    .await
+                    .response_fields()
+            } else {
+                (None, "not_checked", None)
+            };
         // (B) Which identity the booleans above belong to.
         let source = permission_source(
             self.state.host_owns_permission_ux,
@@ -304,6 +365,16 @@ impl Tool for CheckPermissionsTool {
                 "\n⚠️  Screen Recording reads granted but a live capture probe failed — \
                  the grant likely belongs to a different process, not this one.",
             );
+        } else if direct_capture_status == "timed_out" {
+            summary.push_str(
+                "\n⚠️  The direct ScreenCaptureKit readiness probe timed out; the permission \
+                 check returned without waiting indefinitely.",
+            );
+        } else if direct_capture_status == "probe_failed" {
+            summary.push_str(
+                "\n⚠️  The direct ScreenCaptureKit readiness probe failed; see \
+                 direct_capture_error for the bounded failure code.",
+            );
         } else if screen_recording_capturable.is_none() && (!should_prompt || !probe_direct_capture)
         {
             summary.push_str(
@@ -333,6 +404,7 @@ impl Tool for CheckPermissionsTool {
             "screen_recording":            screen_recording,
             "screen_recording_capturable": screen_recording_capturable,
             "direct_capture_status":        direct_capture_status,
+            "direct_capture_error":         direct_capture_error,
             "source":                      source,
         }))
     }
@@ -441,6 +513,38 @@ mod tests {
     fn staged_prompt_never_runs_the_direct_capture_probe() {
         assert!(!should_probe_direct_capture(true, false, false));
         assert!(!should_probe_direct_capture(true, true, false));
+    }
+
+    #[tokio::test]
+    async fn direct_capture_probe_returns_before_a_hung_probe() {
+        let result = run_direct_capture_probe(
+            std::time::Duration::from_millis(10),
+            std::future::pending::<Result<bool, tokio::task::JoinError>>(),
+        )
+        .await;
+
+        assert_eq!(result, DirectCaptureProbeResult::TimedOut);
+        let (capturable, status, error) = result.response_fields();
+        assert_eq!(capturable, None);
+        assert_eq!(status, "timed_out");
+        assert_eq!(error.unwrap()["code"], "direct_capture_probe_timed_out");
+    }
+
+    #[tokio::test]
+    async fn direct_capture_probe_preserves_successful_results() {
+        let ready = run_direct_capture_probe(
+            std::time::Duration::from_secs(1),
+            std::future::ready(Ok(true)),
+        )
+        .await;
+        let unavailable = run_direct_capture_probe(
+            std::time::Duration::from_secs(1),
+            std::future::ready(Ok(false)),
+        )
+        .await;
+
+        assert_eq!(ready, DirectCaptureProbeResult::Ready);
+        assert_eq!(unavailable, DirectCaptureProbeResult::Unavailable);
     }
 
     #[test]

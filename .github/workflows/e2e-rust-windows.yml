@@ -167,7 +167,7 @@ jobs:
 
   installer:
     if: inputs.lane == 'all' || inputs.lane == 'installer'
-    name: "Windows / install-local.ps1 smoke"
+    name: "Windows / installer and update smoke"
     needs: source
     runs-on: windows-latest
     timeout-minutes: 45
@@ -181,6 +181,47 @@ jobs:
       - name: Verify installer runner is interactive
         shell: pwsh
         run: .\scripts\ci\windows\verify-user-session.ps1
+      - name: Run Windows installer regression contracts
+        shell: pwsh
+        run: .\libs\cua-driver\scripts\tests\install-windows-regression.ps1
+      - name: Verify released install and legacy migration preserve state
+        shell: pwsh
+        run: |
+          $savedUserProfile = $env:USERPROFILE
+          $savedLocalAppData = $env:LOCALAPPDATA
+          $testRoot = Join-Path $env:RUNNER_TEMP "cua-driver-release-installer"
+          $env:USERPROFILE = Join-Path $testRoot "profile"
+          $env:LOCALAPPDATA = Join-Path $testRoot "localappdata"
+          $legacyHome = Join-Path $env:USERPROFILE ".cua-driver-rs"
+          $modernHome = Join-Path $env:USERPROFILE ".cua-driver"
+          $installed = Join-Path $env:LOCALAPPDATA "Programs\Cua\cua-driver\bin\cua-driver.exe"
+          try {
+            New-Item -ItemType Directory -Force -Path $legacyHome | Out-Null
+            Set-Content -LiteralPath (Join-Path $legacyHome "version_check.json") -Value "{}"
+            Set-Content -LiteralPath (Join-Path $legacyHome ".telemetry_id") -Value "synthetic-e2e-id"
+
+            $firstOutput = (& .\libs\cua-driver\scripts\install.ps1 -NoPathUpdate *>&1 | Out-String)
+            $firstOutput | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "cua-driver-release-install.txt")
+            if ($firstOutput -match "detected legacy install layout") { throw "cache-only home was treated as legacy" }
+            if (-not (Test-Path -LiteralPath $installed)) { throw "missing installed binary: $installed" }
+            if (-not (Test-Path -LiteralPath (Join-Path $modernHome "packages\current"))) { throw "missing current package junction" }
+            & schtasks.exe /Query /TN "cua-driver-serve" | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "install did not register cua-driver-serve" }
+
+            New-Item -ItemType Directory -Force -Path (Join-Path $legacyHome "packages") | Out-Null
+            $secondOutput = (& .\libs\cua-driver\scripts\install.ps1 -NoPathUpdate *>&1 | Out-String)
+            $secondOutput | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "cua-driver-release-reinstall.txt")
+            if ($secondOutput -notmatch "detected legacy install layout") { throw "true legacy marker was not detected" }
+            if (-not (Test-Path -LiteralPath $installed)) { throw "reinstall removed the installed binary" }
+            & schtasks.exe /Query /TN "cua-driver-serve" | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "legacy migration did not restore cua-driver-serve" }
+          }
+          finally {
+            & schtasks.exe /End /TN "cua-driver-serve" 2>$null | Out-Null
+            & schtasks.exe /Delete /TN "cua-driver-serve" /F 2>$null | Out-Null
+            $env:USERPROFILE = $savedUserProfile
+            $env:LOCALAPPDATA = $savedLocalAppData
+          }
       - name: Install into an isolated local namespace
         shell: pwsh
         env:
@@ -236,6 +277,8 @@ jobs:
             ${{ runner.temp }}/cua-driver-local-config.json
             ${{ runner.temp }}/cua-driver-local-daemon.out.log
             ${{ runner.temp }}/cua-driver-local-daemon.err.log
+            ${{ runner.temp }}/cua-driver-release-install.txt
+            ${{ runner.temp }}/cua-driver-release-reinstall.txt
           if-no-files-found: ignore
           retention-days: 14
 

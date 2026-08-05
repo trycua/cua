@@ -29,7 +29,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 )
 
-var poolGVR = schema.GroupVersionResource{Group: "cua.ai", Version: "v1", Resource: "osgymworkspacepools"}
+var (
+	warmPoolGVR = schema.GroupVersionResource{Group: "osgym.cua.ai", Version: "v1alpha1", Resource: "osgymsandboxwarmpools"}
+	templateGVR = schema.GroupVersionResource{Group: "osgym.cua.ai", Version: "v1alpha1", Resource: "osgymsandboxtemplates"}
+)
 
 func TestAccPoolLifecycle(t *testing.T) {
 	if os.Getenv("TF_ACC") == "" {
@@ -40,7 +43,7 @@ func TestAccPoolLifecycle(t *testing.T) {
 	}
 
 	testEnvironment := &envtest.Environment{
-		CRDDirectoryPaths:     []string{"../../../rbac-e2e/testdata"},
+		CRDDirectoryPaths:     []string{"../../../../clusters/base/osgym/crd.yaml"},
 		ErrorIfCRDPathMissing: true,
 	}
 	config, err := testEnvironment.Start()
@@ -78,9 +81,14 @@ provider "fleets" {
 			"fleets": providerserver.NewProtocol6WithError(fleetsprovider.New("test")()),
 		},
 		CheckDestroy: func(_ *terraform.State) error {
-			_, err := dynamicClient.Resource(poolGVR).Namespace("terraform-e2e").Get(context.Background(), "terraform-e2e", metav1.GetOptions{})
-			if err == nil {
-				return fmt.Errorf("pool still exists after destroy")
+			for resourceName, gvr := range map[string]schema.GroupVersionResource{
+				"terraform-e2e":          warmPoolGVR,
+				"terraform-e2e-template": templateGVR,
+			} {
+				_, err := dynamicClient.Resource(gvr).Namespace("terraform-e2e").Get(context.Background(), resourceName, metav1.GetOptions{})
+				if err == nil {
+					return fmt.Errorf("%s still exists after destroy", resourceName)
+				}
 			}
 			return nil
 		},
@@ -90,7 +98,9 @@ provider "fleets" {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("fleets_pool.test", "name", "terraform-e2e"),
 					resource.TestCheckResourceAttr("fleets_pool.test", "namespace", "terraform-e2e"),
+					resource.TestCheckResourceAttr("fleets_pool.test", "template_name", "terraform-e2e-template"),
 					resource.TestCheckResourceAttr("fleets_pool.test", "replicas", "1"),
+					resource.TestCheckResourceAttr("fleets_pool.test", "container_disk_image", "example.invalid/cyclops/e2e:latest"),
 					resource.TestCheckResourceAttr("fleets_pool.test", "service.#", "1"),
 					resource.TestCheckResourceAttr("fleets_pool.test", "autoscaling.max_pool_size", "5"),
 				),
@@ -172,18 +182,27 @@ func newCyclopsTestServer(t *testing.T, clientset *kubernetes.Clientset, dynamic
 			return
 		}
 
-		const prefix = "/api/k8s/apis/cua.ai/v1/namespaces/"
+		const prefix = "/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/"
 		if !strings.HasPrefix(r.URL.Path, prefix) {
 			http.NotFound(w, r)
 			return
 		}
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, prefix), "/")
-		if len(parts) < 2 || parts[1] != "osgymworkspacepools" {
+		if len(parts) < 2 {
 			http.NotFound(w, r)
 			return
 		}
-		namespace := parts[0]
-		pools := dynamicClient.Resource(poolGVR).Namespace(namespace)
+		var gvr schema.GroupVersionResource
+		switch parts[1] {
+		case warmPoolGVR.Resource:
+			gvr = warmPoolGVR
+		case templateGVR.Resource:
+			gvr = templateGVR
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		objects := dynamicClient.Resource(gvr).Namespace(parts[0])
 		switch {
 		case r.Method == http.MethodPost && len(parts) == 2:
 			var object unstructured.Unstructured
@@ -191,10 +210,10 @@ func newCyclopsTestServer(t *testing.T, clientset *kubernetes.Clientset, dynamic
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			created, err := pools.Create(ctx, &object, metav1.CreateOptions{})
+			created, err := objects.Create(ctx, &object, metav1.CreateOptions{})
 			writeKubernetesResult(w, http.StatusCreated, created, err)
 		case r.Method == http.MethodGet && len(parts) == 3:
-			object, err := pools.Get(ctx, parts[2], metav1.GetOptions{})
+			object, err := objects.Get(ctx, parts[2], metav1.GetOptions{})
 			writeKubernetesResult(w, http.StatusOK, object, err)
 		case r.Method == http.MethodPatch && len(parts) == 3:
 			body, err := io.ReadAll(r.Body)
@@ -202,10 +221,10 @@ func newCyclopsTestServer(t *testing.T, clientset *kubernetes.Clientset, dynamic
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			object, err := pools.Patch(ctx, parts[2], types.MergePatchType, body, metav1.PatchOptions{})
+			object, err := objects.Patch(ctx, parts[2], types.MergePatchType, body, metav1.PatchOptions{})
 			writeKubernetesResult(w, http.StatusOK, object, err)
 		case r.Method == http.MethodDelete && len(parts) == 3:
-			err := pools.Delete(ctx, parts[2], metav1.DeleteOptions{})
+			err := objects.Delete(ctx, parts[2], metav1.DeleteOptions{})
 			writeKubernetesResult(w, http.StatusNoContent, nil, err)
 		default:
 			http.NotFound(w, r)

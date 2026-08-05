@@ -279,11 +279,10 @@ cua-driver browser_click \
 Before dispatch, the driver refreshes the element box and hit-tests the point.
 It refuses stale, covered, or ambiguous targets.
 
-Standalone Chromium on macOS and Linux can activate its native window when
-trusted CDP pointer input is used. CUA Driver detects that limitation and
-returns `browser_input_trust_unavailable` before dispatch instead of claiming
-background delivery. Windows Chrome and Edge have validated trusted
-background delivery.
+Google Chrome on macOS and Chrome and Edge on Windows have validated trusted
+background delivery. Other macOS Chromium products and Linux return
+`browser_input_trust_unavailable` until product-specific background posture is
+validated.
 
 When the application semantics allow a synthetic JavaScript click, request it
 explicitly with a current ref:
@@ -410,7 +409,7 @@ capabilities, or existing-profile consent.
 | Surface | Typed state and mutation | Important boundary |
 | --- | --- | --- |
 | Chrome / Edge on Windows | Exact binding, refs, navigation, typing, trusted or explicit DOM click | Must run in an interactive user session, not Session 0 |
-| Chrome / Edge on macOS | Exact binding, refs, navigation, typing, explicit DOM click | Trusted standalone click refuses to preserve background posture |
+| Chrome / Edge on macOS | Exact binding, refs, navigation, typing, trusted Chrome or explicit DOM click | Trusted standalone background click is validated only for current Google Chrome |
 | Chrome / Chromium on Linux X11 | Exact binding, refs, navigation, typing, explicit DOM click | Trusted standalone click refuses to preserve background posture |
 | Chromium on validated Wayland setups | Exact binding only when compositor identity is provable | Generic/ambiguous compositor identity refuses mutation |
 | Electron | Exact single-page routes where endpoint and host relationship are proven | Do not infer support for arbitrary embedded webviews |

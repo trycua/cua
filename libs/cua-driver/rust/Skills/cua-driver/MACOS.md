@@ -457,12 +457,13 @@ window, and PID-routes its bounded checkbox-pixel fallback. The same control's
 state must verify after mutation; unsupported appearance, scale, zoom,
 window-size, or toolbar geometry refuses without a click.
 
-Standalone Chromium activates its window when CDP's trusted pointer route is
-used on macOS. The driver therefore returns
-`browser_input_trust_unavailable` before dispatch rather than falsely claiming
-background delivery. Use `input_route:"dom_event"` only when synthetic click
-semantics are acceptable. Embedded Electron has a separately bounded route;
-do not infer that route for arbitrary WKWebView or Tauri hosts.
+Current standalone Google Chrome validates CDP's trusted pointer route without
+activating its macOS window. Other Chromium products refuse this route until
+validated. A fresh remote-debugging connection can still surface browser-owned
+consent UI during preparation; do not attribute that setup effect to later input
+dispatch. Use `input_route:"dom_event"` only when synthetic click semantics are
+acceptable. Embedded Electron has a separately bounded route; do not infer that
+route for arbitrary WKWebView or Tauri hosts.
 
 For a declared session, typed browser click, type, and pointer mutations animate
 the macOS agent-cursor overlay at the live main-page target. This is a

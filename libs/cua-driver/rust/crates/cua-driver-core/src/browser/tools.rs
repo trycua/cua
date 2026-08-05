@@ -1007,7 +1007,7 @@ impl Tool for BrowserClickTool {
             if let Some(limitation) = self
                 .engine
                 .platform
-                .standalone_trusted_input_background_limitation()
+                .standalone_trusted_input_background_limitation(validated.record.product_kind)
             {
                 return BrowserRefusal::new(
                     BrowserRefusalCode::BrowserInputTrustUnavailable,
@@ -2971,6 +2971,7 @@ mod tests {
             crate::browser::store::TargetRecord {
                 target_id: String::new(),
                 pid: 1,
+                product_kind: BrowserProduct::GoogleChrome,
                 window_id: 7,
                 ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
                 endpoint_owner_pid: 1,
@@ -3029,6 +3030,7 @@ mod tests {
             crate::browser::store::TargetRecord {
                 target_id: String::new(),
                 pid: 1,
+                product_kind: BrowserProduct::GoogleChrome,
                 window_id: 7,
                 ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
                 endpoint_owner_pid: 1,
@@ -3072,6 +3074,7 @@ mod tests {
             crate::browser::store::TargetRecord {
                 target_id: String::new(),
                 pid: 1,
+                product_kind: BrowserProduct::GoogleChrome,
                 window_id: 7,
                 ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
                 endpoint_owner_pid: 1,

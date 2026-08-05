@@ -396,8 +396,13 @@ async fn browser_websocket_url(port: u16) -> Option<String> {
 
 #[async_trait]
 impl BrowserPlatform for MacOsBrowserPlatform {
-    fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
-        Some("Chromium's trusted CDP Input route activates its standalone browser window on macOS")
+    fn standalone_trusted_input_background_limitation(
+        &self,
+        product: BrowserProduct,
+    ) -> Option<&'static str> {
+        (product != BrowserProduct::GoogleChrome).then_some(
+            "trusted CDP Input background delivery is validated only for Google Chrome on macOS",
+        )
     }
 
     async fn visualize_browser_action(&self, action: BrowserVisualAction) {
@@ -1032,6 +1037,18 @@ mod tests {
         assert!(!is_chromium("Safari", "com.apple.Safari"));
         assert!(!is_chromium("Search", "com.example.Search"));
         assert!(!is_chromium("Operator", "com.example.Operator"));
+    }
+
+    #[test]
+    fn trusted_background_input_is_enabled_only_for_validated_chrome() {
+        let platform = MacOsBrowserPlatform::default();
+        assert_eq!(
+            platform.standalone_trusted_input_background_limitation(BrowserProduct::GoogleChrome),
+            None
+        );
+        assert!(platform
+            .standalone_trusted_input_background_limitation(BrowserProduct::MicrosoftEdge)
+            .is_some());
     }
 
     #[test]

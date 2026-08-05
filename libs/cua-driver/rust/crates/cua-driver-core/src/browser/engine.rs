@@ -1237,6 +1237,7 @@ impl BrowserEngine {
         let record = TargetRecord {
             target_id: String::new(),
             pid,
+            product_kind: class.product_kind,
             window_id,
             ws_url: endpoint.ws_url.clone(),
             endpoint_owner_pid: endpoint.ownership.owner_pid,

@@ -43,7 +43,7 @@ claim.
 | Platform and surface | Current typed-browser status |
 | --- | --- |
 | Windows Chrome and Edge | Validated. Trusted background pointer and synthetic DOM routes are covered. An interactive desktop is required. |
-| macOS Chrome and Edge | Existing-profile attachment is validated. Synthetic DOM actions can remain fully background; trusted standalone pointer routes refuse when Chromium would activate. |
+| macOS Chrome and Edge | Existing-profile attachment is validated. Trusted pointer delivery is validated only for current Google Chrome; synthetic DOM routes remain available for Edge. |
 | Linux X11 Chrome and Edge | Validated for exact binding and synthetic DOM background routes. Trusted standalone pointer routes refuse when activation is unavoidable. |
 | Linux Sway with Chrome | Validated only when compositor identity, process, window, and geometry are exact. |
 | Generic GNOME or KDE Wayland | Read-only discovery or structured refusal; mutation is not claimed. |

@@ -368,7 +368,7 @@ impl BrowserPointerTool {
             if let Some(limitation) = self
                 .engine
                 .platform
-                .standalone_trusted_input_background_limitation()
+                .standalone_trusted_input_background_limitation(validated.record.product_kind)
             {
                 return Some(
                     BrowserRefusal::new(

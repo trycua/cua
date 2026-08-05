@@ -223,7 +223,10 @@ pub trait BrowserPlatform: Send + Sync {
     /// Explain why a trusted CDP Input route cannot preserve background
     /// posture for a standalone browser on this platform. Embedded Chromium
     /// routes are independently proven and do not consult this capability.
-    fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
+    fn standalone_trusted_input_background_limitation(
+        &self,
+        _product: BrowserProduct,
+    ) -> Option<&'static str> {
         None
     }
 

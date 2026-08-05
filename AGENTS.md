@@ -55,6 +55,32 @@ After merge, run a short main-branch smoke and release-path verification. Repeat
 the full matrix after merge only when the merge result materially differs from
 the certified candidate or the smoke test exposes a regression.
 
+## Canonical Cua Driver desktop E2E
+
+Use the repository harnesses as the source of truth for desktop behavior:
+
+```text
+Windows: .\scripts\ci\windows\run-rust-e2e.ps1 -RequireGui
+Linux:   scripts/ci/linux/run-rust-e2e.sh
+macOS:   libs/cua-driver/tests/runners/macos-lume/run-all.sh
+```
+
+- Prefer the GitHub-hosted Windows workflow when its strict preflight proves an
+  interactive desktop. Do not assume that GitHub-hosted Windows runs in Session
+  0. Azure RDP is an optional environment-parity replay, not the canonical gate.
+- Use the GitHub-hosted Linux X11 workflow for the supported Linux gate. Keep
+  Nix source checks and compositor-specific Wayland lanes as their documented
+  separate gates.
+- Run macOS through the logged-in, TCC-authorized Lume maintainer wrapper. When
+  installed-browser behavior is in scope, include `--standalone-browser`.
+- Treat one-off Calculator, browser, or other app smokes and manually produced
+  recordings as supporting diagnostics. They never replace the complete
+  harness result at the exact candidate SHA.
+
+Historical plans, journals, and evidence reports describe the environments used
+at the time. They do not override the current commands and authority defined in
+`libs/cua-driver/docs/test-harnesses-guide.md` and `scripts/ci/README.md`.
+
 ## Pull request titles and component releases
 
 Pull requests are squash-merged, so the pull request title becomes the commit

@@ -30,6 +30,26 @@ The OS workflow may fan the complete matrix out into independent jobs for
 reporting and failure isolation. That is an execution detail; contributors
 should think of it as one canonical suite.
 
+### Evidence authority
+
+A canonical result is the complete repository harness run at the exact source
+SHA. A one-off app smoke, manually assembled script, video, or environment
+replay can diagnose a failure or provide release presentation evidence, but it
+does not replace the complete matrix.
+
+Windows and Linux use the repository's GitHub-hosted workflows when their
+strict environment preflights pass. Windows Azure RDP runs are optional
+environment-parity replays or a fallback when the hosted preflight cannot prove
+a required capability. macOS uses the logged-in Lume maintainer wrapper.
+For browser-facing changes or browser-use release certification, also run the
+standalone Chrome/Edge matrix: the macOS wrapper accepts
+`--standalone-browser`, while the Windows and Linux workflow is
+`.github/workflows/e2e-rust-standalone-browsers.yml`.
+
+Historical `*-plan.md`, `*-journal.md`, and release evidence documents record
+what was run at that time. They are not current execution instructions and do
+not override this guide or `scripts/ci/README.md`.
+
 ## Repository Map
 
 ```text

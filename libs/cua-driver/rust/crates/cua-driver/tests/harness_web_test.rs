@@ -305,7 +305,7 @@ fn harness_webview_left_click_px_background() {
         "webview2",
         "left_click",
         Targeting::Px,
-        DriverRoute::UiaInvoke,
+        DriverRoute::Composite,
     );
     let point = Cell::new(None);
     run_web_case_with_preparation(
@@ -376,13 +376,13 @@ fn harness_webview_left_click_px_background() {
                 "WebView2 PX background click failed: {}",
                 click.text()
             );
-            assert_eq!(
-                click.action_route(),
-                Some("accessibility"),
-                "WebView2 PX background click used an unexpected driver route: {}",
-                click.text()
-            );
             wait_for_journal_text(journal, "lbl-counter", "counter=3");
+            let route = click.action_route();
+            assert!(
+                matches!(route, Some("accessibility" | "synthetic_events")),
+                "WebView2 PX background click used an unsupported driver route {route:?}: {}",
+                click.text(),
+            );
         },
     );
 }

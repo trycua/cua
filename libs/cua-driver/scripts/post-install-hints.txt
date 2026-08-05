@@ -60,6 +60,20 @@ Next steps:
          {{BINARY}} mcp-config --client opencode   # JSON for opencode.json
          {{BINARY}} mcp-config --client hermes     # YAML for ~/.hermes/config.yaml
 
+     • Muse Code (macOS / Linux — merge into
+       $XDG_CONFIG_HOME/muse/settings.json, or ~/.config/muse/settings.json):
+         {
+           "mcp_servers": {
+             "cua-driver": {
+               "enabled": true,
+               "transport": "stdio",
+               "command": "{{BINARY}}",
+               "args": ["mcp"]
+             }
+           }
+         }
+       Start a new Muse session after saving; MCP servers load at startup.
+
      • ZCode (Z.ai — GUI app; paste in Settings → MCP Servers):
          {{BINARY}} mcp-config --client zcode
 

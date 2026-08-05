@@ -80,6 +80,31 @@ For direct agent integrations, see the
 SDK examples. They connect the agent to `cua-driver mcp` without importing a
 generated Cua client.
 
+## Muse Code
+
+[Muse Code](https://research.meta.ai/blog/introducing-muse-code-and-muse-spark-1-2)
+can use Cua Driver as a local stdio MCP server on macOS and Linux. Merge the
+following entry into `$XDG_CONFIG_HOME/muse/settings.json`, or
+`~/.config/muse/settings.json` when `XDG_CONFIG_HOME` is not set:
+
+```json
+{
+  "mcp_servers": {
+    "cua-driver": {
+      "enabled": true,
+      "transport": "stdio",
+      "command": "/absolute/path/to/cua-driver",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Use the installed binary's absolute path, which `command -v cua-driver` prints.
+Merge the `cua-driver` entry with any existing `mcp_servers` instead of
+replacing the settings file. Start a new Muse session after saving the file;
+Muse loads MCP servers at session startup.
+
 Contributor documentation:
 
 - `docs/cursor-themes.md` documents the default semantic cursor and custom

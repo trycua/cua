@@ -21,6 +21,7 @@ mod autostart;
 mod bundle;
 mod check_update_tool;
 mod cli;
+mod direct_capture_verification;
 mod doctor;
 mod history_runtime;
 mod mcp_http;

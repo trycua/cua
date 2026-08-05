@@ -15,6 +15,9 @@ From the repository root:
 ffmpeg. It regenerates the public documentation GIFs deterministically from the
 same rendered frames.
 
-The gallery keeps action animations and host-rendered delivery and target
-badge chips in separate review sections. The generated modifier media is badge
-output from the production renderer, not modifier artwork from the theme.
+The gallery starts with an interactive production cursor configurator covering
+all twelve actions, optional `background` / `foreground` delivery, and optional
+`ax` / `pixel` / `browser` / `desktop` targets. It then shows all fifteen badge
+context states and the twelve isolated theme-owned action animations. Delivery
+and target glyphs appear only in their authoritative runtime location inside
+the badge.

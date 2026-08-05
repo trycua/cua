@@ -13,7 +13,7 @@ from cua_sandbox.transport.computer_server import (
     normalize_screen_size,
     parse_command_response,
 )
-from cyclops_sdk import HttpHeader, HttpRequest
+from fleet_sdk import HttpHeader, HttpRequest
 
 _CMD_MAX_RETRIES = 3
 _CMD_RETRY_BACKOFF_S = 0.5
@@ -45,15 +45,40 @@ class FleetTransport(Transport):
     async def disconnect(self) -> None:
         self._connected = False
 
-    async def _request(self, method: str, path: str, *, json_body: Any = None) -> httpx.Response:
+    async def request_service(
+        self,
+        name: str,
+        *,
+        method: str,
+        path: str,
+        json_body: Any = None,
+        headers: dict[str, str] | None = None,
+    ) -> httpx.Response:
+        if name not in self._bound.services:
+            raise ValueError(f"Fleet sandbox does not expose service {name!r}")
+        return await self._request(
+            method, path, json_body=json_body, service_name=name, extra_headers=headers
+        )
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_body: Any = None,
+        service_name: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+    ) -> httpx.Response:
         assert self._connected, "Transport not connected"
         body = None if json_body is None else json.dumps(json_body).encode()
         headers = (
             [] if body is None else [HttpHeader(name="content-type", value="application/json")]
         )
+        for name, value in (extra_headers or {}).items():
+            headers.append(HttpHeader(name=name, value=value))
         result = await self._sdk.service_request(
             self._bound,
-            self._service_name,
+            service_name or self._service_name,
             path,
             HttpRequest(
                 method=method, url=f"https://service.invalid{path}", headers=headers, body=body

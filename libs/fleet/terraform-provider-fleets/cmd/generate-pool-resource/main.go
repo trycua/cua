@@ -20,6 +20,7 @@ type field struct {
 	GoName          string `json:"go_name"`
 	ValueType       string `json:"value_type"`
 	Mode            string `json:"mode"`
+	CR              string `json:"cr"`
 	CRDPath         string `json:"crd_path"`
 	Description     string `json:"description"`
 	DNSLabel        bool   `json:"dns_label"`
@@ -33,6 +34,7 @@ type block struct {
 	GoName     string  `json:"go_name"`
 	Model      string  `json:"model"`
 	Collection string  `json:"collection"`
+	CR         string  `json:"cr"`
 	CRDPath    string  `json:"crd_path"`
 	Fields     []field `json:"fields"`
 }
@@ -51,8 +53,21 @@ type schemaInfo struct {
 	Maximum     *int64
 }
 
+// The flat fleets_pool resource is backed by a pair of native CRs, so every
+// mapped attribute names the one it lives in.
+const (
+	warmPoolCR       = "warmpool"
+	templateCR       = "template"
+	warmPoolCRDName  = "osgymsandboxwarmpools.osgym.cua.ai"
+	templateCRDName  = "osgymsandboxtemplates.osgym.cua.ai"
+	nativeCRDVersion = "v1alpha1"
+)
+
+// crdSchemas holds the openAPIV3Schema of each CR keyed by mapping CR name.
+type crdSchemas map[string]map[string]any
+
 func main() {
-	crdPath := flag.String("crd", "", "path to the OSGymWorkspacePool CRD")
+	crdPath := flag.String("crd", "", "path to the osgym.cua.ai CRD bundle")
 	mappingPath := flag.String("mapping", "", "path to the Terraform mapping JSON")
 	outputPath := flag.String("out", "", "generated Go output path")
 	flag.Parse()
@@ -62,12 +77,12 @@ func main() {
 
 	var config mapping
 	readJSON(*mappingPath, &config)
-	root := readCRDSchema(*crdPath)
-	validateMapping(root, config)
+	schemas := readCRDSchemas(*crdPath)
+	validateMapping(schemas, config)
 
-	generated, err := format.Source(render(root, config))
+	generated, err := format.Source(render(schemas, config))
 	if err != nil {
-		fatalf("format generated source: %v\n%s", err, render(root, config))
+		fatalf("format generated source: %v\n%s", err, render(schemas, config))
 	}
 	if err := os.WriteFile(*outputPath, generated, 0o644); err != nil {
 		fatalf("write generated source: %v", err)
@@ -84,11 +99,13 @@ func readJSON(path string, target any) {
 	}
 }
 
-func readCRDSchema(path string) map[string]any {
+func readCRDSchemas(path string) crdSchemas {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		fatalf("read CRD: %v", err)
+		fatalf("read CRD bundle: %v", err)
 	}
+	wanted := map[string]string{warmPoolCRDName: warmPoolCR, templateCRDName: templateCR}
+	schemas := crdSchemas{}
 	decoder := yamlv3.NewDecoder(bytes.NewReader(data))
 	for {
 		var document map[string]any
@@ -96,25 +113,70 @@ func readCRDSchema(path string) map[string]any {
 			if err == io.EOF {
 				break
 			}
-			fatalf("decode CRD: %v", err)
+			fatalf("decode CRD bundle: %v", err)
 		}
 		metadata, _ := document["metadata"].(map[string]any)
-		if metadata["name"] != "osgymworkspacepools.cua.ai" {
+		name, _ := metadata["name"].(string)
+		cr, ok := wanted[name]
+		if !ok {
 			continue
 		}
 		versions := mustSlice(mustMap(document["spec"], "spec")["versions"], "spec.versions")
 		for _, rawVersion := range versions {
 			version := mustMap(rawVersion, "version")
-			if version["name"] == "v1" {
-				return mustMap(mustMap(version["schema"], "schema")["openAPIV3Schema"], "openAPIV3Schema")
+			if version["name"] == nativeCRDVersion {
+				schemas[cr] = mustMap(mustMap(version["schema"], "schema")["openAPIV3Schema"], "openAPIV3Schema")
 			}
 		}
+		if schemas[cr] == nil {
+			fatalf("%s has no %s schema", name, nativeCRDVersion)
+		}
 	}
-	fatalf("OSGymWorkspacePool CRD has no v1 schema")
-	return nil
+	for name, cr := range wanted {
+		if schemas[cr] == nil {
+			fatalf("CRD bundle has no %s", name)
+		}
+	}
+	return schemas
 }
 
-func validateMapping(root map[string]any, config mapping) {
+// attributeSchema resolves the CRD node an attribute maps to. Attributes with
+// no crd_path (Terraform-only fields such as id) resolve to a nil node, which
+// inspect reads as "no CRD metadata".
+func (s crdSchemas) attributeSchema(item field) map[string]any {
+	if item.CRDPath == "" {
+		return nil
+	}
+	return lookup(s.root(item.CR, item.Name), item.CRDPath)
+}
+
+// nestedSchema resolves a block field against the block's own CRD node.
+func nestedSchema(blockSchema map[string]any, item field) map[string]any {
+	if item.CRDPath == "" {
+		return nil
+	}
+	return lookup(blockSchema, item.CRDPath)
+}
+
+// blockSchema resolves the CRD node holding a block's nested fields: the object
+// itself for a single block, its items for a set.
+func (s crdSchemas) blockSchema(item block) map[string]any {
+	node := lookup(s.root(item.CR, item.Name), item.CRDPath)
+	if item.Collection == "set" {
+		return mustMap(node["items"], item.CRDPath+".items")
+	}
+	return node
+}
+
+func (s crdSchemas) root(cr, name string) map[string]any {
+	root, ok := s[cr]
+	if !ok {
+		fatalf("%q maps to unsupported cr %q", name, cr)
+	}
+	return root
+}
+
+func validateMapping(schemas crdSchemas, config mapping) {
 	seenNames := map[string]bool{}
 	seenGoNames := map[string]bool{}
 	registerTopLevel := func(name, goName string) {
@@ -131,7 +193,7 @@ func validateMapping(root map[string]any, config mapping) {
 	for _, item := range config.Attributes {
 		validateFieldConfig(item)
 		registerTopLevel(item.Name, item.GoName)
-		validateField(root, item, item.CRDPath)
+		validateField(schemas.attributeSchema(item), item)
 	}
 	for _, item := range config.Blocks {
 		registerTopLevel(item.Name, item.GoName)
@@ -139,22 +201,23 @@ func validateMapping(root map[string]any, config mapping) {
 			fatalf("block %q has unsupported collection %q", item.Name, item.Collection)
 		}
 
-		blockSchema := lookup(root, item.CRDPath)
 		expectedType := "object"
 		if item.Collection == "set" {
 			expectedType = "array"
 		}
-		if actual, _ := blockSchema["type"].(string); actual != expectedType {
+		node := lookup(schemas.root(item.CR, item.Name), item.CRDPath)
+		if actual, _ := node["type"].(string); actual != expectedType {
 			fatalf("block %s maps to CRD type %q, expected %q", item.Name, actual, expectedType)
 		}
-		if item.Collection == "set" {
-			blockSchema = mustMap(blockSchema["items"], item.CRDPath+".items")
-		}
+		blockSchema := schemas.blockSchema(item)
 
 		seenNestedNames := map[string]bool{}
 		seenNestedGoNames := map[string]bool{}
 		for _, nested := range item.Fields {
 			validateFieldConfig(nested)
+			if nested.CR != "" {
+				fatalf("field %q in block %q must not set cr; it is resolved inside %q", nested.Name, item.Name, item.CR)
+			}
 			if seenNestedNames[nested.Name] {
 				fatalf("duplicate Terraform field %q in block %q", nested.Name, item.Name)
 			}
@@ -163,7 +226,7 @@ func validateMapping(root map[string]any, config mapping) {
 				fatalf("duplicate Go field %q in block %q", nested.GoName, item.Name)
 			}
 			seenNestedGoNames[nested.GoName] = true
-			validateField(blockSchema, nested, nested.CRDPath)
+			validateField(nestedSchema(blockSchema, nested), nested)
 		}
 	}
 }
@@ -184,11 +247,11 @@ func validateFieldConfig(item field) {
 	}
 }
 
-func validateField(root map[string]any, item field, path string) {
-	if path == "" {
+func validateField(node map[string]any, item field) {
+	if node == nil {
 		return
 	}
-	info := inspect(lookup(root, path))
+	info := inspect(node)
 	expectedType := baseType(item.ValueType)
 	if expectedType == "int64" {
 		expectedType = "integer"
@@ -201,7 +264,7 @@ func validateField(root map[string]any, item field, path string) {
 	}
 }
 
-func render(root map[string]any, config mapping) []byte {
+func render(schemas crdSchemas, config mapping) []byte {
 	var out bytes.Buffer
 	out.WriteString("// Code generated by cmd/generate-pool-resource; DO NOT EDIT.\n\n")
 	out.WriteString("package provider\n\n")
@@ -225,21 +288,18 @@ func render(root map[string]any, config mapping) []byte {
 	fmt.Fprintf(&out, "func poolResourceSchema() schema.Schema {\n\treturn schema.Schema{Description: %s,\n", strconv.Quote(config.ResourceDescription))
 	out.WriteString("\t\tAttributes: map[string]schema.Attribute{\n")
 	for _, item := range config.Attributes {
-		renderAttribute(&out, root, item, item.CRDPath, "\t\t\t")
+		renderAttribute(&out, schemas.attributeSchema(item), item, "\t\t\t")
 	}
 	out.WriteString("\t\t},\n\t\tBlocks: map[string]schema.Block{\n")
 	for _, item := range config.Blocks {
-		blockSchema := lookup(root, item.CRDPath)
-		if item.Collection == "set" {
-			blockSchema = mustMap(blockSchema["items"], item.CRDPath+".items")
-		}
+		blockSchema := schemas.blockSchema(item)
 		fmt.Fprintf(&out, "\t\t\t%q: schema.%sNestedBlock{", item.Name, title(item.Collection))
 		if item.Collection == "set" {
 			out.WriteString("NestedObject: schema.NestedBlockObject{")
 		}
 		out.WriteString("Attributes: map[string]schema.Attribute{\n")
 		for _, nested := range item.Fields {
-			renderAttribute(&out, blockSchema, nested, nested.CRDPath, "\t\t\t\t")
+			renderAttribute(&out, nestedSchema(blockSchema, nested), nested, "\t\t\t\t")
 		}
 		if item.Collection == "set" {
 			out.WriteString("\t\t\t}}},\n")
@@ -278,10 +338,10 @@ func renderModel(out *bytes.Buffer, name string, fields []field, blocks []block)
 	out.WriteString("}\n\n")
 }
 
-func renderAttribute(out *bytes.Buffer, root map[string]any, item field, path, indent string) {
+func renderAttribute(out *bytes.Buffer, node map[string]any, item field, indent string) {
 	info := schemaInfo{}
-	if path != "" {
-		info = inspect(lookup(root, path))
+	if node != nil {
+		info = inspect(node)
 	}
 	if item.Minimum != nil {
 		info.Minimum = item.Minimum

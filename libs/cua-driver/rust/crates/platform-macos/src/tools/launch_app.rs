@@ -91,7 +91,11 @@ impl Tool for LaunchAppTool {
         let name = args.opt_str("name");
         let mut response_bundle_id = bundle_id.clone();
         let response_requested_name = name.clone();
-        let urls: Vec<String> = args.str_array("urls");
+        let urls: Vec<String> = args
+            .str_array("urls")
+            .into_iter()
+            .map(normalize_launch_url)
+            .collect();
         if args.get("cdp_debugging_port").is_some() {
             return ToolResult::error(
                 "cdp_debugging_port moved to browser_prepare so DevTools is never enabled on an unproven user profile",
@@ -187,14 +191,25 @@ impl Tool for LaunchAppTool {
         // frontmost — handles the intra-`open()` synchronous activation
         // that fired before we could arm with the real pid.
         let prior_frontmost = crate::apps::frontmost_pid();
-
-        let wildcard_lease = prior_frontmost.map(|prior| {
-            crate::focus_steal::FocusStealPreventer::begin_suppression(
-                None,
-                prior,
-                "LaunchAppTool.pre",
-            )
+        let finder_folder_handoff = response_bundle_id.as_deref().is_some_and(|bundle_id| {
+            additional_arguments.is_empty()
+                && env.is_empty()
+                && !creates_new_instance
+                && crate::apps::finder_folder_handoff(bundle_id, &urls)
         });
+
+        // Finder's synchronous folder-open selector must be allowed to activate
+        // long enough to perform the request. Use the ordinary targeted
+        // post-launch guard to restore the prior foreground app immediately.
+        let wildcard_lease = prior_frontmost
+            .filter(|_| !finder_folder_handoff)
+            .map(|prior| {
+                crate::focus_steal::FocusStealPreventer::begin_suppression(
+                    None,
+                    prior,
+                    "LaunchAppTool.pre",
+                )
+            });
 
         // Predicate captured BEFORE moving inputs into spawn_blocking.
         // Same condition that selects the `openURLs:withApplicationAtURL:`
@@ -457,19 +472,7 @@ impl Tool for LaunchAppTool {
 
                 let windows_json: Vec<Value> = windows
                     .iter()
-                    .map(|w| {
-                        serde_json::json!({
-                            "window_id": w.window_id,
-                            "pid": w.pid,
-                            "app_name": w.app_name,
-                            "title": w.title,
-                            "bounds": {
-                                "x": w.bounds.x, "y": w.bounds.y,
-                                "width": w.bounds.width, "height": w.bounds.height
-                            },
-                            "is_on_screen": w.is_on_screen,
-                        })
-                    })
+                    .map(super::list_windows::window_record_json)
                     .collect();
 
                 let mut structured = serde_json::json!({
@@ -647,6 +650,12 @@ fn preflight_file_urls(urls: &[String]) -> Option<ToolResult> {
     None
 }
 
+fn normalize_launch_url(raw: String) -> String {
+    local_file_target(&raw)
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or(raw)
+}
+
 fn local_file_target(raw: &str) -> Option<PathBuf> {
     if raw.is_empty() {
         return Some(PathBuf::from(raw));
@@ -710,7 +719,8 @@ fn hex_value(byte: u8) -> Option<u8> {
 mod tests {
     use super::{
         contains_remote_debugging_flag, is_cua_driver_bundle_id, local_file_target,
-        preflight_file_urls, response_identity, structured_launch_failure, LaunchAppTool,
+        normalize_launch_url, preflight_file_urls, response_identity, structured_launch_failure,
+        LaunchAppTool,
     };
     use cua_driver_core::tool::Tool;
     use serde_json::json;
@@ -725,6 +735,20 @@ mod tests {
         assert_eq!(
             local_file_target("relative/path.md"),
             Some(PathBuf::from("relative/path.md"))
+        );
+    }
+
+    #[test]
+    fn launch_url_normalization_expands_home_relative_paths() {
+        let home = PathBuf::from(std::env::var_os("HOME").expect("HOME must be set for macOS"));
+
+        assert_eq!(
+            PathBuf::from(normalize_launch_url("~/Desktop/BenchInbox".to_owned())),
+            home.join("Desktop/BenchInbox")
+        );
+        assert_eq!(
+            normalize_launch_url("https://example.com".to_owned()),
+            "https://example.com"
         );
     }
 

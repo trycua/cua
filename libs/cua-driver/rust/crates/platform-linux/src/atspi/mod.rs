@@ -51,6 +51,9 @@ pub struct AtspiTreeResult {
     /// True only for a native AT-SPI walk. The X11 property fallback is a
     /// partial discovery aid and must not prove verification predicates.
     pub trusted: bool,
+    /// Machine-readable reason when a native walk failed in a way that is more
+    /// specific than ordinary AT-SPI unavailability.
+    pub degraded_reason: Option<String>,
 }
 
 /// Walk the AT-SPI tree for a window identified by (pid, xid).
@@ -79,6 +82,7 @@ pub(crate) fn walk_tree_for_recording(
                 nodes,
                 bounds,
                 trusted: true,
+                degraded_reason: None,
             };
         }
     }
@@ -104,27 +108,31 @@ pub fn walk_tree_bounded(
     // while the tree is suspiciously root-only, so the first get_window_state
     // after launch returns the real tree instead of an empty one. See #1927.
     const MAX_ATTEMPTS: usize = 4;
+    let mut native_failure = None;
     for attempt in 0..MAX_ATTEMPTS {
-        if let Ok(Some((raw_md, nodes, bounds))) =
-            native::walk_tree_bounded(pid, xid, max_elements, max_depth)
-        {
-            // `nodes.len() <= 1` == only the root window resolved: the
-            // cold-registry symptom. Accept any real tree immediately; only
-            // keep waiting on the degenerate case, and accept it anyway on the
-            // final attempt rather than discarding a (minimal) valid result.
-            if !raw_md.is_empty() && (nodes.len() > 1 || attempt == MAX_ATTEMPTS - 1) {
-                let md = if let Some(q) = query {
-                    filter_tree(&raw_md, q)
-                } else {
-                    raw_md
-                };
-                return AtspiTreeResult {
-                    tree_markdown: md,
-                    nodes,
-                    bounds,
-                    trusted: true,
-                };
+        match native::walk_tree_bounded(pid, xid, max_elements, max_depth) {
+            Ok(Some((raw_md, nodes, bounds))) => {
+                // `nodes.len() <= 1` == only the root window resolved: the
+                // cold-registry symptom. Accept any real tree immediately; only
+                // keep waiting on the degenerate case, and accept it anyway on the
+                // final attempt rather than discarding a (minimal) valid result.
+                if !raw_md.is_empty() && (nodes.len() > 1 || attempt == MAX_ATTEMPTS - 1) {
+                    let md = if let Some(q) = query {
+                        filter_tree(&raw_md, q)
+                    } else {
+                        raw_md
+                    };
+                    return AtspiTreeResult {
+                        tree_markdown: md,
+                        nodes,
+                        bounds,
+                        trusted: true,
+                        degraded_reason: None,
+                    };
+                }
             }
+            Ok(None) => {}
+            Err(error) => native_failure = Some(error.to_string()),
         }
         if attempt < MAX_ATTEMPTS - 1 {
             std::thread::sleep(std::time::Duration::from_millis(150));
@@ -132,7 +140,9 @@ pub fn walk_tree_bounded(
     }
 
     // Fallback: X11 window properties as minimal tree.
-    walk_via_x11_properties(xid, query)
+    let mut fallback = walk_via_x11_properties(xid, query);
+    fallback.degraded_reason = native_failure.map(|error| format!("atspi_walk_failed: {error}"));
+    fallback
 }
 
 /// Perform the first advertised action on element `idx` within pid's app tree.
@@ -241,6 +251,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
                 nodes: vec![],
                 bounds: vec![],
                 trusted: false,
+                degraded_reason: None,
             }
         }
     };
@@ -297,6 +308,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
         nodes,
         bounds: vec![],
         trusted: false,
+        degraded_reason: None,
     }
 }
 

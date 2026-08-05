@@ -92,3 +92,49 @@ test_secret_only_patch_denied {
 		"object": {"spec": {"template": {"imagePullSecret": "ecr-credentials"}}},
 	}
 }
+
+# ── Native OSGymSandboxTemplate shape (spec.vmTemplate) ─────────────────
+
+test_vm_template_no_pull_secret_allowed {
+	pool_admission.allow with input as {
+		"method": "POST",
+		"object": {"spec": {"vmTemplate": {"containerDiskImage": "docker.io/library/alpine:3.20"}}},
+	}
+}
+
+test_vm_template_non_ecr_secret_denied {
+	not pool_admission.allow with input as {
+		"method": "POST",
+		"object": {"spec": {"vmTemplate": {
+			"containerDiskImage": allowed_image,
+			"imagePullSecret": "other-secret",
+		}}},
+	}
+}
+
+test_vm_template_ecr_secret_allowlisted_image_allowed {
+	pool_admission.allow with input as {
+		"method": "POST",
+		"object": {"spec": {"vmTemplate": {
+			"containerDiskImage": allowed_image,
+			"imagePullSecret": "ecr-credentials",
+		}}},
+	}
+}
+
+test_vm_template_ecr_secret_unlisted_image_denied {
+	not pool_admission.allow with input as {
+		"method": "POST",
+		"object": {"spec": {"vmTemplate": {
+			"containerDiskImage": "docker.io/evil/image:latest",
+			"imagePullSecret": "ecr-credentials",
+		}}},
+	}
+}
+
+test_vm_template_patch_pull_secret_swap_denied {
+	not pool_admission.allow with input as {
+		"method": "PATCH",
+		"object": {"spec": {"vmTemplate": {"imagePullSecret": "other-secret"}}},
+	}
+}

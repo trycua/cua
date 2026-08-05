@@ -28,9 +28,13 @@ It also covers the portable whole-desktop loop:
 - `get_screen_size`
 - `get_cursor_position`
 - `move_cursor` with the required `scope="desktop"`
+- `set_window_frame` for exact, read-back-verified top-level window geometry
+- `invoke_menu` for an exact native application-menu path resolved live at each hop
 - `click` with the required `scope="desktop"`
 - `drag` and `scroll` in native desktop coordinates
 - `type_text`, `press_key`, and `hotkey` against the foreground application
+- `clipboard_read` for available types and opt-in plain-text readback
+- `clipboard_write` for text, image, and file-URL clipboard content
 
 The canonical session-owned cursor slice is shared exactly by MCP and both
 generated SDKs:
@@ -73,14 +77,19 @@ from the contract rather than a second runtime map.
 Both SDKs retain a generic tool call so runtime-discovered and
 platform-specific tools remain usable. The generated manifest records tool
 platforms, capabilities, annotations, input schemas, and experimental success
-schemas. Success schemas are not advertised as live MCP `outputSchema` values
-until every transport path has passed parity tests.
+schemas. The live MCP `tools/list` response advertises these successful-result
+schemas as `outputSchema`; all action tools share the closed `ActionResult`
+schema even when their richer runtime input is not part of the portable SDK
+manifest.
+
+See [Action results and postcondition verification](../docs/action-result-contract.md)
+for the wire shape and 0.14 migration guidance.
 
 Compatibility is tracked separately at each boundary:
 
 | Field | Current | Meaning |
 | --- | --- | --- |
-| `contract_version` | `0.3.0` | Generated manifest and typed SDK shape |
+| `contract_version` | `0.6.0` | Generated manifest and typed SDK shape |
 | `tools_list_schema_version` | `1` | cua-driver `tools/list` extension shape |
 | `capability_version` | `1` | Additive capability-token vocabulary |
 | `mcp_protocol_version` | `2025-06-18` | MCP initialization protocol served to agent runtimes |

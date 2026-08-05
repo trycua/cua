@@ -5,10 +5,7 @@ use crate::{
 };
 use std::{
     collections::HashMap,
-    sync::{
-        Arc, Mutex, Weak,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::{Arc, Mutex, Weak},
 };
 use tokio::sync::Mutex as AsyncMutex;
 #[cfg(not(target_arch = "wasm32"))]
@@ -18,7 +15,6 @@ use url::Url;
 #[derive(uniffi::Object)]
 pub struct CyclopsClient {
     base_url: Url,
-    claim_sequence: AtomicU64,
     claim_poll_interval_ms: u64,
     claim_poll_limit: u32,
     lifecycle_locks: Arc<NamespaceLifecycleLocks>,
@@ -56,7 +52,6 @@ impl CyclopsClient {
 
         Ok(Arc::new(Self {
             base_url,
-            claim_sequence: AtomicU64::new(0),
             claim_poll_interval_ms: configuration.claim_poll_interval_ms,
             claim_poll_limit: configuration.claim_poll_limit,
             lifecycle_locks: Arc::new(NamespaceLifecycleLocks {
@@ -64,6 +59,27 @@ impl CyclopsClient {
             }),
             transport,
         }))
+    }
+
+    #[uniffi::constructor]
+    pub fn connect_with_native_http_client(
+        configuration: CyclopsConfiguration,
+    ) -> Result<Arc<Self>, SdkError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Self::connect(
+                configuration,
+                Arc::new(crate::transport::NativeHttpClient::new()?),
+            )
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = configuration;
+            Err(SdkError::Configuration {
+                reason: "connect_with_native_http_client is only available for non-wasm targets"
+                    .into(),
+            })
+        }
     }
 
     #[uniffi::constructor]
@@ -82,7 +98,6 @@ impl CyclopsClient {
 
         Ok(Arc::new(Self {
             base_url,
-            claim_sequence: AtomicU64::new(0),
             claim_poll_interval_ms: configuration.claim_poll_interval_ms,
             claim_poll_limit: configuration.claim_poll_limit,
             lifecycle_locks: Arc::new(NamespaceLifecycleLocks {
@@ -108,7 +123,6 @@ impl CyclopsClient {
 
         Ok(Arc::new(Self {
             base_url,
-            claim_sequence: AtomicU64::new(0),
             claim_poll_interval_ms: configuration.claim_poll_interval_ms,
             claim_poll_limit: configuration.claim_poll_limit,
             lifecycle_locks: Arc::new(NamespaceLifecycleLocks {
@@ -116,6 +130,46 @@ impl CyclopsClient {
             }),
             transport,
         }))
+    }
+
+    #[uniffi::constructor]
+    pub fn connect_with_access_token_and_native_http_client(
+        configuration: CyclopsTokenProviderConfiguration,
+        access_token: String,
+    ) -> Result<Arc<Self>, SdkError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Self::connect_with_access_token(
+                configuration,
+                access_token,
+                Arc::new(crate::transport::NativeHttpClient::new()?),
+            )
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (configuration, access_token);
+            Err(SdkError::Configuration { reason: "connect_with_access_token_and_native_http_client is only available for non-wasm targets".into() })
+        }
+    }
+
+    #[uniffi::constructor]
+    pub fn connect_with_access_token_provider_and_native_http_client(
+        configuration: CyclopsTokenProviderConfiguration,
+        token_provider: Arc<dyn AccessTokenProvider>,
+    ) -> Result<Arc<Self>, SdkError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Self::connect_with_access_token_provider(
+                configuration,
+                token_provider,
+                Arc::new(crate::transport::NativeHttpClient::new()?),
+            )
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (configuration, token_provider);
+            Err(SdkError::Configuration { reason: "connect_with_access_token_provider_and_native_http_client is only available for non-wasm targets".into() })
+        }
     }
 
     #[uniffi::constructor]
@@ -146,17 +200,6 @@ impl CyclopsClient {
 impl CyclopsClient {
     pub(crate) fn base_url(&self) -> &Url {
         &self.base_url
-    }
-
-    pub(crate) fn next_claim_sequence(&self) -> Result<u64, SdkError> {
-        self.claim_sequence
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                current.checked_add(1)
-            })
-            .map(|previous| previous + 1)
-            .map_err(|_| SdkError::Configuration {
-                reason: "claim name sequence is exhausted".into(),
-            })
     }
 
     pub(crate) fn claim_poll_interval_ms(&self) -> u64 {

@@ -45,6 +45,31 @@ fn standalone_fixture_html() -> String {
     )
 }
 
+/// Synthetic control that records event delivery but deliberately rejects the
+/// application action unless the browser marks the click as trusted.
+fn standalone_trust_gated_click_html() -> String {
+    standalone_fixture_html().replace(
+        "</body>",
+        r#"<fieldset>
+  <legend>trust-gated click</legend>
+  <button id="standalone-trust-gated" data-cua-id="standalone-trust-gated">
+    Activate trust-gated control
+  </button>
+  <span id="standalone-trust-gated-state" data-cua-id="standalone-trust-gated-state">
+    activation=idle
+  </span>
+</fieldset>
+<script>
+  document.getElementById('standalone-trust-gated').addEventListener('click', event => {
+    document.getElementById('standalone-trust-gated-state').textContent = event.isTrusted
+      ? 'activation=accepted-trusted'
+      : 'activation=ignored-untrusted';
+  });
+</script>
+</body>"#,
+    )
+}
+
 #[cfg(target_os = "macos")]
 fn standalone_generic_type_text_html() -> String {
     standalone_fixture_html().replace(
@@ -1549,7 +1574,7 @@ fn run_roundtrip(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
-            assert_eq!(click.structured()["status"], "ok", "{}", click.raw);
+            assert_eq!(click.action_effect(), Some("unverifiable"), "{}", click.raw);
             wait_for_text(&fixture.server, "lbl-counter", "counter=1");
 
             let snapshot = fixture.driver.call(
@@ -1571,8 +1596,70 @@ fn run_roundtrip(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
-            assert_eq!(typed.structured()["status"], "ok", "{}", typed.raw);
+            assert_eq!(typed.action_effect(), Some("unverifiable"), "{}", typed.raw);
             wait_for_value(&fixture.server, "txt-input", "standalone-browser");
+
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        })
+    });
+}
+
+fn run_trust_gated_dom_click(spec: &BrowserSpec) {
+    let scenario = format!(
+        "{}-{}-standalone-trust-gated-dom-click",
+        std::env::consts::OS,
+        spec.name
+    );
+    execute_case(case(&spec.name, "trust_gated_dom_click"), |evidence| {
+        let mut fixture =
+            launch_browser_with_html(spec, &scenario, standalone_trust_gated_click_html());
+        *evidence = recording_evidence(fixture.driver.recording_dir());
+        run_with_background_oracles(&mut fixture, |fixture| {
+            let session = format!("standalone-trust-gated-dom-click-{}", fixture.pid);
+            let (target, tab, snapshot) = bind(fixture, &session);
+            let click_ref = ref_by_label(&snapshot, "id=standalone-trust-gated");
+            let click = fixture.driver.call(
+                "browser_click",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "ref": click_ref,
+                    "input_route": "dom_event",
+                    "session": session,
+                }),
+            );
+
+            assert_eq!(click.action_effect(), Some("unverifiable"), "{}", click.raw);
+            assert_eq!(click.action_route(), Some("dom"), "{}", click.raw);
+            assert_eq!(
+                click.action_delivery_mode(),
+                Some("background"),
+                "{}",
+                click.raw
+            );
+            assert_eq!(
+                click.structured()["escalation"]["target"],
+                "page",
+                "{}",
+                click.raw
+            );
+            assert_eq!(
+                click.structured()["escalation"]["reason"],
+                "effect_unconfirmed",
+                "{}",
+                click.raw
+            );
+            assert!(
+                click.text().contains("application effect not verified")
+                    && click.text().contains("trust-gated controls"),
+                "{}",
+                click.raw
+            );
+            wait_for_text(
+                &fixture.server,
+                "standalone-trust-gated-state",
+                "activation=ignored-untrusted",
+            );
 
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         })
@@ -1651,7 +1738,12 @@ fn run_semantic_state(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
-            assert_eq!(clicked.structured()["status"], "ok", "{}", clicked.raw);
+            assert_eq!(
+                clicked.action_effect(),
+                Some("unverifiable"),
+                "{}",
+                clicked.raw
+            );
             wait_for_text(&fixture.server, "lbl-counter", "counter=1");
 
             let refreshed = fixture.driver.call(
@@ -1675,7 +1767,7 @@ fn run_semantic_state(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
-            assert_eq!(typed.structured()["status"], "ok", "{}", typed.raw);
+            assert_eq!(typed.action_effect(), Some("unverifiable"), "{}", typed.raw);
             wait_for_value(&fixture.server, "txt-input", "semantic-browser");
 
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
@@ -1706,7 +1798,7 @@ fn run_background_type(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
-            assert_eq!(typed.structured()["status"], "ok", "{}", typed.raw);
+            assert_eq!(typed.action_effect(), Some("unverifiable"), "{}", typed.raw);
             wait_for_value(&fixture.server, "txt-input", "standalone-browser");
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         })
@@ -1809,6 +1901,7 @@ fn run_native_omnibox_select_all(spec: &BrowserSpec) {
                 "pid": fixture.pid as i64,
                 "window_id": fixture.window_id,
                 "element_index": index,
+                "snapshot_id": snapshot.snapshot_id(),
                 "value": initial,
             }),
         );
@@ -1831,8 +1924,18 @@ fn run_native_omnibox_select_all(spec: &BrowserSpec) {
             "native omnibox Cmd+A: {}",
             selected.raw
         );
-        assert_eq!(selected.verified(), Some(false), "{}", selected.raw);
-        assert_eq!(selected.structured()["effect"], "unverifiable");
+        assert_eq!(
+            selected.action_effect(),
+            Some("unverifiable"),
+            "{}",
+            selected.raw
+        );
+        assert_eq!(
+            selected.action_route(),
+            Some("global_input"),
+            "{}",
+            selected.raw
+        );
 
         let replaced = fixture.driver.call(
             "type_text",
@@ -1931,16 +2034,11 @@ fn run_generic_type_text_completion(spec: &BrowserSpec) {
                 "generic long type_text failed: {}",
                 typed.raw
             );
-            assert_eq!(
-                typed.structured()["requested_chars"].as_u64(),
-                Some(requested_chars as u64),
-                "{}",
-                typed.raw
-            );
-            assert_eq!(
-                typed.structured()["delivered_chars"].as_u64(),
-                Some(requested_chars as u64),
-                "{}",
+            assert_eq!(typed.action_effect(), Some("unverifiable"), "{}", typed.raw);
+            assert!(
+                typed.structured().get("requested_chars").is_none()
+                    && typed.structured().get("delivered_chars").is_none(),
+                "the narrow action result must not echo request accounting: {}",
                 typed.raw
             );
 
@@ -1994,16 +2092,16 @@ fn run_web_type_text_verification(spec: &BrowserSpec) {
             }),
         );
         assert!(!typed.is_error(), "web type_text failed: {}", typed.raw);
-        assert_eq!(typed.path(), Some("key_events_fg"), "{}", typed.raw);
-        assert_eq!(typed.verified(), Some(false), "{}", typed.raw);
+        assert_eq!(typed.action_route(), Some("global_input"), "{}", typed.raw);
         assert_eq!(
-            typed.structured()["effect"],
-            "unverifiable",
+            typed.action_delivery_mode(),
+            Some("foreground"),
             "{}",
             typed.raw
         );
+        assert_eq!(typed.action_effect(), Some("unverifiable"), "{}", typed.raw);
         assert_eq!(
-            typed.structured()["escalation"]["recommended"],
+            typed.structured()["escalation"]["target"],
             "page",
             "{}",
             typed.raw
@@ -2066,22 +2164,10 @@ fn run_trusted_click(spec: &BrowserSpec) {
                 }),
             );
             if cfg!(any(target_os = "linux", target_os = "macos")) {
-                assert_eq!(
-                    click.structured()["refusal"]["code"],
-                    "browser_input_trust_unavailable",
-                    "{}",
-                    click.raw
-                );
-                assert_eq!(
-                    click.structured()["refusal"]["detail"]["alternative_route"],
-                    "dom_event",
-                    "{}",
-                    click.raw
-                );
-                assert_eq!(
-                    click.structured()["refusal"]["detail"]["trusted_delivery_attempted"],
-                    false,
-                    "{}",
+                assert_eq!(click.action_effect(), Some("refused"), "{}", click.raw);
+                assert!(
+                    click.text().contains("browser_input_trust_unavailable"),
+                    "refusal diagnostics must retain the precise code: {}",
                     click.raw
                 );
                 wait_for_text(&fixture.server, "lbl-counter", "counter=0");
@@ -2092,7 +2178,7 @@ fn run_trusted_click(spec: &BrowserSpec) {
                     Evidence::default(),
                 )
             } else {
-                assert_eq!(click.structured()["status"], "ok", "{}", click.raw);
+                assert_eq!(click.action_effect(), Some("unverifiable"), "{}", click.raw);
                 wait_for_text(&fixture.server, "lbl-counter", "counter=1");
                 Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
             }
@@ -2241,7 +2327,12 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
                             "session": session,
                         }),
                     );
-                    assert_eq!(clicked.structured()["status"], "ok", "{}", clicked.raw);
+                    assert_eq!(
+                        clicked.action_effect(),
+                        Some("unverifiable"),
+                        "{}",
+                        clicked.raw
+                    );
                     wait_for_text(&target_server, "lbl-counter", "counter=1");
                     let source_windows =
                         driver.call("list_windows", serde_json::json!({"pid": source_pid}));
@@ -2465,7 +2556,12 @@ fn run_existing_profile_attach(spec: &BrowserSpec) {
                         "session": session,
                     }),
                 );
-                assert_eq!(clicked.structured()["status"], "ok", "{}", clicked.raw);
+                assert_eq!(
+                    clicked.action_effect(),
+                    Some("unverifiable"),
+                    "{}",
+                    clicked.raw
+                );
                 wait_for_text(&fixture.server, "lbl-counter", "counter=1");
 
                 let ended = fixture
@@ -2625,7 +2721,12 @@ fn run_existing_profile_setup(spec: &BrowserSpec) {
                         "session": session,
                     }),
                 );
-                assert_eq!(clicked.structured()["status"], "ok", "{}", clicked.raw);
+                assert_eq!(
+                    clicked.action_effect(),
+                    Some("unverifiable"),
+                    "{}",
+                    clicked.raw
+                );
                 wait_for_text(&fixture.server, "lbl-counter", "counter=1");
 
                 let ended = fixture
@@ -2787,10 +2888,10 @@ fn run_stale_ref(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
-            assert_eq!(
-                refused.structured()["refusal"]["code"],
-                "browser_ref_stale",
-                "{}",
+            assert_eq!(refused.action_effect(), Some("refused"), "{}", refused.raw);
+            assert!(
+                refused.text().contains("browser_ref_stale"),
+                "stale-ref refusal diagnostics must retain the precise code: {}",
                 refused.raw
             );
             wait_for_text(&fixture.server, "lbl-counter", "counter=0");
@@ -2843,7 +2944,12 @@ fn run_frame_roundtrip(spec: &BrowserSpec) {
                         "session": session,
                     }),
                 );
-                assert_eq!(clicked.structured()["status"], "ok", "{}", clicked.raw);
+                assert_eq!(
+                    clicked.action_effect(),
+                    Some("unverifiable"),
+                    "{}",
+                    clicked.raw
+                );
             }
             wait_for_text(&fixture.server, "standalone-shadow-state", "shadow=clicked");
             wait_for_text(&fixture.server, "standalone-frame-state", "iframe=clicked");
@@ -2864,7 +2970,7 @@ fn run_frame_roundtrip(spec: &BrowserSpec) {
                         "session": session,
                     }),
                 );
-                assert_eq!(typed.structured()["status"], "ok", "{}", typed.raw);
+                assert_eq!(typed.action_effect(), Some("unverifiable"), "{}", typed.raw);
             }
             wait_for_text(
                 &fixture.server,
@@ -3138,12 +3244,17 @@ fn run_multi_tab(spec: &BrowserSpec) {
                 }),
             );
             let trusted_clicks = if cfg!(target_os = "windows") {
-                assert_eq!(trusted.structured()["status"], "ok", "{}", trusted.raw);
+                assert_eq!(
+                    trusted.action_effect(),
+                    Some("unverifiable"),
+                    "{}",
+                    trusted.raw
+                );
                 1
             } else {
-                assert_eq!(
-                    trusted.structured()["refusal"]["code"],
-                    "browser_input_trust_unavailable",
+                assert_eq!(trusted.action_effect(), Some("refused"), "{}", trusted.raw);
+                assert!(
+                    trusted.text().contains("browser_input_trust_unavailable"),
                     "{}",
                     trusted.raw
                 );
@@ -3176,7 +3287,12 @@ fn run_multi_tab(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
-            assert_eq!(clicked.structured()["status"], "ok", "{}", clicked.raw);
+            assert_eq!(
+                clicked.action_effect(),
+                Some("unverifiable"),
+                "{}",
+                clicked.raw
+            );
 
             let snapshot = fixture.driver.call(
                 "get_browser_state",
@@ -3199,7 +3315,7 @@ fn run_multi_tab(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
-            assert_eq!(typed.structured()["status"], "ok", "{}", typed.raw);
+            assert_eq!(typed.action_effect(), Some("unverifiable"), "{}", typed.raw);
 
             let snapshot = fixture.driver.call(
                 "get_browser_state",
@@ -3223,7 +3339,7 @@ fn run_multi_tab(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
-            assert_eq!(keyed.structured()["status"], "ok", "{}", keyed.raw);
+            assert_eq!(keyed.action_effect(), Some("unverifiable"), "{}", keyed.raw);
 
             wait_for_text(
                 &second_server,
@@ -3893,7 +4009,12 @@ fn run_dialogs(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
-            assert_eq!(clicked.structured()["status"], "ok", "{}", clicked.raw);
+            assert_eq!(
+                clicked.action_effect(),
+                Some("unverifiable"),
+                "{}",
+                clicked.raw
+            );
             thread::sleep(Duration::from_millis(100));
 
             if cfg!(target_os = "linux") {
@@ -4137,9 +4258,9 @@ fn run_pointer_actions(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
-            assert_eq!(
-                refused.structured()["refusal"]["code"],
-                "browser_action_unavailable",
+            assert_eq!(refused.action_effect(), Some("refused"), "{}", refused.raw);
+            assert!(
+                refused.text().contains("browser_action_unavailable"),
                 "{}",
                 refused.raw
             );
@@ -4158,7 +4279,12 @@ fn run_pointer_actions(spec: &BrowserSpec) {
                         "session": session,
                     }),
                 );
-                assert_eq!(response.structured()["status"], "ok", "{}", response.raw);
+                assert_eq!(
+                    response.action_effect(),
+                    Some("unverifiable"),
+                    "{}",
+                    response.raw
+                );
             }
             wait_for_text(&fixture.server, "standalone-hover-state", "hover=true");
             wait_for_text(
@@ -4179,7 +4305,12 @@ fn run_pointer_actions(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
-            assert_eq!(scrolled.structured()["status"], "ok", "{}", scrolled.raw);
+            assert_eq!(
+                scrolled.action_effect(),
+                Some("unverifiable"),
+                "{}",
+                scrolled.raw
+            );
             let deadline = Instant::now() + Duration::from_secs(5);
             loop {
                 if fixture
@@ -4205,7 +4336,12 @@ fn run_pointer_actions(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
-            assert_eq!(dragged.structured()["status"], "ok", "{}", dragged.raw);
+            assert_eq!(
+                dragged.action_effect(),
+                Some("unverifiable"),
+                "{}",
+                dragged.raw
+            );
             wait_for_text(&fixture.server, "drag-status", "drag_status=dropped");
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         })
@@ -4370,7 +4506,12 @@ fn run_type_replace(spec: &BrowserSpec) {
                     args["mode"] = serde_json::json!(mode);
                 }
                 let response = fixture.driver.call("browser_type", args);
-                assert_eq!(response.structured()["status"], "ok", "{}", response.raw);
+                assert_eq!(
+                    response.action_effect(),
+                    Some("unverifiable"),
+                    "{}",
+                    response.raw
+                );
                 response
             };
 
@@ -4381,25 +4522,26 @@ fn run_type_replace(spec: &BrowserSpec) {
             type_text("second", None, None);
             wait_for_value(&fixture.server, "txt-input", "firstsecond");
 
-            // replace=true sets the field instead of extending it, and reports
-            // how much it displaced so the caller need not re-read the page.
+            // replace=true sets the field instead of extending it. The narrow
+            // action result does not duplicate page state; the fixture is the
+            // independent postcondition oracle.
             let replaced = type_text("third🙂", Some(true), None);
             wait_for_value(&fixture.server, "txt-input", "third🙂");
-            assert_eq!(replaced.structured()["replace"], true, "{}", replaced.raw);
             assert_eq!(
-                replaced.structured()["replaced_chars"],
-                11,
-                "replaced_chars must count the displaced text: {}",
+                replaced.action_effect(),
+                Some("unverifiable"),
+                "{}",
                 replaced.raw
             );
+            assert!(replaced.structured().get("replaced_chars").is_none());
 
             // The trusted keystroke path replaces through the same selection.
             let replaced_unicode = type_text("fourth", Some(true), Some("keystrokes"));
             wait_for_value(&fixture.server, "txt-input", "fourth");
             assert_eq!(
-                replaced_unicode.structured()["replaced_chars"],
-                6,
-                "replaced_chars must count Unicode scalar values like requested_chars: {}",
+                replaced_unicode.action_effect(),
+                Some("unverifiable"),
+                "{}",
                 replaced_unicode.raw
             );
 
@@ -4407,9 +4549,9 @@ fn run_type_replace(spec: &BrowserSpec) {
             let cleared = type_text("", Some(true), None);
             wait_for_value(&fixture.server, "txt-input", "");
             assert_eq!(
-                cleared.structured()["replaced_chars"],
-                6,
-                "clearing must report what it removed: {}",
+                cleared.action_effect(),
+                Some("unverifiable"),
+                "{}",
                 cleared.raw
             );
 
@@ -4428,8 +4570,13 @@ fn run_type_replace(spec: &BrowserSpec) {
                 }),
             );
             assert_eq!(
-                unsupported.structured()["refusal"]["code"],
-                "browser_action_unavailable",
+                unsupported.action_effect(),
+                Some("refused"),
+                "{}",
+                unsupported.raw
+            );
+            assert!(
+                unsupported.text().contains("browser_action_unavailable"),
                 "{}",
                 unsupported.raw
             );
@@ -4484,6 +4631,10 @@ macro_rules! standalone_browser_test {
 }
 
 standalone_browser_test!(standalone_browser_roundtrip, run_roundtrip);
+standalone_browser_test!(
+    standalone_browser_trust_gated_dom_click,
+    run_trust_gated_dom_click
+);
 standalone_browser_test!(standalone_browser_semantic_state, run_semantic_state);
 standalone_browser_test!(standalone_browser_background_type, run_background_type);
 standalone_browser_test!(standalone_browser_type_replace, run_type_replace);

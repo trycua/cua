@@ -7,7 +7,11 @@ TOKEN = 'https://keycloak.invalid/token'
 JSON_HEADERS = [['accept', 'application/json'], ['content-type', 'application/json'], ['authorization', 'Bearer offline-token']]
 
 def pool_json
-  { apiVersion: 'cua.ai/v1', kind: 'OSGymWorkspacePool', metadata: { namespace: 'default', name: 'default', labels: nil }, spec: { replicas: 1, template: { containerDiskImage: 'registry.example/desktop:offline' }, services: [{ name: 'mcp', targetPort: 8080 }] }, status: nil }
+  { apiVersion: 'osgym.cua.ai/v1alpha1', kind: 'OSGymSandboxWarmPool', metadata: { namespace: 'default', name: 'default', labels: nil }, spec: { replicas: 1, sandboxTemplateRef: { name: 'default' } }, status: nil }
+end
+
+def template_json
+  { apiVersion: 'osgym.cua.ai/v1alpha1', kind: 'OSGymSandboxTemplate', metadata: { namespace: 'default', name: 'default', labels: nil }, spec: { vmTemplate: { containerDiskImage: 'registry.example/desktop:offline', services: [{ name: 'mcp', targetPort: 8080 }] } } }
 end
 
 def claim_json(bound = false)
@@ -17,7 +21,7 @@ def claim_json(bound = false)
 end
 
 def token_expected
-  Expected.new('POST', TOKEN, [['accept', 'application/json'], ['content-type', 'application/x-www-form-urlencoded']], 'grant_type=client_credentials&client_id=client-id&client_secret=client-secret'.b, 200, { access_token: 'offline-token', expires_in: 3600 })
+  Expected.new('POST', TOKEN, [['accept', 'application/json'], ['content-type', 'application/x-www-form-urlencoded'], ['authorization', 'Basic Y2xpZW50LWlkOmNsaWVudC1zZWNyZXQ=']], 'grant_type=client_credentials'.b, 200, { access_token: 'offline-token', expires_in: 3600 })
 end
 
 def service_expected(body, response)
@@ -25,7 +29,8 @@ def service_expected(body, response)
 end
 
 def lifecycle_queue
-  pool_url = "#{BASE}/api/k8s/apis/cua.ai/v1/namespaces/default/osgymworkspacepools/default"
+  pool_url = "#{BASE}/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxwarmpools/default"
+  template_url = "#{BASE}/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxtemplates/default"
   claim_url = "#{BASE}/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxclaims/default"
   pool_body = JSON.generate(pool_json).b
   claim_body = '{"apiVersion":"osgym.cua.ai/v1alpha1","kind":"OSGymSandboxClaim","metadata":{"namespace":"default","name":"claim-1","labels":null},"spec":{"sandboxTemplateRef":{"name":"default"}},"status":null}'.b
@@ -35,7 +40,7 @@ def lifecycle_queue
     Expected.new('POST', pool_url.sub(%r{/default\z}, ''), JSON_HEADERS, pool_body, 201, pool_json),
     Expected.new('POST', claim_url.sub(%r{/default\z}, ''), JSON_HEADERS, claim_body, 201, claim_json),
     Expected.new('GET', claim_url, JSON_HEADERS, nil, 200, claim_json(true)),
-    Expected.new('GET', pool_url, JSON_HEADERS, nil, 200, pool_json),
+    Expected.new('GET', template_url, JSON_HEADERS, nil, 200, template_json),
     service_expected('{"offline":true}'.b, 'offline service accepted'),
     Expected.new('DELETE', claim_url, JSON_HEADERS, nil, 204, ''),
     Expected.new('DELETE', pool_url, JSON_HEADERS, nil, 204, ''),
@@ -43,7 +48,7 @@ def lifecycle_queue
   ]
 end
 
-class ScriptedHttpClient < CyclopsSdk::HttpClient
+class ScriptedHttpClient < FleetSdk::HttpClient
   def initialize(expected)
     @expected = expected
     @mutex = Mutex.new
@@ -57,7 +62,7 @@ class ScriptedHttpClient < CyclopsSdk::HttpClient
       raise "request mismatch: #{actual.inspect}" unless actual == [item.method, item.url, item.headers, item.body]
       @requests << request
       body = item.response.is_a?(String) ? item.response.b : JSON.generate(item.response).b
-      CyclopsSdk::HttpResponse.new(status: item.status, headers: [], body: body)
+      FleetSdk::HttpResponse.new(status: item.status, headers: [], body: body)
     end
   end
 
@@ -70,27 +75,26 @@ class ScriptedHttpClient < CyclopsSdk::HttpClient
   end
 end
 
-class FailingHttpClient < CyclopsSdk::HttpClient
+class FailingHttpClient < FleetSdk::HttpClient
   def execute(request)
-    raise CyclopsSdk::HttpError::Transport.new(reason: 'scripted callback failure')
+    raise FleetSdk::HttpError::Transport.new(reason: 'scripted callback failure')
   end
 end
 
 def configuration
-  CyclopsSdk::CyclopsConfiguration.new(base_url: BASE, token_url: TOKEN, credentials: CyclopsSdk::CyclopsCredentials.new('client-id', 'client-secret'), pool_poll_interval_ms: 1, pool_poll_limit: 1, claim_poll_interval_ms: 1, claim_poll_limit: 2)
+  FleetSdk::CyclopsConfiguration.new(base_url: BASE, token_url: TOKEN, credentials: FleetSdk::CyclopsCredentials.new('client-id', 'client-secret'), pool_poll_interval_ms: 1, pool_poll_limit: 1, claim_poll_interval_ms: 1, claim_poll_limit: 2)
 end
 
 def service_request(body)
-  CyclopsSdk::HttpRequest.new(method: 'POST', url: 'https://ignored.invalid/mcp', headers: [], body: body)
+  FleetSdk::HttpRequest.new(method: 'POST', url: 'https://ignored.invalid/mcp', headers: [], body: body)
 end
 
-sandbox = CyclopsSdk::Sandbox.new(namespace: 'default', claim: 'default', name: 'offline-sandbox', services: ['mcp'])
-vm_template = CyclopsSdk::VmTemplate.new(container_disk_image: 'registry.example/desktop:offline', command: nil, runtime: nil, runtime_class_name: nil, node_selector: nil, tolerations: nil, image_pull_policy: nil, image_pull_secret: nil, cpu_cores: nil, memory: nil, firmware: nil, probes: nil, services: nil, oidc: nil)
-spec = CyclopsSdk::PoolSpec.new(replicas: 1, template: CyclopsSdk::PoolTemplate.new(runtime: nil, runtime_class_name: nil, node_selector: nil, tolerations: nil, command: nil, container_disk_image: vm_template.container_disk_image, image_pull_secret: nil, cpu_cores: nil, memory: nil, firmware: nil, probes: nil, oidc: nil), autoscaling: nil, services: [CyclopsSdk::SandboxService.new(name: 'mcp', target_port: 8080, protocol: nil)])
+sandbox = FleetSdk::Sandbox.new(namespace: 'default', claim: 'default', name: 'offline-sandbox', services: ['mcp'])
+spec = FleetSdk::OSGymSandboxWarmPoolSpec.new(replicas: 1, sandbox_template_ref: FleetSdk::SandboxTemplateRef.new(name: 'default'), autoscaling: nil)
 transport = ScriptedHttpClient.new(lifecycle_queue)
-client = CyclopsSdk::CyclopsClient.connect(configuration, transport)
-pool = client.create_pool(CyclopsSdk::CreatePoolRequest.new(namespace: 'default', spec: spec))
-claim = client.create_claim(CyclopsSdk::CreateClaimRequest.new(pool: pool, spec: CyclopsSdk::ClaimSpec.new(sandbox_template_ref: CyclopsSdk::SandboxTemplateRef.new(name: pool.metadata.name), warmpool: nil, bind_deadline: nil, lifecycle: nil)))
+client = FleetSdk::CyclopsClient.connect(configuration, transport)
+pool = client.create_pool(FleetSdk::CreatePoolRequest.new(namespace: 'default', spec: spec))
+claim = client.create_claim(FleetSdk::CreateClaimRequest.new(pool: pool, spec: FleetSdk::ClaimSpec.new(sandbox_template_ref: FleetSdk::SandboxTemplateRef.new(name: pool.metadata.name), warmpool: nil, bind_deadline: nil, lifecycle: nil)))
 created_sandbox = client.wait_claim(claim)
 service = client.service_request(created_sandbox, 'mcp', '/mcp', service_request('{"offline":true}'.b))
 client.delete_claim(claim)
@@ -98,11 +102,11 @@ client.delete_pool(pool)
 transport.assert_exhausted!
 raise 'unexpected service response' unless service.status == 202
 
-failing_client = CyclopsSdk::CyclopsClient.connect(configuration, FailingHttpClient.new)
+failing_client = FleetSdk::CyclopsClient.connect(configuration, FailingHttpClient.new)
 begin
   failing_client.service_request(sandbox, 'mcp', '/mcp', service_request(nil))
   raise 'expected generated SdkError::Transport'
-rescue CyclopsSdk::SdkError::Transport => error
+rescue FleetSdk::SdkError::Transport => error
   raise error unless error.reason == 'scripted callback failure'
 end
 
@@ -111,7 +115,7 @@ body_transport = ScriptedHttpClient.new([
   service_expected(nil, "".b),
   service_expected("".b, "\x00\x7f\xff".b),
 ])
-body_client = CyclopsSdk::CyclopsClient.connect(configuration, body_transport)
+body_client = FleetSdk::CyclopsClient.connect(configuration, body_transport)
 raise 'expected empty service body' unless body_client.service_request(sandbox, 'mcp', '/mcp', service_request(nil)).body.empty?
 raise 'expected binary service body' unless body_client.service_request(sandbox, 'mcp', '/mcp', service_request("".b)).body == "\x00\x7f\xff".b
 body_transport.assert_exhausted!
@@ -122,7 +126,7 @@ concurrent_transport = ScriptedHttpClient.new([
   service_expected('parallel'.b, 'first'),
   service_expected('parallel'.b, 'second'),
 ])
-concurrent_client = CyclopsSdk::CyclopsClient.connect(configuration, concurrent_transport)
+concurrent_client = FleetSdk::CyclopsClient.connect(configuration, concurrent_transport)
 concurrent_client.service_request(sandbox, 'mcp', '/mcp', service_request(nil))
 threads = 2.times.map do
   Thread.new do

@@ -23,6 +23,7 @@ indexmap = "2"
 tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
+clipboard-rs = "0.3.5"
 image = { workspace = true }
 windows = { version = "0.58", features = [
     "Win32_Foundation",

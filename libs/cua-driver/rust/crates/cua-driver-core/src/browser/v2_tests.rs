@@ -15,6 +15,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
 use serde_json::{json, Value};
 
+use crate::action_record::ActionExecutionRecord;
 use crate::protocol::{Content, ToolResult};
 use crate::tool::Tool;
 
@@ -2004,13 +2005,40 @@ async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable
     );
     assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
 
+    let synthetic_args = json!({
+        "target_id": target, "tab_id": tab, "ref": main_ref,
+        "input_route": "dom_event", "session": SESSION
+    });
     let synthetic = BrowserClickTool::new(f.engine.clone())
-        .invoke(json!({
-            "target_id": target, "tab_id": tab, "ref": main_ref,
-            "input_route": "dom_event", "session": SESSION
-        }))
+        .invoke(synthetic_args.clone())
         .await;
     assert_eq!(structured(&synthetic)["status"], "ok");
+    assert_eq!(structured(&synthetic)["effect"], "unverifiable");
+    assert_eq!(structured(&synthetic)["escalation"]["recommended"], "page");
+    assert!(synthetic.content.iter().any(|content| matches!(
+        content,
+        crate::protocol::Content::Text { text, .. }
+            if text.contains("application effect not verified")
+                && text.contains("trust-gated controls")
+    )));
+    let public = ActionExecutionRecord::from_legacy(
+        "browser_click",
+        &synthetic_args,
+        structured(&synthetic),
+    )
+    .expect("browser click action record")
+    .public_result()
+    .expect("public browser click result");
+    let public = serde_json::to_value(public).expect("serialize public result");
+    assert_eq!(public["effect"], "unverifiable", "{public}");
+    assert_eq!(public["route"], "dom", "{public}");
+    assert_eq!(public["delivery"]["mode"], "background", "{public}");
+    assert_eq!(public["escalation"]["target"], "page", "{public}");
+    assert_eq!(
+        public["escalation"]["reason"], "effect_unconfirmed",
+        "{public}"
+    );
+    assert!(public.get("status").is_none(), "{public}");
     assert!(!recorded_calls(&f, "Runtime.callFunctionOn").is_empty());
     assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
     assert!(recorded_calls(&f, "Target.activateTarget").is_empty());

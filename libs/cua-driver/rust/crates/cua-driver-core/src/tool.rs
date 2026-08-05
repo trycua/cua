@@ -1,8 +1,8 @@
 //! Tool trait and registry.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -76,6 +76,51 @@ fn desktop_action_coordinator() -> &'static tokio::sync::Mutex<()> {
     COORDINATOR.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
+fn active_text_input_pids() -> &'static Mutex<HashSet<i64>> {
+    static ACTIVE: OnceLock<Mutex<HashSet<i64>>> = OnceLock::new();
+    ACTIVE.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+#[derive(Debug)]
+struct TextInputAdmission {
+    pid: i64,
+}
+
+impl Drop for TextInputAdmission {
+    fn drop(&mut self) {
+        active_text_input_pids()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&self.pid);
+    }
+}
+
+fn try_admit_text_input(
+    tool_name: &str,
+    args: &Value,
+) -> Result<Option<TextInputAdmission>, ToolResult> {
+    if tool_name != "type_text" {
+        return Ok(None);
+    }
+    let Some(pid) = args
+        .get("pid")
+        .and_then(Value::as_i64)
+        .filter(|pid| *pid > 0)
+    else {
+        // Desktop-scoped input has no stable process identity. It continues to
+        // use the process-wide physical action coordinator below.
+        return Ok(None);
+    };
+    let mut active = active_text_input_pids()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if !active.insert(pid) {
+        let message = format!("text input is already active for pid {pid}");
+        return Err(protected_refusal("input_busy", &message));
+    }
+    Ok(Some(TextInputAdmission { pid }))
+}
+
 pub use cua_driver_contract::{CAPABILITY_VERSION, TOOLS_LIST_SCHEMA_VERSION};
 
 /// Metadata for a single tool.
@@ -120,7 +165,7 @@ impl ToolDef {
         // contract. The legacy map remains only for runtime-only tools.
         let caps = advertised_capabilities_for(&self.name, &self.input_schema);
         let risk = crate::authorization::risk_metadata_json(&self.name);
-        serde_json::json!({
+        let mut entry = serde_json::json!({
             "name": self.name,
             "description": self.description,
             "inputSchema": self.input_schema,
@@ -132,7 +177,22 @@ impl ToolDef {
             },
             "capabilities": caps,
             "risk": risk,
-        })
+        });
+        let output_schema = if crate::action_record::is_action_tool(&self.name) {
+            Some(
+                <cua_driver_contract::ActionResult as cua_driver_contract::ToolOutput>::output_schema(
+                ),
+            )
+        } else {
+            cua_driver_contract::tool_success_output_schema(&self.name)
+        };
+        if let Some(output_schema) = output_schema {
+            entry
+                .as_object_mut()
+                .expect("tool list entry is an object")
+                .insert("outputSchema".into(), output_schema);
+        }
+        entry
     }
 }
 
@@ -162,7 +222,7 @@ impl ToolDef {
 ///   `accessibility.element_tokens` (Surface 6 — tool accepts the
 ///   opaque `element_token` arg alongside the integer `element_index`)
 /// - `app.launch`, `app.list`, `app.kill`, `window.list`,
-///   `window.activate`, `window.debug_info`
+///   `window.activate`, `window.frame.set`, `window.debug_info`
 /// - `system.permissions.tcc`,
 ///   `system.permissions.tcc.accessibility`,
 ///   `system.permissions.tcc.screen_recording`
@@ -269,6 +329,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "kill_app" => &["app.kill"],
         "list_windows" => &["window.list"],
         "bring_to_front" => &["window.activate"],
+        "set_window_frame" => &["window.frame.set"],
         "debug_window_info" => &["window.debug_info"],
 
         // ── permissions / config ─────────────────────────────────────
@@ -942,6 +1003,20 @@ impl ToolRegistry {
             return result;
         }
 
+        // A queued text mutation can become stale while another agent is
+        // typing into the same process. Refuse that overlap before consent,
+        // cursor, recording, or platform focus behavior can begin. The guard
+        // is process-global so independent registries cannot interleave text
+        // through separate platform workers, and RAII releases it on task
+        // cancellation as well as normal completion.
+        let _text_input_admission = match try_admit_text_input(resolved_name, &public_args) {
+            Ok(admission) => admission,
+            Err(mut refusal) => {
+                restore_public_runtime_result(&mut refusal, &runtime_prefix);
+                return refusal;
+            }
+        };
+
         let active_adapters =
             crate::authorization::enforcement_adapters_for_call(resolved_name, &public_args);
         let has_adapter = |id: &str| active_adapters.iter().any(|adapter| adapter.id == id);
@@ -1027,6 +1102,19 @@ impl ToolRegistry {
             if let Err(error) = self
                 .authorize_private_observation(
                     tool.as_ref(),
+                    resolved_name,
+                    &public_args,
+                    context,
+                    runtime_session.as_deref(),
+                )
+                .await
+            {
+                return protected_consent_refusal(error);
+            }
+        }
+        if has_adapter("clipboard") {
+            if let Err(error) = self
+                .authorize_clipboard(
                     resolved_name,
                     &public_args,
                     context,
@@ -1239,6 +1327,28 @@ impl ToolRegistry {
             .flatten();
 
         let mut result = tool.invoke(args.clone()).await;
+        // The platform worker has exited, so another text operation for this
+        // pid may now start even while result projection and evidence capture
+        // finish for the completed call.
+        drop(_text_input_admission);
+        if result.action_record.is_none() {
+            if let Some(structured) = result.structured_content.as_ref() {
+                result.action_record = crate::action_record::ActionExecutionRecord::from_legacy(
+                    resolved_name,
+                    &public_args,
+                    structured,
+                );
+            } else if result.is_error != Some(true) {
+                // Some legacy successful actions return text only. Normalize
+                // them through an empty payload so internal accounting exists
+                // before the public contract cutover.
+                result.action_record = crate::action_record::ActionExecutionRecord::from_legacy(
+                    resolved_name,
+                    &public_args,
+                    &Value::Null,
+                );
+            }
+        }
         if resolved_name == "launch_app" && result.is_error != Some(true) {
             if let (Some(session), Some(before), Some(pid)) = (
                 runtime_session.as_deref(),
@@ -1270,14 +1380,30 @@ impl ToolRegistry {
             crate::session::touch_session(session);
         }
         restore_public_runtime_result(&mut result, &runtime_prefix);
-        let validate_portable_output = match resolved_name {
-            "get_desktop_state" | "get_screen_size" | "get_cursor_position" => true,
-            "move_cursor" | "click" | "drag" | "scroll" | "type_text" | "press_key" | "hotkey" => {
-                args.get("scope").and_then(Value::as_str) == Some("desktop")
+        // Preserve the producer's private summary for recording/replay before
+        // the public ActionResult projection deliberately replaces legacy
+        // prose. Coordinate recovery and other internal diagnostics must not
+        // depend on the narrowed MCP text surface.
+        let recording_result_text = result.content.iter().find_map(|content| {
+            if let Content::Text { text, .. } = content {
+                Some(text.clone())
+            } else {
+                None
             }
-            _ => true,
-        };
-        if result.is_error != Some(true) && validate_portable_output {
+        });
+        if result.is_error != Some(true) && crate::action_record::is_action_tool(resolved_name) {
+            if let Err(error) = publish_action_result(&mut result) {
+                result = ToolResult::error(format!(
+                    "internal action outcome mismatch for {resolved_name}: {error}"
+                ))
+                .with_structured(serde_json::json!({
+                    "code": "action_outcome_mismatch",
+                    "tool": resolved_name,
+                    "detail": error,
+                }));
+            }
+        }
+        if result.is_error != Some(true) {
             if let Some(structured) = result.structured_content.clone() {
                 if let Err(error) =
                     cua_driver_contract::validate_success_output(resolved_name, structured)
@@ -1303,18 +1429,12 @@ impl ToolRegistry {
         // stream stays the actual user-action sequence (not the meta
         // start/stop frames).
         if let Some(pending_turn) = pending_turn {
-            let result_text = result
-                .content
-                .iter()
-                .find_map(|c| {
-                    if let Content::Text { text, .. } = c {
-                        Some(text.as_str())
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or("");
-            self.recording.finish_turn(pending_turn, result_text);
+            self.recording.finish_turn_with_outcome(
+                pending_turn,
+                recording_result_text.as_deref().unwrap_or(""),
+                result.action_record.as_ref(),
+                result.is_error == Some(true),
+            );
         }
 
         // Experimental PiP push — only when --experimental-pip is on argv
@@ -1599,6 +1719,59 @@ impl ToolRegistry {
         Ok(())
     }
 
+    async fn authorize_clipboard(
+        &self,
+        tool_name: &str,
+        args: &Value,
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+        lifecycle_session: Option<&str>,
+    ) -> Result<(), crate::consent::ConsentError> {
+        if context.mode() != crate::authorization::PermissionMode::Bounded {
+            return Ok(());
+        }
+        let (operation, content_kind, summary) = if tool_name == "clipboard_read" {
+            (
+                "read",
+                if args.get("include_text").and_then(Value::as_bool) == Some(true) {
+                    "text_and_types"
+                } else {
+                    "types"
+                },
+                "Allow Cua to read the current system clipboard",
+            )
+        } else {
+            let kind = if args.get("text").and_then(Value::as_str).is_some() {
+                "text"
+            } else if args.get("image_path").and_then(Value::as_str).is_some() {
+                "image"
+            } else {
+                "file_url"
+            };
+            (
+                "write",
+                kind,
+                "Allow Cua to replace the current system clipboard",
+            )
+        };
+        self.protected_resource_grants
+            .authorize(
+                context,
+                "clipboard",
+                crate::authorization::RiskClass::R2,
+                lifecycle_session,
+                serde_json::json!({
+                    "kind": "system_clipboard",
+                    "operation": operation,
+                    "content_kind": content_kind,
+                }),
+                &format!("{summary} using {tool_name}"),
+                Duration::from_secs(30 * 60),
+                Duration::from_secs(8 * 60 * 60),
+            )
+            .await
+            .map(|_| ())
+    }
+
     async fn authorize_file_transfer(
         &self,
         tool_name: &str,
@@ -1640,6 +1813,25 @@ impl ToolRegistry {
                         "canonical_destination_root": destination,
                     }),
                     "Allow Cua to download one file from this browser tab to the exact destination directory".to_owned(),
+                )
+            }
+            "clipboard_write" => {
+                let (argument, content_kind) =
+                    if args.get("image_path").and_then(Value::as_str).is_some() {
+                        ("image_path", "image")
+                    } else {
+                        ("file_path", "file_url")
+                    };
+                let source = canonical_existing_file(required_path_arg(args, argument)?)?;
+                args[argument] = Value::String(source.clone());
+                (
+                    serde_json::json!({
+                        "kind": "clipboard_local_file",
+                        "content_kind": content_kind,
+                        "direction": "local_to_clipboard",
+                        "canonical_source_path": source,
+                    }),
+                    format!("Allow Cua to read this exact local {content_kind} into the clipboard"),
                 )
             }
             "get_desktop_state" | "get_window_state" => {
@@ -1991,6 +2183,25 @@ fn canonical_upload_files(args: &Value) -> Result<Vec<String>, ToolResult> {
         .collect()
 }
 
+fn canonical_existing_file(raw: &str) -> Result<String, ToolResult> {
+    let path = Path::new(raw);
+    if !path.is_absolute() {
+        return Err(protected_scope_refusal(
+            "clipboard file paths must be absolute",
+        ));
+    }
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|_| protected_scope_refusal("the exact clipboard path does not exist"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(protected_scope_refusal(
+            "clipboard paths must name regular files directly, not links or directories",
+        ));
+    }
+    std::fs::canonicalize(path)
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|_| protected_scope_refusal("the clipboard path could not be canonicalized"))
+}
+
 /// Resolve a not-yet-created output without creating it before approval.
 ///
 /// The deepest existing ancestor is canonicalized first, so symlinked parents
@@ -2077,6 +2288,7 @@ fn is_physical_desktop_action(tool: &str) -> bool {
             | "hotkey"
             | "set_value"
             | "bring_to_front"
+            | "set_window_frame"
     )
 }
 
@@ -2154,6 +2366,27 @@ fn namespace_runtime_args(
     runtime_prefix
 }
 
+fn publish_action_result(result: &mut ToolResult) -> Result<(), String> {
+    let action = result
+        .action_record
+        .as_ref()
+        .ok_or_else(|| "successful action omitted its internal execution record".to_owned())?;
+    let public = action
+        .public_result()
+        .map_err(|error| format!("invalid internal execution record: {error:?}"))?;
+    public
+        .validate_invariants()
+        .map_err(|error| format!("invalid public projection: {error}"))?;
+    let structured =
+        serde_json::to_value(public).map_err(|error| format!("projection failed: {error}"))?;
+    // The breaking contract narrows machine-readable structured content. Keep
+    // the outer ToolResult text/images intact for human diagnostics, refusal
+    // messages, recording/replay, and clients that intentionally degrade to
+    // raw content.
+    result.structured_content = Some(structured);
+    Ok(())
+}
+
 fn restore_public_runtime_result(result: &mut ToolResult, runtime_prefix: &str) {
     for content in &mut result.content {
         if let Content::Text { text, .. } = content {
@@ -2206,7 +2439,8 @@ fn restore_public_runtime_value(value: &mut Value, runtime_prefix: &str) -> bool
 mod runtime_isolation_tests {
     use super::{
         canonical_proposed_path, desktop_action_coordinator, namespace_runtime_args,
-        restore_public_runtime_result, TrustedInvocationEvidence, DISPATCH_RUNTIME_SCOPE,
+        publish_action_result, restore_public_runtime_result, try_admit_text_input,
+        TrustedInvocationEvidence, DISPATCH_RUNTIME_SCOPE,
     };
     use crate::{
         authorization::PermissionMode,
@@ -3290,12 +3524,107 @@ resources:
             .invoke_with_context("click", args.clone(), context.clone())
             .await;
         assert_ne!(first.is_error, Some(true));
+        let action = first
+            .action_record
+            .as_ref()
+            .expect("canonical dispatch should normalize legacy action truth");
+        assert_eq!(
+            action.effect,
+            crate::action_record::ActionEffect::Unverifiable
+        );
+        assert!(action
+            .debug_json()
+            .get("requested_delivery")
+            .is_some_and(|value| value == "background"));
         assert_eq!(hits.load(Ordering::SeqCst), 1);
 
         crate::session::fire_session_end(&runtime_session);
         let after_end = registry.invoke_with_context("click", args, context).await;
         assert_eq!(after_end.is_error, Some(true));
         assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn canonical_dispatch_replaces_legacy_action_payload_with_the_closed_outcome() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let registry = input_registry(None, hits.clone());
+        let context = standard_context();
+        let runtime_session = context.runtime_session_key("projection");
+        registry
+            .protected_resource_ownership()
+            .mark_driver_owned_pid(&runtime_session, 42);
+
+        let result = registry
+            .invoke_with_context(
+                "click",
+                serde_json::json!({
+                    "pid": 42,
+                    "window_id": 7,
+                    "session": "projection",
+                    "x": 10,
+                    "y": 20
+                }),
+                context,
+            )
+            .await;
+
+        assert_ne!(result.is_error, Some(true));
+        let structured = result
+            .structured_content
+            .expect("successful actions publish an ActionResult");
+        let object = structured.as_object().expect("ActionResult is an object");
+        assert_eq!(
+            object.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["delivery", "effect", "route"]
+        );
+        assert_eq!(structured["effect"], "unverifiable");
+        assert_eq!(structured["delivery"]["mode"], "unknown");
+        assert!(matches!(
+            structured["route"].as_str(),
+            Some("accessibility" | "synthetic_events" | "global_input" | "dom" | "trusted_input")
+        ));
+        assert!(structured.get("snapshot_id").is_none());
+        assert!(structured.get("x").is_none());
+        assert!(structured.get("y").is_none());
+        assert!(structured.get("scope").is_none());
+        assert!(structured.get("verified").is_none());
+        cua_driver_contract::validate_success_output("click", structured)
+            .expect("the projected action must satisfy the public contract");
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn action_projection_keeps_browser_refusal_diagnostics_and_closes_structured_content() {
+        let legacy = serde_json::json!({
+            "status": "refused",
+            "refusal": {
+                "code": "browser_ref_stale",
+                "message": "take a fresh browser snapshot"
+            }
+        });
+        let mut result = crate::protocol::ToolResult::text(
+            "refused (browser_ref_stale): take a fresh browser snapshot",
+        )
+        .with_structured(legacy.clone());
+        result.action_record = crate::action_record::ActionExecutionRecord::from_legacy(
+            "browser_click",
+            &serde_json::json!({"input_route": "trusted"}),
+            &legacy,
+        );
+
+        publish_action_result(&mut result).expect("browser refusal should project");
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["effect"], "refused");
+        assert_eq!(structured["route"], "trusted_input");
+        assert_eq!(structured["escalation"]["target"], "page");
+        assert!(structured.get("refusal").is_none());
+        assert!(result.content.iter().any(|content| {
+            matches!(
+                content,
+                crate::protocol::Content::Text { text, .. }
+                    if text.contains("browser_ref_stale")
+            )
+        }));
     }
 
     #[tokio::test]
@@ -3319,8 +3648,15 @@ resources:
         );
         let structured = DISPATCH_RUNTIME_SCOPE
             .scope("runtime-b".to_owned(), async {
-                crate::element_token::resolve_element_args(pid, None, Some(&token), None, "click")
-                    .unwrap_err()
+                crate::element_token::resolve_element_args(
+                    pid,
+                    None,
+                    Some(&token),
+                    None,
+                    None,
+                    "click",
+                )
+                .unwrap_err()
             })
             .await
             .structured_content
@@ -3358,6 +3694,38 @@ resources:
             task.await.unwrap();
         }
         assert_eq!(max_active.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn overlapping_text_input_for_one_pid_fails_fast_and_releases_after_completion() {
+        let pid = 8_675_410;
+        let first = try_admit_text_input("type_text", &serde_json::json!({"pid": pid}))
+            .expect("first text operation should be admitted")
+            .expect("pid-scoped text operation should receive a guard");
+
+        let refusal = try_admit_text_input("type_text", &serde_json::json!({"pid": pid}))
+            .expect_err("overlapping text operation should fail fast");
+        assert_eq!(refusal.is_error, Some(true));
+        assert_eq!(
+            refusal
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(serde_json::Value::as_str),
+            Some("input_busy")
+        );
+
+        let other_pid = try_admit_text_input("type_text", &serde_json::json!({"pid": pid + 1}))
+            .expect("a different pid should have an independent input lane")
+            .expect("pid-scoped text operation should receive a guard");
+        drop(other_pid);
+        drop(first);
+
+        assert!(
+            try_admit_text_input("type_text", &serde_json::json!({"pid": pid}))
+                .expect("completed text operation should release its pid")
+                .is_some()
+        );
     }
 
     #[test]
@@ -3534,6 +3902,13 @@ fn recording_args_for(tool_name: &str, args: &Value) -> Value {
                     );
                 }
             }
+            "clipboard_write" => {
+                for field in ["text", "image_path", "file_path"] {
+                    if arguments.contains_key(field) {
+                        arguments.insert(field.to_owned(), Value::String("[redacted]".to_owned()));
+                    }
+                }
+            }
             "browser_set_input_files" => {
                 if let Some(count) = arguments
                     .get("files")
@@ -3685,6 +4060,31 @@ mod capability_tests {
     }
 
     #[test]
+    fn clipboard_write_recording_args_are_content_free() {
+        let recorded = recording_args_for(
+            "clipboard_write",
+            &serde_json::json!({
+                "text": "private text",
+                "image_path": "/private/image.png",
+                "file_path": "/private/document.pdf",
+                "session": "public-session",
+            }),
+        );
+        assert_eq!(recorded["text"], "[redacted]");
+        assert_eq!(recorded["image_path"], "[redacted]");
+        assert_eq!(recorded["file_path"], "[redacted]");
+        assert_eq!(recorded["session"], "public-session");
+        let serialized = recorded.to_string();
+        for forbidden in [
+            "private text",
+            "/private/image.png",
+            "/private/document.pdf",
+        ] {
+            assert!(!serialized.contains(forbidden));
+        }
+    }
+
+    #[test]
     fn existing_profile_prepare_is_a_private_consent_turn() {
         assert!(is_existing_profile_prepare(
             "browser_prepare",
@@ -3738,6 +4138,7 @@ mod capability_tests {
         "kill_app",
         "list_windows",
         "bring_to_front",
+        "set_window_frame",
         "debug_window_info",
         // permissions / config
         "check_permissions",
@@ -3815,6 +4216,7 @@ mod capability_tests {
         "app.kill",
         "window.list",
         "window.activate",
+        "window.frame.set",
         "window.debug_info",
         // permissions
         "system.permissions.tcc",
@@ -4079,6 +4481,77 @@ mod capability_tests {
         assert_eq!(entry["annotations"]["openWorldHint"], true);
         // New key — the whole point of this PR.
         assert!(entry["capabilities"].is_array());
+    }
+
+    #[test]
+    fn action_tools_advertise_the_same_closed_output_schema() {
+        let expected =
+            <cua_driver_contract::ActionResult as cua_driver_contract::ToolOutput>::output_schema();
+        for name in ["click", "browser_click", "browser_pointer", "browser_type"] {
+            let def = ToolDef {
+                name: name.into(),
+                description: "Action.".into(),
+                input_schema: serde_json::json!({"type":"object","properties":{}}),
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: true,
+            };
+            let entry = def.to_list_entry();
+            assert_eq!(entry["outputSchema"], expected, "{name}");
+            assert_eq!(
+                entry["outputSchema"]["additionalProperties"], false,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn typed_non_action_tools_advertise_outputs_without_inventing_runtime_schemas() {
+        let verify = ToolDef {
+            name: "verify_state".into(),
+            description: "Verify.".into(),
+            input_schema: serde_json::json!({"type":"object","properties":{}}),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        }
+        .to_list_entry();
+        assert!(verify["outputSchema"].is_object());
+
+        let runtime_only = ToolDef {
+            name: "runtime_only_probe".into(),
+            description: "Probe.".into(),
+            input_schema: serde_json::json!({"type":"object","properties":{}}),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        }
+        .to_list_entry();
+        assert!(runtime_only.get("outputSchema").is_none());
+    }
+
+    #[test]
+    fn list_windows_advertises_the_shared_z_index_contract() {
+        let entry = ToolDef {
+            name: "list_windows".into(),
+            description: "List windows.".into(),
+            input_schema: serde_json::json!({"type":"object","properties":{}}),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        }
+        .to_list_entry();
+        let z_index =
+            &entry["outputSchema"]["properties"]["windows"]["items"]["properties"]["z_index"];
+        assert_eq!(z_index["type"], serde_json::json!(["integer", "null"]));
+        assert!(z_index["description"]
+            .as_str()
+            .expect("description")
+            .contains("Higher values are closer to the front"));
     }
 
     #[test]

@@ -867,12 +867,38 @@ fn clear_x11_overlay_input_shape(
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+fn map_x11_overlay_with_empty_input(
+    conn: &impl x11rb::connection::Connection,
+    win: u32,
+) -> anyhow::Result<()> {
+    use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK, SO};
+    use x11rb::protocol::xproto::{ClipOrdering, ConnectionExt as XprotoConnectionExt};
+
+    // Check both safety-critical shapes before mapping. If either request is
+    // rejected, the full-root overlay must remain unmapped rather than falling
+    // back to the server's default full-window input region.
+    clear_x11_overlay_input_shape(conn, win)?;
+    conn.shape_rectangles(
+        SO::SET,
+        SK::BOUNDING,
+        ClipOrdering::UNSORTED,
+        win,
+        0,
+        0,
+        &[],
+    )?
+    .check()?;
+    conn.map_window(win)?.check()?;
+    conn.flush()?;
+    Ok(())
+}
+
 // ── X11 thread ────────────────────────────────────────────────────────────
 
 #[cfg(target_os = "linux")]
 fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMsg>) {
     use x11rb::connection::Connection;
-    use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK, SO};
     use x11rb::protocol::xproto::ConnectionExt as XprotoConnectionExt;
     use x11rb::protocol::xproto::{
         AtomEnum, ColormapAlloc, CreateGCAux, CreateWindowAux, EventMask, PropMode, WindowClass,
@@ -990,20 +1016,12 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     // bare/non-composited X servers before the first cursor command paints a
     // real visible shape. ShapeMask with a None pixmap would reset either
     // region to the full window; an empty rectangle list expresses emptiness.
-    clear_x11_overlay_input_shape(&conn, win).ok();
-    conn.shape_rectangles(
-        SO::SET,
-        SK::BOUNDING,
-        x11rb::protocol::xproto::ClipOrdering::UNSORTED,
-        win,
-        0,
-        0,
-        &[],
-    )
-    .ok();
-
-    conn.map_window(win).ok();
-    conn.flush().ok();
+    if let Err(e) = map_x11_overlay_with_empty_input(&conn, win) {
+        tracing::warn!(
+            "X11 overlay: cannot establish click-through input shape; overlay remains unmapped: {e}"
+        );
+        return;
+    }
 
     // One GC is sufficient for the lifetime of the overlay window. Recreating
     // and freeing it every 16 ms adds two avoidable X11 requests to the hot
@@ -1636,12 +1654,30 @@ mod tests {
         );
         assert_x11_button_press_target(&conn, root, overlay)?;
 
-        clear_x11_overlay_input_shape(&conn, overlay)?;
+        conn.unmap_window(overlay)?.check()?;
+        map_x11_overlay_with_empty_input(&conn, overlay)?;
         let click_through_input = conn.shape_get_rectangles(overlay, SK::INPUT)?.reply()?;
         assert!(
             click_through_input.rectangles.is_empty(),
             "click-through overlay must expose an empty X11 input shape"
         );
+        let initial_visible_bounds = [Rectangle {
+            x: 0,
+            y: 0,
+            width: 200,
+            height: 200,
+        }];
+        conn.shape_rectangles(
+            SO::SET,
+            SK::BOUNDING,
+            ClipOrdering::UNSORTED,
+            overlay,
+            0,
+            0,
+            &initial_visible_bounds,
+        )?
+        .check()?;
+        conn.flush()?;
         assert_x11_button_press_target(&conn, root, target)?;
 
         prepare_x11_overlay_geometry(
@@ -1674,6 +1710,16 @@ mod tests {
             "resize repair must not restore a stale full-root input region"
         );
         assert_x11_button_press_target(&conn, root, target)?;
+
+        let missing_window = conn.generate_id()?;
+        assert!(
+            map_x11_overlay_with_empty_input(&conn, missing_window).is_err(),
+            "a rejected input-shape request must abort before mapping"
+        );
+        assert!(
+            conn.poll_for_event()?.is_none(),
+            "mapping must not be attempted after the checked input-shape request fails"
+        );
         Ok(())
     }
 

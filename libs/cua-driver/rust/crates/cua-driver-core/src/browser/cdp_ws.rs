@@ -47,6 +47,7 @@ const EXISTING_PROFILE_METHODS: &[&str] = &[
     "DOM.focus",
     "DOM.getBoxModel",
     "DOM.getDocument",
+    "DOM.getNodeForLocation",
     "DOM.resolveNode",
     "DOM.scrollIntoViewIfNeeded",
     "DOM.setFileInputFiles",

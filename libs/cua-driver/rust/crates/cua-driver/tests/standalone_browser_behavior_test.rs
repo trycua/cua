@@ -2194,7 +2194,9 @@ fn run_trusted_click(spec: &BrowserSpec) {
         std::env::consts::OS,
         spec.name
     );
-    let case = if cfg!(any(target_os = "linux", target_os = "macos")) {
+    let trusted_refused =
+        cfg!(target_os = "linux") || (cfg!(target_os = "macos") && spec.name != "chrome");
+    let case = if trusted_refused {
         refusal_case(
             &spec.name,
             "trusted_click",
@@ -2220,7 +2222,7 @@ fn run_trusted_click(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
-            if cfg!(any(target_os = "linux", target_os = "macos")) {
+            if trusted_refused {
                 assert_eq!(click.action_effect(), Some("refused"), "{}", click.raw);
                 assert!(
                     click.text().contains("browser_input_trust_unavailable"),
@@ -3404,7 +3406,9 @@ fn run_multi_tab(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
-            let trusted_clicks = if cfg!(target_os = "windows") {
+            let trusted_allowed =
+                cfg!(target_os = "windows") || (cfg!(target_os = "macos") && spec.name == "chrome");
+            let trusted_clicks = if trusted_allowed {
                 assert_eq!(
                     trusted.action_effect(),
                     Some("unverifiable"),
@@ -4436,6 +4440,36 @@ fn run_pointer_actions(spec: &BrowserSpec) {
             );
 
             let click_ref = semantic_ref_by_name(&snapshot, "border-click-target", "pointer");
+
+            if cfg!(target_os = "macos") {
+                for action in ["hover", "right_click", "double_click", "scroll", "drag"] {
+                    let mut request = serde_json::json!({
+                        "target_id": target,
+                        "tab_id": tab,
+                        "ref": click_ref,
+                        "action": action,
+                        "input_route": "trusted",
+                        "session": session,
+                    });
+                    if action == "scroll" {
+                        request["delta_y"] = serde_json::json!(120);
+                    } else if action == "drag" {
+                        request["destination_ref"] = serde_json::json!(click_ref);
+                    }
+                    let response = fixture.driver.call("browser_pointer", request);
+                    assert_eq!(
+                        response.action_effect(),
+                        Some("refused"),
+                        "{}",
+                        response.raw
+                    );
+                    assert!(
+                        response.text().contains("browser_input_trust_unavailable"),
+                        "{}",
+                        response.raw
+                    );
+                }
+            }
 
             for action in ["hover", "right_click", "double_click"] {
                 let response = fixture.driver.call(

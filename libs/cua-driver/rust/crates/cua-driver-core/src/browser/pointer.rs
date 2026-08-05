@@ -18,59 +18,42 @@ use crate::tool_args::ArgsExt;
 
 use super::cdp_ws::CdpConnection;
 use super::engine::{BrowserEngine, ValidatedTab};
+use super::input::{ref_point, trusted_input_refusal, trusted_ref_point};
 use super::platform::BrowserVisualActionKind;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::required_session_schema;
 use super::store::{BrowserActionKind, FrameKind, FrameRef};
 use super::tools::{browser_protected_resource_scope, browser_resource_ownership};
+use super::types::BrowserInputAction;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PointerAction {
-    Hover,
-    RightClick,
-    DoubleClick,
-    Scroll,
-    Drag,
-}
-
-impl PointerAction {
-    fn parse(value: &str) -> Result<Self, String> {
-        match value {
-            "hover" => Ok(Self::Hover),
-            "right_click" => Ok(Self::RightClick),
-            "double_click" => Ok(Self::DoubleClick),
-            "scroll" => Ok(Self::Scroll),
-            "drag" => Ok(Self::Drag),
-            _ => Err(format!(
-                "action must be hover, right_click, double_click, scroll, or drag, got {value:?}"
-            )),
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Hover => "hover",
-            Self::RightClick => "right_click",
-            Self::DoubleClick => "double_click",
-            Self::Scroll => "scroll",
-            Self::Drag => "drag",
-        }
+fn parse_pointer_action(value: &str) -> Result<BrowserInputAction, String> {
+    match value {
+        "hover" => Ok(BrowserInputAction::Hover),
+        "right_click" => Ok(BrowserInputAction::RightClick),
+        "double_click" => Ok(BrowserInputAction::DoubleClick),
+        "scroll" => Ok(BrowserInputAction::Scroll),
+        "drag" => Ok(BrowserInputAction::Drag),
+        _ => Err(format!(
+            "action must be hover, right_click, double_click, scroll, or drag, got {value:?}"
+        )),
     }
 }
 
-fn visual_kind(action: PointerAction) -> BrowserVisualActionKind {
+fn visual_kind(action: BrowserInputAction) -> BrowserVisualActionKind {
     match action {
-        PointerAction::Hover => BrowserVisualActionKind::Hover,
-        PointerAction::RightClick => BrowserVisualActionKind::RightClick,
-        PointerAction::DoubleClick => BrowserVisualActionKind::DoubleClick,
-        PointerAction::Scroll => BrowserVisualActionKind::Scroll,
-        PointerAction::Drag => BrowserVisualActionKind::Drag,
+        BrowserInputAction::Click => BrowserVisualActionKind::Click,
+        BrowserInputAction::Hover => BrowserVisualActionKind::Hover,
+        BrowserInputAction::RightClick => BrowserVisualActionKind::RightClick,
+        BrowserInputAction::DoubleClick => BrowserVisualActionKind::DoubleClick,
+        BrowserInputAction::Scroll => BrowserVisualActionKind::Scroll,
+        BrowserInputAction::Drag => BrowserVisualActionKind::Drag,
     }
 }
 
-fn ref_declares_pointer_action(actions: &[BrowserActionKind], action: PointerAction) -> bool {
+fn ref_declares_pointer_action(actions: &[BrowserActionKind], action: BrowserInputAction) -> bool {
     match action {
-        PointerAction::Scroll => actions
+        BrowserInputAction::Click => actions.contains(&BrowserActionKind::Click),
+        BrowserInputAction::Scroll => actions
             .iter()
             .any(|kind| matches!(kind, BrowserActionKind::Scroll | BrowserActionKind::Pointer)),
         _ => actions.contains(&BrowserActionKind::Pointer),
@@ -110,7 +93,7 @@ enum Location {
 
 #[derive(Debug, Clone, PartialEq)]
 struct PointerRequest {
-    action: PointerAction,
+    action: BrowserInputAction,
     route: InputRoute,
     origin: Location,
     destination: Option<Location>,
@@ -159,7 +142,7 @@ fn one_location(
 }
 
 fn parse_request(args: &Value) -> Result<PointerRequest, String> {
-    let action = PointerAction::parse(
+    let action = parse_pointer_action(
         args.get("action")
             .and_then(Value::as_str)
             .ok_or_else(|| "missing required string field: action".to_owned())?,
@@ -176,10 +159,10 @@ fn parse_request(args: &Value) -> Result<PointerRequest, String> {
     if route == InputRoute::DomEvent && !matches!(origin, Location::Ref(_)) {
         return Err("input_route=dom_event requires a ref".into());
     }
-    if action == PointerAction::Drag && destination.is_none() {
+    if action == BrowserInputAction::Drag && destination.is_none() {
         return Err("action=drag requires destination_ref or to_x/to_y".into());
     }
-    if action != PointerAction::Drag && destination.is_some() {
+    if action != BrowserInputAction::Drag && destination.is_some() {
         return Err("destination_ref and to_x/to_y are valid only for action=drag".into());
     }
 
@@ -188,10 +171,10 @@ fn parse_request(args: &Value) -> Result<PointerRequest, String> {
     if !delta_x.is_finite() || !delta_y.is_finite() {
         return Err("delta_x and delta_y must be finite numbers".into());
     }
-    if action == PointerAction::Scroll && delta_x == 0.0 && delta_y == 0.0 {
+    if action == BrowserInputAction::Scroll && delta_x == 0.0 && delta_y == 0.0 {
         return Err("action=scroll requires a non-zero delta_x or delta_y".into());
     }
-    if action != PointerAction::Scroll
+    if action != BrowserInputAction::Scroll
         && (args.get("delta_x").is_some() || args.get("delta_y").is_some())
     {
         return Err("delta_x and delta_y are valid only for action=scroll".into());
@@ -245,45 +228,6 @@ async fn resolve_object(
         .ok_or_else(|| stale("the ref's node has no live object in the page"))
 }
 
-async fn point_for_ref(
-    conn: &CdpConnection,
-    cdp_session: &str,
-    backend_node_id: i64,
-) -> Result<(f64, f64), ToolResult> {
-    let _ = conn
-        .call(
-            Some(cdp_session),
-            "DOM.scrollIntoViewIfNeeded",
-            json!({ "backendNodeId": backend_node_id }),
-        )
-        .await;
-    let model = conn
-        .call(
-            Some(cdp_session),
-            "DOM.getBoxModel",
-            json!({ "backendNodeId": backend_node_id }),
-        )
-        .await
-        .map_err(|_| stale("the ref's node has no live layout box"))?;
-    quad_center(&model).ok_or_else(|| stale("the ref's node returned an unusable layout box"))
-}
-
-fn quad_center(box_model: &Value) -> Option<(f64, f64)> {
-    let quad = box_model.get("model")?.get("content")?.as_array()?;
-    if quad.len() < 8 {
-        return None;
-    }
-    let values = quad
-        .iter()
-        .take(8)
-        .map(Value::as_f64)
-        .collect::<Option<Vec<_>>>()?;
-    Some((
-        (values[0] + values[2] + values[4] + values[6]) / 4.0,
-        (values[1] + values[3] + values[5] + values[7]) / 4.0,
-    ))
-}
-
 pub struct BrowserPointerTool {
     def: ToolDef,
     engine: Arc<BrowserEngine>,
@@ -331,7 +275,7 @@ impl BrowserPointerTool {
         tab_id: &str,
         validated: &ValidatedTab,
         external: &str,
-        action: PointerAction,
+        action: BrowserInputAction,
     ) -> Result<ResolvedRef, ToolResult> {
         let entry = self
             .engine
@@ -340,7 +284,7 @@ impl BrowserPointerTool {
             .map_err(|refusal| refusal.to_tool_result())?;
         let declared = ref_declares_pointer_action(&entry.actions, action);
         if entry.semantic && !declared {
-            let required = if action == PointerAction::Scroll {
+            let required = if action == BrowserInputAction::Scroll {
                 "scroll or pointer"
             } else {
                 "pointer"
@@ -364,34 +308,6 @@ impl BrowserPointerTool {
         })
     }
 
-    fn trusted_background_refusal(&self, validated: &ValidatedTab) -> Option<ToolResult> {
-        if validated.record.cdp_window_id.is_some() {
-            if let Some(limitation) = self
-                .engine
-                .platform
-                .standalone_trusted_input_background_limitation()
-            {
-                return Some(
-                    BrowserRefusal::new(
-                        BrowserRefusalCode::BrowserInputTrustUnavailable,
-                        format!(
-                            "{limitation}; use input_route=\"dom_event\" with refs to explicitly request synthetic full-background pointer delivery"
-                        ),
-                    )
-                    .with_detail(json!({
-                        "requested_route": "trusted",
-                        "limitation": limitation,
-                        "alternative_route": "dom_event",
-                        "alternative_requires_ref": true,
-                        "trusted_delivery_attempted": false,
-                    }))
-                    .to_tool_result(),
-                );
-            }
-        }
-        None
-    }
-
     async fn dom_event(
         &self,
         session: &str,
@@ -407,7 +323,7 @@ impl BrowserPointerTool {
                 Err(result) => return result,
             };
 
-        if let Ok((x, y)) = point_for_ref(conn, &origin.cdp_session, origin.backend_node_id).await {
+        if let Ok((x, y)) = ref_point(conn, &origin.cdp_session, origin.backend_node_id).await {
             self.engine
                 .visualize_browser_action(
                     session,
@@ -421,23 +337,24 @@ impl BrowserPointerTool {
         }
 
         let (function, arguments) = match request.action {
-            PointerAction::Hover => (
+            BrowserInputAction::Click => unreachable!("browser_pointer does not parse click"),
+            BrowserInputAction::Hover => (
                 "function() { const o={bubbles:true,composed:true,view:this.ownerDocument.defaultView}; this.dispatchEvent(new PointerEvent('pointerover',o)); this.dispatchEvent(new PointerEvent('pointerenter',{...o,bubbles:false})); this.dispatchEvent(new MouseEvent('mouseover',o)); this.dispatchEvent(new MouseEvent('mouseenter',{...o,bubbles:false})); return true; }",
                 json!([]),
             ),
-            PointerAction::RightClick => (
+            BrowserInputAction::RightClick => (
                 "function() { const o={bubbles:true,cancelable:true,composed:true,button:2,buttons:2,view:this.ownerDocument.defaultView}; this.dispatchEvent(new PointerEvent('pointerdown',o)); this.dispatchEvent(new MouseEvent('mousedown',o)); this.dispatchEvent(new MouseEvent('mouseup',{...o,buttons:0})); this.dispatchEvent(new PointerEvent('pointerup',{...o,buttons:0})); this.dispatchEvent(new MouseEvent('contextmenu',{...o,buttons:0})); return true; }",
                 json!([]),
             ),
-            PointerAction::DoubleClick => (
+            BrowserInputAction::DoubleClick => (
                 "function() { const o={bubbles:true,cancelable:true,composed:true,button:0,view:this.ownerDocument.defaultView}; for (let detail=1; detail<=2; detail++) { this.dispatchEvent(new PointerEvent('pointerdown',{...o,buttons:1,detail})); this.dispatchEvent(new MouseEvent('mousedown',{...o,buttons:1,detail})); this.dispatchEvent(new MouseEvent('mouseup',{...o,buttons:0,detail})); this.dispatchEvent(new PointerEvent('pointerup',{...o,buttons:0,detail})); this.dispatchEvent(new MouseEvent('click',{...o,buttons:0,detail})); } this.dispatchEvent(new MouseEvent('dblclick',{...o,buttons:0,detail:2})); return true; }",
                 json!([]),
             ),
-            PointerAction::Scroll => (
+            BrowserInputAction::Scroll => (
                 "function(dx,dy) { const o={deltaX:dx,deltaY:dy,bubbles:true,cancelable:true,composed:true,view:this.ownerDocument.defaultView}; this.dispatchEvent(new WheelEvent('wheel',o)); let n=this; while (n && n !== this.ownerDocument.documentElement) { const s=this.ownerDocument.defaultView.getComputedStyle(n); if (/(auto|scroll)/.test(s.overflow+s.overflowX+s.overflowY)) break; n=n.parentElement; } const target=n || this.ownerDocument.scrollingElement || this.ownerDocument.documentElement; const beforeX=target.scrollLeft; const beforeY=target.scrollTop; target.scrollBy(dx,dy); const changed=target.scrollLeft !== beforeX || target.scrollTop !== beforeY; if (changed) target.dispatchEvent(new Event('scroll')); return changed; }",
                 json!([{ "value": request.delta_x }, { "value": request.delta_y }]),
             ),
-            PointerAction::Drag => {
+            BrowserInputAction::Drag => {
                 let destination_argument = if let Some(destination) = destination {
                     let object_id = match resolve_object(
                         conn,
@@ -484,9 +401,11 @@ impl BrowserPointerTool {
         {
             Ok(value)
                 if value.get("exceptionDetails").is_none()
-                    && (!matches!(request.action, PointerAction::Scroll | PointerAction::Drag)
-                        || value.pointer("/result/value").and_then(Value::as_bool)
-                            != Some(false)) =>
+                    && (!matches!(
+                        request.action,
+                        BrowserInputAction::Scroll | BrowserInputAction::Drag
+                    ) || value.pointer("/result/value").and_then(Value::as_bool)
+                        != Some(false)) =>
             {
                 ToolResult::text(format!(
                     "dispatched synthetic {} in {}",
@@ -510,7 +429,7 @@ impl BrowserPointerTool {
                 ),
             )
             .to_tool_result(),
-            Ok(_) if request.action == PointerAction::Drag => BrowserRefusal::new(
+            Ok(_) if request.action == BrowserInputAction::Drag => BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "the drag destination did not resolve in the origin ref's exact document",
             )
@@ -550,8 +469,8 @@ impl BrowserPointerTool {
             "y": origin_point.map(|point| point.1),
             "to_x": destination_point.map(|point| point.0),
             "to_y": destination_point.map(|point| point.1),
-            "delta_x": (request.action == PointerAction::Scroll).then_some(request.delta_x),
-            "delta_y": (request.action == PointerAction::Scroll).then_some(request.delta_y),
+            "delta_x": (request.action == BrowserInputAction::Scroll).then_some(request.delta_x),
+            "delta_y": (request.action == BrowserInputAction::Scroll).then_some(request.delta_y),
         })
     }
 
@@ -570,9 +489,11 @@ impl BrowserPointerTool {
         let origin = match (&request.origin, origin_ref) {
             (Location::Coordinates(x, y), None) => (*x, *y),
             (Location::Ref(_), Some(reference)) => {
-                match point_for_ref(conn, &reference.cdp_session, reference.backend_node_id).await {
+                match trusted_ref_point(conn, &reference.cdp_session, reference.backend_node_id)
+                    .await
+                {
                     Ok(point) => point,
-                    Err(result) => return result,
+                    Err(refusal) => return refusal.to_tool_result(),
                 }
             }
             _ => unreachable!("origin resolution matches request"),
@@ -580,9 +501,11 @@ impl BrowserPointerTool {
         let destination = match (&request.destination, destination_ref) {
             (Some(Location::Coordinates(x, y)), None) => Some((*x, *y)),
             (Some(Location::Ref(_)), Some(reference)) => {
-                match point_for_ref(conn, &reference.cdp_session, reference.backend_node_id).await {
+                match trusted_ref_point(conn, &reference.cdp_session, reference.backend_node_id)
+                    .await
+                {
                     Ok(point) => Some(point),
-                    Err(result) => return result,
+                    Err(refusal) => return refusal.to_tool_result(),
                 }
             }
             (None, None) => None,
@@ -684,28 +607,29 @@ impl BrowserPointerTool {
     ) -> anyhow::Result<()> {
         let call = |params: Value| conn.call(Some(cdp_session), "Input.dispatchMouseEvent", params);
         match request.action {
-            PointerAction::Hover => {
+            BrowserInputAction::Click => unreachable!("browser_pointer does not parse click"),
+            BrowserInputAction::Hover => {
                 call(
                     json!({ "type": "mouseMoved", "x": origin.0, "y": origin.1, "button": "none" }),
                 )
                 .await?;
             }
-            PointerAction::RightClick => {
+            BrowserInputAction::RightClick => {
                 for kind in ["mousePressed", "mouseReleased"] {
                     call(json!({ "type": kind, "x": origin.0, "y": origin.1, "button": "right", "clickCount": 1 })).await?;
                 }
             }
-            PointerAction::DoubleClick => {
+            BrowserInputAction::DoubleClick => {
                 for click_count in [1, 2] {
                     for kind in ["mousePressed", "mouseReleased"] {
                         call(json!({ "type": kind, "x": origin.0, "y": origin.1, "button": "left", "clickCount": click_count })).await?;
                     }
                 }
             }
-            PointerAction::Scroll => {
+            BrowserInputAction::Scroll => {
                 call(json!({ "type": "mouseWheel", "x": origin.0, "y": origin.1, "deltaX": request.delta_x, "deltaY": request.delta_y })).await?;
             }
-            PointerAction::Drag => {
+            BrowserInputAction::Drag => {
                 let destination = destination.expect("drag destination validated");
                 call(
                     json!({ "type": "mouseMoved", "x": origin.0, "y": origin.1, "button": "none" }),
@@ -790,8 +714,12 @@ impl Tool for BrowserPointerTool {
             Err(refusal) => return refusal.to_tool_result(),
         };
         if request.route == InputRoute::Trusted {
-            if let Some(refusal) = self.trusted_background_refusal(&validated) {
-                return refusal;
+            if let Some(refusal) = trusted_input_refusal(
+                self.engine.platform.as_ref(),
+                &validated.record,
+                request.action,
+            ) {
+                return refusal.to_tool_result();
             }
         }
 
@@ -841,7 +769,7 @@ impl Tool for BrowserPointerTool {
                 .to_tool_result();
             }
         }
-        if request.action == PointerAction::Drag
+        if request.action == BrowserInputAction::Drag
             && origin_ref.is_none()
             && destination_ref.is_some()
         {
@@ -851,7 +779,7 @@ impl Tool for BrowserPointerTool {
             )
             .to_tool_result();
         }
-        if request.action == PointerAction::Drag
+        if request.action == BrowserInputAction::Drag
             && matches!(&request.destination, Some(Location::Coordinates(_, _)))
             && origin_ref
                 .as_ref()
@@ -954,35 +882,26 @@ mod tests {
         let scroll_only = [BrowserActionKind::Scroll];
         assert!(ref_declares_pointer_action(
             &scroll_only,
-            PointerAction::Scroll
+            BrowserInputAction::Scroll
         ));
         for action in [
-            PointerAction::Hover,
-            PointerAction::RightClick,
-            PointerAction::DoubleClick,
-            PointerAction::Drag,
+            BrowserInputAction::Hover,
+            BrowserInputAction::RightClick,
+            BrowserInputAction::DoubleClick,
+            BrowserInputAction::Drag,
         ] {
             assert!(!ref_declares_pointer_action(&scroll_only, action));
         }
 
         let pointer = [BrowserActionKind::Pointer];
-        assert!(ref_declares_pointer_action(&pointer, PointerAction::Scroll));
         assert!(ref_declares_pointer_action(
             &pointer,
-            PointerAction::RightClick
+            BrowserInputAction::Scroll
         ));
-    }
-
-    #[test]
-    fn quad_center_rejects_malformed_models() {
-        assert_eq!(
-            quad_center(&json!({ "model": { "content": [0, 0, 10, 0, 10, 20, 0, 20] } })),
-            Some((5.0, 10.0))
-        );
-        assert_eq!(
-            quad_center(&json!({ "model": { "content": [0, 0] } })),
-            None
-        );
+        assert!(ref_declares_pointer_action(
+            &pointer,
+            BrowserInputAction::RightClick
+        ));
     }
 
     #[test]

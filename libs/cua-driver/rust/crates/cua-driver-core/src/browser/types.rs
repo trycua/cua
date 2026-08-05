@@ -71,6 +71,31 @@ pub enum BrowserProduct {
     Other,
 }
 
+/// Browser input action whose trusted background posture is independently
+/// proven for each platform and browser product.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrowserInputAction {
+    Click,
+    Hover,
+    RightClick,
+    DoubleClick,
+    Scroll,
+    Drag,
+}
+
+impl BrowserInputAction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Click => "click",
+            Self::Hover => "hover",
+            Self::RightClick => "right_click",
+            Self::DoubleClick => "double_click",
+            Self::Scroll => "scroll",
+            Self::Drag => "drag",
+        }
+    }
+}
+
 /// Platform adapter's verdict on whether a pid is a browser and which
 /// engine family it belongs to. `supports_cdp` is the gate for the whole
 /// browser-tool route in v1 (Chromium-family only).

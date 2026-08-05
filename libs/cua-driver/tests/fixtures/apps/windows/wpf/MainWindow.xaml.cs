@@ -153,6 +153,11 @@ public partial class MainWindow : Window
         LblInputMirror.Text = $"mirror={TxtInput.Text}";
     }
 
+    private void OnDeferredInputChanged(object sender, TextChangedEventArgs e)
+    {
+        LblDeferredInputMirror.Text = $"deferred_mirror={TxtDeferredInput.Text}";
+    }
+
     private void OnTargetLeftDown(object sender, MouseButtonEventArgs e)
     {
         _targetPointerSeen = true;

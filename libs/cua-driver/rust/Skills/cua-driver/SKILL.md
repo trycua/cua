@@ -502,6 +502,13 @@ success” above. The old `verified`, `path`, coordinates, scope, and
 The full wire contract and 0.14 migration notes are in
 `../../../docs/action-result-contract.md`.
 
+A successful accessibility value write can still return
+`effect:"unverifiable"` when the provider publishes its new value only after
+the action call unwinds. Take a fresh snapshot before retrying; an immediate
+retry can duplicate text. An explicit pixel escalation is reserved for a web
+surface whose accessibility layer echoed the write without proving that the
+renderer observed it.
+
 `get_window_state` itself, when the AX tree comes back empty (a non-AX
 surface like Electron/Chromium/canvas), returns `degraded: true`
 plus an observation-specific escalation hint — normally pointing at pixels (you

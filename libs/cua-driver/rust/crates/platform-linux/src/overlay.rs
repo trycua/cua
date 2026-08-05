@@ -830,10 +830,17 @@ fn prepare_x11_overlay_geometry(
     // invalidated an old bounding shape during RandR reconfiguration, this
     // prevents a zero-filled full-root frame from becoming visible between the
     // ConfigureWindow request and the next cursor-local paint.
-    for shape_kind in [SK::BOUNDING, SK::INPUT] {
-        conn.shape_rectangles(SO::SET, shape_kind, ClipOrdering::UNSORTED, win, 0, 0, &[])?
-            .check()?;
-    }
+    conn.shape_rectangles(
+        SO::SET,
+        SK::BOUNDING,
+        ClipOrdering::UNSORTED,
+        win,
+        0,
+        0,
+        &[],
+    )?
+    .check()?;
+    clear_x11_overlay_input_shape(conn, win)?;
     conn.configure_window(
         win,
         &ConfigureWindowAux::new()
@@ -847,12 +854,51 @@ fn prepare_x11_overlay_geometry(
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+fn clear_x11_overlay_input_shape(
+    conn: &impl x11rb::connection::Connection,
+    win: u32,
+) -> anyhow::Result<()> {
+    use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK, SO};
+    use x11rb::protocol::xproto::ClipOrdering;
+
+    conn.shape_rectangles(SO::SET, SK::INPUT, ClipOrdering::UNSORTED, win, 0, 0, &[])?
+        .check()?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn map_x11_overlay_with_empty_input(
+    conn: &impl x11rb::connection::Connection,
+    win: u32,
+) -> anyhow::Result<()> {
+    use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK, SO};
+    use x11rb::protocol::xproto::{ClipOrdering, ConnectionExt as XprotoConnectionExt};
+
+    // Check both safety-critical shapes before mapping. If either request is
+    // rejected, the full-root overlay must remain unmapped rather than falling
+    // back to the server's default full-window input region.
+    clear_x11_overlay_input_shape(conn, win)?;
+    conn.shape_rectangles(
+        SO::SET,
+        SK::BOUNDING,
+        ClipOrdering::UNSORTED,
+        win,
+        0,
+        0,
+        &[],
+    )?
+    .check()?;
+    conn.map_window(win)?.check()?;
+    conn.flush()?;
+    Ok(())
+}
+
 // ── X11 thread ────────────────────────────────────────────────────────────
 
 #[cfg(target_os = "linux")]
 fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMsg>) {
     use x11rb::connection::Connection;
-    use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK, SO};
     use x11rb::protocol::xproto::ConnectionExt as XprotoConnectionExt;
     use x11rb::protocol::xproto::{
         AtomEnum, ColormapAlloc, CreateGCAux, CreateWindowAux, EventMask, PropMode, WindowClass,
@@ -970,21 +1016,12 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     // bare/non-composited X servers before the first cursor command paints a
     // real visible shape. ShapeMask with a None pixmap would reset either
     // region to the full window; an empty rectangle list expresses emptiness.
-    for shape_kind in [SK::INPUT, SK::BOUNDING] {
-        conn.shape_rectangles(
-            SO::SET,
-            shape_kind,
-            x11rb::protocol::xproto::ClipOrdering::UNSORTED,
-            win,
-            0,
-            0,
-            &[],
-        )
-        .ok();
+    if let Err(e) = map_x11_overlay_with_empty_input(&conn, win) {
+        tracing::warn!(
+            "X11 overlay: cannot establish click-through input shape; overlay remains unmapped: {e}"
+        );
+        return;
     }
-
-    conn.map_window(win).ok();
-    conn.flush().ok();
 
     // One GC is sufficient for the lifetime of the overlay window. Recreating
     // and freeing it every 16 ms adds two avoidable X11 requests to the hot
@@ -1521,6 +1558,170 @@ fn bgra_and_visible_shape(
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
+
+    fn assert_x11_button_press_target(
+        conn: &impl x11rb::connection::Connection,
+        root: u32,
+        expected_window: u32,
+    ) -> anyhow::Result<()> {
+        use x11rb::protocol::xproto::{
+            BUTTON_PRESS_EVENT, BUTTON_RELEASE_EVENT, MOTION_NOTIFY_EVENT,
+        };
+        use x11rb::protocol::xtest::ConnectionExt as XtestConnectionExt;
+
+        conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, x11rb::CURRENT_TIME, root, 50, 50, 0)?
+            .check()?;
+        conn.xtest_fake_input(BUTTON_PRESS_EVENT, 1, x11rb::CURRENT_TIME, root, 0, 0, 0)?
+            .check()?;
+        conn.xtest_fake_input(BUTTON_RELEASE_EVENT, 1, x11rb::CURRENT_TIME, root, 0, 0, 0)?
+            .check()?;
+        conn.flush()?;
+
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while Instant::now() < deadline {
+            if let Some(event) = conn.poll_for_event()? {
+                if let x11rb::protocol::Event::ButtonPress(button) = event {
+                    anyhow::ensure!(
+                        button.event == expected_window,
+                        "button press reached window {} instead of expected window {}",
+                        button.event,
+                        expected_window
+                    );
+                    return Ok(());
+                }
+            } else {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        anyhow::bail!("timed out waiting for an X11 button press")
+    }
+
+    #[test]
+    #[ignore = "requires a live X11 server (run under xvfb-run)"]
+    fn x11_overlay_input_shape_stays_empty_and_clicks_pass_through_after_resize(
+    ) -> anyhow::Result<()> {
+        use x11rb::connection::Connection;
+        use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK, SO};
+        use x11rb::protocol::xproto::{
+            ClipOrdering, ConnectionExt as XprotoConnectionExt, CreateWindowAux, EventMask,
+            Rectangle, WindowClass,
+        };
+
+        let (conn, screen_num) = x11rb::connect(None)?;
+        let screen = &conn.setup().roots[screen_num];
+        let root = screen.root;
+        let target = conn.generate_id()?;
+        let overlay = conn.generate_id()?;
+
+        conn.create_window(
+            screen.root_depth,
+            target,
+            root,
+            0,
+            0,
+            200,
+            200,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            screen.root_visual,
+            &CreateWindowAux::new().event_mask(EventMask::BUTTON_PRESS),
+        )?
+        .check()?;
+        conn.create_window(
+            screen.root_depth,
+            overlay,
+            root,
+            0,
+            0,
+            200,
+            200,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            screen.root_visual,
+            &CreateWindowAux::new()
+                .override_redirect(1)
+                .event_mask(EventMask::BUTTON_PRESS),
+        )?
+        .check()?;
+        conn.map_window(target)?.check()?;
+        conn.map_window(overlay)?.check()?;
+        conn.flush()?;
+
+        let initial_input = conn.shape_get_rectangles(overlay, SK::INPUT)?.reply()?;
+        assert!(
+            !initial_input.rectangles.is_empty(),
+            "fixture must begin with a full input region"
+        );
+        assert_x11_button_press_target(&conn, root, overlay)?;
+
+        conn.unmap_window(overlay)?.check()?;
+        map_x11_overlay_with_empty_input(&conn, overlay)?;
+        let click_through_input = conn.shape_get_rectangles(overlay, SK::INPUT)?.reply()?;
+        assert!(
+            click_through_input.rectangles.is_empty(),
+            "click-through overlay must expose an empty X11 input shape"
+        );
+        let initial_visible_bounds = [Rectangle {
+            x: 0,
+            y: 0,
+            width: 200,
+            height: 200,
+        }];
+        conn.shape_rectangles(
+            SO::SET,
+            SK::BOUNDING,
+            ClipOrdering::UNSORTED,
+            overlay,
+            0,
+            0,
+            &initial_visible_bounds,
+        )?
+        .check()?;
+        conn.flush()?;
+        assert_x11_button_press_target(&conn, root, target)?;
+
+        prepare_x11_overlay_geometry(
+            &conn,
+            overlay,
+            screen.width_in_pixels,
+            screen.height_in_pixels,
+        )?;
+        let full_root = [Rectangle {
+            x: 0,
+            y: 0,
+            width: screen.width_in_pixels,
+            height: screen.height_in_pixels,
+        }];
+        conn.shape_rectangles(
+            SO::SET,
+            SK::BOUNDING,
+            ClipOrdering::UNSORTED,
+            overlay,
+            0,
+            0,
+            &full_root,
+        )?
+        .check()?;
+        conn.flush()?;
+
+        let repaired_input = conn.shape_get_rectangles(overlay, SK::INPUT)?.reply()?;
+        assert!(
+            repaired_input.rectangles.is_empty(),
+            "resize repair must not restore a stale full-root input region"
+        );
+        assert_x11_button_press_target(&conn, root, target)?;
+
+        let missing_window = conn.generate_id()?;
+        assert!(
+            map_x11_overlay_with_empty_input(&conn, missing_window).is_err(),
+            "a rejected input-shape request must abort before mapping"
+        );
+        assert!(
+            conn.poll_for_event()?.is_none(),
+            "mapping must not be attempted after the checked input-shape request fails"
+        );
+        Ok(())
+    }
 
     #[test]
     fn keyed_render_state_carries_the_session_color_identity() {

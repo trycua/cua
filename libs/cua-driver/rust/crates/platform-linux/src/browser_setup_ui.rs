@@ -195,7 +195,8 @@ fn trusted_keyboard_setup_navigation(
     // then invoke its unique semantic navigation control in the exact PID.
     let deadline = Instant::now() + EXISTING_PROFILE_SETUP_READY_TIMEOUT;
     loop {
-        let tree = crate::atspi::walk_tree(pid, window_id, None);
+        let tree =
+            window_scoped_tree(pid, window_id).map_err(|error| anyhow::anyhow!(error.message))?;
         let navigation = exact_setup_navigation(&tree.nodes, descriptor)
             .map_err(|error| anyhow::anyhow!(error.message))?;
         match navigation {
@@ -215,6 +216,40 @@ fn trusted_keyboard_setup_navigation(
             ),
         }
     }
+}
+
+/// Walk the target window's accessibility tree, refusing unless the snapshot is
+/// provably confined to that one window.
+///
+/// AT-SPI publishes a single tree per process, so a browser showing several
+/// windows exposes all of their controls together — including one "Allow remote
+/// debugging for this browser instance" checkbox per open setup page. Matching a
+/// control by label across that tree can therefore find a control the caller did
+/// not name. Requiring proven window scope is what makes the exact-window
+/// contract real rather than assumed.
+fn window_scoped_tree(
+    pid: u32,
+    window_id: u64,
+) -> Result<crate::atspi::AtspiTreeResult, BrowserRefusal> {
+    let tree = crate::atspi::walk_tree(pid, window_id, None);
+    if !tree.trusted {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            "no trusted AT-SPI tree for the approved browser window; \
+             the accessibility bus must be reachable to prove which window a control belongs to",
+        ));
+    }
+    if !tree.window_scoped {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserBindingAmbiguous,
+            format!(
+                "could not prove which of pid {pid}'s accessibility top-levels renders window \
+                 {window_id}, so a matched control cannot be attributed to the approved window; \
+                 relaunch the browser with --remote-debugging-port to skip setup entirely"
+            ),
+        ));
+    }
+    Ok(tree)
 }
 
 pub struct SetupUiHandle {
@@ -361,7 +396,7 @@ pub fn enable(
     window_id: u64,
     descriptor: &'static BrowserSetupDescriptor,
 ) -> Result<SetupUiHandle, BrowserRefusal> {
-    let initial = crate::atspi::walk_tree(pid, window_id, None);
+    let initial = window_scoped_tree(pid, window_id)?;
     let initial_checkbox = exact_setup_checkbox(&initial.nodes, descriptor, false)?;
     let mut handle = if initial_checkbox.is_some() {
         SetupUiHandle {
@@ -405,7 +440,10 @@ pub fn enable(
 
     let deadline = Instant::now() + EXISTING_PROFILE_SETUP_READY_TIMEOUT;
     loop {
-        let tree = crate::atspi::walk_tree(pid, window_id, None);
+        let tree = match window_scoped_tree(pid, window_id) {
+            Ok(tree) => tree,
+            Err(error) => return Err(handle.abort(error)),
+        };
         match exact_setup_checkbox(&tree.nodes, descriptor, handle.trusted_setup_navigation) {
             Ok(Some(node)) => match node.checked {
                 Some(true) => {

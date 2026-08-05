@@ -762,16 +762,16 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 "the approved browser pid is outside the Linux process-id range",
             )
         })?;
-        if self
-            .is_only_exact_native_window(request.pid, request.window_id)
-            .await?
-            != Some(true)
-        {
-            return Err(refusal(
-                BrowserRefusalCode::BrowserBindingAmbiguous,
-                "existing-profile setup on Linux requires exactly one PID-owned native window; generic Wayland and multi-window processes are refused",
-            ));
-        }
+        // Window cardinality is deliberately NOT a precondition here. Setup acts
+        // inside one named window, and `browser_setup_ui` proves that window's
+        // identity directly by resolving the native window to exactly one
+        // accessibility top-level before it matches or actuates any control. A
+        // process owning several windows is the ordinary case for a browser and
+        // says nothing about whether the driver can act precisely; refusing on
+        // it made the whole existing-profile route unreachable for most real
+        // sessions. Where identity genuinely cannot be established — a generic
+        // Wayland session with no compositor window list — that same proof fails
+        // and setup refuses with a reason that names the cause.
         let window_id = request.window_id;
         let listeners_before =
             tokio::task::spawn_blocking(move || loopback_ports_for_pid(request.pid))

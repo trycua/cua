@@ -62,12 +62,7 @@ jobs:
           ref: ${{ needs.source.outputs.sha }}
       - name: Ensure FFmpeg for trajectory video
         shell: pwsh
-        run: |
-          if (-not (Get-Command ffmpeg.exe -ErrorAction SilentlyContinue)) {
-            choco install ffmpeg -y --no-progress
-          }
-          ffmpeg -version
-          ffprobe -version
+        run: .\scripts\ci\windows\setup-ffmpeg.ps1
       - name: Run shared Rust behavior matrix
         shell: pwsh
         env:
@@ -101,12 +96,7 @@ jobs:
           ref: ${{ needs.source.outputs.sha }}
       - name: Ensure FFmpeg for trajectory video
         shell: pwsh
-        run: |
-          if (-not (Get-Command ffmpeg.exe -ErrorAction SilentlyContinue)) {
-            choco install ffmpeg -y --no-progress
-          }
-          ffmpeg -version
-          ffprobe -version
+        run: .\scripts\ci\windows\setup-ffmpeg.ps1
       - name: Run native Rust harnesses
         shell: pwsh
         env:
@@ -140,12 +130,7 @@ jobs:
           ref: ${{ needs.source.outputs.sha }}
       - name: Ensure FFmpeg for trajectory video
         shell: pwsh
-        run: |
-          if (-not (Get-Command ffmpeg.exe -ErrorAction SilentlyContinue)) {
-            choco install ffmpeg -y --no-progress
-          }
-          ffmpeg -version
-          ffprobe -version
+        run: .\scripts\ci\windows\setup-ffmpeg.ps1
       - name: Run capture and desktop-scope contracts
         shell: pwsh
         env:

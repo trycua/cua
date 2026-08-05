@@ -211,6 +211,11 @@ fn daemon_is_listening(_binary: &Path, socket: &str) -> ProbeOutcome {
 /// thread is preferable to hanging the whole readiness window.
 #[cfg(target_os = "windows")]
 fn daemon_is_listening(_binary: &Path, socket: &str) -> ProbeOutcome {
+    probe_pipe_with_timeout(socket, PROBE_ATTEMPT_TIMEOUT)
+}
+
+#[cfg(target_os = "windows")]
+fn probe_pipe_with_timeout(socket: &str, timeout: Duration) -> ProbeOutcome {
     use std::sync::mpsc;
 
     let socket = socket.to_string();
@@ -224,8 +229,7 @@ fn daemon_is_listening(_binary: &Path, socket: &str) -> ProbeOutcome {
     {
         return ProbeOutcome::PipeUnavailable;
     }
-    rx.recv_timeout(PROBE_ATTEMPT_TIMEOUT)
-        .unwrap_or(ProbeOutcome::NoResponse)
+    rx.recv_timeout(timeout).unwrap_or(ProbeOutcome::NoResponse)
 }
 
 #[cfg(target_os = "windows")]
@@ -370,5 +374,126 @@ mod readiness_probe_tests {
             PROBE_ATTEMPT_TIMEOUT * 4 <= READINESS_WINDOW,
             "one stalled attempt must not consume the readiness window"
         );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn stalled_pipe_attempt_is_bounded_and_does_not_block_the_next_probe() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::os::windows::io::{AsRawHandle, FromRawHandle};
+        use std::sync::mpsc;
+        use windows::core::HSTRING;
+        use windows::Win32::Foundation::{ERROR_PIPE_CONNECTED, HANDLE};
+        use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+        use windows::Win32::System::Pipes::{
+            ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT,
+        };
+
+        fn socket_name(label: &str) -> String {
+            let sequence = DAEMON_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            format!(
+                r"\\.\pipe\cua-driver-test-{label}-{}-{sequence}",
+                std::process::id()
+            )
+        }
+
+        fn spawn_server(
+            socket: String,
+            response: Option<&'static [u8]>,
+            release: Option<mpsc::Receiver<()>>,
+        ) -> (
+            mpsc::Receiver<()>,
+            mpsc::Receiver<()>,
+            std::thread::JoinHandle<()>,
+        ) {
+            let (ready_tx, ready_rx) = mpsc::channel();
+            let (request_tx, request_rx) = mpsc::channel();
+            let handle = std::thread::spawn(move || {
+                let name = HSTRING::from(socket);
+                let raw = unsafe {
+                    CreateNamedPipeW(
+                        &name,
+                        PIPE_ACCESS_DUPLEX,
+                        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                        1,
+                        4096,
+                        4096,
+                        0,
+                        None,
+                    )
+                };
+                assert!(!raw.is_invalid(), "CreateNamedPipeW failed");
+                let mut pipe = unsafe { std::fs::File::from_raw_handle(raw.0) };
+                ready_tx.send(()).unwrap();
+
+                let raw = HANDLE(pipe.as_raw_handle());
+                if let Err(error) = unsafe { ConnectNamedPipe(raw, None) } {
+                    assert_eq!(
+                        error.code(),
+                        ERROR_PIPE_CONNECTED.to_hresult(),
+                        "ConnectNamedPipe failed: {error}"
+                    );
+                }
+
+                let mut request = String::new();
+                BufReader::new(pipe.try_clone().unwrap())
+                    .read_line(&mut request)
+                    .unwrap();
+                assert_eq!(request, "{\"method\":\"list\"}\n");
+                request_tx.send(()).unwrap();
+
+                if let Some(response) = response {
+                    pipe.write_all(response).unwrap();
+                    pipe.flush().unwrap();
+                } else {
+                    release
+                        .unwrap()
+                        .recv_timeout(Duration::from_secs(5))
+                        .expect("stalled server was not released");
+                }
+            });
+            (ready_rx, request_rx, handle)
+        }
+
+        let stalled_socket = socket_name("stalled");
+        let (release_tx, release_rx) = mpsc::channel();
+        let (stalled_ready, stalled_request, stalled_server) =
+            spawn_server(stalled_socket.clone(), None, Some(release_rx));
+        stalled_ready.recv_timeout(Duration::from_secs(2)).unwrap();
+
+        let attempt_timeout = Duration::from_millis(250);
+        let started = Instant::now();
+        assert_eq!(
+            probe_pipe_with_timeout(&stalled_socket, attempt_timeout),
+            ProbeOutcome::NoResponse
+        );
+        assert!(
+            started.elapsed() < attempt_timeout * 4,
+            "stalled probe exceeded its attempt bound by too much: {:?}",
+            started.elapsed()
+        );
+        stalled_request
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
+
+        // Leave the first probe worker blocked while proving a later probe can
+        // still complete normally in the same harness process.
+        let responsive_socket = socket_name("responsive");
+        let (responsive_ready, responsive_request, responsive_server) =
+            spawn_server(responsive_socket.clone(), Some(b"{\"ok\":true}\n"), None);
+        responsive_ready
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        assert_eq!(
+            probe_pipe_with_timeout(&responsive_socket, Duration::from_secs(2)),
+            ProbeOutcome::Ready
+        );
+        responsive_request
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
+
+        release_tx.send(()).unwrap();
+        stalled_server.join().unwrap();
+        responsive_server.join().unwrap();
     }
 }

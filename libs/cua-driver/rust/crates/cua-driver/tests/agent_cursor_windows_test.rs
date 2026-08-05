@@ -132,6 +132,19 @@ fn agent_cursor_overlay_obeys_untargeted_and_targeted_z_order() {
             "agent cursor not visible at ({x:.0},{y:.0}): only {visible_pixels} qualifying pixels"
         );
 
+        // Capture the target while it is still foreground. Electron may prune
+        // parts of its UIA tree once another full-size window covers it, but
+        // the snapshot remains a stable handle for the later background click.
+        let target_state = window_state(&mut driver, target);
+        let button_index = ax::element_index_by_id(target_state.tree_text(), "btn-increment")
+            .unwrap_or_else(|| {
+                panic!(
+                    "target increment button missing from foreground UIA snapshot: {}",
+                    target_state.tree_text()
+                )
+            });
+        assert!(target_state.tree_text().contains("counter=0"));
+
         // A targeted cursor remains exactly above its target while an
         // independent ordinary foreground window stays above both. This
         // guards the pre-existing PinAbove semantics while exercising the new
@@ -145,24 +158,6 @@ fn agent_cursor_overlay_obeys_untargeted_and_targeted_z_order() {
             ),
             "independent foreground window did not cover target"
         );
-        let target_state = driver.call(
-            "get_window_state",
-            serde_json::json!({
-                "pid": target.pid,
-                "window_id": target.native_id,
-                "capture_mode": "ax"
-            }),
-        );
-        assert!(
-            !target_state.is_error(),
-            "target snapshot failed: {}",
-            target_state.text()
-        );
-        let button_index = ax::element_index_by_id(target_state.tree_text(), "btn-increment")
-            .expect("target increment button missing from UIA snapshot");
-        assert!(target_state.tree_text().contains("counter=0"));
-        let foreground_state_before = window_state(&mut driver, foreground);
-        assert!(foreground_state_before.tree_text().contains("counter=0"));
         let targeted = driver.call(
             "click",
             serde_json::json!({

@@ -15,6 +15,13 @@ on:
       - "libs/cua-driver/rust/crates/platform-linux/**"
       - "libs/cua-driver/wayland-helper/**"
       - "libs/cua-driver/tests/fixtures/**"
+      # Manifest examples on these pages are loaded by
+      # cua-driver-core's docs_manifest_examples test; a docs-only
+      # edit must run it so schema drift fails here, not at a
+      # user's daemon startup.
+      - "docs/content/docs/how-to-guides/driver/drive-a-web-page.mdx"
+      - "docs/content/docs/how-to-guides/driver/write-a-bounded-manifest.mdx"
+      - "docs/content/docs/reference/cua-driver/permission-modes.mdx"
       - "nix/**"
       - "flake.nix"
       - "flake.lock"
@@ -34,6 +41,13 @@ on:
       - "libs/cua-driver/rust/crates/platform-linux/**"
       - "libs/cua-driver/wayland-helper/**"
       - "libs/cua-driver/tests/fixtures/**"
+      # Manifest examples on these pages are loaded by
+      # cua-driver-core's docs_manifest_examples test; a docs-only
+      # edit must run it so schema drift fails here, not at a
+      # user's daemon startup.
+      - "docs/content/docs/how-to-guides/driver/drive-a-web-page.mdx"
+      - "docs/content/docs/how-to-guides/driver/write-a-bounded-manifest.mdx"
+      - "docs/content/docs/reference/cua-driver/permission-modes.mdx"
       - "nix/**"
       - "flake.nix"
       - "flake.lock"
@@ -68,6 +82,12 @@ jobs:
       - name: Run Linux Rust tests
         working-directory: libs/cua-driver/rust
         run: cargo test -p cua-driver -p cua-driver-contract -p cua-driver-core -p cua-driver-testkit -p cursor-overlay -p cursor-theme-cli -p platform-linux --all-targets --locked
+      - name: Validate published manifest examples against the real parser
+        # Ignored in --all-targets because it reads docs/ from the repo root,
+        # which the Nix sandbox source does not carry; this step runs it from
+        # the full checkout so docs schema drift fails here (#2847 class).
+        working-directory: libs/cua-driver/rust
+        run: cargo test -p cua-driver-core --test docs_manifest_examples --locked -- --ignored
       - name: Run X11 overlay click-through regression
         working-directory: libs/cua-driver/rust
         run: |

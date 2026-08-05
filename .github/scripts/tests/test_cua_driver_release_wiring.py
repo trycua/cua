@@ -447,7 +447,7 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             "github.event_name == 'workflow_dispatch' && inputs.publish && "
             "format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref"
         )
-        self.assertEqual(workflow.count(immutable_ref), 4)
+        self.assertEqual(workflow.count(immutable_ref), 5)
         self.assertIn(
             "name: Ensure Rust target is installed\n"
             "        working-directory: libs/cua-driver/rust",
@@ -462,6 +462,42 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn("inputs.publish == true", workflow)
         self.assertIn('--tag "${{ steps.version.outputs.tag }}"', workflow)
         self.assertIn('--sha "${{ steps.version.outputs.sha }}"', workflow)
+
+    def test_driver_attribution_preflight_gates_candidate_builds(self) -> None:
+        workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
+
+        preflight = workflow.index("  release-attribution-preflight:")
+        linux = workflow.index("  build-linux:", preflight)
+        windows = workflow.index("  build-windows:", linux)
+        macos = workflow.index("  build-macos-universal:", windows)
+        release = workflow.index("  release:", macos)
+        preflight_block = workflow[preflight:linux]
+
+        self.assertIn("name: release attribution preflight", preflight_block)
+        self.assertIn("ref: ${{ github.workflow_sha }}", preflight_block)
+        self.assertIn("path: release-control", preflight_block)
+        self.assertIn(
+            "python3 release-control/.github/scripts/release_attribution.py collect",
+            preflight_block,
+        )
+        self.assertIn('--repo-root "$GITHUB_WORKSPACE"', preflight_block)
+        self.assertIn('--sha "$SHA"', preflight_block)
+        self.assertIn(
+            "No immutable release candidate requested; skipping attribution preflight.",
+            preflight_block,
+        )
+        for block in (
+            workflow[linux:windows],
+            workflow[windows:macos],
+            workflow[macos:release],
+        ):
+            self.assertIn("needs: release-attribution-preflight", block)
+
+        # Keep the publication-time guard as defense in depth.
+        self.assertEqual(
+            workflow.count("python3 .github/scripts/release_attribution.py collect"),
+            1,
+        )
 
     def test_driver_tag_build_cannot_publish_before_manual_e2e_gate(self) -> None:
         workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")

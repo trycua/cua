@@ -41,6 +41,57 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Certify PR-first attribution from the exact immutable candidate before
+  # starting any platform build. Publish recovery dispatches use current
+  # release-control tooling while keeping all release inputs pinned to the tag.
+  # Manual non-publishing builds intentionally remain available for iteration.
+  release-attribution-preflight:
+    name: release attribution preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+
+      - name: Check out release control tooling
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-control
+          persist-credentials: false
+
+      - name: Validate candidate release attribution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
+          elif [[ "${{ inputs.publish }}" == "true" ]]; then
+            VERSION="${{ inputs.version }}"
+          else
+            echo "No immutable release candidate requested; skipping attribution preflight."
+            exit 0
+          fi
+          TAG="cua-driver-rs-v${VERSION}"
+          SHA=$(git rev-list -n 1 "$TAG")
+          python3 release-control/.github/scripts/release_attribution.py collect \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --repository "${{ github.repository }}" \
+            --product cua-driver-rs \
+            --display-name "Cua Driver" \
+            --version "$VERSION" \
+            --tag "$TAG" \
+            --tag-prefix cua-driver-rs-v \
+            --sha "$SHA" \
+            --path libs/cua-driver \
+            --exclude-path libs/cua-driver/docs \
+            --exclude-path libs/cua-driver/python \
+            --exclude-path libs/cua-driver/tests \
+            --changelog libs/cua-driver/rust/CHANGELOG.md \
+            --output "$RUNNER_TEMP/cua-driver-release-manifest.json"
+
   # ── Linux (x86_64 + arm64) ───────────────────────────────────────────────────
   # One matrixed job per Linux target. x86_64 builds on the standard
   # ubuntu-latest host; arm64 builds NATIVELY on GitHub's hosted ARM runner
@@ -51,6 +102,7 @@ jobs:
   # matching tarball at install time based on the host's `uname -m`.
   build-linux:
     name: linux-${{ matrix.arch }}
+    needs: release-attribution-preflight
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -167,6 +219,7 @@ jobs:
   # the matching zip at install time based on the host's OS architecture.
   build-windows:
     name: windows-${{ matrix.arch }}
+    needs: release-attribution-preflight
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -284,6 +337,7 @@ jobs:
   # expose those symbols, so the transitive Swift bridge fails to compile.
   build-macos-universal:
     name: darwin-universal
+    needs: release-attribution-preflight
     runs-on: macos-26
     # Notarize on tag push (real release); on workflow_dispatch honor the
     # `notarize` input so we can iterate on the build pipeline without

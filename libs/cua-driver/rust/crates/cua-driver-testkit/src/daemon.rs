@@ -86,15 +86,32 @@ impl TestDaemon {
         for (key, value) in env {
             command.env(key, value);
         }
-        let child = spawn_in_job(&mut command)
+        // Spawn directly so the `Child` stays reachable for `try_wait` below;
+        // the reaper adopts it on every exit path. Without the handle, a daemon
+        // that dies during startup is indistinguishable from one that is merely
+        // slow, which is what made #2480 undiagnosable from CI logs alone.
+        let mut child = spawn_in_job(&mut command)
             .inspect_err(|error| eprintln!("[testkit] daemon spawn failed: {error}"))
             .ok()?;
         let pid = child.id();
-        reaper.push(child);
 
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + READINESS_WINDOW;
+        // Keep the furthest point any probe reached. A late attempt can regress
+        // (the pipe is torn down as the daemon exits), and the furthest outcome
+        // is the one that explains where startup actually stopped.
+        let mut furthest = ProbeOutcome::PipeUnavailable;
+        let mut exit_status = None;
         while Instant::now() < deadline {
-            if daemon_is_listening(binary, &socket) {
+            // A daemon that has already exited will never become ready; report
+            // its status now instead of burning the rest of the window.
+            if let Ok(Some(status)) = child.try_wait() {
+                exit_status = Some(status);
+                break;
+            }
+            let outcome = daemon_is_listening(binary, &socket);
+            furthest = furthest.max(outcome);
+            if outcome == ProbeOutcome::Ready {
+                reaper.push(child);
                 return Some(Self {
                     socket,
                     pid,
@@ -105,18 +122,114 @@ impl TestDaemon {
             std::thread::sleep(Duration::from_millis(50));
         }
 
-        eprintln!("[testkit] daemon did not become ready on {socket}");
+        match exit_status {
+            Some(status) => eprintln!(
+                "[testkit] daemon exited before becoming ready on {socket}: {status}. \
+                 Furthest readiness probe: {}. Set CUA_TEST_DRIVER_STDERR=1 to inherit \
+                 daemon stderr.",
+                furthest.describe()
+            ),
+            None => eprintln!(
+                "[testkit] daemon did not become ready on {socket} within {}s (process still \
+                 running). Furthest readiness probe: {}. Set CUA_TEST_DRIVER_STDERR=1 to \
+                 inherit daemon stderr.",
+                READINESS_WINDOW.as_secs(),
+                furthest.describe()
+            ),
+        }
+        reaper.push(child);
         None
     }
 }
 
+/// Total time the daemon has to answer a readiness probe.
+const READINESS_WINDOW: Duration = Duration::from_secs(10);
+
+/// Per-attempt bound on a single readiness probe.
+///
+/// A Windows named-pipe read has no timeout, so a server that accepts the
+/// connection but never answers blocks forever. The outer deadline is only
+/// consulted *between* attempts, so without an independent per-attempt bound
+/// one stalled connection consumes the entire readiness window and the failure
+/// surfaces as a bare "did not become ready" (#2480).
+#[cfg(target_os = "windows")]
+const PROBE_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// How far a single readiness probe progressed.
+///
+/// Ordered by progress so `max` across the window keeps the most informative
+/// outcome: knowing the pipe was reachable but never answered points at daemon
+/// startup, whereas never opening the pipe points at spawn or naming.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum ProbeOutcome {
+    /// The pipe/socket could not be opened at all.
+    PipeUnavailable,
+    /// Opened, but the request could not be written.
+    WriteFailed,
+    /// Request written, but no response line arrived before the attempt bound.
+    NoResponse,
+    /// A response arrived but was not valid JSON.
+    MalformedResponse,
+    /// Valid JSON, but not the `ok: true` the protocol promises.
+    NotOk,
+    /// Fully serviced — the daemon is ready.
+    Ready,
+}
+
+impl ProbeOutcome {
+    pub(crate) fn describe(self) -> &'static str {
+        match self {
+            Self::PipeUnavailable => {
+                "pipe never became connectable (daemon had not created it, or the name differs)"
+            }
+            Self::WriteFailed => "pipe opened but the request could not be written",
+            Self::NoResponse => {
+                "request written but the daemon sent no response line before the per-attempt \
+                 timeout (accepted-but-stalled connection)"
+            }
+            Self::MalformedResponse => "daemon replied but the response was not valid JSON",
+            Self::NotOk => "daemon replied with valid JSON but without ok:true",
+            Self::Ready => "ready",
+        }
+    }
+}
+
 #[cfg(unix)]
-fn daemon_is_listening(_binary: &Path, socket: &str) -> bool {
-    std::os::unix::net::UnixStream::connect(socket).is_ok()
+fn daemon_is_listening(_binary: &Path, socket: &str) -> ProbeOutcome {
+    match std::os::unix::net::UnixStream::connect(socket) {
+        Ok(_) => ProbeOutcome::Ready,
+        Err(_) => ProbeOutcome::PipeUnavailable,
+    }
+}
+
+/// Run one named-pipe probe under an independent timeout.
+///
+/// The probe runs on a worker thread because the blocking read it performs has
+/// no native timeout. If the attempt bound expires the thread is abandoned: it
+/// is unblocked when the daemon is reaped at teardown (the kill-on-close job
+/// object closes the pipe), and the harness is short-lived, so leaking a parked
+/// thread is preferable to hanging the whole readiness window.
+#[cfg(target_os = "windows")]
+fn daemon_is_listening(_binary: &Path, socket: &str) -> ProbeOutcome {
+    use std::sync::mpsc;
+
+    let socket = socket.to_string();
+    let (tx, rx) = mpsc::channel();
+    if std::thread::Builder::new()
+        .name("cua-testkit-pipe-probe".into())
+        .spawn(move || {
+            let _ = tx.send(probe_pipe_once(&socket));
+        })
+        .is_err()
+    {
+        return ProbeOutcome::PipeUnavailable;
+    }
+    rx.recv_timeout(PROBE_ATTEMPT_TIMEOUT)
+        .unwrap_or(ProbeOutcome::NoResponse)
 }
 
 #[cfg(target_os = "windows")]
-fn daemon_is_listening(_binary: &Path, socket: &str) -> bool {
+fn probe_pipe_once(socket: &str) -> ProbeOutcome {
     use std::io::{BufRead, BufReader, Write};
 
     // Exercise the real named-pipe protocol instead of spawning `status`.
@@ -129,35 +242,133 @@ fn daemon_is_listening(_binary: &Path, socket: &str) -> bool {
         .write(true)
         .open(socket)
     else {
-        return false;
+        return ProbeOutcome::PipeUnavailable;
     };
     let Ok(mut writer) = pipe.try_clone() else {
-        return false;
+        return ProbeOutcome::WriteFailed;
     };
     if writer
         .write_all(b"{\"method\":\"list\"}\n")
         .and_then(|()| writer.flush())
         .is_err()
     {
-        return false;
+        return ProbeOutcome::WriteFailed;
     }
 
     let mut response = String::new();
     if BufReader::new(pipe).read_line(&mut response).is_err() {
-        return false;
+        return ProbeOutcome::NoResponse;
     }
-    serde_json::from_str::<serde_json::Value>(&response)
-        .ok()
-        .and_then(|value| value.get("ok").and_then(serde_json::Value::as_bool))
-        == Some(true)
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&response) else {
+        return ProbeOutcome::MalformedResponse;
+    };
+    if value.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
+        ProbeOutcome::Ready
+    } else {
+        ProbeOutcome::NotOk
+    }
 }
 
 #[cfg(not(any(unix, target_os = "windows")))]
-fn daemon_is_listening(binary: &Path, socket: &str) -> bool {
-    Command::new(binary)
+fn daemon_is_listening(binary: &Path, socket: &str) -> ProbeOutcome {
+    let ready = Command::new(binary)
         .args(["status", "--socket", socket])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .is_ok_and(|status| status.success())
+        .is_ok_and(|status| status.success());
+    if ready {
+        ProbeOutcome::Ready
+    } else {
+        ProbeOutcome::PipeUnavailable
+    }
+}
+
+#[cfg(test)]
+mod readiness_probe_tests {
+    use super::*;
+
+    /// The furthest-progress ordering is what makes the expiry message useful,
+    /// so pin it rather than leaving it to derive order by accident.
+    #[test]
+    fn outcomes_are_ordered_by_progress() {
+        let ordered = [
+            ProbeOutcome::PipeUnavailable,
+            ProbeOutcome::WriteFailed,
+            ProbeOutcome::NoResponse,
+            ProbeOutcome::MalformedResponse,
+            ProbeOutcome::NotOk,
+            ProbeOutcome::Ready,
+        ];
+        for pair in ordered.windows(2) {
+            assert!(
+                pair[0] < pair[1],
+                "{:?} must rank below {:?}",
+                pair[0],
+                pair[1]
+            );
+        }
+    }
+
+    /// The reported outcome must survive a late regression: as a daemon exits,
+    /// its pipe stops opening, and reporting `PipeUnavailable` would point at
+    /// spawn/naming when the real evidence was an accepted-but-stalled pipe.
+    #[test]
+    fn furthest_outcome_survives_a_late_regression() {
+        let observed = [
+            ProbeOutcome::PipeUnavailable,
+            ProbeOutcome::NoResponse,
+            ProbeOutcome::PipeUnavailable,
+        ];
+        let furthest = observed
+            .iter()
+            .copied()
+            .fold(ProbeOutcome::PipeUnavailable, ProbeOutcome::max);
+        assert_eq!(furthest, ProbeOutcome::NoResponse);
+    }
+
+    #[test]
+    fn ready_outranks_every_failure() {
+        for outcome in [
+            ProbeOutcome::PipeUnavailable,
+            ProbeOutcome::WriteFailed,
+            ProbeOutcome::NoResponse,
+            ProbeOutcome::MalformedResponse,
+            ProbeOutcome::NotOk,
+        ] {
+            assert!(ProbeOutcome::Ready > outcome);
+        }
+    }
+
+    /// Every outcome must explain itself; the whole point of #2480 is that the
+    /// operator can tell a stall from a genuine startup failure.
+    #[test]
+    fn every_outcome_has_a_distinct_description() {
+        let all = [
+            ProbeOutcome::PipeUnavailable,
+            ProbeOutcome::WriteFailed,
+            ProbeOutcome::NoResponse,
+            ProbeOutcome::MalformedResponse,
+            ProbeOutcome::NotOk,
+            ProbeOutcome::Ready,
+        ];
+        let mut seen = Vec::new();
+        for outcome in all {
+            let text = outcome.describe();
+            assert!(!text.is_empty(), "{outcome:?} needs a description");
+            assert!(!seen.contains(&text), "duplicate description: {text}");
+            seen.push(text);
+        }
+    }
+
+    /// The per-attempt bound must leave room for several attempts inside the
+    /// window; if one attempt could span it, the flake in #2480 returns.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn attempt_bound_permits_multiple_attempts_per_window() {
+        assert!(
+            PROBE_ATTEMPT_TIMEOUT * 4 <= READINESS_WINDOW,
+            "one stalled attempt must not consume the readiness window"
+        );
+    }
 }

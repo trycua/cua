@@ -13,6 +13,10 @@
 #   --autostart  register an auto-start daemon (macOS: LaunchAgent;
 #                Linux: systemd user unit). Default off; the post-install
 #                message prints the registration command for the platform.
+#   --bin-dir <path>
+#                install the visible symlink to <path> instead of
+#                ~/.local/bin. Takes precedence over
+#                CUA_DRIVER_LOCAL_INSTALL_DIR; must be absolute.
 #
 # Not for end-users — scripts/install.sh fetches a built release from
 # GitHub. This script is for the developer loop (rapid edit/build/test
@@ -77,6 +81,8 @@ fi
 
 BUILD_CONFIG="debug"
 INSTALL_AUTOSTART=false
+# Empty means "not passed" — the env var / default applies instead (see BIN_DIR below).
+BIN_DIR_OVERRIDE=""
 case "${CUA_DRIVER_REQUIRE_STABLE_SIGNING:-0}" in
     0|false|no|"") CUA_DRIVER_REQUIRE_STABLE_SIGNING=0 ;;
     1|true|yes) CUA_DRIVER_REQUIRE_STABLE_SIGNING=1 ;;
@@ -99,6 +105,17 @@ while [ "$#" -gt 0 ]; do
             CUA_DRIVER_REQUIRE_STABLE_SIGNING=1
             export CUA_DRIVER_REQUIRE_STABLE_SIGNING
             ;;
+        --bin-dir)
+            if [ "$#" -lt 2 ]; then
+                echo "${RED}Error: --bin-dir requires a value.${NORMAL}" >&2
+                exit 2
+            fi
+            BIN_DIR_OVERRIDE="$2"
+            shift
+            ;;
+        --bin-dir=*)
+            BIN_DIR_OVERRIDE="${1#*=}"
+            ;;
         --help|-h)
             echo "${BOLD}${BLUE}cua-driver-rs local installer${NORMAL}"
             echo "Usage: $0 [OPTIONS]"
@@ -112,6 +129,10 @@ while [ "$#" -gt 0 ]; do
             echo "                is attributed to com.trycua.driver.local (not your terminal),"
             echo "                so you grant Accessibility + Screen Recording once and"
             echo "                every cua-driver-local call/mcp routes through it correctly."
+            echo "  --bin-dir <path>"
+            echo "                Install the visible cua-driver-local symlink to <path>"
+            echo "                instead of ~/.local/bin. Must be an absolute path; takes"
+            echo "                precedence over CUA_DRIVER_LOCAL_INSTALL_DIR."
             echo "  --require-stable-signing"
             echo "                On macOS, stop before replacing the installed app unless"
             echo "                a certificate-backed identity is available. Recommended"
@@ -142,7 +163,18 @@ case "$OS" in
 esac
 
 HOME_DIR="${CUA_DRIVER_LOCAL_HOME:-$HOME/.cua-driver-local}"
-BIN_DIR="${CUA_DRIVER_LOCAL_INSTALL_DIR:-$HOME/.local/bin}"
+BIN_DIR="${BIN_DIR_OVERRIDE:-${CUA_DRIVER_LOCAL_INSTALL_DIR:-$HOME/.local/bin}}"
+# The symlink is created after this script cds into the Cargo workspace, so a
+# relative path would silently land inside rust/ — and uninstall-local.sh
+# rejects relative values outright, leaving it unremovable. Fail loudly instead.
+case "$BIN_DIR" in
+    /*) ;;
+    *)
+        echo "${RED}Error: bin dir must be an absolute path (got: $BIN_DIR).${NORMAL}" >&2
+        echo "Set it via --bin-dir /abs/path or CUA_DRIVER_LOCAL_INSTALL_DIR=/abs/path." >&2
+        exit 2
+        ;;
+esac
 RELEASES_DIR="$HOME_DIR/packages/releases"
 CURRENT_LINK="$HOME_DIR/packages/current"
 
@@ -221,10 +253,34 @@ echo ""
 
 echo "${BOLD}Staging into $VERSIONED_DIR${NORMAL}"
 mkdir -p "$VERSIONED_DIR"
-cp "$BUILT_BINARY" "$VERSIONED_DIR/cua-driver-local"
-cp "$BUILT_THEME_BINARY" "$VERSIONED_DIR/cua-cursor-theme"
-chmod +x "$VERSIONED_DIR/cua-driver-local"
-chmod +x "$VERSIONED_DIR/cua-cursor-theme"
+
+# Copy through a temp file in the same directory, then rename over the
+# destination.
+#
+# A plain `cp` opens the destination with O_TRUNC and writes in place. When a
+# previous cua-driver-local is still running out of that exact path — the
+# common case, since the version tag is stable per config, so every rebuild
+# targets the same file — Linux refuses the open with ETXTBSY and the install
+# dies mid-stage:
+#
+#   cp: cannot create regular file '.../cua-driver-local': Text file busy
+#
+# The daemon stop further below cannot prevent this: it runs after the swap,
+# and a manually launched `serve` is not always reachable by it anyway.
+# rename(2) has no such restriction — the running process keeps executing the
+# old inode until it exits, and the new bytes are published atomically, so a
+# concurrent exec sees either the whole old binary or the whole new one.
+stage_binary() {
+    stage_src="$1"
+    stage_dest="$2"
+    stage_tmp="$stage_dest.stage.$$"
+    rm -f "$stage_tmp"
+    cp "$stage_src" "$stage_tmp"
+    chmod +x "$stage_tmp"
+    mv -f "$stage_tmp" "$stage_dest"
+}
+stage_binary "$BUILT_BINARY" "$VERSIONED_DIR/cua-driver-local"
+stage_binary "$BUILT_THEME_BINARY" "$VERSIONED_DIR/cua-cursor-theme"
 
 # Re-sign with a fresh ad-hoc signature.
 #

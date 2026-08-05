@@ -1503,7 +1503,9 @@ impl Tool for GetWindowStateTool {
 
                 cua_driver_core::window_inspection::mark_browser_chrome_capture_coverage(
                     &mut structured,
-                    is_standalone_chromium_browser_process(pid),
+                    is_standalone_chromium_browser_process(pid).then_some(
+                        cua_driver_core::window_inspection::BrowserChromeCaptureCoverage::NotObservable,
+                    ),
                 );
 
                 ToolResult {

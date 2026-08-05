@@ -3641,6 +3641,13 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
                 "Linux window capture already includes the browser-owned prompt surface: {}",
                 before.raw
             );
+        } else if cfg!(target_os = "macos") {
+            assert_eq!(
+                before.structured()["capture_coverage"]["browser_chrome"]["status"],
+                "may_be_incomplete_in_window_scope",
+                "{}",
+                before.raw
+            );
         } else {
             assert_eq!(
                 before.structured()["capture_coverage"]["browser_chrome"]["status"],
@@ -3648,6 +3655,8 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
                 "{}",
                 before.raw
             );
+        }
+        if !cfg!(target_os = "linux") {
             assert_eq!(
                 before.structured()["capture_coverage"]["recovery"]["when"],
                 "verified_window_action_ineffective",
@@ -3741,6 +3750,13 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
             assert!(
                 window.structured()["capture_coverage"]["browser_chrome"].is_null(),
                 "Linux window capture already includes the browser-owned prompt surface: {}",
+                window.raw
+            );
+        } else if cfg!(target_os = "macos") {
+            assert_eq!(
+                window.structured()["capture_coverage"]["browser_chrome"]["status"],
+                "may_be_incomplete_in_window_scope",
+                "{}",
                 window.raw
             );
         } else {
@@ -3923,6 +3939,11 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
             assert!(
                 !desktop_has_materially_more_prompt_pixels,
                 "Linux desktop capture unexpectedly contained materially more permission UI than window capture: {metrics}"
+            );
+        } else if cfg!(target_os = "macos") {
+            assert!(
+                window_changed_pixels >= minimum_prompt_pixels,
+                "macOS window capture omitted the tested notification permission surface: {metrics}"
             );
         } else {
             assert!(

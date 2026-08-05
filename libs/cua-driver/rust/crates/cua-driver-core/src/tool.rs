@@ -222,7 +222,7 @@ impl ToolDef {
 ///   `accessibility.element_tokens` (Surface 6 — tool accepts the
 ///   opaque `element_token` arg alongside the integer `element_index`)
 /// - `app.launch`, `app.list`, `app.kill`, `window.list`,
-///   `window.activate`, `window.debug_info`
+///   `window.activate`, `window.frame.set`, `window.debug_info`
 /// - `system.permissions.tcc`,
 ///   `system.permissions.tcc.accessibility`,
 ///   `system.permissions.tcc.screen_recording`
@@ -329,6 +329,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "kill_app" => &["app.kill"],
         "list_windows" => &["window.list"],
         "bring_to_front" => &["window.activate"],
+        "set_window_frame" => &["window.frame.set"],
         "debug_window_info" => &["window.debug_info"],
 
         // ── permissions / config ─────────────────────────────────────
@@ -1428,10 +1429,11 @@ impl ToolRegistry {
         // stream stays the actual user-action sequence (not the meta
         // start/stop frames).
         if let Some(pending_turn) = pending_turn {
-            self.recording.finish_turn_with_action(
+            self.recording.finish_turn_with_outcome(
                 pending_turn,
                 recording_result_text.as_deref().unwrap_or(""),
                 result.action_record.as_ref(),
+                result.is_error == Some(true),
             );
         }
 
@@ -2286,6 +2288,7 @@ fn is_physical_desktop_action(tool: &str) -> bool {
             | "hotkey"
             | "set_value"
             | "bring_to_front"
+            | "set_window_frame"
     )
 }
 
@@ -3645,8 +3648,15 @@ resources:
         );
         let structured = DISPATCH_RUNTIME_SCOPE
             .scope("runtime-b".to_owned(), async {
-                crate::element_token::resolve_element_args(pid, None, Some(&token), None, "click")
-                    .unwrap_err()
+                crate::element_token::resolve_element_args(
+                    pid,
+                    None,
+                    Some(&token),
+                    None,
+                    None,
+                    "click",
+                )
+                .unwrap_err()
             })
             .await
             .structured_content
@@ -4128,6 +4138,7 @@ mod capability_tests {
         "kill_app",
         "list_windows",
         "bring_to_front",
+        "set_window_frame",
         "debug_window_info",
         // permissions / config
         "check_permissions",
@@ -4205,6 +4216,7 @@ mod capability_tests {
         "app.kill",
         "window.list",
         "window.activate",
+        "window.frame.set",
         "window.debug_info",
         // permissions
         "system.permissions.tcc",

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import httpx
-from cyclops_sdk import HttpClient, HttpError, HttpHeader, HttpRequest, HttpResponse
+from fleet_sdk import HttpClient, HttpError, HttpHeader, HttpRequest, HttpResponse
 
 
 class CyclopsHttpClient(HttpClient):

@@ -22,8 +22,9 @@ private func tokenExpected() -> Expected {
         headers: [
             HttpHeader(name: "accept", value: "application/json"),
             HttpHeader(name: "content-type", value: "application/x-www-form-urlencoded"),
+            HttpHeader(name: "authorization", value: "Basic Y2xpZW50LWlkOmNsaWVudC1zZWNyZXQ="),
         ],
-        body: Data("grant_type=client_credentials&client_id=client-id&client_secret=client-secret".utf8),
+        body: Data("grant_type=client_credentials".utf8),
         status: 200,
         response: Data(#"{"access_token":"offline-token","expires_in":3600}"#.utf8)
     )
@@ -44,13 +45,13 @@ private func lifecycleQueue() -> [Expected] {
     [
         tokenExpected(),
         Expected(method: "POST", url: "https://cyclops.invalid/api/namespaces", headers: jsonHeaders, body: Data(#"{"name":"default"}"#.utf8), status: 201, response: Data("{}".utf8)),
-        Expected(method: "POST", url: "https://cyclops.invalid/api/k8s/apis/cua.ai/v1/namespaces/default/osgymworkspacepools", headers: jsonHeaders, body: Data(#"{"apiVersion":"cua.ai/v1","kind":"OSGymWorkspacePool","metadata":{"namespace":"default","name":"default","labels":null},"spec":{"replicas":1,"template":{"containerDiskImage":"registry.example/desktop:offline"},"services":[{"name":"mcp","targetPort":8080}]},"status":null}"#.utf8), status: 201, response: Data(#"{"apiVersion":"cua.ai/v1","kind":"OSGymWorkspacePool","metadata":{"namespace":"default","name":"default","labels":null},"spec":{"replicas":1,"template":{"containerDiskImage":"registry.example/desktop:offline"},"services":[{"name":"mcp","targetPort":8080}]},"status":null}"#.utf8)),
+        Expected(method: "POST", url: "https://cyclops.invalid/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxwarmpools", headers: jsonHeaders, body: Data(#"{"apiVersion":"osgym.cua.ai/v1alpha1","kind":"OSGymSandboxWarmPool","metadata":{"namespace":"default","name":"default","labels":null},"spec":{"replicas":1,"sandboxTemplateRef":{"name":"default"}},"status":null}"#.utf8), status: 201, response: Data(#"{"apiVersion":"osgym.cua.ai/v1alpha1","kind":"OSGymSandboxWarmPool","metadata":{"namespace":"default","name":"default","labels":null},"spec":{"replicas":1,"sandboxTemplateRef":{"name":"default"}},"status":null}"#.utf8)),
         Expected(method: "POST", url: "https://cyclops.invalid/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxclaims", headers: jsonHeaders, body: Data(#"{"apiVersion":"osgym.cua.ai/v1alpha1","kind":"OSGymSandboxClaim","metadata":{"namespace":"default","name":"claim-1","labels":null},"spec":{"sandboxTemplateRef":{"name":"default"}},"status":null}"#.utf8), status: 201, response: Data(#"{"apiVersion":"osgym.cua.ai/v1alpha1","kind":"OSGymSandboxClaim","metadata":{"namespace":"default","name":"default","labels":null},"spec":{"sandboxTemplateRef":{"name":"default"}},"status":{"phase":"Bound","sandbox":{"name":"offline-sandbox"}}}"#.utf8)),
         Expected(method: "GET", url: "https://cyclops.invalid/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxclaims/default", headers: jsonHeaders, body: nil, status: 200, response: Data(#"{"apiVersion":"osgym.cua.ai/v1alpha1","kind":"OSGymSandboxClaim","metadata":{"namespace":"default","name":"default","labels":null},"spec":{"sandboxTemplateRef":{"name":"default"}},"status":{"phase":"Bound","sandbox":{"name":"offline-sandbox"}}}"#.utf8)),
-        Expected(method: "GET", url: "https://cyclops.invalid/api/k8s/apis/cua.ai/v1/namespaces/default/osgymworkspacepools/default", headers: jsonHeaders, body: nil, status: 200, response: Data(#"{"apiVersion":"cua.ai/v1","kind":"OSGymWorkspacePool","metadata":{"namespace":"default","name":"default","labels":null},"spec":{"replicas":1,"template":{"containerDiskImage":"registry.example/desktop:offline"},"services":[{"name":"mcp","targetPort":8080}]},"status":null}"#.utf8)),
+        Expected(method: "GET", url: "https://cyclops.invalid/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxtemplates/default", headers: jsonHeaders, body: nil, status: 200, response: Data(#"{"apiVersion":"osgym.cua.ai/v1alpha1","kind":"OSGymSandboxTemplate","metadata":{"namespace":"default","name":"default","labels":null},"spec":{"vmTemplate":{"containerDiskImage":"registry.example/desktop:offline","services":[{"name":"mcp","targetPort":8080}]}}}"#.utf8)),
         serviceExpected(body: Data(#"{"offline":true}"#.utf8), response: Data("offline service accepted".utf8)),
         Expected(method: "DELETE", url: "https://cyclops.invalid/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxclaims/default", headers: jsonHeaders, body: nil, status: 204, response: Data()),
-        Expected(method: "DELETE", url: "https://cyclops.invalid/api/k8s/apis/cua.ai/v1/namespaces/default/osgymworkspacepools/default", headers: jsonHeaders, body: nil, status: 204, response: Data()),
+        Expected(method: "DELETE", url: "https://cyclops.invalid/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxwarmpools/default", headers: jsonHeaders, body: nil, status: 204, response: Data()),
         Expected(method: "DELETE", url: "https://cyclops.invalid/api/namespaces/default", headers: jsonHeaders, body: nil, status: 204, response: Data()),
     ]
 }
@@ -94,8 +95,7 @@ private func serviceRequest(_ body: Data?) -> HttpRequest {
 
 @main struct AppControlled {
     static func main() async throws {
-        let vmTemplate = VmTemplate(containerDiskImage: "registry.example/desktop:offline", command: nil, runtime: nil, runtimeClassName: nil, nodeSelector: nil, tolerations: nil, imagePullPolicy: nil, imagePullSecret: nil, cpuCores: nil, memory: nil, firmware: nil, probes: nil, services: nil, oidc: nil)
-        let spec = PoolSpec(replicas: 1, template: PoolTemplate(runtime: nil, runtimeClassName: nil, nodeSelector: nil, tolerations: nil, command: nil, containerDiskImage: vmTemplate.containerDiskImage, imagePullSecret: nil, cpuCores: nil, memory: nil, firmware: nil, probes: nil, oidc: nil), autoscaling: nil, services: [SandboxService(name: "mcp", targetPort: 8080, protocol: nil)])
+        let spec = OsGymSandboxWarmPoolSpec(replicas: 1, sandboxTemplateRef: SandboxTemplateRef(name: "default"), autoscaling: nil)
         let transport = ScriptedHttpClient(expected: lifecycleQueue())
         let client = try CyclopsClient.connect(configuration: configuration(), httpClient: transport)
         let pool = try await client.createPool(request: CreatePoolRequest(namespace: "default", spec: spec))

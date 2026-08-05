@@ -78,19 +78,14 @@ Reading frontmost state is fine (`osascript -e 'tell application
 "System Events" to get name of first application process whose
 frontmost is true'`). Mutating it is not.
 
-**Corollary — the AXMenuBar rule.** `AXMenuBarItem` + AXPick
-dispatches at the AX layer regardless of which app is frontmost,
-but macOS's on-screen menu bar always belongs to the frontmost
-app. If you drive a _backgrounded_ app's menu bar, the AX call
-succeeds but the viewer sees the dispatch rendered over the
-_frontmost_ app's menu bar — confusing in any observed session and
-routinely a silent no-op too, because action menu items go
-`DISABLED` when their owning app isn't the key window. **So: only
-use menu-bar navigation when the target is already frontmost.** For
-backgrounded targets, read state via in-window AX (window title,
-toolbar `AXStaticText`) and dispatch via in-window `element_index`
-or pixel clicks — both paths are frontmost-insensitive. Full
-rationale in "Navigating native menu bars" below.
+**Corollary — the AXMenuBar rule.** Do not manually drive a background
+application's `AXMenuBarItem`: the visible macOS menu bar belongs to the
+frontmost app, and command items may be disabled otherwise. Use `invoke_menu`
+for a known application-menu path. It owns the necessary temporary activation,
+resolves every AX level live, and restores the prior app on a best-effort basis. Prefer an in-window
+element action when the same command has an ordinary control, and prefer
+`set_window_frame` for exact geometry. Full rationale is in “Navigating native
+menu bars” below.
 
 **"Open \<app\>" in user speech means launch, not activate.**
 `cua-driver launch_app` is the one correct path for process
@@ -110,6 +105,7 @@ is safe even for apps that normally foreground on media-load
 | Open / launch an app                  | `launch_app({bundle_id})` or `launch_app({bundle_id, urls:[...]})`                     | `open -a`, `osascript 'tell app … to launch/activate/open'` |
 | Find a pid                            | `list_apps` or `launch_app`'s return                                                   | `pgrep`, `ps`, `osascript frontmost`                        |
 | Enumerate an app's windows            | `list_windows({pid})` — or read the `windows` array `launch_app` already returns       | `osascript 'every window of app …'`                         |
+| Move or resize one exact window       | `set_window_frame({pid, window_id, x, y, width, height})`                              | `osascript` position/size writes or title-bar dragging      |
 | Click / type / scroll / keys          | `click`, `type_text`, `scroll`, `press_key`, `hotkey`                                  | `osascript`, `cliclick`, raw `CGEvent`, `open <url>`        |
 | Drag / drag-and-drop / marquee select | `drag({pid, from_x, from_y, to_x, to_y})` (pixel-only — macOS AX has no semantic drag) | `cliclick dd:`, `osascript drag`                            |
 | Screenshot                            | `screenshot` or the PNG in `get_window_state`                                          | `screencapture`                                             |
@@ -140,12 +136,10 @@ When a cua-driver call surprises you, diagnose cua-driver first:
   race against a close, or the window has no backing store yet).
   Re-snapshot; if persistent, pick a different `window_id` via
   `list_windows`.
-- **`Invalid element_index` / `No cached AX state`?** You either
-  skipped `get_window_state` this turn or passed a different
-  `window_id` than the one the snapshot cached against. The cache
-  is keyed on `(pid, window_id)` — indices don't carry across
-  windows of the same app. Re-snapshot with the same window_id
-  you're about to click in.
+- **`snapshot_id_required` / `stale_element_token` / no cached AX state?**
+  Re-snapshot the exact window and use the new `element_token`, or pair its
+  `snapshot_id` with the matching `element_index`. A new snapshot of that
+  window invalidates older targets immediately.
 - **Sparse Chromium AX tree?** Retry `get_window_state` once — the
   tree populates on second call.
 
@@ -304,8 +298,16 @@ breadth Windows and Linux already exposed (`type_text` / `press_key` /
 no raise, no focus steal. `"foreground"` briefly fronts the owning app,
 acts, then restores the prior frontmost — the explicit last resort for a
 surface that only accepts events while frontmost (the canvas/viewport/game
-case below). Element-indexed (AX) actions are inherently background and
-hold the no-foreground contract without the flag.
+case below). Unmodified element-indexed (AX) actions remain background-capable
+and hold the no-foreground contract without the flag.
+
+Modified clicks are the deliberate exception: pass
+`delivery_mode:"foreground"` and a concrete `window_id`. macOS applications
+can discard PID-routed modifier state after initially publishing a transient
+selection, so Cua Driver refuses that background combination. The foreground
+rung holds physical HID modifier keys around the click, restores the hardware
+cursor and prior foreground app, and confirms list-like selection changes with
+a stable AX readback.
 
 macOS-specific residuals worth knowing (the rest of the capture/dispatch/
 addressing params are a shared cross-platform contract — see `SKILL.md` →
@@ -415,95 +417,31 @@ move is the px form of `type_text` — focus and type in one call.
 
 ## Navigating native menu bars (AXMenuBar)
 
-**Only drive the menu bar when the target app is frontmost.** This
-is the single most-misused cua-driver capability. If the target is
-backgrounded, don't reach for `AXMenuBarItem` + AXPick — use
-in-window `element_index` or pixel clicks instead. Two reasons, one
-functional and one perceptual:
-
-- **Functional:** menu items that touch document/playback/editor
-  state go `DISABLED` when their owning app isn't the key window
-  (Preview rotate, IINA speed change, most editor commands).
-  AXPick + AXPress will dispatch successfully from the driver's side but
-  no-op at the target — you get a silent false-pass.
-- **Perceptual (matters for demos, screen recordings, and anything
-  the user watches live):** macOS's screen-rendered menu bar
-  always belongs to the _frontmost_ app. AXPick on a backgrounded
-  app's `AXMenuBarItem` dispatches to that app's per-process menu at
-  the AX layer, but any visible menu render happens over the
-  frontmost app's menu bar — the viewer sees an IINA submenu
-  flashing on top of Chrome's menus, which reads as "the agent
-  clicked the wrong app." The AX call was correct; the frame the
-  user sees is not. For recorded or observed sessions, this is an
-  integrity bug even though it's not a correctness bug.
-
-**Good decision rule:** if the target is not already frontmost, do
-not use `AXMenuBarItem` at all. For _reading_ in-window state,
-snapshot the window AX tree — most apps expose the same state via
-an in-window `AXStaticText`, title bar, or toolbar. For _dispatching_
-actions, use in-window `element_index` (buttons, toolbar items) or
-pixel clicks on in-window controls — both dispatch via AppKit's
-window-under-pointer hit-test and are **not** frontmost-gated.
-
-When the target IS frontmost, the menu-bar flow below is fine and
-the canonical path for menus.
-
-### The two-snapshot pattern (target frontmost only)
-
-Menu contents are a two-snapshot flow. Closed AXMenu subtrees are
-deliberately skipped during snapshot — otherwise every app's File /
-Edit / View hierarchy plus every Recent Items macOS has ever seen
-would inflate the tree 10-100x. But once a menu is _open_, its
-AXMenuItem children do receive `element_index` values so you can
-click them normally.
-
-1. Find the `[N] AXMenuBarItem "<Menu Name>"` in the tree.
-2. `click({pid, element_index: N, action: "pick"})` — menu bar items
-   implement `AXPick` ("open my submenu"), not `AXPress`. Using the
-   default action on an AXMenuBarItem is a no-op.
-3. Re-snapshot. The expanded menu's items now appear under the bar
-   item as `[M] AXMenuItem "<Item Name>"`.
-4. Click the target item — most items respond to `AXPress` (default
-   action). Submenus nest under the item and are walked the same way.
-5. Re-snapshot and verify.
-
-If you ever need to back out without selecting, `press_key({pid, key:
-"escape"})` closes the open menu. Leaving a menu expanded between
-turns poisons subsequent snapshots for that pid.
-
-### Commands gated on the target being frontmost
-
-Some menu items and global shortcuts (Preview's Tools → Rotate
-Right, ⌘R; anything in the View menu that manipulates the current
-document; most editor commands) are **disabled unless the target
-app is the key / frontmost window**. You'll see it in the AX tree
-as `DISABLED` on the menu item even though the user's intent is
-obviously valid.
-
-Before activating, confirm you're in this narrow case — the menu
-item still reads `DISABLED` after a fresh snapshot AND the action
-the user requested genuinely requires frontmost (Preview rotate,
-View menu document manipulation, editor commands). If either
-check fails, don't activate.
-
-When both checks pass, the driver has no `activate` tool
-(deliberately — the whole point is backgroundable control), so
-this is the one legitimate `osascript` fallback:
+Use `invoke_menu({pid, window_id, path:[...]})` when the desired command has a
+known native application-menu path. The tool temporarily activates the exact
+target window because the on-screen macOS menu bar belongs to the frontmost
+application, resolves each immediate child from live AX state, uses only
+`AXPress`/`AXPick`-class actions, and restores the prior application afterward
+on a best-effort basis.
+It refuses missing, duplicate, disabled, or non-actionable segments and never
+falls back to pixels.
 
 ```bash
-osascript -e 'tell application "<App Name>" to activate'
+cua-driver invoke_menu \
+  '{"pid":844,"window_id":10725,"path":["Window","Move & Resize","Left"]}'
 ```
 
-Then re-snapshot — the menu item loses its `DISABLED` tag — and
-`click({action: "pick"})` the item. Alternatively, a `hotkey`
-call delivered to the now-frontmost app works for the shortcut
-form (`⌘R`, `⌘+`, etc.).
+The native action acknowledgement does not prove the application's semantic
+postcondition, so re-snapshot or use `list_windows`/`verify_state` afterward.
+For geometry commands, prefer `set_window_frame` because its independent frame
+readback is stronger and avoids menu state entirely.
 
-**Always name the focus steal in your response** so the user isn't
-surprised — "Briefly activating Preview to enable Tools → Rotate
-Right" or similar. Don't silently steal focus. You don't need to
-restore the previous frontmost afterwards unless the user asks —
-they can cmd-tab back.
+Do not manually reproduce the old open → snapshot → reuse-index sequence.
+Menu expansion mutates the accessibility tree, and closed AppKit submenus may
+remain present in `AXChildren`; disabled descendants are now non-addressable,
+but their presence is not a visibility guarantee. `invoke_menu` re-resolves the
+live path after every expansion, so it never carries a snapshot index across
+that mutation.
 
 ## Browsers on macOS
 

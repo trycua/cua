@@ -63,8 +63,11 @@ right-click, double-click, scroll, and drag through `browser_pointer`.
 
 A caller must explicitly request `input_route: "dom_event"` to invoke an
 element's DOM click behavior. That route is synthetic even when it preserves
-full-background posture. The driver does not silently change trust models to
-make a call appear successful.
+full-background posture. A completed JavaScript dispatch does not prove the
+control activated: applications may ignore events whose `isTrusted` value is
+false. The result therefore remains `effect: "unverifiable"` and recommends a
+fresh page-state check. The driver does not silently change trust models or
+foreground the browser to make a call appear successful.
 
 Page-owned JavaScript dialogs are modeled as short-lived capabilities rather
 than native-window guesses. Inspection returns the kind and an opaque dialog

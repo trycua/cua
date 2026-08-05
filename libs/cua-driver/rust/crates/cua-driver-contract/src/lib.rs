@@ -30,9 +30,9 @@ pub use inputs::{
     CaptureScope, ClickButton, ClickInput, ClipboardReadInput, ClipboardWriteInput, DesktopScope,
     DragInput, EndSessionInput, EscalateSessionInput, EscalationReason, GetAgentCursorStateInput,
     GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput, GetSessionStateInput,
-    HotkeyInput, MoveCursorInput, PressKeyInput, ScrollBy, ScrollDirection, ScrollInput,
-    SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
-    StartSessionInput, ToolInput, TypeTextInput,
+    HotkeyInput, InvokeMenuInput, MoveCursorInput, PressKeyInput, ScrollBy, ScrollDirection,
+    ScrollInput, SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
+    SetWindowFrameInput, StartSessionInput, ToolInput, TypeTextInput,
 };
 pub use outputs::{
     ActionDelivery, ActionDeliveryMode, ActionEffect, ActionEscalation, ActionEscalationReason,
@@ -56,7 +56,7 @@ pub const TOOLS_LIST_SCHEMA_VERSION: &str = "1";
 pub const CAPABILITY_VERSION: &str = "1";
 
 /// Shape version for the checked-in generated client contract.
-pub const CONTRACT_VERSION: &str = "0.5.0";
+pub const CONTRACT_VERSION: &str = "0.6.0";
 
 /// MCP protocol version used by current cua-driver clients.
 pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
@@ -81,6 +81,8 @@ pub const ACTION_RESULT_TOOLS: &[&str] = &[
     "press_key",
     "hotkey",
     "set_value",
+    "set_window_frame",
+    "invoke_menu",
     "browser_click",
     "browser_pointer",
     "browser_type",
@@ -291,7 +293,7 @@ mod tests {
         let mut sorted = names.clone();
         sorted.sort_unstable();
         assert_eq!(names, sorted);
-        assert_eq!(manifest.contract_version, "0.5.0");
+        assert_eq!(manifest.contract_version, "0.6.0");
         assert!(manifest.experimental);
     }
 
@@ -361,9 +363,11 @@ mod tests {
             "get_desktop_state",
             "get_screen_size",
             "hotkey",
+            "invoke_menu",
             "move_cursor",
             "press_key",
             "scroll",
+            "set_window_frame",
             "type_text",
         ] {
             assert_eq!(
@@ -372,6 +376,56 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn set_window_frame_is_exact_targeted_and_positive_sized() {
+        let contract = tool_contract("set_window_frame").expect("set_window_frame contract");
+        assert_eq!(
+            contract.input_schema["required"],
+            serde_json::json!(["pid", "window_id", "x", "y", "width", "height"])
+        );
+        assert_eq!(
+            contract.input_schema["properties"]["pid"]["minimum"],
+            serde_json::json!(1)
+        );
+        assert_eq!(
+            contract.input_schema["properties"]["window_id"]["minimum"],
+            serde_json::json!(1)
+        );
+        assert_eq!(
+            contract.input_schema["properties"]["width"]["minimum"],
+            serde_json::json!(1)
+        );
+        assert_eq!(
+            contract.input_schema["properties"]["height"]["minimum"],
+            serde_json::json!(1)
+        );
+        assert_eq!(
+            contract.cursor_semantics.expect("cursor semantics").action,
+            CursorAction::App
+        );
+    }
+
+    #[test]
+    fn invoke_menu_requires_an_exact_nonempty_bounded_path() {
+        let contract = tool_contract("invoke_menu").expect("invoke_menu contract");
+        assert_eq!(
+            contract.input_schema["required"],
+            serde_json::json!(["pid", "window_id", "path"])
+        );
+        let path = &contract.input_schema["properties"]["path"];
+        assert_eq!(path["minItems"], serde_json::json!(1));
+        assert_eq!(path["maxItems"], serde_json::json!(16));
+        assert_eq!(path["items"]["minLength"], serde_json::json!(1));
+        assert_eq!(
+            contract.cursor_semantics.expect("cursor semantics").action,
+            CursorAction::App
+        );
+        assert_eq!(
+            contract.capabilities,
+            vec!["menu.path.invoke", "accessibility.menu.native"]
+        );
     }
 
     #[test]

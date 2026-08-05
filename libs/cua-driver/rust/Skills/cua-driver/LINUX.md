@@ -8,6 +8,12 @@ supported: `click`, `type_text`, scroll, `press_key`, `screenshot`,
 `launch_app`, `list_apps`, `list_windows`, `get_window_state`, and
 session recording.
 
+On X11, `set_window_frame({pid, window_id, x, y, width, height})` sends an
+EWMH window-manager request and confirms it against `list_windows` geometry.
+Wayland has no portable protocol for setting another application's top-level
+geometry, so this tool refuses there unless a future compositor-owned adapter
+can provide exact targeting and readback.
+
 AT-SPI is talked to natively over D-Bus (the `atspi`/zbus crate) — no
 `pyatspi` or GObject-introspection typelibs are required at runtime.
 
@@ -17,7 +23,7 @@ AT-SPI is talked to natively over D-Bus (the `atspi`/zbus crate) — no
   target window. No raise, no activate, no real-pointer warp. (It does
   **not** use `XTestFakeButtonEvent`, which would route through the
   focused window.)
-- **Element click** (`element_index`) — AT-SPI `do_action` on the
+- **Element click** (`element_token`, or `element_index` + `snapshot_id`) — AT-SPI `do_action` on the
   accessible. Toolkit-native, focus-free.
 - **type_text** — AT-SPI EditableText first (focus-free; lands in an
   *unfocused* window's editable for Qt6 / GTK4). When a **non-editable**
@@ -97,7 +103,8 @@ is no `ax`/`vision`/`som` capture choice anymore; drop that vocabulary.
 
 Modality is chosen at **action time**, by how you address the target:
 
-- **element ax action** — `element_index` / `element_token` → AT-SPI
+- **element ax action** — `element_token` (preferred), or the matching
+  `element_index` + `snapshot_id` pair → AT-SPI
   `do_action`. Backgroundable, driver-verifiable.
 - **element px action** — `x,y` → pixel rung, read straight off the screenshot
   already in the `get_window_state` response. Best-effort; caller-confirmed.
@@ -113,7 +120,7 @@ experimental per-surface routes.
 The capture/dispatch/addressing params are a shared cross-platform
 contract (see `SKILL.md` → *Cross-platform parameter contract*) — the
 same `session`, `delivery_mode`, `capture_mode`, `scope`, `modifier`,
-`element_index`/`element_token` *shapes* as macOS and Windows, gated in
+`element_index`/`snapshot_id`/`element_token` *shapes* as macOS and Windows, gated in
 CI so the three surfaces can't drift. Linux-relevant notes:
 
 - **`session` is now accepted on every action/cursor tool.** Earlier
@@ -125,6 +132,16 @@ CI so the three surfaces can't drift. Linux-relevant notes:
   effective desktop scope (`start_session(..., capture_scope:"desktop")`, or
   an explicitly escalated `auto` session). Strict window sessions receive
   `desktop_scope_disabled`; no persistent config is read or written.
+
+## Native application menus
+
+Use `invoke_menu({pid, window_id, path:[...]})` for a known GTK/Qt application
+menu command. It activates the exact target only for the duration of the
+operation, resolves each labelled AT-SPI menu descendant again after the prior
+menu expands, and refuses missing, duplicate, disabled, or non-actionable
+segments. It works through AT-SPI on both X11 and Wayland and never falls back
+to coordinates. Verify the command's semantic effect from fresh state; the
+native `do_action` acknowledgement alone is not task completion.
 
 ## AT-SPI needs the session bus (headless / containers / `runuser`)
 

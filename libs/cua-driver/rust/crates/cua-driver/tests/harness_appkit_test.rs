@@ -24,7 +24,7 @@
 
 #![cfg(target_os = "macos")]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
@@ -62,6 +62,10 @@ struct Harness {
 
 impl Harness {
     fn launch() -> Self {
+        Self::launch_with_command_oracle(None)
+    }
+
+    fn launch_with_command_oracle(command_oracle: Option<&Path>) -> Self {
         let exe = harness_exe();
         assert!(
             exe.exists(),
@@ -70,9 +74,12 @@ impl Harness {
         // Launch the binary directly (not via `open`) so we control the pid
         // and can kill it cleanly on Drop. The app still installs an AppKit
         // window via NSApp.run().
-        let app = Command::new(&exe)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+        let mut command = Command::new(&exe);
+        command.stdout(Stdio::null()).stderr(Stdio::null());
+        if let Some(path) = command_oracle {
+            command.env("CUA_APPKIT_COMMAND_ORACLE", path);
+        }
+        let app = command
             .spawn()
             .unwrap_or_else(|error| panic!("launch AppKit harness {exe:?}: {error}"));
         let pid = app.id();
@@ -101,6 +108,21 @@ fn snapshot_elements(driver: &mut McpDriver, pid: u32, window_id: u64) -> ToolRe
             "capture_mode": "ax"
         }),
     )
+}
+
+fn element_token_by_id(snapshot: &ToolResponse, identifier: &str) -> String {
+    let index = element_index_by_id(snapshot.tree_text(), identifier)
+        .unwrap_or_else(|| panic!("{identifier} element_index not found"));
+    snapshot.structured()["elements"]
+        .as_array()
+        .and_then(|elements| {
+            elements
+                .iter()
+                .find(|element| element["element_index"].as_u64() == Some(index))
+        })
+        .and_then(|element| element["element_token"].as_str())
+        .unwrap_or_else(|| panic!("{identifier} element_token not found"))
+        .to_owned()
 }
 
 fn element_pixel_frame(snapshot: &ToolResponse, identifier: &str) -> (f64, f64, f64, f64) {
@@ -214,14 +236,15 @@ fn harness_appkit_smoke() {
             // and other AXStaticText leaves do NOT propagate
             // setAccessibilityIdentifier into the AX tree's identifier slot, so
             // we don't assert on ids for labels. We assert on text-presence for
-            // those, and on AX ids only for actionable controls (Buttons,
-            // TextFields).
+            // those, and on AX ids only for actionable controls whose AppKit
+            // identifiers are actually propagated (Buttons and TextFields).
+            // NSMenuItem behaves like the static leaves here: its title is
+            // exposed, but setAccessibilityIdentifier is not.
             for aid in [
                 "wnd-main", // NSWindow
                 "btn-increment",
-                "btn-reset",      // NSButton
-                "txt-input",      // editable NSTextField
-                "menu-test-item", // NSMenuItem (Mac-specific)
+                "btn-reset", // NSButton
+                "txt-input", // editable NSTextField
                 "btn-exit",
             ] {
                 assert!(
@@ -240,10 +263,154 @@ fn harness_appkit_smoke() {
             assert!(text.contains("counter=0"), "counter label missing");
             assert!(text.contains("clicks=0"), "click_count label missing");
             assert!(
+                text.contains("Harness Test Item"),
+                "AppKit menu item title missing"
+            );
+            assert!(
                 text.contains("last_action=none"),
                 "last_action label missing"
             );
             Observation::delivered(vec![OracleKind::AxState], Evidence::default())
+        },
+    );
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_query_projects_structured_elements() {
+    run_case(
+        native_readonly_case(
+            "appkit",
+            "query_projection",
+            Targeting::Ax,
+            DriverRoute::AxRead,
+            vec![OracleKind::AxState],
+        ),
+        |pid, wid, driver| {
+            let response = driver.call(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "query": "btn-increment",
+                    "include_screenshot": false
+                }),
+            );
+            assert!(
+                !response.is_error(),
+                "query snapshot failed: {}",
+                response.text()
+            );
+            let total = response.structured()["total_element_count"]
+                .as_u64()
+                .expect("total_element_count");
+            let returned = response.structured()["returned_element_count"]
+                .as_u64()
+                .expect("returned_element_count");
+            let elements = response.structured()["elements"]
+                .as_array()
+                .expect("projected elements");
+            assert_eq!(returned as usize, elements.len());
+            assert!(
+                returned < total,
+                "query did not compact {returned}/{total} elements"
+            );
+            assert!(has_id(response.tree_text(), "btn-increment"));
+            let _ = element_token_by_id(&response, "btn-increment");
+            Observation::delivered(vec![OracleKind::AxState], Evidence::default())
+        },
+    );
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_stale_element_token_fails_closed() {
+    run_case(
+        native_readonly_case(
+            "appkit",
+            "stale_element_token",
+            Targeting::Ax,
+            DriverRoute::AxRead,
+            vec![OracleKind::AxState],
+        ),
+        |pid, wid, driver| {
+            let first = snapshot_elements(driver, pid, wid);
+            let token = element_token_by_id(&first, "btn-increment");
+            let _newer = snapshot_elements(driver, pid, wid);
+            let refused = driver.call(
+                "click",
+                serde_json::json!({"pid": pid as i64, "element_token": token}),
+            );
+            assert!(
+                refused.is_error(),
+                "stale token was accepted: {}",
+                refused.text()
+            );
+            assert_eq!(
+                refused.structured()["refusal"]["code"].as_str(),
+                Some("stale_element_token")
+            );
+            let post = snapshot_elements(driver, pid, wid);
+            assert!(
+                post.tree_text().contains("counter=0"),
+                "stale click mutated counter"
+            );
+            Observation::delivered(vec![OracleKind::AxState], Evidence::default())
+        },
+    );
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_invoke_menu_live_path() {
+    run_case(
+        native_foreground_case(
+            "appkit",
+            "invoke_menu",
+            Targeting::Ax,
+            DriverRoute::MacosAxAction,
+        ),
+        |pid, wid, driver| {
+            let refused = driver.call(
+                "invoke_menu",
+                serde_json::json!({
+                    "pid": pid,
+                    "window_id": wid,
+                    "path": ["Window", "Arrange", "Missing"]
+                }),
+            );
+            assert!(refused.is_error(), "missing menu path was accepted");
+            assert!(snapshot_elements(driver, pid, wid)
+                .tree_text()
+                .contains("menu_action=none"));
+
+            // A second native process deliberately steals AppKit activation
+            // and key-window status. The target menu item validates against
+            // both, so an AXFocused-only implementation cannot pass this cell.
+            let _distractor = Harness::launch();
+
+            let invoked = driver.call(
+                "invoke_menu",
+                serde_json::json!({
+                    "pid": pid,
+                    "window_id": wid,
+                    "path": ["Window", "Arrange", "Left"]
+                }),
+            );
+            assert!(
+                !invoked.is_error(),
+                "invoke_menu failed: {}",
+                invoked.text()
+            );
+            assert_eq!(invoked.action_effect(), Some("unverifiable"));
+            std::thread::sleep(Duration::from_millis(300));
+            let post = snapshot_elements(driver, pid, wid);
+            assert!(
+                post.tree_text().contains("menu_action=window_arrange_left"),
+                "menu action did not reach fixture: {}",
+                post.tree_text()
+            );
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         },
     );
 }
@@ -274,6 +441,7 @@ fn harness_appkit_text_input() {
                     "pid": pid as i64,
                     "window_id": wid,
                     "element_index": idx,
+                    "snapshot_id": snap_pre.snapshot_id(),
                     "value": "hello-cua"
                 }),
             );
@@ -287,6 +455,296 @@ fn harness_appkit_text_input() {
                 post_text.contains("hello-cua"),
                 "text_input value did not propagate to mirror; snapshot:\n{post_text}"
             );
+        },
+    );
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_element_foreground_press_key_commits_edit() {
+    run_case(
+        native_foreground_case(
+            "appkit",
+            "press_key_commit",
+            Targeting::Ax,
+            DriverRoute::MacosCgEventHid,
+        ),
+        |pid, wid, driver| {
+            let first = snapshot_elements(driver, pid, wid);
+            let field = element_token_by_id(&first, "txt-input");
+            let set = driver.call(
+                "set_value",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_token": field,
+                    "value": "inline-cua"
+                }),
+            );
+            assert!(!set.is_error(), "set_value failed: {}", set.text());
+
+            let second = snapshot_elements(driver, pid, wid);
+            assert!(
+                second.tree_text().contains("inline-cua"),
+                "transient edit value was not readable:\n{}",
+                second.tree_text()
+            );
+            assert!(
+                second.tree_text().contains("committed=none"),
+                "fixture reported a commit before Return:\n{}",
+                second.tree_text()
+            );
+            let field = element_token_by_id(&second, "txt-input");
+            let commit = driver.call(
+                "press_key",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_token": field,
+                    "key": "return",
+                    "delivery_mode": "foreground"
+                }),
+            );
+            assert!(
+                !commit.is_error(),
+                "foreground element press_key failed: {}",
+                commit.text()
+            );
+            assert_eq!(
+                commit.action_route(),
+                Some("global_input"),
+                "foreground press_key used the wrong public route: {}",
+                commit.raw
+            );
+            assert_eq!(
+                commit.action_delivery_mode(),
+                Some("foreground"),
+                "foreground press_key reported the wrong delivery: {}",
+                commit.raw
+            );
+            assert_eq!(
+                commit.action_effect(),
+                Some("unverifiable"),
+                "press_key claimed more truth than the tool itself observed: {}",
+                commit.raw
+            );
+
+            std::thread::sleep(Duration::from_millis(250));
+            let post = snapshot_elements(driver, pid, wid);
+            assert!(
+                post.tree_text().contains("committed=inline-cua"),
+                "Return did not commit the addressed edit:\n{}",
+                post.tree_text()
+            );
+            Observation::delivered_with_fixture_state(Vec::new())
+        },
+    );
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_px_background_press_key_reports_honest_delivery_truth() {
+    let case = native_background_case(
+        "appkit",
+        "press_key_command",
+        Targeting::Px,
+        DriverRoute::MacosCgEventPid,
+    );
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&cell_id)
+            .expect("start installed macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let oracle_dir = tempfile::tempdir().expect("create command oracle directory");
+        let oracle_path = oracle_dir.path().join("child-process-output.txt");
+        let harness = Harness::launch_with_command_oracle(Some(&oracle_path));
+        let (wid, _) = driver
+            .find_window(harness.pid as i64, "CuaTestHarness AppKit")
+            .expect("AppKit main window not found");
+
+        let (_, passed) = run_with_background_oracles(
+            &mut driver,
+            TargetWindow {
+                pid: harness.pid,
+                native_id: wid,
+            },
+            |driver| {
+                let first = snapshot_elements(driver, harness.pid, wid);
+                let field = element_token_by_id(&first, "txt-input");
+                let set = driver.call(
+                    "set_value",
+                    serde_json::json!({
+                        "pid": harness.pid as i64,
+                        "window_id": wid,
+                        "element_token": field,
+                        "value": "printf cua-press-key"
+                    }),
+                );
+                assert!(!set.is_error(), "set command failed: {}", set.text());
+
+                let focused = snapshot_elements(driver, harness.pid, wid);
+                let (x, y, width, height) = element_pixel_frame(&focused, "txt-input");
+                let pressed = driver.call(
+                    "press_key",
+                    serde_json::json!({
+                        "pid": harness.pid as i64,
+                        "window_id": wid,
+                        "x": x + width / 2.0,
+                        "y": y + height / 2.0,
+                        "key": "return",
+                        "delivery_mode": "background"
+                    }),
+                );
+                assert!(
+                    !pressed.is_error(),
+                    "background Return failed: {}",
+                    pressed.text()
+                );
+                assert_eq!(pressed.action_route(), Some("synthetic_events"));
+                assert_eq!(pressed.action_delivery_mode(), Some("background"));
+                assert_eq!(pressed.action_effect(), Some("unverifiable"));
+                assert!(
+                    pressed.structured()["escalation"].is_null(),
+                    "accepted post without a positive oracle must not claim delivery_failed: {}",
+                    pressed.raw
+                );
+
+                let deadline = std::time::Instant::now() + Duration::from_secs(3);
+                loop {
+                    if std::fs::read_to_string(&oracle_path)
+                        .is_ok_and(|value| value == "cua-press-key")
+                    {
+                        break;
+                    }
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "background Return did not execute the controlled child process"
+                    );
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+
+                let mut exited = Command::new("/usr/bin/true")
+                    .spawn()
+                    .expect("spawn posting-failure fixture");
+                let exited_pid = exited.id();
+                exited.wait().expect("wait for posting-failure fixture");
+                let failed = driver.call(
+                    "press_key",
+                    serde_json::json!({
+                        "pid": exited_pid,
+                        // An explicit target bypasses the PID-only window resolver so
+                        // this negative oracle reaches the posting preflight. Without
+                        // one, the earlier and equally truthful result is
+                        // window_target_not_found because /usr/bin/true owns no window.
+                        "window_id": wid,
+                        "key": "return",
+                        "delivery_mode": "background"
+                    }),
+                );
+                assert!(failed.is_error(), "dead-pid post unexpectedly succeeded");
+                assert_eq!(failed.structured()["code"], "delivery_failed");
+            },
+        )
+        .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
+
+        Observation::delivered_with_fixture_state(passed)
+    });
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_modified_click_preserves_selection() {
+    run_case(
+        native_foreground_case(
+            "appkit",
+            "modified_click_selection",
+            Targeting::Ax,
+            DriverRoute::MacosCgEventHid,
+        ),
+        |pid, wid, driver| {
+            let first = snapshot_elements(driver, pid, wid);
+            let alpha = element_token_by_id(&first, "selection-alpha");
+            let select_alpha = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_token": alpha
+                }),
+            );
+            assert!(
+                !select_alpha.is_error(),
+                "select alpha failed: {}",
+                select_alpha.text()
+            );
+            std::thread::sleep(Duration::from_millis(200));
+
+            let second = snapshot_elements(driver, pid, wid);
+            assert!(
+                second.tree_text().contains("selection=alpha"),
+                "alpha was not selected:\n{}",
+                second.tree_text()
+            );
+            let beta = element_token_by_id(&second, "selection-beta");
+            let refused_background = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_token": beta,
+                    "modifier": ["cmd"]
+                }),
+            );
+            assert!(
+                refused_background.is_error(),
+                "background modified click was not refused: {}",
+                refused_background.text()
+            );
+            assert_eq!(
+                refused_background.structured()["code"],
+                "background_unavailable",
+                "background modified click returned the wrong refusal: {}",
+                refused_background.structured()
+            );
+            std::thread::sleep(Duration::from_millis(300));
+            let after_refusal = snapshot_elements(driver, pid, wid);
+            assert!(
+                after_refusal.tree_text().contains("selection=alpha"),
+                "refused modified click changed the prior selection:\n{}",
+                after_refusal.tree_text()
+            );
+
+            let beta = element_token_by_id(&after_refusal, "selection-beta");
+            let add_beta = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_token": beta,
+                    "modifier": ["cmd"],
+                    "delivery_mode": "foreground"
+                }),
+            );
+            assert!(
+                !add_beta.is_error(),
+                "foreground modified click failed: {}",
+                add_beta.text()
+            );
+            assert_eq!(
+                add_beta.structured()["effect"],
+                "confirmed",
+                "modified click lacked settled selection proof: {}",
+                add_beta.structured()
+            );
+
+            std::thread::sleep(Duration::from_millis(250));
+            let post = snapshot_elements(driver, pid, wid);
+            assert!(
+                post.tree_text().contains("selection=alpha,beta"),
+                "modified click replaced or lost the prior selection:\n{}",
+                post.tree_text()
+            );
+            Observation::delivered_with_fixture_state(Vec::new())
         },
     );
 }
@@ -316,6 +774,7 @@ fn harness_appkit_type_text_background() {
                 "type_text",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "snapshot_id": snap_pre.snapshot_id(),
                     "text": "kbd-cua", "delivery_mode": "background"
                 }),
             );
@@ -357,6 +816,7 @@ fn harness_appkit_scroll_foreground() {
                     "pid": pid as i64,
                     "window_id": wid,
                     "element_index": index,
+                    "snapshot_id": pre.snapshot_id(),
                     "direction": "down",
                     "amount": 5,
                     "delivery_mode": "foreground"
@@ -396,6 +856,7 @@ fn harness_appkit_scroll_background() {
                 "pid": pid as i64,
                 "window_id": wid,
                 "element_index": index,
+                "snapshot_id": pre.snapshot_id(),
                 "direction": "down",
                 "amount": 5,
                 "delivery_mode": "background"
@@ -446,6 +907,7 @@ fn harness_appkit_counter() {
                     "pid": pid as i64,
                     "window_id": wid,
                     "element_index": idx,
+                    "snapshot_id": snap_pre.snapshot_id(),
                     "action": "press",
                     "delivery_mode": "background"
                 }),

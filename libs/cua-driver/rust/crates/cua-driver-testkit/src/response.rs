@@ -103,6 +103,15 @@ impl ToolResponse {
             .and_then(Value::as_bool)
             .unwrap_or(false)
     }
+
+    /// Snapshot handle paired with numeric element indices. Element-targeted
+    /// calls in the 0.17 contract must send this value with `element_index`.
+    pub fn snapshot_id(&self) -> &str {
+        self.structured
+            .get("snapshot_id")
+            .and_then(Value::as_str)
+            .expect("get_window_state response must carry snapshot_id")
+    }
 }
 
 #[cfg(test)]

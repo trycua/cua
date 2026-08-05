@@ -366,6 +366,7 @@ gone wrong — re-read "The no-foreground contract" above.
 | Open a URL in the default browser  | `launch_app({urls: ["https://example.com"]})`                                                   | `Start-Process "https://…"`, `explorer.exe ms-edge:…`, `cmd /c start "" "https://…"` |
 | Find a pid                         | `list_apps` or `launch_app`'s return                                                            | `Get-Process`, `tasklist`, Win+S typing                                              |
 | Enumerate an app's windows         | `list_windows({pid})` — or read the `windows` array `launch_app` already returns                | `Get-Process \| Where-Object { $_.MainWindowHandle }`                                |
+| Move or resize one exact window    | `set_window_frame({pid, window_id, x, y, width, height})`                                       | PowerShell Add-Type wrappers, Win+Arrow, or title-bar dragging                      |
 | Click / type / scroll / keys       | `click`, `type_text`, `scroll`, `press_key`, `hotkey`                                           | `SendInput`, `cliclick`-style C# add-types, AutoHotkey scripts                       |
 | Drag / drag-and-drop               | `drag({pid, from_x, from_y, to_x, to_y})`                                                       | `SendInput` with `MOUSEEVENTF_MOVE`, mouse_event                                     |
 | Screenshot                         | `screenshot` or the PNG in `get_window_state`                                                   | `[System.Windows.Forms.Screen]::CopyFromScreen`, `nircmd savescreenshot`             |
@@ -411,6 +412,11 @@ When a cua-driver call surprises you, diagnose cua-driver first:
   `capture_mode` param is **deprecated and ignored** — it's still accepted
   so old callers don't error, but both the tree and the image come back
   regardless of what you pass.
+- **`list_windows` returns Win32 windows but misses UWP / WebView2
+  windows?** UIA desktop enumeration may be degraded because a provider
+  is unresponsive. `list_windows` falls back to Win32-only output instead
+  of hanging; run `cua-driver doctor` and retry after the provider
+  recovers.
 - **`get_desktop_state` returns `desktop_scope_disabled`?** That's
   intended: full-display capture is a **desktop-scope** operation, gated
   by the caller-declared session policy. To verify a specific window use
@@ -481,8 +487,9 @@ your prior tool calls earned.
    schtasks /Run /TN cua-driver-serve
    ```
 3. **Run `cua-driver doctor`** — reports session ID, COM apartment
-   status, UIA reachability, install paths, version. If anything reads
-   `false` / `error`, fix that before tool-calling.
+   status, UIA desktop-enumeration reachability, install paths,
+   version. If anything reads `false` / `error`, fix that before
+   tool-calling.
 4. **Permissions** — Windows has no TCC equivalent. cua-driver-rs
    needs:
    - No admin elevation for normal use (UIA, PostMessage, UWP
@@ -533,10 +540,11 @@ Canonical multi-step workflow:
 
 # Snapshot the UIA tree.
 '{"pid":6004,"window_id":459672}' | & cua-driver call get_window_state
-# Returns: tree_markdown with [N] element indices, screenshot, dimensions.
+# Returns: tree_markdown with [N] indices plus structured element_token values,
+# snapshot_id, screenshot, and dimensions.
 
-# Click element [22] (the "Equals" button per the tree).
-'{"pid":6004,"window_id":459672,"element_index":22}' | & cua-driver call click
+# Click the "Equals" row with its opaque token from that response.
+'{"pid":6004,"element_token":"s0000002a:22"}' | & cua-driver call click
 # → "✅ Performed UIA Invoke on [22] ..."
 
 # Re-snapshot to verify the action landed.
@@ -547,13 +555,14 @@ Canonical multi-step workflow:
 
 **Every action MUST be bracketed by `get_window_state(pid, window_id)`**:
 
-- **Before** — the pre-action snapshot resolves the `element_index`
-  you're about to use. Indices from previous turns are stale; the
+- **Before** — the pre-action snapshot resolves the `element_token`
+  you're about to use. A bare integer is rejected in 0.17; clients that keep
+  integers must send the same response's `snapshot_id`. Targets from previous turns are stale; the
   server replaces the element index map on every snapshot, keyed
   on `(pid, window_id)`. Indices from turn N don't resolve in turn
-  N+1, and indices from window A don't resolve against window B of
+  N+1, and targets from window A don't resolve against window B of
   the same app. Skip this and element-indexed actions fail with
-  `Invalid element_index`.
+  `stale_element_token` or `snapshot_id_required`.
 - **After** — the post-action snapshot verifies the action actually
   landed. Without it you can't tell a silent no-op from a real
   effect. The UIA tree change (new value, new window, disappeared
@@ -568,13 +577,13 @@ Canonical multi-step workflow:
 
 Two click addressing modes, both gated by `pid`:
 
-### `element_index` mode (preferred)
+### Snapshot-bound element mode (preferred)
 
 ```json
-{ "pid": 6004, "window_id": 459672, "element_index": 22 }
+{ "pid": 6004, "element_token": "s0000002a:22" }
 ```
 
-Looks up the cached UIA element from the last `get_window_state`,
+Looks up the exact cached UIA element from the named snapshot,
 fires `IUIAutomationInvokePattern::Invoke()` on it directly.
 
 Properties:
@@ -598,8 +607,17 @@ Properties:
   `accessibility` means UIA/MSAA and `synthetic_events` means the
   targeted event fallback. Do not parse the human-readable text.
 
-This is the right path for **any** "click button N" / "click menu
-item X" / "click checkbox Y" intent.
+This is the right path for **any** "click button N" or "click checkbox Y"
+intent. For a known application-menu hierarchy, prefer `invoke_menu`:
+
+```json
+{ "pid": 6004, "window_id": 459672, "path": ["Window", "Arrange", "Left"] }
+```
+
+It uses `ExpandCollapsePattern` at intermediate hops and `InvokePattern` or
+`SelectionItemPattern` at the leaf, resolving the live UIA hierarchy again
+after every expansion. It refuses ambiguous, missing, or disabled segments and
+never falls back to pixels. Verify the command's semantic effect afterward.
 
 ### `(x, y)` mode (element px action / pixel)
 
@@ -816,7 +834,7 @@ typed browser tools yet.
 - Daemon version and install paths
 - Current session ID (must be ≥1)
 - COM apartment status (STA / MTA / uninitialized)
-- UIA reachability (can we connect to `CUIAutomation`?)
+- UIA reachability (can we create `CUIAutomation` and enumerate desktop children?)
 - AppX broker reachability (for packaged-app activation)
 - PATH state (is `cua-driver` actually on PATH?)
 - Autostart Scheduled Task status

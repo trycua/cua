@@ -145,6 +145,8 @@ pub fn register_tools_with_cursor_and_provider(
 ) -> ToolRegistry {
     #[cfg(target_os = "linux")]
     wayland::ensure_nested_session();
+    #[cfg(target_os = "linux")]
+    wayland::overlay::set_config_enabled(cfg.enabled);
     if cfg.enabled {
         overlay::init(cfg.clone());
         overlay::run_on_thread();

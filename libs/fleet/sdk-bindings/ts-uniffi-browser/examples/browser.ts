@@ -3,8 +3,9 @@ import {
   uniffiInitAsync,
   type Claim,
   type Pool,
+  type Template,
 } from "../ts/index.web"
-import type { PoolSpec } from "../ts/cyclops_sdk_schema"
+import type { OsGymSandboxTemplateSpec, OsGymSandboxWarmPoolSpec } from "../ts/cyclops_sdk_schema"
 
 declare global {
   interface Window {
@@ -70,16 +71,22 @@ function runtimeConfig(): BrowserRuntimeConfig {
   return config
 }
 
-function makePoolSpec(image: string, imagePullSecret?: string): PoolSpec {
+function makeTemplateSpec(image: string, imagePullSecret?: string): OsGymSandboxTemplateSpec {
   return {
-    replicas: 1,
-    template: {
+    vmTemplate: {
       containerDiskImage: image,
       cpuCores: 4,
       memory: "4Gi",
       imagePullSecret,
+      services: [{ name: serviceName, targetPort: 3000 }],
     },
-    services: [{ name: serviceName, targetPort: 3000 }],
+  }
+}
+
+function makePoolSpec(namespace: string): OsGymSandboxWarmPoolSpec {
+  return {
+    replicas: 1,
+    sandboxTemplateRef: { name: `${namespace}-template` },
   }
 }
 
@@ -100,12 +107,18 @@ async function runLifecycle(): Promise<void> {
   log("[auth] SDK client connected.")
 
   let pool: Pool | undefined
+  let template: Template | undefined
   let claim: Claim | undefined
   try {
-    log("[1/5] Creating pool...")
+    log("[1/5] Creating pool and template...")
     pool = await client.createPool({
       namespace: config.namespace,
-      spec: makePoolSpec(config.image, config.imagePullSecret),
+      spec: makePoolSpec(config.namespace),
+    })
+    template = await client.createTemplate({
+      namespace: config.namespace,
+      name: `${config.namespace}-template`,
+      spec: makeTemplateSpec(config.image, config.imagePullSecret),
     })
 
     log("[2/5] Creating claim...")
@@ -130,6 +143,10 @@ async function runLifecycle(): Promise<void> {
     if (claim) {
       log("[cleanup] Deleting claim...")
       await client.deleteClaim(claim)
+    }
+    if (template) {
+      log("[cleanup] Deleting template...")
+      await client.deleteTemplate(template)
     }
     if (pool) {
       log("[cleanup] Deleting pool...")

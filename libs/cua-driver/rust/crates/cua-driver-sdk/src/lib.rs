@@ -8,10 +8,10 @@
 use cua_driver_contract::{
     ActionResult, ClickInput, ClipboardReadInput, ClipboardWriteInput, DragInput, EndSessionInput,
     EndSessionOutput, EscalateSessionInput, GetAgentCursorStateInput, GetCursorPositionInput,
-    GetDesktopStateInput, GetScreenSizeInput, GetSessionStateInput, HotkeyInput, MoveCursorInput,
-    PressKeyInput, ScrollInput, SessionStateOutput, SetAgentCursorEnabledInput,
-    SetAgentCursorMotionInput, SetAgentCursorThemeInput, StartSessionInput, StartSessionOutput,
-    ToolInput, TypeTextInput, VerifyStateInput, VerifyStateOutput,
+    GetDesktopStateInput, GetScreenSizeInput, GetSessionStateInput, HotkeyInput, InvokeMenuInput,
+    MoveCursorInput, PressKeyInput, ScrollInput, SessionStateOutput, SetAgentCursorEnabledInput,
+    SetAgentCursorMotionInput, SetAgentCursorThemeInput, SetWindowFrameInput, StartSessionInput,
+    StartSessionOutput, ToolInput, TypeTextInput, VerifyStateInput, VerifyStateOutput,
 };
 use cua_driver_core::daemon::{
     is_daemon_listening, request_daemon_metadata, send_request, socket_path_for_namespace,
@@ -556,6 +556,8 @@ macro_rules! desktop_tool_methods {
             get_cursor_position: GetCursorPositionInput,
             verify_state: VerifyStateInput,
             move_cursor: MoveCursorInput,
+            set_window_frame: SetWindowFrameInput,
+            invoke_menu: InvokeMenuInput,
             click: ClickInput,
             drag: DragInput,
             scroll: ScrollInput,

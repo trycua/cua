@@ -254,6 +254,7 @@ const DESKTOP_INPUT_OPERATIONS: &[&str] = &[
     "hotkey",
     "set_value",
     "bring_to_front",
+    "set_window_frame",
 ];
 const DESKTOP_INPUT_SCOPE_KEYS: &[&str] = &[
     "daemon_generation",
@@ -844,8 +845,10 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "press_key"
         | "hotkey"
         | "set_value"
+        | "invoke_menu"
         | "launch_app"
         | "bring_to_front"
+        | "set_window_frame"
         | "start_session"
         | "end_session"
         | "set_agent_cursor_enabled"
@@ -1502,6 +1505,14 @@ mod tests {
     }
 
     #[test]
+    fn native_menu_invocation_matches_local_gui_action_risk() {
+        let risk = advertised_risk_for("invoke_menu");
+        assert_eq!(risk.class, RiskClass::R1);
+        assert_eq!(risk.enforcement, RiskEnforcement::MetadataOnly);
+        assert!(!risk.operation_sensitive);
+    }
+
+    #[test]
     fn screenshot_file_output_is_classified_as_egress() {
         for tool in ["get_desktop_state", "get_window_state"] {
             let observation = classify_tool_call(tool, &serde_json::json!({}));
@@ -1737,6 +1748,10 @@ mod tests {
         );
         assert_eq!(
             ids("type_text_chars", serde_json::json!({})),
+            vec!["desktop_input"]
+        );
+        assert_eq!(
+            ids("set_window_frame", serde_json::json!({})),
             vec!["desktop_input"]
         );
         assert_eq!(

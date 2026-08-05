@@ -29,8 +29,6 @@ pub const BADGE_CHIP_GROUP_GAP: f32 = 7.0;
 const FONT_BYTES: &[u8] = include_bytes!("../assets/Inter.ttf");
 const FONT_SIZE: f32 = 11.5;
 const HORIZONTAL_PADDING: f32 = 10.0;
-const ORB_SIZE: f32 = 10.0;
-const ORB_GAP: f32 = 7.0;
 const TEXT_OPTICAL_Y_OFFSET: f32 = 1.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -50,7 +48,6 @@ pub struct BadgeLabelLayout {
 pub struct SessionBadgeLayout {
     pub rect: Rect,
     pub corner_radius: f32,
-    pub orb_center: (f32, f32),
     pub label: Option<BadgeLabelLayout>,
     pub delivery_chip: Option<BadgeChip>,
     pub target_chip: Option<BadgeChip>,
@@ -337,7 +334,7 @@ pub fn session_badge_layout(input: SessionBadgeInput<'_>) -> Option<SessionBadge
         1 => BADGE_CHIP_SIZE,
         _ => BADGE_CHIP_SIZE * 2.0 + BADGE_CHIP_GAP,
     } * scale;
-    let fixed_width = (HORIZONTAL_PADDING * 2.0 + ORB_SIZE + ORB_GAP) * scale
+    let fixed_width = HORIZONTAL_PADDING * 2.0 * scale
         + chip_width
         + if show_label && chip_count > 0 {
             BADGE_CHIP_GROUP_GAP * scale
@@ -354,7 +351,7 @@ pub fn session_badge_layout(input: SessionBadgeInput<'_>) -> Option<SessionBadge
     };
     let text_width = label_data.as_ref().map_or(0.0, |(_, bounds)| bounds.width);
     let minimum_width = if show_label {
-        72.0 * scale
+        55.0 * scale
     } else {
         fixed_width
     };
@@ -381,11 +378,7 @@ pub fn session_badge_layout(input: SessionBadgeInput<'_>) -> Option<SessionBadge
     let rect = Rect::from_xywh(x, y, badge_width, badge_height)?;
     let corner_radius = badge_height * 0.5;
 
-    let orb_center = (
-        x + HORIZONTAL_PADDING * scale + ORB_SIZE * scale * 0.5,
-        y + badge_height * 0.5,
-    );
-    let mut cursor_x = x + (HORIZONTAL_PADDING + ORB_SIZE + ORB_GAP) * scale;
+    let mut cursor_x = x + HORIZONTAL_PADDING * scale;
     let label = label_data.map(|(text, bounds)| {
         let origin = (
             cursor_x - bounds.min_x,
@@ -426,7 +419,6 @@ pub fn session_badge_layout(input: SessionBadgeInput<'_>) -> Option<SessionBadge
     Some(SessionBadgeLayout {
         rect,
         corner_radius,
-        orb_center,
         label,
         delivery_chip,
         target_chip,
@@ -486,15 +478,15 @@ pub fn paint_session_badge(
         vec![
             GradientStop::new(
                 0.0,
-                session_tinted_color([94, 151, 178], session_fill, 0.52, (236.0 * opacity) as u8),
+                session_tinted_color([94, 151, 178], session_fill, 0.66, (236.0 * opacity) as u8),
             ),
             GradientStop::new(
                 0.46,
-                session_tinted_color([43, 92, 119], session_fill, 0.40, (239.0 * opacity) as u8),
+                session_tinted_color([43, 92, 119], session_fill, 0.52, (239.0 * opacity) as u8),
             ),
             GradientStop::new(
                 1.0,
-                session_tinted_color([13, 27, 38], session_fill, 0.18, (245.0 * opacity) as u8),
+                session_tinted_color([13, 27, 38], session_fill, 0.26, (245.0 * opacity) as u8),
             ),
         ],
         SpreadMode::Pad,
@@ -514,12 +506,14 @@ pub fn paint_session_badge(
         Transform::identity(),
         None,
     );
+    // The rim carries session identity now that the orb is gone. Tinting it
+    // costs no width and leaves label contrast untouched.
     let outline = Paint {
-        shader: tiny_skia::Shader::SolidColor(Color::from_rgba8(
-            255,
-            255,
-            255,
-            (160.0 * opacity) as u8,
+        shader: tiny_skia::Shader::SolidColor(session_tinted_color(
+            [255, 255, 255],
+            session_fill,
+            0.55,
+            (190.0 * opacity) as u8,
         )),
         anti_alias: true,
         ..Default::default()
@@ -534,50 +528,6 @@ pub fn paint_session_badge(
         Transform::identity(),
         None,
     );
-
-    if let Some(orb) = PathBuilder::from_circle(
-        layout.orb_center.0,
-        layout.orb_center.1,
-        ORB_SIZE * scale * 0.5,
-    ) {
-        let orb_paint = Paint {
-            shader: tiny_skia::Shader::SolidColor(Color::from_rgba8(
-                session_fill[0],
-                session_fill[1],
-                session_fill[2],
-                (255.0 * opacity) as u8,
-            )),
-            anti_alias: true,
-            ..Default::default()
-        };
-        pixmap.fill_path(
-            &orb,
-            &orb_paint,
-            tiny_skia::FillRule::Winding,
-            Transform::identity(),
-            None,
-        );
-        let orb_outline = Paint {
-            shader: tiny_skia::Shader::SolidColor(Color::from_rgba8(
-                255,
-                255,
-                255,
-                (226.0 * opacity) as u8,
-            )),
-            anti_alias: true,
-            ..Default::default()
-        };
-        pixmap.stroke_path(
-            &orb,
-            &orb_outline,
-            &Stroke {
-                width: 1.5 * scale,
-                ..Default::default()
-            },
-            Transform::identity(),
-            None,
-        );
-    }
 
     if let Some(label) = &layout.label {
         let label_opacity = (alpha_scale * layout.label_alpha).clamp(0.0, 1.0);
@@ -697,6 +647,23 @@ mod tests {
         assert!(delivery.filled);
         assert!(!target.filled);
         assert!(delivery.rect.x() < target.rect.x());
+    }
+
+    #[test]
+    fn label_starts_at_the_leading_padding_with_no_reserved_marker() {
+        let layout = session_badge_layout(SessionBadgeInput {
+            label: Some("Research run"),
+            delivery: None,
+            target: None,
+            cursor: (120.0, 60.0),
+            backing_scale: 1.0,
+            label_alpha: 1.0,
+            chip_alpha: 0.0,
+            clip: None,
+        })
+        .unwrap();
+        let label = layout.label.unwrap();
+        assert!((label.origin.0 - (layout.rect.x() + HORIZONTAL_PADDING)).abs() < 1.5);
     }
 
     #[test]

@@ -20,11 +20,13 @@ tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 clipboard-rs = { version = "0.3.5", features = ["wayland"] }
-# X11 background input + window enumeration
-x11rb = { version = "0.13", features = ["xinput", "randr", "xfixes", "composite", "shape", "xtest"] }
+# X11 background input + window enumeration + MIT-SHM capture
+x11rb = { version = "0.13", features = ["xinput", "randr", "xfixes", "composite", "shape", "xtest", "shm"] }
 x11 = { version = "2.21", features = ["xlib", "xinput", "xtest"] }
 base64 = { workspace = true }
 image = { workspace = true }
+# Map X server-returned MIT-SHM CreateSegment FDs (no SysV shmget/shmat).
+memmap2 = "0.9"
 # kill(2) for the kill_app tool — SIGKILL via libc::kill.
 libc = "0.2"
 # Native AT-SPI over D-Bus (pure Rust, via zbus) — replaces the pyatspi
@@ -132,6 +134,7 @@ portal-capture = [
 portal-libei = ["portal-input", "portal-capture"]
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 # Used by the `screenshot_cascade` example to surface the
 # `tracing::debug!` lines emitted by each tier of the dispatch as it
 # falls through.

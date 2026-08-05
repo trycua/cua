@@ -29,18 +29,23 @@ private class JavaHttpClient : HttpClient {
     }
 }
 
-private fun poolSpec() = PoolSpec(
+private fun poolSpec(templateName: String) = OsGymSandboxWarmPoolSpec(
     1u,
-    PoolTemplate(
-        null, null, null, null, null,
+    SandboxTemplateRef(templateName),
+    null,
+)
+
+private fun templateSpec() = OsGymSandboxTemplateSpec(
+    VmTemplate(
         required("CUA_IMAGE"),
+        null, null, null, null, null, null,
         required("CUA_IMAGE_PULL_SECRET"),
         4u,
         "4Gi",
-        null, null, null,
+        null, null,
+        listOf(SandboxService("mcp", 3000u, null)),
+        null,
     ),
-    null,
-    listOf(SandboxService("mcp", 3000u, null)),
 )
 
 private suspend fun initializeMcp(client: CyclopsClient, sandbox: Sandbox): UShort {
@@ -81,16 +86,20 @@ fun main() = runBlocking {
         ),
         JavaHttpClient(),
     )
+    val templateName = "$namespace-template"
     var pool: Pool? = null
+    var template: Template? = null
     var claim: Claim? = null
     try {
-        pool = client.createPool(CreatePoolRequest(namespace, poolSpec()))
+        pool = client.createPool(CreatePoolRequest(namespace, poolSpec(templateName)))
+        template = client.createTemplate(CreateTemplateRequest(namespace, templateName, templateSpec()))
         claim = client.createClaim(CreateClaimRequest(pool, null))
         val sandbox = client.waitClaim(claim)
         val status = initializeMcp(client, sandbox)
         println("namespace=$namespace pool=${pool.metadata.name} claim=${claim.metadata.name} sandbox=${sandbox.name} mcp_status=$status")
     } finally {
         claim?.let { client.deleteClaim(it) }
+        template?.let { client.deleteTemplate(it) }
         pool?.let { client.deletePool(it) }
         client.close()
     }

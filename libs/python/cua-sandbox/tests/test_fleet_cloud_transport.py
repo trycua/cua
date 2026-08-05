@@ -2,24 +2,37 @@ import pytest
 from cua_sandbox import Image
 from cua_sandbox.transport import fleet_cloud
 from cua_sandbox.transport.fleet_cloud import FleetCloudTransport
-from cyclops_sdk import Sandbox
+from fleet_sdk import Sandbox
 
 
-def test_registry_image_becomes_typed_pool_request():
+def test_registry_image_becomes_typed_template_request():
     request = FleetCloudTransport(
         image=Image.from_registry("registry.example/workspace@sha256:abc").expose(3000),
         name="demo",
         cpu=4,
         memory_mb=8192,
-    )._pool_request()
-    assert request.namespace == "demo"
-    assert request.spec.template.container_disk_image == "registry.example/workspace@sha256:abc"
-    assert request.spec.template.cpu_cores == 4
-    assert request.spec.template.memory == "8192Mi"
-    assert [(service.name, service.target_port) for service in request.spec.services] == [
+    )._template_request()
+    assert (request.namespace, request.name) == ("demo", "demo")
+    vm_template = request.spec.vm_template
+    assert vm_template.container_disk_image == "registry.example/workspace@sha256:abc"
+    assert vm_template.cpu_cores == 4
+    assert vm_template.memory == "8192Mi"
+    assert [(service.name, service.target_port) for service in vm_template.services] == [
         ("server", 8000),
         ("port-3000", 3000),
     ]
+
+
+def test_pool_request_only_references_the_template():
+    request = FleetCloudTransport(
+        image=Image.from_registry("registry.example/workspace@sha256:abc"),
+        name="demo",
+        replicas=3,
+    )._pool_request()
+    assert request.namespace == "demo"
+    assert request.spec.replicas == 3
+    assert request.spec.sandbox_template_ref.name == "demo"
+    assert request.spec.autoscaling is None
 
 
 @pytest.mark.parametrize(
@@ -31,12 +44,20 @@ def test_rejects_unsupported_images(image):
 
 
 @pytest.mark.asyncio
-async def test_connect_uses_generated_pool_template_claim_default(monkeypatch):
+async def test_connect_creates_template_before_pool_and_defaults_the_claim(monkeypatch):
     pool = type("Pool", (), {"metadata": type("Metadata", (), {"name": "demo"})()})()
     requests = []
+    order = []
 
     class Client:
+        async def create_template(self, request):
+            order.append("template")
+            assert request.spec.vm_template.container_disk_image == "example:latest"
+            return "template"
+
         async def create_pool(self, request):
+            order.append("pool")
+            assert request.spec.sandbox_template_ref.name == "demo"
             return pool
 
         async def wait_pool(self, created_pool):
@@ -57,6 +78,7 @@ async def test_connect_uses_generated_pool_template_claim_default(monkeypatch):
 
     await FleetCloudTransport(image=Image.from_registry("example:latest"), name="demo").connect()
 
+    assert order == ["template", "pool"]
     assert len(requests) == 1
     assert requests[0].spec is None
 
@@ -80,6 +102,30 @@ async def test_cleanup_stops_after_claim_failure():
     with pytest.raises(RuntimeError, match="claim delete failed"):
         await transport._cleanup_resources()
     assert calls == [("claim", "claim")]
+
+
+@pytest.mark.asyncio
+async def test_cleanup_releases_claim_pool_then_template():
+    transport = FleetCloudTransport(image=Image.from_registry("example:latest"), name="demo")
+    calls = []
+
+    class Client:
+        async def delete_claim(self, claim):
+            calls.append(("claim", claim))
+
+        async def delete_pool(self, pool):
+            calls.append(("pool", pool))
+
+        async def delete_template(self, template):
+            calls.append(("template", template))
+
+    transport._sdk = Client()
+    transport._claim = "claim"
+    transport._pool = "pool"
+    transport._template = "template"
+    await transport._cleanup_resources()
+    assert calls == [("claim", "claim"), ("pool", "pool"), ("template", "template")]
+    assert transport._template is None
 
 
 @pytest.mark.asyncio

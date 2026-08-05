@@ -62,8 +62,25 @@ fn string_list_schema(generator: &mut SchemaGenerator) -> Schema {
     Vec::<String>::json_schema(generator)
 }
 
+fn menu_path_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 16,
+        "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+    })
+}
+
 fn number_schema(_: &mut SchemaGenerator) -> Schema {
     json_schema!({ "type": "number" })
+}
+
+fn positive_number_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({ "type": "number", "minimum": 1 })
+}
+
+fn positive_integer_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({ "type": "integer", "minimum": 1 })
 }
 
 fn click_button_schema(generator: &mut SchemaGenerator) -> Schema {
@@ -249,7 +266,7 @@ impl ScrollBy {
 pub struct StartSessionInput {
     /// Stable session id for this run (e.g. "research-run-1").
     pub session: String,
-    /// Per-session perception/action modality. auto starts window-only and requires explicit escalation before desktop tools; window and desktop are strict. Immutable for the live session.
+    /// Per-session perception/action modality. auto starts window-only and requires explicit escalation before desktop tools; escalation permanently switches that session to desktop scope. To recover window scope, call end_session, then start_session with a new session id. window and desktop are strict. Immutable for the live session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "capture_scope_schema")]
     pub capture_scope: Option<CaptureScope>,
@@ -405,6 +422,53 @@ pub struct MoveCursorInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SetWindowFrameInput {
+    #[schemars(schema_with = "positive_integer_schema")]
+    pub pid: u32,
+    #[schemars(schema_with = "positive_integer_schema")]
+    pub window_id: u64,
+    #[schemars(schema_with = "number_schema")]
+    pub x: f64,
+    #[schemars(schema_with = "number_schema")]
+    pub y: f64,
+    #[schemars(schema_with = "positive_number_schema")]
+    pub width: f64,
+    #[schemars(schema_with = "positive_number_schema")]
+    pub height: f64,
+    /// Optional session id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "string_schema")]
+    pub session: Option<String>,
+}
+
+impl ToolInput for SetWindowFrameInput {
+    const TOOL_NAME: &'static str = "set_window_frame";
+}
+
+/// Exact, immediate-child application menu path to resolve and invoke through
+/// the operating system's accessibility API. Path labels are matched after
+/// trimming surrounding whitespace and otherwise remain case-sensitive.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct InvokeMenuInput {
+    #[schemars(schema_with = "positive_integer_schema")]
+    pub pid: u32,
+    #[schemars(schema_with = "positive_integer_schema")]
+    pub window_id: u64,
+    #[schemars(schema_with = "menu_path_schema")]
+    pub path: Vec<String>,
+    /// Optional session id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "string_schema")]
+    pub session: Option<String>,
+}
+
+impl ToolInput for InvokeMenuInput {
+    const TOOL_NAME: &'static str = "invoke_menu";
 }
 
 impl ToolInput for MoveCursorInput {

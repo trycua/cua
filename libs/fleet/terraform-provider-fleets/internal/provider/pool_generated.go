@@ -29,10 +29,9 @@ type poolResourceModel struct {
 	Firmware           types.String         `tfsdk:"firmware"`
 	ReadinessProbeJSON jsontypes.Normalized `tfsdk:"readiness_probe_json"`
 	LivenessProbeJSON  jsontypes.Normalized `tfsdk:"liveness_probe_json"`
-	Phase              types.String         `tfsdk:"phase"`
-	TotalCount         types.Int64          `tfsdk:"total_count"`
-	AvailableCount     types.Int64          `tfsdk:"available_count"`
-	ClaimedCount       types.Int64          `tfsdk:"claimed_count"`
+	TemplateName       types.String         `tfsdk:"template_name"`
+	CurrentReplicas    types.Int64          `tfsdk:"current_replicas"`
+	ReadyReplicas      types.Int64          `tfsdk:"ready_replicas"`
 	Services           types.Set            `tfsdk:"service"`
 	Autoscaling        types.Object         `tfsdk:"autoscaling"`
 }
@@ -50,24 +49,23 @@ type autoscalingModel struct {
 }
 
 func poolResourceSchema() schema.Schema {
-	return schema.Schema{Description: "A Cyclops computer-use pool. The pool name also owns its same-named namespace.",
+	return schema.Schema{Description: "A Cua Fleet computer-use pool: an OSGymSandboxWarmPool and its OSGymSandboxTemplate. The pool name also owns its same-named namespace.",
 		Attributes: map[string]schema.Attribute{
 			"id":                   schema.StringAttribute{Computed: true},
 			"name":                 schema.StringAttribute{Required: true, Description: "DNS label used for both pool and namespace.", Validators: []validator.String{stringvalidator.LengthBetween(1, 63), stringvalidator.RegexMatches(dnsLabelRegex, "must be a lowercase DNS label")}, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
 			"namespace":            schema.StringAttribute{Computed: true},
-			"replicas":             schema.Int64Attribute{Required: true, Validators: []validator.Int64{int64validator.AtLeast(0)}},
+			"replicas":             schema.Int64Attribute{Required: true, Description: "Desired number of pre-warmed OSGymSandboxes.", Validators: []validator.Int64{int64validator.AtLeast(0)}},
 			"cpu_cores":            schema.Int64Attribute{Required: true, Validators: []validator.Int64{int64validator.AtLeast(1)}},
 			"memory":               schema.StringAttribute{Required: true},
-			"container_disk_image": schema.StringAttribute{Required: true},
+			"container_disk_image": schema.StringAttribute{Required: true, Description: "KubeVirt containerDisk OCI image (runtime=kubevirt) or the sandbox pod image ref (runtime=macos/gvisor)."},
 			"image_pull_secret":    schema.StringAttribute{Optional: true, Computed: true, Description: "Kubernetes image pull secret. Defaults to ecr-credentials."},
-			"runtime":              schema.StringAttribute{Optional: true, Computed: true, Description: "Pool backend. \"kubevirt\" (default) provisions a KubeVirt\nVM. \"macos\" provisions a macOS sandbox (ADMIN-ONLY\n— the cyclops-cs backend rejects macos pool writes from\nnon-admins; the SPA hides the option). Flows verbatim\nthrough the compat shim into the OSGymSandboxTemplate\nvmTemplate, where macos_backend dispatches on it.", Validators: []validator.String{stringvalidator.OneOf("gvisor", "kubevirt", "macos")}},
-			"firmware":             schema.StringAttribute{Optional: true, Computed: true, Description: "VM firmware. Use \"efi\" for GPT/UEFI-only guest images\n(e.g. the dockur-built Windows desktop-workspace);\n\"bios\" is KubeVirt's default and what the Linux\nworkspace images boot with.", Validators: []validator.String{stringvalidator.OneOf("bios", "efi")}},
+			"runtime":              schema.StringAttribute{Optional: true, Computed: true, Description: "Pool backend runtime. \"kubevirt\" (default) reconciles each sandbox into a KubeVirt VM. \"macos\" reconciles it into a macOS sandbox (an agent-sandbox Sandbox on a macOS node); \"gvisor\" into a gVisor (runsc) pod on the gVisor K3s workers (also an agent-sandbox Sandbox). For the pod runtimes containerDiskImage is the pod image ref and firmware/cpuCores/memory are advisory.", Validators: []validator.String{stringvalidator.OneOf("gvisor", "kubevirt", "macos")}},
+			"firmware":             schema.StringAttribute{Optional: true, Computed: true, Description: "VM firmware. Use \"efi\" for GPT/UEFI-only guest images (e.g. the dockur-built Windows desktop-workspace); \"bios\" is KubeVirt's default and what the Linux workspace images boot with.", Validators: []validator.String{stringvalidator.OneOf("bios", "efi")}},
 			"readiness_probe_json": schema.StringAttribute{Optional: true, CustomType: jsontypes.NormalizedType{}, Description: "JSON object for the VMI readinessProbe."},
 			"liveness_probe_json":  schema.StringAttribute{Optional: true, CustomType: jsontypes.NormalizedType{}, Description: "JSON object for the VMI livenessProbe."},
-			"phase":                schema.StringAttribute{Computed: true},
-			"total_count":          schema.Int64Attribute{Computed: true},
-			"available_count":      schema.Int64Attribute{Computed: true},
-			"claimed_count":        schema.Int64Attribute{Computed: true},
+			"template_name":        schema.StringAttribute{Computed: true, Description: "Name of the OSGymSandboxTemplate backing this pool."},
+			"current_replicas":     schema.Int64Attribute{Computed: true, Description: "Sandboxes the warm pool currently owns."},
+			"ready_replicas":       schema.Int64Attribute{Computed: true, Description: "Sandboxes that are ready to be claimed."},
 		},
 		Blocks: map[string]schema.Block{
 			"service": schema.SetNestedBlock{NestedObject: schema.NestedBlockObject{Attributes: map[string]schema.Attribute{

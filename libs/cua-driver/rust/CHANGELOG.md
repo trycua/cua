@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.17.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.16.0...cua-driver-rs-v0.17.0) (2026-08-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cua-driver:** make native desktop actions snapshot-safe ([#2783](https://github.com/trycua/cua/issues/2783))
+
+### Features
+
+* **cua-driver:** make native desktop actions snapshot-safe ([#2783](https://github.com/trycua/cua/issues/2783)) ([d8ae6df](https://github.com/trycua/cua/commit/d8ae6df643df5049505a327b88abc2644a25b209))
+* **cua-driver:** make native selection and editing foreground-safe ([#2789](https://github.com/trycua/cua/issues/2789)) ([815013a](https://github.com/trycua/cua/commit/815013a88c02d2c8c3e40f98d41fac84f037f91d))
+
+
+### Bug Fixes
+
+* **cua-driver:** focus exact target for native menus ([#2788](https://github.com/trycua/cua/issues/2788)) ([2269fa3](https://github.com/trycua/cua/commit/2269fa352a801bcf1505ac3af8b125db742a4b82))
+
+## [0.16.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.15.0...cua-driver-rs-v0.16.0) (2026-08-01)
+
+
+### Features
+
+* **cua-driver:** add verified semantic window framing ([#2772](https://github.com/trycua/cua/issues/2772)) ([fb39144](https://github.com/trycua/cua/commit/fb3914475b9cba97376a6b9b739077cc0994d15f))
+
+
+### Bug Fixes
+
+* **cua-driver:** prefer semantic routes before GUI fallback ([6f2faf9](https://github.com/trycua/cua/commit/6f2faf9f9c0ea2db3d0b731d45c6d80a9de23db5))
+
 ## [0.15.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.14.2...cua-driver-rs-v0.15.0) (2026-08-01)
 
 

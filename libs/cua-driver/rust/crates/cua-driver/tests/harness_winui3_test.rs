@@ -260,6 +260,7 @@ fn harness_winui3_type_text() {
             "type_text",
             serde_json::json!({
                 "pid": pid as i64, "window_id": wid, "element_index": idx,
+                "snapshot_id": snap.snapshot_id(),
                 "text": "winui3-typed", "delivery_mode": "background"
             }),
         );
@@ -293,6 +294,7 @@ fn harness_winui3_xaml_popup_open() {
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "background"
                 }),
             );
@@ -335,6 +337,7 @@ fn harness_winui3_checkbox_toggle() {
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "background"
                 }),
             );
@@ -374,6 +377,7 @@ fn harness_winui3_radio_select() {
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "background"
                 }),
             );
@@ -425,6 +429,7 @@ fn harness_winui3_slider_set_value() {
                 "set_value",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "snapshot_id": snap.snapshot_id(),
                     "value": "42"
                 }),
             );
@@ -471,6 +476,7 @@ fn harness_winui3_combo_select() {
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": combo_idx,
+                    "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "background"
                 }),
             );
@@ -488,6 +494,7 @@ fn harness_winui3_combo_select() {
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": item_idx,
+                    "snapshot_id": snap2.snapshot_id(),
                     "delivery_mode": "background"
                 }),
             );

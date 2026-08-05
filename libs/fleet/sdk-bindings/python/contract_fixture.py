@@ -2,9 +2,9 @@ import asyncio
 import json
 from dataclasses import dataclass
 
-from cyclops_sdk import (ClaimSpec, CreateClaimRequest, CreatePoolRequest, CyclopsClient,
-    CyclopsConfiguration, CyclopsCredentials, HttpClient, HttpRequest, HttpResponse, PoolSpec,
-    PoolTemplate, Sandbox, SandboxService, SandboxTemplateRef, VmTemplate)
+from fleet_sdk import (ClaimSpec, CreateClaimRequest, CreatePoolRequest, CyclopsClient,
+    CyclopsConfiguration, CyclopsCredentials, HttpClient, HttpRequest, HttpResponse,
+    OsGymSandboxWarmPoolSpec, Sandbox, SandboxTemplateRef, VmTemplate)
 
 BASE = 'https://cyclops.invalid'
 TOKEN = 'https://keycloak.invalid/realms/offline/protocol/openid-connect/token'
@@ -41,7 +41,7 @@ class ScriptedHttpClient(HttpClient):
         assert not self.expected, self.expected
 
 def token_expected():
-    return Expected('POST', TOKEN, [('accept', 'application/json'), ('content-type', 'application/x-www-form-urlencoded')], b'grant_type=client_credentials&client_id=client-id&client_secret=client-secret', 200, {'access_token': 'offline-token', 'expires_in': 3600})
+    return Expected('POST', TOKEN, [('accept', 'application/json'), ('content-type', 'application/x-www-form-urlencoded'), ('authorization', 'Basic Y2xpZW50LWlkOmNsaWVudC1zZWNyZXQ=')], b'grant_type=client_credentials', 200, {'access_token': 'offline-token', 'expires_in': 3600})
 
 def service_expected(body, response):
     return Expected('POST', SERVICE_URL, SERVICE_HEADERS, body, 202, response)
@@ -56,10 +56,13 @@ def service_request(body):
     return HttpRequest(method='POST', url='https://ignored.invalid/mcp', headers=[], body=body)
 
 def pool_spec():
-    return PoolSpec(replicas=1, template=PoolTemplate(runtime=None, runtime_class_name=None, node_selector=None, tolerations=None, command=None, container_disk_image='registry.example/desktop:offline', image_pull_secret=None, cpu_cores=None, memory=None, firmware=None, probes=None, oidc=None), autoscaling=None, services=[SandboxService(name='mcp', target_port=8080, protocol=None)])
+    return OsGymSandboxWarmPoolSpec(replicas=1, sandbox_template_ref=SandboxTemplateRef(name='default'), autoscaling=None)
 
 def pool_response():
-    return {'apiVersion': 'cua.ai/v1', 'kind': 'OSGymWorkspacePool', 'metadata': {'namespace': 'default', 'name': 'default', 'labels': None}, 'spec': {'replicas': 1, 'template': {'containerDiskImage': 'registry.example/desktop:offline'}, 'services': [{'name': 'mcp', 'targetPort': 8080}]}, 'status': None}
+    return {'apiVersion': 'osgym.cua.ai/v1alpha1', 'kind': 'OSGymSandboxWarmPool', 'metadata': {'namespace': 'default', 'name': 'default', 'labels': None}, 'spec': {'replicas': 1, 'sandboxTemplateRef': {'name': 'default'}}, 'status': None}
+
+def template_response():
+    return {'apiVersion': 'osgym.cua.ai/v1alpha1', 'kind': 'OSGymSandboxTemplate', 'metadata': {'namespace': 'default', 'name': 'default', 'labels': None}, 'spec': {'vmTemplate': {'containerDiskImage': 'registry.example/desktop:offline', 'services': [{'name': 'mcp', 'targetPort': 8080}]}}}
 
 def claim_response(bound=False):
     result = {'apiVersion': 'osgym.cua.ai/v1alpha1', 'kind': 'OSGymSandboxClaim', 'metadata': {'namespace': 'default', 'name': 'default', 'labels': None}, 'spec': {'sandboxTemplateRef': {'name': 'default'}}, 'status': None}
@@ -71,14 +74,15 @@ def expected_lifecycle():
     pool_body = json.dumps(pool_response(), separators=(',', ':')).encode()
     claim_body = b'{"apiVersion":"osgym.cua.ai/v1alpha1","kind":"OSGymSandboxClaim","metadata":{"namespace":"default","name":"claim-1","labels":null},"spec":{"sandboxTemplateRef":{"name":"default"}},"status":null}'
     claim_url = f'{BASE}/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxclaims/default'
-    pool_url = f'{BASE}/api/k8s/apis/cua.ai/v1/namespaces/default/osgymworkspacepools/default'
+    pool_url = f'{BASE}/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxwarmpools/default'
+    template_url = f'{BASE}/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxtemplates/default'
     return [
         token_expected(),
         Expected('POST', f'{BASE}/api/namespaces', JSON_HEADERS, b'{"name":"default"}', 201, {}),
         Expected('POST', pool_url.removesuffix('/default'), JSON_HEADERS, pool_body, 201, pool_response()),
         Expected('POST', claim_url.removesuffix('/default'), JSON_HEADERS, claim_body, 201, claim_response()),
         Expected('GET', claim_url, JSON_HEADERS, None, 200, claim_response(True)),
-        Expected('GET', pool_url, JSON_HEADERS, None, 200, pool_response()),
+        Expected('GET', template_url, JSON_HEADERS, None, 200, template_response()),
         service_expected(b'{"offline":true}', b'offline service accepted'),
         Expected('DELETE', claim_url, JSON_HEADERS, None, 204, b''),
         Expected('DELETE', pool_url, JSON_HEADERS, None, 204, b''),

@@ -13,9 +13,9 @@ TRAIN_SOURCE_ROOT = REPOSITORY_ROOT / "libs/python/cua-train/src"
 def test_package_metadata_pins_binding_bearing_cua_train() -> None:
     project = tomllib.loads((PACKAGE_ROOT / "pyproject.toml").read_text())["project"]
 
-    assert project["version"] == "0.0.7"
+    assert project["version"] == "0.0.10"
     assert project["requires-python"] == ">=3.10"
-    assert project["dependencies"] == ["cua-train==0.1.3"]
+    assert project["dependencies"] == ["cua-train==0.1.6"]
 
 
 def test_cua_fleet_reexports_train_client(monkeypatch) -> None:
@@ -29,4 +29,4 @@ def test_cua_fleet_reexports_train_client(monkeypatch) -> None:
 
     assert cua_fleet.TrainClient is cua_train.TrainClient
     assert cua_fleet.__all__ == ["TrainClient"]
-    assert cua_fleet.__version__ == "0.0.7"
+    assert cua_fleet.__version__ == "0.0.10"

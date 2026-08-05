@@ -90,7 +90,7 @@ jobs:
 
   native:
     if: inputs.lane == 'all' || inputs.lane == 'native'
-    name: "Linux / GTK3 native harness"
+    name: "Linux / GTK3 + GTK4 native harnesses"
     needs: source
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -106,11 +106,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             xvfb dbus-x11 at-spi2-core openbox picom python3-gi gir1.2-gtk-3.0 \
+            gir1.2-gtk-4.0 \
             libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev \
             libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
             libwebkit2gtk-4.1-dev libssl-dev libxdo-dev \
             libayatana-appindicator3-dev librsvg2-dev ffmpeg
-      - name: Run GTK3 native Rust harness
+      - name: Run GTK3 and GTK4 native Rust harnesses
         env:
           CUA_E2E_INTERNAL_LANE: native
         run: |

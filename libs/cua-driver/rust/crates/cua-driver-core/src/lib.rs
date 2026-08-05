@@ -47,6 +47,7 @@ pub fn parent_liveness_stdin_enabled() -> bool {
 
 pub mod action_record;
 pub mod authorization;
+pub mod background_input;
 pub mod browser;
 pub mod capture_mode;
 pub mod capture_scope;
@@ -57,6 +58,7 @@ pub mod cursor_events;
 pub mod cursor_sampler;
 pub mod daemon;
 pub mod element_cache;
+pub mod element_query;
 pub mod element_token;
 pub mod expectation;
 pub mod ffmpeg_install;

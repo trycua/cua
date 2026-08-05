@@ -1,6 +1,6 @@
 # Terraform Provider for Cua Fleets
 
-This provider manages `OSGymWorkspacePool` resources through the Fleet API. It uses the same user-key OAuth credentials and tenant-scoped authorization as the Fleet Python SDK and dashboard.
+This provider manages `OSGymSandboxWarmPool` and `OSGymSandboxTemplate` resources through the Fleet API. It uses the same user-key OAuth credentials and tenant-scoped authorization as the Fleet Python SDK and dashboard.
 
 ## Temporary local installation (until Registry publication)
 
@@ -111,6 +111,12 @@ public Registry, and `terraform providers` should list
 ## Development
 
 ```bash
+native="$(../scripts/build-sdk-bindings-native.sh)"
+native_dir="$(dirname "$native")"
+export CGO_CFLAGS="-I../sdk-bindings/go-uniffi/fleet_sdk -I../sdk-bindings/go-uniffi/cyclops_sdk_schema"
+export CGO_LDFLAGS="-L$native_dir -lcyclops_sdk -Wl,-rpath,$native_dir"
+export LD_LIBRARY_PATH="$native_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
 go test ./...
 go build ./...
 
@@ -119,7 +125,7 @@ KUBEBUILDER_ASSETS="$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@
   TF_ACC=1 go test -tags=acceptance ./internal/provider -run TestAccPoolLifecycle -v
 ```
 
-The provider source address is `trycua/fleets`. A pool owns the same-named Fleet namespace: create bootstraps the namespace, and destroy deletes the pool followed by that namespace.
+The provider source address is `trycua/fleets`. One `fleets_pool` is a pair of native CRs in the same namespace: an `OSGymSandboxWarmPool` named after the pool and the `OSGymSandboxTemplate` it references, named `<pool>-template`. A pool owns the same-named Fleet namespace: creating the warm pool bootstraps the namespace before the template is written into it, and destroy deletes the template, then the pool, then that namespace.
 
 ## Authentication
 
@@ -137,8 +143,8 @@ All provider arguments support environment variables:
 
 The Terraform models, schema, CRD-derived descriptions, enum validators, numeric validators, and nested object types are generated deterministically from:
 
-- `clusters/base/osgym/crd.yaml`, the production `OSGymWorkspacePool` CRD
-- `internal/provider/generate/pool_mapping.json`, the explicit CRD-to-Terraform shape mapping
+- `clusters/base/osgym/crd.yaml`, the production CRD bundle; the generator reads the `v1alpha1` schemas of `osgymsandboxwarmpools.osgym.cua.ai` and `osgymsandboxtemplates.osgym.cua.ai`
+- `internal/provider/generate/pool_mapping.json`, the explicit CRD-to-Terraform shape mapping. Every mapped attribute names the CR it lives in with `"cr": "warmpool"` or `"cr": "template"`
 
 Run:
 

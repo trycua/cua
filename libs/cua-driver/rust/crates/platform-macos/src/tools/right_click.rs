@@ -45,14 +45,9 @@ fn def() -> &'static ToolDef {
             "properties": {
                 "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
                 "pid": { "type": "integer", "description": "Target process ID." },
-                "element_index": {
-                    "type": "integer",
-                    "description": "Element index from last get_window_state. Routes through AXShowMenu. REQUIRES `pid` and `window_id` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op."
-                },
-                "element_token": {
-                    "type": "string",
-                    "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."
-                },
+                "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                 "window_id": {
                     "type": "integer",
                     "description": "CGWindowID. Required when element_index is used. Optional when element_token is supplied (the token carries it)."
@@ -108,6 +103,7 @@ impl Tool for RightClickTool {
             pid,
             element_index_arg,
             element_token_arg.as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
             window_id_arg,
             "right_click",
         ) {
@@ -157,6 +153,18 @@ impl Tool for RightClickTool {
             };
             let element_ptr = element_guard.as_ptr();
 
+            let _mutation_lease = match super::gate_background_window_action(
+                pid,
+                wid,
+                Some(element_ptr),
+                cua_driver_core::background_input::BackgroundAction::AxSemantic,
+            )
+            .await
+            {
+                Ok(lease) => lease,
+                Err(refusal_result) => return refusal_result,
+            };
+
             let result =
                 tokio::task::spawn_blocking(move || ax_show_menu(element_ptr, idx, pid, wid)).await;
 
@@ -180,11 +188,46 @@ impl Tool for RightClickTool {
         // refuses a window with no live frame).
         let (screen_x, screen_y, win_local_x, win_local_y) = if let Some(wid) = window_id {
             match super::px_frame::resolve_or_refuse(wid).await {
-                Ok(frame) => frame.to_screen(cx, cy),
+                Ok(frame) => {
+                    let translated = frame.to_screen(cx, cy);
+                    if !delivery_mode.is_foreground()
+                        && (translated.2 < 0.0
+                            || translated.3 < 0.0
+                            || translated.2 > frame.bounds.width
+                            || translated.3 > frame.bounds.height)
+                    {
+                        return ToolResult::error(format!(
+                            "right_click: window-local point ({:.1}, {:.1}) pt lies outside \
+                             window {wid}'s {:.0}×{:.0} pt frame; background delivery refused",
+                            translated.2, translated.3, frame.bounds.width, frame.bounds.height
+                        ));
+                    }
+                    translated
+                }
                 Err(refusal) => return refusal,
             }
         } else {
             (cx, cy, cx, cy)
+        };
+
+        let _mutation_lease = if !delivery_mode.is_foreground() {
+            if let Some(wid) = window_id {
+                match super::gate_background_window_action(
+                    pid,
+                    wid,
+                    None,
+                    cua_driver_core::background_input::BackgroundAction::WindowPointer,
+                )
+                .await
+                {
+                    Ok(lease) => Some(lease),
+                    Err(refusal_result) => return refusal_result,
+                }
+            } else {
+                None
+            }
+        } else {
+            None
         };
 
         // Pin overlay above the target window before animating.

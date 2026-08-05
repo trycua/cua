@@ -324,28 +324,6 @@ end
     end
   end
 
-  # The Record type OSGymWorkspacePoolStatus.
-
-  def self.check_lower_TypeOSGymWorkspacePoolStatus(v)
-    RustBuffer.check_lower_Optionalstring(v.phase)
-    RustBuffer.check_lower_Optionalu32(v.total_count)
-    RustBuffer.check_lower_Optionalu32(v.available_count)
-    RustBuffer.check_lower_Optionalu32(v.claimed_count)
-  end
-
-  def self.alloc_from_TypeOSGymWorkspacePoolStatus(v)
-    RustBuffer.allocWithBuilder do |builder|
-      builder.write_TypeOSGymWorkspacePoolStatus(v)
-      return builder.finalize
-    end
-  end
-
-  def consumeIntoTypeOSGymWorkspacePoolStatus
-    consumeWithStream do |stream|
-      return stream.readTypeOSGymWorkspacePoolStatus
-    end
-  end
-
   # The Record type OidcConfig.
 
   def self.check_lower_TypeOidcConfig(v)
@@ -366,58 +344,6 @@ end
   def consumeIntoTypeOidcConfig
     consumeWithStream do |stream|
       return stream.readTypeOidcConfig
-    end
-  end
-
-  # The Record type PoolSpec.
-
-  def self.check_lower_TypePoolSpec(v)
-
-    RustBuffer.check_lower_TypePoolTemplate(v.template)
-    RustBuffer.check_lower_OptionalTypeWarmPoolAutoscaling(v.autoscaling)
-    RustBuffer.check_lower_OptionalSequenceTypeSandboxService(v.services)
-  end
-
-  def self.alloc_from_TypePoolSpec(v)
-    RustBuffer.allocWithBuilder do |builder|
-      builder.write_TypePoolSpec(v)
-      return builder.finalize
-    end
-  end
-
-  def consumeIntoTypePoolSpec
-    consumeWithStream do |stream|
-      return stream.readTypePoolSpec
-    end
-  end
-
-  # The Record type PoolTemplate.
-
-  def self.check_lower_TypePoolTemplate(v)
-    RustBuffer.check_lower_OptionalTypeRuntimeKind(v.runtime)
-    RustBuffer.check_lower_Optionalstring(v.runtime_class_name)
-    RustBuffer.check_lower_OptionalMapStringString(v.node_selector)
-    RustBuffer.check_lower_OptionalSequenceTypePreservedJson(v.tolerations)
-    RustBuffer.check_lower_OptionalSequencestring(v.command)
-
-    RustBuffer.check_lower_Optionalstring(v.image_pull_secret)
-    RustBuffer.check_lower_Optionalu32(v.cpu_cores)
-    RustBuffer.check_lower_Optionalstring(v.memory)
-    RustBuffer.check_lower_OptionalTypeFirmware(v.firmware)
-    RustBuffer.check_lower_OptionalTypePreservedJson(v.probes)
-    RustBuffer.check_lower_OptionalTypeOidcConfig(v.oidc)
-  end
-
-  def self.alloc_from_TypePoolTemplate(v)
-    RustBuffer.allocWithBuilder do |builder|
-      builder.write_TypePoolTemplate(v)
-      return builder.finalize
-    end
-  end
-
-  def consumeIntoTypePoolTemplate
-    consumeWithStream do |stream|
-      return stream.readTypePoolTemplate
     end
   end
 
@@ -1107,10 +1033,6 @@ class RustBufferStream
     unpack_from 4, 'L>'
   end
 
-  def readU64
-    unpack_from 8, 'Q>'
-  end
-
   def readBool
     v = unpack_from 1, 'c'
 
@@ -1238,17 +1160,6 @@ class RustBufferStream
     )
   end
 
-  # The Record type OSGymWorkspacePoolStatus.
-
-  def readTypeOSGymWorkspacePoolStatus
-    OSGymWorkspacePoolStatus.new(
-      phase: readOptionalstring,
-      total_count: readOptionalu32,
-      available_count: readOptionalu32,
-      claimed_count: readOptionalu32
-    )
-  end
-
   # The Record type OidcConfig.
 
   def readTypeOidcConfig
@@ -1258,36 +1169,6 @@ class RustBufferStream
       aws_role_arn: readOptionalstring,
       aws_region: readOptionalstring,
       refresh_interval_seconds: readOptionalu32
-    )
-  end
-
-  # The Record type PoolSpec.
-
-  def readTypePoolSpec
-    PoolSpec.new(
-      replicas: readU32,
-      template: readTypePoolTemplate,
-      autoscaling: readOptionalTypeWarmPoolAutoscaling,
-      services: readOptionalSequenceTypeSandboxService
-    )
-  end
-
-  # The Record type PoolTemplate.
-
-  def readTypePoolTemplate
-    PoolTemplate.new(
-      runtime: readOptionalTypeRuntimeKind,
-      runtime_class_name: readOptionalstring,
-      node_selector: readOptionalMapStringString,
-      tolerations: readOptionalSequenceTypePreservedJson,
-      command: readOptionalSequencestring,
-      container_disk_image: readString,
-      image_pull_secret: readOptionalstring,
-      cpu_cores: readOptionalu32,
-      memory: readOptionalstring,
-      firmware: readOptionalTypeFirmware,
-      probes: readOptionalTypePreservedJson,
-      oidc: readOptionalTypeOidcConfig
     )
   end
 
@@ -1812,11 +1693,6 @@ class RustBufferBuilder
     pack_into(4, 'L>', v)
   end
 
-  def write_U64(v)
-    v = CyclopsSdkSchema::uniffi_in_range(v, "u64", 0, 2**64)
-    pack_into(8, 'Q>', v)
-  end
-
   def write_Bool(v)
     pack_into(1, 'c', v ? 1 : 0)
   end
@@ -1917,15 +1793,6 @@ class RustBufferBuilder
     self.write_Optionalstring(v.selector)
   end
 
-  # The Record type OSGymWorkspacePoolStatus.
-
-  def write_TypeOSGymWorkspacePoolStatus(v)
-    self.write_Optionalstring(v.phase)
-    self.write_Optionalu32(v.total_count)
-    self.write_Optionalu32(v.available_count)
-    self.write_Optionalu32(v.claimed_count)
-  end
-
   # The Record type OidcConfig.
 
   def write_TypeOidcConfig(v)
@@ -1934,32 +1801,6 @@ class RustBufferBuilder
     self.write_Optionalstring(v.aws_role_arn)
     self.write_Optionalstring(v.aws_region)
     self.write_Optionalu32(v.refresh_interval_seconds)
-  end
-
-  # The Record type PoolSpec.
-
-  def write_TypePoolSpec(v)
-    self.write_U32(v.replicas)
-    self.write_TypePoolTemplate(v.template)
-    self.write_OptionalTypeWarmPoolAutoscaling(v.autoscaling)
-    self.write_OptionalSequenceTypeSandboxService(v.services)
-  end
-
-  # The Record type PoolTemplate.
-
-  def write_TypePoolTemplate(v)
-    self.write_OptionalTypeRuntimeKind(v.runtime)
-    self.write_Optionalstring(v.runtime_class_name)
-    self.write_OptionalMapStringString(v.node_selector)
-    self.write_OptionalSequenceTypePreservedJson(v.tolerations)
-    self.write_OptionalSequencestring(v.command)
-    self.write_String(v.container_disk_image)
-    self.write_Optionalstring(v.image_pull_secret)
-    self.write_Optionalu32(v.cpu_cores)
-    self.write_Optionalstring(v.memory)
-    self.write_OptionalTypeFirmware(v.firmware)
-    self.write_OptionalTypePreservedJson(v.probes)
-    self.write_OptionalTypeOidcConfig(v.oidc)
   end
 
   # The Record type SandboxService.
@@ -2428,15 +2269,6 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_schema_fn_method_preservedjson_to_json,
     [:uint64, RustCallStatus.by_ref],
     RustBuffer.by_value
-  attach_function :uniffi_cyclops_sdk_schema_fn_method_poolspec_uniffi_trait_eq_eq,
-    [RustBuffer.by_value, RustBuffer.by_value, RustCallStatus.by_ref],
-    :int8
-  attach_function :uniffi_cyclops_sdk_schema_fn_method_poolspec_uniffi_trait_eq_ne,
-    [RustBuffer.by_value, RustBuffer.by_value, RustCallStatus.by_ref],
-    :int8
-  attach_function :uniffi_cyclops_sdk_schema_fn_method_poolspec_uniffi_trait_hash,
-    [RustBuffer.by_value, RustCallStatus.by_ref],
-    :uint64
   attach_function :ffi_cyclops_sdk_schema_rustbuffer_alloc,
     [:uint64, RustCallStatus.by_ref],
     RustBuffer.by_value
@@ -2935,125 +2767,6 @@ class WarmPoolAutoscaling
       return false
     end
     if @max_pool_size != other.max_pool_size
-      return false
-    end
-
-    true
-  end
-end
-
-  # Record type OSGymWorkspacePoolStatus
-class OSGymWorkspacePoolStatus
-  attr_reader :phase, :total_count, :available_count, :claimed_count
-
-  def initialize(phase:, total_count:, available_count:, claimed_count:)
-    @phase = phase
-    @total_count = total_count
-    @available_count = available_count
-    @claimed_count = claimed_count
-  end
-
-  def ==(other)
-    if @phase != other.phase
-      return false
-    end
-    if @total_count != other.total_count
-      return false
-    end
-    if @available_count != other.available_count
-      return false
-    end
-    if @claimed_count != other.claimed_count
-      return false
-    end
-
-    true
-  end
-end
-
-  # Record type PoolSpec
-class PoolSpec
-  attr_reader :replicas, :template, :autoscaling, :services
-
-  def initialize(replicas:, template:, autoscaling:, services:)
-    @replicas = replicas
-    @template = template
-    @autoscaling = autoscaling
-    @services = services
-  end
-
-  def ==(other)
-    if @replicas != other.replicas
-      return false
-    end
-    if @template != other.template
-      return false
-    end
-    if @autoscaling != other.autoscaling
-      return false
-    end
-    if @services != other.services
-      return false
-    end
-
-    true
-  end
-end
-
-  # Record type PoolTemplate
-class PoolTemplate
-  attr_reader :runtime, :runtime_class_name, :node_selector, :tolerations, :command, :container_disk_image, :image_pull_secret, :cpu_cores, :memory, :firmware, :probes, :oidc
-
-  def initialize(runtime:, runtime_class_name:, node_selector:, tolerations:, command:, container_disk_image:, image_pull_secret:, cpu_cores:, memory:, firmware:, probes:, oidc:)
-    @runtime = runtime
-    @runtime_class_name = runtime_class_name
-    @node_selector = node_selector
-    @tolerations = tolerations
-    @command = command
-    @container_disk_image = container_disk_image
-    @image_pull_secret = image_pull_secret
-    @cpu_cores = cpu_cores
-    @memory = memory
-    @firmware = firmware
-    @probes = probes
-    @oidc = oidc
-  end
-
-  def ==(other)
-    if @runtime != other.runtime
-      return false
-    end
-    if @runtime_class_name != other.runtime_class_name
-      return false
-    end
-    if @node_selector != other.node_selector
-      return false
-    end
-    if @tolerations != other.tolerations
-      return false
-    end
-    if @command != other.command
-      return false
-    end
-    if @container_disk_image != other.container_disk_image
-      return false
-    end
-    if @image_pull_secret != other.image_pull_secret
-      return false
-    end
-    if @cpu_cores != other.cpu_cores
-      return false
-    end
-    if @memory != other.memory
-      return false
-    end
-    if @firmware != other.firmware
-      return false
-    end
-    if @probes != other.probes
-      return false
-    end
-    if @oidc != other.oidc
       return false
     end
 

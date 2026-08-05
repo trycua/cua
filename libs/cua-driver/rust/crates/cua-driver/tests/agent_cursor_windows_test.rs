@@ -42,8 +42,8 @@ fn agent_cursor_overlay_obeys_untargeted_and_targeted_z_order() {
         ],
     );
     execute_case(case, |evidence| {
-        let mut driver = McpDriver::spawn_named("windows-desktop-agent-cursor-px")
-            .expect("required source-built driver did not start");
+        let mut driver = McpDriver::spawn_named_with_overlay("windows-desktop-agent-cursor-px")
+            .expect("required source-built driver with cursor overlay did not start");
         *evidence = recording_evidence(driver.recording_dir());
         let (_target_profile, target) = launch_normal_window(&mut driver, "target");
         bring_to_front(&mut driver, target);
@@ -191,10 +191,14 @@ fn agent_cursor_overlay_obeys_untargeted_and_targeted_z_order() {
             "targeted click leaked into the independent foreground window: {}",
             foreground_state_after.tree_text()
         );
-        wait_until(Duration::from_secs(2), || {
-            window_is_above(overlay, HWND(target.native_id as *mut _))
-                && window_is_above(HWND(foreground.native_id as *mut _), overlay)
-        });
+        wait_until(
+            Duration::from_secs(2),
+            "target-bound overlay z-order",
+            || {
+                window_is_above(overlay, HWND(target.native_id as *mut _))
+                    && window_is_above(HWND(foreground.native_id as *mut _), overlay)
+            },
+        );
         assert_eq!(
             unsafe { GetForegroundWindow().0 as u64 },
             foreground.native_id,
@@ -241,8 +245,9 @@ fn agent_cursor_move_does_not_leak_input() {
         ],
     );
     execute_case(case, |evidence| {
-        let mut driver = McpDriver::spawn_named("windows-desktop-agent-cursor-no-input-leak")
-            .expect("required source-built driver did not start");
+        let mut driver =
+            McpDriver::spawn_named_with_overlay("windows-desktop-agent-cursor-no-input-leak")
+                .expect("required source-built driver with cursor overlay did not start");
         *evidence = recording_evidence(driver.recording_dir());
         let sentinel = ForegroundSentinel::launch(&mut driver);
         driver.start_behavior_recording();
@@ -381,9 +386,11 @@ fn bring_to_front(driver: &mut McpDriver, target: TargetWindow) {
         "bring_to_front failed: {}",
         response.text()
     );
-    wait_until(Duration::from_secs(2), || unsafe {
-        GetForegroundWindow().0 as u64 == target.native_id
-    });
+    wait_until(
+        Duration::from_secs(2),
+        "ordinary window foreground",
+        || unsafe { GetForegroundWindow().0 as u64 == target.native_id },
+    );
 }
 
 fn wait_for_overlay() -> HWND {
@@ -391,11 +398,15 @@ fn wait_for_overlay() -> HWND {
         .encode_wide()
         .collect();
     let mut overlay = HWND::default();
-    wait_until(Duration::from_secs(2), || {
-        overlay =
-            unsafe { FindWindowW(PCWSTR(class_name.as_ptr()), PCWSTR::null()) }.unwrap_or_default();
-        !overlay.0.is_null()
-    });
+    wait_until(
+        Duration::from_secs(2),
+        "agent cursor overlay window",
+        || {
+            overlay = unsafe { FindWindowW(PCWSTR(class_name.as_ptr()), PCWSTR::null()) }
+                .unwrap_or_default();
+            !overlay.0.is_null()
+        },
+    );
     overlay
 }
 
@@ -437,12 +448,12 @@ fn window_is_above(upper: HWND, lower: HWND) -> bool {
     }
 }
 
-fn wait_until(timeout: Duration, mut predicate: impl FnMut() -> bool) {
+fn wait_until(timeout: Duration, description: &str, mut predicate: impl FnMut() -> bool) {
     let deadline = Instant::now() + timeout;
     while !predicate() {
         assert!(
             Instant::now() < deadline,
-            "condition timed out after {timeout:?}"
+            "timed out after {timeout:?} waiting for {description}"
         );
         std::thread::sleep(Duration::from_millis(25));
     }

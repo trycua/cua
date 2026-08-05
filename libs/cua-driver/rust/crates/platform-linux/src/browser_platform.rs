@@ -892,6 +892,54 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         };
         let endpoint = match endpoint_result {
             Ok(endpoint) => endpoint,
+            // The toggle took, but no endpoint appeared. That is Chromium's
+            // documented-by-behaviour semantics rather than a failure: "Allow
+            // remote debugging for this browser instance" persists a preference
+            // that the browser acts on at its NEXT launch — verified on Chrome
+            // 151 by enabling it and observing no listener for 25s, then a
+            // listener on 127.0.0.1 plus a DevToolsActivePort file immediately
+            // after a restart with no --remote-debugging-port flag.
+            //
+            // Rolling back here erased the setting moments before the restart
+            // that would activate it, so this path could never succeed. Keep the
+            // preference, close the temporary tab, and tell the caller the one
+            // thing it needs to do. The profile is armed, not broken.
+            Err(error)
+                if enabled_remote_debugging
+                    && error.code == BrowserRefusalCode::BrowserRequiresSetup =>
+            {
+                let closed = tokio::task::spawn_blocking(move || handle.close_for_success())
+                    .await
+                    .map_err(|join_error| {
+                        refusal(
+                            BrowserRefusalCode::BrowserRouteUnavailable,
+                            format!("could not finish browser setup cleanup: {join_error}"),
+                        )
+                    })??;
+                return Err(refusal(
+                    BrowserRefusalCode::BrowserRequiresSetup,
+                    format!(
+                        "remote debugging is now enabled for this {} profile, but {} only opens \
+                         its debugging endpoint at startup. Restart the browser, then call \
+                         browser_prepare again — the setting persists and does not need to be \
+                         applied twice.",
+                        descriptor.product_name, descriptor.product_name
+                    ),
+                )
+                .with_detail(serde_json::json!({
+                    "restart_required": true,
+                    "remote_debugging_enabled": true,
+                    "setup_side_effects": {
+                        "opened_setup_page": opened_setup_page,
+                        "closed_setup_page": closed.unwrap_or(false),
+                        "enabled_remote_debugging": true,
+                        "restored_remote_debugging": false,
+                        "focused_setup_address_field": focused_setup_address_field,
+                        "foregrounded_window": foregrounded_window,
+                        "injected_global_input": injected_global_input,
+                    },
+                })));
+            }
             Err(error) => {
                 let error = tokio::task::spawn_blocking(move || handle.abort(error))
                     .await

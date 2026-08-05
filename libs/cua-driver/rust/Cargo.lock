@@ -1006,7 +1006,6 @@ dependencies = [
  "serde_json",
  "tar",
  "tempfile",
- "time",
  "tokio",
  "tokio-tungstenite",
  "tracing",

@@ -34,10 +34,10 @@ private-window-picker bypass dialog when ScreenCaptureKit is queried,
 `screen_recording_capturable: null` and
 `direct_capture_status: "not_checked"`. This preserves the command's read-only,
 no-prompt contract. After `permissions grant` completes a successful live
-probe, status also returns `direct_capture_verification` with the verification
-time and product bundle ID. That object is a historical observation; it does
-not turn the read-only status call into a claim about current ScreenCaptureKit
-readiness.
+probe, status also returns `direct_capture_verification` with
+`source: "permissions_grant"`. That object is a historical observation; it
+does not turn the read-only status call into a claim about current
+ScreenCaptureKit readiness.
 
 `permissions grant` never sends a prompt-capable request over the daemon
 socket. It launches a short-lived instance of the installed CuaDriver app

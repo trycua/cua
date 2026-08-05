@@ -70,11 +70,15 @@ jobs:
         run: cargo test -p cua-driver -p cua-driver-contract -p cua-driver-core -p cua-driver-testkit -p cursor-overlay -p cursor-theme-cli -p platform-linux --all-targets --locked
       - name: Run X11 overlay click-through regression
         working-directory: libs/cua-driver/rust
-        run: >-
-          xvfb-run -a --server-args="-screen 0 1920x1080x24"
-          cargo test -p platform-linux
-          x11_overlay_input_shape_stays_empty_and_clicks_pass_through_after_resize
-          --locked -- --ignored --nocapture
+        run: |
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            cargo test -p platform-linux \
+            x11_overlay_input_shape_stays_empty_and_clicks_pass_through_after_resize \
+            --locked -- --ignored --nocapture
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            cargo test -p platform-linux \
+            x11_overlay_owner_stays_click_through_across_cursor_lifecycle_and_randr \
+            --locked -- --ignored --nocapture
       - name: Run real uinput device-name regression
         working-directory: libs/cua-driver/rust
         run: |

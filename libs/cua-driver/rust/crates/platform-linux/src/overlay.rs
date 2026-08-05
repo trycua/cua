@@ -42,6 +42,9 @@ static CMD_RX_CELL: Mutex<Option<std::sync::mpsc::Receiver<OverlayMsg>>> = Mutex
 static RENDER: Mutex<Option<RenderMap>> = Mutex::new(None);
 static ARRIVAL_TX: Mutex<Option<HashMap<CursorKey, tokio::sync::oneshot::Sender<()>>>> =
     Mutex::new(None);
+#[cfg(all(test, target_os = "linux"))]
+static X11_RANDR_REPAIR_COUNT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 
 fn arrival_register(key: CursorKey, tx: tokio::sync::oneshot::Sender<()>) {
     let mut guard = ARRIVAL_TX.lock().unwrap();
@@ -1088,6 +1091,8 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
                 tracing::warn!("X11 overlay geometry repair failed; disabling overlay: {e}");
                 break;
             }
+            #[cfg(test)]
+            X11_RANDR_REPAIR_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             compositor_present = x11_compositor_present(&conn, screen_num);
             tracing::debug!(
                 width = geometry.0,
@@ -1559,6 +1564,11 @@ fn bgra_and_visible_shape(
 mod tests {
     use super::*;
 
+    fn drain_x11_test_events(conn: &impl x11rb::connection::Connection) -> anyhow::Result<()> {
+        while conn.poll_for_event()?.is_some() {}
+        Ok(())
+    }
+
     fn assert_x11_button_press_target(
         conn: &impl x11rb::connection::Connection,
         root: u32,
@@ -1569,6 +1579,7 @@ mod tests {
         };
         use x11rb::protocol::xtest::ConnectionExt as XtestConnectionExt;
 
+        drain_x11_test_events(conn)?;
         conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, x11rb::CURRENT_TIME, root, 50, 50, 0)?
             .check()?;
         conn.xtest_fake_input(BUTTON_PRESS_EVENT, 1, x11rb::CURRENT_TIME, root, 0, 0, 0)?
@@ -1594,6 +1605,223 @@ mod tests {
             }
         }
         anyhow::bail!("timed out waiting for an X11 button press")
+    }
+
+    #[test]
+    #[ignore = "requires a live X11 server with XTEST, Shape, and RandR (run under xvfb-run or XWayland)"]
+    fn x11_overlay_owner_stays_click_through_across_cursor_lifecycle_and_randr(
+    ) -> anyhow::Result<()> {
+        use x11rb::connection::Connection;
+        use x11rb::protocol::randr::ConnectionExt as RandrConnectionExt;
+        use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK};
+        use x11rb::protocol::xproto::{
+            AtomEnum, ConnectionExt as XprotoConnectionExt, CreateWindowAux, EventMask, MapState,
+            Window, WindowClass,
+        };
+
+        fn find_named_window(
+            conn: &impl Connection,
+            root: Window,
+            expected_name: &[u8],
+        ) -> anyhow::Result<Window> {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while Instant::now() < deadline {
+                for window in conn.query_tree(root)?.reply()?.children {
+                    let name = conn
+                        .get_property(
+                            false,
+                            window,
+                            AtomEnum::WM_NAME,
+                            AtomEnum::STRING,
+                            0,
+                            u32::MAX,
+                        )?
+                        .reply()?;
+                    if name.value == expected_name {
+                        return Ok(window);
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            anyhow::bail!(
+                "timed out waiting for X11 window {}",
+                String::from_utf8_lossy(expected_name)
+            )
+        }
+
+        fn wait_for_bounding_shape(
+            conn: &impl Connection,
+            overlay: Window,
+            should_be_empty: bool,
+            phase: &str,
+        ) -> anyhow::Result<()> {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while Instant::now() < deadline {
+                let shape = conn.shape_get_rectangles(overlay, SK::BOUNDING)?.reply()?;
+                if shape.rectangles.is_empty() == should_be_empty {
+                    return Ok(());
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            anyhow::bail!("overlay bounding shape did not settle during {phase}")
+        }
+
+        fn assert_click_through(
+            conn: &impl Connection,
+            root: Window,
+            overlay: Window,
+            target: Window,
+            phase: &str,
+        ) -> anyhow::Result<()> {
+            let attributes = conn.get_window_attributes(overlay)?.reply()?;
+            anyhow::ensure!(
+                attributes.map_state == MapState::VIEWABLE,
+                "overlay was not mapped during {phase}"
+            );
+            let input = conn.shape_get_rectangles(overlay, SK::INPUT)?.reply()?;
+            anyhow::ensure!(
+                input.rectangles.is_empty(),
+                "overlay exposed {} ShapeInput rectangles during {phase}",
+                input.rectangles.len()
+            );
+            assert_x11_button_press_target(conn, root, target).map_err(|error| {
+                anyhow::anyhow!("click delivery failed during {phase}: {error}")
+            })?;
+            eprintln!(
+                "{phase}: ShapeInput rectangles={}, click_target={target}",
+                input.rectangles.len()
+            );
+            Ok(())
+        }
+
+        fn wait_for_cursor_move_from(x: f64, y: f64, phase: &str) -> anyhow::Result<()> {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while Instant::now() < deadline {
+                let position = current_position();
+                if (position.0 - x).hypot(position.1 - y) > 32.0 {
+                    eprintln!(
+                        "{phase}: cursor moved from ({x}, {y}) to ({}, {})",
+                        position.0, position.1
+                    );
+                    return Ok(());
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            let position = current_position();
+            anyhow::bail!(
+                "cursor position remained ({}, {}) near ({x}, {y}) during {phase}",
+                position.0,
+                position.1
+            )
+        }
+
+        let (conn, screen_num) = x11rb::connect(None)?;
+        let screen = &conn.setup().roots[screen_num];
+        let root = screen.root;
+        let root_depth = screen.root_depth;
+        let root_visual = screen.root_visual;
+        let initial_width = screen.width_in_pixels;
+        let initial_height = screen.height_in_pixels;
+        let initial_mm_width = screen.width_in_millimeters;
+        let initial_mm_height = screen.height_in_millimeters;
+
+        let target = conn.generate_id()?;
+        conn.create_window(
+            root_depth,
+            target,
+            root,
+            0,
+            0,
+            400,
+            400,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            root_visual,
+            &CreateWindowAux::new().event_mask(EventMask::BUTTON_PRESS),
+        )?
+        .check()?;
+        conn.map_window(target)?.check()?;
+        conn.flush()?;
+
+        let cursor_id = "issue-1819-live-shape-probe";
+        let cfg = CursorConfig {
+            cursor_id: cursor_id.to_owned(),
+            ..CursorConfig::default()
+        };
+        init(cfg);
+        run_on_thread();
+
+        let title = format!("Cua.AgentCursorOverlay.{cursor_id}");
+        let overlay = find_named_window(&conn, root, title.as_bytes())?;
+        wait_for_bounding_shape(&conn, overlay, true, "daemon startup")?;
+        assert_click_through(&conn, root, overlay, target, "daemon startup")?;
+
+        send_command(OverlayCommand::SetEnabled(true));
+        send_command(OverlayCommand::SnapTo {
+            x: 160.0,
+            y: 160.0,
+            heading_radians: None,
+        });
+        wait_for_bounding_shape(&conn, overlay, false, "cursor show")?;
+        assert_click_through(&conn, root, overlay, target, "cursor show")?;
+
+        send_command(OverlayCommand::MoveTo {
+            x: 240.0,
+            y: 240.0,
+            end_heading_radians: std::f64::consts::FRAC_PI_4,
+        });
+        wait_for_cursor_move_from(160.0, 160.0, "cursor move")?;
+        wait_for_bounding_shape(&conn, overlay, false, "cursor move")?;
+        assert_click_through(&conn, root, overlay, target, "cursor move")?;
+
+        send_command(OverlayCommand::SetEnabled(false));
+        wait_for_bounding_shape(&conn, overlay, true, "cursor hide")?;
+        assert_click_through(&conn, root, overlay, target, "cursor hide")?;
+
+        send_command(OverlayCommand::SetEnabled(true));
+        send_command(OverlayCommand::SnapTo {
+            x: 160.0,
+            y: 160.0,
+            heading_radians: None,
+        });
+        wait_for_bounding_shape(&conn, overlay, false, "cursor reshow")?;
+
+        let repairs_before = X11_RANDR_REPAIR_COUNT.load(std::sync::atomic::Ordering::SeqCst);
+        conn.randr_set_screen_size(
+            root,
+            initial_width,
+            initial_height,
+            u32::from(initial_mm_width).saturating_add(1),
+            u32::from(initial_mm_height).saturating_add(1),
+        )?
+        .check()?;
+        conn.flush()?;
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let repairs_after = loop {
+            let repairs = X11_RANDR_REPAIR_COUNT.load(std::sync::atomic::Ordering::SeqCst);
+            if repairs > repairs_before {
+                break repairs;
+            }
+            if Instant::now() >= deadline {
+                anyhow::bail!("overlay owner did not repair after the RandR configuration event");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let geometry = conn.get_geometry(overlay)?.reply()?;
+        anyhow::ensure!(
+            geometry.width == initial_width && geometry.height == initial_height,
+            "overlay geometry became {}x{} after same-size RandR repair",
+            geometry.width,
+            geometry.height
+        );
+        eprintln!(
+            "RandR repair: count={repairs_after}, overlay_geometry={}x{}",
+            geometry.width, geometry.height
+        );
+        wait_for_bounding_shape(&conn, overlay, false, "RandR repair")?;
+        assert_click_through(&conn, root, overlay, target, "RandR repair")?;
+        Ok(())
     }
 
     #[test]

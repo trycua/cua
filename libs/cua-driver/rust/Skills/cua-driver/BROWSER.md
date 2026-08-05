@@ -296,9 +296,11 @@ cua-driver browser_click \
 
 `dom_event` calls the page element's click behavior without pretending that a
 trusted pointer event occurred. It requires a ref and is the full-background
-alternative where supported. Never silently change trust class after a
-refusal. Coordinate clicks accept viewport CSS `x` and `y`, but only on the
-trusted route; prefer refs.
+alternative where supported. Dispatch is not proof that the control activated:
+trust-gated controls can ignore synthetic events, so refresh page state and
+verify the expected postcondition. Never silently change trust class or
+foreground the browser after a refusal. Coordinate clicks accept viewport CSS
+`x` and `y`, but only on the trusted route; prefer refs.
 
 ### Type
 

@@ -1,11 +1,9 @@
-//! Bounded registry and read-only walker for AX windows without CGWindowID.
+//! Stateless, read-only observation of AX windows without CGWindowID.
 
 use super::bindings::*;
-use core_foundation::base::{CFEqual, CFRelease, CFRetain, CFTypeRef};
+use core_foundation::base::{CFRelease, CFTypeRef};
 use serde::Serialize;
-use std::{collections::VecDeque, sync::Mutex};
 
-const SURFACE_CAPACITY: usize = 64;
 const AX_MESSAGING_TIMEOUT_SECONDS: f32 = 2.0;
 
 fn is_surface_candidate(
@@ -15,169 +13,6 @@ fn is_surface_candidate(
     window_id: Option<u32>,
 ) -> bool {
     role == "AXWindow" && owner_pid == Some(requested_pid) && window_id.is_none()
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct SurfaceDescriptor {
-    pub surface_token: String,
-    pub pid: i32,
-    pub kind: &'static str,
-    pub role: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub subrole: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub identifier: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub frame: Option<[f64; 4]>,
-}
-
-struct SurfaceEntry {
-    descriptor: SurfaceDescriptor,
-    element_ptr: usize,
-}
-
-impl Drop for SurfaceEntry {
-    fn drop(&mut self) {
-        if self.element_ptr != 0 {
-            unsafe { CFRelease(self.element_ptr as CFTypeRef) };
-        }
-    }
-}
-
-#[derive(Default)]
-pub struct SurfaceRegistry {
-    entries: Mutex<VecDeque<SurfaceEntry>>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResolveError {
-    Stale,
-    ForeignPid,
-    InvalidElement,
-}
-
-pub struct RetainedSurface(usize);
-
-impl RetainedSurface {
-    pub fn as_ptr(&self) -> AXUIElementRef {
-        self.0 as AXUIElementRef
-    }
-}
-
-impl Drop for RetainedSurface {
-    fn drop(&mut self) {
-        if self.0 != 0 {
-            unsafe { CFRelease(self.0 as CFTypeRef) };
-        }
-    }
-}
-
-impl SurfaceRegistry {
-    pub fn discover(&self, pid: i32) -> Vec<SurfaceDescriptor> {
-        unsafe {
-            let application = AXUIElementCreateApplication(pid);
-            if application.is_null() {
-                return Vec::new();
-            }
-            let _ = AXUIElementSetMessagingTimeout(application, AX_MESSAGING_TIMEOUT_SECONDS);
-            super::enablement::ensure_chromium_ax_enabled(pid, application);
-            let windows = copy_ax_windows(application);
-            CFRelease(application as CFTypeRef);
-
-            let mut surfaces = Vec::new();
-            for window in windows {
-                let _ = AXUIElementSetMessagingTimeout(window, AX_MESSAGING_TIMEOUT_SECONDS);
-                let role = copy_string_attr(window, "AXRole").unwrap_or_default();
-                let mut owner_pid = 0;
-                let owner_pid = (AXUIElementGetPid(window, &mut owner_pid) == kAXErrorSuccess)
-                    .then_some(owner_pid);
-                if !is_surface_candidate(&role, owner_pid, pid, ax_get_window_id(window)) {
-                    CFRelease(window as CFTypeRef);
-                    continue;
-                }
-                surfaces.push(
-                    self.insert_owned(
-                        pid,
-                        window,
-                        role,
-                        copy_string_attr(window, "AXSubrole"),
-                        copy_string_attr(window, "AXTitle")
-                            .filter(|value| !value.trim().is_empty()),
-                        copy_string_attr(window, "AXIdentifier")
-                            .filter(|value| !value.trim().is_empty()),
-                        element_screen_rect(window),
-                    ),
-                );
-            }
-            surfaces
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn insert_owned(
-        &self,
-        pid: i32,
-        element: AXUIElementRef,
-        role: String,
-        subrole: Option<String>,
-        title: Option<String>,
-        identifier: Option<String>,
-        frame: Option<[f64; 4]>,
-    ) -> SurfaceDescriptor {
-        let mut entries = self.entries.lock().unwrap();
-        if let Some(existing) = entries.iter().find(|entry| {
-            entry.descriptor.pid == pid
-                && unsafe { CFEqual(entry.element_ptr as CFTypeRef, element as CFTypeRef) != 0 }
-        }) {
-            unsafe { CFRelease(element as CFTypeRef) };
-            return existing.descriptor.clone();
-        }
-
-        let descriptor = SurfaceDescriptor {
-            surface_token: format!("axw:{}", uuid::Uuid::new_v4()),
-            pid,
-            kind: "ax_window",
-            role,
-            subrole,
-            title,
-            identifier,
-            frame,
-        };
-        entries.push_back(SurfaceEntry {
-            descriptor: descriptor.clone(),
-            element_ptr: element as usize,
-        });
-        while entries.len() > SURFACE_CAPACITY {
-            entries.pop_front();
-        }
-        descriptor
-    }
-
-    pub fn resolve(&self, pid: i32, token: &str) -> Result<RetainedSurface, ResolveError> {
-        let entries = self.entries.lock().unwrap();
-        let Some(entry) = entries
-            .iter()
-            .find(|entry| entry.descriptor.surface_token == token)
-        else {
-            return Err(ResolveError::Stale);
-        };
-        if entry.descriptor.pid != pid {
-            return Err(ResolveError::ForeignPid);
-        }
-        let pointer = entry.element_ptr as AXUIElementRef;
-        let mut owner_pid = 0;
-        if unsafe { AXUIElementGetPid(pointer, &mut owner_pid) } != kAXErrorSuccess
-            || owner_pid != pid
-            || unsafe { copy_string_attr(pointer, "AXRole") }.as_deref() != Some("AXWindow")
-            || unsafe { ax_get_window_id(pointer) }.is_some()
-        {
-            return Err(ResolveError::InvalidElement);
-        }
-        unsafe { CFRetain(pointer as CFTypeRef) };
-        Ok(RetainedSurface(entry.element_ptr))
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -201,33 +36,103 @@ pub struct ObservationNode {
     pub selected: Option<bool>,
 }
 
-pub struct Observation {
+#[derive(Debug, Clone, Serialize)]
+pub struct SurfaceObservation {
+    pub kind: &'static str,
+    pub role: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subrole: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identifier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame: Option<[f64; 4]>,
     pub nodes: Vec<ObservationNode>,
     pub truncated: bool,
 }
 
-pub fn observe(
-    surface: &RetainedSurface,
+pub struct ObservationSet {
+    pub surfaces: Vec<SurfaceObservation>,
+    pub node_count: usize,
+    pub truncated: bool,
+}
+
+pub fn observe_surfaces(pid: i32, max_elements: usize, max_depth: usize) -> ObservationSet {
+    let mut result = ObservationSet {
+        surfaces: Vec::new(),
+        node_count: 0,
+        truncated: false,
+    };
+
+    unsafe {
+        let application = AXUIElementCreateApplication(pid);
+        if application.is_null() {
+            return result;
+        }
+        let _ = AXUIElementSetMessagingTimeout(application, AX_MESSAGING_TIMEOUT_SECONDS);
+        let windows = copy_ax_windows(application);
+        CFRelease(application as CFTypeRef);
+
+        for window in windows {
+            let _ = AXUIElementSetMessagingTimeout(window, AX_MESSAGING_TIMEOUT_SECONDS);
+            let role = copy_string_attr(window, "AXRole").unwrap_or_default();
+            let mut owner_pid = 0;
+            let owner_pid =
+                (AXUIElementGetPid(window, &mut owner_pid) == kAXErrorSuccess).then_some(owner_pid);
+            if !is_surface_candidate(&role, owner_pid, pid, ax_get_window_id(window)) {
+                CFRelease(window as CFTypeRef);
+                continue;
+            }
+
+            let remaining = max_elements.saturating_sub(result.node_count);
+            if remaining == 0 {
+                result.truncated = true;
+                CFRelease(window as CFTypeRef);
+                continue;
+            }
+            let (nodes, truncated) = observe_tree(window, pid, remaining, max_depth);
+            result.node_count += nodes.len();
+            result.truncated |= truncated;
+            result.surfaces.push(SurfaceObservation {
+                kind: "ax_window",
+                role,
+                subrole: copy_string_attr(window, "AXSubrole"),
+                title: nonempty_attr(window, "AXTitle"),
+                identifier: nonempty_attr(window, "AXIdentifier"),
+                frame: element_screen_rect(window),
+                nodes,
+                truncated,
+            });
+            CFRelease(window as CFTypeRef);
+        }
+    }
+    result
+}
+
+unsafe fn nonempty_attr(element: AXUIElementRef, name: &str) -> Option<String> {
+    copy_string_attr(element, name).filter(|value| !value.trim().is_empty())
+}
+
+unsafe fn observe_tree(
+    root: AXUIElementRef,
     pid: i32,
     max_elements: usize,
     max_depth: usize,
-) -> Observation {
-    let mut observation = Observation {
-        nodes: Vec::new(),
-        truncated: false,
-    };
-    unsafe {
-        walk_observation(
-            surface.as_ptr(),
-            pid,
-            0,
-            None,
-            max_elements,
-            max_depth,
-            &mut observation,
-        );
-    }
-    observation
+) -> (Vec<ObservationNode>, bool) {
+    let mut nodes = Vec::new();
+    let mut truncated = false;
+    walk_observation(
+        root,
+        pid,
+        0,
+        None,
+        max_elements,
+        max_depth,
+        &mut nodes,
+        &mut truncated,
+    );
+    (nodes, truncated)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -238,14 +143,11 @@ unsafe fn walk_observation(
     parent: Option<usize>,
     max_elements: usize,
     max_depth: usize,
-    observation: &mut Observation,
+    nodes: &mut Vec<ObservationNode>,
+    truncated: &mut bool,
 ) {
-    if depth > max_depth {
-        observation.truncated = true;
-        return;
-    }
-    if observation.nodes.len() >= max_elements {
-        observation.truncated = true;
+    if depth > max_depth || nodes.len() >= max_elements {
+        *truncated = true;
         return;
     }
     let mut owner_pid = 0;
@@ -254,21 +156,18 @@ unsafe fn walk_observation(
     }
 
     let role = copy_string_attr(element, "AXRole").unwrap_or_else(|| "AXUnknown".into());
-    let title = copy_string_attr(element, "AXTitle").filter(|value| !value.trim().is_empty());
-    let description =
-        copy_string_attr(element, "AXDescription").filter(|value| !value.trim().is_empty());
+    let title = nonempty_attr(element, "AXTitle");
+    let description = nonempty_attr(element, "AXDescription");
     let value = copy_stringish_attr(element, "AXValue")
         .map(|value| value.state_value)
         .filter(|value| !value.trim().is_empty());
-    let identifier =
-        copy_string_attr(element, "AXIdentifier").filter(|value| !value.trim().is_empty());
+    let identifier = nonempty_attr(element, "AXIdentifier");
     let label = title
-        .clone()
-        .or_else(|| description.clone())
+        .or(description)
         .or_else(|| value.clone())
         .or_else(|| identifier.clone());
-    let index = observation.nodes.len();
-    observation.nodes.push(ObservationNode {
+    let index = nodes.len();
+    nodes.push(ObservationNode {
         observation_index: index,
         parent_observation_index: parent,
         role,
@@ -289,7 +188,8 @@ unsafe fn walk_observation(
             Some(index),
             max_elements,
             max_depth,
-            observation,
+            nodes,
+            truncated,
         );
         CFRelease(child as CFTypeRef);
     }
@@ -300,20 +200,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn surface_descriptor_never_exposes_native_or_action_identity() {
-        let descriptor = SurfaceDescriptor {
-            surface_token: "axw:test".into(),
-            pid: 7,
+    fn serialized_surface_has_no_native_or_action_identity() {
+        let surface = SurfaceObservation {
             kind: "ax_window",
             role: "AXWindow".into(),
             subrole: None,
             title: Some("Document".into()),
             identifier: None,
             frame: None,
+            nodes: Vec::new(),
+            truncated: false,
         };
-        let value = serde_json::to_value(descriptor).unwrap();
-        assert!(value.get("surface_token").is_some());
+        let value = serde_json::to_value(surface).unwrap();
         assert!(value.get("window_id").is_none());
+        assert!(value.get("surface_token").is_none());
         assert!(value.get("element_index").is_none());
         assert!(value.get("element_token").is_none());
     }

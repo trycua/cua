@@ -723,7 +723,6 @@ impl Default for SessionConfigRegistry {
 /// Shared state passed to all tools.
 pub struct ToolState {
     pub element_cache: Arc<ElementCache>,
-    pub accessibility_surfaces: Arc<crate::ax::surface::SurfaceRegistry>,
     pub cursor_registry: Arc<CursorRegistry>,
     pub zoom_registry: Arc<ZoomRegistry>,
     pub resize_registry: Arc<ResizeRegistry>,
@@ -763,7 +762,6 @@ impl ToolState {
     ) -> Self {
         Self {
             element_cache: Arc::new(ElementCache::new()),
-            accessibility_surfaces: Arc::new(crate::ax::surface::SurfaceRegistry::default()),
             cursor_registry: Arc::new(CursorRegistry::new()),
             zoom_registry: Arc::new(ZoomRegistry::new()),
             resize_registry: Arc::new(ResizeRegistry::new()),
@@ -895,10 +893,7 @@ pub fn register_all(
         state.clone(),
     )));
     registry.register(Box::new(
-        accessibility_surfaces::ListAccessibilitySurfacesTool::new(state.clone()),
-    ));
-    registry.register(Box::new(
-        accessibility_surfaces::GetAccessibilitySurfaceStateTool::new(state.clone()),
+        accessibility_surfaces::GetAccessibilitySurfacesTool,
     ));
     registry.register(Box::new(
         cua_driver_core::expectation::VerifyStateTool::new(Arc::new(

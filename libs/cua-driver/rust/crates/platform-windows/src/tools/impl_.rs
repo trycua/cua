@@ -9609,12 +9609,7 @@ pub fn build_registry_with_provider(
         state: state.clone(),
     }));
     r.register(Box::new(
-        cua_driver_core::accessibility_surface::UnsupportedAccessibilitySurfaceTool::list(
-            "windows",
-        ),
-    ));
-    r.register(Box::new(
-        cua_driver_core::accessibility_surface::UnsupportedAccessibilitySurfaceTool::get("windows"),
+        cua_driver_core::accessibility_surface::UnsupportedAccessibilitySurfaceTool::new("windows"),
     ));
     r.register(Box::new(
         cua_driver_core::expectation::VerifyStateTool::new(std::sync::Arc::new(

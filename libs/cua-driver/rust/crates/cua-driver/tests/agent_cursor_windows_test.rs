@@ -45,7 +45,7 @@ fn agent_cursor_overlay_obeys_untargeted_and_targeted_z_order() {
         let mut driver = McpDriver::spawn_named_with_overlay("windows-desktop-agent-cursor-px")
             .expect("required source-built driver with cursor overlay did not start");
         *evidence = recording_evidence(driver.recording_dir());
-        let (_target_profile, target) = launch_normal_window(&mut driver, "target");
+        let target = launch_wpf_window(&mut driver);
         bring_to_front(&mut driver, target);
         driver.start_behavior_recording();
         let (x, y) = window_center(target.native_id);
@@ -369,6 +369,24 @@ fn launch_normal_window(driver: &mut McpDriver, label: &str) -> (tempfile::TempD
         .find_window(pid as i64, "CuaTestHarness Electron")
         .expect("ordinary Electron harness window did not appear");
     (profile, TargetWindow { pid, native_id })
+}
+
+fn launch_wpf_window(driver: &mut McpDriver) -> TargetWindow {
+    let executable = harness_app("harness-wpf", "CuaTestHarness.Wpf.exe");
+    assert!(
+        executable.exists(),
+        "WPF harness missing at {}; run the Windows harness build first",
+        executable.display()
+    );
+    let mut command = Command::new(executable);
+    command.stdout(Stdio::null()).stderr(Stdio::null());
+    let child = spawn_in_job(&mut command).expect("launch ordinary WPF harness window");
+    let pid = child.id();
+    driver.reaper().push(child);
+    let (native_id, _) = driver
+        .find_window(pid as i64, "CuaTestHarness WPF")
+        .expect("ordinary WPF harness window did not appear");
+    TargetWindow { pid, native_id }
 }
 
 fn bring_to_front(driver: &mut McpDriver, target: TargetWindow) {

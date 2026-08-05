@@ -21,6 +21,47 @@ def execute(args):
     return asyncio.run(_execute_async(args))
 
 
+def oracle_validation_failed(result) -> bool:
+    """True when an oracle run produced no evidence that it solved the task.
+
+    ``--oracle`` runs the task's own reference solution, so a non-positive score
+    means the example is broken rather than that the operator performed badly:
+    the oracle is supposed to score. Reporting "Task completed successfully!"
+    for a ``[0.0]`` evaluation presents a failed example as a validated one,
+    which is exactly the signal someone authoring a task is relying on.
+
+    Only ``--oracle`` runs are judged. In a manual interactive run a zero score
+    usually means the human simply did not finish the task, which is not a
+    failure of the task definition and must not fail the command.
+
+    A result that carries no numeric score at all (``None``, empty, or a custom
+    object) is treated as inconclusive rather than failed, so evaluators with a
+    bespoke return shape keep working.
+    """
+    scores = _numeric_scores(result)
+    if not scores:
+        return False
+    return max(scores) <= 0.0
+
+
+def _numeric_scores(result) -> list[float]:
+    """Best-effort extraction of numeric scores from an evaluator result."""
+    if result is None or isinstance(result, (str, bytes, bool)):
+        return []
+    if isinstance(result, (int, float)):
+        return [float(result)]
+    try:
+        candidates = list(result)
+    except TypeError:
+        return []
+    scores = []
+    for item in candidates:
+        if isinstance(item, bool) or not isinstance(item, (int, float)):
+            continue
+        scores.append(float(item))
+    return scores
+
+
 def _detect_task_config(env_path: Path) -> dict:
     """Detect provider type and os_type from task configuration.
 
@@ -234,10 +275,14 @@ async def _execute_simulated_interactive(args, env_path: Path) -> int:
             input()
 
         # Evaluate if function exists
+        oracle_failed = False
         if env.evaluate_task_fn:
             print(f"{CYAN}Running evaluation...{RESET}")
             result = await env.evaluate()
             print(f"{YELLOW}✓ Evaluation result: {BOLD}{result}{RESET}")
+            oracle_failed = bool(getattr(args, "oracle", False)) and oracle_validation_failed(
+                result
+            )
 
         # Save trace if requested
         if (
@@ -262,6 +307,17 @@ async def _execute_simulated_interactive(args, env_path: Path) -> int:
                 print(f"{RED}Failed to save trace: {_e}{RESET}")
 
         await env.close()
+        if oracle_failed:
+            # The task's own reference solution scored nothing. Announcing
+            # success here is what let a broken example look validated.
+            print(
+                f"\n{RED}✗ Oracle run did not solve the task (evaluation scored no points).{RESET}"
+            )
+            print(
+                f"{YELLOW}The task ran to completion, but its reference solution "
+                f"produced no score, so this run does not validate the task.{RESET}"
+            )
+            return 1
         print(f"\n{GREEN}✓ Task completed successfully!{RESET}")
         try:
             if getattr(args, "trace_out", None):
@@ -378,16 +434,29 @@ async def _execute_native_interactive(args, env_path: Path, provider_type: str) 
             input()
 
         # Evaluate if function exists
+        oracle_failed = False
         if env and env.evaluate_task_fn and task_config:
             print(f"\n{CYAN}Running evaluation...{RESET}")
             task_cfg = task_config.get("_task_cfg")
             if task_cfg and session:
                 result = await env.evaluate_task_fn(task_cfg, session)
                 print(f"{YELLOW}✓ Evaluation result: {BOLD}{result}{RESET}")
+                oracle_failed = bool(getattr(args, "oracle", False)) and oracle_validation_failed(
+                    result
+                )
 
         # Cleanup
         print(f"\n{CYAN}Cleaning up environment...{RESET}")
         await cleanup()
+        if oracle_failed:
+            print(
+                f"\n{RED}✗ Oracle run did not solve the task (evaluation scored no points).{RESET}"
+            )
+            print(
+                f"{YELLOW}The task ran to completion, but its reference solution "
+                f"produced no score, so this run does not validate the task.{RESET}"
+            )
+            return 1
         print(f"{GREEN}✓ Task completed successfully!{RESET}")
 
         return 0

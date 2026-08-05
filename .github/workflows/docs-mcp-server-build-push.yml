@@ -30,8 +30,41 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  # Pull requests build the Docker context without any OIDC capability. The
+  # trusted release job below is the only job that can assume the ECR role.
+  pull-request-build:
+    if: github.event_name == 'pull_request'
     runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build only (PR)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./${{ env.SERVICE_DIR }}
+          file: ./${{ env.SERVICE_DIR }}/Dockerfile
+          push: false
+          platforms: ${{ matrix.platform }}
+
+  build:
+    if: github.event_name != 'pull_request'
+    runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -51,16 +84,6 @@ jobs:
         run: |
           TAG=$(echo "${{ matrix.platform }}" | sed 's/\//-/g')
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::296062593712:role/github-actions-ecr-push-cua
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -93,6 +116,18 @@ jobs:
           else
             echo "push=false" >> $GITHUB_OUTPUT
           fi
+
+      - name: Configure AWS credentials
+        if: steps.push-check.outputs.push == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::296062593712:role/github-actions-ecr-push-cua
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        if: steps.push-check.outputs.push == 'true'
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build only (PR)
         if: steps.push-check.outputs.push == 'false'

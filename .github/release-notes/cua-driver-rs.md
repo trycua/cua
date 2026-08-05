@@ -20,6 +20,6 @@ uninstaller scripts.
 
 GitHub's label is used only to keep this monorepo's repository-wide “Latest”
 pointer from switching between independently released products. A plain Cua
-Driver SemVer such as `0.17.0` is a stable release; npm and PyPI publish it on
+Driver SemVer is a stable release; npm and PyPI publish it on
 their normal stable channels, and the installers resolve the versioned
 `cua-driver-rs-v*` releases directly.

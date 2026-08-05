@@ -22,7 +22,7 @@ from cua_sandbox._auth import login, whoami
 from cua_sandbox._config import configure
 from cua_sandbox.image import Image
 from cua_sandbox.localhost import Localhost, localhost
-from cua_sandbox.pool import Pool, Template
+from cua_sandbox.pool import Lease, Pool, Template, supports_claim_renewal
 from cua_sandbox.runtime.compat import (
     RuntimeSupport,
     check_local_support,
@@ -54,7 +54,9 @@ __all__ = [
     "login",
     "whoami",
     "Image",
+    "Lease",
     "Pool",
+    "supports_claim_renewal",
     "Template",
     "TemplateResource",
     "CreatePoolRequest",

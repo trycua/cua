@@ -107,6 +107,15 @@ class _FleetClient:
     async def wait_claim(self, claim: Any) -> Any:
         return await self._client.wait_claim(claim)
 
+    async def renew_claim(self, claim: Any, shutdown_time: str) -> Any:
+        renew = getattr(self._client, "renew_claim", None)
+        if renew is None:
+            raise RuntimeError(
+                "the installed cua-fleet release does not support claim renewal; "
+                "upgrade to a build whose CyclopsClient exposes renew_claim"
+            )
+        return await renew(claim, shutdown_time)
+
     async def delete_claim(self, claim: Any) -> None:
         await self._client.delete_claim(claim)
 

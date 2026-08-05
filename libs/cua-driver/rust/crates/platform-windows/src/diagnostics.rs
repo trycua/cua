@@ -21,11 +21,6 @@
 #[cfg(target_os = "windows")]
 use windows::Win32::Foundation::HANDLE;
 #[cfg(target_os = "windows")]
-use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
-    COINIT_APARTMENTTHREADED,
-};
-#[cfg(target_os = "windows")]
 use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 #[cfg(target_os = "windows")]
 use windows::Win32::System::StationsAndDesktops::{
@@ -34,8 +29,6 @@ use windows::Win32::System::StationsAndDesktops::{
 };
 #[cfg(target_os = "windows")]
 use windows::Win32::System::Threading::{GetCurrentProcessId, GetCurrentThreadId};
-#[cfg(target_os = "windows")]
-use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation};
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
@@ -225,45 +218,10 @@ fn classify_interactive_desktop(state: &DesktopState) -> Result<bool, String> {
     Ok(state.has_foreground_window())
 }
 
-/// Probe whether `CoCreateInstance(CUIAutomation)` succeeds — the same
-/// COM call used by `get_window_state` / `list_windows` element-walks.
-///
-/// Initialises COM (apartment-threaded) for the duration of the probe
-/// and uninitialises before returning so the rest of the doctor run is
-/// unaffected.
-///
-/// **COM lifecycle invariant** — the IUIAutomation interface produced by
-/// CoCreateInstance must be released BEFORE CoUninitialize tears down
-/// the apartment, or `IUnknown::Release` will dereference freed COM
-/// infrastructure and segfault (0xC0000005 ACCESS_VIOLATION). We flatten
-/// the probe result into a plain `Result<(), String>` first so the
-/// `IUIAutomation` is dropped at the end of the statement, then call
-/// CoUninitialize on the next line.
+/// Probe the same bounded desktop child enumeration used by window tools.
 #[cfg(target_os = "windows")]
 pub fn ui_automation_available() -> Result<(), String> {
-    unsafe {
-        // Failure here means COM is already initialised in this thread
-        // (likely apartment-threaded too); we only call CoUninitialize
-        // when our CoInitializeEx actually paired with a fresh init.
-        let init_result = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-        let need_uninit = init_result.is_ok();
-
-        // Bind to `_` immediately so the IUIAutomation interface is
-        // dropped (and `Release()` runs while COM is still up) before
-        // we proceed to CoUninitialize. Holding the binding past
-        // CoUninitialize and letting Drop run at function return
-        // causes a use-after-free in the COM apartment.
-        let result =
-            CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
-                .map(|_| ())
-                .map_err(|e| format!("{e}"));
-
-        if need_uninit {
-            CoUninitialize();
-        }
-
-        result
-    }
+    crate::uia::windows_enum::probe_desktop_availability()
 }
 
 // ── Non-Windows stubs so the cua-driver crate can call into us

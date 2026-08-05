@@ -484,6 +484,7 @@ pub fn is_computer_action(tool_name: &str, operation: ToolOperation) -> bool {
                     "app.launch"
                         | "app.kill"
                         | "window.activate"
+                        | "window.frame.set"
                         | "browser.navigate"
                         | "browser.input.click"
                         | "browser.input.type"
@@ -730,15 +731,39 @@ fn structured_refusal_code(tool_name: &str, result: Option<&serde_json::Value>) 
     if structured
         .and_then(|value| value.get("status"))
         .and_then(serde_json::Value::as_str)
+        == Some("refused")
+    {
+        return ToolRefusalCode::from_wire_code(
+            structured
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(serde_json::Value::as_str),
+        );
+    }
+    if structured
+        .and_then(|value| value.get("effect"))
+        .and_then(serde_json::Value::as_str)
         != Some("refused")
     {
         return ToolRefusalCode::None;
     }
-    ToolRefusalCode::from_wire_code(
-        structured
-            .and_then(|value| value.pointer("/refusal/code"))
-            .and_then(serde_json::Value::as_str),
-    )
+
+    // ActionResult deliberately keeps refusal details out of the narrow
+    // structured contract. The original bounded text is preserved at the MCP
+    // boundary, so recover only the closed wire code from its stable prefix;
+    // refusal prose and details never cross the observer seam.
+    let wire_code = result
+        .and_then(|value| value.get("content"))
+        .and_then(serde_json::Value::as_array)
+        .and_then(|items| {
+            items.iter().find_map(|item| {
+                item.get("text")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(|text| text.strip_prefix("refused ("))
+                    .and_then(|tail| tail.split_once("):"))
+                    .map(|(code, _)| code)
+            })
+        });
+    ToolRefusalCode::from_wire_code(wire_code)
 }
 
 fn serialized_size_without_retaining(value: &serde_json::Value) -> Option<usize> {
@@ -1190,6 +1215,64 @@ mod observation_tests {
         ] {
             assert!(!debug.contains(forbidden), "observer leaked {forbidden}");
         }
+    }
+
+    #[test]
+    fn action_result_browser_refusals_preserve_closed_telemetry_code() {
+        let response = Response::ok(
+            serde_json::json!(1),
+            serde_json::json!({
+                "content": [{
+                    "type": "text",
+                    "text": "refused (browser_ref_stale): private refusal prose"
+                }],
+                "structuredContent": {
+                    "effect": "refused",
+                    "route": "dom",
+                    "actual_delivery": {"mode": "not_applicable"}
+                }
+            }),
+        );
+        let observation = ToolObservationTimer::start_with_operation(
+            "browser_click".to_owned(),
+            ToolOperation::BrowserClickTrusted,
+            true,
+            true,
+            StdioExecutionPath::DirectDaemon,
+        )
+        .finish(&response);
+        assert!(observation.success);
+        assert_eq!(observation.refusal_code, ToolRefusalCode::BrowserRefStale);
+        assert!(
+            !format!("{observation:?}").contains("private refusal prose"),
+            "observer retained refusal prose"
+        );
+    }
+
+    #[test]
+    fn action_result_refusal_without_a_known_text_code_is_other() {
+        let response = Response::ok(
+            serde_json::json!(1),
+            serde_json::json!({
+                "content": [{"type": "text", "text": "refused without a stable prefix"}],
+                "structuredContent": {
+                    "effect": "refused",
+                    "route": "dom",
+                    "actual_delivery": {"mode": "not_applicable"}
+                }
+            }),
+        );
+        assert_eq!(
+            ToolObservationTimer::start(
+                "browser_click".to_owned(),
+                true,
+                true,
+                StdioExecutionPath::DirectDaemon,
+            )
+            .finish(&response)
+            .refusal_code,
+            ToolRefusalCode::Other
+        );
     }
 
     #[test]

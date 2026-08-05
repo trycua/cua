@@ -128,7 +128,7 @@ func poolImagePullSecretAllowed(ctx context.Context, r *http.Request) (bool, err
 	default:
 		return true, nil
 	}
-	if !strings.Contains(r.PathValue("path"), "osgymworkspacepools") || r.Body == nil {
+	if !isPoolShapedWrite(r.PathValue("path")) || r.Body == nil {
 		return true, nil
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
@@ -143,7 +143,16 @@ func poolImagePullSecretAllowed(ctx context.Context, r *http.Request) (bool, err
 	return auth.EvalPoolAdmission(ctx, r.Method, object)
 }
 
-// macosPoolNeedsAdmin returns true if r is a write to an osgymworkspacepools
+// isPoolShapedWrite reports whether path targets a resource whose body can
+// carry a VM shape (image, runtime, node placement): the native
+// OSGymSandboxTemplate, or the retired legacy OSGymWorkspacePool (kept so a
+// stale client cannot slip past the gate while the CRD deletion propagates).
+func isPoolShapedWrite(path string) bool {
+	return strings.Contains(path, "osgymsandboxtemplates") ||
+		strings.Contains(path, "osgymworkspacepools")
+}
+
+// macosPoolNeedsAdmin returns true if r is a write to a pool-shaped
 // resource whose body opts into the macOS runtime AND the caller is not an
 // admin. It rebuffers r.Body so the downstream proxy can still read it. Reads
 // and non-macOS writes always return false (no restriction).
@@ -153,7 +162,7 @@ func macosPoolNeedsAdmin(ctx context.Context, user *auth.User, r *http.Request) 
 	default:
 		return false, nil
 	}
-	if !strings.Contains(r.PathValue("path"), "osgymworkspacepools") || r.Body == nil {
+	if !isPoolShapedWrite(r.PathValue("path")) || r.Body == nil {
 		return false, nil
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
@@ -171,16 +180,21 @@ func macosPoolNeedsAdmin(ctx context.Context, user *auth.User, r *http.Request) 
 	return !isAdmin, nil
 }
 
-// bodyRequestsMacOS reports whether an OSGymWorkspacePool CR body opts into the
-// macOS runtime — via spec.template.runtime=macos, or (defence in depth) the
-// macOS-only runtimeClass / nodeSelector that a macOS pod carries.
+// bodyRequestsMacOS reports whether a pool-shaped CR body opts into the
+// macOS runtime — via the VM template's runtime=macos, or (defence in depth)
+// the macOS-only runtimeClass / nodeSelector that a macOS pod carries. The VM
+// shape lives at spec.vmTemplate on the native OSGymSandboxTemplate and at
+// spec.template on the retired legacy OSGymWorkspacePool.
 func bodyRequestsMacOS(body []byte) bool {
 	var obj map[string]any
 	if json.Unmarshal(body, &obj) != nil {
 		return false
 	}
 	spec, _ := obj["spec"].(map[string]any)
-	tmpl, _ := spec["template"].(map[string]any)
+	tmpl, _ := spec["vmTemplate"].(map[string]any)
+	if tmpl == nil {
+		tmpl, _ = spec["template"].(map[string]any)
+	}
 	if tmpl == nil {
 		return false
 	}

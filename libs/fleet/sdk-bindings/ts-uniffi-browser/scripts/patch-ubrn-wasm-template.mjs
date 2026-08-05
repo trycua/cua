@@ -9,6 +9,7 @@ const templateDirectory = new URL(
 await patchTemplate("Cargo.toml.txt", new Map([
   ['wasm-bindgen = "*"', 'wasm-bindgen = "=0.2.126"\nconsole_error_panic_hook = "0.1.7"'],
   ['opt-level = "3"', "opt-level = 3"],
+  ["[workspace]", "[workspace]\nresolver = \"2\""],
 ]))
 
 await patchTemplate("lib.rs", new Map([

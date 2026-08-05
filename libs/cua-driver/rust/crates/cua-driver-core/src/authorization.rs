@@ -254,6 +254,7 @@ const DESKTOP_INPUT_OPERATIONS: &[&str] = &[
     "hotkey",
     "set_value",
     "bring_to_front",
+    "set_window_frame",
 ];
 const DESKTOP_INPUT_SCOPE_KEYS: &[&str] = &[
     "daemon_generation",
@@ -576,22 +577,30 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
     EnforcementAdapterDescriptor {
         id: "clipboard",
         operations: &["clipboard_read", "clipboard_write"],
-        state: RiskEnforcement::NotExposed,
-        risk_class: RiskClass::Unclassified,
+        state: RiskEnforcement::Active,
+        risk_class: RiskClass::R2,
         resource_kind: "system_clipboard",
-        scope_keys: &[],
-        grant_type: None,
-        idle_ttl_seconds: None,
-        absolute_ttl_seconds: None,
-        authorization_requirement: "required_before_exposure",
-        revocation_triggers: &[],
-        refusal_code: None,
-        authorization_source: "capability_not_exposed",
-        enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::NotExposed),
+        scope_keys: &[
+            "daemon_generation",
+            "public_session",
+            "operation",
+            "content_kind",
+            "permission_mode",
+            "managed_policy_sha256",
+            "user_policy_sha256",
+        ],
+        grant_type: Some("protected_resource_grant"),
+        idle_ttl_seconds: Some(30 * 60),
+        absolute_ttl_seconds: Some(8 * 60 * 60),
+        authorization_requirement: "manifest_only_in_bounded",
+        revocation_triggers: SESSION_REVOCATION,
+        refusal_code: Some("authorization_required"),
+        authorization_source: "built_in_standard; manifest_in_bounded; trusted_unrestricted_mode",
+        enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
         behavior_by_mode: AdapterModeBehavior::new(
-            ModeBehavior::Deny,
-            ModeBehavior::Deny,
-            ModeBehavior::Deny,
+            ModeBehavior::Allow,
+            ModeBehavior::Manifest,
+            ModeBehavior::Allow,
         ),
     },
     EnforcementAdapterDescriptor {
@@ -713,6 +722,10 @@ pub fn enforcement_adapters_for_call(
         add("desktop_input");
     }
 
+    if matches!(tool, "clipboard_read" | "clipboard_write") {
+        add("clipboard");
+    }
+
     let writes_screenshot = matches!(tool, "get_desktop_state" | "get_window_state")
         && args
             .get("screenshot_out_file")
@@ -726,6 +739,9 @@ pub fn enforcement_adapters_for_call(
             | "stop_recording"
             | "replay_trajectory"
     ) || writes_screenshot
+        || (tool == "clipboard_write"
+            && (args.get("image_path").and_then(Value::as_str).is_some()
+                || args.get("file_path").and_then(Value::as_str).is_some()))
         || (tool == "install_ffmpeg" && args.get("confirm").and_then(Value::as_bool) == Some(true))
     {
         add("file_transfer_and_output");
@@ -829,18 +845,23 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "press_key"
         | "hotkey"
         | "set_value"
+        | "invoke_menu"
         | "launch_app"
         | "bring_to_front"
+        | "set_window_frame"
         | "start_session"
         | "end_session"
         | "set_agent_cursor_enabled"
         | "set_agent_cursor_motion"
         | "set_agent_cursor_theme" => RiskClass::R1,
 
+        "clipboard_write" => RiskClass::R1,
+
         // Surfaces that can reveal or control sensitive local/authenticated
         // state. Active adapters still decide their exact resource scope at
         // the canonical registry boundary before platform dispatch.
         "zoom"
+        | "clipboard_read"
         | "list_apps"
         | "list_windows"
         | "debug_window_info"
@@ -959,7 +980,8 @@ pub fn classify_tool_call(tool: &str, args: &Value) -> RiskAssessment {
         | "debug_window_info"
         | "get_browser_state"
         | "escalate_session"
-        | "zoom" => RiskAssessment {
+        | "zoom"
+        | "clipboard_read" => RiskAssessment {
             class: RiskClass::R2,
             enforcement: RiskEnforcement::Active,
             operation_sensitive: true,
@@ -979,6 +1001,17 @@ pub fn classify_tool_call(tool: &str, args: &Value) -> RiskAssessment {
         | "stop_recording"
         | "replay_trajectory" => RiskAssessment {
             class: RiskClass::R3,
+            enforcement: RiskEnforcement::Active,
+            operation_sensitive: true,
+        },
+        "clipboard_write" => RiskAssessment {
+            class: if args.get("image_path").and_then(Value::as_str).is_some()
+                || args.get("file_path").and_then(Value::as_str).is_some()
+            {
+                RiskClass::R3
+            } else {
+                RiskClass::R1
+            },
             enforcement: RiskEnforcement::Active,
             operation_sensitive: true,
         },
@@ -1472,6 +1505,14 @@ mod tests {
     }
 
     #[test]
+    fn native_menu_invocation_matches_local_gui_action_risk() {
+        let risk = advertised_risk_for("invoke_menu");
+        assert_eq!(risk.class, RiskClass::R1);
+        assert_eq!(risk.enforcement, RiskEnforcement::MetadataOnly);
+        assert!(!risk.operation_sensitive);
+    }
+
+    #[test]
     fn screenshot_file_output_is_classified_as_egress() {
         for tool in ["get_desktop_state", "get_window_state"] {
             let observation = classify_tool_call(tool, &serde_json::json!({}));
@@ -1486,6 +1527,29 @@ mod tests {
             assert_eq!(egress.enforcement, RiskEnforcement::Active);
             assert!(egress.operation_sensitive);
             assert_eq!(advertised_risk_for(tool).class, RiskClass::R3);
+        }
+    }
+
+    #[test]
+    fn clipboard_risk_distinguishes_reads_text_writes_and_local_files() {
+        let read = classify_tool_call("clipboard_read", &serde_json::json!({}));
+        assert_eq!(read.class, RiskClass::R2);
+        assert_eq!(read.enforcement, RiskEnforcement::Active);
+
+        let text = classify_tool_call(
+            "clipboard_write",
+            &serde_json::json!({"text": "private content"}),
+        );
+        assert_eq!(text.class, RiskClass::R1);
+        assert_eq!(text.enforcement, RiskEnforcement::Active);
+
+        for args in [
+            serde_json::json!({"image_path": "/tmp/private-content"}),
+            serde_json::json!({"file_path": "/tmp/private-content"}),
+        ] {
+            let file = classify_tool_call("clipboard_write", &args);
+            assert_eq!(file.class, RiskClass::R3);
+            assert_eq!(file.enforcement, RiskEnforcement::Active);
         }
     }
 
@@ -1563,6 +1627,7 @@ mod tests {
                 "process_control",
                 "os_permission_prompt",
                 "driver_configuration",
+                "clipboard",
             ]
         );
         assert_eq!(
@@ -1571,7 +1636,7 @@ mod tests {
         );
         assert_eq!(
             adapter_ids_with_state(RiskEnforcement::NotExposed),
-            vec!["clipboard", "devices", "shell_and_network"]
+            vec!["devices", "shell_and_network"]
         );
         assert_eq!(
             adapter_ids_with_state_for_mode(PermissionMode::Standard, RiskEnforcement::Active),
@@ -1586,6 +1651,7 @@ mod tests {
                 "process_control",
                 "os_permission_prompt",
                 "driver_configuration",
+                "clipboard",
             ]
         );
 
@@ -1616,6 +1682,7 @@ mod tests {
             "browser_consequential_action",
             "browser_bound_input",
             "driver_configuration",
+            "clipboard",
         ] {
             assert_eq!(behavior(id, PermissionMode::Standard), ModeBehavior::Allow);
             assert_eq!(
@@ -1684,6 +1751,10 @@ mod tests {
             vec!["desktop_input"]
         );
         assert_eq!(
+            ids("set_window_frame", serde_json::json!({})),
+            vec!["desktop_input"]
+        );
+        assert_eq!(
             ids("replay_trajectory", serde_json::json!({})),
             vec!["desktop_input", "file_transfer_and_output"]
         );
@@ -1723,6 +1794,23 @@ mod tests {
             ids("set_config", serde_json::json!({})),
             vec!["driver_configuration"]
         );
+        assert_eq!(
+            ids("clipboard_read", serde_json::json!({})),
+            vec!["clipboard"]
+        );
+        assert_eq!(
+            ids("clipboard_write", serde_json::json!({"text": "private"})),
+            vec!["clipboard"]
+        );
+        for args in [
+            serde_json::json!({"image_path": "/tmp/private-content"}),
+            serde_json::json!({"file_path": "/tmp/private-content"}),
+        ] {
+            assert_eq!(
+                ids("clipboard_write", args),
+                vec!["clipboard", "file_transfer_and_output"]
+            );
+        }
     }
 
     #[test]
@@ -1740,7 +1828,8 @@ mod tests {
                 "browser_bound_input",
                 "process_control",
                 "os_permission_prompt",
-                "driver_configuration"
+                "driver_configuration",
+                "clipboard"
             ])
         );
         assert_eq!(
@@ -1749,7 +1838,7 @@ mod tests {
         );
         assert_eq!(
             status["not_exposed_risk_enforcement"],
-            serde_json::json!(["clipboard", "devices", "shell_and_network"])
+            serde_json::json!(["devices", "shell_and_network"])
         );
         assert_eq!(
             status["effective_active_risk_enforcement"],
@@ -1763,7 +1852,8 @@ mod tests {
                 "browser_bound_input",
                 "process_control",
                 "os_permission_prompt",
-                "driver_configuration"
+                "driver_configuration",
+                "clipboard"
             ])
         );
         assert_eq!(

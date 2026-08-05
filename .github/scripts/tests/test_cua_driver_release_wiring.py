@@ -469,7 +469,7 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn("CUA_DRIVER_LOCAL_HOME: ${{ runner.temp }}/cua-driver-local-home", linux)
 
         windows = self.read(".github/workflows/e2e-rust-windows.yml")
-        self.assertIn('name: "Windows / install-local.ps1 smoke"', windows)
+        self.assertIn('name: "Windows / installer and update smoke"', windows)
         self.assertIn("install-local.ps1 -NoAutoStart -NoPathUpdate", windows)
         self.assertIn('CUA_DRIVER_LOCAL_HOME = Join-Path $env:RUNNER_TEMP', windows)
 

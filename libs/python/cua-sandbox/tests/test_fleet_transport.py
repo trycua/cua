@@ -3,7 +3,7 @@ import json
 
 import pytest
 from cua_sandbox.transport.fleet import FleetTransport
-from cyclops_sdk import HttpResponse, Sandbox
+from fleet_sdk import HttpResponse, Sandbox
 
 
 class FakeSDK:

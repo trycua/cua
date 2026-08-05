@@ -102,6 +102,15 @@
                                           AutomationProperties.AutomationId="menu-edit-copy"
                                           Click="OnMenuEditCopy"/>
                             </MenuItem>
+                            <MenuItem Header="_Window"
+                                      AutomationProperties.AutomationId="menu-window">
+                                <MenuItem Header="_Arrange"
+                                          AutomationProperties.AutomationId="menu-window-arrange">
+                                    <MenuItem Header="_Left"
+                                              AutomationProperties.AutomationId="menu-window-arrange-left"
+                                              Click="OnMenuWindowArrangeLeft"/>
+                                </MenuItem>
+                            </MenuItem>
                         </Menu>
                         <Button x:Name="BtnContextTarget"
                                 AutomationProperties.AutomationId="btn-context-target"
@@ -198,6 +207,7 @@
                     <StackPanel>
                         <ListBox x:Name="LstItems"
                                  AutomationProperties.AutomationId="lst-items"
+                                 SelectionMode="Extended"
                                  Width="220" Height="80" HorizontalAlignment="Left"
                                  SelectionChanged="OnListChanged">
                             <ListBoxItem Content="apple"  AutomationProperties.AutomationId="lst-apple"/>

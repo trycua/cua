@@ -112,6 +112,22 @@ fn policies_are_isolated_immutable_and_enforced_over_mcp() {
         json!({"session": "scope-auto"}),
     );
     assert_eq!(code(&auto_window), Some("window_scope_disabled"));
+    assert_eq!(
+        auto_window["result"]["structuredContent"],
+        json!({
+            "session": "scope-auto",
+            "capture_scope": "auto",
+            "effective_scope": "desktop",
+            "desktop_unlocked": true,
+            "escalation_reason": "foreground_ineffective",
+            "escalation_detail": "window ladder exhausted",
+            "code": "window_scope_disabled"
+        })
+    );
+    assert_eq!(
+        auto_window["result"]["content"][0]["text"],
+        "window-scope tool 'get_window_state' is disabled because escalation to desktop scope is permanent for session 'scope-auto'; to recover, call end_session for session 'scope-auto', then call start_session with a new session id"
+    );
 
     let conflict = call(
         &mut driver,

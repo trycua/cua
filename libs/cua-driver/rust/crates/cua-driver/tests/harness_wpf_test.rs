@@ -48,6 +48,8 @@ use cua_driver_testkit::e2e::{
 use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::{run_with_background_oracles, ForegroundSentinel};
 use cua_driver_testkit::{ax, harness_app, spawn_in_job, Driver, McpDriver, ToolResponse};
+use windows::Win32::Foundation::HWND;
+use windows::Win32::UI::WindowsAndMessaging::{IsIconic, ShowWindow, SW_MINIMIZE};
 
 // ── harness launcher ─────────────────────────────────────────────────────────
 
@@ -113,6 +115,21 @@ fn snapshot(driver: &mut McpDriver, pid: u32, window_id: u64) -> ToolResponse {
             "capture_mode": "ax"
         }),
     )
+}
+
+fn element_token_by_id(snapshot: &ToolResponse, identifier: &str) -> String {
+    let index = ax::element_index_by_id(snapshot.tree_text(), identifier)
+        .unwrap_or_else(|| panic!("{identifier} element_index not found"));
+    snapshot.structured()["elements"]
+        .as_array()
+        .and_then(|elements| {
+            elements
+                .iter()
+                .find(|element| element["element_index"].as_u64() == Some(index))
+        })
+        .and_then(|element| element["element_token"].as_str())
+        .unwrap_or_else(|| panic!("{identifier} element_token not found"))
+        .to_owned()
 }
 
 fn snapshot_lines_containing(text: &str, needles: &[&str]) -> String {
@@ -278,6 +295,86 @@ fn harness_wpf_smoke() {
     );
 }
 
+#[test]
+#[ignore]
+fn harness_wpf_query_projects_structured_elements() {
+    run_case(
+        native_readonly_case(
+            "wpf",
+            "query_projection",
+            Targeting::Ax,
+            DriverRoute::AxRead,
+            vec![OracleKind::AxState],
+        ),
+        |pid, wid, driver| {
+            let response = driver.call(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "query": "btn-increment",
+                    "include_screenshot": false
+                }),
+            );
+            assert!(
+                !response.is_error(),
+                "query snapshot failed: {}",
+                response.text()
+            );
+            let total = response.structured()["total_element_count"]
+                .as_u64()
+                .expect("total_element_count");
+            let returned = response.structured()["returned_element_count"]
+                .as_u64()
+                .expect("returned_element_count");
+            let elements = response.structured()["elements"]
+                .as_array()
+                .expect("projected elements");
+            assert_eq!(returned as usize, elements.len());
+            assert!(
+                returned < total,
+                "query did not compact {returned}/{total} elements"
+            );
+            let _ = element_token_by_id(&response, "btn-increment");
+            Observation::delivered(vec![OracleKind::AxState], Evidence::default())
+        },
+    );
+}
+
+#[test]
+#[ignore]
+fn harness_wpf_stale_element_token_fails_closed() {
+    run_case(
+        native_readonly_case(
+            "wpf",
+            "stale_element_token",
+            Targeting::Ax,
+            DriverRoute::AxRead,
+            vec![OracleKind::AxState],
+        ),
+        |pid, wid, driver| {
+            let first = snapshot(driver, pid, wid);
+            let token = element_token_by_id(&first, "btn-increment");
+            let _newer = snapshot(driver, pid, wid);
+            let refused = driver.call(
+                "click",
+                serde_json::json!({"pid": pid as i64, "element_token": token}),
+            );
+            assert!(
+                refused.is_error(),
+                "stale token was accepted: {}",
+                refused.text()
+            );
+            assert_eq!(
+                refused.structured()["refusal"]["code"].as_str(),
+                Some("stale_element_token")
+            );
+            assert!(snapshot(driver, pid, wid).tree_text().contains("counter=0"));
+            Observation::delivered(vec![OracleKind::AxState], Evidence::default())
+        },
+    );
+}
+
 // ── shared driver session helper ─────────────────────────────────────────────
 
 /// Spin up a fresh cua-driver + harness pair, run the closure, then tear
@@ -436,6 +533,7 @@ fn harness_wpf_counter_invoke() {
                     "click",
                     serde_json::json!({
                         "pid": pid as i64, "window_id": wid, "element_index": idx,
+                        "snapshot_id": pre.snapshot_id(),
                         "delivery_mode": "background"
                     }),
                 )
@@ -451,6 +549,95 @@ fn harness_wpf_counter_invoke() {
             delivered_with_fixture_state(passed)
         },
     );
+}
+
+#[test]
+#[ignore]
+fn harness_wpf_minimized_element_click_refuses_without_side_effects() {
+    let case = CaseSpec::delivered(
+        "windows-wpf-minimized-element-click-refusal",
+        "wpf",
+        "wpf",
+        "left_click",
+        Targeting::Ax,
+        Delivery::Background,
+        Scope::Window,
+        DriverRoute::Composite,
+        vec![
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::Cursor,
+            OracleKind::NoLeakedInput,
+            OracleKind::Protocol,
+        ],
+    )
+    .expecting_refusal(vec![RefusalCode::WindowMinimized]);
+
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_named("windows-wpf-minimized-element-click-refusal")
+            .expect("required source-built driver did not start");
+        *evidence = recording_evidence(driver.recording_dir());
+        let state_dir = tempfile::tempdir().expect("create WPF fixture state directory");
+        let state_path = state_dir.path().join("state.json");
+        let pid = launch_harness_with_state_file(&mut driver, Some(&state_path))
+            .expect("required WPF harness did not launch");
+        let (wid, _) = driver
+            .find_window(pid as i64, "CuaTestHarness WPF")
+            .expect("main window");
+        wait_for_fixture_file_text(&state_path, "lbl-counter", "counter=0");
+        let ready = snapshot(&mut driver, pid, wid);
+        let idx = ax::element_index_by_id(ready.text(), "btn-increment")
+            .expect("btn-increment not in pre-minimize snapshot");
+
+        let sentinel = ForegroundSentinel::launch(&mut driver);
+        let hwnd = HWND(wid as *mut _);
+        let _ = unsafe { ShowWindow(hwnd, SW_MINIMIZE) };
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !unsafe { IsIconic(hwnd) }.as_bool() {
+            assert!(Instant::now() < deadline, "WPF target did not minimize");
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        driver.start_behavior_recording();
+
+        let (response, mut passed) = sentinel
+            .observe_desktop(|| {
+                driver.call(
+                    "click",
+                    serde_json::json!({
+                        "pid": pid as i64,
+                        "window_id": wid,
+                        "element_index": idx,
+                        "snapshot_id": ready.snapshot_id(),
+                        "delivery_mode": "background"
+                    }),
+                )
+            })
+            .unwrap_or_else(|error| panic!("minimized refusal leaked desktop state: {error}"));
+        assert!(
+            response.is_error(),
+            "minimized click reported success: {}",
+            response.text()
+        );
+        assert_eq!(response.structured()["status"], "refused");
+        assert_eq!(response.structured()["refusal"]["code"], "window_minimized");
+        assert!(
+            unsafe { IsIconic(hwnd) }.as_bool(),
+            "refused click restored or otherwise changed the minimized target"
+        );
+        std::thread::sleep(Duration::from_millis(300));
+        wait_for_fixture_file_text(&state_path, "lbl-counter", "counter=0");
+
+        passed.extend([OracleKind::FixtureState, OracleKind::Protocol]);
+        passed.sort();
+        passed.dedup();
+        Observation::refused(
+            RefusalCode::WindowMinimized,
+            passed,
+            response.text(),
+            Evidence::default(),
+        )
+    });
 }
 
 #[test]
@@ -508,8 +695,8 @@ fn harness_wpf_left_click_px_background() {
             click.text()
         );
         assert_eq!(
-            click.structured()["path"].as_str(),
-            Some("ax"),
+            click.action_route(),
+            Some("accessibility"),
             "WPF PX background click used an unexpected driver route: {}",
             click.text()
         );
@@ -551,6 +738,7 @@ fn harness_wpf_type_text() {
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "foreground"
                 }),
             );
@@ -612,6 +800,7 @@ fn harness_wpf_set_value() {
                         "set_value",
                         serde_json::json!({
                             "pid": pid as i64, "window_id": wid, "element_index": idx,
+                            "snapshot_id": snap.snapshot_id(),
                             "value": "via-uia-setvalue"
                         }),
                     )
@@ -673,6 +862,7 @@ fn harness_wpf_right_click() {
                 "right_click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "foreground"
                 }),
             );
@@ -716,6 +906,7 @@ fn harness_wpf_double_click() {
                 "double_click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "foreground"
                 }),
             );
@@ -852,6 +1043,7 @@ fn harness_wpf_scroll() {
                         "pid": pid as i64,
                         "window_id": wid,
                         "element_index": idx,
+                        "snapshot_id": pre.snapshot_id(),
                         "delivery_mode": "foreground"
                     }),
                 );
@@ -911,6 +1103,7 @@ fn harness_wpf_modal_messagebox() {
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "foreground"
                 }),
             );
@@ -972,6 +1165,7 @@ fn harness_wpf_modal_messagebox() {
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": modal_wid, "element_index": cancel_idx,
+                    "snapshot_id": modal_snap.snapshot_id(),
                     "delivery_mode": "foreground"
                 }),
             );
@@ -1004,6 +1198,7 @@ fn harness_wpf_owned_popup() {
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "foreground"
                 }),
             );
@@ -1063,6 +1258,7 @@ fn harness_wpf_layered_popup_capture() {
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "foreground"
                 }),
             );
@@ -1277,7 +1473,8 @@ fn harness_wpf_slider_increase_large() {
                 let resp = driver.call(
                     "click",
                     serde_json::json!({
-                        "pid": pid as i64, "window_id": wid, "element_index": idx
+                        "pid": pid as i64, "window_id": wid, "element_index": idx,
+                        "snapshot_id": snap.snapshot_id()
                     }),
                 );
                 println!("invoke IncreaseLarge #{i}: {}", resp.text());
@@ -1329,6 +1526,7 @@ fn harness_wpf_checkbox_toggle() {
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "foreground"
                 }),
             );
@@ -1368,6 +1566,7 @@ fn harness_wpf_radio_select() {
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "foreground"
                 }),
             );
@@ -1406,6 +1605,7 @@ fn harness_wpf_combo_select() {
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": combo_idx,
+                    "snapshot_id": snap.snapshot_id(),
                     "action": "expand", "delivery_mode": "background"
                 }),
             );
@@ -1419,6 +1619,7 @@ fn harness_wpf_combo_select() {
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": item_idx,
+                    "snapshot_id": snap2.snapshot_id(),
                     "delivery_mode": "background"
                 }),
             );
@@ -1457,6 +1658,7 @@ fn harness_wpf_listbox_select() {
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "foreground"
                 }),
             );
@@ -1484,75 +1686,138 @@ fn harness_wpf_listbox_select() {
 
 #[test]
 #[ignore]
-fn harness_wpf_menu_invoke() {
+fn harness_wpf_modified_click_preserves_selection() {
     run_foreground_case(
-        "menu_invoke",
+        "modified_click_selection",
+        Targeting::Ax,
+        DriverRoute::WindowsSendInput,
+        Vec::new(),
+        |pid, wid, driver| {
+            focus_harness(driver, pid, wid);
+            let first = snapshot(driver, pid, wid);
+            let apple =
+                ax::element_index_by_id(first.text(), "lst-apple").expect("lst-apple missing");
+            let select_apple = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": wid, "element_index": apple,
+                    "snapshot_id": first.snapshot_id(), "delivery_mode": "foreground"
+                }),
+            );
+            assert!(
+                !select_apple.is_error(),
+                "select apple failed: {}",
+                select_apple.text()
+            );
+            std::thread::sleep(Duration::from_millis(250));
+
+            let second = snapshot(driver, pid, wid);
+            let banana =
+                ax::element_index_by_id(second.text(), "lst-banana").expect("lst-banana missing");
+            let refused_background = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": wid, "element_index": banana,
+                    "snapshot_id": second.snapshot_id(), "modifier": ["ctrl"]
+                }),
+            );
+            assert!(
+                refused_background.is_error(),
+                "background modified click was not refused: {}",
+                refused_background.text()
+            );
+            assert_eq!(
+                refused_background.structured()["code"],
+                "background_unavailable",
+                "background modified click returned the wrong refusal: {}",
+                refused_background.structured()
+            );
+            std::thread::sleep(Duration::from_millis(250));
+            let after_refusal = snapshot(driver, pid, wid);
+            assert!(
+                after_refusal.text().contains("selected=apple"),
+                "refused modified click changed the prior selection: {}",
+                after_refusal.text()
+            );
+            let banana = ax::element_index_by_id(after_refusal.text(), "lst-banana")
+                .expect("lst-banana missing after refusal");
+            let add_banana = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": wid, "element_index": banana,
+                    "snapshot_id": after_refusal.snapshot_id(), "delivery_mode": "foreground",
+                    "modifier": ["ctrl"]
+                }),
+            );
+            assert!(
+                !add_banana.is_error(),
+                "modified click failed: {}",
+                add_banana.text()
+            );
+            std::thread::sleep(Duration::from_millis(300));
+            let post = snapshot(driver, pid, wid);
+            assert!(
+                post.text().contains("selected=apple,banana"),
+                "modified click replaced or lost the prior selection: {}",
+                post.text()
+                    .lines()
+                    .filter(|line| line.contains("selected="))
+                    .collect::<Vec<_>>()
+                    .join(" / ")
+            );
+            Vec::new()
+        },
+    );
+}
+
+#[test]
+#[ignore]
+fn harness_wpf_invoke_menu_live_path() {
+    run_foreground_case(
+        "invoke_menu",
         Targeting::Ax,
         DriverRoute::UiaExpandCollapse,
         Vec::new(),
         |pid, wid, driver| {
             focus_harness(driver, pid, wid);
-            // Expand File menu first (UIA expand pattern on MenuItem)
-            let snap = snapshot(driver, pid, wid);
-            let file_idx = ax::element_index_by_id(snap.text(), "menu-file")
-                .or_else(|| ax::element_index_containing(snap.text(), "File"))
-                .unwrap_or_else(|| {
-                    panic!(
-                        "menu-file missing. Menu-related snapshot lines: {}",
-                        snapshot_lines_containing(snap.text(), &["menu", "file", "new", "open"])
-                    )
-                });
-            let expand = driver.call(
-                "click",
+            let refused = driver.call(
+                "invoke_menu",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": file_idx,
-                    "action": "expand",
-                    "delivery_mode": "foreground"
+                    "pid": pid, "window_id": wid,
+                    "path": ["Window", "Arrange", "Missing"]
                 }),
             );
-            assert!(
-                !expand.is_error(),
-                "File menu expand failed: {}",
-                expand.text()
-            );
-            std::thread::sleep(Duration::from_millis(400));
+            assert!(refused.is_error(), "missing menu path was accepted");
+            assert!(snapshot(driver, pid, wid)
+                .tree_text()
+                .contains("menu_action=none"));
 
-            // Re-snapshot so menu-file-new is in the cache (it materialized
-            // when the menu expanded).
-            let snap2 = snapshot(driver, pid, wid);
-            let new_idx = ax::element_index_by_id(snap2.text(), "menu-file-new")
-                .or_else(|| ax::element_index_containing(snap2.text(), "New"))
-                .unwrap_or_else(|| {
-                    panic!(
-                        "menu-file-new missing after expand. Menu-related snapshot lines: {}",
-                        snapshot_lines_containing(snap2.text(), &["menu", "file", "new", "open"])
-                    )
-                });
             let invoke = driver.call(
-                "click",
+                "invoke_menu",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": new_idx,
-                    "delivery_mode": "foreground"
+                    "pid": pid, "window_id": wid,
+                    "path": ["Window", "Arrange", "Left"]
                 }),
             );
             assert!(
                 !invoke.is_error(),
-                "File > New invoke failed: {}",
+                "Window > Arrange > Left invoke failed: {}",
                 invoke.text()
             );
+            assert_eq!(invoke.action_effect(), Some("unverifiable"));
             std::thread::sleep(Duration::from_millis(500));
 
             let post = snapshot(driver, pid, wid);
             assert!(
-                post.text().contains("menu_action=file_new"),
-                "File>New didn't invoke: {}",
-                post.text()
+                post.tree_text().contains("menu_action=window_arrange_left"),
+                "Window>Arrange>Left didn't invoke: {}",
+                post.tree_text()
                     .lines()
                     .filter(|l| l.contains("menu_action="))
                     .collect::<Vec<_>>()
                     .join(" / ")
             );
-            println!("✅ harness_wpf_menu_invoke: menu_action=file_new");
+            println!("✅ harness_wpf_invoke_menu_live_path: menu_action=window_arrange_left");
             Vec::new()
         },
     );

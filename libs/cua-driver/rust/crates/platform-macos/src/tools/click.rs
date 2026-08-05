@@ -58,6 +58,32 @@ enum PixelActivationPolicy {
     ForegroundAssist,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct SelectionPixelTarget {
+    screen_x: f64,
+    screen_y: f64,
+    window_x: f64,
+    window_y: f64,
+}
+
+fn selection_readback_confirms(
+    before: bool,
+    after: bool,
+    has_modifiers: bool,
+    prior_selected_peers_preserved: bool,
+) -> bool {
+    if has_modifiers {
+        after != before && prior_selected_peers_preserved
+    } else {
+        after
+    }
+}
+
+const SELECTION_READBACK_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+const SELECTION_READBACK_POLL: std::time::Duration = std::time::Duration::from_millis(25);
+const SELECTION_READBACK_SETTLE: std::time::Duration = std::time::Duration::from_millis(200);
+const SELECTION_READBACK_STABILITY: std::time::Duration = std::time::Duration::from_millis(250);
+
 fn pixel_activation_policy(
     button: &str,
     effective_foreground: bool,
@@ -99,16 +125,16 @@ fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "click".into(),
         description:
-            "Click against a target pid. **Prefer `element_index` over pixel \
-             coordinates** — element_index works on backgrounded / minimized / hidden / \
-             off-Space windows, surfaces a stable handle that survives rebuilds, and tells \
+            "Click against a target pid. **Prefer `element_token` over pixel \
+             coordinates** — the token works on backgrounded / minimized / hidden / \
+             off-Space windows, identifies one exact snapshot element, and tells \
              you what you're clicking via the cached element's role + label. Reach for \
              `x, y` only when the target is a canvas / video / WebGL / custom-drawn surface \
              that doesn't appear in the AX tree.\n\n\
              Two addressing modes:\n\n\
-             - element_index + window_id (from last get_window_state): AX action path. \
+             - element_token, or element_index + snapshot_id (from get_window_state): AX action path. \
                Works on backgrounded/hidden windows. No cursor move, no focus steal. \
-               element_index cache is scoped per (pid, window_id) and is replaced by the \
+               The snapshot cache is scoped per (pid, window_id) and is replaced by the \
                next snapshot of the same window — re-snapshot every turn before clicking.\n\n\
              - x, y (window-local screenshot pixels, top-left origin of the PNG returned \
                by get_window_state): CGEvent path. Synthesizes mouse events and posts to \
@@ -136,8 +162,9 @@ fn def() -> &'static ToolDef {
                 "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
                 "pid":           { "type": "integer", "description": "Target process ID." },
                 "window_id":     { "type": "integer", "description": "Target window ID. Required for element_index. Optional when element_token is supplied (the token carries it)." },
-                "element_index": { "type": "integer", "description": "Element index from last get_window_state. REQUIRES `pid` and `window_id` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op." },
-                "element_token": { "type": "string",  "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token` of the last get_window_state. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded — re-snapshot in that case." },
+                "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                 "x":             { "type": "number",  "description": "X in screenshot pixels, read straight off the image you were handed — no scaling math needed. With pid+window_id (capture_scope=window): window-local pixels from the get_window_state PNG (top-left origin). Windowless (no pid/window_id, capture_scope=desktop): pixels from the get_desktop_state PNG (the native full-display image). Either way, the pixel you read IS the pixel that gets clicked; the driver undoes the Retina backing scale + any downscale internally." },
                 "y":             { "type": "number",  "description": "Y in screenshot pixels (see x). Window-local from get_window_state, or full-display from get_desktop_state under capture_scope=desktop." },
                 "action":        { "type": "string",  "description": "AX action: press, show_menu, pick, confirm, cancel, open." },
@@ -163,7 +190,7 @@ fn def() -> &'static ToolDef {
                 "delivery_mode": {
                     "type": "string",
                     "enum": ["background", "foreground"],
-                    "description": "Best-effort-background ladder rung (default \"background\"). \"background\": perform the AX action or post the CGEvent without fronting. \"foreground\": briefly front the window, act, let transient UI settle, then restore the prior frontmost app. Requires window_id. A click is never driver-verifiable (no read-back), so both report verified:false — confirm the effect via screenshot. Use the agent loop: background AX (element_index) → screenshot → background pixel (x/y) → screenshot → delivery_mode:\"foreground\"."
+                    "description": "Best-effort-background ladder rung (default \"background\"). \"background\": perform the AX action or post the CGEvent without fronting. \"foreground\": briefly front the window, act, let transient UI settle, then restore the prior frontmost app. Requires window_id. Modified clicks require \"foreground\" so macOS observes physical modifier-key state. A generic click has no independent postcondition read-back, except selection of list-like AX rows whose AXSelected state can be confirmed; otherwise confirm the effect from a fresh state snapshot. Use the agent loop: background AX (element_index) → snapshot → background pixel (x/y) → snapshot → delivery_mode:\"foreground\"."
                 },
                 "scope": {
                     "type": "string",
@@ -274,12 +301,21 @@ impl Tool for ClickTool {
                 .update_position(&cursor_key, sx, sy);
 
             let btn = button.clone();
+            let desktop_modifiers: Vec<String> = args.str_array("modifier");
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
                 // Desktop scope is explicitly foreground and vision-driven: post
                 // at the global HID tap so WindowServer delivers to the window
                 // actually visible at this point. PID-posting here would silently
                 // turn the foreground contract back into background delivery.
-                crate::input::mouse::click_at_xy_desktop(sx, sy, count, &btn)
+                let modifier_refs: Vec<&str> =
+                    desktop_modifiers.iter().map(String::as_str).collect();
+                crate::input::mouse::click_at_xy_desktop_with_modifiers(
+                    sx,
+                    sy,
+                    count,
+                    &btn,
+                    &modifier_refs,
+                )
             })
             .await;
             let button_label = match button.as_str() {
@@ -318,6 +354,7 @@ impl Tool for ClickTool {
             pid,
             element_index_arg,
             element_token_arg.as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
             window_id_arg,
             "click",
         ) {
@@ -365,6 +402,25 @@ impl Tool for ClickTool {
         let debug_image_out = args.opt_str("debug_image_out");
         let modifiers: Vec<String> = args.str_array("modifier");
 
+        // PID-routed key transitions can look correct for one AX poll and then
+        // collapse to a plain click once AppKit resolves the gesture. Refuse
+        // that false-success path. The explicit foreground rung uses physical
+        // HID modifier transitions under an exact-window activation guard.
+        if !modifiers.is_empty() && (!delivery_mode.is_foreground() || window_id.is_none()) {
+            return ToolResult::error(
+                "click modifiers require delivery_mode:\"foreground\" and window_id on macOS; \
+                 background PID-routed events cannot preserve live modifier-key state",
+            )
+            .with_structured(serde_json::json!({
+                "code": "background_unavailable",
+                "effect": "refused",
+                "escalation": {
+                    "recommended": "foreground",
+                    "reason": "macOS modifier clicks require exact-window HID delivery so the target observes live modifier state"
+                }
+            }));
+        }
+
         if let (Some(idx), Some(wid)) = (element_index, window_id) {
             // ── AX element path ────────────────────────────────────────────
             // Retain the element out of the cache so it can't be freed by a
@@ -381,6 +437,28 @@ impl Tool for ClickTool {
                 }
             };
             let element_ptr = element_guard.as_ptr();
+
+            // ── Exact-target background gate (macOS background input v1) ──
+            // The element branch is semantic AX delivery, except button=middle
+            // which falls back to a routed pixel click at the element's center
+            // and is therefore held to the stricter WindowPointer rung. Gate
+            // BEFORE any cursor/dispatch work so a stale or sibling-owned
+            // target refuses instead of acting on the wrong window.
+            let _mutation_lease = if !delivery_mode.is_foreground() {
+                let gate_action = if button_str == "middle" {
+                    cua_driver_core::background_input::BackgroundAction::WindowPointer
+                } else {
+                    cua_driver_core::background_input::BackgroundAction::AxSemantic
+                };
+                match super::gate_background_window_action(pid, wid, Some(element_ptr), gate_action)
+                    .await
+                {
+                    Ok(lease) => Some(lease),
+                    Err(refusal_result) => return refusal_result,
+                }
+            } else {
+                None
+            };
 
             // Surface 5: button=right on the AX path → AXShowMenu (the same surface
             // the dedicated `right_click` tool dispatches). Threads through the
@@ -426,9 +504,22 @@ impl Tool for ClickTool {
                     .update_position(&cursor_key, cx, cy);
 
                 let mods_owned = modifiers.clone();
+                let foreground = delivery_mode.is_foreground();
                 let result = tokio::task::spawn_blocking(move || {
                     let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
-                    crate::input::mouse::middle_click_at_xy(pid, cx, cy, &m)
+                    if foreground && !m.is_empty() {
+                        crate::input::skylight::with_foreground_hid_activation(
+                            pid as libc::pid_t,
+                            wid,
+                            || {
+                                crate::input::mouse::click_at_xy_desktop_with_modifiers_preserving_cursor(
+                                    cx, cy, 1, "middle", &m,
+                                )
+                            },
+                        )
+                    } else {
+                        crate::input::mouse::middle_click_at_xy(pid, cx, cy, &m)
+                    }
                 })
                 .await;
                 return match result {
@@ -457,6 +548,59 @@ impl Tool for ClickTool {
                     .update_position(&cursor_key, cx, cy);
             }
 
+            // Finder icon/list items can expose a readable AXSelected state
+            // while refusing both AXSelected writes and AXPress. Resolve a
+            // verified coordinate frame only for those collection-like
+            // elements so perform_ax_click can cross that one failed semantic
+            // rung internally and confirm the result by AX read-back.
+            let selection_candidate = if effective_action == "press" {
+                tokio::task::spawn_blocking(move || {
+                    crate::input::ax_actions::nearest_container_selection_state(element_ptr)
+                        .is_some()
+                })
+                .await
+                .unwrap_or(false)
+            } else {
+                false
+            };
+            let mut selection_pixel = if selection_candidate {
+                if let Some((cx, cy)) = center {
+                    super::px_frame::resolve_or_refuse(wid)
+                        .await
+                        .ok()
+                        .map(|frame| SelectionPixelTarget {
+                            screen_x: cx,
+                            screen_y: cy,
+                            window_x: cx - frame.bounds.x,
+                            window_y: cy - frame.bounds.y,
+                        })
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            // The selection fallback delivers a routed window-local pixel
+            // click — a stricter (WindowPointer) rung than the semantic gate
+            // above. In background, drop the fallback rather than silently
+            // escalate when the pointer rung would refuse (e.g. a
+            // minimized/hidden target); the semantic path still runs.
+            if selection_pixel.is_some()
+                && !delivery_mode.is_foreground()
+                && _mutation_lease
+                    .as_ref()
+                    .expect("background element actions hold the per-pid lease")
+                    .gate_again(
+                        wid,
+                        Some(element_ptr),
+                        cua_driver_core::background_input::BackgroundAction::WindowPointer,
+                    )
+                    .await
+                    .is_err()
+            {
+                selection_pixel = None;
+            }
+
             // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
             // Capture prior frontmost, arm the wildcard suppressor in the
             // snapshot, then arm a targeted suppressor across the AX action
@@ -479,6 +623,7 @@ impl Tool for ClickTool {
             // not the shared "default" one (which would light the wrong cursor
             // and stomp default for a non-default session).
             let ck = cursor_key.clone();
+            let selection_modifiers = modifiers.clone();
             let result = focus_guard::with_focus_suppressed(
                 if foreground { None } else { Some(pid) },
                 prior_front,
@@ -487,29 +632,53 @@ impl Tool for ClickTool {
                     tokio::task::spawn_blocking(move || {
                         if foreground {
                             let mut outcome = None;
-                            let fronted = crate::input::skylight::with_foreground_assist(
-                                pid as libc::pid_t,
-                                wid,
-                                || {
-                                    outcome = Some(perform_ax_click(
-                                        element_ptr,
-                                        idx,
-                                        pid,
-                                        wid,
-                                        &action_clone,
-                                        &ck,
-                                    )?);
-                                    std::thread::sleep(std::time::Duration::from_millis(150));
-                                    Ok(())
-                                },
-                            )?;
+                            let has_modifiers = !selection_modifiers.is_empty();
+                            let action = || {
+                                outcome = Some(perform_ax_click(
+                                    element_ptr,
+                                    idx,
+                                    pid,
+                                    wid,
+                                    &action_clone,
+                                    &ck,
+                                    selection_pixel,
+                                    &selection_modifiers,
+                                    foreground,
+                                )?);
+                                std::thread::sleep(std::time::Duration::from_millis(150));
+                                Ok(())
+                            };
+                            let fronted = if has_modifiers {
+                                crate::input::skylight::with_foreground_hid_activation(
+                                    pid as libc::pid_t,
+                                    wid,
+                                    action,
+                                )?;
+                                true
+                            } else {
+                                crate::input::skylight::with_foreground_assist(
+                                    pid as libc::pid_t,
+                                    wid,
+                                    action,
+                                )?
+                            };
                             let outcome = outcome.ok_or_else(|| {
                                 anyhow::anyhow!("foreground AX click did not execute")
                             })?;
                             Ok((outcome, fronted))
                         } else {
-                            perform_ax_click(element_ptr, idx, pid, wid, &action_clone, &ck)
-                                .map(|outcome| (outcome, false))
+                            perform_ax_click(
+                                element_ptr,
+                                idx,
+                                pid,
+                                wid,
+                                &action_clone,
+                                &ck,
+                                selection_pixel,
+                                &selection_modifiers,
+                                false,
+                            )
+                            .map(|outcome| (outcome, false))
                         }
                     })
                     .await
@@ -521,7 +690,16 @@ impl Tool for ClickTool {
             let changes = super::finish_window_observation(snapshot, &args).await;
 
             match result {
-                Ok(Ok(((mut msg, needs_webkit_delay, suspected_noop), fronted))) => {
+                Ok(Ok((
+                    (
+                        mut msg,
+                        needs_webkit_delay,
+                        suspected_noop,
+                        selection_verified,
+                        selection_via_pixel,
+                    ),
+                    fronted,
+                ))) => {
                     // For text inputs, wait 800ms for WebKit DOM focus to settle
                     // before returning — matches the Swift reference behaviour.
                     if needs_webkit_delay {
@@ -538,10 +716,27 @@ impl Tool for ClickTool {
                     //   * unverifiable — dispatched fine, driver just can't confirm;
                     //     the caller verifies via screenshot.
                     let mut structured = serde_json::json!({
-                        "path": if fronted { "ax_fg" } else { "ax" },
-                        "verified": false,
-                        "effect": if suspected_noop { "suspected_noop" } else { "unverifiable" },
+                        "path": if selection_via_pixel {
+                            if fronted { "cgevent_fg" } else { "cgevent" }
+                        } else if fronted {
+                            "ax_fg"
+                        } else {
+                            "ax"
+                        },
+                        "verified": selection_verified,
+                        "effect": if selection_verified {
+                            "confirmed"
+                        } else if suspected_noop {
+                            "suspected_noop"
+                        } else {
+                            "unverifiable"
+                        },
                     });
+                    if selection_verified {
+                        structured["evidence"] = serde_json::json!([
+                            { "kind": "accessibility_readback" }
+                        ]);
+                    }
                     if suspected_noop {
                         structured["escalation"] = serde_json::json!({
                             "recommended": "px",
@@ -634,12 +829,62 @@ impl Tool for ClickTool {
             // CGEventSetWindowLocation in the Chromium recipe.
             let (screen_x, screen_y, win_local_x, win_local_y) = if let Some(wid) = window_id {
                 match super::px_frame::resolve_or_refuse(wid).await {
-                    Ok(frame) => frame.to_screen(cx, cy),
+                    Ok(frame) => {
+                        let (sx, sy, lx, ly) = frame.to_screen(cx, cy);
+                        // A window-local point outside the live frame would
+                        // dispatch onto whatever occupies that screen point —
+                        // the same wrong-surface misclick class as #2237.
+                        // Refuse in background, where the caller cannot see
+                        // what is actually under the translated point.
+                        if !delivery_mode.is_foreground()
+                            && (lx < 0.0
+                                || ly < 0.0
+                                || lx > frame.bounds.width
+                                || ly > frame.bounds.height)
+                        {
+                            return ToolResult::error(format!(
+                                "click: window-local point ({lx:.1}, {ly:.1}) pt lies outside \
+                                 window {wid}'s {:.0}×{:.0} pt frame; background delivery \
+                                 refused. Re-read coordinates from a fresh get_window_state \
+                                 screenshot.",
+                                frame.bounds.width, frame.bounds.height
+                            ));
+                        }
+                        (sx, sy, lx, ly)
+                    }
                     Err(refusal) => return refusal,
                 }
             } else {
                 // No window_id → treat x,y as screen coordinates (legacy behaviour).
                 (cx, cy, cx, cy)
+            };
+
+            // ── Exact-target background gate (macOS background input v1) ──
+            // A window-addressed background pixel action targets coordinates,
+            // which only mean something while the exact window is current and
+            // not minimized/hidden: a stale target would let the pid-scoped
+            // hit-test or routed events land on a same-process sibling. Gate
+            // BEFORE the AX hit-test backend and any cursor/dispatch work.
+            // delivery_mode:"foreground" stays the explicit last resort.
+            let mutation_lease_held = crate::background_mutation::held_by_current_task(pid);
+            let _mutation_lease = if !delivery_mode.is_foreground() && !mutation_lease_held {
+                if let Some(wid) = window_id {
+                    match super::gate_background_window_action(
+                        pid,
+                        wid,
+                        None,
+                        cua_driver_core::background_input::BackgroundAction::WindowPointer,
+                    )
+                    .await
+                    {
+                        Ok(lease) => Some(lease),
+                        Err(refusal_result) => return refusal_result,
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
             };
 
             // A background PX action can still use an accessibility delivery
@@ -653,10 +898,20 @@ impl Tool for ClickTool {
                 && modifiers.is_empty()
             {
                 let focus_only = action == "focus";
+                let hit_test_wid = window_id.expect("guarded by window_id.is_some() above");
                 let ax_result = tokio::task::spawn_blocking(move || unsafe {
                     let Some(element) = element_at_screen_position(pid, screen_x, screen_y) else {
                         return Ok::<bool, anyhow::Error>(false);
                     };
+                    // The pid-scoped hit-test can resolve an element from a
+                    // same-process sibling overlapping the requested point.
+                    // Require proven ancestry in the requested window before
+                    // acting; otherwise fall through to the routed pixel path
+                    // (already gated for this exact window).
+                    if crate::ax::exact_target::element_window_id(element) != Some(hit_test_wid) {
+                        CFRelease(element as _);
+                        return Ok(false);
+                    }
                     let delivered = if focus_only {
                         crate::input::ax_actions::focus_element(element as usize).is_ok()
                     } else {
@@ -793,8 +1048,18 @@ impl Tool for ClickTool {
                 "click.pixel",
                 || async move {
                     tokio::task::spawn_blocking(move || {
+                        let has_modifiers = !mods_owned.is_empty();
                         let do_click = move || -> anyhow::Result<()> {
                             let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
+                            if fg && !m.is_empty() {
+                                return crate::input::mouse::click_at_xy_desktop_with_modifiers_preserving_cursor(
+                                    screen_x,
+                                    screen_y,
+                                    count,
+                                    &button_kind,
+                                    &m,
+                                );
+                            }
                             match button_kind.as_str() {
                                 "right" => {
                                     if let Some(wid) = window_id {
@@ -839,10 +1104,22 @@ impl Tool for ClickTool {
                         // Foreground rung: brief front → click → restore.
                         // Returns whether the window was ACTUALLY fronted, so the
                         // reported `path` honestly reflects the rung that ran.
-                        match (fg, window_id) {
-                            (true, Some(wid)) => crate::input::skylight::with_foreground_assist(
-                                pid as libc::pid_t, wid, do_click,
-                            ),
+                        match (fg, window_id, has_modifiers) {
+                            (true, Some(wid), true) => {
+                                crate::input::skylight::with_foreground_hid_activation(
+                                    pid as libc::pid_t,
+                                    wid,
+                                    do_click,
+                                )
+                                .map(|_| true)
+                            }
+                            (true, Some(wid), false) => {
+                                crate::input::skylight::with_foreground_assist(
+                                    pid as libc::pid_t,
+                                    wid,
+                                    do_click,
+                                )
+                            }
                             _ => do_click().map(|_| false),
                         }
                     })
@@ -916,7 +1193,8 @@ impl Tool for ClickTool {
 
 // ── AX click implementation (blocking) ───────────────────────────────────────
 
-/// Returns `(summary_text, needs_webkit_delay, suspected_noop)`.
+/// Returns `(summary_text, needs_webkit_delay, suspected_noop,
+/// selection_verified, selection_via_pixel)`.
 ///
 /// `suspected_noop` is true when the element did not advertise the action we
 /// dispatched — AXUIElementPerformAction returns success regardless, so this is
@@ -930,7 +1208,10 @@ fn perform_ax_click(
     window_id: u32,
     action_str: &str,
     cursor_key: &str,
-) -> anyhow::Result<(String, bool, bool)> {
+    selection_pixel: Option<SelectionPixelTarget>,
+    modifiers: &[String],
+    foreground: bool,
+) -> anyhow::Result<(String, bool, bool, bool, bool)> {
     let ax_action = map_action(action_str);
     let element = element_ptr as AXUIElementRef;
 
@@ -944,13 +1225,144 @@ fn perform_ax_click(
     // (AX returns success even when the element doesn't advertise the action).
     let advertised = unsafe { copy_action_names(element) };
 
-    let err = unsafe { crate::ax::bindings::perform_action(element, ax_action) };
-    if err != crate::ax::bindings::kAXErrorSuccess {
-        anyhow::bail!("AXUIElementPerformAction({ax_action}) returned {err}");
-    }
-
     let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
     let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
+
+    // A click on an AppKit collection item is frequently represented by a
+    // label child or row that does not advertise AXPress. Prefer a bounded,
+    // read-back-verified AXSelected write over dispatching a known hollow press
+    // or forcing the caller onto a less stable pixel coordinate.
+    if ax_action == "AXPress" && !advertised.iter().any(|action| action == ax_action) {
+        if modifiers.is_empty() {
+            if let Some(selected_role) =
+                crate::input::ax_actions::select_nearest_container(element_ptr)
+            {
+                return Ok((
+                    format!(
+                        "✅ Selected nearest {selected_role} for [{idx}] {role} \"{title}\"; \
+                         confirmed AXSelected=true."
+                    ),
+                    false,
+                    false,
+                    true,
+                    false,
+                ));
+            }
+        }
+
+        if let (Some(target), Some(selection)) = (
+            selection_pixel,
+            crate::input::ax_actions::capture_nearest_container_selection(element_ptr),
+        ) {
+            let selected_role = selection.role().to_owned();
+            let Some((before, _)) = selection.observe() else {
+                anyhow::bail!("selection target stopped exposing AXSelected before delivery");
+            };
+            let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+            if foreground && !modifier_refs.is_empty() {
+                crate::input::mouse::click_at_xy_desktop_with_modifiers_preserving_cursor(
+                    target.screen_x,
+                    target.screen_y,
+                    1,
+                    "left",
+                    &modifier_refs,
+                )?;
+            } else {
+                crate::input::mouse::click_at_xy_with_window_local(
+                    pid,
+                    target.screen_x,
+                    target.screen_y,
+                    target.window_x,
+                    target.window_y,
+                    window_id,
+                    1,
+                    &modifier_refs,
+                )?;
+            }
+            // AppKit may publish a transient AXSelected transition while the
+            // event queue is still resolving the gesture. Let it settle before
+            // accepting a candidate, then require the same state to survive a
+            // second observation. A modified selection additionally preserves
+            // every peer that was selected before delivery.
+            std::thread::sleep(SELECTION_READBACK_SETTLE);
+            let deadline = std::time::Instant::now() + SELECTION_READBACK_TIMEOUT;
+            loop {
+                if let Some((after, peers_preserved)) = selection.observe() {
+                    let verified = selection_readback_confirms(
+                        before,
+                        after,
+                        !modifiers.is_empty(),
+                        peers_preserved,
+                    );
+                    if verified {
+                        std::thread::sleep(SELECTION_READBACK_STABILITY);
+                        if let Some((stable_after, stable_peers_preserved)) = selection.observe() {
+                            if stable_after == after
+                                && selection_readback_confirms(
+                                    before,
+                                    stable_after,
+                                    !modifiers.is_empty(),
+                                    stable_peers_preserved,
+                                )
+                            {
+                                return Ok((
+                                    format!(
+                                        "✅ Selected nearest {selected_role} for [{idx}] {role} \
+                                         \"{title}\"; AX selection write was unavailable, so a \
+                                         coordinate click was delivered and confirmed by stable \
+                                         AXSelected read-back."
+                                    ),
+                                    false,
+                                    false,
+                                    true,
+                                    true,
+                                ));
+                            }
+                        }
+                    }
+                }
+                if std::time::Instant::now() >= deadline {
+                    break;
+                }
+                std::thread::sleep(SELECTION_READBACK_POLL);
+            }
+            if modifiers.is_empty() {
+                anyhow::bail!(
+                    "coordinate click did not produce a stable AXSelected transition; \
+                     retry after a fresh snapshot"
+                );
+            }
+            anyhow::bail!(
+                "foreground modified coordinate click did not produce a stable AXSelected \
+                 transition while preserving the prior selection; take a fresh snapshot \
+                 before retrying"
+            );
+        }
+    }
+
+    let err = unsafe { crate::ax::bindings::perform_action(element, ax_action) };
+    if err != crate::ax::bindings::kAXErrorSuccess {
+        // Some collection rows claim a click-like action but Finder returns
+        // kAXErrorCannotComplete. Use the same verified selection fallback
+        // before surfacing the dispatch error.
+        if ax_action == "AXPress" && modifiers.is_empty() {
+            if let Some(selected_role) =
+                crate::input::ax_actions::select_nearest_container(element_ptr)
+            {
+                return Ok((
+                    format!(
+                        "✅ Selected nearest {selected_role} for [{idx}] {role} \"{title}\" \
+                         after AXPress returned {err}; confirmed AXSelected=true."
+                    ),
+                    false,
+                    false,
+                    true,
+                    false,
+                ));
+            }
+        }
+        anyhow::bail!("AXUIElementPerformAction({ax_action}) returned {err}");
+    }
 
     let mut summary = format!("✅ Performed {ax_action} on [{idx}] {role} \"{title}\".");
 
@@ -1033,7 +1445,27 @@ fn perform_ax_click(
     let _ = pid;
     let _ = window_id; // used by caller context
 
-    Ok((summary, needs_webkit_delay, suspected_noop))
+    Ok((summary, needs_webkit_delay, suspected_noop, false, false))
+}
+
+#[cfg(test)]
+mod selection_fallback_tests {
+    use super::selection_readback_confirms;
+
+    #[test]
+    fn plain_click_requires_selected_readback() {
+        assert!(selection_readback_confirms(false, true, false, true));
+        assert!(selection_readback_confirms(true, true, false, true));
+        assert!(!selection_readback_confirms(false, false, false, true));
+    }
+
+    #[test]
+    fn modified_click_requires_a_transition_and_preserves_prior_selection() {
+        assert!(selection_readback_confirms(false, true, true, true));
+        assert!(selection_readback_confirms(true, false, true, true));
+        assert!(!selection_readback_confirms(true, true, true, true));
+        assert!(!selection_readback_confirms(false, true, true, false));
+    }
 }
 
 fn map_action(action: &str) -> &'static str {

@@ -1,5 +1,5 @@
 {
-  "resource_description": "A Cyclops computer-use pool. The pool name also owns its same-named namespace.",
+  "resource_description": "A Cua Fleet computer-use pool: an OSGymSandboxWarmPool and its OSGymSandboxTemplate. The pool name also owns its same-named namespace.",
   "attributes": [
     {
       "name": "id",
@@ -27,6 +27,7 @@
       "go_name": "Replicas",
       "value_type": "int64",
       "mode": "required",
+      "cr": "warmpool",
       "crd_path": "spec.replicas"
     },
     {
@@ -34,28 +35,32 @@
       "go_name": "CPUCores",
       "value_type": "int64",
       "mode": "required",
-      "crd_path": "spec.template.cpuCores"
+      "cr": "template",
+      "crd_path": "spec.vmTemplate.cpuCores"
     },
     {
       "name": "memory",
       "go_name": "Memory",
       "value_type": "string",
       "mode": "required",
-      "crd_path": "spec.template.memory"
+      "cr": "template",
+      "crd_path": "spec.vmTemplate.memory"
     },
     {
       "name": "container_disk_image",
       "go_name": "ContainerDiskImage",
       "value_type": "string",
       "mode": "required",
-      "crd_path": "spec.template.containerDiskImage"
+      "cr": "template",
+      "crd_path": "spec.vmTemplate.containerDiskImage"
     },
     {
       "name": "image_pull_secret",
       "go_name": "ImagePullSecret",
       "value_type": "string",
       "mode": "optional_computed",
-      "crd_path": "spec.template.imagePullSecret",
+      "cr": "template",
+      "crd_path": "spec.vmTemplate.imagePullSecret",
       "description": "Kubernetes image pull secret. Defaults to ecr-credentials."
     },
     {
@@ -63,21 +68,24 @@
       "go_name": "Runtime",
       "value_type": "string",
       "mode": "optional_computed",
-      "crd_path": "spec.template.runtime"
+      "cr": "template",
+      "crd_path": "spec.vmTemplate.runtime"
     },
     {
       "name": "firmware",
       "go_name": "Firmware",
       "value_type": "string",
       "mode": "optional_computed",
-      "crd_path": "spec.template.firmware"
+      "cr": "template",
+      "crd_path": "spec.vmTemplate.firmware"
     },
     {
       "name": "readiness_probe_json",
       "go_name": "ReadinessProbeJSON",
       "value_type": "normalized_json",
       "mode": "optional",
-      "crd_path": "spec.template.probes",
+      "cr": "template",
+      "crd_path": "spec.vmTemplate.probes",
       "description": "JSON object for the VMI readinessProbe."
     },
     {
@@ -85,36 +93,36 @@
       "go_name": "LivenessProbeJSON",
       "value_type": "normalized_json",
       "mode": "optional",
-      "crd_path": "spec.template.probes",
+      "cr": "template",
+      "crd_path": "spec.vmTemplate.probes",
       "description": "JSON object for the VMI livenessProbe."
     },
     {
-      "name": "phase",
-      "go_name": "Phase",
+      "name": "template_name",
+      "go_name": "TemplateName",
       "value_type": "string",
       "mode": "computed",
-      "crd_path": "status.phase"
+      "cr": "warmpool",
+      "crd_path": "spec.sandboxTemplateRef.name",
+      "description": "Name of the OSGymSandboxTemplate backing this pool."
     },
     {
-      "name": "total_count",
-      "go_name": "TotalCount",
+      "name": "current_replicas",
+      "go_name": "CurrentReplicas",
       "value_type": "int64",
       "mode": "computed",
-      "crd_path": "status.totalCount"
+      "cr": "warmpool",
+      "crd_path": "status.replicas",
+      "description": "Sandboxes the warm pool currently owns."
     },
     {
-      "name": "available_count",
-      "go_name": "AvailableCount",
+      "name": "ready_replicas",
+      "go_name": "ReadyReplicas",
       "value_type": "int64",
       "mode": "computed",
-      "crd_path": "status.availableCount"
-    },
-    {
-      "name": "claimed_count",
-      "go_name": "ClaimedCount",
-      "value_type": "int64",
-      "mode": "computed",
-      "crd_path": "status.claimedCount"
+      "cr": "warmpool",
+      "crd_path": "status.readyReplicas",
+      "description": "Sandboxes that are ready to be claimed."
     }
   ],
   "blocks": [
@@ -122,7 +130,8 @@
       "name": "service",
       "model": "serviceModel",
       "collection": "set",
-      "crd_path": "spec.services",
+      "cr": "template",
+      "crd_path": "spec.vmTemplate.services",
       "fields": [
         {
           "name": "name",
@@ -152,6 +161,7 @@
       "name": "autoscaling",
       "model": "autoscalingModel",
       "collection": "single",
+      "cr": "warmpool",
       "crd_path": "spec.autoscaling",
       "fields": [
         {

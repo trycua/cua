@@ -90,7 +90,7 @@ pub fn sanitize_reserved_args(args: &mut Value) {
 #[cfg(test)]
 mod reserved_args_tests {
     use super::{parse_typed_input, parse_typed_projection, sanitize_reserved_args};
-    use cua_driver_contract::{ClickButton, ClickInput, GetScreenSizeInput};
+    use cua_driver_contract::{ClickButton, ClickInput, GetScreenSizeInput, SetWindowFrameInput};
     use serde_json::json;
 
     #[test]
@@ -132,6 +132,30 @@ mod reserved_args_tests {
             crate::protocol::Content::Text { text, .. }
                 if text.contains("unknown field `pid`")
         ));
+    }
+
+    #[test]
+    fn set_window_frame_typed_input_accepts_namespaced_session_metadata() {
+        let input = parse_typed_input::<SetWindowFrameInput>(
+            "set_window_frame",
+            json!({
+                "pid": 42,
+                "window_id": 84,
+                "x": 10,
+                "y": 20,
+                "width": 800,
+                "height": 600,
+                "session": "window-layout",
+                "_public_session_label": "window-layout",
+                "_session_id": "__cua_runtime_test:window-layout",
+                "_transport_session_id": "transport-1"
+            }),
+        )
+        .expect("trusted session metadata is not part of the public contract");
+
+        assert_eq!(input.pid, 42);
+        assert_eq!(input.window_id, 84);
+        assert_eq!(input.session.as_deref(), Some("window-layout"));
     }
 
     #[test]

@@ -6,7 +6,7 @@ description: |-
 
 # fleets_pool
 
-Creates an `OSGymWorkspacePool` and its same-named namespace. Destroy removes both. Import IDs are pool names.
+Creates an `OSGymSandboxWarmPool`, the `OSGymSandboxTemplate` it references (named `<pool>-template`), and their same-named namespace. Destroy removes all three. Import IDs are pool names.
 
 ```terraform
 resource "fleets_pool" "linux" {
@@ -46,7 +46,7 @@ resource "fleets_pool" "linux" {
 
 ## Read-only Attributes
 
-`namespace`, `phase`, `total_count`, `available_count`, and `claimed_count` are populated from Fleet.
+`namespace` and `template_name` identify the objects Fleet created. `current_replicas` and `ready_replicas` are the warm pool's `status.replicas` and `status.readyReplicas`.
 
 ## Import
 

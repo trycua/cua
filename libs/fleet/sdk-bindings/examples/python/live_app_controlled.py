@@ -3,70 +3,49 @@ import asyncio
 import json
 import os
 import time
-import urllib.error
-import urllib.request
-
-from cyclops_sdk import (
+from fleet_sdk import (
     CreateClaimRequest,
     CreatePoolRequest,
+    CreateTemplateRequest,
     CyclopsClient,
     CyclopsConfiguration,
     CyclopsCredentials,
-    HttpClient,
     HttpHeader,
     HttpRequest,
-    HttpResponse,
-    PoolSpec,
-    PoolTemplate,
+    OsGymSandboxTemplateSpec,
+    OsGymSandboxWarmPoolSpec,
     SandboxService,
+    SandboxTemplateRef,
+    VmTemplate,
 )
 
 
-class UrlLibHttpClient(HttpClient):
-    async def execute(self, request: HttpRequest) -> HttpResponse:
-        return await asyncio.to_thread(self._execute, request)
-
-    def _execute(self, request: HttpRequest) -> HttpResponse:
-        native = urllib.request.Request(
-            request.url,
-            data=request.body,
-            method=request.method,
-            headers={header.name: header.value for header in request.headers},
-        )
-        try:
-            with urllib.request.urlopen(native, timeout=60) as response:
-                return HttpResponse(
-                    status=response.status,
-                    headers=[HttpHeader(name=name, value=value) for name, value in response.headers.items()],
-                    body=response.read(),
-                )
-        except urllib.error.HTTPError as error:  # lint-ignore: swallowed-exception
-            return HttpResponse(
-                status=error.code,
-                headers=[HttpHeader(name=name, value=value) for name, value in error.headers.items()],
-                body=error.read(),
-            )
-
-
-def pool_spec(image: str, image_pull_secret: str) -> PoolSpec:
-    return PoolSpec(
+def pool_spec(template_name: str) -> OsGymSandboxWarmPoolSpec:
+    return OsGymSandboxWarmPoolSpec(
         replicas=1,
-        template=PoolTemplate(
+        sandbox_template_ref=SandboxTemplateRef(name=template_name),
+        autoscaling=None,
+    )
+
+
+def template_spec(image: str, image_pull_secret: str) -> OsGymSandboxTemplateSpec:
+    return OsGymSandboxTemplateSpec(
+        vm_template=VmTemplate(
+            container_disk_image=image,
+            command=None,
             runtime=None,
             runtime_class_name=None,
             node_selector=None,
             tolerations=None,
-            command=None,
-            container_disk_image=image,
+            image_pull_policy=None,
             image_pull_secret=image_pull_secret,
             cpu_cores=4,
             memory="4Gi",
             firmware=None,
             probes=None,
+            services=[SandboxService(name="mcp", target_port=3000, protocol=None)],
             oidc=None,
-        ),
-        autoscaling=None,
-        services=[SandboxService(name="mcp", target_port=3000, protocol=None)],
+        )
     )
 
 
@@ -117,7 +96,7 @@ async def main() -> None:
     image_pull_secret = os.environ["CUA_IMAGE_PULL_SECRET"]
     image = os.environ["CUA_IMAGE"]
 
-    client = CyclopsClient.connect(
+    client = CyclopsClient.connect_with_native_http_client(
         CyclopsConfiguration(
             base_url=base_url,
             token_url=token_url,
@@ -126,14 +105,22 @@ async def main() -> None:
             pool_poll_limit=120,
             claim_poll_interval_ms=5000,
             claim_poll_limit=120,
-        ),
-        UrlLibHttpClient(),
+        )
     )
+    template_name = f"{namespace}-template"
     pool = None
+    template = None
     claim = None
     try:
         pool = await client.create_pool(
-            CreatePoolRequest(namespace=namespace, spec=pool_spec(image, image_pull_secret))
+            CreatePoolRequest(namespace=namespace, spec=pool_spec(template_name))
+        )
+        template = await client.create_template(
+            CreateTemplateRequest(
+                namespace=namespace,
+                name=template_name,
+                spec=template_spec(image, image_pull_secret),
+            )
         )
         claim = await client.create_claim(CreateClaimRequest(pool=pool, spec=None))
         sandbox = await client.wait_claim(claim)
@@ -153,6 +140,8 @@ async def main() -> None:
     finally:
         if claim is not None:
             await client.delete_claim(claim)
+        if template is not None:
+            await client.delete_template(template)
         if pool is not None:
             await client.delete_pool(pool)
 

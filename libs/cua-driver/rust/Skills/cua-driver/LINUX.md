@@ -8,6 +8,12 @@ supported: `click`, `type_text`, scroll, `press_key`, `screenshot`,
 `launch_app`, `list_apps`, `list_windows`, `get_window_state`, and
 session recording.
 
+On X11, `set_window_frame({pid, window_id, x, y, width, height})` sends an
+EWMH window-manager request and confirms it against `list_windows` geometry.
+Wayland has no portable protocol for setting another application's top-level
+geometry, so this tool refuses there unless a future compositor-owned adapter
+can provide exact targeting and readback.
+
 AT-SPI is talked to natively over D-Bus (the `atspi`/zbus crate) — no
 `pyatspi` or GObject-introspection typelibs are required at runtime.
 
@@ -17,7 +23,7 @@ AT-SPI is talked to natively over D-Bus (the `atspi`/zbus crate) — no
   target window. No raise, no activate, no real-pointer warp. (It does
   **not** use `XTestFakeButtonEvent`, which would route through the
   focused window.)
-- **Element click** (`element_index`) — AT-SPI `do_action` on the
+- **Element click** (`element_token`, or `element_index` + `snapshot_id`) — AT-SPI `do_action` on the
   accessible. Toolkit-native, focus-free.
 - **type_text** — AT-SPI EditableText first (focus-free; lands in an
   *unfocused* window's editable for Qt6 / GTK4). When a **non-editable**
@@ -60,19 +66,19 @@ remote desktop session, or when repeated action-scoped activation prevents the
 remote surface from accepting input. On X11 it uses persistent
 `_NET_ACTIVE_WINDOW` activation (the `wmctrl -a` equivalent).
 
-**Read-back / `verified`** — `type_text` reports `{verified}`: the AT-SPI
-`EditableText.insertText` path (`path:"ax"`) is the **driver-verifiable** rung
-(the a11y layer confirms the insert into the widget model) → `verified:true`;
-keystroke / XSendEvent / XTest / foreground rungs are not read-back-confirmed
-→ `verified:false` (confirm via screenshot). Mirrors the macOS/Windows verdict.
+**Read-back / action effect** — AT-SPI `EditableText.insertText` can return
+`effect:"confirmed"` with `evidence:[{"kind":"value_readback"}]` when the
+accessibility layer reads the inserted value back from the widget model.
+Keystroke / XSendEvent / XTest / foreground rungs return
+`effect:"unverifiable"` unless another publishable readback exists. Confirm
+those through `verify_state` or multimodal reading.
 
-**`effect` / `escalation`** — alongside `verified`, action responses carry the
-cross-platform `effect` (`confirmed` / `unverifiable` / `suspected_noop`) and,
-when you should change rung, `escalation:{recommended, reason}`. See `SKILL.md`
-→ behavior matrix. On a standard Wayland compositor the Linux-specific value
-of `recommended` is **`foreground`** (raw background pixels cannot target an
-unfocused window); the opt-in nested compositor is a separate environment. Use
-**`px` on X11** (an element px action — background pixel click — lands via
+**Escalation** — action responses use the cross-platform closed
+`escalation:{target, reason}` shape. See `SKILL.md` → behavior matrix. On a
+standard Wayland compositor the Linux-specific target is **`foreground`**
+(raw background pixels cannot target an unfocused window); the opt-in nested
+compositor is a separate environment. Use **`pixel` on X11** (an element px
+action — background pixel click — lands via
 AT-SPI `do_action`-at-point off the screenshot already in the snapshot — the
 matrix below).
 
@@ -97,7 +103,8 @@ is no `ax`/`vision`/`som` capture choice anymore; drop that vocabulary.
 
 Modality is chosen at **action time**, by how you address the target:
 
-- **element ax action** — `element_index` / `element_token` → AT-SPI
+- **element ax action** — `element_token` (preferred), or the matching
+  `element_index` + `snapshot_id` pair → AT-SPI
   `do_action`. Backgroundable, driver-verifiable.
 - **element px action** — `x,y` → pixel rung, read straight off the screenshot
   already in the `get_window_state` response. Best-effort; caller-confirmed.
@@ -113,7 +120,7 @@ experimental per-surface routes.
 The capture/dispatch/addressing params are a shared cross-platform
 contract (see `SKILL.md` → *Cross-platform parameter contract*) — the
 same `session`, `delivery_mode`, `capture_mode`, `scope`, `modifier`,
-`element_index`/`element_token` *shapes* as macOS and Windows, gated in
+`element_index`/`snapshot_id`/`element_token` *shapes* as macOS and Windows, gated in
 CI so the three surfaces can't drift. Linux-relevant notes:
 
 - **`session` is now accepted on every action/cursor tool.** Earlier
@@ -125,6 +132,16 @@ CI so the three surfaces can't drift. Linux-relevant notes:
   effective desktop scope (`start_session(..., capture_scope:"desktop")`, or
   an explicitly escalated `auto` session). Strict window sessions receive
   `desktop_scope_disabled`; no persistent config is read or written.
+
+## Native application menus
+
+Use `invoke_menu({pid, window_id, path:[...]})` for a known GTK/Qt application
+menu command. It activates the exact target only for the duration of the
+operation, resolves each labelled AT-SPI menu descendant again after the prior
+menu expands, and refuses missing, duplicate, disabled, or non-actionable
+segments. It works through AT-SPI on both X11 and Wayland and never falls back
+to coordinates. Verify the command's semantic effect from fresh state; the
+native `do_action` acknowledgement alone is not task completion.
 
 ## AT-SPI needs the session bus (headless / containers / `runuser`)
 
@@ -162,17 +179,15 @@ bridge isn't up / the daemon isn't on the session bus".
 
 ## The validated modality matrix (X11 / XFCE)
 
-Each input rung, and whether the **driver itself** can confirm it (vs. only
-the caller agent confirming via screenshot — the same honesty line macOS and
-Windows draw):
+Each input rung and its stable public route:
 
-| Modality | `delivery_mode` | Path reported | Driver-verifiable? |
+| Modality | `delivery_mode` | `route` | Postcondition proof |
 |---|---|---|---|
-| Element click (`element_index`) | `background` | `x11_atspi` (AT-SPI `do_action`) | ✅ a11y action |
-| **element px action (x,y)** | `background` | `x11_atspi` (AT-SPI `do_action`-at-point) for AX apps; else MPX `x11_pixel` | ✅ when AT-SPI-at-point lands; else best-effort |
-| Pixel (px) click, escalated | `foreground` | `x11_pixel_fg` (EWMH activate → inject → restore) | ❌ confirm via screenshot |
-| `type_text` into editable | `background` | `ax` (AT-SPI `insertText`) | ✅ `verified:true` |
-| `type_text`, non-editable focus | `background`/`foreground` | `key_events` / `key_events_fg` | ❌ confirm via screenshot |
+| Element click (`element_index`) | `background` | `accessibility` | Use `verify_state`; invocation alone is not confirmation |
+| **element px action (x,y)** | `background` | `accessibility` when AT-SPI-at-point lands, otherwise `global_input` | Use `verify_state` or multimodal reading |
+| Pixel (px) click, escalated | `foreground` | `global_input` | Use `verify_state` or multimodal reading |
+| `type_text` into editable | `background` | `accessibility` | `confirmed` only with `value_readback` evidence |
+| `type_text`, non-editable focus | `background`/`foreground` | `synthetic_events` or `global_input` | Use `verify_state` or multimodal reading |
 
 **A background element px action does land on X11** — for an AX-exposing app it
 takes the focus-free AT-SPI `do_action`-at-point path (`x11_atspi`), exactly

@@ -65,6 +65,8 @@ pub mod input;
 
 #[cfg(target_os = "windows")]
 pub mod capture;
+#[cfg(target_os = "windows")]
+mod clipboard;
 
 #[cfg(target_os = "windows")]
 pub mod wgc;

@@ -43,6 +43,8 @@ pub mod installed_apps;
 
 #[cfg(target_os = "linux")]
 pub mod capture;
+#[cfg(target_os = "linux")]
+mod clipboard;
 
 #[cfg(target_os = "linux")]
 pub mod atspi;
@@ -143,6 +145,8 @@ pub fn register_tools_with_cursor_and_provider(
 ) -> ToolRegistry {
     #[cfg(target_os = "linux")]
     wayland::ensure_nested_session();
+    #[cfg(target_os = "linux")]
+    wayland::overlay::set_config_enabled(cfg.enabled);
     if cfg.enabled {
         overlay::init(cfg.clone());
         overlay::run_on_thread();

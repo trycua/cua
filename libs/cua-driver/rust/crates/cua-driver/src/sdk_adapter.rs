@@ -304,7 +304,7 @@ fn daemon_tools_list_from(tools_list: &Value) -> Value {
             .flatten()
             .map(|tool| {
                 let annotations = tool.get("annotations").unwrap_or(&Value::Null);
-                json!({
+                let mut daemon_tool = json!({
                     "name": tool.get("name").cloned().unwrap_or(Value::Null),
                     "description": tool.get("description").cloned().unwrap_or(Value::String(String::new())),
                     "input_schema": tool.get("inputSchema").cloned().unwrap_or_else(|| json!({"type": "object"})),
@@ -314,7 +314,14 @@ fn daemon_tools_list_from(tools_list: &Value) -> Value {
                     "open_world": annotations.get("openWorldHint").cloned().unwrap_or(Value::Bool(false)),
                     "capabilities": tool.get("capabilities").cloned().unwrap_or_else(|| json!([])),
                     "risk": tool.get("risk").cloned().unwrap_or(Value::Null),
-                })
+                });
+                if let Some(output_schema) = tool.get("outputSchema") {
+                    daemon_tool
+                        .as_object_mut()
+                        .expect("daemon tool entry is an object")
+                        .insert("output_schema".into(), output_schema.clone());
+                }
+                daemon_tool
             })
             .collect::<Vec<_>>();
     json!({
@@ -371,7 +378,12 @@ mod tests {
                     "openWorldHint": false
                 },
                 "capabilities": ["probe.read"],
-                "risk": {"level": "low"}
+                "risk": {"level": "low"},
+                "outputSchema": {
+                    "type": "object",
+                    "required": ["value"],
+                    "properties": {"value": {"type": "string"}}
+                }
             }],
             "capability_version": "1",
             "schema_version": "1",
@@ -382,6 +394,10 @@ mod tests {
         });
         let daemon = daemon_tools_list_from(&tools_list);
         assert_eq!(daemon["tools"][0]["input_schema"]["type"], "object");
+        assert_eq!(
+            daemon["tools"][0]["output_schema"]["required"],
+            json!(["value"])
+        );
         assert_eq!(daemon["tools"][0]["read_only"], true);
         assert_eq!(
             daemon["enforcement_adapters"][0]["id"],

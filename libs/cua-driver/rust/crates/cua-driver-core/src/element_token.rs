@@ -53,8 +53,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
-/// LRU cap of valid snapshots retained per pid. Past this point the
-/// oldest entry for the pid is evicted and its tokens go stale.
+/// LRU cap of valid snapshots retained per pid. Only the newest snapshot for
+/// each `(pid, window_id)` remains valid; the cap bounds snapshots retained for
+/// other windows owned by the same process.
 ///
 /// Chosen at 8: enough for an agent that re-snapshots once per turn over
 /// a multi-window session (open Slack, open Safari, swap to Cursor, …)
@@ -122,6 +123,11 @@ impl TokenRegistry {
         let runtime_scope = current_runtime_scope();
         let mut entries = self.by_runtime_and_pid.lock().unwrap();
         let lane = entries.entry((runtime_scope, pid)).or_default();
+        // Every platform replaces its per-window element cache on the next
+        // snapshot. Retaining an older token for the same window would resolve
+        // that token against the new cache and could target a different row.
+        // Invalidate it at the same boundary as the cache replacement.
+        lane.retain(|entry| entry.window_id != window_id);
         lane.push(SnapshotEntry {
             snapshot_id: id,
             window_id,
@@ -273,6 +279,14 @@ fn parse_token(token: &str) -> Option<(u32, usize)> {
     Some((sid, idx))
 }
 
+fn parse_snapshot_handle(snapshot_id: &str) -> Option<u32> {
+    let hex = snapshot_id.strip_prefix('s')?;
+    if hex.len() != 8 || hex.contains(':') {
+        return None;
+    }
+    u32::from_str_radix(hex, 16).ok()
+}
+
 /// Process-global handle to the token registry. Used by every platform's
 /// `get_window_state` (to register a fresh snapshot) and every element-
 /// targeting tool (to resolve a passed-in token).
@@ -294,19 +308,17 @@ pub fn token_for(snapshot_id: u32, element_index: usize) -> String {
     format_token(snapshot_id, element_index)
 }
 
-/// Result of dispatching the `element_token` ↔ `element_index` precedence
-/// rule on a tool call's args. Returned by [`resolve_element_args`].
+/// Result of validating an `element_token` or snapshot-bound `element_index`
+/// on a tool call's args. Returned by [`resolve_element_args`].
 #[derive(Debug, Clone)]
 pub enum ResolvedElement {
     /// Neither `element_token` nor `element_index` was supplied — the
     /// tool should fall through to its non-element addressing mode
     /// (typically pixel `x, y`) or error.
     None,
-    /// Resolved to `(window_id, element_index)`. The `window_id` may be
-    /// `None` when the caller supplied only `element_index` without a
-    /// `window_id` (legacy back-compat for tools that already handled
-    /// that case); when the caller supplied a token, `window_id` is
-    /// always the one the snapshot was taken against.
+    /// Resolved to `(window_id, element_index)`. Element targets always resolve
+    /// through the snapshot registry, so `window_id` is always present. The
+    /// optional shape remains temporarily to avoid duplicating tool plumbing.
     Element {
         window_id: Option<u32>,
         element_index: usize,
@@ -317,24 +329,21 @@ pub enum ResolvedElement {
     },
 }
 
-/// Apply the Surface 6 precedence rule for tool args that accept both
-/// `element_index` and `element_token`. Returns either a stale/format
-/// error (already wrapped as a `ToolResult::error`) or the resolved
+/// Validate tool args that accept `element_index`, `snapshot_id`, and
+/// `element_token`. Returns either a structured refusal or the resolved
 /// `(window_id, element_index)` pair.
 ///
 /// Rule:
 /// - **Neither**: returns [`ResolvedElement::None`]. The tool decides
 ///   whether to error or fall through to a pixel path.
-/// - **Only `element_index`**: legacy behaviour, unchanged. Returns
-///   `Element { window_id: <caller's window_id arg, if any>, element_index, via_token: false }`.
+/// - **Only `element_index`**: refuses with `snapshot_id_required`.
+/// - **`element_index` + `snapshot_id`**: resolves that exact registered
+///   snapshot and fails closed if it is stale.
 /// - **Only `element_token`**: resolves through the registry. On stale
 ///   or malformed token, returns an error. On success returns
 ///   `Element { window_id: Some(<from snapshot>), element_index, via_token: true }`.
-/// - **Both supplied**: `element_token` takes precedence; the resolver
-///   verifies it matches `element_index` and logs a warning on
-///   disagreement (the integer is treated as advisory once a token is
-///   present). On stale or malformed token, returns an error — the
-///   integer is NOT used as a fallback (Surface 6 plan: "token wins").
+/// - **Token plus other target fields**: every supplied field must identify the
+///   same snapshot, window, and element. A conflict fails closed.
 ///
 /// `args_window_id` is the `window_id` arg the caller already pulled
 /// off the JSON via the existing `args.opt_u64("window_id")`. Passing
@@ -344,49 +353,81 @@ pub fn resolve_element_args(
     pid: i32,
     args_element_index: Option<usize>,
     args_element_token: Option<&str>,
+    args_snapshot_id: Option<&str>,
     args_window_id: Option<u32>,
     tool_name: &str,
 ) -> Result<ResolvedElement, crate::protocol::ToolResult> {
-    match (args_element_index, args_element_token) {
-        (None, None) => Ok(ResolvedElement::None),
-        (Some(idx), None) => Ok(ResolvedElement::Element {
-            window_id: args_window_id,
-            element_index: idx,
-            via_token: false,
-        }),
-        (idx_opt, Some(tok)) => {
-            // Token wins. Resolve through the registry; bail on stale
-            // or malformed without falling back to the integer.
-            let (wid, idx) = global().resolve(pid, tok).map_err(|message| {
-                let code = if message.contains("another runtime generation") {
-                    "generation_mismatch"
-                } else if message == STALE_TOKEN_ERROR {
-                    "stale_element_token"
-                } else {
-                    "invalid_element_token"
-                };
-                crate::protocol::ToolResult::error(message.clone()).with_structured(
-                    serde_json::json!({
-                        "status": "refused",
-                        "refusal": {
-                            "code": code,
-                            "message": message,
-                        }
-                    }),
+    let refusal = |code: &str, message: String| {
+        crate::protocol::ToolResult::error(message.clone()).with_structured(serde_json::json!({
+            "status": "refused",
+            "refusal": { "code": code, "message": message }
+        }))
+    };
+    let resolve_token = |tok: &str| {
+        let (wid, idx) = global().resolve(pid, tok).map_err(|message| {
+            let code = if message.contains("another runtime generation") {
+                "generation_mismatch"
+            } else if message == STALE_TOKEN_ERROR {
+                "stale_element_token"
+            } else {
+                "invalid_element_token"
+            };
+            refusal(code, message)
+        })?;
+        Ok::<_, crate::protocol::ToolResult>((wid, idx))
+    };
+
+    match (args_element_index, args_element_token, args_snapshot_id) {
+        (None, None, None) => Ok(ResolvedElement::None),
+        (None, None, Some(_)) => Err(refusal(
+            "element_index_required",
+            format!("{tool_name}: snapshot_id requires element_index"),
+        )),
+        (Some(_), None, None) => Err(refusal(
+            "snapshot_id_required",
+            format!(
+                "{tool_name}: bare element_index is not accepted in Cua Driver 0.17; pass element_token or snapshot_id with element_index"
+            ),
+        )),
+        (Some(idx), None, Some(snapshot_handle)) => {
+            let snapshot_id = parse_snapshot_handle(snapshot_handle).ok_or_else(|| {
+                refusal(
+                    "invalid_snapshot_id",
+                    format!("{tool_name}: snapshot_id has invalid format"),
                 )
             })?;
-            if let Some(int_idx) = idx_opt {
-                if int_idx != idx {
-                    // Disagreement is non-fatal — token wins, but we
-                    // log so the consumer can debug. Use eprintln so
-                    // the daemon's stderr captures it (the recording
-                    // path doesn't see this).
-                    eprintln!(
-                        "[cua-driver-rs] {tool_name}: element_token / element_index \
-                         disagree (token={tok} → idx={idx}, arg element_index={int_idx}); \
-                         token wins."
-                    );
-                }
+            let token = format_token(snapshot_id, idx);
+            let (wid, resolved_idx) = resolve_token(&token)?;
+            if args_window_id.is_some_and(|arg_wid| arg_wid != wid) {
+                return Err(refusal(
+                    "conflicting_element_target",
+                    format!(
+                        "{tool_name}: snapshot belongs to window_id {wid}, not {}",
+                        args_window_id.unwrap()
+                    ),
+                ));
+            }
+            Ok(ResolvedElement::Element {
+                window_id: Some(wid),
+                element_index: resolved_idx,
+                via_token: false,
+            })
+        }
+        (idx_opt, Some(tok), snapshot_opt) => {
+            let (wid, idx) = resolve_token(tok)?;
+            if idx_opt.is_some_and(|arg_idx| arg_idx != idx)
+                || args_window_id.is_some_and(|arg_wid| arg_wid != wid)
+                || snapshot_opt.is_some_and(|handle| {
+                    parse_snapshot_handle(handle)
+                        != parse_token(tok).map(|(snapshot_id, _)| snapshot_id)
+                })
+            {
+                return Err(refusal(
+                    "conflicting_element_target",
+                    format!(
+                        "{tool_name}: element_token conflicts with element_index, snapshot_id, or window_id"
+                    ),
+                ));
             }
             Ok(ResolvedElement::Element {
                 window_id: Some(wid),
@@ -488,21 +529,26 @@ mod tests {
     }
 
     #[test]
-    fn next_snapshot_for_same_pid_keeps_old_until_lru_evicts() {
-        // The contract is "previous snapshot is invalidated when a NEW
-        // snapshot runs for the pid" — but we hold an LRU of size
-        // LRU_CAP_PER_PID, so callers get a small grace window of recent
-        // snapshots, not strictly the most recent one. This is what the
-        // Surface 6 plan describes ("cap at e.g. 8 most recent").
+    fn next_snapshot_for_same_window_invalidates_old_immediately() {
         let reg = fresh_registry();
         let pid = 12;
         let s1 = reg.register_snapshot(pid, 1, 5);
         let s2 = reg.register_snapshot(pid, 1, 5);
-        // Both should still resolve.
-        let _ = reg
-            .resolve(pid, &format_token(s1, 0))
-            .expect("s1 still in LRU");
+        assert_eq!(
+            reg.resolve(pid, &format_token(s1, 0)).unwrap_err(),
+            STALE_TOKEN_ERROR
+        );
         let _ = reg.resolve(pid, &format_token(s2, 0)).expect("s2 fresh");
+    }
+
+    #[test]
+    fn snapshots_for_different_windows_share_the_bounded_lru() {
+        let reg = fresh_registry();
+        let pid = 12;
+        let s1 = reg.register_snapshot(pid, 1, 5);
+        let s2 = reg.register_snapshot(pid, 2, 5);
+        assert_eq!(reg.resolve(pid, &format_token(s1, 0)).unwrap().0, 1);
+        assert_eq!(reg.resolve(pid, &format_token(s2, 0)).unwrap().0, 2);
     }
 
     #[test]
@@ -511,9 +557,9 @@ mod tests {
         let pid = 13;
         // Fill the LRU.
         let oldest = reg.register_snapshot(pid, 1, 5);
-        for _ in 0..LRU_CAP_PER_PID {
+        for window_id in 2..=(LRU_CAP_PER_PID as u32 + 1) {
             // Push LRU_CAP_PER_PID more, which evicts `oldest`.
-            let _ = reg.register_snapshot(pid, 1, 5);
+            let _ = reg.register_snapshot(pid, window_id, 5);
         }
         // Lane size must respect the cap.
         assert_eq!(reg.snapshot_count(pid), LRU_CAP_PER_PID);
@@ -587,32 +633,16 @@ mod tests {
     // thin precedence layer on top.
 
     #[test]
-    fn element_index_alone_still_works() {
-        // Surface 6 backward-compat regression guard: tools that only
-        // see element_index keep returning the same shape.
-        let resolved = resolve_element_args(
+    fn bare_element_index_is_refused() {
+        let result = resolve_element_args(
             /* pid = */ 1,
             /* element_index = */ Some(7),
             /* element_token = */ None,
+            /* snapshot_id = */ None,
             /* window_id = */ Some(99),
             "click",
-        )
-        .expect("element_index-only must succeed");
-        match resolved {
-            ResolvedElement::Element {
-                window_id,
-                element_index,
-                via_token,
-            } => {
-                assert_eq!(window_id, Some(99));
-                assert_eq!(element_index, 7);
-                assert!(
-                    !via_token,
-                    "element_index-only path must NOT report via_token"
-                );
-            }
-            _ => panic!("expected Element, got {resolved:?}"),
-        }
+        );
+        assert!(result.is_err());
     }
 
     #[test]
@@ -629,6 +659,7 @@ mod tests {
             pid,
             None,
             Some(&token),
+            None,
             // window_id arg intentionally omitted — the token carries it.
             None,
             "click",
@@ -649,35 +680,31 @@ mod tests {
     }
 
     #[test]
-    fn both_provided_token_wins_disagree_warns() {
-        // Both args supplied with disagreeing indices — token wins, no
-        // error returned. We can't assert the stderr line content from
-        // a unit test, but we CAN assert the returned indices come from
-        // the token, not the integer.
+    fn conflicting_token_and_index_are_refused() {
         let reg = global();
         let pid = 0x7fff_0002_i32;
         let snapshot_id = reg.register_snapshot(pid, 777, 5);
         let token = format_token(snapshot_id, 3);
-        let resolved = resolve_element_args(
-            pid,
-            Some(99), // disagrees with token (which says idx 3)
-            Some(&token),
-            None,
-            "click",
-        )
-        .expect("disagreement still resolves; token wins");
-        match resolved {
+        let result = resolve_element_args(pid, Some(99), Some(&token), None, None, "click");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn snapshot_id_and_index_resolve_safely() {
+        let reg = global();
+        let pid = 0x7fff_0004_i32;
+        let snapshot_id = reg.register_snapshot(pid, 888, 5);
+        let handle = format!("s{snapshot_id:08x}");
+        let resolved = resolve_element_args(pid, Some(2), None, Some(&handle), Some(888), "click")
+            .expect("snapshot-bound index must resolve");
+        assert!(matches!(
+            resolved,
             ResolvedElement::Element {
-                window_id,
-                element_index,
-                via_token,
-            } => {
-                assert_eq!(window_id, Some(777));
-                assert_eq!(element_index, 3, "token's idx wins over the integer arg");
-                assert!(via_token);
+                window_id: Some(888),
+                element_index: 2,
+                via_token: false
             }
-            _ => panic!("expected Element, got {resolved:?}"),
-        }
+        ));
     }
 
     #[test]
@@ -687,7 +714,8 @@ mod tests {
         let pid = 0x7fff_0003_i32;
         // Token references a snapshot that was never registered → stale.
         let token = format_token(0xdead, 0);
-        let err = resolve_element_args(pid, Some(0), Some(&token), Some(1), "click").unwrap_err();
+        let err =
+            resolve_element_args(pid, Some(0), Some(&token), None, Some(1), "click").unwrap_err();
         // ToolResult::error wraps the message in a Content::Text — the
         // assertion uses the protocol-level error_text accessor.
         assert!(
@@ -698,7 +726,7 @@ mod tests {
 
     #[test]
     fn neither_returns_none() {
-        let resolved = resolve_element_args(1, None, None, None, "click")
+        let resolved = resolve_element_args(1, None, None, None, None, "click")
             .expect("neither arg returns None, not error");
         assert!(matches!(resolved, ResolvedElement::None));
     }

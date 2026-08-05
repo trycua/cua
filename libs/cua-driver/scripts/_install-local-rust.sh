@@ -253,10 +253,34 @@ echo ""
 
 echo "${BOLD}Staging into $VERSIONED_DIR${NORMAL}"
 mkdir -p "$VERSIONED_DIR"
-cp "$BUILT_BINARY" "$VERSIONED_DIR/cua-driver-local"
-cp "$BUILT_THEME_BINARY" "$VERSIONED_DIR/cua-cursor-theme"
-chmod +x "$VERSIONED_DIR/cua-driver-local"
-chmod +x "$VERSIONED_DIR/cua-cursor-theme"
+
+# Copy through a temp file in the same directory, then rename over the
+# destination.
+#
+# A plain `cp` opens the destination with O_TRUNC and writes in place. When a
+# previous cua-driver-local is still running out of that exact path — the
+# common case, since the version tag is stable per config, so every rebuild
+# targets the same file — Linux refuses the open with ETXTBSY and the install
+# dies mid-stage:
+#
+#   cp: cannot create regular file '.../cua-driver-local': Text file busy
+#
+# The daemon stop further below cannot prevent this: it runs after the swap,
+# and a manually launched `serve` is not always reachable by it anyway.
+# rename(2) has no such restriction — the running process keeps executing the
+# old inode until it exits, and the new bytes are published atomically, so a
+# concurrent exec sees either the whole old binary or the whole new one.
+stage_binary() {
+    stage_src="$1"
+    stage_dest="$2"
+    stage_tmp="$stage_dest.stage.$$"
+    rm -f "$stage_tmp"
+    cp "$stage_src" "$stage_tmp"
+    chmod +x "$stage_tmp"
+    mv -f "$stage_tmp" "$stage_dest"
+}
+stage_binary "$BUILT_BINARY" "$VERSIONED_DIR/cua-driver-local"
+stage_binary "$BUILT_THEME_BINARY" "$VERSIONED_DIR/cua-cursor-theme"
 
 # Re-sign with a fresh ad-hoc signature.
 #

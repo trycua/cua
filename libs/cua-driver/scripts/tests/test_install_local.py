@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -206,6 +207,46 @@ def test_relative_bin_dir_is_rejected(tmp_path: Path) -> None:
 
     assert result.returncode == 2, result.stdout + result.stderr
     assert "absolute path" in result.stderr
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="ETXTBSY on a running binary is Linux-specific"
+)
+def test_reinstall_over_a_running_driver(tmp_path: Path) -> None:
+    """Staging must replace the versioned binary by rename, not write through it.
+
+    The version tag is stable per build config, so every rebuild targets the
+    same path. If a previous cua-driver-local is still executing out of it, a
+    write-in-place `cp` fails with ETXTBSY ("Text file busy") and the install
+    dies mid-stage. Reproduce that with a real running executable.
+    """
+    scripts_dir, _, env = _linux_fixture(tmp_path)
+    versioned = (
+        tmp_path / "local-home/packages/releases/0.0.0-local-debug-x86_64-unknown-linux-gnu"
+    )
+    versioned.mkdir(parents=True)
+    busy = versioned / "cua-driver-local"
+    shutil.copy2("/bin/sleep", busy)
+
+    running = subprocess.Popen([str(busy), "60"])
+    try:
+        result = subprocess.run(
+            ["/bin/bash", str(scripts_dir / DISPATCHER.name)],
+            cwd=scripts_dir.parent,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    finally:
+        running.terminate()
+        running.wait(timeout=10)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Text file busy" not in result.stderr
+    assert busy.read_text() == "fresh driver\n"
+    # The rename must not leave the temp file behind.
+    assert not list(versioned.glob("*.stage.*"))
 
 
 def test_bin_dir_without_value_is_rejected(tmp_path: Path) -> None:

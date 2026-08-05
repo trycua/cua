@@ -2809,6 +2809,14 @@ impl Tool for LaunchAppTool {
 
 // ── click ─────────────────────────────────────────────────────────────────────
 
+fn posted_pixel_click_result(pid: u32, click_word: &str) -> ToolResult {
+    ToolResult::text(format!("✅ Posted {click_word} to pid {pid}.")).with_structured(json!({
+        "path": "post_message",
+        "verified": false,
+        "effect": "unverifiable"
+    }))
+}
+
 pub struct ClickTool {
     state: Arc<ToolState>,
 }
@@ -3783,15 +3791,12 @@ impl Tool for ClickTool {
                 };
             }
 
-            // delivery_mode:"background", non-dropped + non-UIA click — e.g. a
-            // right-click or multi-click on a plain Win32 window. Chromium is
-            // never reached here: its mouse events are flagged silently-dropped
-            // above and handled by the injection path, so the only targets that
-            // fall through are ones PostMessage delivers to without a foreground
-            // swap. (Foreground was handled at the top; the legacy `auto`
-            // Chromium-SendInput heuristic was removed in the macOS-alignment
-            // pass — escalating to delivery_mode:"foreground" is now the explicit
-            // path for any target PostMessage can't reach.)
+            // delivery_mode:"background", non-dropped + non-UIA click. This
+            // includes plain Win32 targets and embedded Chromium when its UIA
+            // provider is temporarily unavailable. Attempt PostMessage without a
+            // foreground swap; the caller must verify the resulting fixture state.
+            // Foreground was handled at the top, and known dropped surfaces use
+            // the targeted-injection path above.
 
             // bitmap pixels -> screen (DWM-frame origin + inset). Use
             // post_click_screen so we don't double-ClientToScreen.
@@ -3807,10 +3812,7 @@ impl Tool for ClickTool {
                         3 => "triple-click",
                         _ => "click",
                     };
-                    ToolResult::text(format!("✅ Posted {click_word} to pid {pid}."))
-                        .with_structured(
-                            json!({ "path": "pixel", "verified": false, "effect": "unverifiable" }),
-                        )
+                    posted_pixel_click_result(pid, click_word)
                 }
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -3819,6 +3821,39 @@ impl Tool for ClickTool {
             // Match Swift's error wording for the missing-target case.
             ToolResult::error("Provide element_index or (x, y) to address the click target.")
         }
+    }
+}
+
+#[cfg(test)]
+mod pixel_click_transport_tests {
+    use super::posted_pixel_click_result;
+    use cua_driver_core::action_record::{
+        ActionExecutionRecord, ActionTransport, ActualDelivery, RequestedDelivery,
+    };
+
+    #[test]
+    fn post_message_pixel_click_reports_synthetic_transport() {
+        let result = posted_pixel_click_result(42, "click");
+        let structured = result
+            .structured_content
+            .as_ref()
+            .expect("posted click should expose legacy transport metadata");
+        assert_eq!(structured["path"], "post_message");
+
+        let record = ActionExecutionRecord::from_legacy(
+            "click",
+            &serde_json::json!({ "delivery_mode": "background" }),
+            structured,
+        )
+        .expect("posted click should normalize into the public action contract");
+        assert_eq!(record.transport, ActionTransport::WindowsPostMessage);
+        assert_eq!(record.requested_delivery, RequestedDelivery::Background);
+        assert_eq!(record.actual_delivery, Some(ActualDelivery::Background));
+
+        let public = serde_json::to_value(record.public_result().expect("valid ActionResult"))
+            .expect("serialize ActionResult");
+        assert_eq!(public["route"], "synthetic_events");
+        assert_eq!(public["delivery"]["mode"], "background");
     }
 }
 

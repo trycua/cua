@@ -582,6 +582,11 @@ jobs:
       [build-linux, build-windows, build-macos-universal, verify-release-artifacts]
     if: github.event_name == 'workflow_dispatch' && inputs.publish == true
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
+      issues: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -795,6 +800,16 @@ jobs:
             sed 's/^/  - /' "${RUNNER_TEMP}/missing-release-assets.txt" >&2
           fi
           exit 1
+
+      - name: Dispatch released-binary distro compatibility
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh workflow run ci-distro-compat-cua-driver.yml \
+            --repo "${{ github.repository }}" \
+            --ref main \
+            -f "version=$VERSION"
 
       - name: Generate post-publication GitHub App token
         id: post-publish-app-token

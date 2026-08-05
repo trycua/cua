@@ -190,7 +190,7 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn('CUA_DRIVER_RS_TELEMETRY_ENABLED: "false"', workflow)
         self.assertIn('CUA_TELEMETRY_ENABLED: "false"', workflow)
 
-    def test_distro_compat_does_not_run_for_unreleased_source_changes(self) -> None:
+    def test_distro_compat_does_not_run_for_source_changes_or_candidate_tags(self) -> None:
         workflow = self.read(".github/workflows/ci-distro-compat-cua-driver.yml")
 
         self.assertNotIn('      - "libs/cua-driver/rust/**"', workflow)
@@ -198,8 +198,23 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             workflow.count('      - ".github/workflows/ci-distro-compat-cua-driver.yml"'),
             2,
         )
-        self.assertIn('      - "cua-driver-rs-v*"', workflow)
+        self.assertNotIn('      - "cua-driver-rs-v*"', workflow)
+        self.assertNotIn("  release:\n", workflow.split("permissions:", 1)[0])
         self.assertIn("  workflow_dispatch:", workflow)
+
+    def test_driver_publish_dispatches_distro_compat_after_public_visibility(self) -> None:
+        workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
+
+        verify = workflow.index("- name: Verify the release and every staged asset are public")
+        dispatch = workflow.index("- name: Dispatch released-binary distro compatibility")
+        self.assertGreater(dispatch, verify)
+        release_job = workflow.index("  release:\n")
+        self.assertIn("      actions: write", workflow[release_job:verify])
+        self.assertNotIn("  actions: write", workflow[:release_job])
+        self.assertIn("gh workflow run ci-distro-compat-cua-driver.yml", workflow)
+        self.assertIn('--ref main', workflow)
+        self.assertIn('-f "version=$VERSION"', workflow)
+        self.assertIn("GH_TOKEN: ${{ github.token }}", workflow[dispatch:])
 
     def test_expensive_rust_workflows_do_not_watch_the_entire_tree(self) -> None:
         for relative_path in (
@@ -552,11 +567,12 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn(".stdout(Stdio::null())", telemetry)
         self.assertIn(".stderr(Stdio::null())", telemetry)
 
-    def test_released_linux_smoke_waits_for_assets_and_installs_xkbcommon(self) -> None:
+    def test_released_linux_smoke_waits_only_for_public_cdn_and_installs_xkbcommon(self) -> None:
         workflow = self.read(".github/workflows/ci-distro-compat-cua-driver.yml")
 
-        self.assertIn("for attempt in $(seq 1 90)", workflow)
-        self.assertIn("release asset was still unavailable after 15 minutes", workflow)
+        self.assertIn("for attempt in $(seq 1 12)", workflow)
+        self.assertIn("published release asset was still unavailable after 1 minute", workflow)
+        self.assertNotIn("tag-triggered compatibility run", workflow)
         self.assertEqual(workflow.count("libxkbcommon0"), 4)
         self.assertEqual(workflow.count('libxkbcommon"'), 2)
 

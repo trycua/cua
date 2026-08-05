@@ -857,7 +857,6 @@ impl Default for SessionConfigRegistry {
 /// Shared state passed to all tools.
 pub struct ToolState {
     pub snapshots: Arc<Snapshots>,
-    pub accessibility_surfaces: Arc<crate::ax::surface::SurfaceRegistry>,
     pub cursor_registry: Arc<CursorRegistry>,
     pub(crate) capture_bindings: Arc<capture_binding::MacCaptureBindings>,
     /// Global, disk-persisted config — the base layer and the only one the
@@ -910,7 +909,6 @@ impl ToolState {
     ) -> Self {
         Self {
             snapshots: Arc::new(Snapshots::new()),
-            accessibility_surfaces: Arc::new(crate::ax::surface::SurfaceRegistry::default()),
             cursor_registry: Arc::new(CursorRegistry::new()),
             capture_bindings: Arc::new(capture_binding::MacCaptureBindings::new(capture_service)),
             // Load persisted config from ~/.cua-driver/config.json so that
@@ -1098,10 +1096,7 @@ pub fn register_all(
         state.clone(),
     )));
     registry.register(Box::new(
-        accessibility_surfaces::ListAccessibilitySurfacesTool::new(state.clone()),
-    ));
-    registry.register(Box::new(
-        accessibility_surfaces::GetAccessibilitySurfaceStateTool::new(state.clone()),
+        accessibility_surfaces::GetAccessibilitySurfacesTool,
     ));
     registry.register(Box::new(
         cua_driver_core::expectation::VerifyStateTool::new(Arc::new(

@@ -646,6 +646,10 @@ fn action_target_args(
     let object = args.as_object_mut().expect("action arguments object");
     if addressing == "ax" {
         object.insert("element_index".to_owned(), serde_json::json!(index));
+        object.insert(
+            "snapshot_id".to_owned(),
+            serde_json::json!(state.snapshot_id()),
+        );
     } else {
         let origin = window_origin(fixture, state);
         let scale = screenshot_scale(state);
@@ -750,15 +754,9 @@ fn unverified_background_protocol_oracle(
         return Vec::new();
     }
     assert_eq!(
-        response.verified(),
-        Some(false),
-        "background dispatch without independent read-back must remain unverified: {}",
-        response.text()
-    );
-    assert_ne!(
-        response.structured()["verify"].as_str(),
-        Some("confirmed"),
-        "background dispatch overclaimed a confirmed read-back: {}",
+        response.action_effect(),
+        Some("unverifiable"),
+        "background dispatch without independent read-back must remain unverifiable: {}",
         response.text()
     );
     vec![OracleKind::Protocol]
@@ -967,10 +965,9 @@ fn run_macos_selection_hotkeys(fixture: &mut Fixture) {
         args["keys"] = serde_json::json!(["cmd", "a"]);
         let response = fixture.driver.call("hotkey", args);
         assert!(!response.is_error(), "Cmd+A failed: {}", response.raw);
-        assert_eq!(response.verified(), Some(false), "{}", response.raw);
         assert_eq!(
-            response.structured()["effect"],
-            "unverifiable",
+            response.action_effect(),
+            Some("unverifiable"),
             "generic hotkeys must retain the honest unverifiable contract: {}",
             response.raw
         );
@@ -992,8 +989,12 @@ fn run_macos_selection_hotkeys(fixture: &mut Fixture) {
     paste_args["keys"] = serde_json::json!(["cmd", "v"]);
     let pasted = fixture.driver.call("hotkey", paste_args);
     assert!(!pasted.is_error(), "Cmd+V failed: {}", pasted.raw);
-    assert_eq!(pasted.verified(), Some(false), "{}", pasted.raw);
-    assert_eq!(pasted.structured()["effect"], "unverifiable");
+    assert_eq!(
+        pasted.action_effect(),
+        Some("unverifiable"),
+        "{}",
+        pasted.raw
+    );
     assert_fixture_value(fixture, "keyboard-input", PASTED);
 }
 
@@ -1400,12 +1401,12 @@ fn run_browser_tool_roundtrip(fixture: &mut Fixture) -> Observation {
         }),
     );
     assert_eq!(
-        click.structured()["status"].as_str(),
-        Some("ok"),
+        click.action_effect(),
+        Some("unverifiable"),
         "trusted browser click failed: {}",
         click.raw
     );
-    assert_eq!(click.structured()["route"].as_str(), Some("trusted"));
+    assert_eq!(click.action_route(), Some("trusted_input"));
     assert_fixture_text(fixture, "lbl-counter", "counter=1");
 
     let second_snapshot = fixture.driver.call(
@@ -1428,8 +1429,8 @@ fn run_browser_tool_roundtrip(fixture: &mut Fixture) -> Observation {
         }),
     );
     assert_eq!(
-        typed.structured()["status"].as_str(),
-        Some("ok"),
+        typed.action_effect(),
+        Some("unverifiable"),
         "browser type failed: {}",
         typed.raw
     );
@@ -1445,10 +1446,10 @@ fn run_browser_tool_roundtrip(fixture: &mut Fixture) -> Observation {
             "session": session,
         }),
     );
-    assert_eq!(
-        stale.structured()["refusal"]["code"].as_str(),
-        Some("browser_ref_stale"),
-        "older snapshot ref should fail closed: {}",
+    assert_eq!(stale.action_effect(), Some("refused"), "{}", stale.raw);
+    assert!(
+        stale.text().contains("browser_ref_stale"),
+        "older snapshot ref should retain its diagnostic code: {}",
         stale.raw
     );
     assert_fixture_text(fixture, "lbl-counter", "counter=1");
@@ -1498,9 +1499,14 @@ fn run_browser_tool_roundtrip(fixture: &mut Fixture) -> Observation {
         }),
     );
     assert_eq!(
-        stale_after_navigation.structured()["refusal"]["code"].as_str(),
-        Some("browser_ref_stale"),
-        "navigation-invalidated ref should fail closed: {}",
+        stale_after_navigation.action_effect(),
+        Some("refused"),
+        "{}",
+        stale_after_navigation.raw
+    );
+    assert!(
+        stale_after_navigation.text().contains("browser_ref_stale"),
+        "navigation-invalidated ref should retain its diagnostic code: {}",
         stale_after_navigation.raw
     );
     let ended = fixture

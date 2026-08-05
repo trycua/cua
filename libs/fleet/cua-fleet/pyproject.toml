@@ -1,0 +1,13 @@
+[project]
+name = "cua-fleet"
+version = "0.0.10"
+description = "Cua Fleet facade for the Cua Cloud Python SDK"
+requires-python = ">=3.10"
+dependencies = ["cua-train==0.1.6"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["cua_fleet"]

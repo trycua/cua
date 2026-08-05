@@ -43,10 +43,54 @@ pub fn click_at_xy(
 /// (it lands on whatever is visually on top at the point) — exactly the
 /// foreground, vision-driven model that complements the background contract.
 pub fn click_at_xy_desktop(x: f64, y: f64, count: usize, button: &str) -> anyhow::Result<()> {
+    click_at_xy_desktop_inner(x, y, count, button, &[], false)
+}
+
+/// Global HID click with physical modifier transitions. The caller must guard
+/// the exact foreground window because this transport has no pid addressing.
+pub fn click_at_xy_desktop_with_modifiers(
+    x: f64,
+    y: f64,
+    count: usize,
+    button: &str,
+    modifiers: &[&str],
+) -> anyhow::Result<()> {
+    click_at_xy_desktop_inner(x, y, count, button, modifiers, false)
+}
+
+/// Global HID modifier click that restores the user's hardware cursor after
+/// the event pair has been queued.
+pub fn click_at_xy_desktop_with_modifiers_preserving_cursor(
+    x: f64,
+    y: f64,
+    count: usize,
+    button: &str,
+    modifiers: &[&str],
+) -> anyhow::Result<()> {
+    click_at_xy_desktop_inner(x, y, count, button, modifiers, true)
+}
+
+fn click_at_xy_desktop_inner(
+    x: f64,
+    y: f64,
+    count: usize,
+    button: &str,
+    modifiers: &[&str],
+    preserve_cursor: bool,
+) -> anyhow::Result<()> {
     use core_graphics::display::CGDisplay;
     use core_graphics::event::CGEventTapLocation;
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+    let prior = if preserve_cursor {
+        Some(
+            CGEvent::new(source.clone())
+                .map_err(|_| anyhow::anyhow!("CGEvent::new failed"))?
+                .location(),
+        )
+    } else {
+        None
+    };
     let point = CGPoint::new(x, y);
     let (down_ty, up_ty, btn) = match button {
         "right" => (
@@ -75,16 +119,40 @@ pub fn click_at_xy_desktop(x: f64, y: f64, count: usize, button: &str) -> anyhow
     // warped point, not the pre-warp one.
     unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
     std::thread::sleep(std::time::Duration::from_millis(40));
-    for _ in 0..count.max(1) {
-        let down = CGEvent::new_mouse_event(source.clone(), down_ty, point, btn)
-            .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(down) failed"))?;
-        down.post(CGEventTapLocation::HID);
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        let up = CGEvent::new_mouse_event(source.clone(), up_ty, point, btn)
-            .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(up) failed"))?;
-        up.post(CGEventTapLocation::HID);
+    let result = super::keyboard::with_global_modifier_keys(modifiers, |flags| {
+        for pair_index in 0..count.max(1) {
+            let down = CGEvent::new_mouse_event(source.clone(), down_ty, point, btn)
+                .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(down) failed"))?;
+            down.set_flags(flags);
+            down.set_integer_value_field(
+                core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE,
+                (pair_index + 1) as i64,
+            );
+            down.post(CGEventTapLocation::HID);
+            std::thread::sleep(std::time::Duration::from_millis(28));
+            let up = CGEvent::new_mouse_event(source.clone(), up_ty, point, btn)
+                .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(up) failed"))?;
+            up.set_flags(flags);
+            up.set_integer_value_field(
+                core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE,
+                (pair_index + 1) as i64,
+            );
+            up.post(CGEventTapLocation::HID);
+            if count > 1 {
+                std::thread::sleep(std::time::Duration::from_millis(80));
+            }
+        }
+        Ok(())
+    });
+
+    // Let AppKit consume the up event before the pointer is restored. The
+    // exact foreground guard remains active around this entire helper.
+    std::thread::sleep(std::time::Duration::from_millis(40));
+    if let Some(prior) = prior {
+        let _ = CGDisplay::warp_mouse_cursor_position(prior);
+        unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
     }
-    Ok(())
+    result
 }
 
 /// Move the real hardware cursor to a logical desktop point.
@@ -145,17 +213,7 @@ pub fn scroll_wheel_desktop(
 /// used only by approved, bounded setup flows after an accessibility element
 /// has proven the exact target point and window.
 pub fn click_at_xy_desktop_preserving_cursor(x: f64, y: f64) -> anyhow::Result<()> {
-    use core_graphics::display::CGDisplay;
-
-    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
-        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
-    let prior = CGEvent::new(source)
-        .map_err(|_| anyhow::anyhow!("CGEvent::new failed"))?
-        .location();
-    let result = click_at_xy_desktop(x, y, 1, "left");
-    let _ = CGDisplay::warp_mouse_cursor_position(prior);
-    unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
-    result
+    click_at_xy_desktop_inner(x, y, 1, "left", &[], true)
 }
 
 extern "C" {
@@ -219,70 +277,71 @@ fn click_at_xy_inner(
             .subsec_nanos() as i64
     });
 
-    // Prime the target window's cursor-tracking state with a leading mouseMoved
-    // so an AppKit NSButton / NSView hit-tests the down at the right point
-    // (Swift recipe Step 3). Without it the synthetic mouseDown on a
-    // backgrounded AppKit control is silently ignored.
-    post_mouse_moved_primer(pid, &source, point, window_local, wid, click_group_id);
-    std::thread::sleep(std::time::Duration::from_millis(12));
+    super::keyboard::with_pid_modifier_keys(pid, modifiers, || {
+        // Prime the target window's cursor-tracking state with a leading
+        // mouseMoved so an AppKit NSButton / NSView hit-tests the down at the
+        // right point. Without it the synthetic mouseDown on a backgrounded
+        // AppKit control is silently ignored.
+        post_mouse_moved_primer(pid, &source, point, window_local, wid, click_group_id);
+        std::thread::sleep(std::time::Duration::from_millis(12));
 
-    for pair_index in 0..count {
-        let click_state = (pair_index + 1) as i64;
+        for pair_index in 0..count {
+            let click_state = (pair_index + 1) as i64;
 
-        let down = CGEvent::new_mouse_event(
-            source.clone(),
-            CGEventType::LeftMouseDown,
-            point,
-            CGMouseButton::Left,
-        )
-        .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(down) failed"))?;
-        if flags != CGEventFlags::CGEventFlagNull {
-            down.set_flags(flags);
+            let down = CGEvent::new_mouse_event(
+                source.clone(),
+                CGEventType::LeftMouseDown,
+                point,
+                CGMouseButton::Left,
+            )
+            .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(down) failed"))?;
+            if flags != CGEventFlags::CGEventFlagNull {
+                down.set_flags(flags);
+            }
+
+            post_mouse_event(
+                pid,
+                &down,
+                window_local,
+                wid,
+                click_group_id,
+                click_state,
+                0,
+                3,
+            );
+            // 28 ms down→up gap: an NSButton's mouseDown enters a modal
+            // tracking loop that polls for the matching mouseUp; too tight a
+            // gap can race the loop's first poll and the click is dropped.
+            std::thread::sleep(std::time::Duration::from_millis(28));
+
+            let up = CGEvent::new_mouse_event(
+                source.clone(),
+                CGEventType::LeftMouseUp,
+                point,
+                CGMouseButton::Left,
+            )
+            .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(up) failed"))?;
+            if flags != CGEventFlags::CGEventFlagNull {
+                up.set_flags(flags);
+            }
+
+            post_mouse_event(
+                pid,
+                &up,
+                window_local,
+                wid,
+                click_group_id,
+                click_state,
+                0,
+                3,
+            );
+
+            if count > 1 {
+                std::thread::sleep(std::time::Duration::from_millis(80));
+            }
         }
-
-        post_mouse_event(
-            pid,
-            &down,
-            window_local,
-            wid,
-            click_group_id,
-            click_state,
-            0,
-            3,
-        );
-        // 28 ms down→up gap: an NSButton's mouseDown enters a modal tracking
-        // loop that polls for the matching mouseUp; too tight a gap can race the
-        // loop's first poll and the click is dropped. 16 ms was under that
-        // threshold for some controls.
-        std::thread::sleep(std::time::Duration::from_millis(28));
-
-        let up = CGEvent::new_mouse_event(
-            source.clone(),
-            CGEventType::LeftMouseUp,
-            point,
-            CGMouseButton::Left,
-        )
-        .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(up) failed"))?;
-        if flags != CGEventFlags::CGEventFlagNull {
-            up.set_flags(flags);
-        }
-
-        post_mouse_event(
-            pid,
-            &up,
-            window_local,
-            wid,
-            click_group_id,
-            click_state,
-            0,
-            3,
-        );
-
-        if count > 1 {
-            std::thread::sleep(std::time::Duration::from_millis(80));
-        }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Prepare a raw background pixel click by making the target AppKit-active

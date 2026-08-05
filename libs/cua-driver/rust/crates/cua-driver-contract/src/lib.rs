@@ -27,19 +27,21 @@ pub use cursor::{
     CursorSemantics, CursorTarget, CursorThemeSelection,
 };
 pub use inputs::{
-    CaptureScope, ClickButton, ClickInput, DesktopScope, DragInput, EndSessionInput,
-    EscalateSessionInput, EscalationReason, GetAgentCursorStateInput, GetCursorPositionInput,
-    GetDesktopStateInput, GetScreenSizeInput, GetSessionStateInput, HotkeyInput, MoveCursorInput,
-    PressKeyInput, ScrollBy, ScrollDirection, ScrollInput, SetAgentCursorEnabledInput,
-    SetAgentCursorMotionInput, SetAgentCursorThemeInput, StartSessionInput, ToolInput,
-    TypeTextInput,
+    CaptureScope, ClickButton, ClickInput, ClipboardReadInput, ClipboardWriteInput, DesktopScope,
+    DragInput, EndSessionInput, EscalateSessionInput, EscalationReason, GetAgentCursorStateInput,
+    GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput, GetSessionStateInput,
+    HotkeyInput, InvokeMenuInput, MoveCursorInput, PressKeyInput, ScrollBy, ScrollDirection,
+    ScrollInput, SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
+    SetWindowFrameInput, StartSessionInput, ToolInput, TypeTextInput,
 };
 pub use outputs::{
-    ClickOutput, CursorMotionOutput, CursorPointOutput, CursorPositionOutput, CursorThemeOutput,
-    CursorVisualOutput, DesktopActionOutput, DesktopStateOutput, EffectiveScope, EndSessionOutput,
-    GetAgentCursorStateOutput, MoveCursorOutput, ScreenSizeOutput, SessionStateOutput,
-    SetAgentCursorEnabledOutput, SetAgentCursorMotionOutput, SetAgentCursorThemeOutput,
-    StartSessionOutput, ToolOutput,
+    ActionDelivery, ActionDeliveryMode, ActionEffect, ActionEscalation, ActionEscalationReason,
+    ActionEscalationTarget, ActionEvidence, ActionEvidenceKind, ActionResult,
+    ActionResultValidationError, ActionRoute, ClipboardReadOutput, ClipboardWriteOutput,
+    CursorMotionOutput, CursorPointOutput, CursorPositionOutput, CursorThemeOutput,
+    CursorVisualOutput, DesktopStateOutput, EffectiveScope, EndSessionOutput,
+    GetAgentCursorStateOutput, ScreenSizeOutput, SessionStateOutput, SetAgentCursorEnabledOutput,
+    SetAgentCursorMotionOutput, SetAgentCursorThemeOutput, StartSessionOutput, ToolOutput,
 };
 pub use verification::{
     BoundsExpectation, ElementPredicate, ElementSelector, PredicateOutcome, StatePredicate,
@@ -54,10 +56,41 @@ pub const TOOLS_LIST_SCHEMA_VERSION: &str = "1";
 pub const CAPABILITY_VERSION: &str = "1";
 
 /// Shape version for the checked-in generated client contract.
-pub const CONTRACT_VERSION: &str = "0.3.0";
+pub const CONTRACT_VERSION: &str = "0.6.0";
 
 /// MCP protocol version used by current cua-driver clients.
 pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
+
+/// Tools whose successful result is the shared closed [`ActionResult`].
+///
+/// Keep this vocabulary in the contract crate so MCP schema advertising,
+/// runtime validation, SDK normalization, and the execution seam cannot drift.
+pub const ACTION_RESULT_TOOLS: &[&str] = &[
+    "click",
+    "double_click",
+    "right_click",
+    "scroll",
+    "drag",
+    "mouse_drag",
+    "parallel_mouse_drag",
+    "move_cursor",
+    "mouse_button_down",
+    "mouse_button_up",
+    "type_text",
+    "type_text_chars",
+    "press_key",
+    "hotkey",
+    "set_value",
+    "set_window_frame",
+    "invoke_menu",
+    "browser_click",
+    "browser_pointer",
+    "browser_type",
+];
+
+pub fn is_action_result_tool(name: &str) -> bool {
+    ACTION_RESULT_TOOLS.contains(&name)
+}
 
 #[derive(
     Debug,
@@ -124,8 +157,8 @@ pub struct ToolContract {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor_semantics: Option<CursorSemantics>,
     pub input_schema: Value,
-    /// Schema for successful `structuredContent` only. It is experimental and
-    /// is not advertised as MCP `outputSchema` until transport parity is proven.
+    /// Schema for successful `structuredContent`. The live MCP surface
+    /// advertises this as `outputSchema`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub success_output_schema: Option<Value>,
     /// Runtime-only validator bound to the same Rust output type that produced
@@ -216,9 +249,27 @@ pub fn tool_input_fields(name: &str) -> Option<&'static BTreeSet<String>> {
     tool_index().get(name).map(|entry| &entry.input_fields)
 }
 
+/// Return the successful `structuredContent` schema advertised by the live
+/// MCP tool. Runtime-only tools can define a narrow shared schema here without
+/// committing every generated SDK to their broader platform-specific shape.
+pub fn tool_success_output_schema(name: &str) -> Option<Value> {
+    if name == "list_windows" {
+        return Some(desktop::list_windows_success_output_schema());
+    }
+    tool_contract(name).and_then(|contract| contract.success_output_schema)
+}
+
 /// Validate a successful structured payload against the Rust output type that
 /// also generates its SDK schema. Returns `Ok(false)` for non-SDK tools.
 pub fn validate_success_output(name: &str, value: Value) -> Result<bool, String> {
+    if is_action_result_tool(name) {
+        validate_typed_output::<ActionResult>(value)?;
+        return Ok(true);
+    }
+    if name == "list_windows" {
+        desktop::validate_list_windows_output(value)?;
+        return Ok(true);
+    }
     if let Some(entry) = tool_index().get(name) {
         (entry.output_validator)(value)?;
         Ok(true)
@@ -242,8 +293,32 @@ mod tests {
         let mut sorted = names.clone();
         sorted.sort_unstable();
         assert_eq!(names, sorted);
-        assert_eq!(manifest.contract_version, "0.3.0");
+        assert_eq!(manifest.contract_version, "0.6.0");
         assert!(manifest.experimental);
+    }
+
+    #[test]
+    fn every_action_result_tool_uses_the_closed_runtime_validator() {
+        let valid = serde_json::json!({
+            "effect": "unverifiable",
+            "route": "synthetic_events"
+        });
+        let legacy = serde_json::json!({
+            "path": "ax",
+            "verified": true
+        });
+
+        for name in ACTION_RESULT_TOOLS {
+            assert_eq!(
+                validate_success_output(name, valid.clone()),
+                Ok(true),
+                "{name} must accept the shared ActionResult"
+            );
+            assert!(
+                validate_success_output(name, legacy.clone()).is_err(),
+                "{name} must reject a legacy action payload"
+            );
+        }
     }
 
     #[test]
@@ -288,14 +363,122 @@ mod tests {
             "get_desktop_state",
             "get_screen_size",
             "hotkey",
+            "invoke_menu",
             "move_cursor",
             "press_key",
             "scroll",
+            "set_window_frame",
             "type_text",
         ] {
             assert_eq!(
                 tool_contract(name).expect("desktop contract").schema_mode,
                 SchemaMode::PortableSubset,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn set_window_frame_is_exact_targeted_and_positive_sized() {
+        let contract = tool_contract("set_window_frame").expect("set_window_frame contract");
+        assert_eq!(
+            contract.input_schema["required"],
+            serde_json::json!(["pid", "window_id", "x", "y", "width", "height"])
+        );
+        assert_eq!(
+            contract.input_schema["properties"]["pid"]["minimum"],
+            serde_json::json!(1)
+        );
+        assert_eq!(
+            contract.input_schema["properties"]["window_id"]["minimum"],
+            serde_json::json!(1)
+        );
+        assert_eq!(
+            contract.input_schema["properties"]["width"]["minimum"],
+            serde_json::json!(1)
+        );
+        assert_eq!(
+            contract.input_schema["properties"]["height"]["minimum"],
+            serde_json::json!(1)
+        );
+        assert_eq!(
+            contract.cursor_semantics.expect("cursor semantics").action,
+            CursorAction::App
+        );
+    }
+
+    #[test]
+    fn invoke_menu_requires_an_exact_nonempty_bounded_path() {
+        let contract = tool_contract("invoke_menu").expect("invoke_menu contract");
+        assert_eq!(
+            contract.input_schema["required"],
+            serde_json::json!(["pid", "window_id", "path"])
+        );
+        let path = &contract.input_schema["properties"]["path"];
+        assert_eq!(path["minItems"], serde_json::json!(1));
+        assert_eq!(path["maxItems"], serde_json::json!(16));
+        assert_eq!(path["items"]["minLength"], serde_json::json!(1));
+        assert_eq!(
+            contract.cursor_semantics.expect("cursor semantics").action,
+            CursorAction::App
+        );
+        assert_eq!(
+            contract.capabilities,
+            vec!["menu.path.invoke", "accessibility.menu.native"]
+        );
+    }
+
+    #[test]
+    fn list_windows_defines_nullable_higher_is_frontmost_z_index() {
+        assert!(tool_contract("list_windows").is_none());
+        let schema = tool_success_output_schema("list_windows").expect("runtime schema");
+        let z_index = &schema["properties"]["windows"]["items"]["properties"]["z_index"];
+        assert_eq!(z_index["type"], serde_json::json!(["integer", "null"]));
+        let description = z_index["description"].as_str().expect("description");
+        assert!(description.contains("Higher values are closer to the front"));
+        assert!(description.contains("must not infer an order"));
+
+        assert_eq!(
+            validate_success_output(
+                "list_windows",
+                serde_json::json!({
+                    "windows": [
+                        {"z_index": 4, "platform_field": true},
+                        {"z_index": null}
+                    ],
+                    "current_space_id": null
+                }),
+            ),
+            Ok(true)
+        );
+        assert!(validate_success_output(
+            "list_windows",
+            serde_json::json!({"windows": [{"z_index": "unknown"}]}),
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn desktop_action_contracts_share_the_strict_action_result() {
+        let expected = ActionResult::output_schema();
+        for name in [
+            "click",
+            "drag",
+            "hotkey",
+            "move_cursor",
+            "press_key",
+            "scroll",
+            "type_text",
+        ] {
+            let contract = tool_contract(name).expect("desktop action contract");
+            assert_eq!(
+                contract.success_output_schema,
+                Some(expected.clone()),
+                "{name}"
+            );
+            assert_eq!(
+                contract.success_output_schema.as_ref().expect("schema")["additionalProperties"],
+                false,
                 "{name}"
             );
         }

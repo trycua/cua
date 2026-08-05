@@ -936,9 +936,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             )
         })?;
         let window = tokio::task::spawn_blocking(move || {
-            crate::win32::list_windows(Some(pid_u32))
-                .into_iter()
-                .find(|window| window.hwnd == window_id)
+            crate::win32::find_window_by_pid_and_handle(pid_u32, window_id)
         })
         .await
         .ok()
@@ -980,7 +978,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             )
         })?;
         let windows = tokio::task::spawn_blocking(move || {
-            crate::win32::list_windows(Some(pid_u32))
+            crate::win32::list_windows_via_win32(Some(pid_u32))
                 .into_iter()
                 .map(|window| window.hwnd)
                 .collect::<Vec<_>>()

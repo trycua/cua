@@ -1,4 +1,7 @@
-use cyclops_sdk_schema::{ClaimSpec, OSGymSandboxClaimStatus, OSGymWorkspacePoolStatus, PoolSpec};
+use cyclops_sdk_schema::{
+    ClaimSpec, OSGymSandboxClaimStatus, OSGymSandboxTemplateSpec, OSGymSandboxWarmPoolSpec,
+    OSGymSandboxWarmPoolStatus,
+};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt, sync::Arc};
 
@@ -84,15 +87,20 @@ pub struct ResourceMetadata {
 }
 
 /// UniFFI cannot emit aliases for external record types. Generated bindings use
-/// `OSGymWorkspacePoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
+/// `OSGymSandboxWarmPoolStatus` and `OSGymSandboxClaimStatus` from cyclops_sdk_schema.
+///
+/// A `Pool` is the `osgym.cua.ai/v1alpha1 OSGymSandboxWarmPool` CR verbatim —
+/// the SDK is a naive CRUD mapper over the native CRDs, with no translation
+/// layer (the legacy `cua.ai/v1 OSGymWorkspacePool` and its operator compat
+/// shim are gone).
 #[derive(Clone, Debug, Serialize, Deserialize, uniffi::Record)]
 #[serde(rename_all = "camelCase")]
 pub struct Pool {
     pub api_version: String,
     pub kind: String,
     pub metadata: ResourceMetadata,
-    pub spec: PoolSpec,
-    pub status: Option<OSGymWorkspacePoolStatus>,
+    pub spec: OSGymSandboxWarmPoolSpec,
+    pub status: Option<OSGymSandboxWarmPoolStatus>,
 }
 
 impl PartialEq for Pool {
@@ -136,12 +144,47 @@ pub struct Sandbox {
 #[derive(Clone, Debug, Serialize, Deserialize, uniffi::Record)]
 pub struct CreatePoolRequest {
     pub namespace: String,
-    pub spec: PoolSpec,
+    pub spec: OSGymSandboxWarmPoolSpec,
 }
 
 impl PartialEq for CreatePoolRequest {
     fn eq(&self, other: &Self) -> bool {
         self.namespace == other.namespace && schema_values_equal(&self.spec, &other.spec)
+    }
+}
+
+/// The `osgym.cua.ai/v1alpha1 OSGymSandboxTemplate` CR verbatim. Warm pools
+/// and claims reference one by name via `spec.sandboxTemplateRef.name`.
+#[derive(Clone, Debug, Serialize, Deserialize, uniffi::Record)]
+#[serde(rename_all = "camelCase")]
+pub struct Template {
+    pub api_version: String,
+    pub kind: String,
+    pub metadata: ResourceMetadata,
+    pub spec: OSGymSandboxTemplateSpec,
+}
+
+impl PartialEq for Template {
+    fn eq(&self, other: &Self) -> bool {
+        self.api_version == other.api_version
+            && self.kind == other.kind
+            && self.metadata == other.metadata
+            && schema_values_equal(&self.spec, &other.spec)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, uniffi::Record)]
+pub struct CreateTemplateRequest {
+    pub namespace: String,
+    pub name: String,
+    pub spec: OSGymSandboxTemplateSpec,
+}
+
+impl PartialEq for CreateTemplateRequest {
+    fn eq(&self, other: &Self) -> bool {
+        self.namespace == other.namespace
+            && self.name == other.name
+            && schema_values_equal(&self.spec, &other.spec)
     }
 }
 

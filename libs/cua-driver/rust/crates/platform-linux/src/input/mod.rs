@@ -21,6 +21,7 @@ use evdev::{AttributeSet, EventType, InputEvent, Key, RelativeAxisType};
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::fs;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -126,6 +127,17 @@ static UINPUT_POINTERS: OnceLock<Mutex<HashMap<String, Arc<Mutex<VirtualDevice>>
     OnceLock::new();
 static XLIB_THREADS_READY: OnceLock<Result<(), String>> = OnceLock::new();
 static MPX_NAME_COUNTER: AtomicU64 = AtomicU64::new(1);
+// evdev 0.12.2 asserts `name.len() + 1 < UINPUT_MAX_NAME_SIZE` while building
+// a device. Linux defines UINPUT_MAX_NAME_SIZE as 80, leaving 78 usable bytes.
+const EVDEV_UINPUT_NAME_MAX_BYTES: usize = 78;
+const UINPUT_POINTER_SUFFIX: &str = " uinput pointer";
+pub const UINPUT_UNAVAILABLE_CODE: &str = "uinput_unavailable";
+
+#[derive(Debug, thiserror::Error)]
+#[error("Linux uinput pointer unavailable: {reason}")]
+struct UinputUnavailable {
+    reason: String,
+}
 
 fn mpx_pointers() -> &'static Mutex<HashMap<String, MasterPointerIds>> {
     MPX_POINTERS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -137,11 +149,70 @@ fn uinput_pointers() -> &'static Mutex<HashMap<String, Arc<Mutex<VirtualDevice>>
 
 fn master_pointer_name(cursor_id: &str) -> String {
     let nonce = MPX_NAME_COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("CUA {cursor_id} mp-{}-{nonce}", std::process::id())
+    let prefix = "CUA ";
+    let suffix = format!(" mp-{}-{nonce}", std::process::id());
+    let max_cursor_bytes = EVDEV_UINPUT_NAME_MAX_BYTES
+        .saturating_sub(prefix.len() + suffix.len() + UINPUT_POINTER_SUFFIX.len());
+    let cursor_id = sanitize_device_name(cursor_id);
+    format!(
+        "{prefix}{}{suffix}",
+        truncate_utf8(&cursor_id, max_cursor_bytes)
+    )
 }
 
 fn slave_pointer_name(master_name: &str) -> String {
-    format!("{master_name} uinput pointer")
+    format!("{master_name}{UINPUT_POINTER_SUFFIX}")
+}
+
+fn truncate_utf8(value: &str, max_bytes: usize) -> &str {
+    let mut end = value.len().min(max_bytes);
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    &value[..end]
+}
+
+fn sanitize_device_name(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| if ch.is_control() { '_' } else { ch })
+        .collect()
+}
+
+fn normalize_uinput_device_name(name: &str) -> String {
+    let sanitized = sanitize_device_name(name);
+    truncate_utf8(&sanitized, EVDEV_UINPUT_NAME_MAX_BYTES).to_owned()
+}
+
+fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> &str {
+    payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("unknown panic")
+}
+
+pub(crate) fn uinput_unavailable(reason: impl Into<String>) -> anyhow::Error {
+    UinputUnavailable {
+        reason: reason.into(),
+    }
+    .into()
+}
+
+fn guarded_uinput_creation<T>(name: &str, create: impl FnOnce(&str) -> Result<T>) -> Result<T> {
+    let name = normalize_uinput_device_name(name);
+    match catch_unwind(AssertUnwindSafe(|| create(&name))) {
+        Ok(Ok(device)) => Ok(device),
+        Ok(Err(error)) => Err(uinput_unavailable(error.to_string())),
+        Err(payload) => Err(uinput_unavailable(format!(
+            "device creation panicked: {}",
+            panic_payload_message(payload.as_ref())
+        ))),
+    }
+}
+
+pub fn is_uinput_unavailable(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<UinputUnavailable>().is_some()
 }
 
 fn master_pointer_device_name(master_name: &str) -> String {
@@ -372,7 +443,13 @@ fn ensure_master_pointer(cursor_id: &str) -> Result<MasterPointerIds> {
     // inexpensive availability probe above handles the normal permission
     // denial; this ordering also prevents a race or late open failure from
     // leaking a newly created master pair.
-    let uinput_device = create_uinput_pointer(&device_name)?;
+    let uinput_device = match create_uinput_pointer(&device_name) {
+        Ok(device) => device,
+        Err(error) => {
+            unsafe { x11::xlib::XCloseDisplay(display) };
+            return Err(error);
+        }
+    };
     let mut change = x11::xinput2::XIAnyHierarchyChangeInfo::default();
     let name = CString::new(base.clone())?;
     unsafe {
@@ -481,25 +558,28 @@ pub fn forget_master_pointer(cursor_id: &str) {
 }
 
 fn create_uinput_pointer(name: &str) -> Result<VirtualDevice> {
-    let mut keys = AttributeSet::<Key>::new();
-    keys.insert(Key::BTN_LEFT);
-    keys.insert(Key::BTN_RIGHT);
-    keys.insert(Key::BTN_MIDDLE);
+    guarded_uinput_creation(name, |name| {
+        let mut keys = AttributeSet::<Key>::new();
+        keys.insert(Key::BTN_LEFT);
+        keys.insert(Key::BTN_RIGHT);
+        keys.insert(Key::BTN_MIDDLE);
 
-    let mut rel_axes = AttributeSet::<RelativeAxisType>::new();
-    rel_axes.insert(RelativeAxisType::REL_X);
-    rel_axes.insert(RelativeAxisType::REL_Y);
-    // REL_WHEEL (vertical) and REL_HWHEEL (horizontal) so the same uinput slave
-    // can also drive scroll: libinput turns these into the XI2 smooth-scroll
-    // events GTK consumes, where synthetic Button4-7 XSendEvents are dropped.
-    rel_axes.insert(RelativeAxisType::REL_WHEEL);
-    rel_axes.insert(RelativeAxisType::REL_HWHEEL);
+        let mut rel_axes = AttributeSet::<RelativeAxisType>::new();
+        rel_axes.insert(RelativeAxisType::REL_X);
+        rel_axes.insert(RelativeAxisType::REL_Y);
+        // REL_WHEEL (vertical) and REL_HWHEEL (horizontal) so the same uinput
+        // slave can also drive scroll: libinput turns these into the XI2
+        // smooth-scroll events GTK consumes, where synthetic Button4-7
+        // XSendEvents are dropped.
+        rel_axes.insert(RelativeAxisType::REL_WHEEL);
+        rel_axes.insert(RelativeAxisType::REL_HWHEEL);
 
-    Ok(evdev::uinput::VirtualDeviceBuilder::new()?
-        .name(name)
-        .with_keys(&keys)?
-        .with_relative_axes(&rel_axes)?
-        .build()?)
+        Ok(evdev::uinput::VirtualDeviceBuilder::new()?
+            .name(name)
+            .with_keys(&keys)?
+            .with_relative_axes(&rel_axes)?
+            .build()?)
+    })
 }
 
 fn wait_for_slave_pointer_id(display: *mut x11::xlib::Display, device_name: &str) -> Result<i32> {
@@ -1605,8 +1685,23 @@ pub fn send_focus_out(xid: u64) -> Result<()> {
 
 /// Send a button click (down + up) to a window at window-local coordinates.
 pub fn send_click(xid: u64, x: i32, y: i32, count: usize, button: u8) -> Result<()> {
+    send_click_with_modifiers(xid, x, y, count, button, &[])
+}
+
+/// Send a target-addressed X11 click whose event-state mask carries the named
+/// modifiers. Unlike a plain AT-SPI action, this preserves multi-selection
+/// semantics without changing the X input focus.
+pub fn send_click_with_modifiers(
+    xid: u64,
+    x: i32,
+    y: i32,
+    count: usize,
+    button: u8,
+    modifiers: &[&str],
+) -> Result<()> {
     let (conn, _) = connect_x11_for_input()?;
     let root = conn.setup().roots[0].root;
+    let modifier_state = modifiers_to_state(modifiers);
 
     for _ in 0..count {
         let target = resolve_event_target(&conn, xid, x, y)?;
@@ -1622,7 +1717,7 @@ pub fn send_click(xid: u64, x: i32, y: i32, count: usize, button: u8) -> Result<
             root_y: target.root_y,
             event_x: target.local_x,
             event_y: target.local_y,
-            state: KeyButMask::from(0u16),
+            state: modifier_state,
             same_screen: true,
         };
 
@@ -1638,7 +1733,9 @@ pub fn send_click(xid: u64, x: i32, y: i32, count: usize, button: u8) -> Result<
             root_y: target.root_y,
             event_x: target.local_x,
             event_y: target.local_y,
-            state: button_state_mask(button),
+            state: KeyButMask::from(
+                u16::from(modifier_state) | u16::from(button_state_mask(button)),
+            ),
             same_screen: true,
         };
 
@@ -2056,22 +2153,67 @@ pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
 /// by vision on the whole screen and issues a real screen-absolute pointer
 /// click. `button` is an X button number (1=left, 2=middle, 3=right).
 pub fn send_click_xtest_desktop(x: i32, y: i32, button: u8, count: usize) -> Result<()> {
+    send_click_xtest_desktop_with_modifiers(x, y, button, count, &[])
+}
+
+/// Real XTest click with physical modifier down/up transitions around the
+/// pointer gesture. Used only after the caller selected foreground delivery.
+pub fn send_click_xtest_desktop_with_modifiers(
+    x: i32,
+    y: i32,
+    button: u8,
+    count: usize,
+    modifiers: &[&str],
+) -> Result<()> {
     use x11rb::protocol::xtest::ConnectionExt as _;
     let (conn, screen_num) = connect_x11_for_input()?;
     let root = conn.setup().roots[screen_num].root;
-    // Absolute pointer warp (MotionNotify, detail=0 => absolute) so the button
-    // events that follow are delivered at (x, y).
-    conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x as i16, y as i16, 0)?;
-    let count = count.max(1);
-    for click_index in 0..count {
-        conn.xtest_fake_input(BUTTON_PRESS_EVENT, button, 0, root, x as i16, y as i16, 0)?;
-        conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?;
-        if click_index + 1 < count {
-            // Chromium needs the first pair to reach the server before the
-            // second pair. A zero-gap batch produces two click events but no
-            // DOM dblclick event under Xvfb/Openbox.
-            conn.flush()?;
-            sleep(Duration::from_millis(DOUBLE_CLICK_DELAY_MS));
+    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let mut guards = Vec::new();
+    let mut modifier_keycodes = Vec::new();
+    for modifier in modifiers {
+        let keysym = key_name_to_keysym(modifier)?;
+        let (keycode, guard) = keycode_for_keysym(&conn, &mapping, keysym, modifier)?;
+        if let Some(guard) = guard {
+            guards.push(guard);
+        }
+        modifier_keycodes.push(keycode);
+    }
+    let mut pressed = Vec::new();
+    let gesture_result = (|| -> Result<()> {
+        for &keycode in &modifier_keycodes {
+            conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
+            pressed.push(keycode);
+        }
+        // Absolute pointer warp (MotionNotify, detail=0 => absolute) so the
+        // button events that follow are delivered at (x, y).
+        conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x as i16, y as i16, 0)?;
+        let count = count.max(1);
+        for click_index in 0..count {
+            conn.xtest_fake_input(BUTTON_PRESS_EVENT, button, 0, root, x as i16, y as i16, 0)?;
+            conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?;
+            if click_index + 1 < count {
+                // Chromium needs the first pair to reach the server before the
+                // second pair. A zero-gap batch produces two click events but
+                // no DOM dblclick event under Xvfb/Openbox.
+                conn.flush()?;
+                sleep(Duration::from_millis(DOUBLE_CLICK_DELAY_MS));
+            }
+        }
+        Ok(())
+    })();
+
+    // Always attempt to release every modifier that was successfully queued,
+    // including when a later pointer request fails. A failed gesture must not
+    // leave the desktop with a logically stuck Ctrl/Shift/Alt/Super key.
+    let mut release_result: Result<()> = Ok(());
+    for &keycode in pressed.iter().rev() {
+        if let Err(error) =
+            conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)
+        {
+            if release_result.is_ok() {
+                release_result = Err(error.into());
+            }
         }
     }
     conn.flush()?;
@@ -2080,6 +2222,9 @@ pub fn send_click_xtest_desktop(x: i32, y: i32, button: u8, count: usize) -> Res
     // under Xtigervnc where keyboard events did not (see send_key_xtest), but make
     // it explicit so the desktop click is reliable across X servers too.
     let _ = conn.get_input_focus()?.reply();
+    drop(guards);
+    gesture_result?;
+    release_result?;
     Ok(())
 }
 
@@ -2595,8 +2740,115 @@ exit 0"#,
 #[cfg(test)]
 mod path_tests {
     use super::{
-        path_cumulative, point_on_path, real_pointer_capabilities_available, sample_function,
+        create_uinput_pointer, guarded_uinput_creation, is_uinput_unavailable, master_pointer_name,
+        modifiers_to_state, normalize_uinput_device_name, path_cumulative, point_on_path,
+        real_pointer_capabilities_available, sample_function, slave_pointer_name,
+        EVDEV_UINPUT_NAME_MAX_BYTES, UINPUT_POINTER_SUFFIX,
     };
+    use x11rb::protocol::xproto::KeyButMask;
+
+    #[test]
+    fn click_modifier_state_combines_canonical_names_and_aliases() {
+        let state = modifiers_to_state(&["ctrl", "shift", "meta"]);
+        assert!(state.contains(KeyButMask::CONTROL));
+        assert!(state.contains(KeyButMask::SHIFT));
+        assert!(state.contains(KeyButMask::MOD4));
+        assert!(!state.contains(KeyButMask::MOD1));
+
+        assert_eq!(
+            modifiers_to_state(&["control", "alt"]),
+            KeyButMask::from(u16::from(KeyButMask::CONTROL) | u16::from(KeyButMask::MOD1))
+        );
+    }
+
+    #[test]
+    fn slave_pointer_name_fits_evdev_uinput_limit() {
+        for cursor_id in ["m".repeat(200), "cursor-鼠".repeat(50)] {
+            let name = slave_pointer_name(&master_pointer_name(&cursor_id));
+            assert!(
+                name.len() <= 78,
+                "evdev 0.12 requires uinput names to be at most 78 bytes, got {}",
+                name.len()
+            );
+        }
+
+        let cursor_id = "same-long-cursor".repeat(20);
+        let first = slave_pointer_name(&master_pointer_name(&cursor_id));
+        let second = slave_pointer_name(&master_pointer_name(&cursor_id));
+        assert_ne!(first, second, "truncation must retain the unique nonce");
+        assert!(first.ends_with(UINPUT_POINTER_SUFFIX));
+        assert!(second.ends_with(UINPUT_POINTER_SUFFIX));
+    }
+
+    #[test]
+    fn uinput_name_normalization_covers_byte_boundaries_and_multibyte_text() {
+        let exact = "a".repeat(EVDEV_UINPUT_NAME_MAX_BYTES);
+        assert_eq!(normalize_uinput_device_name(&exact), exact);
+
+        let overlong_ascii = "a".repeat(EVDEV_UINPUT_NAME_MAX_BYTES + 1);
+        assert_eq!(
+            normalize_uinput_device_name(&overlong_ascii),
+            "a".repeat(EVDEV_UINPUT_NAME_MAX_BYTES)
+        );
+
+        let exact_multibyte = format!("{}鼠", "a".repeat(75));
+        assert_eq!(exact_multibyte.len(), EVDEV_UINPUT_NAME_MAX_BYTES);
+        assert_eq!(
+            normalize_uinput_device_name(&exact_multibyte),
+            exact_multibyte
+        );
+
+        let split_multibyte = format!("{}鼠", "a".repeat(77));
+        let normalized = normalize_uinput_device_name(&split_multibyte);
+        assert_eq!(normalized, "a".repeat(77));
+        assert!(normalized.is_char_boundary(normalized.len()));
+
+        assert_eq!(
+            normalize_uinput_device_name("CUA\0pointer\n"),
+            "CUA_pointer_"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn uinput_creation_panic_is_contained_and_daemon_worker_remains_usable() {
+        let failed = tokio::task::spawn_blocking(|| {
+            guarded_uinput_creation::<()>("panic", |_| panic!("synthetic evdev panic"))
+        })
+        .await
+        .expect("the blocking worker must not unwind");
+        let error = failed.expect_err("the panic must become an error");
+        assert!(is_uinput_unavailable(&error));
+        assert!(error.to_string().contains("device creation panicked"));
+
+        let subsequent = tokio::task::spawn_blocking(|| {
+            guarded_uinput_creation("subsequent", |name| Ok(name.to_owned()))
+        })
+        .await
+        .expect("the runtime must remain usable after the contained panic")
+        .expect("a subsequent device operation must succeed");
+        assert_eq!(subsequent, "subsequent");
+    }
+
+    #[test]
+    fn uinput_creation_error_is_stably_typed() {
+        let error =
+            guarded_uinput_creation::<()>("failure", |_| anyhow::bail!("permission denied"))
+                .expect_err("the injected builder error must be returned");
+        assert!(is_uinput_unavailable(&error));
+        assert_eq!(
+            error.to_string(),
+            "Linux uinput pointer unavailable: permission denied"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires a writable /dev/uinput device"]
+    fn real_uinput_accepts_normalized_overlong_multibyte_name() {
+        let overlong_name = format!("CUA {}{UINPUT_POINTER_SUFFIX}", "鼠".repeat(100));
+        let device = create_uinput_pointer(&overlong_name)
+            .expect("normalized device name should create a real uinput pointer");
+        drop(device);
+    }
 
     #[test]
     fn real_pointer_capabilities_require_uinput_access() {

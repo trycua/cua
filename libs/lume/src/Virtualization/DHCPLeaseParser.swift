@@ -52,6 +52,7 @@ private struct DHCPLease {
 /// Parses DHCP lease files to retrieve IP addresses for VMs based on their MAC addresses
 enum DHCPLeaseParser {
     private static let leasePath = "/var/db/dhcpd_leases"
+    private static let arpTimeout: TimeInterval = 2
     
     /// Retrieves the IP address for a given MAC address.
     /// First checks vmnet's DHCP leases (for NAT mode), then falls back to the
@@ -91,22 +92,12 @@ enum DHCPLeaseParser {
     /// Used for bridged networking where the VM gets its IP from the physical
     /// network's DHCP server instead of vmnet.
     private static func getIPFromARP(forMAC macAddress: String) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/arp")
-        process.arguments = ["-an"]
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            return nil
-        }
-
-        guard let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) else {
+        guard
+            let output = processOutput(
+                executableURL: URL(fileURLWithPath: "/usr/sbin/arp"),
+                arguments: ["-an"],
+                timeout: arpTimeout)
+        else {
             return nil
         }
 
@@ -124,6 +115,42 @@ enum DHCPLeaseParser {
         }
 
         return nil
+    }
+
+    /// Runs a small lookup process without allowing a stalled system utility to
+    /// block every VM status or clone operation indefinitely.
+    static func processOutput(
+        executableURL: URL,
+        arguments: [String],
+        timeout: TimeInterval
+    ) -> String? {
+        let process = Process()
+        process.executableURL = executableURL
+        process.arguments = arguments
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+
+        let deadline = Date().addingTimeInterval(timeout)
+        while process.isRunning && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+
+        guard !process.isRunning else {
+            process.terminate()
+            return nil
+        }
+
+        return String(
+            data: pipe.fileHandleForReading.readDataToEndOfFile(),
+            encoding: .utf8)
     }
     
     /// Parses the contents of a DHCP lease file into lease entries
@@ -159,4 +186,4 @@ enum DHCPLeaseParser {
         
         return leases
     }
-} 
+}

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 from urllib.parse import urlparse
 
 from cua_sandbox._config import (
@@ -17,18 +17,21 @@ from cua_sandbox._config import (
 from cua_sandbox.image import Image
 from cua_sandbox.transport.cyclops_http_client import CyclopsHttpClient
 from cua_sandbox.transport.fleet import FleetTransport
-from cyclops_sdk import (
+from fleet_sdk import (
     CreateClaimRequest,
     CreatePoolRequest,
+    CreateTemplateRequest,
     CyclopsClient,
     CyclopsConfiguration,
     CyclopsCredentials,
     HttpRequest,
-    PoolSpec,
-    PoolTemplate,
+    OsGymSandboxTemplateSpec,
+    OsGymSandboxWarmPoolSpec,
     PreservedJson,
     SandboxService,
+    SandboxTemplateRef,
     ServiceProtocol,
+    VmTemplate,
 )
 
 if TYPE_CHECKING:
@@ -67,6 +70,21 @@ class _FleetClient:
     async def create_pool(self, request: CreatePoolRequest) -> Any:
         return await self._client.create_pool(request)
 
+    async def reconcile_pool(self, request: CreatePoolRequest) -> Any:
+        return await self._client.reconcile_pool(request)
+
+    async def create_template(self, request: CreateTemplateRequest) -> Any:
+        return await self._client.create_template(request)
+
+    async def reconcile_template(self, request: CreateTemplateRequest) -> Any:
+        return await self._client.reconcile_template(request)
+
+    async def get_template(self, namespace: str, name: str) -> Any:
+        return await self._client.get_template(namespace, name)
+
+    async def delete_template(self, template: Any) -> None:
+        await self._client.delete_template(template)
+
     async def create_claim(self, request: CreateClaimRequest) -> Any:
         return await self._client.create_claim(request)
 
@@ -77,7 +95,7 @@ class _FleetClient:
             for current_pool in pools:
                 if current_pool.metadata.name != pool.metadata.name:
                     continue
-                if current_pool.status and (current_pool.status.available_count or 0) >= 1:
+                if current_pool.status and (current_pool.status.ready_replicas or 0) >= 1:
                     return current_pool
                 break
             if asyncio.get_running_loop().time() >= deadline:
@@ -95,16 +113,16 @@ class _FleetClient:
     async def delete_pool(self, pool: Any) -> None:
         await self._client.delete_pool(pool)
 
+    async def update_pool(self, pool: Any) -> Any:
+        return await self._client.update_pool(pool)
+
     async def service_request(
         self, sandbox: Any, service: str, path: str, request: HttpRequest
     ) -> Any:
         return await self._client.service_request(sandbox, service, path, request)
 
     async def get_pool(self, name: str) -> Any:
-        for pool in await self.list_pools():
-            if pool.metadata.name == name:
-                return pool
-        raise LookupError(f"Fleet pool {name!r} was not found")
+        return await self._client.get_pool(name)
 
     async def get_claim(self, pool: Any) -> Any:
         expected = f"{pool.metadata.name}-claim"
@@ -180,19 +198,39 @@ class FleetCloudTransport(FleetTransport):
         region: str = "us-east-1",
         time_to_start: Optional[float] = None,
         request_timeout: Optional[float] = None,
+        replicas: int = 1,
+        services: Mapping[str, int] | None = None,
     ) -> None:
         if disk_gb is not None:
             raise ValueError("disk_gb is not supported by the Fleet cloud transport")
         if region != "us-east-1":
             raise ValueError("Fleet cloud sandboxes currently support only region='us-east-1'")
+        if isinstance(replicas, bool) or not isinstance(replicas, int) or replicas < 1:
+            raise ValueError("replicas must be a positive integer")
+        if services is not None and (
+            not isinstance(services, Mapping)
+            or not services
+            or any(
+                not isinstance(name, str)
+                or not name
+                or not isinstance(port, int)
+                or port < 1
+                or port > 65535
+                for name, port in services.items()
+            )
+        ):
+            raise ValueError("services must map non-empty names to TCP ports")
         self._image = image
         self._name = name
         self._cpu = cpu
         self._memory_mb = memory_mb
         self._time_to_start = time_to_start if time_to_start is not None else 600.0
         self._request_timeout = request_timeout or 30.0
+        self._replicas = replicas
+        self._services = dict(services) if services is not None else None
         self._provisioned = False
         self._owns_resources = image is not None
+        self._template: Any = None
         self._pool: Any = None
         self._claim: Any = None
         self._sdk: Any = None
@@ -211,6 +249,7 @@ class FleetCloudTransport(FleetTransport):
                         self._pool = await self._sdk.get_pool(self._name)
                     else:
                         self._validate_image(self._image)
+                        self._template = await self._sdk.create_template(self._template_request())
                         self._pool = await self._sdk.create_pool(self._pool_request())
                         self._pool = await self._sdk.wait_pool(self._pool)
                 if self._claim is None:
@@ -272,6 +311,9 @@ class FleetCloudTransport(FleetTransport):
         if self._pool is not None:
             await self._sdk.delete_pool(self._pool)
             self._pool = None
+        if self._template is not None:
+            await self._sdk.delete_template(self._template)
+            self._template = None
         self._provisioned = False
 
     @classmethod
@@ -317,31 +359,37 @@ class FleetCloudTransport(FleetTransport):
         sdk = _FleetClient()
         try:
             pool = await sdk.get_pool(name)
+            template_name = pool.spec.sandbox_template_ref.name
             await sdk.delete_claim(await sdk.get_claim(pool))
             await sdk.delete_pool(pool)
+            await sdk.delete_template(
+                await sdk.get_template(pool.metadata.namespace, template_name)
+            )
         finally:
             await sdk.close()
 
-    def _pool_request(self) -> CreatePoolRequest:
+    def _template_request(self) -> CreateTemplateRequest:
         assert self._image is not None
-        services = [SandboxService(name="server", target_port=8000, protocol=ServiceProtocol.TCP)]
-        services.extend(
-            SandboxService(name=f"port-{port}", target_port=port, protocol=ServiceProtocol.TCP)
-            for port in self._image._ports
-            if port != 8000
-        )
-        return CreatePoolRequest(
+        service_ports = self._services or {
+            "server": 8000,
+            **{f"port-{port}": port for port in self._image._ports if port != 8000},
+        }
+        services = [
+            SandboxService(name=name, target_port=port, protocol=ServiceProtocol.TCP)
+            for name, port in service_ports.items()
+        ]
+        return CreateTemplateRequest(
             namespace=self._name,
-            spec=PoolSpec(
-                replicas=1,
-                services=services,
-                template=PoolTemplate(
+            name=self._name,
+            spec=OsGymSandboxTemplateSpec(
+                vm_template=VmTemplate(
+                    container_disk_image=self._image._registry,
+                    command=None,
                     runtime=None,
                     runtime_class_name=None,
                     node_selector=None,
                     tolerations=None,
-                    command=None,
-                    container_disk_image=self._image._registry,
+                    image_pull_policy=None,
                     image_pull_secret="ecr-credentials",
                     cpu_cores=self._cpu,
                     memory=None if self._memory_mb is None else f"{self._memory_mb}Mi",
@@ -349,15 +397,25 @@ class FleetCloudTransport(FleetTransport):
                     probes=PreservedJson.from_json(
                         json.dumps({"readinessProbe": {"tcpSocket": {"port": 8000}}})
                     ),
+                    services=services,
                     oidc=None,
                 ),
+            ),
+        )
+
+    def _pool_request(self) -> CreatePoolRequest:
+        return CreatePoolRequest(
+            namespace=self._name,
+            spec=OsGymSandboxWarmPoolSpec(
+                replicas=self._replicas,
+                sandbox_template_ref=SandboxTemplateRef(name=self._name),
                 autoscaling=None,
             ),
         )
 
     @staticmethod
-    def _service_names(pool: Any) -> list[str]:
-        return [service.name for service in pool.spec.services or []] or ["server"]
+    def _service_names(template: Any) -> list[str]:
+        return [service.name for service in template.spec.vm_template.services or []] or ["server"]
 
     @staticmethod
     def _validate_image(image: Image) -> None:

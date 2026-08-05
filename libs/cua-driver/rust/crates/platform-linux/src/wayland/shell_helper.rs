@@ -643,13 +643,14 @@ mod tests {
         assert!(EXTENSION_SOURCE.contains("createGlowSurface(this._fillColor)"));
         assert!(EXTENSION_SOURCE.contains("cr.translate(-GLOW_PADDING, -GLOW_PADDING);"));
         assert!(EXTENSION_SOURCE.contains("function drawBadgeChip"));
-        assert!(EXTENSION_SOURCE.contains("this._badge.add_child(this._badgeDot)"));
+        assert!(EXTENSION_SOURCE.contains("function badgeStyle(fillColor)"));
         assert!(EXTENSION_SOURCE.contains("this._badge.add_child(this._badgeLabel)"));
         assert!(EXTENSION_SOURCE.contains("this._deliveryChip"));
         assert!(EXTENSION_SOURCE.contains("this._targetChip"));
-        assert!(EXTENSION_SOURCE.contains("const badgeAlpha = Math.max(labelAlpha, chipAlpha)"));
+        assert!(EXTENSION_SOURCE.contains("if (labelAlpha > 0.001 || chipAlpha > 0.001)"));
         assert!(EXTENSION_SOURCE.contains("this._badgeLabel.hide()"));
         assert!(!EXTENSION_SOURCE.contains("this._badgeIdentity"));
+        assert!(!EXTENSION_SOURCE.contains("this._badgeDot"));
         assert!(!EXTENSION_SOURCE.contains("function drawModifiers"));
         let metadata: serde_json::Value =
             serde_json::from_str(EXTENSION_METADATA).expect("valid bundled helper metadata");

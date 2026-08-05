@@ -842,6 +842,58 @@ mod tests {
     }
 
     #[test]
+    fn bundled_skill_keeps_filesystem_outcome_ladder_and_gui_proof_boundaries() {
+        let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let skill = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
+            .expect("canonical skill must be readable");
+
+        for required in [
+            "headless filesystem or command capability",
+            "perform one batch-safe operation",
+            "filesystem rename committed",
+            "issue that modified click with",
+            "every intended item is selected",
+            "source reflects copy-versus-move semantics",
+        ] {
+            assert!(
+                skill.contains(required),
+                "skill lost required filesystem outcome guidance: {required}"
+            );
+        }
+    }
+
+    #[test]
+    fn bundled_skill_keeps_semantic_clipboard_outcome_ladder() {
+        let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let skill = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
+            .expect("canonical skill must be readable");
+        let browser = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/BROWSER.md"))
+            .expect("canonical browser skill must be readable");
+
+        for required in [
+            "exact value on the system clipboard",
+            "`clipboard_write`",
+            "`clipboard_read`",
+            "passive page-text ref",
+        ] {
+            assert!(
+                skill.contains(required),
+                "skill lost required clipboard outcome guidance: {required}"
+            );
+        }
+        for required in [
+            "exact page content on the system clipboard",
+            "passive headings and text nodes are evidence sources",
+            "foreground escalation rules in `SKILL.md`",
+        ] {
+            assert!(
+                browser.contains(required),
+                "browser skill lost required clipboard outcome guidance: {required}"
+            );
+        }
+    }
+
+    #[test]
     fn extract_flat_tarball_v_0_2_20_plus() {
         // Post-fix shape: one wrapper dir, files directly under it.
         //   cua-driver-rs-v0.2.20-skills/SKILL.md

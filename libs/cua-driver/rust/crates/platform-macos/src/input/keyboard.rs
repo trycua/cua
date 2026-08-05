@@ -216,6 +216,53 @@ pub fn press_key_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
     result
 }
 
+/// Hold physical modifier keys on the global HID queue around one pointer
+/// gesture, then release them in reverse order even when the gesture fails.
+///
+/// This is only safe inside an exact-window foreground activation guard. The
+/// caller receives the live modifier flags so every mouse event in the gesture
+/// carries the same state as the physical key transitions.
+pub(super) fn with_global_modifier_keys<T>(
+    modifiers: &[&str],
+    gesture: impl FnOnce(CGEventFlags) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    use core_graphics::event::CGEventTapLocation;
+
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+    let mut active_flags = CGEventFlags::CGEventFlagNull;
+    let mut pressed = Vec::new();
+
+    for modifier in modifiers {
+        let Some((key_code, flag)) = modifier_key_code_and_flag(modifier) else {
+            continue;
+        };
+        if pressed
+            .iter()
+            .any(|(pressed_code, _)| *pressed_code == key_code)
+        {
+            continue;
+        }
+        active_flags |= flag;
+        if let Err(error) = post_global_key(
+            &source,
+            key_code,
+            true,
+            active_flags,
+            CGEventTapLocation::HID,
+        ) {
+            release_global_modifiers(&source, &pressed, active_flags, CGEventTapLocation::HID);
+            return Err(error);
+        }
+        pressed.push((key_code, flag));
+        std::thread::sleep(std::time::Duration::from_millis(8));
+    }
+
+    let result = gesture(active_flags);
+    release_global_modifiers(&source, &pressed, active_flags, CGEventTapLocation::HID);
+    result
+}
+
 fn post_global_key(
     source: &CGEventSource,
     key_code: u16,
@@ -254,6 +301,57 @@ fn modifier_key_code_and_flag(modifier: &str) -> Option<(u16, CGEventFlags)> {
         "ctrl" | "control" => Some((59, CGEventFlags::CGEventFlagControl)),
         "fn" => Some((63, CGEventFlags::CGEventFlagSecondaryFn)),
         _ => None,
+    }
+}
+
+/// Hold PID-routed modifier keys around one pointer gesture and release them in
+/// reverse order even when the gesture fails.
+///
+/// Mouse-event flag bits alone are not a sufficient physical-modifier model for
+/// every AppKit host (Finder's collection views are a notable example). Pairing
+/// the flagged mouse events with real modifier down/up transitions gives the
+/// target the same ordered state it receives for a keyboard chord without
+/// putting those transitions on the global HID queue.
+pub(super) fn with_pid_modifier_keys<T>(
+    pid: i32,
+    modifiers: &[&str],
+    gesture: impl FnOnce() -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    let mut active_flags = CGEventFlags::CGEventFlagNull;
+    let mut pressed = Vec::new();
+    for modifier in modifiers {
+        let Some((key_code, flag)) = modifier_key_code_and_flag(modifier) else {
+            continue;
+        };
+        if pressed
+            .iter()
+            .any(|(pressed_code, _)| *pressed_code == key_code)
+        {
+            continue;
+        }
+        active_flags |= flag;
+        if let Err(error) = post_key(pid, key_code, true, active_flags) {
+            release_pid_modifiers(pid, &pressed, active_flags);
+            return Err(error);
+        }
+        pressed.push((key_code, flag));
+        std::thread::sleep(std::time::Duration::from_millis(8));
+    }
+
+    let result = gesture();
+    release_pid_modifiers(pid, &pressed, active_flags);
+    result
+}
+
+fn release_pid_modifiers(
+    pid: i32,
+    pressed: &[(u16, CGEventFlags)],
+    mut active_flags: CGEventFlags,
+) {
+    for &(key_code, flag) in pressed.iter().rev() {
+        active_flags.remove(flag);
+        let _ = post_key(pid, key_code, false, active_flags);
+        std::thread::sleep(std::time::Duration::from_millis(8));
     }
 }
 

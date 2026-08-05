@@ -66,6 +66,7 @@ from cua_sandbox.interfaces import (
     Mobile,
     Mouse,
     Screen,
+    Services,
     Shell,
     Terminal,
     Tunnel,
@@ -268,6 +269,7 @@ class Sandbox:
         self.terminal = Terminal(transport)
         self.mobile = Mobile(transport)
         self.tunnel = Tunnel(transport)
+        self.services = Services(transport)
         _os = _runtime_info.environment if _runtime_info and _runtime_info.environment else "linux"
         self.apps = Apps(transport, os_type=_os)
 
@@ -725,8 +727,8 @@ class Sandbox:
         spec = pool.get("spec") or {}
         status = pool.get("status") or {}
         replicas = spec.get("replicas", 1)
-        available = status.get("availableCount", 0)
-        state = "suspended" if replicas == 0 else "running" if available else "provisioning"
+        ready = status.get("readyReplicas", 0)
+        state = "suspended" if replicas == 0 else "running" if ready else "provisioning"
         return SandboxInfo(
             name=metadata.get("name", ""),
             status=state,

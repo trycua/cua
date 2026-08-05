@@ -27,6 +27,13 @@ pub struct RawDriver {
 }
 
 impl RawDriver {
+    /// Process id of the daemon that owns platform UI state, when this raw
+    /// transport is daemon-backed. Linux lifecycle tests use it to inspect
+    /// the daemon's kernel thread accounting without relying on `ps` races.
+    pub fn daemon_pid(&self) -> Option<u32> {
+        self._daemon.as_ref().map(|daemon| daemon.pid)
+    }
+
     /// Spawn the driver with piped stdio. Returns `None` (with a skip eprintln)
     /// if the binary isn't built — callers early-return so an un-built binary
     /// skips rather than fails.
